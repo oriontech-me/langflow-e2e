@@ -1,5 +1,6 @@
 import { BrowserContext, Page } from "playwright/test";
-import { DISCORD_URL, GITHUB_URL } from "../../../src/constants/constants";
+const DISCORD_URL = "https://discord.com/invite/EqksyE2EX9";
+const GITHUB_URL = "https://github.com/langflow-ai/langflow";
 import { expect, test } from "../../fixtures";
 import { addNewUserAndLogin } from "../../utils/add-new-user-and-loggin";
 import { cleanAllFlows } from "../../utils/clean-all-flows";
