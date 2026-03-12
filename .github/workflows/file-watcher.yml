@@ -29,14 +29,75 @@ jobs:
           SINCE="24 hours ago"
 
           declare -A AREA_PATHS
-          AREA_PATHS["API (backend routes)"]="src/backend/base/langflow/api/"
-          AREA_PATHS["Components (backend)"]="src/backend/base/langflow/components/"
-          AREA_PATHS["Frontend pages"]="src/frontend/src/pages/"
-          AREA_PATHS["Frontend components"]="src/frontend/src/components/"
-          AREA_PATHS["Frontend stores"]="src/frontend/src/stores/"
-          AREA_PATHS["Authentication"]="src/backend/base/langflow/api/v1/login.py src/backend/base/langflow/api/v1/users.py"
-          AREA_PATHS["Flow execution"]="src/backend/base/langflow/api/v1/endpoints.py"
+          declare -A AREA_TAGS
+          declare -A AREA_CHECKLIST
 
+          # ── ROUTES & FEATURE FLAGS (highest priority — can break everything) ──
+          AREA_PATHS["Routes & Feature Flags"]="src/frontend/src/routes.tsx src/frontend/src/customization/feature-flags.ts src/frontend/src/customization/config-constants.ts"
+          AREA_TAGS["Routes & Feature Flags"]="@release @api @workspace @components"
+          AREA_CHECKLIST["Routes & Feature Flags"]="ALL AREAS — route or feature flag changes can break any test"
+
+          # ── AUTHENTICATION ──
+          AREA_PATHS["Authentication"]="src/backend/base/langflow/api/v1/login.py src/backend/base/langflow/api/v1/users.py src/backend/base/langflow/api/v1/api_key.py src/backend/base/langflow/services/auth/ src/frontend/src/pages/LoginPage/ src/frontend/src/pages/SignUpPage/ src/frontend/src/components/authorization/ src/frontend/src/stores/authStore.ts"
+          AREA_TAGS["Authentication"]="@release @api"
+          AREA_CHECKLIST["Authentication"]="ÁREA 1 — Autenticação e Gerenciamento de Usuários"
+
+          # ── FLOW CRUD & CANVAS ──
+          AREA_PATHS["Flow CRUD & Canvas"]="src/backend/base/langflow/api/v1/flows.py src/backend/base/langflow/api/v1/folders.py src/frontend/src/pages/FlowPage/ src/frontend/src/stores/flowStore.ts src/frontend/src/stores/flowsManagerStore.ts src/frontend/src/constants/flow_constants.tsx"
+          AREA_TAGS["Flow CRUD & Canvas"]="@workspace @release"
+          AREA_CHECKLIST["Flow CRUD & Canvas"]="ÁREA 2 — Flows CRUD | ÁREA 3 — Pastas | ÁREA 4 — Canvas Editor"
+
+          # ── FLOW EXECUTION ──
+          AREA_PATHS["Flow Execution"]="src/backend/base/langflow/api/v1/endpoints.py src/backend/base/langflow/processing/ src/backend/base/langflow/api/v1/chat.py src/backend/base/langflow/services/chat/"
+          AREA_TAGS["Flow Execution"]="@release @api"
+          AREA_CHECKLIST["Flow Execution"]="ÁREA 10.3 — Execução de Flows via API | ÁREA 4.10 — Executar e Parar"
+
+          # ── MODEL PROVIDERS & LLM ──
+          AREA_PATHS["Model Providers & LLM"]="src/frontend/src/pages/SettingsPage/pages/ModelProvidersPage/ src/frontend/src/modals/modelProviderModal/ src/frontend/src/constants/providerConstants.ts src/frontend/src/components/common/modelProviderCountComponent/ src/backend/base/langflow/api/v1/models.py src/backend/base/langflow/api/v1/model_options.py"
+          AREA_TAGS["Model Providers & LLM"]="@components @api"
+          AREA_CHECKLIST["Model Providers & LLM"]="ÁREA 8 — Integrações LLM e Model Providers | ÁREA 7 — Templates (todos os testes de integração)"
+
+          # ── AGENTS & AGENTIC FLOWS ──
+          AREA_PATHS["Agents & Agentic Flows"]="src/backend/base/langflow/agentic/ src/backend/base/langflow/base/agents/ src/frontend/src/pages/MainPage/"
+          AREA_TAGS["Agents & Agentic Flows"]="@components @release"
+          AREA_CHECKLIST["Agents & Agentic Flows"]="ÁREA 9.5 — Agent Component | ÁREA 7.4 — Templates de Agentes"
+
+          # ── PLAYGROUND & CHAT UI ──
+          AREA_PATHS["Playground & Chat"]="src/frontend/src/pages/Playground/ src/frontend/src/components/core/playgroundComponent/ src/frontend/src/stores/playgroundStore.ts src/frontend/src/stores/messagesStore.ts src/backend/base/langflow/api/v1/chat.py"
+          AREA_TAGS["Playground & Chat"]="@workspace @release"
+          AREA_CHECKLIST["Playground & Chat"]="ÁREA 6 — Playground"
+
+          # ── GLOBAL VARIABLES & SETTINGS ──
+          AREA_PATHS["Settings & Global Variables"]="src/frontend/src/pages/SettingsPage/ src/backend/base/langflow/api/v1/variable.py src/frontend/src/stores/globalVariablesStore/ src/backend/base/langflow/settings.py"
+          AREA_TAGS["Settings & Global Variables"]="@api @release"
+          AREA_CHECKLIST["Settings & Global Variables"]="ÁREA 8.4 — Variáveis Globais | ÁREA 13 — Configurações"
+
+          # ── MCP SERVER ──
+          AREA_PATHS["MCP Server"]="src/frontend/src/pages/SettingsPage/pages/MCPServersPage/ src/frontend/src/modals/addMcpServerModal/ src/backend/base/langflow/api/v1/mcp.py src/backend/base/langflow/api/v1/mcp_projects.py src/backend/base/langflow/agentic/mcp/"
+          AREA_TAGS["MCP Server"]="@components"
+          AREA_CHECKLIST["MCP Server"]="ÁREA 11 — MCP Server"
+
+          # ── TRACING & MONITORING ──
+          AREA_PATHS["Tracing & Monitoring"]="src/backend/base/langflow/api/v1/traces.py src/backend/base/langflow/api/v1/monitor.py src/backend/base/langflow/services/tracing/"
+          AREA_TAGS["Tracing & Monitoring"]="@api"
+          AREA_CHECKLIST["Tracing & Monitoring"]="ÁREA 12 — Observabilidade e Monitoramento"
+
+          # ── DATABASE MODELS ──
+          AREA_PATHS["Database Models"]="src/backend/base/langflow/services/database/models/ src/backend/base/langflow/alembic/"
+          AREA_TAGS["Database Models"]="@database @release"
+          AREA_CHECKLIST["Database Models"]="ÁREA 1, 2, 6, 8 — qualquer área com estado persistido"
+
+          # ── COMPONENT INPUT TYPES ──
+          AREA_PATHS["Component Input Types"]="src/frontend/src/components/core/parameterRenderComponent/ src/frontend/src/CustomNodes/ src/backend/base/langflow/inputs/ src/backend/base/langflow/field_typing/"
+          AREA_TAGS["Component Input Types"]="@components"
+          AREA_CHECKLIST["Component Input Types"]="ÁREA 5 — Configuração de Componentes | ÁREA 4 — Canvas Editor"
+
+          # ── FILE UPLOAD ──
+          AREA_PATHS["File Upload"]="src/backend/base/langflow/api/v1/files.py src/backend/base/langflow/services/storage/ src/frontend/src/pages/MainPage/pages/filesPage/"
+          AREA_TAGS["File Upload"]="@components @api"
+          AREA_CHECKLIST["File Upload"]="ÁREA 9.7 — File Upload Component"
+
+          # ────────────────────────────────────────────────────────────────────
           CHANGED_AREAS=""
           CHANGE_DETAILS=""
 
@@ -44,14 +105,15 @@ jobs:
             PATH_LIST="${AREA_PATHS[$AREA]}"
             COMMITS=$(git log --since="$SINCE" --oneline -- $PATH_LIST 2>/dev/null | head -5)
             if [ -n "$COMMITS" ]; then
-              CHANGED_AREAS="$CHANGED_AREAS\n- **$AREA**"
+              TAGS="${AREA_TAGS[$AREA]}"
+              CHECKLIST="${AREA_CHECKLIST[$AREA]}"
+              CHANGED_AREAS="$CHANGED_AREAS\n- **$AREA** | tags: \`$TAGS\` | checklist: $CHECKLIST"
               CHANGE_DETAILS="$CHANGE_DETAILS\n\n### $AREA\n\`\`\`\n$COMMITS\n\`\`\`"
             fi
           done
 
           if [ -n "$CHANGED_AREAS" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            # Store details as a multiline output
             {
               echo "areas<<EOF"
               echo -e "$CHANGED_AREAS"
@@ -75,44 +137,32 @@ jobs:
             const areas = `${{ steps.detect.outputs.areas }}`;
             const details = `${{ steps.detect.outputs.details }}`;
 
-            // Map changed areas to checklist sections
-            const areaToChecklist = {
-              'API (backend routes)': 'ÁREA 10 — API REST',
-              'Components (backend)': 'ÁREA 9 — Componentes Principais',
-              'Frontend pages': 'ÁREA 2, 3, 6, 13 — Flows, Pastas, Playground, Settings',
-              'Frontend components': 'ÁREA 4, 5 — Canvas, Configuração de Componentes',
-              'Frontend stores': 'ÁREA 4, 6 — Canvas, Playground',
-              'Authentication': 'ÁREA 1 — Autenticação e Gerenciamento de Usuários',
-              'Flow execution': 'ÁREA 10.3 — Execução de Flows via API',
-            };
-
-            let checklistMapping = '';
-            for (const [key, value] of Object.entries(areaToChecklist)) {
-              if (areas.includes(key)) {
-                checklistMapping += `\n- ${key} → **${value}**`;
-              }
-            }
-
             const body = [
               '## Langflow source changes detected — test review required',
               '',
               `**Date:** ${today}`,
               `**Source:** [langflow-ai/langflow](https://github.com/langflow-ai/langflow)`,
               '',
-              '### Changed areas',
-              areas,
+              '### Changed areas, affected tags and checklist sections',
               '',
-              '### Checklist sections to review',
-              checklistMapping || '- See REGRESSION_CHECKLIST.md for full mapping',
+              '| Area | Run these tests | Checklist |',
+              '|---|---|---|',
+              ...areas.split('\n').filter(l => l.startsWith('- **')).map(line => {
+                const match = line.match(/\*\*(.+?)\*\* \| tags: `(.+?)` \| checklist: (.+)/);
+                if (match) return `| ${match[1]} | \`npx playwright test --grep "${match[2].split(' ').join('|')}"\` | ${match[3]} |`;
+                return line;
+              }),
               '',
               '### Commits (last 24h)',
               details,
               '',
               '### Action required',
-              '1. Review the commits above for breaking changes',
-              '2. Run the affected test areas: `npm run test:grep "<area>"`',
-              '3. Update failing or stale tests in this repo',
-              '4. Update `REGRESSION_CHECKLIST.md` if new scenarios were introduced',
+              '1. Review the commits listed above',
+              '2. Run the tests indicated for each changed area',
+              '3. Follow the validation guide in README.md → "Como validar um teste existente"',
+              '4. Update or fix stale tests if behavior changed',
+              '5. Update `REGRESSION_CHECKLIST.md` if new scenarios were introduced',
+              '6. Close this issue when done',
               '',
               '/cc @lice-reis',
             ].join('\n');
