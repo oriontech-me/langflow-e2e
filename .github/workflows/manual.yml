@@ -6,10 +6,18 @@ on:
       langflow_target:
         description: |
           Langflow target. Options:
-            • Docker tag: "latest", "1.3.0", "dev"
+            • Docker tag: "latest", "1.5.1.dev36" (uses the image selected below)
             • Full URL of a running instance: "https://staging.example.com"
         required: true
         default: "latest"
+      langflow_image:
+        description: "Docker image to use: nightly (langflow-nightly) or stable (langflow)"
+        required: false
+        type: choice
+        options:
+          - nightly
+          - stable
+        default: "nightly"
       test_suite:
         description: "Test suite: all | core | extended | features | integrations | unit | regression"
         required: false
@@ -26,18 +34,27 @@ jobs:
       use_docker: ${{ steps.check.outputs.use_docker }}
       base_url: ${{ steps.check.outputs.base_url }}
       image_tag: ${{ steps.check.outputs.image_tag }}
+      docker_image: ${{ steps.check.outputs.docker_image }}
     steps:
       - id: check
         run: |
           TARGET="${{ github.event.inputs.langflow_target }}"
+          IMAGE_TYPE="${{ github.event.inputs.langflow_image || 'nightly' }}"
+          if [ "$IMAGE_TYPE" = "nightly" ]; then
+            REPO="langflowai/langflow-nightly"
+          else
+            REPO="langflowai/langflow"
+          fi
           if [[ "$TARGET" == http* ]]; then
             echo "use_docker=false" >> $GITHUB_OUTPUT
             echo "base_url=$TARGET" >> $GITHUB_OUTPUT
             echo "image_tag=" >> $GITHUB_OUTPUT
+            echo "docker_image=" >> $GITHUB_OUTPUT
           else
             echo "use_docker=true" >> $GITHUB_OUTPUT
             echo "base_url=http://localhost:7860/" >> $GITHUB_OUTPUT
             echo "image_tag=$TARGET" >> $GITHUB_OUTPUT
+            echo "docker_image=${REPO}:${TARGET}" >> $GITHUB_OUTPUT
           fi
 
   e2e-docker:
@@ -49,7 +66,7 @@ jobs:
 
     services:
       langflow:
-        image: langflowai/langflow:${{ needs.detect-target.outputs.image_tag }}
+        image: ${{ needs.detect-target.outputs.docker_image }}
         ports:
           - 7860:7860
         env:

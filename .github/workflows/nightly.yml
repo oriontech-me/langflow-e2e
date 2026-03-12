@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       langflow_image_tag:
-        description: "Langflow Docker image tag (e.g. latest, 1.3.0)"
+        description: "Langflow nightly image tag (e.g. latest, 1.5.1.dev36)"
         required: false
         default: "latest"
       test_grep:
@@ -16,13 +16,13 @@ on:
 
 jobs:
   e2e-nightly:
-    name: Nightly E2E (${{ github.event.inputs.langflow_image_tag || 'latest' }})
+    name: Nightly E2E (langflow-nightly:${{ github.event.inputs.langflow_image_tag || 'latest' }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
     services:
       langflow:
-        image: langflowai/langflow:${{ github.event.inputs.langflow_image_tag || 'latest' }}
+        image: langflowai/langflow-nightly:${{ github.event.inputs.langflow_image_tag || 'latest' }}
         ports:
           - 7860:7860
         env:
@@ -94,7 +94,7 @@ jobs:
                 '## Nightly E2E Test Failure',
                 '',
                 `- **Date:** ${today}`,
-                `- **Langflow version:** \`langflowai/langflow:${tag}\``,
+                `- **Langflow version:** \`langflowai/langflow-nightly:${tag}\``,
                 `- **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
                 '',
                 '### Next steps',
