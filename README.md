@@ -143,6 +143,56 @@ Só marque `[x]` após confirmar os 5 passos acima. Se a cobertura for parcial, 
 
 ---
 
+## Manutenção dos testes
+
+### Como o time fica sabendo que um teste precisa ser revisado
+
+O maior risco em testes E2E não é o teste que falha — é o teste que **passa mas não valida mais o comportamento correto**, porque o Langflow mudou e o teste não acompanhou.
+
+Existe um mecanismo automático para isso: o `file-watcher.yml` roda todo dia às 05h BRT e verifica se houve commits no repositório oficial do Langflow nas últimas 24h em caminhos críticos. Quando detecta mudanças, abre automaticamente uma issue neste repositório.
+
+**A issue informa:**
+- Qual área funcional mudou (ex: "Model Providers & LLM")
+- O comando exato para rodar os testes afetados (ex: `npx playwright test --grep "@components|@api"`)
+- Qual seção do `REGRESSION_CHECKLIST.md` revisar
+- Os commits das últimas 24h para leitura humana
+
+**Exemplo de issue gerada após mudança em model providers:**
+> | Area | Run these tests | Checklist |
+> |---|---|---|
+> | Model Providers & LLM | `npx playwright test --grep "@components\|@api"` | ÁREA 8 — LLM Providers + ÁREA 7 — Templates |
+
+### Áreas monitoradas
+
+O watcher cobre 12 áreas funcionais mapeadas a partir do source do Langflow:
+
+| Área | Caminhos monitorados | Tags afetadas |
+|---|---|---|
+| Routes & Feature Flags | `routes.tsx`, `feature-flags.ts` | todas |
+| Authentication | `api/v1/login.py`, `services/auth/`, `LoginPage/`, `authStore.ts` | `@release @api` |
+| Flow CRUD & Canvas | `api/v1/flows.py`, `FlowPage/`, `flowStore.ts` | `@workspace @release` |
+| Flow Execution | `api/v1/endpoints.py`, `processing/`, `api/v1/chat.py` | `@release @api` |
+| Model Providers & LLM | `ModelProvidersPage/`, `modelProviderModal/`, `providerConstants.ts`, `api/v1/models.py` | `@components @api` |
+| Agents & Agentic Flows | `agentic/`, `base/agents/`, `MainPage/` | `@components @release` |
+| Playground & Chat | `pages/Playground/`, `playgroundStore.ts`, `api/v1/chat.py` | `@workspace @release` |
+| Settings & Global Variables | `SettingsPage/`, `api/v1/variable.py` | `@api @release` |
+| MCP Server | `MCPServersPage/`, `api/v1/mcp.py`, `agentic/mcp/` | `@components` |
+| Tracing & Monitoring | `api/v1/traces.py`, `services/tracing/` | `@api` |
+| Database Models | `services/database/models/`, `alembic/` | `@database @release` |
+| Component Input Types | `parameterRenderComponent/`, `CustomNodes/`, `inputs/` | `@components` |
+
+### O que fazer quando chegar uma issue do file-watcher
+
+1. Leia os commits listados na issue — identifique se é uma mudança de comportamento, renomeação de elemento, novo endpoint, etc.
+2. Rode os testes indicados na tabela da issue
+3. Para cada teste que falhar ou parecer desatualizado, siga o guia de validação acima
+4. Atualize os testes necessários e marque o `REGRESSION_CHECKLIST.md`
+5. Feche a issue
+
+> **Importante:** uma issue do file-watcher não significa que os testes vão falhar — significa que o time precisa verificar ativamente. Mudanças sutis de UI (renomear um botão, mover um elemento) podem não quebrar o teste, mas invalidar o que ele está testando.
+
+---
+
 ## Regression Checklist
 
 Veja [`REGRESSION_CHECKLIST.md`](./REGRESSION_CHECKLIST.md) para o mapa completo de cobertura.
