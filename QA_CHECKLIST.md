@@ -161,12 +161,10 @@
 - [ ] Trigger via requisição HTTP externa
 - [ ] Payload recebido propagado ao flow
 
-#### 3.5 Agent
-- [-] Agent com tool calling → `core/features/agent-component-regression.spec.ts`
-- [-] Agent exibe steps de raciocínio no Playground → `core/features/agent-reasoning-steps.spec.ts`
-- [ ] Agent para ao atingir stop condition
-- [ ] Agent com múltiplas tools configuradas
-- [-] Composio (tool integration para Agent) → `core/features/composio.spec.ts`
+#### 3.5 Agent (Componente)
+- [-] Componente Agent exibido no canvas com configurações padrão → `core/features/agent-component-regression.spec.ts`
+- [ ] Configurar system prompt no componente Agent
+- [ ] Configurar model provider diretamente no componente Agent
 
 #### 3.6 Loop Component
 - [-] Componente Loop no canvas → `extended/features/loop-component.spec.ts`
@@ -229,7 +227,34 @@
 
 ### core-functionality/llm-agents/ — Agentes e Execução com LLM
 
-> _Conteúdo a ser adicionado._
+#### 6.1 Execução de Agente
+- [-] Agent com tool calling executa corretamente → `core/features/agent-component-regression.spec.ts`
+- [-] Agent exibe steps de raciocínio no Playground → `core/features/agent-reasoning-steps.spec.ts`
+- [-] Composio (tool integration para Agent) → `core/features/composio.spec.ts`
+- [ ] Agent executa flow completo com LLM e retorna resposta
+- [ ] Agent em modo streaming — resposta exibida progressivamente no Playground
+
+#### 6.2 Controle de Execução
+- [ ] Agent para ao atingir stop condition configurada
+- [ ] Agent para ao atingir número máximo de iterações
+- [ ] Agent com múltiplas tools configuradas executa corretamente
+- [ ] Agent com timeout configurado respeita o limite
+
+#### 6.3 Memória e Contexto
+- [ ] Agent com memória persistente entre mensagens (Memory Chatbot flow)
+- [ ] Agent usa `context_id` customizado — memória isolada por contexto
+- [ ] Trocar `context_id` reseta histórico do agente
+
+#### 6.4 Tools e Integrações
+- [ ] Agent com tool MCP externo integrado executa ação e retorna resultado
+- [ ] Agent executa múltiplas tools em sequência
+- [ ] Tool retorna erro — agent trata e continua execução sem falhar o flow
+
+#### 6.5 Output e Raciocínio
+- [ ] Inspecionar steps de raciocínio do Agent no Playground
+- [ ] Inspecionar tools usadas pelo Agent no Playground
+- [ ] Agent retorna output em formato JSON estruturado
+- [ ] Agent retorna output em Markdown renderizado corretamente
 
 ---
 
@@ -327,8 +352,6 @@
 - [-] Modo fullscreen do Playground → `core/features/playground-fullscreen.spec.ts`
 - [ ] Playground compartilhável (URL pública, sem autenticação)
 - [-] Voice mode (assistente de voz) → `core/features/voice-assistant.spec.ts`
-- [ ] Inspecionar steps de raciocínio do Agent
-- [ ] Inspecionar tools usadas pelo Agent
 - [-] Botão Stop no Playground → `extended/features/stop-button-playground.spec.ts`
 
 #### 9.4 Output Modal
