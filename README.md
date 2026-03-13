@@ -111,15 +111,16 @@ tests/
     │   ├── core-functionality/
     │   │   ├── auth/              # autenticação e gerenciamento de usuários
     │   │   ├── knowledge-ingestion-management/  # upload, processamento e vetores
+    │   │   ├── llm-agents/        # agentes e execução com LLM
     │   │   ├── model-provider/    # gestão de provedores (OpenAI, Ollama, etc.)
     │   │   ├── observability-monitoring/        # tracing, logs e métricas
     │   │   ├── playground/        # chat, renderização e testes de saída
+    │   │   ├── project-management/              # gestão de projetos e pastas
     │   │   └── templates/         # modelos pré-definidos de flows e componentes
     │   ├── flow-functionality/    # execução de grafos, drag-and-drop e JSON
     │   ├── mcp/
     │   │   ├── client/            # consumo de ferramentas e contexto
     │   │   └── server/            # provedor de recursos e tools
-    │   ├── project-management/    # gestão de projetos e pastas
     │   └── ui-ux/                 # interface visual, canvas e design system
     └── smoke/
         ├── api/
