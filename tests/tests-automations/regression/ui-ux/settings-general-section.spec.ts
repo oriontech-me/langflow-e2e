@@ -1,4 +1,4 @@
-import { expect, test } from "../../../fixtures";
+import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
 // NOTE: In LANGFLOW_AUTO_LOGIN=true mode, the General settings page hides the

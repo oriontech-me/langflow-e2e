@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import { readFileSync } from "fs";
 import path from "path";
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 
 test(

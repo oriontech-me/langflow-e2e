@@ -1,4 +1,4 @@
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 // The /api/v1/run endpoint requires x-api-key authentication (not Bearer).

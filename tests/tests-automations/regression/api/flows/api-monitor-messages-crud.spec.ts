@@ -1,4 +1,4 @@
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 // These tests exercise the /api/v1/monitor/messages endpoint beyond the basic

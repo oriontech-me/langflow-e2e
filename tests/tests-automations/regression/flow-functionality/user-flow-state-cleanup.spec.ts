@@ -1,4 +1,4 @@
-import { expect, test } from "../../../fixtures";
+import { expect, test } from "../../../fixtures/fixtures";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
 
 test(

@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";

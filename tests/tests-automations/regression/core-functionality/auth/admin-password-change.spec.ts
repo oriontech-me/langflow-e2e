@@ -1,4 +1,4 @@
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 // NOTE: When login fails with 401 (wrong credentials), the Langflow frontend re-calls

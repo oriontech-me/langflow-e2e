@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import { test } from "../../../fixtures";
+import { test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
 

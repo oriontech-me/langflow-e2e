@@ -1,4 +1,4 @@
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 
 // Helper: mock auto_login to show the login screen
 async function enableLoginScreen(page: any) {

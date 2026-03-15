@@ -1,4 +1,4 @@
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 // Tests the POST /api/v1/run/{flow_id} endpoint with tweaks parameter,

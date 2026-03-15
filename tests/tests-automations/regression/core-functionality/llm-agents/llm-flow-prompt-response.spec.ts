@@ -18,7 +18,7 @@
 
 import * as dotenv from "dotenv";
 import path from "path";
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
 import { FlowEditorPage, PlaygroundPage } from "../../../../pages";

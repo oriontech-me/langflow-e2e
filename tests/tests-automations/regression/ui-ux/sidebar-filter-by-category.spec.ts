@@ -1,4 +1,4 @@
-import { expect, test } from "../../../fixtures";
+import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
 // Helper: navigate to a blank flow so the full sidebar is visible.

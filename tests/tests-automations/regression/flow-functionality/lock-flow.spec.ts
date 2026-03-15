@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import * as dotenv from "dotenv";
 import path from "path";
-import { expect, test } from "../../../fixtures";
+import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { lockFlow, unlockFlow } from "../../../helpers/flows/lock-flow";
 import { unselectNodes } from "../../../helpers/ui/unselect-nodes";

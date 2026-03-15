@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { addFlowToTestOnEmptyLangflow } from "../../../../helpers/flows/add-flow-to-test-on-empty-langflow";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { generateRandomFilename } from "../../../../helpers/filesystem/generate-filename";

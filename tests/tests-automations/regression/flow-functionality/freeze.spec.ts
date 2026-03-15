@@ -1,4 +1,4 @@
-import { expect, test } from "../../../fixtures";
+import { expect, test } from "../../../fixtures/fixtures";
 import { addFlowToTestOnEmptyLangflow } from "../../../helpers/flows/add-flow-to-test-on-empty-langflow";
 import { addLegacyComponents } from "../../../helpers/flows/add-legacy-components";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";

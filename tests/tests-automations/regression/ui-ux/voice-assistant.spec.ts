@@ -1,4 +1,4 @@
-import { expect, test } from "../../../fixtures";
+import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
 // TODO: Need to review the voice assistant vs text to voice

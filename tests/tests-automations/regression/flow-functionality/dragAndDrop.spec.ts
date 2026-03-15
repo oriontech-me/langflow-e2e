@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { expect, test } from "../../../fixtures";
+import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { simulateDragAndDrop } from "../../../helpers/ui/simulate-drag-and-drop";
 

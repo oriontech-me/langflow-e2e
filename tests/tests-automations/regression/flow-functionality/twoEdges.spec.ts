@@ -1,4 +1,4 @@
-import { test } from "../../../fixtures";
+import { test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
 test(

@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { loadSimpleAgentWithOpenAI } from "../../../../helpers/flows/load-simple-agent-with-openai";
 
 test.describe.serial("Playground UX Regression (IDs 44 + 126 + 2)", () => {

@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import { test } from "../../../../fixtures";
+import { test } from "../../../../fixtures/fixtures";
 
 test(
   "should delete a flow (requires store API key)",

@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { MainPage } from "../../../../pages";
 
 test(

@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { expect, test } from "../../../fixtures";
+import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
 test("user must be able to update outdated components by update all button", async ({

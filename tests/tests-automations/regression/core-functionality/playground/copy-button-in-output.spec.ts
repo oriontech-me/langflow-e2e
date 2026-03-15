@@ -1,4 +1,4 @@
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { addCustomComponent } from "../../../../helpers/flows/add-custom-component";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";

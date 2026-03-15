@@ -1,4 +1,4 @@
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 
 // The health check endpoint is at /health_check (not under /api/v1/)
 // It returns: { "status": "ok", "chat": "ok", "db": "ok" }

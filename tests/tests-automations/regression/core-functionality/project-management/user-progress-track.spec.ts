@@ -1,7 +1,7 @@
 import { BrowserContext, Page } from "playwright/test";
 const DISCORD_URL = "https://discord.com/invite/EqksyE2EX9";
 const GITHUB_URL = "https://github.com/langflow-ai/langflow";
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { addNewUserAndLogin } from "../../../../helpers/auth/add-new-user-and-loggin";
 import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
 import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folders";

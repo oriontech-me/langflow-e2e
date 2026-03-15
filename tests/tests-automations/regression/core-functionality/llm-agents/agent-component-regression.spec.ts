@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import { expect, test } from "../../../../fixtures";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { loadSimpleAgentWithOpenAI } from "../../../../helpers/flows/load-simple-agent-with-openai";
 
 test.describe.serial("Agent Component Regression", () => {
