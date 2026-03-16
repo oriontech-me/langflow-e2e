@@ -8,14 +8,14 @@ dotenv.config();
  * Override via env var:
  *   PLAYWRIGHT_BASE_URL=http://localhost:7860 npx playwright test
  */
-const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:7860/";
+const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:7860";
 
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 3,
-  workers: process.env.CI ? 2 : 2,
+  workers: process.env.CI ? 2 : undefined,
   timeout: 5 * 60 * 1000, // 5 minutes per test
   reporter: process.env.CI ? "blob" : "html",
 
