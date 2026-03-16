@@ -1,6 +1,7 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import { test } from "../../../../fixtures/fixtures";
+import { type Page } from "@playwright/test";
+import { expect, test } from "../../../../fixtures/fixtures";
 
 test(
   "should delete a flow (requires store API key)",
@@ -30,8 +31,7 @@ test(
 
     await page.getByTestId("api-key-save-button-store").click();
 
-    await page.waitForTimeout(1000);
-    await page.getByText("Success! Your API Key has been saved.").isVisible();
+    await expect(page.getByText("Success! Your API Key has been saved.")).toBeVisible({ timeout: 10000 });
 
     await page.waitForSelector('[data-testid="button-store"]', {
       timeout: 30000,
@@ -57,23 +57,19 @@ test(
 
     await page.waitForSelector("text=Website Content QA", { timeout: 30000 });
 
-    await page.getByText("Website Content QA").first().isVisible();
+    await expect(page.getByText("Website Content QA").first()).toBeVisible({ timeout: 10000 });
 
     await page.getByTestId("home-dropdown-menu").first().click();
     await page.waitForTimeout(500);
 
     await page.getByText("Delete").last().click();
-    await page.waitForTimeout(500);
-    await page
-      .getByText("Are you sure you want to delete the selected component?")
-      .isVisible();
+    await expect(page.getByText("Are you sure you want to delete the selected component?")).toBeVisible({ timeout: 5000 });
     await page.getByText("Delete").nth(1).click();
-    await page.waitForTimeout(1000);
-    await page.getByText("Successfully").first().isVisible();
+    await expect(page.getByText("Successfully").first()).toBeVisible({ timeout: 10000 });
   },
 );
 
-async function waitForInstallButton(page) {
+async function waitForInstallButton(page: Page) {
   try {
     // Wait for install button with retry logic
     const button = await page.waitForSelector(
@@ -94,7 +90,7 @@ async function waitForInstallButton(page) {
   }
 }
 
-async function waitForSuccessMessage(page) {
+async function waitForSuccessMessage(page: Page) {
   try {
     // Wait for success message
     await page.waitForSelector('text="Flow Installed Successfully."', {

@@ -45,8 +45,11 @@ test(
 
     await page.waitForSelector("text=OAUTH2", { timeout: 20000 });
 
-    await page.waitForTimeout(1000);
-
+    await expect(
+      page.getByTestId(
+        "button_open_list_selection_sortablelist_sortablelist_action_button",
+      ),
+    ).toBeVisible({ timeout: 5000 });
     await page
       .getByTestId(
         "button_open_list_selection_sortablelist_sortablelist_action_button",
@@ -55,8 +58,7 @@ test(
 
     await page.getByTestId(`list_item_fetch_emails`).click();
 
-    await page.waitForTimeout(1000);
-
+    await expect(page.getByTestId("button_run_gmail")).toBeVisible({ timeout: 5000 });
     await page.getByTestId("button_run_gmail").click();
 
     await page.waitForSelector("text=built successfully", {

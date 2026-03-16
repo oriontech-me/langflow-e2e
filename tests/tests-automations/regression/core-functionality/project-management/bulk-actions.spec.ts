@@ -19,7 +19,7 @@ test(
     });
     await page.getByTestId("icon-ChevronLeft").first().click();
 
-    await page.getByText("Projects").first().isVisible();
+    await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 10000 });
     await page.getByTestId("new-project-btn").click();
     await page.getByTestId("side_nav_options_all-templates").click();
     await page.getByRole("heading", { name: "Document Q&A" }).click();
@@ -28,7 +28,7 @@ test(
     });
     await page.getByTestId("icon-ChevronLeft").first().click();
 
-    await page.getByText("Projects").first().isVisible();
+    await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 10000 });
     await page.getByTestId("new-project-btn").click();
     await page.getByTestId("side_nav_options_all-templates").click();
     await page.getByRole("heading", { name: "Basic Prompting" }).click();
@@ -37,12 +37,11 @@ test(
     });
     await page.getByTestId("icon-ChevronLeft").first().click();
 
-    await page.getByText("Projects").first().isVisible();
+    await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 10000 });
     await page.waitForSelector('[data-testid="home-dropdown-menu"]', {
       timeout: 100000,
     });
-    await page.getByTestId("list-card").first().isVisible({ timeout: 3000 });
-    await page.waitForTimeout(500);
+    await expect(page.getByTestId("list-card").first()).toBeVisible({ timeout: 10000 });
 
     // Test shift selection
     await page.keyboard.down("Shift");
@@ -105,9 +104,7 @@ test(
 
     // Test bulk delete
     await page.getByTestId("delete-bulk-btn").first().click();
-    await page.getByText("This can't be undone.").isVisible({
-      timeout: 1000,
-    });
+    await expect(page.getByText("This can't be undone.")).toBeVisible({ timeout: 5000 });
     await page.getByText("Delete").last().click();
 
     // Verify deletion success message

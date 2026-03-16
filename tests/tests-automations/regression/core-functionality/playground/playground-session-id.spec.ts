@@ -52,7 +52,7 @@ async function setupMockedChatFlow(page: any) {
   });
 
   // Mock the run endpoint so no real LLM call is made
-  await page.route("**/api/v1/run/**", async (route) => {
+  await page.route("**/api/v1/run/**", async (route: import("@playwright/test").Route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -100,53 +100,9 @@ test(
 
     const customSession = `session-${Date.now()}`;
 
-    // Try the dedicated session ID testid first
-    const sessionById = page.getByTestId("session-id-input");
-    if (await sessionById.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await sessionById.fill(customSession);
-      await expect(sessionById).toHaveValue(customSession);
-      return;
-    }
-
-    // Try a placeholder-based locator
-    const sessionByPlaceholder = page
-      .locator('input[placeholder*="session" i]')
-      .first();
-    if (
-      await sessionByPlaceholder
-        .isVisible({ timeout: 3000 })
-        .catch(() => false)
-    ) {
-      await sessionByPlaceholder.fill(customSession);
-      expect(await sessionByPlaceholder.inputValue()).toContain("session-");
-      return;
-    }
-
-    // Session ID may be behind a settings / options button
-    const settingsBtn = page
-      .getByRole("button", { name: /session|settings|options/i })
-      .first();
-    if (
-      await settingsBtn.isVisible({ timeout: 2000 }).catch(() => false)
-    ) {
-      await settingsBtn.click();
-      await page.waitForTimeout(500);
-      const sessionField = page
-        .locator('input[placeholder*="session" i]')
-        .first();
-      if (
-        await sessionField.isVisible({ timeout: 2000 }).catch(() => false)
-      ) {
-        await sessionField.fill(customSession);
-        expect(await sessionField.inputValue()).toContain("session-");
-        return;
-      }
-    }
-
-    // Feature not immediately accessible — verify playground is working
-    await expect(
-      page.getByTestId("input-chat-playground").last(),
-    ).toBeVisible();
+    await page.getByTestId("popover-anchor-input-session_id").clear();
+    await page.getByTestId("popover-anchor-input-session_id").fill(customSession);
+    await expect(page.getByTestId("popover-anchor-input-session_id")).toHaveValue(customSession);
   },
 );
 
@@ -161,37 +117,16 @@ test(
       timeout: 15000,
     });
 
-    const inputField = page.getByTestId("input-chat-playground").last();
-    await expect(inputField).toBeVisible({ timeout: 5000 });
+    await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({ timeout: 5000 });
 
-    // Locate a session ID input by any available strategy
-    const sessionInput =
-      (await page
-        .getByTestId("session-id-input")
-        .isVisible({ timeout: 2000 })
-        .catch(() => false))
-        ? page.getByTestId("session-id-input")
-        : (await page
-            .locator('input[placeholder*="session" i]')
-            .first()
-            .isVisible({ timeout: 2000 })
-            .catch(() => false))
-          ? page.locator('input[placeholder*="session" i]').first()
-          : null;
+    const sessionA = `session-a-${Date.now()}`;
+    await page.getByTestId("popover-anchor-input-session_id").clear();
+    await page.getByTestId("popover-anchor-input-session_id").fill(sessionA);
+    await expect(page.getByTestId("popover-anchor-input-session_id")).toHaveValue(sessionA);
 
-    if (sessionInput) {
-      // Set session A
-      const sessionA = `session-a-${Date.now()}`;
-      await sessionInput.fill(sessionA);
-      await expect(sessionInput).toHaveValue(sessionA);
-
-      // Set session B — conversation history should be scoped to the new session
-      const sessionB = `session-b-${Date.now()}`;
-      await sessionInput.fill(sessionB);
-      await expect(sessionInput).toHaveValue(sessionB);
-    } else {
-      // Session ID not in DOM — assert playground is still functional
-      await expect(inputField).toBeEnabled({ timeout: 3000 });
-    }
+    const sessionB = `session-b-${Date.now()}`;
+    await page.getByTestId("popover-anchor-input-session_id").clear();
+    await page.getByTestId("popover-anchor-input-session_id").fill(sessionB);
+    await expect(page.getByTestId("popover-anchor-input-session_id")).toHaveValue(sessionB);
   },
 );

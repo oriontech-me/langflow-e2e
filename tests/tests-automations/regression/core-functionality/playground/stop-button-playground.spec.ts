@@ -89,18 +89,16 @@ class CustomComponent(Component):
     await page.getByText("Check & Save").last().click();
     await adjustScreenView(page, { numberOfZoomOut: 2 });
 
-    //connection 1
-    const elementCustomComponentOutput = await page
+    // Connect CustomComponent → ChatOutput (click-click pattern)
+    await page
       .getByTestId("handle-customcomponent-shownode-output-right")
-      .first();
-
-    await elementCustomComponentOutput.hover();
-    await page.mouse.down();
-    const elementChatOutput = await page
+      .first()
+      .click();
+    await page
       .getByTestId("handle-chatoutput-shownode-inputs-left")
-      .first();
-    await elementChatOutput.hover();
-    await page.mouse.up();
+      .first()
+      .click();
+    await expect(page.locator(".react-flow__edge")).toHaveCount(1, { timeout: 8000 });
 
     await page.waitForSelector('[data-testid="button_run_chat output"]', {
       timeout: 3000,
@@ -114,18 +112,11 @@ class CustomComponent(Component):
       timeout: 30000,
     });
 
-    const elements = await page.$$('[data-testid="button-stop"]');
-
-    if (elements.length > 0) {
-      const lastElement = elements[elements.length - 1];
-      await lastElement.waitForElementState("visible");
-    }
-
-    expect(await page.getByTestId("button-stop").last()).toBeVisible();
+    await expect(page.getByTestId("button-stop").last()).toBeVisible({ timeout: 30000 });
 
     await page.getByTestId("button-stop").last().click();
 
     await page.waitForSelector("text=build stopped", { timeout: 30000 });
-    expect(await page.getByText("build stopped").isVisible()).toBeTruthy();
+    await expect(page.getByText("build stopped")).toBeVisible({ timeout: 5000 });
   },
 );

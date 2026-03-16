@@ -80,71 +80,35 @@ test(
       timeout: 15000,
     });
 
-    // Attempt to locate a fullscreen / maximize button via multiple strategies
-    const fullscreenByTestId = page.locator(
-      '[data-testid="icon-Maximize2"], [data-testid="icon-Maximize"], [data-testid*="fullscreen"], [data-testid*="maximize"]',
-    );
-    const fullscreenByRole = page.getByRole("button", {
-      name: /fullscreen|maximize|expand/i,
-    });
+    await expect(
+      page.getByTestId("input-chat-playground").last(),
+    ).toBeVisible({ timeout: 5000 });
 
-    const testIdVisible = await fullscreenByTestId
-      .first()
-      .isVisible({ timeout: 3000 })
-      .catch(() => false);
-    const roleVisible = await fullscreenByRole
-      .first()
-      .isVisible({ timeout: 2000 })
-      .catch(() => false);
+    // Locate fullscreen button — try the most common testid patterns
+    const fullscreenBtn = page
+      .locator('[data-testid*="maximize"], [data-testid*="fullscreen"], [data-testid="icon-Maximize2"], [data-testid="icon-Maximize"]')
+      .first();
 
-    if (testIdVisible) {
-      await fullscreenByTestId.first().click();
-      await page.waitForTimeout(500);
+    const isPresent = await fullscreenBtn.isVisible({ timeout: 3000 }).catch(() => false);
 
-      // After expanding, the input field must still be visible
-      await expect(
-        page.getByTestId("input-chat-playground").last(),
-      ).toBeVisible({ timeout: 5000 });
-
-      // A minimize / collapse button or close button should now appear
-      const minimizeBtn = page.locator(
-        '[data-testid="icon-Minimize2"], [data-testid="icon-Minimize"], [data-testid*="minimize"], [data-testid*="collapse"]',
-      );
-      const closeBtn = page.getByRole("button", {
-        name: /minimize|collapse|close/i,
-      });
-
-      const minimizeVisible = await minimizeBtn
-        .first()
-        .isVisible({ timeout: 3000 })
-        .catch(() => false);
-      const closeVisible = await closeBtn
-        .first()
-        .isVisible({ timeout: 2000 })
-        .catch(() => false);
-
-      // Either a minimize control appears, or the input is still accessible (fullscreen succeeded)
-      expect(
-        minimizeVisible ||
-          closeVisible ||
-          (await page
-            .getByTestId("input-chat-playground")
-            .last()
-            .isVisible()
-            .catch(() => false)),
-      ).toBe(true);
-    } else if (roleVisible) {
-      await fullscreenByRole.first().click();
-      await page.waitForTimeout(500);
-      await expect(
-        page.getByTestId("input-chat-playground").last(),
-      ).toBeVisible({ timeout: 5000 });
-    } else {
-      // Fullscreen button not present in this build — verify playground is functional
-      await expect(
-        page.getByTestId("input-chat-playground").last(),
-      ).toBeVisible({ timeout: 5000 });
+    if (!isPresent) {
+      test.skip(true, "Fullscreen button not found — run DOM discovery: page.evaluate(() => Array.from(document.querySelectorAll('[data-testid]')).map(e => e.getAttribute('data-testid')).filter(id => /max|full|screen/i.test(id ?? '')))");
+      return;
     }
+
+    await fullscreenBtn.click();
+    await page.waitForTimeout(300);
+
+    // After expanding, the input must still be visible
+    await expect(
+      page.getByTestId("input-chat-playground").last(),
+    ).toBeVisible({ timeout: 5000 });
+
+    // A minimize/collapse button must appear
+    const minimizeBtn = page.locator(
+      '[data-testid*="minimize"], [data-testid*="collapse"], [data-testid="icon-Minimize2"], [data-testid="icon-Minimize"]',
+    ).first();
+    await expect(minimizeBtn).toBeVisible({ timeout: 3000 });
   },
 );
 
