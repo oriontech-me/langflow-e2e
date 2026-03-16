@@ -172,8 +172,9 @@ Todo trabalho entra via PR — sem push direto em `main`.
 
 **Processo:**
 1. Abra o PR com o branch pronto e o teste validado (seguindo o guia acima)
-2. Pelo menos **1 aprovação** de outro membro do time antes de mergear
-3. Use **squash merge** para manter o histórico do `main` limpo
+2. Use **squash merge** para manter o histórico do `main` limpo
+
+> Recomenda-se solicitar a revisão de outro membro da organização antes de mergear.
 
 **O que o PR deve comunicar:**
 - O que ele adiciona ou corrige
