@@ -12,7 +12,7 @@ import {
 
 // Provider/model to use across all tests in this suite.
 // Defaults: provider = "openai", model = "gpt-4o-mini" (when omitted).
-const agentOptions: LoadSimpleAgentOptions = {};
+const agentOptions: LoadSimpleAgentOptions = { provider: "google" };
 
 const provider = agentOptions.provider ?? "openai";
 

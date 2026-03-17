@@ -1,6 +1,11 @@
 import type { Page } from "@playwright/test";
 import { adjustScreenView } from "../ui/adjust-screen-view";
-import { providerSetupMap, type Provider } from "../provider-setup";
+import {
+  providerSetupMap,
+  hasProviderEnvKeys,
+  missingProviderEnvKeys,
+  type Provider,
+} from "../provider-setup";
 
 export interface LoadSimpleAgentOptions {
   provider?: Provider;
@@ -12,6 +17,12 @@ export async function loadSimpleAgent(
   options: LoadSimpleAgentOptions = {},
 ): Promise<void> {
   const { provider = "openai", model } = options;
+
+  if (!hasProviderEnvKeys(provider)) {
+    throw new Error(
+      `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
+    );
+  }
 
   await page.goto("/");
   await page.waitForSelector('[data-testid="mainpage_title"]', {
