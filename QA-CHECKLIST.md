@@ -3,7 +3,7 @@
 > **Repositório:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Testes:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Última atualização:** 2026-03-13
+> **Última atualização:** 2026-03-17
 
 ---
 
@@ -20,8 +20,6 @@
 ---
 
 # PART I — PAGES & HELPERS
-
-> _Conteúdo a ser adicionado. Envie a estrutura para esta seção ser preenchida._
 
 ---
 
@@ -41,8 +39,22 @@
 
 ## Helpers
 
+### Flows
+
+- [~] Carregar Simple Agent com provider e modelo variável → `helpers/flows/load-simple-agent.ts`
+- [~] Carregar Simple Agent com OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
+
+### Provider Setup
+
+- [~] Setup de Provider OpenAI → `helpers/provider-setup/setup-openai.ts`
+- [~] Setup de Provider Anthropic → `helpers/provider-setup/setup-anthropic.ts`
+- [~] Setup de Provider Google Generative AI → `helpers/provider-setup/setup-google.ts`
+- [~] Map de Providers (providerSetupMap) — ponto central de registro de providers → `helpers/provider-setup/index.ts`
+- [~] Configurar um Provedor/Modelo — suporte a OpenAI, Anthropic e Google via options object
+
+### A implementar
+
 - [ ] Configurar um MCP
-- [ ] Configurar um Provedor/Modelo
 - [ ] Configurar um Custom Component
 - [ ] Deletar um componente
 - [ ] Rodar um flow

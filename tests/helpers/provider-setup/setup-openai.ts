@@ -47,6 +47,6 @@ export async function setupOpenAI(
   if (modelTestId) {
     await page.locator(`[data-testid="${modelTestId}"]`).click();
   } else {
-    await page.locator('[data-testid*="gpt"]').first().click();
+    await page.locator('[data-testid*="gpt-4o-mini"]').first().click();
   }
 }

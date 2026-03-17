@@ -1,7 +1,14 @@
 import * as dotenv from "dotenv";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { loadSimpleAgentWithOpenAI } from "../../../../helpers/flows/load-simple-agent-with-openai";
+import {
+  loadSimpleAgent,
+  type LoadSimpleAgentOptions,
+} from "../../../../helpers/flows/load-simple-agent";
+
+// Provider/model to use across all tests in this suite.
+// Defaults: provider = "openai", model = "gpt-4o-mini" (when omitted).
+const agentOptions: LoadSimpleAgentOptions = {};
 
 test.describe.serial("Agent Component Regression", () => {
   test(
@@ -17,7 +24,7 @@ test.describe.serial("Agent Component Regression", () => {
         dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
       }
 
-      await loadSimpleAgentWithOpenAI(page);
+      await loadSimpleAgent(page, agentOptions);
 
       await page.getByTestId("playground-btn-flow-io").click();
 
@@ -61,7 +68,7 @@ test.describe.serial("Agent Component Regression", () => {
         dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
       }
 
-      await loadSimpleAgentWithOpenAI(page);
+      await loadSimpleAgent(page, agentOptions);
 
       await page.getByTestId("playground-btn-flow-io").click();
 
@@ -99,7 +106,7 @@ test.describe.serial("Agent Component Regression", () => {
         dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
       }
 
-      await loadSimpleAgentWithOpenAI(page);
+      await loadSimpleAgent(page, agentOptions);
 
       await page.getByTestId("playground-btn-flow-io").click();
 
@@ -136,7 +143,7 @@ test.describe.serial("Agent Component Regression", () => {
         dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
       }
 
-      await loadSimpleAgentWithOpenAI(page);
+      await loadSimpleAgent(page, agentOptions);
 
       await page.getByTestId("playground-btn-flow-io").click();
 
@@ -175,7 +182,7 @@ test.describe.serial("Agent Component Regression", () => {
       // Use Simple Agent template (has Chat I/O needed for playground) but
       // send a knowledge question that doesn't require tools — verifies agent
       // responds even when tool use is not needed (regression for ID 147)
-      await loadSimpleAgentWithOpenAI(page);
+      await loadSimpleAgent(page, agentOptions);
 
       // Open playground
       await page.getByTestId("playground-btn-flow-io").click();

@@ -1,11 +1,18 @@
 import type { Page } from "@playwright/test";
 import { adjustScreenView } from "../ui/adjust-screen-view";
-import { setupOpenAI } from "../provider-setup/setup-openai";
+import { providerSetupMap, type Provider } from "../provider-setup";
+
+export interface LoadSimpleAgentOptions {
+  provider?: Provider;
+  model?: string;
+}
 
 export async function loadSimpleAgent(
   page: Page,
-  providerSetup: (page: Page) => Promise<void> = setupOpenAI,
+  options: LoadSimpleAgentOptions = {},
 ): Promise<void> {
+  const { provider = "openai", model } = options;
+
   await page.goto("/");
   await page.waitForSelector('[data-testid="mainpage_title"]', {
     timeout: 30000,
@@ -45,5 +52,5 @@ export async function loadSimpleAgent(
   });
 
   await adjustScreenView(page);
-  await providerSetup(page);
+  await providerSetupMap[provider](page, model);
 }
