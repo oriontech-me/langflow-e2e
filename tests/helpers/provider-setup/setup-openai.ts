@@ -45,8 +45,10 @@ export async function setupOpenAI(
   // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
   await page.getByTestId("model_model").click();
   if (modelTestId) {
+    await page.locator(`[data-testid="${modelTestId}"]`).waitFor({ state: "visible", timeout: 10000 });
     await page.locator(`[data-testid="${modelTestId}"]`).click();
   } else {
+    await page.locator('[data-testid*="gpt-4o-mini"]').first().waitFor({ state: "visible", timeout: 10000 });
     await page.locator('[data-testid*="gpt-4o-mini"]').first().click();
   }
 }

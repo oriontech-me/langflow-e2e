@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 
-export async function setupGoogleGen(
+export async function setupGoogle(
   page: Page,
   modelTestId?: string,
 ): Promise<void> {
@@ -23,7 +23,7 @@ export async function setupGoogleGen(
   const saveConfigBtn = page.getByRole("button", { name: "Save Configuration" });
 
   if ((await saveConfigBtn.count()) > 0) {
-    await page.getByPlaceholder("sk-...").fill(process.env.GOOGLE_API_KEY ?? "");
+    await page.getByPlaceholder("AIza...").fill(process.env.GOOGLE_API_KEY ?? "");
     await saveConfigBtn.click();
   }
 
@@ -47,6 +47,7 @@ export async function setupGoogleGen(
   if (modelTestId) {
     await page.locator(`[data-testid="${modelTestId}"]`).click();
   } else {
+    await page.locator('[data-testid*="gemini"]').first().waitFor({ state: "visible", timeout: 10000 });
     await page.locator('[data-testid*="gemini"]').first().click();
   }
 }
