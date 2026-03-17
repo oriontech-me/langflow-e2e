@@ -9,3 +9,4 @@ dist/
 *.sqlite
 *.zip
 .claude/settings.local.json
+docs/superpowers/
