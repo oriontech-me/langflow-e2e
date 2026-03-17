@@ -143,6 +143,7 @@ Use o padrão `<tipo>/<descrição-curta>` em kebab-case:
 | `feat/` | Novo teste, novo helper ou page object | `feat/flow-import-json` |
 | `fix/` | Correção de teste quebrado ou flaky | `fix/model-provider-selector-flaky` |
 | `chore/` | CI, checklist, dependências, refatoração interna | `chore/update-nightly-workflow` |
+| `docs/` | Atualização de documentação | `docs/update-contributing` |
 
 A descrição deve identificar o que muda, não quem mudou ou quando.
 
@@ -172,9 +173,16 @@ Todo trabalho entra via PR — sem push direto em `main`.
 
 **Processo:**
 1. Abra o PR com o branch pronto e o teste validado (seguindo o guia acima)
-2. Use **squash merge** para manter o histórico do `main` limpo
+2. **Solicite revisão de outro membro da organização** antes de mergear — se não houver resposta em tempo razoável, registre o motivo no PR
+3. Use **squash merge** para manter o histórico do `main` limpo e linear
+4. **Após o merge**, delete o branch local e remoto:
+   ```bash
+   git checkout main && git pull
+   git branch -d <branch>
+   git push origin --delete <branch>
+   ```
 
-> Recomenda-se solicitar a revisão de outro membro da organização antes de mergear.
+> A revisão de código é a prática esperada no projeto. Quando não for possível obtê-la, registre no PR o contexto que justificou a decisão — isso transforma uma exceção em aprendizado para o time.
 
 **O que o PR deve comunicar:**
 - O que ele adiciona ou corrige
