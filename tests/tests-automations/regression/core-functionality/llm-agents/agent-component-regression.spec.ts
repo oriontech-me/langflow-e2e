@@ -5,10 +5,16 @@ import {
   loadSimpleAgent,
   type LoadSimpleAgentOptions,
 } from "../../../../helpers/flows/load-simple-agent";
+import {
+  hasProviderEnvKeys,
+  missingProviderEnvKeys,
+} from "../../../../helpers/provider-setup";
 
 // Provider/model to use across all tests in this suite.
 // Defaults: provider = "openai", model = "gpt-4o-mini" (when omitted).
 const agentOptions: LoadSimpleAgentOptions = {};
+
+const provider = agentOptions.provider ?? "openai";
 
 test.describe.serial("Agent Component Regression", () => {
   test(
@@ -16,8 +22,8 @@ test.describe.serial("Agent Component Regression", () => {
     { tag: ["@release", "@components"] },
     async ({ page }) => {
       test.skip(
-        !process?.env?.OPENAI_API_KEY,
-        "OPENAI_API_KEY required to run this test",
+        !hasProviderEnvKeys(provider),
+        `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
       );
 
       if (!process.env.CI) {
@@ -60,8 +66,8 @@ test.describe.serial("Agent Component Regression", () => {
     { tag: ["@release", "@components"] },
     async ({ page }) => {
       test.skip(
-        !process?.env?.OPENAI_API_KEY,
-        "OPENAI_API_KEY required to run this test",
+        !hasProviderEnvKeys(provider),
+        `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
       );
 
       if (!process.env.CI) {
@@ -98,8 +104,8 @@ test.describe.serial("Agent Component Regression", () => {
     { tag: ["@release", "@components"] },
     async ({ page }) => {
       test.skip(
-        !process?.env?.OPENAI_API_KEY,
-        "OPENAI_API_KEY required to run this test",
+        !hasProviderEnvKeys(provider),
+        `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
       );
 
       if (!process.env.CI) {
@@ -135,8 +141,8 @@ test.describe.serial("Agent Component Regression", () => {
     { tag: ["@release", "@components"] },
     async ({ page }) => {
       test.skip(
-        !process?.env?.OPENAI_API_KEY,
-        "OPENAI_API_KEY required to run this test",
+        !hasProviderEnvKeys(provider),
+        `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
       );
 
       if (!process.env.CI) {
@@ -171,8 +177,8 @@ test.describe.serial("Agent Component Regression", () => {
     { tag: ["@release", "@components"] },
     async ({ page }) => {
       test.skip(
-        !process?.env?.OPENAI_API_KEY,
-        "OPENAI_API_KEY required to run this test",
+        !hasProviderEnvKeys(provider),
+        `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
       );
 
       if (!process.env.CI) {
