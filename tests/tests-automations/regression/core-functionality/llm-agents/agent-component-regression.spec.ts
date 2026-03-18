@@ -2,7 +2,7 @@ import * as dotenv from "dotenv";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import {
-  SimpleAgentPage,
+  SimpleAgentTemplatePage,
   type LoadSimpleAgentOptions,
 } from "../../../../pages";
 import {
@@ -30,7 +30,7 @@ test.describe.serial("Agent Component Regression", () => {
         dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
       }
 
-      await new SimpleAgentPage(page).load(agentOptions);
+      await new SimpleAgentTemplatePage(page).load(agentOptions);
 
       await page.getByTestId("playground-btn-flow-io").click();
 
@@ -74,7 +74,7 @@ test.describe.serial("Agent Component Regression", () => {
         dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
       }
 
-      await new SimpleAgentPage(page).load(agentOptions);
+      await new SimpleAgentTemplatePage(page).load(agentOptions);
 
       await page.getByTestId("playground-btn-flow-io").click();
 
@@ -112,7 +112,7 @@ test.describe.serial("Agent Component Regression", () => {
         dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
       }
 
-      await new SimpleAgentPage(page).load(agentOptions);
+      await new SimpleAgentTemplatePage(page).load(agentOptions);
 
       await page.getByTestId("playground-btn-flow-io").click();
 
@@ -149,7 +149,7 @@ test.describe.serial("Agent Component Regression", () => {
         dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
       }
 
-      await new SimpleAgentPage(page).load(agentOptions);
+      await new SimpleAgentTemplatePage(page).load(agentOptions);
 
       await page.getByTestId("playground-btn-flow-io").click();
 
@@ -188,7 +188,7 @@ test.describe.serial("Agent Component Regression", () => {
       // Use Simple Agent template (has Chat I/O needed for playground) but
       // send a knowledge question that doesn't require tools — verifies agent
       // responds even when tool use is not needed (regression for ID 147)
-      await new SimpleAgentPage(page).load(agentOptions);
+      await new SimpleAgentTemplatePage(page).load(agentOptions);
 
       // Open playground
       await page.getByTestId("playground-btn-flow-io").click();

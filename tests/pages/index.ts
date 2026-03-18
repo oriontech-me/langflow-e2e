@@ -5,5 +5,5 @@ export { FlowEditorPage } from "./FlowEditorPage";
 export { PlaygroundPage } from "./PlaygroundPage";
 export { MainPage } from "./MainPage";
 export { SettingsPage } from "./SettingsPage";
-export { SimpleAgentPage } from "./SimpleAgentPage";
-export type { LoadSimpleAgentOptions } from "./SimpleAgentPage";
+export { SimpleAgentTemplatePage } from "./SimpleAgentTemplatePage";
+export type { LoadSimpleAgentOptions } from "./SimpleAgentTemplatePage";

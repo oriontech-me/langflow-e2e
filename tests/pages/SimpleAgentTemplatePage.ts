@@ -13,7 +13,7 @@ export interface LoadSimpleAgentOptions {
   model?: string;
 }
 
-export class SimpleAgentPage extends BasePage {
+export class SimpleAgentTemplatePage extends BasePage {
   constructor(page: Page) {
     super(page);
   }
