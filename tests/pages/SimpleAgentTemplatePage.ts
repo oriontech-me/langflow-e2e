@@ -13,13 +13,41 @@ export interface LoadSimpleAgentOptions {
   model?: string;
 }
 
+/**
+ * Resolves which provider/model to use based on env vars:
+ *
+ *   MODEL_TEST_STRATEGY=all      → uses options as-is (caller iterates all DB models)
+ *   MODEL_TEST_STRATEGY=provider → overrides provider with MODEL_TEST_PROVIDER
+ *   MODEL_TEST_STRATEGY=model    → overrides model with MODEL_TEST_ID
+ *
+ * Explicit options always take precedence over env vars.
+ */
+function resolveModelOptions(options: LoadSimpleAgentOptions): LoadSimpleAgentOptions {
+  const strategy = process.env.MODEL_TEST_STRATEGY ?? "all";
+
+  if (options.provider || options.model) {
+    return options;
+  }
+
+  if (strategy === "provider" && process.env.MODEL_TEST_PROVIDER) {
+    return { provider: process.env.MODEL_TEST_PROVIDER as Provider };
+  }
+
+  if (strategy === "model" && process.env.MODEL_TEST_ID) {
+    return { model: process.env.MODEL_TEST_ID };
+  }
+
+  return options;
+}
+
 export class SimpleAgentTemplatePage extends BasePage {
   constructor(page: Page) {
     super(page);
   }
 
   async load(options: LoadSimpleAgentOptions = {}): Promise<void> {
-    const { provider = "openai", model } = options;
+    const resolved = resolveModelOptions(options);
+    const { provider = "openai", model } = resolved;
 
     if (!hasProviderEnvKeys(provider)) {
       throw new Error(
