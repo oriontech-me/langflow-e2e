@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { adjustScreenView } from "../ui/adjust-screen-view";
+import { setupOpenAI } from "../provider-setup/setup-openai";
 
 /**
  * Loads the Simple Agent template and configures the OpenAI provider.
@@ -10,7 +11,7 @@ import { adjustScreenView } from "../ui/adjust-screen-view";
  *
  * Cleans existing flows first to avoid "flow must be unique" 400 error on template creation.
  */
-export async function loadSimpleAgentWithOpenAI(page: Page): Promise<void> {
+async function loadSimpleAgentTemplate(page: Page): Promise<void> {
   await page.goto("/");
   await page.waitForSelector('[data-testid="mainpage_title"]', {
     timeout: 30000,
@@ -51,17 +52,9 @@ export async function loadSimpleAgentWithOpenAI(page: Page): Promise<void> {
 
   await adjustScreenView(page);
 
-  // New UI: "Setup Provider" button (no key) or model combobox (key already saved globally)
-  const setupBtn = page.getByRole("button", { name: "Setup Provider" });
-  if (await setupBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await setupBtn.click();
-    await page.waitForSelector('[data-testid="provider-item-OpenAI"]', {
-      timeout: 10000,
-    });
-    await page.getByTestId("provider-item-OpenAI").click();
-    await page.getByPlaceholder("sk-...").fill(process.env.OPENAI_API_KEY || "");
-    await page.getByRole("button", { name: "Save Configuration" }).click();
-    await page.getByRole("button", { name: "Close" }).click();
-  }
-  // else: OpenAI already configured globally — model combobox is showing, proceed
+}
+
+export async function loadSimpleAgentWithOpenAI(page: Page): Promise<void> {
+  await loadSimpleAgentTemplate(page);
+  await setupOpenAI(page);
 }
