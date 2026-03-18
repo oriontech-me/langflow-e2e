@@ -1,9 +1,10 @@
 import type { Page } from "@playwright/test";
-import { loadSimpleAgent } from "./load-simple-agent";
+import { SimpleAgentPage } from "../../pages";
 
 export async function loadSimpleAgentWithOpenAI(
   page: Page,
   modelTestId?: string,
 ): Promise<void> {
-  await loadSimpleAgent(page, { provider: "openai", model: modelTestId });
+  const simpleAgentPage = new SimpleAgentPage(page);
+  await simpleAgentPage.load({ provider: "openai", model: modelTestId });
 }
