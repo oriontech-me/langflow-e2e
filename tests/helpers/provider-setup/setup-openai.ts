@@ -45,7 +45,7 @@ export async function setupOpenAI(
   // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
   await page.getByTestId("model_model").click();
   if (modelTestId) {
-    const modelOption = page.locator(`[data-testid="${modelTestId}"]`);
+    const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${modelTestId}$`) });
     const isAvailable = await modelOption.isVisible({ timeout: 10000 }).catch(() => false);
     if (!isAvailable) {
       await page.keyboard.press("Escape");
@@ -53,7 +53,7 @@ export async function setupOpenAI(
     }
     await modelOption.click();
   } else {
-    await page.locator('[data-testid*="gpt-4o-mini"]').first().waitFor({ state: "visible", timeout: 10000 });
-    await page.locator('[data-testid*="gpt-4o-mini"]').first().click();
+    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().waitFor({ state: "visible", timeout: 10000 });
+    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().click();
   }
 }

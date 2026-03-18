@@ -37,9 +37,9 @@ async function collectModelsForProvider(
   for (let i = 0; i < toggleCount; i++) {
     const toggle = toggles.nth(i);
 
-    const testId = await toggle.getAttribute("data-testid");
-    if (testId) {
-      models.push({ provider: providerName, model: testId });
+    const modelName = await toggle.locator("..").locator("span.text-sm").textContent();
+    if (modelName?.trim()) {
+      models.push({ provider: providerName, model: modelName.trim() });
     }
 
     const isChecked = (await toggle.getAttribute("aria-checked")) === "true";

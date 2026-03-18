@@ -71,11 +71,8 @@ export class SimpleAgentTemplatePage extends BasePage {
     });
 
     // Step 5: Adjust canvas view and configure the provider
-    // DB stores toggle IDs (llm-toggle-xxx) — convert to dropdown option IDs (xxx-option)
-    const modelOptionId = model?.startsWith("llm-toggle-")
-      ? `${model.replace("llm-toggle-", "")}-option`
-      : model;
+    // JSON stores model names (e.g. "claude-opus-4-6") — passed directly to setup for hasText matching
     await adjustScreenView(this.page);
-    await providerSetupMap[provider](this.page, modelOptionId);
+    await providerSetupMap[provider](this.page, model);
   }
 }

@@ -45,7 +45,7 @@ export async function setupAnthropic(
   // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
   await page.getByTestId("model_model").click();
   if (modelTestId) {
-    const modelOption = page.locator(`[data-testid="${modelTestId}"]`);
+    const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${modelTestId}$`) });
     const isAvailable = await modelOption.isVisible({ timeout: 10000 }).catch(() => false);
     if (!isAvailable) {
       await page.keyboard.press("Escape");
@@ -53,7 +53,7 @@ export async function setupAnthropic(
     }
     await modelOption.click();
   } else {
-    await page.locator('[data-testid*="claude"]').first().waitFor({ state: "visible", timeout: 10000 });
-    await page.locator('[data-testid*="claude"]').first().click();
+    await page.locator('[data-testid$="-option"]', { hasText: "claude" }).first().waitFor({ state: "visible", timeout: 10000 });
+    await page.locator('[data-testid$="-option"]', { hasText: "claude" }).first().click();
   }
 }
