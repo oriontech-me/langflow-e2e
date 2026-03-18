@@ -28,7 +28,7 @@ test(
       // The logs page should contain either entries or an empty-state message
       const hasContent = await page
         .locator("body")
-        .evaluate((el) => el.innerText.length > 0);
+        .evaluate((el) => (el as HTMLElement).innerText.length > 0);
       expect(hasContent).toBe(true);
     } else {
       // Redirected — the app is still alive and the home page rendered
