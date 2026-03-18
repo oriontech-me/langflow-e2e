@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import { SettingsPage } from "../../pages/SettingsPage";
 
 const DB_DIR = path.join(__dirname, "data");
 const DB_PATH = path.join(DB_DIR, "models.db");
@@ -20,7 +21,7 @@ function getDb(): Database.Database {
   db.exec(`
     DROP TABLE IF EXISTS models;
     CREATE TABLE models (
-      id    INTEGER PRIMARY KEY AUTOINCREMENT,
+      id       INTEGER PRIMARY KEY AUTOINCREMENT,
       provider TEXT NOT NULL,
       model    TEXT NOT NULL
     )
@@ -35,21 +36,17 @@ async function collectModelsForProvider(
   apiKeyPlaceholder: string,
   apiKeyEnvVar: string,
 ): Promise<ModelRecord[]> {
-  // Open the model dropdown and provider management panel
-  await page.getByTestId("model_model").click();
-  await page.getByTestId("manage-model-providers").click();
-
-  // Select the provider
+  // Step 1: Select the provider from the Model Providers list
   await page.getByTestId(providerTestId).click();
 
-  // Fill API key if Save Configuration button is visible
+  // Step 2: Fill API key if Save Configuration button is visible
   const saveConfigBtn = page.getByRole("button", { name: "Save Configuration" });
   if ((await saveConfigBtn.count()) > 0) {
     await page.getByPlaceholder(apiKeyPlaceholder).fill(process.env[apiKeyEnvVar] ?? "");
     await saveConfigBtn.click();
   }
 
-  // Collect data-testid from each toggle and enable all models
+  // Step 3: Collect data-testid from each toggle and enable all models
   const toggles = page.locator('[data-testid^="llm-toggle"]');
   const toggleCount = await toggles.count();
   const models: ModelRecord[] = [];
@@ -73,22 +70,23 @@ async function collectModelsForProvider(
     models.map((m) => m.model),
   );
 
-  // Close the provider management panel (no Step 7 — model selection not needed)
-  await page.getByRole("button", { name: "Close" }).click();
+  // Step 4: Navigate back to the Model Providers list for the next provider
+  await page.getByTestId("sidebar-nav-Model Providers").click();
 
   return models;
 }
 
 export async function collectAndSaveModels(page: Page): Promise<void> {
-  const modelDropdown = page.getByTestId("model_model");
+  // Step 1: Navigate to Settings via user menu
+  const settingsPage = new SettingsPage(page);
+  await settingsPage.navigate();
 
-  if ((await modelDropdown.count()) === 0) {
-    console.log("No Agent node found on canvas — skipping model collection.");
-    return;
-  }
+  // Step 2: Open the Model Providers section in the settings sidebar
+  await page.getByTestId("sidebar-nav-Model Providers").click();
 
   const allModels: ModelRecord[] = [];
 
+  // Step 3: Collect models from each provider
   const anthropicModels = await collectModelsForProvider(
     page,
     "provider-item-Anthropic",
@@ -116,7 +114,7 @@ export async function collectAndSaveModels(page: Page): Promise<void> {
   );
   allModels.push(...openaiModels);
 
-  // Persist to SQLite — drops and recreates the table, then inserts fresh
+  // Step 4: Persist to SQLite — drops and recreates the table, then inserts fresh
   const db = getDb();
 
   const insert = db.prepare("INSERT INTO models (provider, model) VALUES (?, ?)");
