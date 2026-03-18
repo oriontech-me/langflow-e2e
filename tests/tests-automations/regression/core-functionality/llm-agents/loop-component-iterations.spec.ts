@@ -4,7 +4,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test(
   "Loop component can be added to canvas",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@agents"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -60,7 +60,7 @@ test(
 
 test(
   "Loop component has loop input and output handles",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@agents"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -132,7 +132,7 @@ test(
 
 test(
   "Loop component has iteration count field",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@agents"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

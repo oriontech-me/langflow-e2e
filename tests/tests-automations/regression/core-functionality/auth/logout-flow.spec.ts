@@ -26,7 +26,7 @@ function setupAutoLoginMock(page: any) {
 
 test(
   "logout must redirect user to login page",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
@@ -79,7 +79,7 @@ test(
 
 test(
   "after logout, navigating to root must redirect to login",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
@@ -125,7 +125,7 @@ test(
 
 test(
   "after logout, reload must stay on login page",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 

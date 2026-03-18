@@ -5,7 +5,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 
 test(
   "should delete a flow (requires store API key)",
-  { tag: ["@release", "@api"] },
+  { tag: ["@release", "@api", "@project-management"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.STORE_API_KEY,

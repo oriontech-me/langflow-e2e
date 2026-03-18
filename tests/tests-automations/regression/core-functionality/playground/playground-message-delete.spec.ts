@@ -71,7 +71,7 @@ async function setupConnectedFlow(page: any) {
 test.describe("Playground Message History", () => {
   test(
     "playground displays sent messages in the chat area",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       await setupConnectedFlow(page);
 
@@ -104,7 +104,7 @@ test.describe("Playground Message History", () => {
 
   test(
     "playground shows trash/delete icon on message hover",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       await setupConnectedFlow(page);
 
@@ -160,7 +160,7 @@ test.describe("Playground Message History", () => {
 
   test(
     "playground clear history button removes all messages",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       await setupConnectedFlow(page);
 

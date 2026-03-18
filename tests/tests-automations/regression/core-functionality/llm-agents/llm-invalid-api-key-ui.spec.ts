@@ -52,7 +52,7 @@ async function setupPlayground(page: any) {
 test.describe("LLM Invalid API Key UI Error Display", () => {
   test(
     "playground shows error when LLM run endpoint returns 500 (mocked invalid API key)",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@agents"] },
     async ({ page }) => {
       await setupPlayground(page);
 
@@ -105,7 +105,7 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
 
   test(
     "playground input remains usable after API error (mocked)",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@agents"] },
     async ({ page }) => {
       await setupPlayground(page);
 

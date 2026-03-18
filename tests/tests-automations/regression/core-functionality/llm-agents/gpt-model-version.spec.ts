@@ -5,7 +5,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 test.describe("GPT Model Version Selection", () => {
   test(
     "OpenAI component has a model dropdown that accepts input",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -59,7 +59,7 @@ test.describe("GPT Model Version Selection", () => {
 
   test(
     "OpenAI model name field can be edited",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -108,7 +108,7 @@ test.describe("GPT Model Version Selection", () => {
 
   test(
     "Language Model component offers model selection dropdown",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 

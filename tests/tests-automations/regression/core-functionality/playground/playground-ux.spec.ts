@@ -6,7 +6,7 @@ import { loadSimpleAgentWithOpenAI } from "../../../../helpers/flows/load-simple
 test.describe.serial("Playground UX Regression (IDs 44 + 126 + 2)", () => {
   test(
     "user message must appear instantly in playground before AI responds",
-    { tag: ["@release", "@components"] },
+    { tag: ["@release", "@components", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,
@@ -45,7 +45,7 @@ test.describe.serial("Playground UX Regression (IDs 44 + 126 + 2)", () => {
 
   test(
     "playground must scroll to latest message after sending",
-    { tag: ["@release", "@components"] },
+    { tag: ["@release", "@components", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,
@@ -85,7 +85,7 @@ test.describe.serial("Playground UX Regression (IDs 44 + 126 + 2)", () => {
 
   test(
     "playground must render JSON structured output",
-    { tag: ["@release", "@components"] },
+    { tag: ["@release", "@components", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,
@@ -136,7 +136,7 @@ test.describe.serial("Playground UX Regression (IDs 44 + 126 + 2)", () => {
 
   test(
     "playground input field must be ready after AI responds",
-    { tag: ["@release", "@components"] },
+    { tag: ["@release", "@components", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,

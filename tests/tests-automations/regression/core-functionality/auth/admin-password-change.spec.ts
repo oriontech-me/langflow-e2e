@@ -23,7 +23,7 @@ async function enableLoginScreen(page: any) {
 
 test(
   "admin changes user password — user can log in with new password",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page, request }) => {
     const username = `pwdtest_${Math.random().toString(36).substring(5)}`;
     const originalPassword = `pass_${Math.random().toString(36).substring(5)}`;
@@ -104,7 +104,7 @@ test(
 
 test(
   "admin changes user password — old password no longer works after change",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page, request }) => {
     const username = `pwdold_${Math.random().toString(36).substring(5)}`;
     const originalPassword = `orig_${Math.random().toString(36).substring(5)}`;

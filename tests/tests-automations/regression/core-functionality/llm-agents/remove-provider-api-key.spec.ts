@@ -4,7 +4,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
   "Model provider modal allows removing a configured API key",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -130,7 +130,7 @@ test(
 
 test(
   "DELETE /api/v1/variables/{id} removes a provider API key variable",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -177,7 +177,7 @@ test(
 
 test(
   "Variables list no longer contains deleted provider key",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 

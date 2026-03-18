@@ -94,7 +94,7 @@ async function deleteUserIfExists(page: any, username: string) {
 
 test(
   "admin creates inactive user — inactive user cannot log in",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     const randomName = `user_${Math.random().toString(36).substring(5)}`;
     const randomPassword = Math.random().toString(36).substring(5);
@@ -163,7 +163,7 @@ test(
 
 test(
   "admin activates previously inactive user — user can log in after activation",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     const randomName = `user_${Math.random().toString(36).substring(5)}`;
     const randomPassword = Math.random().toString(36).substring(5);
@@ -234,7 +234,7 @@ test(
 
 test(
   "admin renames user — renamed user can log in with new username",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     const randomName = `user_${Math.random().toString(36).substring(5)}`;
     const updatedName = `renamed_${Math.random().toString(36).substring(5)}`;

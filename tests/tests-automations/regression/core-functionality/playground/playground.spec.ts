@@ -7,7 +7,7 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
 test(
   "fresh start playground",
-  { tag: ["@release", "@workspace", "@api"] },
+  { tag: ["@release", "@workspace", "@api", "@playground"] },
   async ({ page }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });

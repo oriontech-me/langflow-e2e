@@ -6,7 +6,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test(
   "user must be able to send images in the playground with the agent component",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@agents"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.ANTHROPIC_API_KEY,

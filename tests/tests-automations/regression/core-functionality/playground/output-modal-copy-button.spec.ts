@@ -4,7 +4,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 test.describe("Output Modal Copy Button", () => {
   test(
     "user should be able to copy text output from component output modal",
-    { tag: ["@release", "@workspace"] },
+    { tag: ["@release", "@workspace", "@playground"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -75,7 +75,7 @@ test.describe("Output Modal Copy Button", () => {
 
   test(
     "copy button should work with JSON output from API Request component",
-    { tag: ["@release", "@workspace"] },
+    { tag: ["@release", "@workspace", "@playground"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 

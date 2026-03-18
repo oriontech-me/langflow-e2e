@@ -5,7 +5,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test(
   "should able to see and interact with Traces",
-  { tag: ["@release", "@workspace", "@api"] },
+  { tag: ["@release", "@workspace", "@api", "@observability"] },
 
   async ({ page }) => {
     if (!process.env.CI) {
@@ -59,7 +59,7 @@ test(
 
 test.skip(
   "should able to see traces after running a flow",
-  { tag: ["@release", "@workspace", "@api"] },
+  { tag: ["@release", "@workspace", "@api", "@observability"] },
 
   async ({ page }) => {
     if (!process.env.CI) {

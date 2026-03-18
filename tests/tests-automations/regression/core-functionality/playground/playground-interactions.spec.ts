@@ -54,7 +54,7 @@ async function setupChatFlow(page: any) {
 
 test(
   "send button is visible and enabled in the playground",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupChatFlow(page);
 
@@ -79,7 +79,7 @@ test(
 
 test(
   "typing a message in playground updates the input field value",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupChatFlow(page);
 
@@ -102,7 +102,7 @@ test(
 
 test(
   "playground opens with chat input field visible and focused",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupChatFlow(page);
 
@@ -119,7 +119,7 @@ test(
 
 test(
   "playground session ID field is visible and accepts custom value",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupChatFlow(page);
 

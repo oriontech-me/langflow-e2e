@@ -6,7 +6,7 @@ import { loadSimpleAgentWithOpenAI } from "../../../../helpers/flows/load-simple
 test.describe.serial("Agent Component Regression", () => {
   test(
     "agent must show reasoning steps and produce a valid response",
-    { tag: ["@release", "@components"] },
+    { tag: ["@release", "@components", "@agents"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,
@@ -50,7 +50,7 @@ test.describe.serial("Agent Component Regression", () => {
 
   test(
     "agent stop button must halt execution mid-run",
-    { tag: ["@release", "@components"] },
+    { tag: ["@release", "@components", "@agents"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,
@@ -88,7 +88,7 @@ test.describe.serial("Agent Component Regression", () => {
 
   test(
     "agent must display duration after successful run",
-    { tag: ["@release", "@components"] },
+    { tag: ["@release", "@components", "@agents"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,
@@ -125,7 +125,7 @@ test.describe.serial("Agent Component Regression", () => {
 
   test(
     "agent must handle multiple consecutive messages in same session",
-    { tag: ["@release", "@components"] },
+    { tag: ["@release", "@components", "@agents"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,
@@ -161,7 +161,7 @@ test.describe.serial("Agent Component Regression", () => {
 
   test(
     "agent must run and respond without any tools connected (ID 147)",
-    { tag: ["@release", "@components"] },
+    { tag: ["@release", "@components", "@agents"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,

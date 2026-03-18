@@ -5,7 +5,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 test.describe("Claude Model Switch — Language Model Component", () => {
   test(
     "Language Model component shows Anthropic as a provider option",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -79,7 +79,7 @@ test.describe("Claude Model Switch — Language Model Component", () => {
 
   test(
     "Language Model component allows selecting a Claude model variant",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 

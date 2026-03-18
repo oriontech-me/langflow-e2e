@@ -58,7 +58,7 @@ test.describe("Playground Empty Message Behavior", () => {
 
   test(
     "send button is disabled when input is empty",
-    { tag: ["@release", "@regression"] },
+    { tag: ["@release", "@regression", "@playground"] },
     async ({ page }) => {
       const input = page.getByTestId("input-chat-playground").last();
       const sendBtn = page.getByTestId("button-send").last();
@@ -77,7 +77,7 @@ test.describe("Playground Empty Message Behavior", () => {
 
   test(
     "send button becomes enabled when user types a message",
-    { tag: ["@release", "@regression"] },
+    { tag: ["@release", "@regression", "@playground"] },
     async ({ page }) => {
       const input = page.getByTestId("input-chat-playground").last();
       const sendBtn = page.getByTestId("button-send").last();
