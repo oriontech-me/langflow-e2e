@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect } from "../../fixtures/fixtures";
 import { unselectNodes } from "../ui/unselect-nodes";
 
-export const selectGptModel = async (page: Page) => {
+export const selectGeminiModel = async (page: Page) => {
   const nodes = page.locator(".react-flow__node", {
     has: page.getByTestId("title-language model"),
   });
@@ -32,42 +32,55 @@ export const selectGptModel = async (page: Page) => {
     await page.getByTestId("manage-model-providers").click();
     await page.waitForSelector("text=Model providers", { timeout: 30000 });
 
-    await page.getByTestId("provider-item-OpenAI").click();
+    await page.getByTestId("provider-item-Google Generative AI").click();
     await page.waitForTimeout(500);
 
     // Click the key input to enter edit mode (clears masked value if key exists)
-    const keyInput = page.getByPlaceholder("sk-...");
+    const keyInput = page.getByPlaceholder("AIza...");
     await keyInput.click();
-    await page.keyboard.type(process.env.OPENAI_API_KEY!);
+    await page.keyboard.type(process.env.GOOGLE_API_KEY!);
 
     // Button label varies: "Save Configuration" (new) or "Replace Configuration" (existing key)
-    const saveBtn = page.getByRole("button", { name: /Save Configuration|Replace Configuration/ });
+    const saveBtn = page.getByRole("button", {
+      name: /Save Configuration|Replace Configuration/,
+    });
     await expect(saveBtn).toBeEnabled({ timeout: 5000 });
     await saveBtn.click();
-    await page.waitForSelector("text=OpenAI Configuration Saved", {
+    await page.waitForSelector("text=Google Generative AI Configuration Saved", {
       timeout: 30000,
     });
 
     // Wait for key verification to complete — toggle only appears after the API validates the key
     await page
-      .getByTestId("llm-toggle-gpt-4o-mini")
+      .getByTestId("llm-toggle-gemini-2.5-flash")
       .waitFor({ state: "visible", timeout: 60000 });
 
     const isChecked = await page
-      .getByTestId("llm-toggle-gpt-4o-mini")
+      .getByTestId("llm-toggle-gemini-2.5-flash")
       .isChecked();
     if (!isChecked) {
-      await page.getByTestId("llm-toggle-gpt-4o-mini").click();
+      await page.getByTestId("llm-toggle-gemini-2.5-flash").click();
     }
 
     await page.getByText("Close").last().click();
 
-    // Re-open dropdown to select the model
-    await page.getByTestId("model_model").nth(i).click();
-    await page.waitForSelector('[role="listbox"]', { timeout: 10000 });
-
-    await page.waitForTimeout(500);
-    await page.getByTestId("gpt-4o-mini-option").click();
+    // Re-open dropdown and click Gemini option — retries if dropdown closes during re-render
+    let modelSelected = false;
+    for (let attempt = 0; attempt < 5 && !modelSelected; attempt++) {
+      await page.getByTestId("model_model").nth(i).click();
+      try {
+        const option = page.getByTestId("gemini-2.5-flash-option");
+        await option.waitFor({ state: "visible", timeout: 10000 });
+        await option.click({ timeout: 5000 });
+        modelSelected = true;
+      } catch {
+        // Dropdown may have closed or re-rendered, retry opening
+        await page.waitForTimeout(300);
+      }
+    }
+    if (!modelSelected) {
+      throw new Error("Failed to select gemini-2.5-flash after 5 attempts");
+    }
 
     if (i < nodeCount - 1) {
       await unselectNodes(page);

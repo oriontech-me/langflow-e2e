@@ -107,7 +107,7 @@
 - [-] Abrir opções avançadas do componente → `core/features/` (open-advanced-options util)
 - [-] Editar campo de texto (input) → `core/unit/inputComponent.spec.ts`
 - [-] Editar dropdown → `core/unit/dropdownComponent.spec.ts`
-- [-] Editar área de texto (textarea) → `core/unit/textAreaModalComponent.spec.ts`
+- [-] Editar área de texto (textarea) → `core/unit/textAreaModalComponent.spec.
 - [-] Editar campo de código → `core/unit/codeAreaModalComponent.spec.ts`
 - [-] Editar campo float → `core/unit/floatComponent.spec.ts`
 - [-] Editar campo int → `core/unit/intComponent.spec.ts`
@@ -229,7 +229,7 @@
 
 #### 6.1 Execução de Agente
 - [-] Agent com tool calling executa corretamente → `core/features/agent-component-regression.spec.ts`
-- [-] Agent exibe steps de raciocínio no Playground → `core/features/agent-reasoning-steps.spec.ts`
+- [x] Agent exibe steps de raciocínio no Playground → `core/features/agent-reasoning-steps.spec.ts`
 - [-] Composio (tool integration para Agent) → `core/features/composio.spec.ts`
 - [ ] Agent executa flow completo com LLM e retorna resposta
 - [ ] Agent em modo streaming — resposta exibida progressivamente no Playground
