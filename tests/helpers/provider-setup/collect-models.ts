@@ -1,3 +1,4 @@
+// Test spec that runs this helper: tests/collect-models.spec.ts
 import type { Page } from "@playwright/test";
 import Database from "better-sqlite3";
 import path from "path";
