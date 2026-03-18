@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
-import { BasePage } from "../BasePage";
-import { SidebarComponent } from "../SidebarComponent";
-import { addFlowToTestOnEmptyLangflow } from "../../helpers/flows/add-flow-to-test-on-empty-langflow";
+import { BasePage } from "./BasePage";
+import { SidebarComponent } from "./SidebarComponent";
+import { addFlowToTestOnEmptyLangflow } from "../helpers/flows/add-flow-to-test-on-empty-langflow";
 
 export class MainPage extends BasePage {
   readonly sidebar: SidebarComponent;
