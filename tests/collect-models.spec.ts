@@ -14,6 +14,6 @@ test("collect and save all provider models to database", async ({ page }) => {
     timeout: 30000,
   });
 
-  // Step 2: Collect all provider models via Settings and save to SQLite
+  // Step 2: Collect all provider models via Settings and save to JSON
   await collectAndSaveModels(page);
 });

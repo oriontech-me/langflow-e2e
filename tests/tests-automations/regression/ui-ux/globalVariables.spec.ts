@@ -35,7 +35,7 @@ test(
     await initialGPTsetup(page, {
       skipAdjustScreenView: true,
       skipUpdateOldComponents: true,
-      skipSelectGptModel: true,
+      skipProviderSetup: true,
     });
 
     const genericName = Math.random().toString();

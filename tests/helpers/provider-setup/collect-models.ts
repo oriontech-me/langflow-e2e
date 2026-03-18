@@ -1,33 +1,15 @@
 // Test spec that runs this helper: tests/collect-models.spec.ts
 import type { Page } from "@playwright/test";
-import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
 import { SettingsPage } from "../../pages/SettingsPage";
 
-const DB_DIR = path.join(__dirname, "data");
-const DB_PATH = path.join(DB_DIR, "models.db");
+const DATA_DIR = path.join(__dirname, "data");
+const JSON_PATH = path.join(DATA_DIR, "models.json");
 
 interface ModelRecord {
   provider: string;
   model: string;
-}
-
-function getDb(): Database.Database {
-  if (!fs.existsSync(DB_DIR)) {
-    fs.mkdirSync(DB_DIR, { recursive: true });
-  }
-
-  const db = new Database(DB_PATH);
-  db.exec(`
-    DROP TABLE IF EXISTS models;
-    CREATE TABLE models (
-      id       INTEGER PRIMARY KEY AUTOINCREMENT,
-      provider TEXT NOT NULL,
-      model    TEXT NOT NULL
-    )
-  `);
-  return db;
 }
 
 async function collectModelsForProvider(
@@ -115,18 +97,12 @@ export async function collectAndSaveModels(page: Page): Promise<void> {
   );
   allModels.push(...openaiModels);
 
-  // Step 4: Persist to SQLite — drops and recreates the table, then inserts fresh
-  const db = getDb();
+  // Step 4: Persist to JSON — overwrites file with fresh data
+  if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+  }
 
-  const insert = db.prepare("INSERT INTO models (provider, model) VALUES (?, ?)");
-  const insertMany = db.transaction((records: ModelRecord[]) => {
-    for (const record of records) {
-      insert.run(record.provider, record.model);
-    }
-  });
+  fs.writeFileSync(JSON_PATH, JSON.stringify(allModels, null, 2), "utf-8");
 
-  insertMany(allModels);
-  db.close();
-
-  console.log(`Total de modelos salvos no banco: ${allModels.length}`);
+  console.log(`Total de modelos salvos no JSON: ${allModels.length}`);
 }

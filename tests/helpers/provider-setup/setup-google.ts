@@ -45,7 +45,13 @@ export async function setupGoogle(
   // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
   await page.getByTestId("model_model").click();
   if (modelTestId) {
-    await page.locator(`[data-testid="${modelTestId}"]`).click();
+    const modelOption = page.locator(`[data-testid="${modelTestId}"]`);
+    const isAvailable = await modelOption.isVisible({ timeout: 10000 }).catch(() => false);
+    if (!isAvailable) {
+      await page.keyboard.press("Escape");
+      throw new Error(`MODEL_NOT_AVAILABLE: "${modelTestId}" not found in dropdown — model may not be supported.`);
+    }
+    await modelOption.click();
   } else {
     await page.locator('[data-testid*="gemini"]').first().waitFor({ state: "visible", timeout: 10000 });
     await page.locator('[data-testid*="gemini"]').first().click();

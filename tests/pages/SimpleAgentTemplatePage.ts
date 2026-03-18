@@ -13,41 +13,13 @@ export interface LoadSimpleAgentOptions {
   model?: string;
 }
 
-/**
- * Resolves which provider/model to use based on env vars:
- *
- *   MODEL_TEST_STRATEGY=all      → uses options as-is (caller iterates all DB models)
- *   MODEL_TEST_STRATEGY=provider → overrides provider with MODEL_TEST_PROVIDER
- *   MODEL_TEST_STRATEGY=model    → overrides model with MODEL_TEST_ID
- *
- * Explicit options always take precedence over env vars.
- */
-function resolveModelOptions(options: LoadSimpleAgentOptions): LoadSimpleAgentOptions {
-  const strategy = process.env.MODEL_TEST_STRATEGY ?? "all";
-
-  if (options.provider || options.model) {
-    return options;
-  }
-
-  if (strategy === "provider" && process.env.MODEL_TEST_PROVIDER) {
-    return { provider: process.env.MODEL_TEST_PROVIDER as Provider };
-  }
-
-  if (strategy === "model" && process.env.MODEL_TEST_ID) {
-    return { model: process.env.MODEL_TEST_ID };
-  }
-
-  return options;
-}
-
 export class SimpleAgentTemplatePage extends BasePage {
   constructor(page: Page) {
     super(page);
   }
 
   async load(options: LoadSimpleAgentOptions = {}): Promise<void> {
-    const resolved = resolveModelOptions(options);
-    const { provider = "openai", model } = resolved;
+    const { provider = "openai", model } = options;
 
     if (!hasProviderEnvKeys(provider)) {
       throw new Error(
@@ -68,6 +40,7 @@ export class SimpleAgentTemplatePage extends BasePage {
       if (!(await dropdown.isVisible({ timeout: 2000 }).catch(() => false)))
         break;
       await dropdown.click();
+      await this.page.getByTestId("btn_delete_dropdown_menu").first().waitFor({ state: "visible", timeout: 5000 });
       await this.page.getByTestId("btn_delete_dropdown_menu").first().click();
       await this.page
         .getByTestId("btn_delete_delete_confirmation_modal")
@@ -98,7 +71,11 @@ export class SimpleAgentTemplatePage extends BasePage {
     });
 
     // Step 5: Adjust canvas view and configure the provider
+    // DB stores toggle IDs (llm-toggle-xxx) — convert to dropdown option IDs (xxx-option)
+    const modelOptionId = model?.startsWith("llm-toggle-")
+      ? `${model.replace("llm-toggle-", "")}-option`
+      : model;
     await adjustScreenView(this.page);
-    await providerSetupMap[provider](this.page, model);
+    await providerSetupMap[provider](this.page, modelOptionId);
   }
 }
