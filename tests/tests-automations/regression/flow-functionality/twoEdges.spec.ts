@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
@@ -12,7 +13,7 @@ test(
     await page.getByText("Search Results", { exact: true }).first().isVisible();
     await page.getByTestId("canvas_controls_dropdown").click();
 
-    const focusElementsOnBoard = async ({ page }) => {
+    const focusElementsOnBoard = async ({ page }: { page: Page }) => {
       await page.waitForSelector('[data-testid="fit_view"]', {
         timeout: 30000,
       });

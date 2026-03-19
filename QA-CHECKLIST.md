@@ -264,6 +264,13 @@
 - [x] Agent responde múltiplas mensagens consecutivas na mesma sessão → `agent-component-regression.spec.ts`
 - [ ] Agent com memória persistente entre mensagens
 - [ ] Agent usa `context_id` customizado
+- [x] Memory Chatbot template carrega com estrutura correta de nós e arestas → `llm-agents/memory-history-regression.spec.ts`
+- [x] Message History retém contexto entre mensagens na mesma sessão do Playground → `llm-agents/memory-history-regression.spec.ts`
+- [x] Isolamento de sessão: session IDs distintos têm históricos independentes → `llm-agents/memory-history-regression.spec.ts`
+- [x] Mensagens persistem após fechar e reabrir o Playground → `llm-agents/memory-history-regression.spec.ts`
+- [x] Sem Message History, LLM não retém contexto entre mensagens → `llm-agents/memory-history-regression.spec.ts`
+- [ ] Parâmetro n_messages limita quantidade de mensagens retidas (**bug confirmado**: valor salvo corretamente pelo frontend mas ignorado na execução do backend)
+- [ ] Agent usa `context_id` customizado — memória isolada por contexto
 - [ ] Trocar `context_id` reseta histórico do agente
 
 #### 6.4 Tools e Integrações
@@ -414,6 +421,13 @@
 - [-] Simple Agent com memória
 - [-] Vector Store RAG
 - [-] Memory Chatbot
+- [-] **Basic Prompting** (OpenAI) → `core/integrations/Basic Prompting.spec.ts`
+- [-] **Basic Prompting** (Anthropic) → `core/integrations/Basic Prompting Anthropic.spec.ts`
+- [-] **Simple Agent** (OpenAI) → `core/integrations/Simple Agent.spec.ts`
+- [-] **Simple Agent** (Anthropic) → `core/integrations/Simple Agent Anthropic.spec.ts`
+- [-] **Simple Agent** com memória → `core/integrations/Simple Agent Memory.spec.ts`
+- [-] **Vector Store RAG** → `core/integrations/Vector Store.spec.ts`
+- [x] **Memory Chatbot** → `llm-agents/memory-history-regression.spec.ts`
 
 #### 11.2 Templates de Geração de Conteúdo
 - [-] Blog Writer
