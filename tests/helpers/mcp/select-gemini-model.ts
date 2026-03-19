@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect } from "../../fixtures/fixtures";
 import { unselectNodes } from "../ui/unselect-nodes";
 
-export const selectAnthropicModel = async (page: Page) => {
+export const selectGeminiModel = async (page: Page) => {
   const nodes = page.locator(".react-flow__node", {
     has: page.getByTestId("title-language model"),
   });
@@ -32,42 +32,44 @@ export const selectAnthropicModel = async (page: Page) => {
     await page.getByTestId("manage-model-providers").click();
     await page.waitForSelector("text=Model providers", { timeout: 30000 });
 
-    await page.getByTestId("provider-item-Anthropic").click();
+    await page.getByTestId("provider-item-Google Generative AI").click();
     await page.waitForTimeout(500);
 
     // Click the key input to enter edit mode (clears masked value if key exists)
-    const keyInput = page.getByPlaceholder("sk-ant-...");
+    const keyInput = page.getByPlaceholder("AIza...");
     await keyInput.click();
-    await page.keyboard.type(process.env.ANTHROPIC_API_KEY!);
+    await page.keyboard.type(process.env.GOOGLE_API_KEY!);
 
     // Button label varies: "Save Configuration" (new) or "Replace Configuration" (existing key)
-    const saveBtn = page.getByRole("button", { name: /Save Configuration|Replace Configuration/ });
+    const saveBtn = page.getByRole("button", {
+      name: /Save Configuration|Replace Configuration/,
+    });
     await expect(saveBtn).toBeEnabled({ timeout: 5000 });
     await saveBtn.click();
-    await page.waitForSelector("text=Anthropic Configuration Saved", {
+    await page.waitForSelector("text=Google Generative AI Configuration Saved", {
       timeout: 30000,
     });
 
     // Wait for key verification to complete — toggle only appears after the API validates the key
     await page
-      .getByTestId("llm-toggle-claude-sonnet-4-5-20250929")
+      .getByTestId("llm-toggle-gemini-2.5-flash")
       .waitFor({ state: "visible", timeout: 60000 });
 
     const isChecked = await page
-      .getByTestId("llm-toggle-claude-sonnet-4-5-20250929")
+      .getByTestId("llm-toggle-gemini-2.5-flash")
       .isChecked();
     if (!isChecked) {
-      await page.getByTestId("llm-toggle-claude-sonnet-4-5-20250929").click();
+      await page.getByTestId("llm-toggle-gemini-2.5-flash").click();
     }
 
     await page.getByText("Close").last().click();
 
-    // Re-open dropdown and click Claude option — retries if dropdown closes during re-render
+    // Re-open dropdown and click Gemini option — retries if dropdown closes during re-render
     let modelSelected = false;
     for (let attempt = 0; attempt < 5 && !modelSelected; attempt++) {
       await page.getByTestId("model_model").nth(i).click();
       try {
-        const option = page.getByTestId("claude-sonnet-4-5-20250929-option");
+        const option = page.getByTestId("gemini-2.5-flash-option");
         await option.waitFor({ state: "visible", timeout: 10000 });
         await option.click({ timeout: 5000 });
         modelSelected = true;
@@ -77,7 +79,7 @@ export const selectAnthropicModel = async (page: Page) => {
       }
     }
     if (!modelSelected) {
-      throw new Error("Failed to select claude-sonnet-4-5-20250929 after 5 attempts");
+      throw new Error("Failed to select gemini-2.5-flash after 5 attempts");
     }
 
     if (i < nodeCount - 1) {
