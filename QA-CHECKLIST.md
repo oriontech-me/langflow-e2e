@@ -3,7 +3,7 @@
 > **Repositório:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Testes:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Última atualização:** 2026-03-17
+> **Última atualização:** 2026-03-19
 
 ---
 
@@ -25,32 +25,35 @@
 
 ## Pages
 
-- [ ] Sidebar de componentes — barra de navegação de componentes com suporte a busca parametrizável (search como variável)
-- [ ] Settings — navegação à aba de configurações gerais
+- [x] `SimpleAgentTemplatePage` — carrega template Simple Agent com provider e modelo configurável → `pages/SimpleAgentTemplatePage.ts`
+- [x] `SettingsPage` — navegação à página de configurações via menu do usuário → `pages/SettingsPage.ts`
+- [ ] Sidebar de componentes — barra de navegação de componentes com suporte a busca parametrizável
 - [ ] Model Provider — navegação à aba de gerenciamento de provedores de modelo
 - [ ] API Keys — navegação à aba de chaves de API / variáveis globais
 - [ ] Templates — navegação à aba de escolha de templates (Starter Projects)
 - [ ] Import Flow — navegação para importar um fluxo via JSON
 - [ ] Delete Flow — navegação para excluir um fluxo
-- [ ] Delete Project — navegação para excluir um projeto/pasta
 - [ ] MCP Config — navegação para configurar MCP Server
 
 ---
 
 ## Helpers
 
-### Flows
-
-- [~] Carregar Simple Agent com provider e modelo variável → `helpers/flows/load-simple-agent.ts`
-- [~] Carregar Simple Agent com OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
-
 ### Provider Setup
 
-- [~] Setup de Provider OpenAI → `helpers/provider-setup/setup-openai.ts`
-- [~] Setup de Provider Anthropic → `helpers/provider-setup/setup-anthropic.ts`
-- [~] Setup de Provider Google Generative AI → `helpers/provider-setup/setup-google.ts`
-- [~] Map de Providers (providerSetupMap) — ponto central de registro de providers → `helpers/provider-setup/index.ts`
-- [~] Configurar um Provedor/Modelo — suporte a OpenAI, Anthropic e Google via options object
+- [x] Setup de Provider OpenAI → `helpers/provider-setup/setup-openai.ts`
+- [x] Setup de Provider Anthropic → `helpers/provider-setup/setup-anthropic.ts`
+- [x] Setup de Provider Google Generative AI → `helpers/provider-setup/setup-google.ts`
+- [x] Map de Providers (`providerSetupMap`) — ponto central de registro → `helpers/provider-setup/index.ts`
+- [x] Validação de providers via API (crédito, key válida) → `helpers/provider-setup/collect-models.ts`
+- [x] Coleta de modelos disponíveis via UI (Settings → Model Providers) → `helpers/provider-setup/collect-models.ts`
+- [x] `providers.json` — status de cada provider (active/inactive + motivo) → `data/providers.json`
+- [x] `models.json` — lista de modelos por provider → `data/models.json`
+
+### Flows
+
+- [x] Carregar Simple Agent com provider e modelo variável → `pages/SimpleAgentTemplatePage.ts`
+- [x] Carregar Simple Agent com OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
 
 ### A implementar
 
@@ -77,37 +80,37 @@
 ### api/flows/ — API REST
 
 #### 1.1 Health Check
-- [-] GET `/api/v1/health_check` → status 200, db ok → `core/features/api-health-check.spec.ts`
-- [-] GET `/api/v1/health` → retorna uptime e versão → `core/features/api-health-check.spec.ts`
+- [-] GET `/api/v1/health_check` → status 200, db ok
+- [-] GET `/api/v1/health` → retorna uptime e versão
 
 #### 1.2 CRUD de Flows via API
-- [-] POST `/api/v1/flows/` → cria flow, retorna ID → `core/features/api-flows-crud.spec.ts`
-- [-] GET `/api/v1/flows/` → lista flows do usuário → `core/features/api-flows-crud.spec.ts`
-- [-] GET `/api/v1/flows/{id}` → retorna flow pelo ID → `core/features/api-flows-crud.spec.ts`
-- [-] PATCH `/api/v1/flows/{id}` → atualiza nome/descrição → `core/features/api-flows-crud.spec.ts`
-- [-] DELETE `/api/v1/flows/{id}` → remove flow, retorna 200 → `core/features/api-flows-crud.spec.ts`
-- [-] GET `/api/v1/flows/{id}` após DELETE → deve retornar 404 → `core/features/api-flows-crud.spec.ts`
+- [-] POST `/api/v1/flows/` → cria flow, retorna ID
+- [-] GET `/api/v1/flows/` → lista flows do usuário
+- [-] GET `/api/v1/flows/{id}` → retorna flow pelo ID
+- [-] PATCH `/api/v1/flows/{id}` → atualiza nome/descrição
+- [-] DELETE `/api/v1/flows/{id}` → remove flow, retorna 200
+- [-] GET `/api/v1/flows/{id}` após DELETE → deve retornar 404
 
 #### 1.3 Execução de Flows via API
-- [-] POST `/api/v1/run/{flow_id}` com `input_value` → retorna resposta → `core/features/api-run-flow.spec.ts`
-- [-] POST com `tweaks` → parâmetros sobrescrevem configuração do flow → `core/features/api-run-with-tweaks.spec.ts`
-- [-] POST com `session_id` customizado → `core/features/api-run-flow.spec.ts`
-- [-] POST com `input_type: "chat"` e `output_type: "chat"` → `core/features/api-run-with-tweaks.spec.ts`
-- [-] POST com API key inválida → retorna 401/403 → `core/features/api-run-flow.spec.ts`
-- [-] POST para flow inexistente → retorna 404 → `core/features/api-run-flow.spec.ts`
+- [-] POST `/api/v1/run/{flow_id}` com `input_value` → retorna resposta
+- [-] POST com `tweaks` → parâmetros sobrescrevem configuração do flow
+- [-] POST com `session_id` customizado
+- [-] POST com `input_type: "chat"` e `output_type: "chat"`
+- [-] POST com API key inválida → retorna 401/403
+- [-] POST para flow inexistente → retorna 404
 
 #### 1.4 Componentes via API
-- [-] GET `/api/v1/all` → lista todos os componentes disponíveis → `core/features/api-run-flow.spec.ts`
-- [-] POST `/api/v1/custom_component` → cria componente customizado → `core/features/api-custom-component.spec.ts`
+- [-] GET `/api/v1/all` → lista todos os componentes disponíveis
+- [-] POST `/api/v1/custom_component` → cria componente customizado
 
 #### 1.5 Mensagens e Monitoramento via API
-- [-] GET `/api/v1/monitor/messages` → retorna 200 com array → `core/features/api-monitor-messages.spec.ts`
-- [-] GET com filtro de session_id retorna apenas mensagens da sessão → `core/features/api-monitor-messages.spec.ts`
+- [-] GET `/api/v1/monitor/messages` → retorna 200 com array
+- [-] GET com filtro de session_id retorna apenas mensagens da sessão
 
 #### 1.6 Geração de Código de Integração
-- [-] Gerar curl para execução via API → `extended/features/curlApiGeneration.spec.ts`
-- [-] Gerar código Python para integração → `extended/features/pythonApiGeneration.spec.ts`
-- [-] Modal de acesso à API (api-access-button) → `core/features/tweaksTest.spec.ts`
+- [-] Gerar curl para execução via API
+- [-] Gerar código Python para integração
+- [-] Modal de acesso à API
 
 ---
 
@@ -116,76 +119,76 @@
 ### 2. Configuração de Componentes
 
 #### 2.1 Painel de Parâmetros
-- [-] Abrir opções avançadas do componente → `core/features/` (open-advanced-options util)
-- [-] Editar campo de texto (input) → `core/unit/inputComponent.spec.ts`
-- [-] Editar dropdown → `core/unit/dropdownComponent.spec.ts`
-- [-] Editar área de texto (textarea) → `core/unit/textAreaModalComponent.spec.ts`
-- [-] Editar campo de código → `core/unit/codeAreaModalComponent.spec.ts`
-- [-] Editar campo float → `core/unit/floatComponent.spec.ts`
-- [-] Editar campo int → `core/unit/intComponent.spec.ts`
-- [-] Editar campo toggle → `core/unit/toggleComponent.spec.ts`
-- [-] Editar key-pair list → `core/unit/keyPairListComponent.spec.ts`
-- [-] Editar input list → `core/unit/inputListComponent.spec.ts`
-- [-] Editar table input → `core/unit/tableInputComponent.spec.ts`
-- [-] Editar slider → `core/unit/sliderComponent.spec.ts`
-- [-] Editar tab component → `core/unit/tabComponent.spec.ts`
+- [-] Abrir opções avançadas do componente
+- [-] Editar campo de texto (input)
+- [-] Editar dropdown
+- [-] Editar área de texto (textarea)
+- [-] Editar campo de código
+- [-] Editar campo float
+- [-] Editar campo int
+- [-] Editar campo toggle
+- [-] Editar key-pair list
+- [-] Editar input list
+- [-] Editar table input
+- [-] Editar slider
+- [-] Editar tab component
 
 #### 2.2 Tool Mode
-- [-] Habilitar Tool Mode num componente → `extended/features/tool-mode.spec.ts`
-- [-] Agrupar componentes em Tool Mode → `core/features/toolModeGroup.spec.ts`
-- [-] Editar tools (edit-tools) → `extended/features/edit-tools.spec.ts`
+- [-] Habilitar Tool Mode num componente
+- [-] Agrupar componentes em Tool Mode
+- [-] Editar tools (edit-tools)
 
 #### 2.3 Atualização de Componentes
-- [-] Notificação de componente desatualizado → `extended/features/outdated-message.spec.ts`
-- [-] Ação de atualizar componente → `extended/features/outdated-actions.spec.ts`
+- [-] Notificação de componente desatualizado
+- [-] Ação de atualizar componente
 - [ ] Atualização com breaking change — deve alertar usuário
 - [ ] Componente legado visível via configuração
 
 #### 2.4 Edição de Código
-- [-] Editar código Python do componente customizado → `core/features/customComponentAdd.spec.ts`
-- [-] Componente customizado completo → `core/unit/` (custom_component_full.ts)
+- [-] Editar código Python do componente customizado
+- [-] Componente customizado completo
 
 ---
 
 ### 3. Componentes Principais
 
 #### 3.1 Chat Input / Output
-- [-] ChatInput recebe mensagem do usuário → `core/unit/chatInputOutput.spec.ts`
-- [-] ChatOutput exibe resposta do LLM → `core/integrations/textInputOutput.spec.ts`
-- [-] Chat Input/Output com autenticação de usuário → `core/integrations/chatInputOutputUser-shard-0.spec.ts`
+- [-] ChatInput recebe mensagem do usuário
+- [-] ChatOutput exibe resposta do LLM
+- [-] Chat Input/Output com autenticação de usuário
 
 #### 3.2 Prompt Template
-- [-] Prompt com variáveis em curly braces → `core/regression/generalBugs-prompt.spec.ts`
-- [-] Modal do Prompt → `core/unit/promptModalComponent.spec.ts`
-- [-] Porta dinâmica gerada ao adicionar variável no prompt → `core/features/prompt-dynamic-variables.spec.ts`
-- [-] Remover variável do prompt apaga porta correspondente → `core/features/prompt-remove-variable.spec.ts`
+- [-] Prompt com variáveis em curly braces
+- [-] Modal do Prompt
+- [-] Porta dinâmica gerada ao adicionar variável no prompt
+- [-] Remover variável do prompt apaga porta correspondente
 
 #### 3.3 API Request (HTTP)
-- [-] Configurar URL e método HTTP → `core/features/api-component-regression.spec.ts`
-- [-] Adicionar headers e body → `core/features/api-request-component-ui.spec.ts`
+- [-] Configurar URL e método HTTP
+- [-] Adicionar headers e body
 - [ ] Executar request GET e verificar resposta status 200
 - [ ] Executar request POST com payload
 - [ ] Erro de URL inválida
 
 #### 3.4 Webhook
-- [-] Componente Webhook exibido no canvas → `core/unit/webhookComponent.spec.ts`
-- [-] URL de webhook gerada automaticamente → `core/features/webhook-component-regression.spec.ts`
+- [-] Componente Webhook exibido no canvas
+- [-] URL de webhook gerada automaticamente
 - [ ] Trigger via requisição HTTP externa
 - [ ] Payload recebido propagado ao flow
 
 #### 3.5 Agent (Componente)
-- [-] Componente Agent exibido no canvas com configurações padrão → `core/features/agent-component-regression.spec.ts`
+- [-] Componente Agent exibido no canvas com configurações padrão
 - [ ] Configurar system prompt no componente Agent
 - [ ] Configurar model provider diretamente no componente Agent
 
 #### 3.6 Loop Component
-- [-] Componente Loop no canvas → `extended/features/loop-component.spec.ts`
+- [-] Componente Loop no canvas
 - [ ] Loop executa número correto de iterações
 - [ ] Loop para ao atingir condição de saída
 
 #### 3.7 Nested / Agrupamento
-- [-] Componente aninhado (nested) → `core/unit/nestedComponent.spec.ts`
-- [-] Entrar e sair de componente agrupado → `core/features/group-enter-exit.spec.ts`
+- [-] Componente aninhado (nested)
+- [-] Entrar e sair de componente agrupado
 
 ---
 
@@ -194,76 +197,82 @@
 ### core-functionality/auth/ — Autenticação e Gerenciamento de Usuários
 
 #### 4.1 Login / Logout
-- [-] Login com credenciais válidas (admin/admin) → `core/features/auto-login-off.spec.ts`
-- [-] Login com credenciais inválidas — deve exibir mensagem de erro → `core/features/login-invalid-credentials.spec.ts`
-- [-] Logout — deve redirecionar para tela de login → `core/features/logout-flow.spec.ts`
-- [-] Auto-login ativado (LANGFLOW_AUTO_LOGIN=true) — deve pular tela de login → `core/features/auto-login-off.spec.ts`
-- [-] Auto-login desativado — deve exibir tela de login → `extended/features/autoLogin.spec.ts`
-- [-] Sessão expirada — deve redirecionar para login ao tentar ação autenticada → `core/features/session-expired.spec.ts`
-- [-] Limpeza de sessão após logout → `core/regression/general-bugs-remove-session-after-logout.spec.ts`
+- [-] Login com credenciais válidas
+- [-] Login com credenciais inválidas — deve exibir mensagem de erro
+- [-] Logout — deve redirecionar para tela de login
+- [-] Auto-login ativado — deve pular tela de login
+- [-] Auto-login desativado — deve exibir tela de login
+- [-] Sessão expirada — deve redirecionar para login
+- [-] Limpeza de sessão após logout
 
 #### 4.2 Gerenciamento de Usuários (Admin)
-- [-] Admin cria novo usuário → `core/features/auto-login-off.spec.ts`
-- [-] Admin desativa usuário — usuário não consegue mais logar → `core/features/admin-user-management.spec.ts`
-- [-] Admin ativa usuário inativo — usuário consegue logar após ativação → `core/features/admin-user-management.spec.ts`
-- [-] Admin renomeia usuário → `core/features/admin-user-management.spec.ts`
-- [-] Admin altera senha de usuário — usuário loga com nova senha → `core/features/admin-password-change.spec.ts`
-- [-] Admin altera senha — senha antiga não funciona após troca → `core/features/admin-password-change.spec.ts`
-- [-] Fluxo de isolamento: user A não vê flows de user B → `core/features/auto-login-off.spec.ts`
-- [-] Configurações de usuário (user settings) → `extended/features/userSettings.spec.ts`
+- [-] Admin cria novo usuário
+- [-] Admin desativa usuário
+- [-] Admin ativa usuário inativo
+- [-] Admin renomeia usuário
+- [-] Admin altera senha de usuário
+- [-] Admin altera senha — senha antiga não funciona após troca
+- [-] Fluxo de isolamento: user A não vê flows de user B
 
 #### 4.3 Variáveis Globais (API Keys)
-- [-] Criar variável global → `core/features/globalVariables.spec.ts`
+- [-] Criar variável global
 - [ ] Usar variável global em componente (API key)
-- [-] Editar variável global existente → `core/features/global-variable-edit.spec.ts`
-- [-] Deletar variável global → `core/features/global-variables-crud.spec.ts`
-- [-] Criar variável global do tipo "Generic" → `core/features/global-variables-crud.spec.ts`
+- [-] Editar variável global existente
+- [-] Deletar variável global
+- [-] Criar variável global do tipo "Generic"
 
 ---
 
 ### core-functionality/knowledge-ingestion-management/ — Upload, Processamento e Vetores
 
 #### 5.1 File Upload
-- [-] Upload de arquivo via componente → `core/unit/fileUploadComponent.spec.ts`
-- [-] Upload de arquivos de diferentes tipos (txt, pdf, json, py, wav) → `utils/upload-file.ts`
-- [-] Limite de tamanho de arquivo → `extended/features/limit-file-size-upload.spec.ts`
-- [-] Página de gerenciamento de arquivos → `extended/features/files-page.spec.ts`
+- [-] Upload de arquivo via componente
+- [-] Upload de arquivos de diferentes tipos (txt, pdf, json, py, wav)
+- [-] Limite de tamanho de arquivo
+- [-] Página de gerenciamento de arquivos
 
 #### 5.2 Processamento e Vetorização
 - [ ] Ingestão de documento via componente Split Text + Embeddings
-- [ ] Indexação em Vector Store (Chroma/Astra/Pinecone) — documento disponível para consulta
+- [ ] Indexação em Vector Store — documento disponível para consulta
 - [ ] Query ao Vector Store retorna chunks relevantes ao prompt
-- [ ] Pipeline RAG completo (ingest → embed → store → retrieve → answer) executa sem erro
+- [ ] Pipeline RAG completo (ingest → embed → store → retrieve → answer)
 
 ---
 
 ### core-functionality/llm-agents/ — Agentes e Execução com LLM
 
+> ⚠️ Testes nesta seção usam `SimpleAgentTemplatePage` e são parametrizados por modelo via `models.json`.
+> Rode `npx playwright test tests/collect-models.spec.ts` antes de executar estes testes.
+> Veja `CLAUDE.md` nesta pasta para o guia completo.
+
 #### 6.1 Execução de Agente
-- [-] Agent com tool calling executa corretamente → `core/features/agent-component-regression.spec.ts`
-- [-] Agent exibe steps de raciocínio no Playground → `core/features/agent-reasoning-steps.spec.ts`
-- [-] Composio (tool integration para Agent) → `core/features/composio.spec.ts`
-- [ ] Agent executa flow completo com LLM e retorna resposta
+- [x] Agent executa com múltiplos providers e modelos (OpenAI, Anthropic, Google) → `agent-component-regression.spec.ts`
+- [x] Agent exibe resposta válida para pergunta simples → `agent-component-regression.spec.ts`
+- [x] Agent responde sem tools conectadas (regressão ID 147) → `agent-component-regression.spec.ts`
+- [-] Agent exibe steps de raciocínio no Playground → `agent-reasoning-steps.spec.ts`
+- [-] Composio (tool integration para Agent) → `composio.spec.ts`
 - [ ] Agent em modo streaming — resposta exibida progressivamente no Playground
 
 #### 6.2 Controle de Execução
+- [x] Botão Stop interrompe execução do agente → `agent-component-regression.spec.ts`
 - [ ] Agent para ao atingir stop condition configurada
 - [ ] Agent para ao atingir número máximo de iterações
 - [ ] Agent com múltiplas tools configuradas executa corretamente
 - [ ] Agent com timeout configurado respeita o limite
 
 #### 6.3 Memória e Contexto
-- [ ] Agent com memória persistente entre mensagens (Memory Chatbot flow)
-- [ ] Agent usa `context_id` customizado — memória isolada por contexto
+- [x] Agent responde múltiplas mensagens consecutivas na mesma sessão → `agent-component-regression.spec.ts`
+- [ ] Agent com memória persistente entre mensagens
+- [ ] Agent usa `context_id` customizado
 - [ ] Trocar `context_id` reseta histórico do agente
 
 #### 6.4 Tools e Integrações
 - [ ] Agent com tool MCP externo integrado executa ação e retorna resultado
 - [ ] Agent executa múltiplas tools em sequência
-- [ ] Tool retorna erro — agent trata e continua execução sem falhar o flow
+- [ ] Tool retorna erro — agent trata e continua execução
 
 #### 6.5 Output e Raciocínio
-- [ ] Inspecionar steps de raciocínio do Agent no Playground
+- [x] Duração de execução exibida após run com tools → `agent-component-regression.spec.ts`
 - [ ] Inspecionar tools usadas pelo Agent no Playground
 - [ ] Agent retorna output em formato JSON estruturado
 - [ ] Agent retorna output em Markdown renderizado corretamente
@@ -272,219 +281,219 @@
 
 ### core-functionality/model-provider/ — Gestão de Provedores
 
-#### 7.1 OpenAI
-- [-] Configurar API key OpenAI via GlobalVariables → `core/features/globalVariables.spec.ts`
-- [-] Selecionar modelo GPT (GPT-4o-mini) → `utils/select-gpt-model.ts`
-- [-] Executar flow com OpenAI → todos os testes de integration
-- [-] Trocar versão do modelo GPT (dropdown) → `core/features/gpt-model-version.spec.ts`
-- [-] Erro de API key inválida — exibir mensagem de erro → `core/features/llm-invalid-api-key-ui.spec.ts` (mocked)
+> ⚠️ Testes de configuração de provider via Settings usam `SettingsPage`.
+> Veja `helpers/provider-setup/` para os helpers de setup de cada provider.
 
-#### 7.2 Anthropic
-- [-] Configurar API key Anthropic → `utils/select-anthropic-model.ts`
-- [-] Selecionar modelo Claude → `core/integrations/Basic Prompting Anthropic.spec.ts`
-- [-] Trocar entre modelos Claude (Sonnet, Haiku, Opus) → `core/features/claude-model-switch.spec.ts`
-- [-] Erro de API key Anthropic inválida → `core/features/api-invalid-key.spec.ts` (API-level)
+#### 7.1 Coleta e Validação de Providers
+- [x] Validar API keys de todos os providers via chamada real → `collect-models.spec.ts`
+- [x] Coletar modelos disponíveis por provider via UI → `collect-models.spec.ts`
+- [x] Providers inativos aparecem como skipped nos testes com motivo → `agent-component-regression.spec.ts`
 
-#### 7.3 Gerenciamento de Providers
-- [-] Modal "Manage Model Providers" → `core/features/modelProviderModal.spec.ts`
-- [-] Contagem de providers disponíveis → `core/features/modelProviderCount.spec.ts`
-- [-] Componente Language Model — configuração → `core/features/language-model-regression.spec.ts`
-- [-] Componente Model Input → `core/features/modelInputComponent.spec.ts`
-- [-] Adicionar novo provider via modal → `core/features/model-provider-api-key.spec.ts`, `core/features/model-provider-modal-actions.spec.ts`
-- [-] Remover API key de provider existente → `core/features/remove-provider-api-key.spec.ts`
+#### 7.2 OpenAI
+- [-] Configurar API key OpenAI via GlobalVariables
+- [-] Selecionar modelo GPT no agente
+- [-] Executar flow com OpenAI
+- [-] Erro de API key inválida — exibir mensagem de erro
 
-#### 7.4 Provedores Open-Source
+#### 7.3 Anthropic
+- [-] Configurar API key Anthropic
+- [-] Selecionar modelo Claude no agente
+- [-] Trocar entre modelos Claude (Sonnet, Haiku, Opus)
+- [-] Erro de API key Anthropic inválida
+
+#### 7.4 Google Generative AI
+- [-] Configurar API key Google no agente
+- [-] Selecionar modelo Gemini no agente
+
+#### 7.5 Gerenciamento de Providers
+- [-] Modal "Manage Model Providers"
+- [-] Contagem de providers disponíveis
+- [-] Componente Language Model — configuração
+- [-] Componente Model Input
+- [-] Adicionar novo provider via modal
+- [-] Remover API key de provider existente
+
+#### 7.6 Provedores Open-Source
 - [ ] Configurar e executar flow com Ollama (modelo local)
 - [ ] Configurar e executar flow com Groq
 - [ ] Configurar e executar flow com Mistral
-- [ ] Configurar e executar flow com outros provedores open-source disponíveis no modal
 
-#### 7.5 Parâmetros de Modelo (Agent)
-- [ ] Parâmetro de temperatura — variação afeta o comportamento da resposta
-- [ ] Parâmetro de esforço (reasoning effort) — variação afeta profundidade do raciocínio
-- [ ] Quantidade máxima de tokens — resposta respeitada ao limite configurado
-- [ ] Quantidade máxima de tentativas e interações do agente — agente para ao atingir o limite
-- [ ] Uso de `context_id` customizado — memória isolada por contexto
-- [ ] Formatação do output — resposta respeita formato configurado (JSON, Markdown, texto simples)
+#### 7.7 Parâmetros de Modelo (Agent)
+- [ ] Parâmetro de temperatura
+- [ ] Parâmetro de esforço (reasoning effort)
+- [ ] Quantidade máxima de tokens
+- [ ] Quantidade máxima de tentativas do agente
+- [ ] Uso de `context_id` customizado
+- [ ] Formatação do output (JSON, Markdown, texto simples)
 
 ---
 
 ### core-functionality/observability-monitoring/ — Tracing, Logs e Métricas
 
 #### 8.1 Traces
-- [-] Visualizar traces de execução → `core/features/traces.spec.ts`
-- [-] Trace API retorna transações paginadas → `core/features/traces-detail.spec.ts`
-- [-] Trace exibe latência de cada componente → `core/features/traces-latency-tokens.spec.ts`
-- [-] Trace exibe tokens consumidos → `core/features/traces-latency-tokens.spec.ts`
+- [-] Visualizar traces de execução
+- [-] Trace API retorna transações paginadas
+- [-] Trace exibe latência de cada componente
+- [-] Trace exibe tokens consumidos
 
 #### 8.2 Notificações
-- [-] Notificações do sistema → `extended/features/notifications.spec.ts`
-- [-] Notificação de erro de execução → `core/features/execution-error-notification.spec.ts`
-- [-] Notificação de componente desatualizado → `core/features/outdated-component-notification.spec.ts`
+- [-] Notificações do sistema
+- [-] Notificação de erro de execução
+- [-] Notificação de componente desatualizado
 
 #### 8.3 Estado do Usuário
-- [-] Rastrear progresso do usuário → `core/features/user-progress-track.spec.ts`
-- [-] Limpeza de estado do flow de usuário → `core/features/user-flow-state-cleanup.spec.ts`
+- [-] Rastrear progresso do usuário
+- [-] Limpeza de estado do flow de usuário
 
 #### 8.4 Tratamento de Erros e Edge Cases
-- [-] Componente que levanta erro Python → `extended/features/validate-raise-errors-components.spec.ts`
+- [-] Componente que levanta erro Python
 - [ ] Flow com erro exibe mensagem apropriada
-- [-] Erro de rede durante execução — retry ou mensagem clara → `core/features/execution-error-notification.spec.ts`
-- [-] Timeout de execução — mensagem clara ao usuário → `core/features/execution-error-notification.spec.ts`
-- [-] Bugs gerais shard-4 → `core/regression/generalBugs-shard-4.spec.ts`
-- [-] Bugs gerais shard-5 → `core/regression/generalBugs-shard-5.spec.ts`
-- [-] Bugs gerais shard-9 → `core/regression/generalBugs-shard-9.spec.ts`
-- [-] Bugs de agente (extended) → `extended/regression/`
-- [-] Bugs de minimize, move, save → `extended/regression/`
-- [-] Bugs de truncation, icons → `extended/regression/`
+- [-] Erro de rede durante execução
+- [-] Timeout de execução — mensagem clara ao usuário
 
 ---
 
 ### core-functionality/playground/ — Chat, Renderização e Testes de Saída
 
 #### 9.1 Interações de Chat
-- [-] Abrir Playground → (via playground-btn-flow-io)
-- [-] Enviar mensagem de texto → (via input-chat-playground + button-send)
-- [-] Receber resposta do LLM → (via div-chat-message)
-- [-] Streaming de resposta (SSE) → `withEventDeliveryModes` (modo streaming)
-- [-] Polling de resposta → `withEventDeliveryModes` (modo polling)
-- [-] Resposta direta (direct) → `withEventDeliveryModes` (modo direct)
-- [-] UX do Playground (playground-ux) → `core/features/playground-ux.spec.ts`
-- [!] Enviar mensagem vazia — deve desabilitar botão enviar → `core/features/playground-empty-message-send.spec.ts` (**BUG: botão habilitado mesmo vazio**)
-- [ ] Enviar mensagem enquanto resposta em curso — deve aguardar ou enfileirar
+- [-] Abrir Playground
+- [-] Enviar mensagem de texto
+- [-] Receber resposta do LLM
+- [-] Streaming de resposta (SSE)
+- [-] Polling de resposta
+- [-] Resposta direta (direct)
+- [-] UX do Playground
+- [!] Enviar mensagem vazia — deve desabilitar botão enviar (**BUG: botão habilitado mesmo vazio**)
+- [ ] Enviar mensagem enquanto resposta em curso
 
 #### 9.2 Histórico e Sessão
-- [-] Configurar session ID customizado → `core/features/settings-message-history.spec.ts`
-- [-] Trocar session ID — inicia nova conversa → `core/features/playground-session-id.spec.ts`
-- [-] Deletar mensagem individual do histórico → `core/features/playground-message-delete.spec.ts`
+- [-] Configurar session ID customizado
+- [-] Trocar session ID — inicia nova conversa
+- [-] Deletar mensagem individual do histórico
 - [ ] Limpar histórico completo de sessão
-- [-] Histórico persiste ao reabrir Playground → `core/features/playground-history-persist.spec.ts`
+- [-] Histórico persiste ao reabrir Playground
 
 #### 9.3 Features Avançadas do Playground
-- [-] Modo fullscreen do Playground → `core/features/playground-fullscreen.spec.ts`
+- [-] Modo fullscreen do Playground
 - [ ] Playground compartilhável (URL pública, sem autenticação)
-- [-] Voice mode (assistente de voz) → `core/features/voice-assistant.spec.ts`
-- [-] Botão Stop no Playground → `extended/features/stop-button-playground.spec.ts`
+- [-] Voice mode (assistente de voz)
+- [-] Botão Stop no Playground
 
 #### 9.4 Output Modal
-- [-] Copiar output do componente → `extended/features/output-modal-copy-button.spec.ts`
-- [-] Botão de copy no output → `extended/features/copy-button-in-output.spec.ts`
+- [-] Copiar output do componente
+- [-] Botão de copy no output
 
 ---
 
 ### core-functionality/project-management/ — Gestão de Projetos e Pastas
 
 #### 10.1 CRUD de Pastas
-- [-] Criar nova pasta → `core/features/folders.spec.ts`
-- [-] Renomear pasta → `core/features/folders.spec.ts`
-- [-] Deletar pasta vazia → `core/features/folders.spec.ts`
-- [-] Deletar pasta com flows dentro → `core/features/folder-deletion-integrity.spec.ts`
-- [-] Integridade após deleção — flows/pastas restantes não afetados → `core/features/folder-deletion-integrity.spec.ts`
-- [-] Criar pasta após deletar todas as pastas → `core/features/folder-deletion-integrity.spec.ts`
-- [-] Upload de flow por drag-and-drop na pasta → `core/features/folder-drag-drop-flow.spec.ts`
-- [-] Mover flow para outra pasta → `core/features/folders.spec.ts`
+- [-] Criar nova pasta
+- [-] Renomear pasta
+- [-] Deletar pasta vazia
+- [-] Deletar pasta com flows dentro
+- [-] Integridade após deleção
+- [-] Criar pasta após deletar todas as pastas
+- [-] Upload de flow por drag-and-drop na pasta
+- [-] Mover flow para outra pasta
 
 #### 10.2 Navegação de Pastas
-- [~] Navegar entre pastas — flows corretos exibidos por pasta → `core/features/flow-navigation-folders.spec.ts`
-- [-] Pesquisar flow por nome filtra resultados corretamente → `core/features/flow-navigation-folders.spec.ts`
-- [-] Pastas na sidebar de navegação → `extended/features/integration-side-bar.spec.ts`
+- [~] Navegar entre pastas
+- [-] Pesquisar flow por nome filtra resultados corretamente
+- [-] Pastas na sidebar de navegação
 
 ---
 
 ### core-functionality/templates/ — Modelos Pré-definidos de Flows e Componentes
 
 #### 11.1 Templates Básicos
-- [-] **Basic Prompting** (OpenAI) → `core/integrations/Basic Prompting.spec.ts`
-- [-] **Basic Prompting** (Anthropic) → `core/integrations/Basic Prompting Anthropic.spec.ts`
-- [-] **Simple Agent** (OpenAI) → `core/integrations/Simple Agent.spec.ts`
-- [-] **Simple Agent** (Anthropic) → `core/integrations/Simple Agent Anthropic.spec.ts`
-- [-] **Simple Agent** com memória → `core/integrations/Simple Agent Memory.spec.ts`
-- [-] **Vector Store RAG** → `core/integrations/Vector Store.spec.ts`
-- [-] **Memory Chatbot** → `core/integrations/Memory Chatbot.spec.ts`
+- [-] Basic Prompting (OpenAI)
+- [-] Basic Prompting (Anthropic)
+- [-] Simple Agent (OpenAI)
+- [-] Simple Agent (Anthropic)
+- [-] Simple Agent com memória
+- [-] Vector Store RAG
+- [-] Memory Chatbot
 
 #### 11.2 Templates de Geração de Conteúdo
-- [-] **Blog Writer** → `core/integrations/Blog Writer.spec.ts`
-- [-] **Instagram Copywriter** → `core/integrations/Instagram Copywriter.spec.ts`
-- [-] **Twitter Thread Generator** → `core/integrations/Twitter Thread Generator.spec.ts`
-- [-] **SEO Keyword Generator** → `core/integrations/SEO Keyword Generator.spec.ts`
-- [-] **Portfolio Website Code Generator** → `core/integrations/Portfolio Website Code Generator.spec.ts`
-- [-] **SaaS Pricing** → `core/integrations/SaaS Pricing.spec.ts`
+- [-] Blog Writer
+- [-] Instagram Copywriter
+- [-] Twitter Thread Generator
+- [-] SEO Keyword Generator
+- [-] Portfolio Website Code Generator
+- [-] SaaS Pricing
 
 #### 11.3 Templates de Análise e Processamento
-- [-] **Document QA** → `core/integrations/Document QA.spec.ts`
-- [-] **Invoice Summarizer** → `core/integrations/Invoice Summarizer.spec.ts`
-- [-] **Financial Report Parser** → `core/integrations/Financial Report Parser.spec.ts`
-- [-] **Image Sentiment Analysis** → `core/integrations/Image Sentiment Analysis.spec.ts`
-- [-] **Text Sentiment Analysis** → `core/integrations/Text Sentiment Analysis.spec.ts`
-- [-] **Youtube Analysis** → `core/integrations/Youtube Analysis.spec.ts`
+- [-] Document QA
+- [-] Invoice Summarizer
+- [-] Financial Report Parser
+- [-] Image Sentiment Analysis
+- [-] Text Sentiment Analysis
+- [-] Youtube Analysis
 
 #### 11.4 Templates de Agentes
-- [-] **Dynamic Agent** → `core/integrations/Dynamic Agent.spec.ts`
-- [-] **Hierarchical Agent** → `core/integrations/Hierarchical Agent.spec.ts`
-- [-] **Sequential Task Agent** → `core/integrations/Sequential Agent.spec.ts`
-- [-] **Social Media Agent** → `core/integrations/Social Media Agent.spec.ts`
-- [-] **Travel Planning Agent** → `core/integrations/Travel Planning Agent.spec.ts`
-- [-] **Market Research** → `core/integrations/Market Research.spec.ts`
-- [-] **Research Translation Loop** → `core/integrations/Research Translation Loop.spec.ts`
-- [-] **Pokedex Agent** → `core/integrations/Pokedex Agent.spec.ts`
-- [-] **Price Deal Finder** → `core/integrations/Price Deal Finder.spec.ts`
-- [-] **News Aggregator** → `core/integrations/News Aggregator.spec.ts`
+- [-] Dynamic Agent
+- [-] Hierarchical Agent
+- [-] Sequential Task Agent
+- [-] Social Media Agent
+- [-] Travel Planning Agent
+- [-] Market Research
+- [-] Research Translation Loop
+- [-] Pokedex Agent
+- [-] Price Deal Finder
+- [-] News Aggregator
 
 #### 11.5 Templates Avançados
-- [-] **Custom Component Generator** → `core/integrations/Custom Component Generator.spec.ts`
-- [-] **Prompt Chaining** → `core/integrations/Prompt Chaining.spec.ts`
-- [-] **Decision Flow** → `core/integrations/decisionFlow.spec.ts`
-- [-] **Similarity** → `core/integrations/similarity.spec.ts`
-- [-] **MCP Server** (starter projects) → `extended/features/mcp-server-starter-projects.spec.ts`
-
-#### 11.6 Shards de Starter Projects
-- [-] Starter Projects Shard 1 → `core/integrations/starter-projects-shard1.spec.ts`
-- [-] Starter Projects Shard 2 → `core/integrations/starter-projects-shard2.spec.ts`
-- [-] Starter Projects Shard 3 → `core/integrations/starter-projects-shard3.spec.ts`
-- [-] Starter Projects Shard 4 → `core/integrations/starter-projects-shard4.spec.ts`
-- [-] Starter Projects (extended) → `extended/features/starter-projects.spec.ts`
+- [-] Custom Component Generator
+- [-] Prompt Chaining
+- [-] Decision Flow
+- [-] Similarity
+- [-] MCP Server (starter projects)
 
 ---
 
 ## flow-functionality/ — Execução de Grafos, Drag-and-Drop e JSON
 
 #### 12.1 Criar Flow
-- [-] Criar flow em branco (blank flow) → `core/features/` (awaitBootstrapTest)
-- [-] Criar flow a partir de template (via modal "New Flow") → `core/integrations/`
-- [-] Criar flow duplicando um existente → `core/features/duplicate-flow.spec.ts`
-- [-] Criar flow via importação de arquivo JSON → `core/features/import-flow-json.spec.ts`
+- [-] Criar flow em branco (blank flow)
+- [-] Criar flow a partir de template
+- [-] Criar flow duplicando um existente
+- [-] Criar flow via importação de arquivo JSON
 
 #### 12.2 Visualizar e Editar Flow
-- [-] Renomear flow pelo header do editor → `core/features/` (rename-flow util)
-- [-] Editar nome e descrição do flow → `extended/features/edit-flow-name.spec.ts`
-- [-] Auto-save do flow ao fazer alterações → `extended/features/auto-save-off.spec.ts`
-- [-] Configurações do flow (flow settings) → `extended/features/flowSettings.spec.ts`
+- [-] Renomear flow pelo header do editor
+- [-] Editar nome e descrição do flow
+- [-] Auto-save do flow ao fazer alterações
+- [-] Configurações do flow (flow settings)
 
 #### 12.3 Deletar Flow
-- [-] Deletar flow individual → `extended/features/deleteFlows.spec.ts`
-- [-] Deletar múltiplos flows (bulk actions) → `extended/features/bulk-actions.spec.ts`
-- [-] Confirmar que flow deletado não aparece na listagem → `core/features/api-flows-crud.spec.ts`
+- [-] Deletar flow individual
+- [-] Deletar múltiplos flows (bulk actions)
+- [-] Confirmar que flow deletado não aparece na listagem
 
 #### 12.4 Exportar / Importar Flow
-- [-] Exportar flow como JSON → `core/features/export-import-flow.spec.ts`
-- [-] Importar flow via upload de arquivo JSON → `core/features/export-import-flow.spec.ts`
-- [~] Importar flow com componentes desatualizados — deve mostrar aviso de atualização → `core/features/outdated-component-notification.spec.ts`
-- [-] Importar JSON inválido — deve exibir mensagem de erro → `core/features/import-invalid-json.spec.ts`
+- [-] Exportar flow como JSON
+- [-] Importar flow via upload de arquivo JSON
+- [~] Importar flow com componentes desatualizados
+- [-] Importar JSON inválido — deve exibir mensagem de erro
 
 #### 12.5 Operações de Flow
-- [-] Travar (lock) flow — impede edição → `core/features/flow-lock.spec.ts`
-- [-] Destravar flow → `extended/features/lock-flow.spec.ts`
-- [-] Mover flow entre pastas via API (PATCH folder_id) → `core/features/api-folders-crud.spec.ts`
-- [-] Publicar flow (publish) → `core/features/publish-flow.spec.ts`
-- [-] Salvar componentes do flow como template → `core/features/save-flow-as-template.spec.ts`
+- [-] Travar (lock) flow — impede edição
+- [-] Destravar flow
+- [-] Mover flow entre pastas via API
+- [-] Publicar flow (publish)
+- [-] Salvar componentes do flow como template
 
 #### 12.6 Execução de Flow
-- [-] Executar flow pelo botão Run → `core/features/run-flow.spec.ts`
-- [-] Parar building do flow → `core/features/stop-building.spec.ts`
+- [-] Executar flow pelo botão Run
+- [-] Parar building do flow
 
 ---
 
 ## mcp/ — Model Context Protocol
+
+> ⚠️ Testes que executam agentes via MCP devem usar `SimpleAgentTemplatePage` e `models.json`.
+> Veja `CLAUDE.md` nesta pasta para o guia completo.
 
 ### mcp/client/ — Consumo de Ferramentas e Contexto
 
@@ -501,9 +510,9 @@
 ### mcp/server/ — Provedor de Recursos e Tools
 
 #### 14.1 MCP Server
-- [-] Aba MCP Server no flow → `extended/features/mcp-server-tab.spec.ts`
-- [-] Adicionar MCP server via modal → `extended/features/mcp-server.spec.ts`
-- [-] Starter project com MCP → `extended/features/mcp-server-starter-projects.spec.ts`
+- [-] Aba MCP Server no flow
+- [-] Adicionar MCP server via modal
+- [-] Starter project com MCP
 - [ ] Flow exposto como MCP server — verificar endpoint gerado
 - [ ] Executar tool do MCP server via protocolo MCP
 - [ ] Resource exposto pelo server é acessível via URI
@@ -514,74 +523,71 @@
 ## ui-ux/ — Interface Visual, Canvas e Design System
 
 #### 15.1 Sidebar de Componentes
-- [-] Pesquisar componente por nome → `core/features/filterSidebar.spec.ts`
-- [-] Hover sobre componente exibe tooltip/preview → `core/features/componentHoverAdd.spec.ts`
-- [-] Pesquisa por teclado (keyboard shortcut) → `core/features/keyboardComponentSearch.spec.ts`
-- [-] Filtrar componentes por categoria → `core/features/sidebar-category-filter.spec.ts`, `core/features/sidebar-filter-by-category.spec.ts`
-- [-] Sidebar mostra contagem correta de providers → `core/features/sidebar-provider-count.spec.ts`
+- [-] Pesquisar componente por nome
+- [-] Hover sobre componente exibe tooltip/preview
+- [-] Pesquisa por teclado (keyboard shortcut)
+- [-] Filtrar componentes por categoria
+- [-] Sidebar mostra contagem correta de providers
 
 #### 15.2 Adicionar Componentes ao Canvas
-- [-] Arrastar componente da sidebar para o canvas (drag-and-drop) → `extended/features/dragAndDrop.spec.ts`
-- [-] Duplo clique na sidebar adiciona componente ao canvas → `core/features/sidebar-add-component.spec.ts`
-- [-] Hover + clique no botão "+" adiciona componente ao canvas → `core/features/sidebar-add-component.spec.ts`
-- [-] Componente adicionado aparece com configurações padrão → `core/features/canvas-component-defaults.spec.ts`
+- [-] Arrastar componente da sidebar para o canvas
+- [-] Duplo clique na sidebar adiciona componente ao canvas
+- [-] Hover + clique no botão "+" adiciona componente ao canvas
+- [-] Componente adicionado aparece com configurações padrão
 
 #### 15.3 Conexões entre Componentes
-- [-] Conectar dois componentes compatíveis (desenhar edge) → `core/features/canvas-connect-components.spec.ts`
-- [-] Impedir conexão entre tipos incompatíveis (edge inválida) → `core/features/canvas-incompatible-connection.spec.ts`
-- [-] Deletar edge/conexão → `extended/features/twoEdges.spec.ts`
-- [-] Filtrar edges por tipo de dado → `core/features/filterEdge-shard-0.spec.ts`
-- [-] Reconectar edge já existente → `core/features/canvas-edge-reconnect.spec.ts`
+- [-] Conectar dois componentes compatíveis
+- [-] Impedir conexão entre tipos incompatíveis
+- [-] Deletar edge/conexão
+- [-] Filtrar edges por tipo de dado
+- [-] Reconectar edge já existente
 
 #### 15.4 Manipulação de Nós
-- [-] Deletar componente do canvas → `extended/features/deleteComponents.spec.ts`
-- [-] Copiar e colar componente (Ctrl+C / Ctrl+V) → `core/features/canvas-copy-paste.spec.ts`
-- [-] Atalhos de teclado do canvas → `extended/features/langflowShortcuts.spec.ts`
-- [-] Minimizar componente no canvas → `extended/features/minimize.spec.ts`
-- [-] Mover componente dentro do canvas (drag no canvas) → `extended/regression/`
-- [-] Selecionar múltiplos componentes via box selection (Shift+drag) → `core/features/canvas-multiselect.spec.ts`
-- [-] Deletar múltiplos componentes selecionados → `core/features/canvas-multiselect.spec.ts`
-- [-] Desselecionar nó clicando em área vazia do canvas → `core/features/canvas-deselect-node.spec.ts`
-- [-] Desselecionar nó via Escape → `core/features/canvas-deselect-node.spec.ts`
+- [-] Deletar componente do canvas
+- [-] Copiar e colar componente (Ctrl+C / Ctrl+V)
+- [-] Atalhos de teclado do canvas
+- [-] Minimizar componente no canvas
+- [-] Mover componente dentro do canvas
+- [-] Selecionar múltiplos componentes via box selection
+- [-] Deletar múltiplos componentes selecionados
+- [-] Desselecionar nó clicando em área vazia do canvas
+- [-] Desselecionar nó via Escape
 
 #### 15.5 Zoom e Navegação do Canvas
-- [-] Zoom in aumenta escala do canvas → `core/features/canvas-zoom-fitview.spec.ts`
-- [-] Zoom out diminui escala do canvas → `core/features/canvas-zoom-fitview.spec.ts`
-- [-] Fit View (Ctrl+Shift+H) centraliza nós → `core/features/canvas-zoom-fitview.spec.ts`
-- [-] Botão Fit View na toolbar → `core/features/canvas-zoom-fitview.spec.ts`
-- [-] Scroll para navegar no canvas → `core/features/canvas-scroll-navigation.spec.ts`
-- [~] Minimap (se habilitado) — feature flag-gated, not tested
+- [-] Zoom in / Zoom out
+- [-] Fit View centraliza nós
+- [-] Botão Fit View na toolbar
+- [-] Scroll para navegar no canvas
+- [~] Minimap — feature flag-gated
 
 #### 15.6 Agrupamento (Group)
-- [-] Criar grupo de componentes → `core/features/group.spec.ts`
-- [-] Desagrupar componentes → `core/features/group-enter-exit.spec.ts`
-- [-] Expandir/colapsar grupo → `core/features/group-expand-collapse.spec.ts`, `core/features/group-enter-exit.spec.ts`
+- [-] Criar grupo de componentes
+- [-] Desagrupar componentes
+- [-] Expandir/colapsar grupo
 
 #### 15.7 Freeze e Estado
-- [-] Congelar componente (freeze) → `core/features/freeze.spec.ts`
-- [-] Freeze path (congela caminho inteiro) → `core/features/freeze-path.spec.ts`
-- [-] Descongelar componente → `core/features/freeze-unfreeze-component.spec.ts`
+- [-] Congelar componente (freeze)
+- [-] Freeze path
+- [-] Descongelar componente
 
 #### 15.8 Sticky Notes
-- [-] Adicionar sticky note → `extended/features/sticky-notes.spec.ts`
+- [-] Adicionar sticky note
 - [ ] Editar texto da sticky note
-- [-] Mudar cor da sticky note → `core/features/note-color-picker.spec.ts`
-- [-] Redimensionar sticky note → `extended/features/sticky-notes-dimensions.spec.ts`
-- [-] Deletar sticky note (Delete key) → `core/features/canvas-sticky-note-delete.spec.ts`
-- [-] Deletar sticky note (Backspace key) → `core/features/canvas-sticky-note-delete.spec.ts`
-- [-] Múltiplas sticky notes independentes → `core/features/canvas-sticky-note-delete.spec.ts`
+- [-] Mudar cor da sticky note
+- [-] Redimensionar sticky note
+- [-] Deletar sticky note
 
 #### 15.9 Right-Click e Menus
-- [-] Menu de contexto por right-click no canvas → `core/features/right-click-dropdown.spec.ts`
-- [-] Menu de contexto por right-click em componente → `core/features/canvas-right-click-component.spec.ts`
-- [-] Ações do menu principal (actionsMainPage) → `core/features/actionsMainPage-shard-1.spec.ts`
+- [-] Menu de contexto por right-click no canvas
+- [-] Menu de contexto por right-click em componente
+- [-] Ações do menu principal
 
 #### 15.10 Settings e Configurações de UI
-- [-] Acessar página de Settings → `core/features/settings-navigation.spec.ts`
-- [-] Configurações de histórico de mensagens → `core/features/settings-message-history.spec.ts`
-- [-] Alterar configurações de aparência/tema → `core/features/settings-theme-toggle.spec.ts`
-- [-] Atalhos de teclado funcionam no editor → `extended/features/langflowShortcuts.spec.ts`
-- [~] Todos os atalhos documentados funcionam → `core/features/settings-navigation.spec.ts` (verifica seção Shortcuts carrega)
+- [-] Acessar página de Settings
+- [-] Configurações de histórico de mensagens
+- [-] Alterar configurações de aparência/tema
+- [-] Atalhos de teclado funcionam no editor
+- [~] Todos os atalhos documentados funcionam
 
 ---
 
@@ -595,7 +601,8 @@
 | `core-components/` — Componentes | 22 | 16 | 0 | 6 |
 | `core-functionality/playground/` | 17 | 14 | 0 | 3 |
 | `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
-| `core-functionality/model-provider/` | 16 | 10 | 0 | 6 |
+| `core-functionality/model-provider/` | 20 | 13 | 0 | 7 |
+| `core-functionality/llm-agents/` | 15 | 8 | 0 | 7 |
 | `core-functionality/knowledge-ingestion/` | 8 | 4 | 0 | 4 |
 | `flow-functionality/` | 20 | 18 | 1 | 1 |
 | `mcp/server/` | 7 | 3 | 0 | 4 |
@@ -604,7 +611,7 @@
 | `templates/` | 35 | 33 | 0 | 2 |
 | `ui-ux/` — Canvas | 30 | 28 | 1 | 1 |
 | `ui-ux/` — Settings | 4 | 4 | 0 | 0 |
-| **TOTAL** | **246** | **202 (82%)** | **3** | **41 (17%)** |
+| **TOTAL** | **265** | **213 (80%)** | **3** | **49 (18%)** |
 
 ---
 
@@ -618,11 +625,11 @@
 
 #### 🟡 Média Prioridade (regressão importante)
 5. MCP client — consumo de tools e resources externos
-6. Webhook trigger externo
-7. Agent — steps de raciocínio no Playground (inspecionar tools)
+6. Agent com tool MCP externo integrado
+7. Webhook trigger externo
 8. Playground compartilhável (URL pública)
-9. Importar flow com componentes desatualizados
-10. Pipeline RAG completo (knowledge-ingestion)
+9. Pipeline RAG completo (knowledge-ingestion)
+10. Agent — steps de raciocínio com tools usadas
 
 #### 🟢 Baixa Prioridade (melhorias de cobertura)
 11. Loop component — iterações corretas
@@ -631,5 +638,3 @@
 14. Parâmetros de modelo para agentes
 15. Editar texto da sticky note
 16. Usar variável global em componente
-
----

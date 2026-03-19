@@ -93,7 +93,7 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? "openai";
 
   test.describe.serial(`Agent Component Regression [${label}]`, () => {
-    test.only(
+    test(
       "agent must show reasoning steps and produce a valid response",
       { tag: ["@release", "@components"] },
       async ({ page }) => {

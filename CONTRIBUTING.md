@@ -18,7 +18,10 @@ Localize dentro de `tests/tests-automations/regression/` a pasta que corresponde
 | Canvas, sidebar, sticky notes | `ui-ux/` |
 | Endpoints REST | `api/flows/` |
 | Upload de arquivos, RAG | `core-functionality/knowledge-ingestion-management/` |
+| Agentes LLM, raciocínio, tool calling | `core-functionality/llm-agents/` |
 | MCP server ou client | `mcp/server/` ou `mcp/client/` |
+
+> Pastas com `CLAUDE.md` contêm instruções específicas sobre como criar testes naquela área. Leia antes de começar.
 
 **2. Nomeie o arquivo**
 
@@ -56,9 +59,12 @@ test.describe("Nome da área ou funcionalidade", () => {
 Antes de escrever ações do zero, verifique se já existe um helper ou page object para o que você precisa:
 
 ```typescript
-// exemplo: navegar até o model provider e selecionar um modelo
-import { navigateToModelProvider } from "../../pages/main/model-provider.page";
-import { selectProviderAndModel } from "../../helpers/ui/model-provider.helper";
+// navegar para settings
+import { SettingsPage } from "../../pages";
+
+// carregar Simple Agent com provider e modelo configurável
+import { SimpleAgentTemplatePage } from "../../pages";
+await new SimpleAgentTemplatePage(page).load({ provider: "openai", model: "gpt-4o-mini" });
 ```
 
 **5. Adicione pelo menos uma tag**
@@ -66,7 +72,7 @@ import { selectProviderAndModel } from "../../helpers/ui/model-provider.helper";
 Todo teste deve ter uma tag para poder ser filtrado por suite:
 
 ```typescript
-test("deve configurar o model provider", { tag: ["@components"] }, async ({ page }) => {
+test("deve configurar o model provider", { tag: ["@model-provider"] }, async ({ page }) => {
 ```
 
 Veja a tabela de tags disponíveis no [README](./README.md#tags-disponíveis).
@@ -74,6 +80,106 @@ Veja a tabela de tags disponíveis no [README](./README.md#tags-disponíveis).
 **6. Atualize o `QA_CHECKLIST.md`**
 
 Após criar o teste, localize o item correspondente no checklist e marque como `[-]` (automatizado, precisa validar). Somente mude para `[x]` após seguir o processo de validação abaixo.
+
+---
+
+## Criando testes com LLM (agentes, providers, MCP)
+
+Testes que executam um agente com LLM exigem um setup específico. **Não hardcode provider, API key ou modelo** — use a infraestrutura do projeto.
+
+### Antes de criar o teste: gere os dados
+
+```bash
+npx playwright test tests/collect-models.spec.ts
+```
+
+Isso valida as API keys de cada provider e coleta os modelos disponíveis na UI, gerando:
+- `tests/helpers/provider-setup/data/providers.json`
+- `tests/helpers/provider-setup/data/models.json`
+
+### Padrão de parametrização por modelo
+
+O projeto usa um padrão onde cada modelo do `models.json` gera um `test.describe.serial` separado. Veja `agent-component-regression.spec.ts` como referência completa.
+
+Estrutura básica:
+
+```typescript
+import * as dotenv from "dotenv";
+import path from "path";
+import fs from "fs";
+import { test, expect } from "../../../../fixtures/fixtures";
+import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
+import { hasProviderEnvKeys, type Provider } from "../../../../helpers/provider-setup";
+import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
+
+if (!process.env.CI) {
+  dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
+}
+
+// Lê providers inativos para exibir como skipped no output
+function getProviderSkipReasons(): Map<string, string> {
+  const jsonPath = path.resolve(__dirname, "../../../../helpers/provider-setup/data/providers.json");
+  if (!fs.existsSync(jsonPath)) return new Map();
+  const records = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ProviderRecord[];
+  return new Map(
+    records.filter((r) => r.status === "inactive").map((r) => [r.provider, `Provider "${r.provider}" inativo — ${r.error}`])
+  );
+}
+
+// Lê modelos e aplica estratégia do .env
+function getTestTargets() {
+  const jsonPath = path.resolve(__dirname, "../../../../helpers/provider-setup/data/models.json");
+  if (!fs.existsSync(jsonPath)) return [];
+  const allModels = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+  const skipReasons = getProviderSkipReasons();
+  // aplicar filtro de strategy (ver agent-component-regression.spec.ts para implementação completa)
+  return allModels.map((m: any) => ({
+    label: `${m.provider} / ${m.model}`,
+    options: { provider: m.provider as Provider, model: m.model },
+    skipReason: skipReasons.get(m.provider),
+  }));
+}
+
+const targets = getTestTargets();
+
+for (const { label, options, skipReason } of targets) {
+  const provider = options.provider ?? "openai";
+
+  test.describe.serial(`Meu Teste [${label}]`, () => {
+    test("deve ...", { tag: ["@agents"] }, async ({ page }) => {
+      test.skip(!!skipReason, skipReason ?? "");
+      test.skip(!hasProviderEnvKeys(provider), `Missing env vars for "${provider}"`);
+
+      try {
+        await new SimpleAgentTemplatePage(page).load(options);
+      } catch (e: any) {
+        if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
+        throw e;
+      }
+
+      // seu teste aqui
+    });
+  });
+}
+```
+
+### Rodando testes de agente
+
+```bash
+# Rodar um modelo específico
+MODEL_TEST_STRATEGY=model MODEL_TEST_ID=gpt-4o-mini \
+  npx playwright test caminho/do/teste.spec.ts --workers=1
+
+# Rodar todos os modelos de um provider
+MODEL_TEST_STRATEGY=provider MODEL_TEST_PROVIDER=openai \
+  npx playwright test caminho/do/teste.spec.ts --workers=1
+
+# Rodar todos os modelos do JSON
+MODEL_TEST_STRATEGY=all \
+  npx playwright test caminho/do/teste.spec.ts --workers=1
+```
+
+> `--workers=1` é obrigatório para testes de agente — eles criam flows no Langflow e conflitam se rodarem em paralelo.
 
 ---
 
@@ -88,45 +194,26 @@ PLAYWRIGHT_BASE_URL=http://localhost:7860 npx playwright test caminho/do/teste.s
 npx playwright show-report
 ```
 
-No relatório, verifique se os `test.step()` descritos no código correspondem ao que aconteceu na tela (screenshots + log de rede).
-
 **2. Confirme que os passos do teste estão documentados**
 
-Cada teste deve ter `test.step()` descrevendo o que cada bloco faz. Se não tiver, adicione antes de validar:
-
-```typescript
-await test.step("Log in with valid credentials and confirm main page loads", async () => { ... });
-await test.step("Reload page and confirm session was cleared — login screen must appear", async () => { ... });
-```
+Cada teste deve ter `test.step()` descrevendo o que cada bloco faz.
 
 **3. Force uma falha para confirmar que não é falso positivo**
 
-Comente ou inverta a asserção principal do teste e rode novamente. O teste **deve falhar**. Se passar mesmo com a asserção quebrada, o cenário não está sendo validado de verdade.
-
-```typescript
-// Antes
-expect(isLoggedIn).toBeFalsy();
-
-// Para testar: inverta e confirme que falha
-expect(isLoggedIn).toBeTruthy(); // deve falhar → reverta depois
-```
+Comente ou inverta a asserção principal. O teste **deve falhar**. Se passar mesmo com a asserção quebrada, o cenário não está sendo validado de verdade.
 
 **4. Rode em modo debug para acompanhar passo a passo**
 
 ```bash
-PLAYWRIGHT_BASE_URL=http://localhost:7860 npx playwright test caminho/do/teste.spec.ts --debug
+npx playwright test caminho/do/teste.spec.ts --debug
 ```
-
-O Playwright Inspector abre e você avança ação por ação, vendo o estado da página em cada momento.
 
 **5. Verifique os logs do terminal**
 
-A fixture base imprime erros de backend automaticamente. Após rodar, procure no output por:
+A fixture base imprime erros de backend automaticamente. Procure por:
 
 - `🚨 Backend Error:` — erro HTTP inesperado
 - `🚨 Flow Error Detected` — falha silenciosa na execução de flow
-
-Se aparecer algum desses e o teste passar mesmo assim, revise o teste.
 
 **6. Atualize o checklist**
 
@@ -140,12 +227,10 @@ Use o padrão `<tipo>/<descrição-curta>` em kebab-case:
 
 | Tipo | Quando usar | Exemplo |
 |---|---|---|
-| `feat/` | Novo teste, novo helper ou page object | `feat/flow-import-json` |
+| `feat/` | Novo teste, novo helper ou page object | `feat/agent-regression-multi-provider` |
 | `fix/` | Correção de teste quebrado ou flaky | `fix/model-provider-selector-flaky` |
 | `chore/` | CI, checklist, dependências, refatoração interna | `chore/update-nightly-workflow` |
 | `docs/` | Atualização de documentação | `docs/update-contributing` |
-
-A descrição deve identificar o que muda, não quem mudou ou quando.
 
 ---
 
@@ -154,7 +239,7 @@ A descrição deve identificar o que muda, não quem mudou ou quando.
 Use o mesmo prefixo da branch seguido de uma descrição no imperativo:
 
 ```
-feat: add test for login with invalid credentials
+feat: add agent regression tests parametrized by model
 fix: replace flaky selector in model provider test
 chore: update file-watcher monitored paths
 ```
@@ -163,8 +248,6 @@ chore: update file-watcher monitored paths
 - Português ou inglês — escolha um e mantenha no branch inteiro
 - Sem ponto final
 
-Para mudanças pequenas e relacionadas, agrupe em um único commit. Não crie um commit por linha editada.
-
 ---
 
 ## Pull Requests
@@ -172,8 +255,8 @@ Para mudanças pequenas e relacionadas, agrupe em um único commit. Não crie um
 Todo trabalho entra via PR — sem push direto em `main`.
 
 **Processo:**
-1. Abra o PR com o branch pronto e o teste validado (seguindo o guia acima)
-2. **Solicite revisão de outro membro da organização** antes de mergear — se não houver resposta em tempo razoável, registre o motivo no PR
+1. Abra o PR com o branch pronto e o teste validado
+2. **Solicite revisão de outro membro da organização** antes de mergear
 3. Use **squash merge** para manter o histórico do `main` limpo e linear
 4. **Após o merge**, delete o branch local e remoto:
    ```bash
@@ -182,14 +265,10 @@ Todo trabalho entra via PR — sem push direto em `main`.
    git push origin --delete <branch>
    ```
 
-> A revisão de código é a prática esperada no projeto. Quando não for possível obtê-la, registre no PR o contexto que justificou a decisão — isso transforma uma exceção em aprendizado para o time.
-
 **O que o PR deve comunicar:**
 - O que ele adiciona ou corrige
 - Como o teste foi validado (os 5 passos do guia)
 - Issue relacionada, se vier de um alerta do file-watcher
-
-O template de PR já está configurado no repositório e preenche esses campos automaticamente ao abrir um PR no GitHub.
 
 ---
 
@@ -197,44 +276,34 @@ O template de PR já está configurado no repositório e preenche esses campos a
 
 ### Como o time fica sabendo que um teste precisa ser revisado
 
-O maior risco em testes E2E não é o teste que falha — é o teste que **passa mas não valida mais o comportamento correto**, porque o Langflow mudou e o teste não acompanhou.
-
 O `file-watcher.yml` roda todo dia às 05h BRT e verifica se houve commits no repositório oficial do Langflow nas últimas 24h em caminhos críticos. Quando detecta mudanças, abre automaticamente uma issue neste repositório.
 
 **A issue informa:**
-- Qual área funcional mudou (ex: "Model Providers & LLM")
-- O comando exato para rodar os testes afetados (ex: `npx playwright test --grep "@components|@api"`)
+- Qual área funcional mudou
+- O comando exato para rodar os testes afetados
 - Qual seção do `QA_CHECKLIST.md` revisar
-- Os commits das últimas 24h para leitura humana
-
-**Exemplo de issue gerada após mudança em model providers:**
-> | Area | Run these tests | Checklist |
-> |---|---|---|
-> | Model Providers & LLM | `npx playwright test --grep "@components\|@api"` | ÁREA 8 — LLM Providers + ÁREA 7 — Templates |
 
 ### Áreas monitoradas
 
 | Área | Caminhos monitorados | Tags afetadas |
 |---|---|---|
 | Routes & Feature Flags | `routes.tsx`, `feature-flags.ts` | todas |
-| Authentication | `api/v1/login.py`, `services/auth/`, `LoginPage/`, `authStore.ts` | `@release @api` |
-| Flow CRUD & Canvas | `api/v1/flows.py`, `FlowPage/`, `flowStore.ts` | `@workspace @release` |
-| Flow Execution | `api/v1/endpoints.py`, `processing/`, `api/v1/chat.py` | `@release @api` |
-| Model Providers & LLM | `ModelProvidersPage/`, `modelProviderModal/`, `providerConstants.ts`, `api/v1/models.py` | `@components @api` |
-| Agents & Agentic Flows | `agentic/`, `base/agents/`, `MainPage/` | `@components @release` |
-| Playground & Chat | `pages/Playground/`, `playgroundStore.ts`, `api/v1/chat.py` | `@workspace @release` |
-| Settings & Global Variables | `SettingsPage/`, `api/v1/variable.py` | `@api @release` |
-| MCP Server | `MCPServersPage/`, `api/v1/mcp.py`, `agentic/mcp/` | `@components` |
-| Tracing & Monitoring | `api/v1/traces.py`, `services/tracing/` | `@api` |
-| Database Models | `services/database/models/`, `alembic/` | `@database @release` |
-| Component Input Types | `parameterRenderComponent/`, `CustomNodes/`, `inputs/` | `@components` |
+| Authentication | `api/v1/login.py`, `services/auth/` | `@auth` |
+| Flow CRUD & Canvas | `api/v1/flows.py`, `FlowPage/` | `@project-management` |
+| Flow Execution | `api/v1/endpoints.py`, `processing/` | `@api` |
+| Model Providers & LLM | `ModelProvidersPage/`, `providerConstants.ts` | `@model-provider @agents` |
+| Agents & Agentic Flows | `agentic/`, `base/agents/` | `@agents` |
+| Playground & Chat | `pages/Playground/`, `api/v1/chat.py` | `@playground` |
+| Settings & Global Variables | `SettingsPage/`, `api/v1/variable.py` | `@settings` |
+| MCP Server | `MCPServersPage/`, `api/v1/mcp.py` | `@mcp` |
+| Tracing & Monitoring | `api/v1/traces.py`, `services/tracing/` | `@observability` |
+| Database Models | `services/database/models/`, `alembic/` | `@api` |
+| Component Input Types | `parameterRenderComponent/`, `inputs/` | `@ui-ux` |
 
 ### O que fazer quando chegar uma issue do file-watcher
 
-1. Leia os commits listados na issue — identifique se é uma mudança de comportamento, renomeação de elemento, novo endpoint, etc.
+1. Leia os commits listados na issue
 2. Rode os testes indicados na tabela da issue
 3. Para cada teste que falhar ou parecer desatualizado, siga o guia de validação acima
 4. Atualize os testes necessários e marque o `QA_CHECKLIST.md`
 5. Feche a issue
-
-> **Importante:** uma issue do file-watcher não significa que os testes vão falhar — significa que o time precisa verificar ativamente. Mudanças sutis de UI (renomear um botão, mover um elemento) podem não quebrar o teste, mas invalidar o que ele está testando.
