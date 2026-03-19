@@ -35,7 +35,7 @@ test(
       }
     }
 
-    await visibleElementHandle.hover().then(async () => {
+    await visibleElementHandle!.hover().then(async () => {
       await expect(
         page.getByText("Drag to connect compatible inputs").first(),
       ).toBeVisible();
@@ -70,7 +70,7 @@ test(
 
     await page.waitForTimeout(500);
 
-    await visibleElementHandle.hover().then(async () => {
+    await visibleElementHandle!.hover().then(async () => {
       await page.waitForTimeout(1000);
 
       await expect(
@@ -104,7 +104,7 @@ test(
 
     await page.waitForTimeout(500);
 
-    await visibleElementHandle.hover().then(async () => {
+    await visibleElementHandle!.hover().then(async () => {
       await page.waitForTimeout(1000);
 
       await expect(
@@ -137,7 +137,7 @@ test(
       }
     }
 
-    await visibleElementHandle.hover().then(async () => {
+    await visibleElementHandle!.hover().then(async () => {
       await expect(
         page.getByText("Drag to connect compatible outputs").first(),
       ).toBeVisible();
