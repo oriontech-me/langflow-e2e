@@ -238,6 +238,122 @@ test(
   },
 );
 
+// Helper: inject a value into the Webhook's "data" field by intercepting the
+// GET /api/v1/flows/{id} response so the canvas receives the patched template.
+// The "data" field (Payload, advanced=True) has no editable UI — it is populated
+// only via the webhook POST endpoint in production. We simulate that by
+// intercepting the API response, which is equivalent for testing build_data() logic.
+async function loadFlowWithDataField(
+  page: any,
+  flowId: string,
+  dataValue: string,
+) {
+  // Intercept the GET flow response and inject the data field value
+  await page.route(`**/api/v1/flows/${flowId}`, async (route: any) => {
+    const response = await route.fetch();
+    const json = await response.json();
+
+    const webhookNode = (json?.data?.nodes ?? []).find(
+      (n: any) => n?.data?.type === "Webhook",
+    );
+    if (webhookNode) {
+      webhookNode.data.node.template.data.value = dataValue;
+    }
+
+    await route.fulfill({ json });
+  });
+
+  // Navigate to the flow — the interceptor will inject the data field value
+  await page.goto(`/flow/${flowId}`);
+  await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
+    timeout: 60000,
+  });
+  await page.waitForSelector('[data-testid="button_run_webhook"]', {
+    timeout: 60000,
+  });
+  await adjustScreenView(page);
+
+  // Remove the intercept after use so it doesn't affect subsequent requests
+  await page.unroute(`**/api/v1/flows/${flowId}`);
+}
+
+test(
+  "Webhook component — valid JSON payload is propagated as structured Data output",
+  { tag: ["@release", "@regression"] },
+  async ({ page }) => {
+    await addWebhookComponent(page);
+    const flowId = page.url().split("/").at(-1)!;
+    expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
+
+    // Wait for autosave before reloading
+    await page.waitForTimeout(4000);
+
+    // The "data" field has no editable UI — inject the value via API response
+    // intercept so the canvas receives the patched template on navigation.
+    // build_data() will parse the JSON string and return it as a Data object.
+    await loadFlowWithDataField(
+      page,
+      flowId,
+      '{"event": "regression-test", "value": 42}',
+    );
+
+    await page.getByTestId("button_run_webhook").click();
+    await page.waitForSelector("text=built successfully", { timeout: 30000 });
+    await expect(page.getByText("built successfully").last()).toBeVisible();
+
+    // Open output inspection and verify the parsed object
+    await page.getByTestId("output-inspection-data-webhook").click();
+    await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
+
+    const dialog = page.locator('[role="dialog"]');
+    const editorContent = await dialog
+      .locator("[role='textbox']")
+      .evaluate((el) => el.textContent ?? "");
+
+    const parsed = JSON.parse(editorContent.trim() || "null");
+    expect(parsed).toEqual({ event: "regression-test", value: 42 });
+
+    await page.keyboard.press("Escape");
+  },
+);
+
+test(
+  "Webhook component — invalid JSON payload is encapsulated in {payload: ...}",
+  { tag: ["@release", "@regression"] },
+  async ({ page }) => {
+    await addWebhookComponent(page);
+    const flowId = page.url().split("/").at(-1)!;
+    expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
+
+    // Wait for autosave before reloading
+    await page.waitForTimeout(4000);
+
+    // build_data() catches json.JSONDecodeError and wraps the raw string in
+    // {"payload": "<raw string>"} — this tests that fallback path.
+    const invalidPayload = "not valid json {{broken";
+
+    await loadFlowWithDataField(page, flowId, invalidPayload);
+
+    await page.getByTestId("button_run_webhook").click();
+    await page.waitForSelector("text=built successfully", { timeout: 30000 });
+    await expect(page.getByText("built successfully").last()).toBeVisible();
+
+    // Open output inspection and verify the fallback wrapping
+    await page.getByTestId("output-inspection-data-webhook").click();
+    await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
+
+    const dialog = page.locator('[role="dialog"]');
+    const editorContent = await dialog
+      .locator("[role='textbox']")
+      .evaluate((el) => el.textContent ?? "");
+
+    const parsed = JSON.parse(editorContent.trim() || "null");
+    expect(parsed).toEqual({ payload: invalidPayload });
+
+    await page.keyboard.press("Escape");
+  },
+);
+
 test(
   "GET /api/v1/monitor/messages returns 200 with array response",
   { tag: ["@release", "@regression"] },

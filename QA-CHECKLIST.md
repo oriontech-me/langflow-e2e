@@ -164,8 +164,8 @@
 - [x] Botão de cópia copia a URL correta para o clipboard e exibe toast "Endpoint URL copied" → `core-components/webhook-component-regression.spec.ts`
 - [x] POST para flow inexistente retorna 404 → `core-components/webhook-component-regression.spec.ts`
 - [x] GET `/api/v1/monitor/messages` retorna 200 com array → `core-components/webhook-component-regression.spec.ts`
-- [ ] Payload JSON recebido é propagado corretamente como saída Data do componente
-- [ ] Payload inválido (não-JSON) é encapsulado em `{"payload": "..."}` na saída
+- [x] Payload JSON recebido é propagado corretamente como saída Data do componente → `core-components/webhook-component-regression.spec.ts`
+- [x] Payload inválido (não-JSON) é encapsulado em `{"payload": "..."}` na saída → `core-components/webhook-component-regression.spec.ts`
 
 #### 3.5 Agent (Componente)
 - [-] Componente Agent exibido no canvas com configurações padrão → `core/features/agent-component-regression.spec.ts`
