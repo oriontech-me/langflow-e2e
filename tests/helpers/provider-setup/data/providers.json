@@ -1,0 +1,20 @@
+[
+  {
+    "provider": "openai",
+    "status": "active",
+    "error": null,
+    "checkedAt": "2026-03-19T14:46:18.073Z"
+  },
+  {
+    "provider": "anthropic",
+    "status": "inactive",
+    "error": "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.",
+    "checkedAt": "2026-03-19T14:46:16.974Z"
+  },
+  {
+    "provider": "google",
+    "status": "active",
+    "error": null,
+    "checkedAt": "2026-03-19T14:46:17.589Z"
+  }
+]

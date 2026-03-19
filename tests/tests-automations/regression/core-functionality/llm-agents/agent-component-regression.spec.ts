@@ -8,6 +8,7 @@ import {
   missingProviderEnvKeys,
   type Provider,
 } from "../../../../helpers/provider-setup";
+import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
 
 // Load .env before resolving strategy and targets
 if (!process.env.CI) {
@@ -22,6 +23,26 @@ interface ModelRecord {
 interface TestTarget {
   label: string;
   options: LoadSimpleAgentOptions;
+  skipReason?: string;
+}
+
+function getProviderSkipReasons(): Map<string, string> {
+  const jsonPath = path.resolve(
+    __dirname,
+    "../../../../helpers/provider-setup/data/providers.json",
+  );
+  if (!fs.existsSync(jsonPath)) {
+    console.warn("providers.json not found — run collect-providers.spec.ts first. Skipping provider pre-validation.");
+    return new Map();
+  }
+  const records = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ProviderRecord[];
+  const reasons = new Map<string, string>();
+  for (const r of records) {
+    if (r.status === "inactive") {
+      reasons.set(r.provider, `Provider "${r.provider}" inativo — ${r.error}`);
+    }
+  }
+  return reasons;
 }
 
 function getModelsFromJson(): ModelRecord[] {
@@ -39,44 +60,44 @@ function getModelsFromJson(): ModelRecord[] {
 
 function getTestTargets(): TestTarget[] {
   const strategy = process.env.MODEL_TEST_STRATEGY ?? "all";
+  const skipReasons = getProviderSkipReasons();
 
   if (strategy === "model" && process.env.MODEL_TEST_ID) {
     const model = process.env.MODEL_TEST_ID;
     return [{ label: `model:${model}`, options: { model } }];
   }
 
-  // "all" and "provider" both read from the database — "provider" filters by MODEL_TEST_PROVIDER
   const allModels = getModelsFromJson();
 
   if (allModels.length === 0) {
-    // Fallback when DB is not populated yet — run collect-models.spec.ts first
-    console.warn(
-      "models.db not found or empty — run collect-models.spec.ts first to populate the database.",
-    );
+    console.warn("models.json not found or empty — run collect-models.spec.ts first.");
     return [{ label: "provider:openai (fallback)", options: { provider: "openai" } }];
   }
 
-  const models =
-    strategy === "provider" && process.env.MODEL_TEST_PROVIDER
-      ? allModels.filter((m) => m.provider === process.env.MODEL_TEST_PROVIDER)
-      : allModels;
+  let models = allModels;
+
+  if (strategy === "provider" && process.env.MODEL_TEST_PROVIDER) {
+    models = models.filter((m) => m.provider === process.env.MODEL_TEST_PROVIDER);
+  }
 
   return models.map((m) => ({
     label: `${m.provider} / ${m.model}`,
     options: { provider: m.provider as Provider, model: m.model },
+    skipReason: skipReasons.get(m.provider),
   }));
 }
 
 const targets = getTestTargets();
 
-for (const { label, options } of targets) {
+for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? "openai";
 
   test.describe.serial(`Agent Component Regression [${label}]`, () => {
-    test(
+    test.only(
       "agent must show reasoning steps and produce a valid response",
       { tag: ["@release", "@components"] },
       async ({ page }) => {
+        test.skip(!!skipReason, skipReason ?? "");
         test.skip(
           !hasProviderEnvKeys(provider),
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
@@ -124,6 +145,7 @@ for (const { label, options } of targets) {
       "agent stop button must halt execution mid-run",
       { tag: ["@release", "@components"] },
       async ({ page }) => {
+        test.skip(!!skipReason, skipReason ?? "");
         test.skip(
           !hasProviderEnvKeys(provider),
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
@@ -168,6 +190,7 @@ for (const { label, options } of targets) {
       "agent must display duration after successful run",
       { tag: ["@release", "@components"] },
       async ({ page }) => {
+        test.skip(!!skipReason, skipReason ?? "");
         test.skip(
           !hasProviderEnvKeys(provider),
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
@@ -208,6 +231,7 @@ for (const { label, options } of targets) {
       "agent must handle multiple consecutive messages in same session",
       { tag: ["@release", "@components"] },
       async ({ page }) => {
+        test.skip(!!skipReason, skipReason ?? "");
         test.skip(
           !hasProviderEnvKeys(provider),
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
@@ -247,6 +271,7 @@ for (const { label, options } of targets) {
       "agent must run and respond without any tools connected (ID 147)",
       { tag: ["@release", "@components"] },
       async ({ page }) => {
+        test.skip(!!skipReason, skipReason ?? "");
         test.skip(
           !hasProviderEnvKeys(provider),
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
