@@ -118,9 +118,9 @@ Tags are split into two groups: **transversais** (severidade/camada) e **funcion
 | `@playground` | Playground de chat e interações |
 | `@auth` | Autenticação, login, sessão, gestão de usuários |
 | `@observability` | Traces, latência, tokens |
-| `@knowledge` | Ingestão de arquivos e RAG |
-| `@project-management` | Flows, pastas, navegação, bulk actions |
+| `@files` | Página de arquivos, upload, Read File / Write File components |
 | `@templates` | Starter projects e templates de flow |
+| `@settings` | Navegação e configuração na página de Settings |
 | `@ui-ux` | Interface geral, atalhos, aparência |
 
 ## CI/CD

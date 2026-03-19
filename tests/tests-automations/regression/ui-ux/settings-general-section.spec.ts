@@ -17,7 +17,7 @@ test.describe("Settings General Section", () => {
 
   test(
     "Settings General section loads and shows its header",
-    { tag: ["@release", "@regression"] },
+    { tag: ["@release", "@regression", "@settings"] },
     async ({ page }) => {
       await page.getByRole("link", { name: "General", exact: true }).click();
       await page.waitForTimeout(500);
@@ -37,7 +37,7 @@ test.describe("Settings General Section", () => {
 
   test(
     "Settings Messages section is accessible",
-    { tag: ["@release", "@regression"] },
+    { tag: ["@release", "@regression", "@settings"] },
     async ({ page }) => {
       await page.getByRole("link", { name: "Messages", exact: true }).click();
       await page.waitForTimeout(500);
@@ -51,7 +51,7 @@ test.describe("Settings General Section", () => {
 
   test(
     "Settings Shortcuts section is accessible and lists shortcuts",
-    { tag: ["@release", "@regression"] },
+    { tag: ["@release", "@regression", "@settings"] },
     async ({ page }) => {
       await page.getByRole("link", { name: "Shortcuts", exact: true }).click();
       await page.waitForTimeout(500);

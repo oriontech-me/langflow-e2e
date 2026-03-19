@@ -3,7 +3,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 
 test.describe("Flow Page tests", () => {
-  test("save", { tag: ["@release", "@project-management"] }, async ({ page }) => {
+  test("save", { tag: ["@release"] }, async ({ page }) => {
     await awaitBootstrapTest(page);
 
     await page.getByTestId("blank-flow").click();

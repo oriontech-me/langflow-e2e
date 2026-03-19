@@ -4,7 +4,7 @@ import { renameFlow } from "../../../../helpers/flows/rename-flow";
 
 test(
   "user should be able to edit flow name by clicking on the header or on the main page",
-  { tag: ["@release", "@workspace", "@components", "@project-management"] },
+  { tag: ["@release", "@workspace", "@components"] },
   async ({ page }) => {
     const randomName = Math.random().toString(36).substring(2, 15);
     const randomName2 = Math.random().toString(36).substring(2, 15);

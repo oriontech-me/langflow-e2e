@@ -4,7 +4,7 @@ import { MainPage } from "../../../../pages";
 
 test(
   "CRUD folders",
-  { tag: ["@release", "@api", "@project-management"] },
+  { tag: ["@release", "@api"] },
   async ({ page }) => {
     const mainPage = new MainPage(page);
 

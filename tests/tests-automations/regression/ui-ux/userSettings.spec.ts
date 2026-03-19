@@ -11,7 +11,7 @@ test.afterEach(async () => {
 
 test(
   "should see general profile gradient",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@settings"] },
 
   async ({ page }) => {
     await awaitBootstrapTest(page, {
@@ -54,7 +54,7 @@ const FALLBACK_FIELDS = [
 
 test(
   "should interact with global variables",
-  { tag: ["@release", "@workspace", "@api"] },
+  { tag: ["@release", "@workspace", "@api", "@settings"] },
 
   async ({ page }) => {
     const randomName = Math.random().toString(36).substring(2);
@@ -179,7 +179,7 @@ test(
   },
 );
 
-test("should see shortcuts", { tag: ["@release"] }, async ({ page }) => {
+test("should see shortcuts", { tag: ["@release", "@settings"] }, async ({ page }) => {
   await awaitBootstrapTest(page, {
     skipModal: true,
   });
@@ -311,7 +311,7 @@ test("should see shortcuts", { tag: ["@release"] }, async ({ page }) => {
 
 test(
   "should interact with API Keys",
-  { tag: ["@release", "@api"] },
+  { tag: ["@release", "@api", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, {
       skipModal: true,
@@ -364,7 +364,7 @@ test(
 
 test(
   "should navigate back to flow from global variables",
-  { tag: ["@release", "@workspace"] },
+  { tag: ["@release", "@workspace", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

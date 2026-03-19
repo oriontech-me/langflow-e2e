@@ -47,7 +47,7 @@ const EXPECTED_COLUMNS = [
 
 test(
   "Settings > Messages displays sent messages in correct order with working filters",
-  { tag: ["@release", "@workspace", "@api"] },
+  { tag: ["@release", "@workspace", "@api", "@settings"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.OPENAI_API_KEY,

@@ -8,7 +8,7 @@ import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folder
 
 test(
   "admin user must be able to track their progress in getting started",
-  { tag: ["@release", "@api", "@project-management"] },
+  { tag: ["@release", "@api"] },
   async ({ page, context }) => {
     await page.goto("/");
     await progressTrackTestFn(page, context);
@@ -17,7 +17,7 @@ test(
 
 test(
   "normal user must be able to track their progress in getting started",
-  { tag: ["@release", "@api", "@project-management"] },
+  { tag: ["@release", "@api"] },
   async ({ page, context }) => {
     await addNewUserAndLogin(page);
     await progressTrackTestFn(page, context, true);

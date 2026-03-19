@@ -3,7 +3,7 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 
 test(
   "settings page has appearance/general options",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -48,7 +48,7 @@ test(
 
 test(
   "settings page is accessible via direct navigation",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -77,7 +77,7 @@ test(
 
 test(
   "user profile menu shows settings option",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 

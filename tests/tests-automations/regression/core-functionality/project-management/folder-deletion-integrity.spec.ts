@@ -12,7 +12,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test(
   "deleting a folder should update the folder list immediately",
-  { tag: ["@release", "@api", "@project-management"] },
+  { tag: ["@release", "@api"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -88,7 +88,7 @@ test(
 
 test(
   "deleting one folder should not affect other folders",
-  { tag: ["@release", "@api", "@project-management"] },
+  { tag: ["@release", "@api"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -204,7 +204,7 @@ test(
 
 test(
   "creating a new folder after deletion should work correctly",
-  { tag: ["@release", "@api", "@project-management"] },
+  { tag: ["@release", "@api"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -303,7 +303,7 @@ test(
 
 test(
   "creating a flow after deleting all folders should create a default folder",
-  { tag: ["@release", "@api", "@project-management"] },
+  { tag: ["@release", "@api"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 

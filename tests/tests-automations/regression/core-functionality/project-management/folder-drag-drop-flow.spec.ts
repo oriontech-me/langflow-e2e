@@ -4,7 +4,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
   "creating a flow in a specific folder via API places it in that folder",
-  { tag: ["@release", "@workspace", "@regression", "@project-management"] },
+  { tag: ["@release", "@workspace", "@regression"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -60,7 +60,7 @@ test(
 
 test(
   "moving a flow to another folder via API PATCH updates folder_id",
-  { tag: ["@release", "@workspace", "@regression", "@project-management"] },
+  { tag: ["@release", "@workspace", "@regression"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -140,7 +140,7 @@ test(
 
 test(
   "folder listing shows flows correctly via UI",
-  { tag: ["@release", "@workspace", "@regression", "@project-management"] },
+  { tag: ["@release", "@workspace", "@regression"] },
   async ({ page, request }) => {
     const authToken = await getAuthToken(request);
     const folderName = `ui-folder-${Date.now()}`;

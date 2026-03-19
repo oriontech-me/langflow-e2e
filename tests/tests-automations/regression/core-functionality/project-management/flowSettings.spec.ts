@@ -4,7 +4,7 @@ import { renameFlow } from "../../../../helpers/flows/rename-flow";
 
 test(
   "flowSettings",
-  { tag: ["@release", "@api", "@workspace", "@project-management"] },
+  { tag: ["@release", "@api", "@workspace"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

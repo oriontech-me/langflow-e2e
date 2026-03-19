@@ -4,7 +4,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
   "flows created via API appear on the home listing",
-  { tag: ["@release", "@workspace", "@regression", "@project-management"] },
+  { tag: ["@release", "@workspace", "@regression"] },
   async ({ page, request }) => {
     await awaitBootstrapTest(page);
 
@@ -45,7 +45,7 @@ test(
 
 test(
   "searching flows by name filters results correctly",
-  { tag: ["@release", "@workspace", "@regression", "@project-management"] },
+  { tag: ["@release", "@workspace", "@regression"] },
   async ({ page, request }) => {
     await awaitBootstrapTest(page);
 
