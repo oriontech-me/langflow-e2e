@@ -1,6 +1,7 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 
 // Reusable helper: create blank flow and add the Webhook component.
 // After this call the component is visible on the canvas and the inspector is open.
@@ -22,25 +23,34 @@ async function addWebhookComponent(page: any) {
 }
 
 test(
-  "Webhook component — HTTP POST to webhook endpoint returns 202 Accepted",
+  "Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202",
   { tag: ["@release", "@regression"] },
   async ({ page, request }) => {
     await addWebhookComponent(page);
 
-    // Extract the flow UUID from the browser URL (/flow/{uuid})
     const flowId = page.url().split("/").at(-1)!;
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
 
-    // POST a JSON payload to the webhook endpoint.
-    // LANGFLOW_AUTO_LOGIN=true → no API key required.
-    const response = await request.post(`/api/v1/webhook/${flowId}`, {
+    // Wait for autosave to persist the flow before posting
+    await page.waitForTimeout(4000);
+
+    // JSON body — the primary use case
+    const jsonRes = await request.post(`/api/v1/webhook/${flowId}`, {
       data: { event: "regression-test", value: 42 },
     });
+    expect(jsonRes.status()).toBe(202);
+    const jsonBody = await jsonRes.json();
+    expect(jsonBody.status).toBe("in progress");
+    expect(jsonBody.message).toBe("Task started in the background");
 
-    expect(response.status()).toBe(202);
-    const body = await response.json();
-    expect(body.status).toBe("in progress");
-    expect(body.message).toBe("Task started in the background");
+    // Plain-text body — the endpoint must accept any Content-Type
+    const textRes = await request.post(`/api/v1/webhook/${flowId}`, {
+      data: "regression-plain-text",
+      headers: { "Content-Type": "text/plain" },
+    });
+    expect(textRes.status()).toBe(202);
+    const textBody = await textRes.json();
+    expect(textBody.status).toBe("in progress");
   },
 );
 
@@ -81,12 +91,6 @@ test(
     const endpointValue =
       webhookNode?.data?.node?.template?.endpoint?.value ?? "";
     expect(endpointValue).toBe("BACKEND_URL");
-
-    // The webhook endpoint must accept a POST after the flow is saved
-    const postResponse = await request.post(`/api/v1/webhook/${flowId}`, {
-      data: { regression: true },
-    });
-    expect(postResponse.status()).toBe(202);
   },
 );
 
@@ -153,5 +157,101 @@ test(
     expect(parsed).toEqual({});
 
     await page.keyboard.press("Escape");
+  },
+);
+
+test(
+  "Webhook component — endpoint field renders the actual webhook URL",
+  { tag: ["@release", "@regression"] },
+  async ({ page }) => {
+    await addWebhookComponent(page);
+
+    const flowId = page.url().split("/").at(-1)!;
+    expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
+
+    // The endpoint field has advanced=False and copy_field=True.
+    // The frontend replaces the "BACKEND_URL" placeholder with the real
+    // webhook URL: {protocol}//{host}/api/v1/webhook/{flowId or endpoint_name}.
+    await page.waitForSelector('[data-testid="str_endpoint"]', {
+      timeout: 10000,
+    });
+    const endpointValue = await page
+      .locator('[data-testid="str_endpoint"]')
+      .inputValue();
+
+    expect(endpointValue).toMatch(/^https?:\/\//);
+    expect(endpointValue).toContain("/api/v1/webhook/");
+    expect(endpointValue.length).toBeGreaterThan(0);
+  },
+);
+
+test(
+  "Webhook component — copy button copies the endpoint URL to clipboard",
+  { tag: ["@release", "@regression"] },
+  async ({ page }) => {
+    await addWebhookComponent(page);
+
+    // The CopyFieldAreaComponent renders a copy icon button with testid
+    // btn_copy_{id} where id="str_endpoint" (type_fieldname convention).
+    // Clicking it copies the endpoint URL and shows a success toast.
+    await page.waitForSelector('[data-testid="btn_copy_str_endpoint"]', {
+      timeout: 10000,
+    });
+
+    // Read what the endpoint field is showing before clicking copy
+    const expectedUrl = await page
+      .locator('[data-testid="str_endpoint"]')
+      .inputValue();
+    expect(expectedUrl).toContain("/api/v1/webhook/");
+
+    await page.getByTestId("btn_copy_str_endpoint").click();
+
+    // Verify the success toast appears
+    await expect(page.getByText("Endpoint URL copied")).toBeVisible({
+      timeout: 5000,
+    });
+
+    // Verify the clipboard actually contains the correct URL
+    // playwright.config.ts grants clipboard permissions to Chromium
+    const clipboardText = await page.evaluate(() =>
+      navigator.clipboard.readText(),
+    );
+    expect(clipboardText).toBe(expectedUrl);
+  },
+);
+
+test(
+  "Webhook component — POST to non-existent flow name returns 404",
+  { tag: ["@release", "@regression"] },
+  async ({ request }) => {
+    // The webhook endpoint returns 404 when the flow_id_or_name cannot be resolved.
+    // This is confirmed by the backend unit test: test_webhook_not_found_invalid_endpoint.
+    // Using a string name (not UUID) as the backend resolves by endpoint_name first.
+    const response = await request.post(
+      "/api/v1/webhook/non-existent-flow-e2e-regression-test",
+      {
+        data: { test: "not-found" },
+      },
+    );
+
+    expect(response.status()).toBe(404);
+  },
+);
+
+test(
+  "GET /api/v1/monitor/messages returns 200 with array response",
+  { tag: ["@release", "@regression"] },
+  async ({ request }) => {
+    const authToken = await getAuthToken(request);
+
+    // /api/v1/monitor/messages tracks message delivery for all components including Webhook.
+    const res = await request.get("/api/v1/monitor/messages", {
+      headers: { Authorization: authToken },
+    });
+
+    expect(res.status()).toBe(200);
+    const body = await res.json();
+    // The response must be an array (possibly empty when no flows have run yet)
+    expect(Array.isArray(body)).toBe(true);
   },
 );

@@ -171,10 +171,16 @@
 - [ ] Invalid URL error
 
 #### 3.4 Webhook
-- [-] Webhook component displayed on canvas
-- [-] Webhook URL generated automatically
-- [ ] Trigger via external HTTP request
-- [ ] Received payload propagated to flow
+- [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
+- [x] Flow salvo no banco contém o nó Webhook com endpoint="BACKEND_URL" → `core-components/webhook-component-regression.spec.ts`
+- [x] Campo cURL no inspector mostra URL válida com flow ID e flags corretas (`-X POST`, `Content-Type`, `-d`) → `core-components/webhook-component-regression.spec.ts`
+- [x] Data field vazia retorna objeto Data vazio `{}` ao executar → `core-components/webhook-component-regression.spec.ts`
+- [x] Campo endpoint (`str_endpoint`) renderiza a URL real do webhook → `core-components/webhook-component-regression.spec.ts`
+- [x] Botão de cópia copia a URL correta para o clipboard e exibe toast "Endpoint URL copied" → `core-components/webhook-component-regression.spec.ts`
+- [x] POST para flow inexistente retorna 404 → `core-components/webhook-component-regression.spec.ts`
+- [x] GET `/api/v1/monitor/messages` retorna 200 com array → `core-components/webhook-component-regression.spec.ts`
+- [ ] Payload JSON recebido é propagado corretamente como saída Data do componente
+- [ ] Payload inválido (não-JSON) é encapsulado em `{"payload": "..."}` na saída
 
 #### 3.5 Agent (Component)
 - [-] Agent component displayed on canvas with default settings
