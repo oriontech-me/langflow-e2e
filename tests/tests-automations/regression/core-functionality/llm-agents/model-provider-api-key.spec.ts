@@ -5,7 +5,7 @@ import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 test.describe("Model Provider API Key Management", () => {
   test(
     "Model Providers settings page loads with provider list",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page, { skipModal: true });
 
@@ -24,7 +24,7 @@ test.describe("Model Provider API Key Management", () => {
 
   test(
     "OpenAI provider is listed in Model Providers settings",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page, { skipModal: true });
 
@@ -43,7 +43,7 @@ test.describe("Model Provider API Key Management", () => {
 
   test(
     "Anthropic provider is listed in Model Providers settings",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page, { skipModal: true });
 
@@ -62,7 +62,7 @@ test.describe("Model Provider API Key Management", () => {
 
   test(
     "clicking a provider opens its API key configuration",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page, { skipModal: true });
 

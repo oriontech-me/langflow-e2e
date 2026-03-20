@@ -4,7 +4,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test.skip(
   "user should be able to use youtube transcripts component",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@agents"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

@@ -4,7 +4,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
   "traces page is accessible from main navigation",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@observability"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -39,7 +39,7 @@ test(
 
 test(
   "GET /api/v1/monitor/transactions returns 200 with paginated result",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -64,7 +64,7 @@ test(
 
 test(
   "GET /api/v1/monitor/transactions filters by flow_id (UUID)",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -88,7 +88,7 @@ test(
 
 test(
   "transaction records contain required fields when not empty",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 

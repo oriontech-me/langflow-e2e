@@ -72,7 +72,7 @@ async function setupMockedChatFlow(page: any) {
 
 test(
   "playground opens with a chat input field after connecting ChatInput and ChatOutput",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupMockedChatFlow(page);
 
@@ -89,7 +89,7 @@ test(
 
 test(
   "playground session ID input accepts a custom session value",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupMockedChatFlow(page);
 
@@ -108,7 +108,7 @@ test(
 
 test(
   "changing session ID in playground resets the conversation history display",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupMockedChatFlow(page);
 

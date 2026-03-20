@@ -17,7 +17,7 @@ async function openModelProviders(page: any) {
 test.describe("Model Provider Modal Actions", () => {
   test(
     "model provider page opens and shows provider list",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await openModelProviders(page);
 
@@ -47,7 +47,7 @@ test.describe("Model Provider Modal Actions", () => {
 
   test(
     "entering an API key in provider modal enables the provider",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await openModelProviders(page);
 
@@ -148,7 +148,7 @@ test.describe("Model Provider Modal Actions", () => {
 
   test(
     "removing an API key shows confirmation or success",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await openModelProviders(page);
 

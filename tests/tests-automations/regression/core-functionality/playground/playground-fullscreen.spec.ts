@@ -54,7 +54,7 @@ async function setupPlayground(page: any) {
 
 test(
   "playground modal is visible after opening from the flow editor",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupPlayground(page);
 
@@ -71,7 +71,7 @@ test(
 
 test(
   "playground fullscreen button expands the view when available",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupPlayground(page);
 
@@ -114,7 +114,7 @@ test(
 
 test(
   "playground can be closed and reopened from the flow editor",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@playground"] },
   async ({ page }) => {
     await setupPlayground(page);
 

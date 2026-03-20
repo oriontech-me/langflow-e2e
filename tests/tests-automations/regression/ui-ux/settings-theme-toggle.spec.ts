@@ -3,7 +3,7 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 
 test(
   "user profile menu has theme toggle buttons",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -24,7 +24,7 @@ test(
 
 test(
   "theme can be toggled between light and dark mode",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -102,7 +102,7 @@ test(
 
 test(
   "settings page displays current theme configuration",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 

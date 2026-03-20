@@ -12,7 +12,7 @@ import {
 
 test(
   "user must interact with chat with Input/Output",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@agents"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.OPENAI_API_KEY,

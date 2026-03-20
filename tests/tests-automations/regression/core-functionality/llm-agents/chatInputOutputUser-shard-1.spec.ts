@@ -8,7 +8,7 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
 test(
   "user must be able to see output inspection",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@agents"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.OPENAI_API_KEY,
@@ -49,7 +49,7 @@ test(
 
 test(
   "user must be able to see output inspection using 'o' shortcut",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@agents"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

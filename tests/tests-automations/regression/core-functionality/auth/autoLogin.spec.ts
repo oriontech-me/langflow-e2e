@@ -3,12 +3,12 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test.describe(
   "Auto_login tests",
-  { tag: ["@release", "@api", "@database", "@mainpage"] },
+  { tag: ["@release", "@api", "@database", "@mainpage", "@auth"] },
 
   () => {
     test(
       "auto_login sign in",
-      { tag: ["@release", "@api", "@database"] },
+      { tag: ["@release", "@api", "@database", "@auth"] },
       async ({ page }) => {
         await awaitBootstrapTest(page, {
           skipModal: true,
@@ -19,7 +19,7 @@ test.describe(
 
     test(
       "auto_login block_admin",
-      { tag: ["@release", "@api", "@database"] },
+      { tag: ["@release", "@api", "@database", "@auth"] },
       async ({ page }) => {
         await awaitBootstrapTest(page, {
           skipModal: true,

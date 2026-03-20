@@ -6,7 +6,7 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
 test(
   "user must be able to change mode of MCP tools without any issues",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await page.waitForTimeout(5000);
 
@@ -192,7 +192,7 @@ test(
 
 test(
   "user must be able to add and delete MCP server from sidebar",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -327,7 +327,7 @@ test(
 
 test(
   "STDIO MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -477,7 +477,7 @@ test(
 
 test(
   "HTTP/SSE MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -666,7 +666,7 @@ test(
 
 test(
   "mcp server tools should be refreshed when editing a server",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await page.waitForTimeout(5000);
 
@@ -984,7 +984,7 @@ test(
 
 test(
   "Streamable HTTP MCP server with server-everything should load tools correctly",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     // Start the MCP server with proper health checking
     const server = "https://mcp.deepwiki.com/mcp";
@@ -1071,7 +1071,7 @@ test(
 
 // test(
 //   "SSE MCP server with deepwiki should load tools correctly",
-//   { tag: ["@release", "@workspace", "@components"] },
+//   { tag: ["@release", "@workspace", "@components", "@mcp"] },
 //   async ({ page }) => {
 //     await page.waitForTimeout(5000);
 

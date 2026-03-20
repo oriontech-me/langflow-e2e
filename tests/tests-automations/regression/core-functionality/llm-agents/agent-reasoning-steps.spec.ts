@@ -4,7 +4,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test(
   "Agent component can be added to canvas",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@agents"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -58,7 +58,7 @@ test(
 
 test(
   "Agent component has tool configuration options",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@agents"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -147,7 +147,7 @@ test(
 
 test(
   "Agent component shows reasoning steps section in playground via mock",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@agents"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

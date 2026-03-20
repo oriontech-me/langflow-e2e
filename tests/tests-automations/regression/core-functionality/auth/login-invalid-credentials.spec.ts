@@ -2,7 +2,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 
 test(
   "login with invalid credentials must show error and stay on login page",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     // Mock auto_login to force login screen
     await page.route("**/api/v1/auto_login", (route) => {
@@ -65,7 +65,7 @@ test(
 
 test(
   "login with empty credentials must not redirect to main page",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await page.route("**/api/v1/auto_login", (route) => {
       route.fulfill({

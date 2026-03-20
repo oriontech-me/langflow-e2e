@@ -3,7 +3,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
   "GET /api/v1/monitor/transactions returns items with latency/duration info",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -48,7 +48,7 @@ test(
 
 test(
   "GET /api/v1/monitor/transactions supports pagination parameters",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -75,7 +75,7 @@ test(
 
 test(
   "GET /api/v1/monitor/messages response contains message content",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -115,7 +115,7 @@ test(
 
 test(
   "traces page is accessible in the UI",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@observability"] },
   async ({ page, request }) => {
     const authToken = await getAuthToken(request);
 

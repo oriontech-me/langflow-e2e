@@ -68,7 +68,7 @@ async function setupChatFlow(page: any) {
 test.describe("Playground History Persistence", () => {
   test(
     "playground chat input is visible and accepts text",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       await setupChatFlow(page);
 
@@ -87,7 +87,7 @@ test.describe("Playground History Persistence", () => {
 
   test(
     "closing and reopening playground preserves the chat interface",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       await setupChatFlow(page);
 
@@ -125,7 +125,7 @@ test.describe("Playground History Persistence", () => {
 
   test(
     "playground shows message history section when available",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       await setupChatFlow(page);
 
