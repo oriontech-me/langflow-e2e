@@ -10,3 +10,4 @@ dist/
 *.zip
 .claude/settings.local.json
 docs/superpowers/
+.playwright-mcp/

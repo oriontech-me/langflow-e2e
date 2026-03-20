@@ -156,10 +156,16 @@
 - [ ] Erro de URL inválida
 
 #### 3.4 Webhook
-- [-] Componente Webhook exibido no canvas → `core/unit/webhookComponent.spec.ts`
-- [-] URL de webhook gerada automaticamente → `core/features/webhook-component-regression.spec.ts`
-- [ ] Trigger via requisição HTTP externa
-- [ ] Payload recebido propagado ao flow
+- [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
+- [x] Flow salvo no banco contém o nó Webhook com endpoint="BACKEND_URL" → `core-components/webhook-component-regression.spec.ts`
+- [x] Campo cURL no inspector mostra URL válida com flow ID e flags corretas (`-X POST`, `Content-Type`, `-d`) → `core-components/webhook-component-regression.spec.ts`
+- [x] Data field vazia retorna objeto Data vazio `{}` ao executar → `core-components/webhook-component-regression.spec.ts`
+- [x] Campo endpoint (`str_endpoint`) renderiza a URL real do webhook → `core-components/webhook-component-regression.spec.ts`
+- [x] Botão de cópia copia a URL correta para o clipboard e exibe toast "Endpoint URL copied" → `core-components/webhook-component-regression.spec.ts`
+- [x] POST para flow inexistente retorna 404 → `core-components/webhook-component-regression.spec.ts`
+- [x] GET `/api/v1/monitor/messages` retorna 200 com array → `core-components/webhook-component-regression.spec.ts`
+- [x] Payload JSON recebido é propagado corretamente como saída Data do componente → `core-components/webhook-component-regression.spec.ts`
+- [x] Payload inválido (não-JSON) é encapsulado em `{"payload": "..."}` na saída → `core-components/webhook-component-regression.spec.ts`
 
 #### 3.5 Agent (Componente)
 - [-] Componente Agent exibido no canvas com configurações padrão → `core/features/agent-component-regression.spec.ts`
