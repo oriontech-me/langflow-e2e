@@ -35,6 +35,7 @@ export class SimpleAgentTemplatePage extends BasePage {
 
     // Step 2: Delete all existing flows to avoid "flow must be unique" 400 error
     const emptyPageDescription = this.page.getByTestId("empty_page_description");
+    let deletedFlowsCount = 0;
     while ((await emptyPageDescription.count()) === 0) {
       const dropdown = this.page.getByTestId("home-dropdown-menu").first();
       if (!(await dropdown.isVisible({ timeout: 2000 }).catch(() => false)))
@@ -47,6 +48,10 @@ export class SimpleAgentTemplatePage extends BasePage {
         .first()
         .click();
       await this.page.waitForTimeout(500);
+      deletedFlowsCount++;
+    }
+    if (deletedFlowsCount > 0) {
+      console.warn(`[SimpleAgentTemplatePage] ${deletedFlowsCount} flow(s) deletado(s) antes de carregar o template.`);
     }
 
     // Step 3: Open new project modal (empty page has a different button)
