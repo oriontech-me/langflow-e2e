@@ -12,7 +12,7 @@ test(
     await page.getByText("Search Results", { exact: true }).first().isVisible();
     await page.getByTestId("canvas_controls_dropdown").click();
 
-    const focusElementsOnBoard = async ({ page }) => {
+    const focusElementsOnBoard = async ({ page }: { page: import("@playwright/test").Page }) => {
       await page.waitForSelector('[data-testid="fit_view"]', {
         timeout: 30000,
       });

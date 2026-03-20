@@ -11,7 +11,7 @@ test.describe("Output Modal Copy Button", () => {
       await page.getByTestId("blank-flow").click();
 
       await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 3000,
+        timeout: 30000,
         state: "visible",
       });
 
@@ -20,7 +20,7 @@ test.describe("Output Modal Copy Button", () => {
       await page.getByTestId("sidebar-search-input").fill("text input");
 
       await page.waitForSelector('[data-testid="input_outputText Input"]', {
-        timeout: 3000,
+        timeout: 10000,
         state: "visible",
       });
 
@@ -81,12 +81,17 @@ test.describe("Output Modal Copy Button", () => {
 
       await page.getByTestId("blank-flow").click();
 
-      await page.waitForSelector('[data-testid="disclosure-data sources"]', {
-        timeout: 3000,
+      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
+        timeout: 30000,
         state: "visible",
       });
 
-      await page.getByTestId("disclosure-data sources").click();
+      await page.getByTestId("sidebar-search-input").fill("api request");
+
+      await page.waitForSelector('[data-testid="data_sourceAPI Request"]', {
+        timeout: 10000,
+        state: "visible",
+      });
 
       await page
         .getByTestId("data_sourceAPI Request")

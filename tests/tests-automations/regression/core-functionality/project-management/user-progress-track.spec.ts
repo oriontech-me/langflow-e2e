@@ -1,4 +1,4 @@
-import { BrowserContext, Page } from "playwright/test";
+import { BrowserContext, Page } from "@playwright/test";
 const DISCORD_URL = "https://discord.com/invite/EqksyE2EX9";
 const GITHUB_URL = "https://github.com/langflow-ai/langflow";
 import { expect, test } from "../../../../fixtures/fixtures";

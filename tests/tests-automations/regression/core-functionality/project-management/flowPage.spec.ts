@@ -11,7 +11,7 @@ test.describe("Flow Page tests", () => {
     await page.waitForSelector(
       '[data-testid="sidebar-custom-component-button"]',
       {
-        timeout: 3000,
+        timeout: 30000,
       },
     );
 

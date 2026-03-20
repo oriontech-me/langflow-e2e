@@ -9,7 +9,7 @@ async function setupConnectedFlow(page: any) {
   await page.getByTestId("blank-flow").click();
 
   // Mock run endpoint
-  await page.route("**/api/v1/run/**", async (route) => {
+  await page.route("**/api/v1/run/**", async (route: import("@playwright/test").Route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",

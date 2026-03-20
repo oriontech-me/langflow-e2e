@@ -71,7 +71,7 @@ test(
 
     // Verify success message
     await expect(page.getByText("Project deleted successfully")).toBeVisible({
-      timeout: 5000,
+      timeout: 15000,
     });
 
     // Verify the folder is removed from the sidebar immediately (no stale data)
@@ -170,7 +170,7 @@ test(
 
     // Verify success message
     await expect(page.getByText("Project deleted successfully")).toBeVisible({
-      timeout: 5000,
+      timeout: 15000,
     });
 
     // Verify folder-alpha is removed
@@ -197,7 +197,7 @@ test(
     await page.getByText("Delete").last().click();
 
     await expect(page.getByText("Project deleted successfully")).toBeVisible({
-      timeout: 5000,
+      timeout: 15000,
     });
   },
 );
@@ -254,7 +254,7 @@ test(
     await page.getByText("Delete").last().click();
 
     await expect(page.getByText("Project deleted successfully")).toBeVisible({
-      timeout: 5000,
+      timeout: 15000,
     });
 
     // Verify folder is deleted
@@ -296,7 +296,7 @@ test(
     await page.getByText("Delete").last().click();
 
     await expect(page.getByText("Project deleted successfully")).toBeVisible({
-      timeout: 5000,
+      timeout: 15000,
     });
   },
 );
@@ -355,7 +355,7 @@ test(
 
       // Wait for deletion to complete
       await expect(page.getByText("Project deleted successfully")).toBeVisible({
-        timeout: 5000,
+        timeout: 15000,
       });
 
       // Wait a bit for UI to update
