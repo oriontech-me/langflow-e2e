@@ -14,7 +14,8 @@
     "test:grep": "npx playwright test --grep",
     "report": "npx playwright show-report",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint tests/"
+    "lint": "eslint tests/",
+    "lint:ci": "eslint tests/ --quiet"
   },
   "dependencies": {
     "dotenv": "^16.4.5"
