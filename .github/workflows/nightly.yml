@@ -1,8 +1,10 @@
 name: Nightly E2E Regression
 
 on:
-  schedule:
-    - cron: "0 6 * * *" # 03:00 BRT (UTC-3)
+  # schedule:
+  #   - cron: "0 6 * * *" # 03:00 BRT (UTC-3)
+  # Agendamento desabilitado até a suite estar estável em produção.
+  # Para habilitar: descomentar as linhas acima.
   workflow_dispatch:
     inputs:
       langflow_image_tag:
