@@ -26,20 +26,11 @@ test(
 
     await page.waitForSelector("text=new flow", { timeout: 30000 });
 
-    expect(
-      (
-        await page.waitForSelector("text=new flow", {
-          timeout: 30000,
-        })
-      ).isVisible(),
-    );
+    await expect(page.getByText("new flow")).toBeVisible({ timeout: 30000 });
 
-    expect(
-      await page.waitForSelector("data-testid=new_project_btn_empty_page", {
-        timeout: 5000,
-        state: "visible",
-      }),
-    );
+    await expect(page.getByTestId("new_project_btn_empty_page")).toBeVisible({
+      timeout: 5000,
+    });
 
     await page.getByTestId("new_project_btn_empty_page").click();
 

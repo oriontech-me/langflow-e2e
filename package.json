@@ -12,7 +12,9 @@
     "test:unit": "npx playwright test tests/core/unit/",
     "test:regression": "npx playwright test tests/core/regression/ tests/extended/regression/",
     "test:grep": "npx playwright test --grep",
-    "report": "npx playwright show-report"
+    "report": "npx playwright show-report",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint tests/"
   },
   "dependencies": {
     "dotenv": "^16.4.5"
@@ -20,7 +22,10 @@
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "@types/node": "^25.5.0",
+    "eslint": "^10.1.0",
+    "eslint-plugin-playwright": "^2.10.1",
     "playwright": "^1.57.0",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.57.1"
   }
 }

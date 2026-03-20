@@ -58,9 +58,9 @@ test.skip(
     const trucatedWordCount = await page.getByText(`[truncated`).count();
     expect(trucatedWordCount).toBeGreaterThan(0);
 
-    expect(page.locator("span.ag-header-cell-text").nth(1)).toHaveText("url");
+    await expect(page.locator("span.ag-header-cell-text").nth(1)).toHaveText("url");
 
-    expect(page.locator("span[data-ref=lbRecordCount]").first()).toHaveText(
+    await expect(page.locator("span[data-ref=lbRecordCount]").first()).toHaveText(
       "100",
     );
   },

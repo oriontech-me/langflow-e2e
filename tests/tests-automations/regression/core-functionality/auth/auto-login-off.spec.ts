@@ -198,13 +198,9 @@ test(
       timeout: 30000,
     });
 
-    expect(
-      (
-        await page.waitForSelector("text=Welcome to LangFlow", {
-          timeout: 30000,
-        })
-      ).isVisible(),
-    );
+    await expect(page.getByText("Welcome to LangFlow")).toBeVisible({
+      timeout: 30000,
+    });
 
     await page.waitForTimeout(2000);
 
