@@ -64,7 +64,23 @@ function getTestTargets(): TestTarget[] {
 
   if (strategy === "model" && process.env.MODEL_TEST_ID) {
     const model = process.env.MODEL_TEST_ID;
-    return [{ label: `model:${model}`, options: { model } }];
+    const allModels = getModelsFromJson();
+    const record = allModels.find((m) => m.model === model);
+
+    if (!record) {
+      console.warn(
+        `MODEL_TEST_ID="${model}" not found in models.json — provider cannot be inferred. ` +
+        `Run collect-models.spec.ts first, or set MODEL_TEST_STRATEGY=provider + MODEL_TEST_PROVIDER.`,
+      );
+      return [{ label: `model:${model}`, options: { model } }];
+    }
+
+    const provider = record.provider as Provider;
+    return [{
+      label: `${provider} / ${model}`,
+      options: { provider, model },
+      skipReason: skipReasons.get(provider),
+    }];
   }
 
   const allModels = getModelsFromJson();
