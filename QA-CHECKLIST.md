@@ -354,7 +354,7 @@
 - [-] Histórico persiste ao reabrir Playground → `core/features/playground-history-persist.spec.ts`
 
 #### 9.3 Features Avançadas do Playground
-- [-] Modo fullscreen do Playground → `core/features/playground-fullscreen.spec.ts`
+- [x] Modo fullscreen do Playground → `core/features/playground-fullscreen.spec.ts`
 - [ ] Playground compartilhável (URL pública, sem autenticação)
 - [-] Voice mode (assistente de voz) → `core/features/voice-assistant.spec.ts`
 - [-] Botão Stop no Playground → `extended/features/stop-button-playground.spec.ts`
