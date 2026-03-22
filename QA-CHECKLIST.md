@@ -379,15 +379,15 @@
 ### core-functionality/playground/ — Chat, Renderização e Testes de Saída
 
 #### 9.1 Interações de Chat
-- [-] Abrir Playground
-- [-] Enviar mensagem de texto
-- [-] Receber resposta do LLM
-- [-] Streaming de resposta (SSE)
-- [-] Polling de resposta
-- [-] Resposta direta (direct)
-- [-] UX do Playground
-- [!] Enviar mensagem vazia — deve desabilitar botão enviar (**BUG: botão habilitado mesmo vazio**)
-- [ ] Enviar mensagem enquanto resposta em curso
+- [-] Abrir Playground → (via playground-btn-flow-io)
+- [-] Enviar mensagem de texto → (via input-chat-playground + button-send)
+- [-] Receber resposta do LLM → (via div-chat-message)
+- [-] Streaming de resposta (SSE) → `withEventDeliveryModes` (modo streaming)
+- [-] Polling de resposta → `withEventDeliveryModes` (modo polling)
+- [-] Resposta direta (direct) → `withEventDeliveryModes` (modo direct)
+- [x] UX do Playground (playground-ux) → `playground/playground-ux.spec.ts`
+- [!] Enviar mensagem vazia — deve desabilitar botão enviar → `playground/playground-empty-message-send.spec.ts` (**BUG: botão habilitado mesmo vazio**)
+- [ ] Enviar mensagem enquanto resposta em curso — deve aguardar ou enfileirar
 
 #### 9.2 Histórico e Sessão
 - [-] Configurar session ID customizado
