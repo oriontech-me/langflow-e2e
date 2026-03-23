@@ -363,6 +363,10 @@
 - [-] Copiar output do componente → `extended/features/output-modal-copy-button.spec.ts`
 - [-] Botão de copy no output → `extended/features/copy-button-in-output.spec.ts`
 
+#### 9.5 Output de Dados Estruturados
+- [x] JSON Data output renderiza como code block → `core-functionality/playground/playground-output-data.spec.ts`
+- [x] DataFrame output renderiza como tabela markdown → `core-functionality/playground/playground-output-data.spec.ts`
+
 ---
 
 ### core-functionality/project-management/ — Gestão de Projetos e Pastas
