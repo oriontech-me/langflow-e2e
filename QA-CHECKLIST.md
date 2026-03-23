@@ -379,6 +379,9 @@
 - [-] Deletar mensagem individual do histórico
 - [ ] Limpar histórico completo de sessão
 - [-] Histórico persiste ao reabrir Playground
+- [x] Rename indisponível na sessão Default → `core-functionality/playground/playground-session-rename.spec.ts`
+- [x] Rename indisponível em sessão sem mensagens → `core-functionality/playground/playground-session-rename.spec.ts`
+- [x] Rename disponível e funcional em sessão com mensagens (Enter confirma, Escape cancela) → `core-functionality/playground/playground-session-rename.spec.ts`
 
 #### 9.3 Features Avançadas do Playground
 - [-] Modo fullscreen do Playground
@@ -614,7 +617,7 @@
 | `api/` — API REST | 17 | 17 | 0 | 0 |
 | `core-components/` — Config | 20 | 18 | 0 | 2 |
 | `core-components/` — Componentes | 22 | 16 | 0 | 6 |
-| `core-functionality/playground/` | 17 | 14 | 0 | 3 |
+| `core-functionality/playground/` | 20 | 17 | 0 | 3 |
 | `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
 | `core-functionality/model-provider/` | 20 | 13 | 0 | 7 |
 | `core-functionality/llm-agents/` | 15 | 8 | 0 | 7 |
