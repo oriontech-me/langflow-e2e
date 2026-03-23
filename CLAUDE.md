@@ -42,7 +42,7 @@ npx playwright test tests/path/to/file.spec.ts  # Single file
 npm run report                                # Open HTML report
 ```
 
-Filter by tag: `npx playwright test --grep "@api"` — available tags: `@release`, `@regression`, `@api`, `@components`, `@workspace`, `@database`, `@mainpage`
+Filter by tag: `npx playwright test --grep "@api"` — available tags listed in the Tag Semantics section below.
 
 ## Architecture
 
@@ -94,6 +94,10 @@ regression/
 
 ### Tag Semantics
 
+Tags are split into two groups: **transversais** (severidade/camada) e **funcionais** (área de produto).
+
+**Transversais**
+
 | Tag | When to apply |
 |---|---|
 | `@release` | Happy-path flows required before any deploy |
@@ -103,6 +107,21 @@ regression/
 | `@workspace` | Flow/folder/canvas management |
 | `@database` | Tests with persistent saved state |
 | `@mainpage` | Home/dashboard UI tests |
+
+**Funcionais** (área de produto — use junto com as transversais)
+
+| Tag | Área |
+|---|---|
+| `@model-provider` | Configuração de provedores, API keys, modal de modelo |
+| `@agents` | Comportamento de agentes LLM, raciocínio, steps |
+| `@mcp` | Integração MCP (server e client) |
+| `@playground` | Playground de chat e interações |
+| `@auth` | Autenticação, login, sessão, gestão de usuários |
+| `@observability` | Traces, latência, tokens |
+| `@files` | Página de arquivos, upload, Read File / Write File components |
+| `@templates` | Starter projects e templates de flow |
+| `@settings` | Navegação e configuração na página de Settings |
+| `@ui-ux` | Interface geral, atalhos, aparência |
 
 ## CI/CD
 

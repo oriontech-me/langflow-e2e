@@ -5,7 +5,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
   "Flow save button saves the current flow",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@templates"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -58,7 +58,7 @@ test(
 
 test(
   "Component in canvas can be saved as a custom component via API",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@templates"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -95,7 +95,7 @@ class SavedTemplate(Component):
 
 test(
   "Flow can be exported and re-imported as a template JSON",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@templates"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 

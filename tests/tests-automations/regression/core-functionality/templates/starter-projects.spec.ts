@@ -4,7 +4,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test(
   "user must be able to interact with starter projects",
-  { tag: ["@release", "@starter-projectss"] },
+  { tag: ["@release", "@templates"] },
   async ({ page, context }) => {
     await awaitBootstrapTest(page);
 

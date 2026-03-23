@@ -5,7 +5,7 @@ import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-serv
 
 test(
   "user should be able to manage MCP server tools and configuration",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

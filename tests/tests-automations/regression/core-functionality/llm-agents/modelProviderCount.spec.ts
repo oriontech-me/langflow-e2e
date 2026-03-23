@@ -4,7 +4,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 test.describe("ModelProviderCount Component", () => {
   test(
     "should open model provider page when navigating via settings",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -43,7 +43,7 @@ test.describe("ModelProviderCount Component", () => {
 
   test(
     "should navigate back from model provider page",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -79,7 +79,7 @@ test.describe("ModelProviderCount Component", () => {
 
   test(
     "should navigate to model provider page multiple times",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -120,7 +120,7 @@ test.describe("ModelProviderCount Component", () => {
 
   test(
     "should display provider list in the page",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -152,7 +152,7 @@ test.describe("ModelProviderCount Component", () => {
 
   test(
     "model provider page should display provider count information",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 

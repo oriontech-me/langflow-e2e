@@ -4,7 +4,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 test.describe("ModelInputComponent", () => {
   test(
     "should display model selector in a node with model input",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -43,7 +43,7 @@ test.describe("ModelInputComponent", () => {
 
   test(
     "should open model dropdown and show providers",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -82,7 +82,7 @@ test.describe("ModelInputComponent", () => {
 
   test(
     "should show Manage Model Providers button in dropdown",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -122,7 +122,7 @@ test.describe("ModelInputComponent", () => {
 
   test(
     "should open Model Provider Modal from dropdown",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -164,7 +164,7 @@ test.describe("ModelInputComponent", () => {
 
   test(
     "should show Refresh List button in dropdown",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -201,7 +201,7 @@ test.describe("ModelInputComponent", () => {
 
   test(
     "should display selected model in trigger button",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 

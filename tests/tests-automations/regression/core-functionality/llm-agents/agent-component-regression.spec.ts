@@ -133,6 +133,48 @@ for (const { label, options, skipReason } of targets) {
         await page.getByTestId("input-chat-playground").last().fill("What is 2 + 2?");
 
         await page.getByTestId("button-send").last().click();
+      if (!process.env.CI) {
+        dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
+      }
+
+      await loadSimpleAgentWithOpenAI(page);
+
+      await page.getByTestId("playground-btn-flow-io").click();
+
+      await page
+        .getByTestId("input-chat-playground")
+        .last()
+        .fill("What is 123 + 456?");
+
+      await page.getByTestId("button-send").last().click();
+
+      const stopButton = page.getByRole("button", { name: "Stop" });
+      await stopButton.waitFor({ state: "visible", timeout: 30000 });
+      await expect(stopButton).toBeHidden({ timeout: 120000 });
+
+      // duration-display is hidden in playground view; ThinkingMessage shows "Finished in Xs" instead
+      const finishedText = page.getByText(/Finished in/).last();
+      await expect(finishedText).toBeVisible({ timeout: 10000 });
+
+      const durationText = await finishedText.innerText();
+      expect(durationText.trim().length).toBeGreaterThan(0);
+    },
+  );
+
+  test(
+    "agent must handle multiple consecutive messages in same session",
+    { tag: ["@release", "@components", "@agents"] },
+    async ({ page }) => {
+      test.skip(
+        !process?.env?.OPENAI_API_KEY,
+        "OPENAI_API_KEY required to run this test",
+      );
+
+      if (!process.env.CI) {
+        dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
+      }
+
+      await loadSimpleAgentWithOpenAI(page);
 
         // Some models respond directly without tools — stop button may not appear
         const stopButton = page.getByRole("button", { name: "Stop" });

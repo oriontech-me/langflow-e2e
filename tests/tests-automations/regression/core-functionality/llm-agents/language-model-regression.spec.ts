@@ -157,7 +157,7 @@ test.describe("Language Model Component Regression", () => {
 
   test(
     "model provider modal must open and display providers list",
-    { tag: ["@release", "@components", "@workspace"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       if (!process.env.CI) {
         dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });

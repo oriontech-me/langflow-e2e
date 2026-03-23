@@ -5,7 +5,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 // TODO: This test needs to be rebuilt/refactored
 test.skip(
   "truncated values must be displayed correctly",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@playground"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

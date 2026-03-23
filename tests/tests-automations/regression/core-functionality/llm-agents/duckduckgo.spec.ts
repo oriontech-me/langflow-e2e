@@ -4,7 +4,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test(
   "user should be able to use duckduckgo search component",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@agents"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

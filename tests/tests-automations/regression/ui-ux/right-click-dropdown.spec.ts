@@ -3,7 +3,7 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 
 test(
   "user can open component dropdown menu by right-clicking on nodes",
-  { tag: ["@release", "@components", "@dropdown", "@right-click"] },
+  { tag: ["@release", "@components", "@ui-ux"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

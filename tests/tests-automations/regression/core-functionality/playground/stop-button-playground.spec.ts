@@ -6,7 +6,7 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
 test(
   "User must be able to stop building from inside Playground",
-  { tag: ["@release", "@api"] },
+  { tag: ["@release", "@api", "@playground"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

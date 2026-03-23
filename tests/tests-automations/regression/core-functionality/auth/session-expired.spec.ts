@@ -3,7 +3,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
   "API request with invalid token returns 401 or 403",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ request }) => {
     const response = await request.get("/api/v1/flows/", {
       headers: { Authorization: "Bearer invalid.expired.token" },
@@ -15,7 +15,7 @@ test(
 
 test(
   "API request with no token returns 401 or 403",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ request }) => {
     const response = await request.get("/api/v1/flows/");
 
@@ -26,7 +26,7 @@ test(
 
 test(
   "UI shows login page when auto_login is unavailable (session cannot be established)",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     // Simulate a scenario where the session cannot be established
     // (auto_login returns 500 = auth server down or session expired)
@@ -57,7 +57,7 @@ test(
 
 test(
   "valid token grants access to protected resources",
-  { tag: ["@release", "@api", "@regression"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 

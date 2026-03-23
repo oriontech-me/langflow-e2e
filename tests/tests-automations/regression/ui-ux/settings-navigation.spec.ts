@@ -3,7 +3,7 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 
 test(
   "user can access Settings page from the profile menu",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -21,7 +21,7 @@ test(
 
 test(
   "Settings page shows all main sections in sidebar navigation",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -42,7 +42,7 @@ test(
 
 test(
   "Settings Shortcuts section lists keyboard shortcuts",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -70,7 +70,7 @@ test(
 
 test(
   "Settings Model Providers section loads with provider configuration",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@settings"] },
   async ({ page }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 

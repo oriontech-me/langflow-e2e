@@ -8,7 +8,7 @@ dist/
 *.db
 *.sqlite
 *.zip
-.claude/settings.local.json
+.claude/
 docs/superpowers/
 
 # Artefatos gerados localmente — cada dev gera via collect-models.spec.ts

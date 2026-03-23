@@ -5,7 +5,7 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
 test(
   "user should be able to copy JSON from output",
-  { tag: ["@release", "@workspace"] },
+  { tag: ["@release", "@workspace", "@playground"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
