@@ -16,6 +16,10 @@ LANGFLOW_SUPERUSER=langflow
 LANGFLOW_SUPERUSER_PASSWORD=langflow
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
+GOOGLE_API_KEY=
+MODEL_TEST_STRATEGY=               # all | provider | model (default: all)
+MODEL_TEST_PROVIDER=               # used when MODEL_TEST_STRATEGY=provider
+MODEL_TEST_ID=                     # used when MODEL_TEST_STRATEGY=model
 ```
 
 Start a Langflow instance before running tests:
@@ -45,6 +49,23 @@ npm run lint                                  # ESLint (mesmo check do CI de PR)
 ```
 
 Filter by tag: `npx playwright test --grep "@api"` — available tags listed in the Tag Semantics section below.
+
+### Agent / multi-provider tests
+
+Before running any LLM agent test, collect the available models from a live Langflow instance:
+
+```bash
+npx playwright test tests/collect-models.spec.ts
+```
+
+This generates `tests/helpers/provider-setup/data/providers.json` and `models.json`. Then run agent tests targeting a specific model:
+
+```bash
+MODEL_TEST_STRATEGY=model MODEL_TEST_ID=gpt-4o-mini \
+  npx playwright test tests/tests-automations/regression/core-functionality/llm-agents/agent-component-regression.spec.ts --workers=1
+```
+
+Always use `--workers=1` for agent tests — they create flows with unique names in Langflow and must not run in parallel.
 
 ## Architecture
 
@@ -86,6 +107,9 @@ regression/
 - Use `test.describe()` and `test()` blocks; document steps with `test.step()`
 - Tag every test with at least one tag (`@release`, `@regression`, etc.)
 - Use helpers from `tests/helpers/` instead of writing raw Playwright calls
+- Never hardcode provider, model, or API key — use `SimpleAgentTemplatePage` and the provider setup
+- Never commit with `test.only` — it breaks the entire CI suite
+- Use `--workers=1` for any test that creates flows in Langflow
 
 **Test validation checklist** before marking complete (from CONTRIBUTING.md):
 1. Run with full trace (`--trace=on`) and verify steps match screenshots
@@ -124,6 +148,34 @@ Tags are split into two groups: **transversais** (severidade/camada) e **funcion
 | `@templates` | Starter projects e templates de flow |
 | `@settings` | Navegação e configuração na página de Settings |
 | `@ui-ux` | Interface geral, atalhos, aparência |
+
+### Multi-provider setup
+
+`tests/helpers/provider-setup/` contains the logic for collecting and selecting models:
+
+- `collect-models.spec.ts` validates API keys via real calls and saves available models from the Langflow UI
+- `providers.json` — `{ provider, status, error, checkedAt }`
+- `models.json` — `{ provider, model }`
+- `agent-component-regression.spec.ts` reads both files and parametrizes tests per model; inactive providers appear as `skipped` with the exact reason
+
+**Supported providers**
+
+| Provider | Env var | Default model (fallback) |
+|---|---|---|
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` |
+| Anthropic | `ANTHROPIC_API_KEY` | first available `claude` model |
+| Google | `GOOGLE_API_KEY` | first available `gemini` model |
+
+**Subfolders with their own CLAUDE.md**
+
+| Folder | Topic |
+|---|---|
+| `tests/helpers/` | Helper functions reference |
+| `tests/tests-automations/regression/api/` | REST API tests |
+| `tests/tests-automations/regression/core-functionality/llm-agents/` | Agent tests with multi-provider setup |
+| `tests/tests-automations/regression/core-functionality/model-provider/` | Provider configuration tests |
+| `tests/tests-automations/regression/core-functionality/playground/` | Playground tests |
+| `tests/tests-automations/regression/mcp/` | MCP integration tests |
 
 ## CI/CD
 
