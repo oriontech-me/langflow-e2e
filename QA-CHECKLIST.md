@@ -352,6 +352,9 @@
 - [-] Deletar mensagem individual do histórico → `core/features/playground-message-delete.spec.ts`
 - [ ] Limpar histórico completo de sessão
 - [-] Histórico persiste ao reabrir Playground → `core/features/playground-history-persist.spec.ts`
+- [x] Rename indisponível na sessão Default → `core-functionality/playground/playground-session-rename.spec.ts`
+- [x] Rename indisponível em sessão sem mensagens → `core-functionality/playground/playground-session-rename.spec.ts`
+- [x] Rename disponível e funcional em sessão com mensagens (Enter confirma, Escape cancela) → `core-functionality/playground/playground-session-rename.spec.ts`
 
 #### 9.3 Features Avançadas do Playground
 - [-] Modo fullscreen do Playground → `core/features/playground-fullscreen.spec.ts`
