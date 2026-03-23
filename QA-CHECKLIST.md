@@ -342,7 +342,7 @@
 - [-] Streaming de resposta (SSE) → `withEventDeliveryModes` (modo streaming)
 - [-] Polling de resposta → `withEventDeliveryModes` (modo polling)
 - [-] Resposta direta (direct) → `withEventDeliveryModes` (modo direct)
-- [-] UX do Playground (playground-ux) → `core/features/playground-ux.spec.ts`
+- [x] UX do Playground (playground-ux) → `core/features/playground-ux.spec.ts`
 - [!] Enviar mensagem vazia — deve desabilitar botão enviar → `core/features/playground-empty-message-send.spec.ts` (**BUG: botão habilitado mesmo vazio**)
 - [ ] Enviar mensagem enquanto resposta em curso — deve aguardar ou enfileirar
 

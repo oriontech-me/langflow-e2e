@@ -8,7 +8,6 @@ async function setupPlayground(page: any) {
   await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
   await page.getByTestId("blank-flow").click();
 
-  // Add ChatOutput
   await page.getByTestId("sidebar-search-input").fill("chat output");
   await page.waitForSelector('[data-testid="input_outputChat Output"]', {
     timeout: 30000,
@@ -22,7 +21,6 @@ async function setupPlayground(page: any) {
 
   await zoomOut(page, 2);
 
-  // Add ChatInput via drag
   await page.getByTestId("sidebar-search-input").fill("chat input");
   await page.waitForSelector('[data-testid="input_outputChat Input"]', {
     timeout: 30000,
@@ -39,7 +37,6 @@ async function setupPlayground(page: any) {
     timeout: 10000,
   });
 
-  // Connect ChatInput → ChatOutput
   await page
     .getByTestId("handle-chatinput-noshownode-chat message-source")
     .click();
@@ -52,102 +49,80 @@ async function setupPlayground(page: any) {
   });
 }
 
-test(
-  "playground modal is visible after opening from the flow editor",
-  { tag: ["@release", "@workspace", "@regression", "@playground"] },
-  async ({ page }) => {
-    await setupPlayground(page);
+test.describe("Playground — fullscreen and panel behavior", () => {
+  test(
+    "playground modal is visible after opening from the flow editor",
+    { tag: ["@release", "@workspace", "@regression", "@playground"] },
+    async ({ page }) => {
+      await test.step("Set up ChatInput → ChatOutput flow", async () => {
+        await setupPlayground(page);
+      });
 
-    await page.getByTestId("playground-btn-flow-io").click();
-    await page.waitForSelector('[data-testid="input-chat-playground"]', {
-      timeout: 15000,
-    });
+      await test.step("Open playground and confirm chat input is visible", async () => {
+        await page.getByTestId("playground-btn-flow-io").click();
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 15000 });
+      });
+    },
+  );
 
-    await expect(
-      page.getByTestId("input-chat-playground").last(),
-    ).toBeVisible({ timeout: 5000 });
-  },
-);
+  test(
+    "playground fullscreen button expands the view",
+    { tag: ["@release", "@workspace", "@regression", "@playground"] },
+    async ({ page }) => {
+      await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
+        await setupPlayground(page);
+        await page.getByTestId("playground-btn-flow-io").click();
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 15000 });
+      });
 
-test(
-  "playground fullscreen button expands the view when available",
-  { tag: ["@release", "@workspace", "@regression", "@playground"] },
-  async ({ page }) => {
-    await setupPlayground(page);
+      await test.step("Click fullscreen button", async () => {
+        await page.getByRole("button", { name: "Enter fullscreen" }).click();
+      });
 
-    await page.getByTestId("playground-btn-flow-io").click();
-    await page.waitForSelector('[data-testid="input-chat-playground"]', {
-      timeout: 15000,
-    });
+      await test.step("Confirm close button appears and chat input remains visible", async () => {
+        await expect(
+          page.getByTestId("playground-close-button"),
+        ).toBeVisible({ timeout: 5000 });
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 5000 });
+      });
+    },
+  );
 
-    await expect(
-      page.getByTestId("input-chat-playground").last(),
-    ).toBeVisible({ timeout: 5000 });
+  test(
+    "playground can be closed and reopened from the flow editor",
+    { tag: ["@release", "@workspace", "@regression", "@playground"] },
+    async ({ page }) => {
+      await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
+        await setupPlayground(page);
+        await page.getByTestId("playground-btn-flow-io").click();
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 15000 });
+      });
 
-    // Locate fullscreen button — try the most common testid patterns
-    const fullscreenBtn = page
-      .locator('[data-testid*="maximize"], [data-testid*="fullscreen"], [data-testid="icon-Maximize2"], [data-testid="icon-Maximize"]')
-      .first();
+      await test.step("Enter fullscreen and close playground via keyboard", async () => {
+        await page.getByRole("button", { name: "Enter fullscreen" }).click();
+        const closeBtn = page.getByTestId("playground-close-button");
+        await expect(closeBtn).toBeVisible({ timeout: 5000 });
+        await closeBtn.focus();
+        await page.keyboard.press("Enter");
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).not.toBeVisible({ timeout: 5000 });
+      });
 
-    const isPresent = await fullscreenBtn.isVisible({ timeout: 3000 }).catch(() => false);
-
-    if (!isPresent) {
-      test.skip(true, "Fullscreen button not found — run DOM discovery: page.evaluate(() => Array.from(document.querySelectorAll('[data-testid]')).map(e => e.getAttribute('data-testid')).filter(id => /max|full|screen/i.test(id ?? '')))");
-      return;
-    }
-
-    await fullscreenBtn.click();
-    await page.waitForTimeout(300);
-
-    // After expanding, the input must still be visible
-    await expect(
-      page.getByTestId("input-chat-playground").last(),
-    ).toBeVisible({ timeout: 5000 });
-
-    // A minimize/collapse button must appear
-    const minimizeBtn = page.locator(
-      '[data-testid*="minimize"], [data-testid*="collapse"], [data-testid="icon-Minimize2"], [data-testid="icon-Minimize"]',
-    ).first();
-    await expect(minimizeBtn).toBeVisible({ timeout: 3000 });
-  },
-);
-
-test(
-  "playground can be closed and reopened from the flow editor",
-  { tag: ["@release", "@workspace", "@regression", "@playground"] },
-  async ({ page }) => {
-    await setupPlayground(page);
-
-    // Open playground
-    await page.getByTestId("playground-btn-flow-io").click();
-    await page.waitForSelector('[data-testid="input-chat-playground"]', {
-      timeout: 15000,
-    });
-    await expect(
-      page.getByTestId("input-chat-playground").last(),
-    ).toBeVisible({ timeout: 5000 });
-
-    // Close the playground — use JS click because the panel overlaps the button
-    await page.evaluate(() => {
-      const btn = document.querySelector(
-        '[data-testid="playground-btn-flow-io"]',
-      ) as HTMLElement | null;
-      if (btn) btn.click();
-    });
-    await page.waitForTimeout(800);
-
-    // Playground input should no longer be visible
-    await expect(
-      page.getByTestId("input-chat-playground").last(),
-    ).not.toBeVisible({ timeout: 5000 });
-
-    // Reopen
-    await page.getByTestId("playground-btn-flow-io").click();
-    await page.waitForSelector('[data-testid="input-chat-playground"]', {
-      timeout: 15000,
-    });
-    await expect(
-      page.getByTestId("input-chat-playground").last(),
-    ).toBeVisible({ timeout: 5000 });
-  },
-);
+      await test.step("Reopen playground and confirm chat input is visible again", async () => {
+        await page.getByTestId("playground-btn-flow-io").click();
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 15000 });
+      });
+    },
+  );
+});
