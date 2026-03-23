@@ -589,7 +589,7 @@
 | `api/` — API REST | 17 | 17 | 0 | 0 |
 | `core-components/` — Config | 20 | 18 | 0 | 2 |
 | `core-components/` — Componentes | 22 | 16 | 0 | 6 |
-| `core-functionality/playground/` | 20 | 17 | 0 | 3 |
+| `core-functionality/playground/` | 17 | 14 | 0 | 3 |
 | `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
 | `core-functionality/model-provider/` | 16 | 10 | 0 | 6 |
 | `core-functionality/knowledge-ingestion/` | 8 | 4 | 0 | 4 |
@@ -600,7 +600,7 @@
 | `templates/` | 35 | 33 | 0 | 2 |
 | `ui-ux/` — Canvas | 30 | 28 | 1 | 1 |
 | `ui-ux/` — Settings | 4 | 4 | 0 | 0 |
-| **TOTAL** | **249** | **205 (82%)** | **3** | **41 (16%)** |
+| **TOTAL** | **246** | **202 (82%)** | **3** | **41 (17%)** |
 
 ---
 
