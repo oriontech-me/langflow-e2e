@@ -352,6 +352,9 @@
 - [-] Deletar mensagem individual do histórico → `core/features/playground-message-delete.spec.ts`
 - [ ] Limpar histórico completo de sessão
 - [-] Histórico persiste ao reabrir Playground → `core/features/playground-history-persist.spec.ts`
+- [x] Rename indisponível na sessão Default → `core-functionality/playground/playground-session-rename.spec.ts`
+- [x] Rename indisponível em sessão sem mensagens → `core-functionality/playground/playground-session-rename.spec.ts`
+- [x] Rename disponível e funcional em sessão com mensagens (Enter confirma, Escape cancela) → `core-functionality/playground/playground-session-rename.spec.ts`
 
 #### 9.3 Features Avançadas do Playground
 - [-] Modo fullscreen do Playground → `core/features/playground-fullscreen.spec.ts`
@@ -586,7 +589,7 @@
 | `api/` — API REST | 17 | 17 | 0 | 0 |
 | `core-components/` — Config | 20 | 18 | 0 | 2 |
 | `core-components/` — Componentes | 22 | 16 | 0 | 6 |
-| `core-functionality/playground/` | 17 | 14 | 0 | 3 |
+| `core-functionality/playground/` | 20 | 17 | 0 | 3 |
 | `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
 | `core-functionality/model-provider/` | 16 | 10 | 0 | 6 |
 | `core-functionality/knowledge-ingestion/` | 8 | 4 | 0 | 4 |
@@ -597,7 +600,7 @@
 | `templates/` | 35 | 33 | 0 | 2 |
 | `ui-ux/` — Canvas | 30 | 28 | 1 | 1 |
 | `ui-ux/` — Settings | 4 | 4 | 0 | 0 |
-| **TOTAL** | **246** | **202 (82%)** | **3** | **41 (17%)** |
+| **TOTAL** | **249** | **205 (82%)** | **3** | **41 (16%)** |
 
 ---
 
