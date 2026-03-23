@@ -74,6 +74,8 @@ async function setupChatEchoFlow(page: Page): Promise<void> {
 }
 
 test.describe("Playground Output – Image Upload (ID B0c)", () => {
+  test.describe.configure({ mode: "serial" });
+
   test.afterEach(async ({ page }) => {
     await page.goto("/");
     await cleanAllFlows(page);
