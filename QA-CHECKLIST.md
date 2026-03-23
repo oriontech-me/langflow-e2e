@@ -350,7 +350,8 @@
 - [-] Configurar session ID customizado → `core/features/settings-message-history.spec.ts`
 - [-] Trocar session ID — inicia nova conversa → `core/features/playground-session-id.spec.ts`
 - [-] Deletar mensagem individual do histórico → `core/features/playground-message-delete.spec.ts`
-- [ ] Limpar histórico completo de sessão
+- [x] Limpar histórico completo de sessão (Default session) → `playground/playground-clear-history.spec.ts`
+- [x] Deletar sessão criada pelo usuário → `playground/playground-clear-history.spec.ts`
 - [-] Histórico persiste ao reabrir Playground → `core/features/playground-history-persist.spec.ts`
 
 #### 9.3 Features Avançadas do Playground
