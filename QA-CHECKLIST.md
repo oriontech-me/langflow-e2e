@@ -474,6 +474,7 @@
 #### 12.6 Execução de Flow
 - [-] Executar flow pelo botão Run → `core/features/run-flow.spec.ts`
 - [-] Parar building do flow → `core/features/stop-building.spec.ts`
+- [!] Botão playground desabilitado com flow vazio — precisa revisão → `regression/flow-functionality/generalBugs-shard-3.spec.ts` (**teste skipado: assertion era no-op, comportamento atual do Langflow a confirmar**)
 
 ---
 

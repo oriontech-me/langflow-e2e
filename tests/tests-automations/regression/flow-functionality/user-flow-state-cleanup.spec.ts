@@ -87,13 +87,9 @@ test(
     // Create a flow for User A
     await page.waitForSelector('[id="new-project-btn"]', { timeout: 30000 });
     // Check that User A starts with an empty flows list
-    expect(
-      (
-        await page.waitForSelector("text=Welcome to LangFlow", {
-          timeout: 30000,
-        })
-      ).isVisible(),
-    );
+    await expect(page.getByText("Welcome to LangFlow")).toBeVisible({
+      timeout: 30000,
+    });
 
     await page.waitForSelector('[data-testid="mainpage_title"]', {
       timeout: 30000,

@@ -96,7 +96,7 @@ test(
 
     await page.waitForSelector(".border-ring-frozen", { timeout: 3000 });
 
-    expect(page.locator(".border-ring-frozen")).toHaveCount(1);
+    await expect(page.locator(".border-ring-frozen")).toHaveCount(1);
 
     await page.getByText("Prompt Template", { exact: true }).last().click();
 

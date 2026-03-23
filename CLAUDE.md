@@ -40,6 +40,8 @@ npm run test:regression                       # Regression tests
 npm run test:grep <pattern>                   # Filter by grep pattern
 npx playwright test tests/path/to/file.spec.ts  # Single file
 npm run report                                # Open HTML report
+npm run typecheck                             # TypeScript check (tsc --noEmit)
+npm run lint                                  # ESLint (mesmo check do CI de PR)
 ```
 
 Filter by tag: `npx playwright test --grep "@api"` — available tags listed in the Tag Semantics section below.
@@ -125,9 +127,10 @@ Tags are split into two groups: **transversais** (severidade/camada) e **funcion
 
 ## CI/CD
 
-Three GitHub Actions workflows:
+Four GitHub Actions workflows:
 
-- **`nightly.yml`** — Runs daily at 03:00 BRT against `langflowai/langflow-nightly:latest`; opens a GitHub issue on failure assigned to @lice-reis.
+- **`pr-validation.yml`** — Runs on every PR to `main`; two parallel jobs: TypeScript check (`tsc --noEmit`) and ESLint. Both must pass before merge.
+- **`nightly.yml`** — Runs daily at 03:00 BRT against `langflowai/langflow-nightly:latest`; opens a GitHub issue on failure assigned to @Victor-w-Madeira.
 - **`manual.yml`** — Parameterized manual run; accepts a Docker tag or full URL, a specific test suite, and an optional grep filter.
 - **`file-watcher.yml`** — Detects upstream Langflow changes in critical paths and opens a GitHub issue with the exact `--grep` command needed to revalidate affected areas.
 
