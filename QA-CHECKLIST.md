@@ -345,6 +345,8 @@
 - [-] UX do Playground (playground-ux) → `core/features/playground-ux.spec.ts`
 - [!] Enviar mensagem vazia — deve desabilitar botão enviar → `core/features/playground-empty-message-send.spec.ts` (**BUG: botão habilitado mesmo vazio**)
 - [ ] Enviar mensagem enquanto resposta em curso — deve aguardar ou enfileirar
+- [x] Anexar imagem no chat — preview compacto aparece no input antes de enviar → `core-functionality/playground/playground-output-image.spec.ts`
+- [x] Imagem renderizada na mensagem do usuário após envio → `core-functionality/playground/playground-output-image.spec.ts`
 
 #### 9.2 Histórico e Sessão
 - [-] Configurar session ID customizado → `core/features/settings-message-history.spec.ts`
