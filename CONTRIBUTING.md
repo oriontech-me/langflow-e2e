@@ -165,10 +165,9 @@ for (const { label, options, skipReason } of targets) {
 
 ### Rodando testes de agente
 
-```bash
-# Rodar um modelo específico
-MODEL_TEST_STRATEGY=model MODEL_TEST_ID=gpt-4o-mini \
-  npx playwright test caminho/do/teste.spec.ts --workers=1
+Esta é a etapa mais importante — e a mais ignorada.
+
+Quebre intencionalmente o comportamento que o teste deveria detectar e confirme que o teste **falha**. Se ele continuar passando, a asserção não está validando nada de real.
 
 # Rodar todos os modelos de um provider
 MODEL_TEST_STRATEGY=provider MODEL_TEST_PROVIDER=openai \
@@ -179,15 +178,21 @@ MODEL_TEST_STRATEGY=all \
   npx playwright test caminho/do/teste.spec.ts --workers=1
 ```
 
-> `--workers=1` é obrigatório para testes de agente — eles criam flows no Langflow e conflitam se rodarem em paralelo.
+Para testes de agente, a forma de forçar falha depende do comportamento validado:
 
----
+| O que o teste valida | Como forçar a falha |
+|---|---|
+| Resposta contém conteúdo específico | Trocar o prompt por um que não produza esse conteúdo |
+| Parâmetro afeta o comportamento (ex: `max_tokens`) | Comentar a linha que define o parâmetro no teste |
+| `system_prompt` é respeitado | Não preencher o campo de instructions |
+| Memória é retida entre mensagens | Desconectar o Memory component do flow |
+| Tool result aparece no reasoning panel | Remover a tool do agente antes de executar |
+| New Chat limpa a sessão | Não clicar em New Chat antes de perguntar |
+| Streaming é progressivo | Mockar a resposta como não-streaming via `page.route()` |
 
-## Como validar um teste
+> Se o teste passar em todos esses cenários de quebra, ele é um **falso positivo** e não deve ser mergeado.
 
-Antes de marcar um cenário como coberto no checklist, siga este processo:
-
-**1. Rode o teste isolado com relatório completo**
+**4. Rode em modo debug para acompanhar passo a passo**
 
 ```bash
 PLAYWRIGHT_BASE_URL=http://localhost:7860 npx playwright test caminho/do/teste.spec.ts --reporter=html --trace=on
@@ -218,6 +223,84 @@ A fixture base imprime erros de backend automaticamente. Procure por:
 **6. Atualize o checklist**
 
 Só marque `[x]` após confirmar os 5 passos acima. Se a cobertura for parcial, use `[~]`.
+
+---
+
+## Antipadrões de falso positivo
+
+Os padrões abaixo produzem testes que **nunca falham** — independentemente do estado da aplicação. São os erros mais comuns ao criar testes E2E e os mais difíceis de detectar em revisão de código.
+
+### `|| true` — asserção matematicamente impossível de falhar
+
+```typescript
+// ❌ ERRADO — passa sempre, não valida nada
+expect(hasResponse || hasSteps || true).toBe(true);
+expect(claudeVisible || manageBtnVisible || true).toBe(true);
+```
+
+Um teste com `|| true` na asserção é um placeholder disfarçado. Se você encontrar esse padrão no codebase, reescreva a asserção ou remova o teste.
+
+### `catch(() => false)` sem justificativa — soft check silencioso
+
+```typescript
+// ❌ PROBLEMÁTICO sem contexto — passa mesmo se o elemento nunca aparecer
+const isVisible = await element.isVisible({ timeout: 3000 }).catch(() => false);
+if (isVisible) {
+  await expect(outroElemento).toBeVisible();
+}
+```
+
+O padrão `catch(() => false)` é **aceitável apenas quando o comportamento é genuinamente opcional**. Nesse caso, documente a intenção com um comentário explicando por que o check é soft:
+
+```typescript
+// ✅ CORRETO — soft check intencional e documentado
+// header-icon só aparece quando o agente usa tools.
+// Modelos que respondem diretamente sem tools não geram este ícone — comportamento esperado.
+const usedTools = await page.getByTestId("header-icon").last()
+  .isVisible({ timeout: 3000 }).catch(() => false);
+if (usedTools) {
+  await expect(page.getByTestId("duration-display").last()).toBeVisible();
+}
+```
+
+Se o comportamento **não** é opcional, use uma asserção direta:
+
+```typescript
+// ✅ CORRETO — asserção direta para comportamento obrigatório
+await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
+const responseText = await page.getByTestId("div-chat-message").last().innerText();
+expect(responseText.trim().length).toBeGreaterThan(1);
+```
+
+### Asserção de presença sem validação de conteúdo
+
+```typescript
+// ❌ FRACO — confirma que o elemento existe, mas não que contém o dado correto
+await expect(page.getByTestId("div-chat-message").last()).toBeVisible();
+
+// ✅ MELHOR — valida que o conteúdo é o esperado
+const response = await page.getByTestId("div-chat-message").last().innerText();
+expect(response).toContain("Paris"); // para "what is the capital of France?"
+```
+
+### Hardcode de provider em testes de agente
+
+```typescript
+// ❌ ERRADO — testa apenas Anthropic, ignora OpenAI, Google, WatsonX, Ollama
+await page.getByText("Anthropic").click();
+await page.getByTestId("popover-anchor-input-api_key").fill(process.env.ANTHROPIC_API_KEY);
+
+// ✅ CORRETO — parametrizado pela infraestrutura de providers do projeto
+for (const { label, options, skipReason } of getTestTargets()) {
+  test.describe.serial(`Meu Teste [${label}]`, () => {
+    test("deve ...", async ({ page }) => {
+      await new SimpleAgentTemplatePage(page).load(options);
+    });
+  });
+}
+```
+
+Veja `agent-component-regression.spec.ts` e o `CLAUDE.md` da pasta `llm-agents/` para o padrão completo.
 
 ---
 

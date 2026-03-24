@@ -1,6 +1,10 @@
 name: Nightly E2E Regression
 
 on:
+  # schedule:
+  #   - cron: "0 6 * * *" # 03:00 BRT (UTC-3)
+  # Agendamento desabilitado até a suite estar estável em produção.
+  # Para habilitar: descomentar as linhas acima.
   workflow_dispatch:
     inputs:
       langflow_image_tag:
@@ -100,7 +104,7 @@ jobs:
                 '2. Determine if the failure is a test bug or a Langflow regression',
                 '3. Update or fix the affected tests',
                 '',
-                '/cc @lice-reis',
+                '/cc @Victor-w-Madeira',
               ].join('\n'),
               labels: ['nightly-failure', 'needs-triage'],
             });

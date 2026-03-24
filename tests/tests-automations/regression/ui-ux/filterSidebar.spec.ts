@@ -45,7 +45,7 @@ test(
 
     await page.waitForTimeout(500);
 
-    expect(await page.getByTestId("icon-ListFilter").first()).toBeVisible();
+    await expect(page.getByTestId("icon-ListFilter").first()).toBeVisible();
 
     await page
       .getByTestId("icon-X")

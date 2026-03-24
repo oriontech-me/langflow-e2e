@@ -91,18 +91,12 @@ test(
 
     await Promise.all(
       disclosureTestIds.map((id) => {
-        if (!expect(page.getByTestId(id)).toBeVisible()) {
-          console.error(`${id} is not visible`);
-        }
         return expect(page.getByTestId(id)).toBeVisible();
       }),
     );
 
     await Promise.all(
       elementTestIds.map(async (id) => {
-        if (!expect(page.getByTestId(id).first()).toBeVisible()) {
-          console.error(`${id} is not visible`);
-        }
         return expect(page.getByTestId(id).first()).toBeVisible();
       }),
     );
@@ -122,9 +116,6 @@ test(
 
     await Promise.all(
       visibleModelSpecsTestIds.map((id) => {
-        if (!expect(page.getByTestId(id)).toBeVisible()) {
-          console.error(`${id} is not visible`);
-        }
         return expect(page.getByTestId(id)).toBeVisible();
       }),
     );

@@ -49,7 +49,7 @@ test("user must be able to update outdated components by update all button", asy
     .count();
   expect(outdatedBreakingComponents).toBe(4);
 
-  expect(await page.getByTestId("update-all-button")).toHaveText("Review All");
+  await expect(page.getByTestId("update-all-button")).toHaveText("Review All");
 
   await page.getByTestId("update-all-button").click();
 
@@ -150,7 +150,7 @@ test("user must be able to update outdated components by each outdated component
     .count();
   expect(outdatedBreakingComponents).toBe(4);
 
-  expect(await page.getByTestId("update-all-button")).toHaveText("Review All");
+  await expect(page.getByTestId("update-all-button")).toHaveText("Review All");
 
   await page.getByTestId("review-button").first().click();
 
@@ -174,7 +174,7 @@ test("user must be able to update outdated components by each outdated component
     timeout: 30000,
   });
 
-  expect(await page.getByTestId("update-all-button")).toHaveText("Review All");
+  await expect(page.getByTestId("update-all-button")).toHaveText("Review All");
 
   await awaitBootstrapTest(page, { skipModal: true });
 
