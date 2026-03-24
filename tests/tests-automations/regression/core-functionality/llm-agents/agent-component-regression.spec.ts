@@ -110,6 +110,57 @@ for (const { label, options, skipReason } of targets) {
 
   test.describe.serial(`Agent Component Regression [${label}]`, () => {
     test(
+      "agent must run and respond without any tools connected",
+      { tag: ["@release", "@components", "@agents"] },
+      async ({ page }) => {
+        test.skip(!!skipReason, skipReason ?? "");
+        test.skip(
+          !hasProviderEnvKeys(provider),
+          `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
+        );
+
+        // Use Simple Agent template (has Chat I/O needed for playground) but
+        // send a knowledge question that doesn't require tools — verifies agent
+        // responds even when tool use is not needed (regression for ID 147)
+        try {
+          await new SimpleAgentTemplatePage(page).load(options);
+        } catch (e: any) {
+          if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
+          throw e;
+        }
+
+        await page.getByTestId("playground-btn-flow-io").click();
+
+        await page.waitForSelector('[data-testid="input-chat-playground"]', {
+          timeout: 30000,
+        });
+
+        await page
+          .getByTestId("input-chat-playground")
+          .last()
+          .fill("What is the capital of France?");
+
+        await page.getByTestId("button-send").last().click();
+
+        // Some models respond directly without tools — stop button may not appear
+        const stopButton = page.getByRole("button", { name: "Stop" });
+        const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
+        if (stopVisible) {
+          await expect(stopButton).toBeHidden({ timeout: 120000 });
+        }
+
+        await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
+
+        const responseText = await page
+          .getByTestId("div-chat-message")
+          .last()
+          .innerText();
+
+        expect(responseText.trim().length).toBeGreaterThan(1);
+      },
+    );
+
+    test(
       "agent must show reasoning steps and produce a valid response",
       { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
@@ -282,55 +333,5 @@ for (const { label, options, skipReason } of targets) {
       },
     );
 
-    test(
-      "agent must run and respond without any tools connected (ID 147)",
-      { tag: ["@release", "@components", "@agents"] },
-      async ({ page }) => {
-        test.skip(!!skipReason, skipReason ?? "");
-        test.skip(
-          !hasProviderEnvKeys(provider),
-          `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
-        );
-
-        // Use Simple Agent template (has Chat I/O needed for playground) but
-        // send a knowledge question that doesn't require tools — verifies agent
-        // responds even when tool use is not needed (regression for ID 147)
-        try {
-          await new SimpleAgentTemplatePage(page).load(options);
-        } catch (e: any) {
-          if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
-          throw e;
-        }
-
-        await page.getByTestId("playground-btn-flow-io").click();
-
-        await page.waitForSelector('[data-testid="input-chat-playground"]', {
-          timeout: 30000,
-        });
-
-        await page
-          .getByTestId("input-chat-playground")
-          .last()
-          .fill("What is the capital of France?");
-
-        await page.getByTestId("button-send").last().click();
-
-        // Some models respond directly without tools — stop button may not appear
-        const stopButton = page.getByRole("button", { name: "Stop" });
-        const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-        if (stopVisible) {
-          await expect(stopButton).toBeHidden({ timeout: 120000 });
-        }
-
-        await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
-
-        const responseText = await page
-          .getByTestId("div-chat-message")
-          .last()
-          .innerText();
-
-        expect(responseText.trim().length).toBeGreaterThan(1);
-      },
-    );
   });
 }
