@@ -2,7 +2,7 @@ import dotenv from "dotenv";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { selectAnthropicModel } from "../../../../helpers/mcp/select-anthropic-model";
+import { setupAnthropic } from "../../../../helpers/provider-setup/setup-anthropic";
 
 test(
   "user must not experience message duplication in mathematical expressions with agent component",
@@ -21,7 +21,7 @@ test(
     await page.getByTestId("side_nav_options_all-templates").click();
     await page.getByRole("heading", { name: "Simple Agent" }).first().click();
 
-    await selectAnthropicModel(page);
+    await setupAnthropic(page);
 
     await page.getByTestId("playground-btn-flow-io").click();
 

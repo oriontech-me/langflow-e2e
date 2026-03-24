@@ -13,7 +13,7 @@ git clone https://github.com/lice-reis/langflow-e2e.git
 cd langflow-e2e
 npm install
 npx playwright install chromium --with-deps
-cp .env.example .env  # ajuste PLAYWRIGHT_BASE_URL se necessário
+cp .env.example .env  # ajuste PLAYWRIGHT_BASE_URL e API keys
 ```
 
 **Pré-requisitos:** Node.js 20+, Playwright 1.57+ (instalado via `npm install`), Docker (opcional).
@@ -41,7 +41,7 @@ LANGFLOW_IMAGE_TAG=1.3.0 ./scripts/start-langflow-docker.sh
 
 ```bash
 npm test                                              # suíte completa
-npm run test:core                                     # somente testes core (obrigatórios para release)
+npm run test:core                                     # somente testes core
 npm run test:extended                                 # somente testes extended
 npm run test:regression                               # somente regressão de bugs
 npx playwright test --grep "@api"                    # por tag
@@ -51,17 +51,66 @@ npm run report                                        # abre o último relatóri
 
 ---
 
+## Testes com LLM (agentes, providers, MCP)
+
+Testes que dependem de modelos de linguagem exigem dois passos antes de rodar:
+
+### 1. Coletar providers e modelos
+
+```bash
+npx playwright test tests/collect-models.spec.ts
+```
+
+Esse comando:
+- Valida as API keys de OpenAI, Anthropic e Google via chamada real à API
+- Coleta a lista de modelos disponíveis na UI via Settings → Model Providers
+- Salva dois arquivos em `tests/helpers/provider-setup/data/`:
+  - `providers.json` — status de cada provider (`active` / `inactive` + motivo)
+  - `models.json` — lista de todos os modelos disponíveis por provider
+
+### 2. Configurar a estratégia de teste no `.env`
+
+```bash
+# Rodar todos os modelos do JSON
+MODEL_TEST_STRATEGY=all
+
+# Rodar somente modelos de um provider
+MODEL_TEST_STRATEGY=provider
+MODEL_TEST_PROVIDER=openai
+
+# Rodar somente um modelo específico
+MODEL_TEST_STRATEGY=model
+MODEL_TEST_ID=gpt-4o-mini
+```
+
+### 3. Rodar com --workers=1
+
+Testes de agentes criam flows no Langflow e exigem `--workers=1` para evitar conflito de nomes:
+
+```bash
+npx playwright test tests/tests-automations/regression/core-functionality/llm-agents/agent-component-regression.spec.ts --workers=1
+```
+
+> Providers com `status: "inactive"` no `providers.json` aparecem como `skipped` no output com o motivo exato (ex: saldo insuficiente, key inválida).
+
+---
+
 ## Tags disponíveis
 
-| Tag | Quando usar |
+| Tag | Área |
 |---|---|
-| `@release` | Caminho feliz — validação antes de deploy |
-| `@regression` | Bugs corrigidos que não podem voltar |
-| `@api` | Mudanças em endpoints de backend |
-| `@components` | Mudanças em componentes do canvas |
-| `@workspace` | Mudanças em flows, pastas ou canvas |
-| `@database` | Testes com estado persistido |
-| `@mainpage` | Mudanças na página principal |
+| `@model-provider` | Configuração de provedores, API keys, modal de modelo |
+| `@agents` | Comportamento de agentes LLM, raciocínio, steps |
+| `@mcp` | Integração MCP (server e client) |
+| `@playground` | Playground de chat e interações |
+| `@auth` | Autenticação, login, sessão, gestão de usuários |
+| `@observability` | Traces, latência, tokens |
+| `@files` | Ingestão de arquivos e RAG |
+| `@project-management` | Flows, pastas, navegação, bulk actions |
+| `@templates` | Starter projects e templates de flow |
+| `@ui-ux` | Interface geral, atalhos, aparência |
+| `@settings` | Navegações que usam a página de configurações |
+| `@api` | Testes que chamam a API REST do Langflow |
 
 Todo teste novo deve ter **pelo menos uma tag** e importar de `../../fixtures` (não do Playwright diretamente).
 
@@ -72,57 +121,66 @@ Todo teste novo deve ter **pelo menos uma tag** e importar de `../../fixtures` (
 | Pasta | Responsabilidade |
 |---|---|
 | `assets/` | Arquivos estáticos usados nos testes: documentos para upload, flows JSON prontos para importação e arquivos de mídia. Nenhum código aqui — só dados. |
-| `fixtures/` | Ponto de entrada para todos os testes. Estende o `test` do Playwright com monitoramento automático de erros de backend — intercepta respostas `4xx/5xx` e falhas silenciosas de flow em toda execução. Todo teste importa daqui, nunca do Playwright diretamente. |
-| `helpers/` | Funções de ações específicas reutilizáveis. Encapsulam operações concretas da aplicação — selecionar provedor e modelo de um agente, adicionar um componente customizado, fazer upload de arquivo, rodar um flow. Os testes chamam essas funções sem repetir os passos. |
-| `pages/` | Page Objects para navegação da interface. Cada arquivo representa uma área da UI e expõe funções para navegar até ela — abrir a Sidebar, acessar o Model Provider, ir para Settings, importar um flow. Concentra os seletores e evita que mudem em vários lugares ao mesmo tempo. |
-| `tests-automations/` | Onde vivem os testes. Organizado em `regression/` (cenários de regressão mapeados no checklist) e `smoke/` (verificações rápidas de sanidade). Dentro de `regression/`, cada subpasta corresponde a uma área funcional do Langflow. |
+| `fixtures/` | Ponto de entrada para todos os testes. Estende o `test` do Playwright com monitoramento automático de erros de backend. Todo teste importa daqui, nunca do Playwright diretamente. |
+| `helpers/` | Funções de ações específicas reutilizáveis. Encapsulam operações concretas da aplicação. |
+| `helpers/provider-setup/` | Setup de providers (OpenAI, Anthropic, Google), coleta de modelos e validação de credenciais. |
+| `pages/` | Page Objects para navegação da interface. Cada arquivo representa uma área da UI. |
+| `tests-automations/` | Onde vivem os testes, organizados por área funcional. |
 
 ```
 tests/
 ├── assets/
-│   ├── files/                     # documentos, PDFs, JSONs usados em upload
-│   ├── flows/                     # flows JSON pré-definidos para importação
-│   └── media/                     # imagens e arquivos de mídia
+│   ├── files/
+│   ├── flows/
+│   └── media/
+│
+├── collect-models.spec.ts          # coleta providers.json + models.json (rodar antes de testes LLM)
 │
 ├── fixtures/
 │
 ├── helpers/
-│   ├── api/                       # chamadas e validações de endpoints REST
-│   ├── auth/                      # login, logout, criação de usuários
-│   ├── filesystem/                # upload e gerenciamento de arquivos
-│   ├── flows/                     # criação, execução, importação e exclusão de flows
-│   ├── mcp/                       # configuração de MCP server e client
-│   ├── other/                     # ações diversas sem categoria específica
-│   └── ui/                        # interações de canvas, componentes, sidebar e playground
+│   ├── api/
+│   ├── auth/
+│   ├── filesystem/
+│   ├── flows/
+│   ├── mcp/
+│   ├── other/
+│   ├── provider-setup/             # setup de providers e coleta de modelos
+│   │   ├── collect-models.ts       # helper: valida providers via API + coleta modelos via UI
+│   │   ├── setup-openai.ts
+│   │   ├── setup-anthropic.ts
+│   │   ├── setup-google.ts
+│   │   ├── index.ts                # providerSetupMap + hasProviderEnvKeys
+│   │   └── data/
+│   │       ├── providers.json      # gerado por collect-models.spec.ts
+│   │       └── models.json         # gerado por collect-models.spec.ts
+│   └── ui/
 │
 ├── pages/
-│   ├── auth/                      # login, logout, tela de usuários
-│   ├── components/                # sidebar de componentes, busca, filtros
-│   ├── flows/                     # listagem, importação e exclusão de flows
-│   └── main/                      # página principal, navegação global, MCP, settings, model provider
+│   ├── BasePage.ts
+│   ├── SimpleAgentTemplatePage.ts  # carrega template Simple Agent com provider/modelo configurável
+│   ├── SettingsPage.ts
+│   └── ...
 │
 └── tests-automations/
     ├── regression/
-    │   ├── api/
-    │   │   └── flows/             # endpoints REST (health check, CRUD, execução, monitoramento)
-    │   ├── core-components/       # configuração de componentes + componentes principais
+    │   ├── api/flows/
+    │   ├── core-components/
     │   ├── core-functionality/
-    │   │   ├── auth/              # autenticação e gerenciamento de usuários
-    │   │   ├── knowledge-ingestion-management/  # upload, processamento e vetores
-    │   │   ├── llm-agents/        # agentes e execução com LLM
-    │   │   ├── model-provider/    # gestão de provedores (OpenAI, Ollama, etc.)
-    │   │   ├── observability-monitoring/        # tracing, logs e métricas
-    │   │   ├── playground/        # chat, renderização e testes de saída
-    │   │   ├── project-management/              # gestão de projetos e pastas
-    │   │   └── templates/         # modelos pré-definidos de flows e componentes
-    │   ├── flow-functionality/    # execução de grafos, drag-and-drop e JSON
+    │   │   ├── auth/
+    │   │   ├── knowledge-ingestion-management/
+    │   │   ├── llm-agents/
+    │   │   ├── model-provider/
+    │   │   ├── observability-monitoring/
+    │   │   ├── playground/
+    │   │   ├── project-management/
+    │   │   └── templates/
+    │   ├── flow-functionality/
     │   ├── mcp/
-    │   │   ├── client/            # consumo de ferramentas e contexto
-    │   │   └── server/            # provedor de recursos e tools
-    │   └── ui-ux/                 # interface visual, canvas e design system
+    │   │   ├── client/
+    │   │   └── server/
+    │   └── ui-ux/
     └── smoke/
-        ├── api/
-        └── ui-ux/
 ```
 
 ---

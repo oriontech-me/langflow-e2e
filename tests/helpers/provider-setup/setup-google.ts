@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 
-export async function setupOpenAI(
+export async function setupGoogle(
   page: Page,
   modelTestId?: string,
 ): Promise<void> {
@@ -8,7 +8,7 @@ export async function setupOpenAI(
   const modelDropdown = page.getByTestId("model_model");
 
   if ((await modelDropdown.count()) === 0) {
-    console.log("No Agent node found on canvas — skipping OpenAI setup.");
+    console.log("No Agent node found on canvas — skipping Google Generative AI setup.");
     return;
   }
 
@@ -16,18 +16,18 @@ export async function setupOpenAI(
   await page.getByTestId("model_model").click();
   await page.getByTestId("manage-model-providers").click();
 
-  // Step 3: Select the OpenAI provider
-  await page.getByTestId("provider-item-OpenAI").click();
+  // Step 3: Select the Google Generative AI provider
+  await page.getByTestId("provider-item-Google Generative AI").click();
 
   // Step 4: Save the API key if not already configured
   const saveConfigBtn = page.getByRole("button", { name: "Save Configuration" });
 
   if ((await saveConfigBtn.count()) > 0) {
-    await page.getByPlaceholder("sk-...").fill(process.env.OPENAI_API_KEY ?? "");
+    await page.getByPlaceholder("AIza...").fill(process.env.GOOGLE_API_KEY ?? "");
     await saveConfigBtn.click();
   }
 
-  // Step 5: Enable all available OpenAI models
+  // Step 5: Enable all available Google Generative AI models
   const toggles = page.locator('[data-testid^="llm-toggle"]');
   const toggleCount = await toggles.count();
 
@@ -53,7 +53,7 @@ export async function setupOpenAI(
     }
     await modelOption.click();
   } else {
-    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().waitFor({ state: "visible", timeout: 10000 });
-    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().click();
+    await page.locator('[data-testid$="-option"]', { hasText: "gemini" }).first().waitFor({ state: "visible", timeout: 10000 });
+    await page.locator('[data-testid$="-option"]', { hasText: "gemini" }).first().click();
   }
 }

@@ -3,7 +3,7 @@ import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
-import { selectAnthropicModel } from "../../../../helpers/mcp/select-anthropic-model";
+import { setupAnthropic } from "../../../../helpers/provider-setup/setup-anthropic";
 
 test.describe("Language Model Component Regression", () => {
   test(
@@ -81,7 +81,7 @@ test.describe("Language Model Component Regression", () => {
       await page.getByTestId("side_nav_options_all-templates").click();
       await page.getByRole("heading", { name: "Basic Prompting" }).click();
 
-      await selectAnthropicModel(page);
+      await setupAnthropic(page);
 
       await page.getByTestId("button_run_chat output").click();
       await page.waitForSelector("text=built successfully", { timeout: 30000 });
@@ -140,7 +140,7 @@ test.describe("Language Model Component Regression", () => {
 
       await initialGPTsetup(page);
 
-      await selectAnthropicModel(page);
+      await setupAnthropic(page);
 
       const languageModelNode = page
         .locator(".react-flow__node")

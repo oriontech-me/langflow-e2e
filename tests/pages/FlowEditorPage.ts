@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
-import { BasePage } from "../BasePage";
-import { SidebarComponent } from "../components/SidebarComponent";
+import { BasePage } from "./BasePage";
+import { SidebarComponent } from "./SidebarComponent";
 
 export class FlowEditorPage extends BasePage {
   readonly sidebar: SidebarComponent;
