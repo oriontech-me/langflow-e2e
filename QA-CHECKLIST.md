@@ -164,11 +164,20 @@
 - [-] Removing a variable from the prompt deletes the corresponding port
 
 #### 3.3 API Request (HTTP)
-- [-] Configure URL and HTTP method
-- [-] Add headers and body
-- [ ] Execute GET request and verify status 200 response
-- [ ] Execute POST request with payload
-- [ ] Invalid URL error
+- [x] Renderiza no canvas com handles de URL e API Response corretos → `core-components/api-request-component-regression.spec.ts`
+- [x] Configurar URL e método HTTP (validação de campos UI) → `core-components/api-request-component-regression.spec.ts`
+- [x] Executar request GET e verificar resposta status 200 e estrutura de output → `core-components/api-request-component-regression.spec.ts`
+- [x] Executar request POST e verificar que o verbo POST é enviado (status 200) → `core-components/api-request-component-regression.spec.ts`
+- [x] Resposta HTTP não-2xx (404) propagada como status_code sem crash → `core-components/api-request-component-regression.spec.ts`
+- [x] Query parameters embutidos na URL são enviados e ecoados na resposta → `core-components/api-request-component-regression.spec.ts`
+- [x] Erro de URL inválida exibe notificação com mensagem de erro descritiva → `core-components/api-request-component-regression.spec.ts`
+- [x] Estado do flow é persistido no banco após autosave → `core-components/api-request-component-regression.spec.ts`
+- [-] Executar request PUT e verificar que o verbo PUT é enviado → pendente
+- [-] Executar request PATCH e verificar que o verbo PATCH é enviado → pendente
+- [-] Executar request DELETE e verificar que o verbo DELETE é enviado → pendente
+- [-] Adicionar headers e body (key-value pairs no inspector) → pendente
+- [-] Tab cURL alterna modo e exibe campo de input cURL → pendente
+- [-] Modo cURL executa GET e retorna 200 com dados de resposta → pendente
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`

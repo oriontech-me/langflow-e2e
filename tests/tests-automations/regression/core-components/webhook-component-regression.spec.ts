@@ -28,7 +28,7 @@ test(
   async ({ page, request }) => {
     await addWebhookComponent(page);
 
-    const flowId = page.url().split("/").at(-1)!;
+    const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
 
     // Wait for autosave to persist the flow before posting
@@ -60,7 +60,7 @@ test(
   async ({ page, request }) => {
     await addWebhookComponent(page);
 
-    const flowId = page.url().split("/").at(-1)!;
+    const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
 
     // Wait for the auto-save debounce to flush the flow to the database.
@@ -103,7 +103,7 @@ test(
     // The inspector renders the cURL field (via WebhookFieldComponent → TextAreaComponent)
     // as a textbox containing the actual curl command with the real backend URL and flow ID.
     // This verifies that the CURL_WEBHOOK placeholder is correctly substituted.
-    const flowId = page.url().split("/").at(-1)!;
+    const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
 
     // Read the cURL textbox value directly from the inspector (no modal needed).
@@ -166,7 +166,7 @@ test(
   async ({ page }) => {
     await addWebhookComponent(page);
 
-    const flowId = page.url().split("/").at(-1)!;
+    const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
 
     // The endpoint field has advanced=False and copy_field=True.
@@ -282,7 +282,7 @@ test(
   { tag: ["@release", "@regression"] },
   async ({ page }) => {
     await addWebhookComponent(page);
-    const flowId = page.url().split("/").at(-1)!;
+    const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
 
     // Wait for autosave before reloading
@@ -322,7 +322,7 @@ test(
   { tag: ["@release", "@regression"] },
   async ({ page }) => {
     await addWebhookComponent(page);
-    const flowId = page.url().split("/").at(-1)!;
+    const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
 
     // Wait for autosave before reloading
