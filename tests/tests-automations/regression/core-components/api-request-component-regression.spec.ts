@@ -204,6 +204,99 @@ test(
 );
 
 test(
+  "API Request component — PUT method executes PUT verb and returns 200",
+  { tag: ["@release", "@regression", "@components"] },
+  async ({ page }) => {
+    await addApiRequestComponent(page);
+
+    const urlInput = page.getByTestId("popover-anchor-input-url_input");
+    await expect(urlInput).toBeVisible({ timeout: 10000 });
+    // httpbin.org/put only accepts PUT — returns 405 for any other method
+    await urlInput.fill("https://httpbin.org/put");
+
+    const methodDropdown = page.getByTestId("dropdown_str_method");
+    await expect(methodDropdown).toBeVisible({ timeout: 10000 });
+    await methodDropdown.click();
+    await page.getByText("PUT", { exact: true }).click();
+    await expect(
+      page.getByTestId("value-dropdown-dropdown_str_method"),
+    ).toHaveText("PUT");
+
+    const output = await runAndOpenOutput(page);
+
+    expect(output).toContain("200");
+    expect(output).toContain("httpbin.org/put");
+    expect(output).toContain("status_code");
+    expect(output).toContain("response_headers");
+    expect(output).toContain("result");
+
+    await page.keyboard.press("Escape");
+  },
+);
+
+test(
+  "API Request component — PATCH method executes PATCH verb and returns 200",
+  { tag: ["@release", "@regression", "@components"] },
+  async ({ page }) => {
+    await addApiRequestComponent(page);
+
+    const urlInput = page.getByTestId("popover-anchor-input-url_input");
+    await expect(urlInput).toBeVisible({ timeout: 10000 });
+    // httpbin.org/patch only accepts PATCH — returns 405 for any other method
+    await urlInput.fill("https://httpbin.org/patch");
+
+    const methodDropdown = page.getByTestId("dropdown_str_method");
+    await expect(methodDropdown).toBeVisible({ timeout: 10000 });
+    await methodDropdown.click();
+    await page.getByText("PATCH", { exact: true }).click();
+    await expect(
+      page.getByTestId("value-dropdown-dropdown_str_method"),
+    ).toHaveText("PATCH");
+
+    const output = await runAndOpenOutput(page);
+
+    expect(output).toContain("200");
+    expect(output).toContain("httpbin.org/patch");
+    expect(output).toContain("status_code");
+    expect(output).toContain("response_headers");
+    expect(output).toContain("result");
+
+    await page.keyboard.press("Escape");
+  },
+);
+
+test(
+  "API Request component — DELETE method executes DELETE verb and returns 200",
+  { tag: ["@release", "@regression", "@components"] },
+  async ({ page }) => {
+    await addApiRequestComponent(page);
+
+    const urlInput = page.getByTestId("popover-anchor-input-url_input");
+    await expect(urlInput).toBeVisible({ timeout: 10000 });
+    // httpbin.org/delete only accepts DELETE — returns 405 for any other method
+    await urlInput.fill("https://httpbin.org/delete");
+
+    const methodDropdown = page.getByTestId("dropdown_str_method");
+    await expect(methodDropdown).toBeVisible({ timeout: 10000 });
+    await methodDropdown.click();
+    await page.getByText("DELETE", { exact: true }).click();
+    await expect(
+      page.getByTestId("value-dropdown-dropdown_str_method"),
+    ).toHaveText("DELETE");
+
+    const output = await runAndOpenOutput(page);
+
+    expect(output).toContain("200");
+    expect(output).toContain("httpbin.org/delete");
+    expect(output).toContain("status_code");
+    expect(output).toContain("response_headers");
+    expect(output).toContain("result");
+
+    await page.keyboard.press("Escape");
+  },
+);
+
+test(
   "API Request component — non-2xx HTTP response propagates status_code without crashing",
   { tag: ["@regression", "@components"] },
   async ({ page }) => {
