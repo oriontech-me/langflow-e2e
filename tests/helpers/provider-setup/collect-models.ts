@@ -39,7 +39,7 @@ async function validateOpenAI(model: string): Promise<ProviderRecord> {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         model,
-        max_tokens: 1,
+        max_completion_tokens: 1,
         messages: [{ role: "user", content: "hi" }],
       }),
     });
