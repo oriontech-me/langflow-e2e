@@ -174,9 +174,9 @@
 - [x] Resposta HTTP não-2xx (404) propagada como status_code sem crash → `core-components/api-request-component-regression.spec.ts`
 - [x] Query parameters embutidos na URL são enviados e ecoados na resposta → `core-components/api-request-component-regression.spec.ts`
 - [x] Erro de URL inválida exibe notificação com mensagem de erro descritiva → `core-components/api-request-component-regression.spec.ts`
-- [-] Adicionar headers e body (key-value pairs no inspector) → pendente
-- [-] Tab cURL alterna modo e exibe campo de input cURL → pendente
-- [-] Modo cURL executa GET e retorna 200 com dados de resposta → pendente
+- [x] Adicionar headers e body (key-value pairs no inspector) → `core-components/api-request-component-regression.spec.ts`
+- [x] Tab cURL alterna modo e exibe campo de input cURL → `core-components/api-request-component-regression.spec.ts`
+- [x] Modo cURL executa GET e retorna 200 com dados de resposta → `core-components/api-request-component-regression.spec.ts`
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`

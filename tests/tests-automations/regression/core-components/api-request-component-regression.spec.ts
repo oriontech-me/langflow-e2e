@@ -50,6 +50,65 @@ async function runAndOpenOutput(page: any): Promise<string> {
     .evaluate((el: HTMLElement) => el.textContent ?? "");
 }
 
+// Helper: click an AG Grid cell, fill the resulting textarea editor, and save.
+// Uses toPass() for full retry on AG Grid re-render instability.
+// After save, verifies the value appears as a button in the table dialog
+// to guard against false-positive saves where the editor closed for another reason.
+async function fillViewTextCell(
+  page: any,
+  cellLocator: any,
+  value: string,
+  tableDialog: any,
+): Promise<void> {
+  await expect(async () => {
+    if (!(await page.getByTestId("textarea").isVisible())) {
+      let coords: { x: number; y: number } | null = null;
+      try {
+        coords = await cellLocator.evaluate(
+          (el: Element) => {
+            const rect = el.getBoundingClientRect();
+            return rect.width
+              ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+              : null;
+          },
+          null,
+          { timeout: 500 },
+        );
+      } catch {
+        coords = null;
+      }
+      if (!coords) throw new Error("Cell not found or not rendered");
+      await page.mouse.click(coords.x, coords.y);
+      await page.waitForSelector('[data-testid="textarea"]', { timeout: 2000 });
+    }
+    await page.getByTestId("textarea").fill(value, { timeout: 2000 });
+    const saveCoords = await page.evaluate(() => {
+      const dialogs = Array.from(document.querySelectorAll('[role="dialog"]'));
+      const vt = dialogs.find((d) =>
+        d.querySelector('[data-testid="textarea"]'),
+      );
+      if (!vt) return null;
+      const btn = Array.from(vt.querySelectorAll("button")).find((b) =>
+        b.textContent?.includes("Save"),
+      );
+      if (!btn) return null;
+      const rect = (btn as HTMLElement).getBoundingClientRect();
+      return rect.width
+        ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+        : null;
+    });
+    if (!saveCoords) throw new Error("Save button not found in View Text dialog");
+    await page.mouse.click(saveCoords.x, saveCoords.y);
+    await page.waitForSelector('[data-testid="textarea"]', {
+      state: "detached",
+      timeout: 3000,
+    });
+    await expect(tableDialog.getByRole("button", { name: value })).toBeVisible({
+      timeout: 5000,
+    });
+  }).toPass({ timeout: 40000 });
+}
+
 // =============================================================================
 // UI / Canvas tests — verify component rendering and inspector fields
 // =============================================================================
@@ -339,6 +398,136 @@ test(
     expect(output).toContain("e2e_param");
     expect(output).toContain("functional_test_value");
     expect(output).toContain("200");
+
+    await page.keyboard.press("Escape");
+  },
+);
+
+// =============================================================================
+// Headers / Body / cURL tests
+// =============================================================================
+
+test(
+  "API Request component — inspector accepts headers and body key-value pairs",
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    await addApiRequestComponent(page);
+
+    // ── Headers table ────────────────────────────────────────────────────────
+    // Open the headers key-value table
+    const headersDiv = page.getByTestId("div-table_headers");
+    await expect(headersDiv).toBeVisible({ timeout: 10000 });
+    await headersDiv.getByRole("button", { name: "Open table" }).click();
+
+    const headersDialog = page.locator('[role="dialog"]').last();
+    await expect(headersDialog).toBeVisible({ timeout: 10000 });
+
+    // Add a row and fill the Key cell
+    await headersDialog.getByTestId("add-row-button").click();
+
+    const headerKeyCell = headersDialog
+      .locator('[role="treegrid"] [role="row"]')
+      .last()
+      .locator('[col-id="key"]');
+
+    await fillViewTextCell(page, headerKeyCell, "X-E2E-Header", headersDialog);
+
+    // Close headers dialog via Cancel to keep the inspector panel open
+    await headersDialog.getByTestId("btn-cancel-modal").click();
+    await expect(headersDialog).not.toBeVisible({ timeout: 5000 });
+
+    // ── Body table ───────────────────────────────────────────────────────────
+    const bodyDiv = page.getByTestId("div-table_body");
+    await expect(bodyDiv).toBeVisible({ timeout: 10000 });
+    await bodyDiv.getByRole("button", { name: "Open table" }).click();
+
+    const bodyDialog = page.locator('[role="dialog"]').last();
+    await expect(bodyDialog).toBeVisible({ timeout: 10000 });
+
+    await bodyDialog.getByTestId("add-row-button").click();
+
+    const bodyKeyCell = bodyDialog
+      .locator('[role="treegrid"] [role="row"]')
+      .last()
+      .locator('[col-id="key"]');
+
+    await fillViewTextCell(page, bodyKeyCell, "payload_key", bodyDialog);
+
+    await bodyDialog.getByTestId("btn-cancel-modal").click();
+    await expect(bodyDialog).not.toBeVisible({ timeout: 5000 });
+
+    // Canvas and component must still be intact after table interactions
+    await expect(page.getByTestId("title-API Request")).toBeVisible();
+    await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  },
+);
+
+test(
+  "API Request component — cURL tab switches mode and field accepts a cURL command",
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    await addApiRequestComponent(page);
+
+    // The inspector has two tabs: URL (tab_0) and cURL (tab_1)
+    await expect(page.getByTestId("tab_0_url")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("tab_1_curl")).toBeVisible({
+      timeout: 10000,
+    });
+
+    // Switch to cURL tab
+    await page.getByTestId("tab_1_curl").click();
+
+    // The cURL textarea must become visible
+    const curlTextarea = page.getByTestId("textarea_str_curl_input");
+    await expect(curlTextarea).toBeVisible({ timeout: 10000 });
+
+    // Fill with a valid cURL command
+    const curlCommand =
+      "curl -X GET https://httpbin.org/get -H 'Accept: application/json'";
+    await curlTextarea.fill(curlCommand);
+    await expect(curlTextarea).toHaveValue(curlCommand);
+
+    // The cURL input handle must be present on the left side of the node
+    await expect(
+      page.getByTestId("handle-apirequest-shownode-curl-left"),
+    ).toBeVisible();
+
+    // Canvas must still show exactly one node
+    await expect(page.getByTestId("title-API Request")).toBeVisible();
+    await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  },
+);
+
+test(
+  "API Request component — cURL mode executes GET request and returns 200 with response data",
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    await addApiRequestComponent(page);
+
+    // The URL field is required even when the cURL tab is active.
+    // Fill it first in the URL tab, then switch to the cURL tab.
+    const urlInput = page.getByTestId("popover-anchor-input-url_input");
+    await expect(urlInput).toBeVisible({ timeout: 10000 });
+    await urlInput.fill("https://httpbin.org/get");
+
+    // Switch to cURL tab — the curl_input field accepts extra cURL options
+    await page.getByTestId("tab_1_curl").click();
+    const curlTextarea = page.getByTestId("textarea_str_curl_input");
+    await expect(curlTextarea).toBeVisible({ timeout: 10000 });
+
+    // Add an Accept header via cURL syntax to exercise the curl_input field
+    await curlTextarea.fill(
+      "curl -X GET https://httpbin.org/get -H 'Accept: application/json'",
+    );
+
+    // Run the component and inspect the output
+    const output = await runAndOpenOutput(page);
+
+    // A successful GET returns status 200 and the httpbin echo payload
+    expect(output).toContain("200");
+    expect(output).toContain("httpbin.org");
+    expect(output).toContain("status_code");
+    expect(output).toContain("result");
 
     await page.keyboard.press("Escape");
   },
