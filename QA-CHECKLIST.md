@@ -182,8 +182,11 @@
 - [ ] Configurar model provider diretamente no componente Agent
 
 #### 3.6 Loop Component
-- [-] Componente Loop no canvas
-- [ ] Loop executa número correto de iterações
+- [x] Componente Loop renderiza no canvas com title e botão run → `core-components/loop-component-regression.spec.ts`
+- [x] Handles corretos: inputs-left, item-left, item-right, done-right → `core-components/loop-component-regression.spec.ts`
+- [x] Botões de output inspection presentes para item e done → `core-components/loop-component-regression.spec.ts`
+- [x] Run sem conexões exibe notificação "Flow build failed" sem crash → `core-components/loop-component-regression.spec.ts`
+- [ ] Loop executa número correto de iterações com lista conectada
 - [ ] Loop para ao atingir condição de saída
 
 #### 3.7 Nested / Agrupamento
