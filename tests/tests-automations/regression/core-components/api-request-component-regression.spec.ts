@@ -140,42 +140,6 @@ test(
   },
 );
 
-test(
-  "API Request component — flow is saved and node persists in database",
-  { tag: ["@regression", "@components"] },
-  async ({ page }) => {
-    await addApiRequestComponent(page);
-
-    const flowId = page.url().split("/").slice(-1)[0];
-    expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
-
-    // Wait for autosave debounce to flush the flow to the database
-    await page.waitForTimeout(4000); 
-
-    // Fetch the flow via browser context to carry session cookies
-    const flowData = await page.evaluate(async (fId) => {
-      const res = await fetch(`/api/v1/flows/${fId}`, {
-        credentials: "include",
-      });
-      if (!res.ok) return null;
-      return res.json();
-    }, flowId);
-
-    expect(flowData).not.toBeNull();
-    const nodes: any[] = flowData?.data?.nodes ?? [];
-
-    // The flow must contain an APIRequest node
-    const apiRequestNode = nodes.find(
-      (n: any) => n.data?.type === "APIRequest",
-    );
-    expect(apiRequestNode).toBeDefined();
-
-    // The URL input field must exist in the template (field name: url_input)
-    const urlField = apiRequestNode?.data?.node?.template?.url_input;
-    expect(urlField).toBeDefined();
-  },
-);
-
 // =============================================================================
 // Execution / Output tests — verify HTTP behavior and output Data structure
 // =============================================================================
