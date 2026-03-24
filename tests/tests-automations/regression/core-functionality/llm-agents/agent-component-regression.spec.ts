@@ -181,7 +181,7 @@ for (const { label, options, skipReason } of targets) {
 
         await page.getByTestId("playground-btn-flow-io").click();
 
-        await page.getByTestId("input-chat-playground").last().fill("What is 2 + 2?");
+        await page.getByTestId("input-chat-playground").last().fill("Who was the first astronaut to walk on the Moon?");
 
         await page.getByTestId("button-send").last().click();
 
@@ -229,7 +229,7 @@ for (const { label, options, skipReason } of targets) {
         await page
           .getByTestId("input-chat-playground")
           .last()
-          .fill("Write a very long essay about the history of artificial intelligence.");
+          .fill("Write a detailed story about the life and adventures of a fictional explorer in the 18th century.");
 
         await page.getByTestId("button-send").last().click();
 
@@ -271,7 +271,7 @@ for (const { label, options, skipReason } of targets) {
 
         await page.getByTestId("playground-btn-flow-io").click();
 
-        await page.getByTestId("input-chat-playground").last().fill("What is 123 + 456?");
+        await page.getByTestId("input-chat-playground").last().fill("What are the main differences between mammals and reptiles?");
 
         await page.getByTestId("button-send").last().click();
 
@@ -312,7 +312,7 @@ for (const { label, options, skipReason } of targets) {
 
         await page.getByTestId("playground-btn-flow-io").click();
 
-        for (const message of ["Hello.", "What is 1 + 1?"]) {
+        for (const message of ["Hello.", "Name three countries in South America."]) {
           await page.getByTestId("input-chat-playground").last().fill(message);
 
           await page.getByTestId("button-send").last().click();
