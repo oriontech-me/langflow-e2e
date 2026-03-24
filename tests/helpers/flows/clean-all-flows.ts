@@ -1,6 +1,12 @@
 import { Page } from "@playwright/test";
 
 export const cleanAllFlows = async (page: Page) => {
+  // Wait for the home page to be ready before starting the deletion loop.
+  // Prevents the loop from running against an incomplete page load.
+  await page.waitForSelector(
+    '[data-testid="empty_page_description"], [data-testid="home-dropdown-menu"]',
+    { timeout: 20000 },
+  );
   const emptyPageDescription = page.getByTestId("empty_page_description");
   while ((await emptyPageDescription.count()) === 0) {
     await page.getByTestId("home-dropdown-menu").first().click();
