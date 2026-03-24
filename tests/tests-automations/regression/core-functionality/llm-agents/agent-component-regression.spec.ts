@@ -111,7 +111,7 @@ for (const { label, options, skipReason } of targets) {
   test.describe.serial(`Agent Component Regression [${label}]`, () => {
     test(
       "agent must show reasoning steps and produce a valid response",
-      { tag: ["@release", "@components"] },
+      { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -133,48 +133,6 @@ for (const { label, options, skipReason } of targets) {
         await page.getByTestId("input-chat-playground").last().fill("What is 2 + 2?");
 
         await page.getByTestId("button-send").last().click();
-      if (!process.env.CI) {
-        dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-      }
-
-      await loadSimpleAgentWithOpenAI(page);
-
-      await page.getByTestId("playground-btn-flow-io").click();
-
-      await page
-        .getByTestId("input-chat-playground")
-        .last()
-        .fill("What is 123 + 456?");
-
-      await page.getByTestId("button-send").last().click();
-
-      const stopButton = page.getByRole("button", { name: "Stop" });
-      await stopButton.waitFor({ state: "visible", timeout: 30000 });
-      await expect(stopButton).toBeHidden({ timeout: 120000 });
-
-      // duration-display is hidden in playground view; ThinkingMessage shows "Finished in Xs" instead
-      const finishedText = page.getByText(/Finished in/).last();
-      await expect(finishedText).toBeVisible({ timeout: 10000 });
-
-      const durationText = await finishedText.innerText();
-      expect(durationText.trim().length).toBeGreaterThan(0);
-    },
-  );
-
-  test(
-    "agent must handle multiple consecutive messages in same session",
-    { tag: ["@release", "@components", "@agents"] },
-    async ({ page }) => {
-      test.skip(
-        !process?.env?.OPENAI_API_KEY,
-        "OPENAI_API_KEY required to run this test",
-      );
-
-      if (!process.env.CI) {
-        dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-      }
-
-      await loadSimpleAgentWithOpenAI(page);
 
         // Some models respond directly without tools — stop button may not appear
         const stopButton = page.getByRole("button", { name: "Stop" });
@@ -189,19 +147,18 @@ for (const { label, options, skipReason } of targets) {
         const responseText = await lastMessage.innerText();
         expect(responseText.trim().length).toBeGreaterThan(1);
 
-        // header-icon and duration-display appear when agent uses tools
-        // soft-check: only assert if tools were actually called
-        const headerIcon = page.getByTestId("header-icon").last();
-        if (await headerIcon.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await expect(page.getByTestId("duration-display").last()).toBeVisible();
-          await expect(page.getByTestId("icon-check").first()).toBeVisible();
+        // ThinkingMessage shows "Finished in Xs" when agent uses reasoning steps — soft-check
+        const finishedText = page.getByText(/Finished in/).last();
+        if (await finishedText.isVisible({ timeout: 5000 }).catch(() => false)) {
+          const durationText = await finishedText.innerText();
+          expect(durationText.trim().length).toBeGreaterThan(0);
         }
       },
     );
 
     test(
       "agent stop button must halt execution mid-run",
-      { tag: ["@release", "@components"] },
+      { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -246,7 +203,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent must display duration after successful run",
-      { tag: ["@release", "@components"] },
+      { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -287,7 +244,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent must handle multiple consecutive messages in same session",
-      { tag: ["@release", "@components"] },
+      { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -327,7 +284,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent must run and respond without any tools connected (ID 147)",
-      { tag: ["@release", "@components"] },
+      { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
