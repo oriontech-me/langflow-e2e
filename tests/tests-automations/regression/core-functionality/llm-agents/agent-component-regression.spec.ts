@@ -406,8 +406,10 @@ for (const { label, options, skipReason } of targets) {
 
         await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
 
-        // Assert that the response time indicator is displayed in the playground
-        await expect(page.getByText(/Finished in \d+(\.\d+)?s/).last()).toBeVisible({ timeout: 10000 });
+        // Close the playground and check the duration indicator on the canvas node
+        await page.getByTestId("playground-close-button").click();
+
+        await expect(page.getByTestId("node_duration_agent")).toBeVisible({ timeout: 10000 });
       },
     );
 
