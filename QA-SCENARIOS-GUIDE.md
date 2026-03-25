@@ -918,49 +918,142 @@
 
 ## 18. Agentes LLM — Execução e Controle
 
-**Arquivos:** `llm-agents/agent-component-regression.spec.ts`, `llm-agents/agent-reasoning-steps.spec.ts`, `llm-agents/memory-history-regression.spec.ts`
+**Arquivos:** `llm-agents/agent-component-regression.spec.ts`, `llm-agents/memory-history-regression.spec.ts`
 
 ---
 
-### 18.1 Agent com tool calling executa corretamente `[-]`
+### agent-component-regression.spec.ts
 
-**Objetivo:** Verificar que o Agent consegue usar ferramentas para responder perguntas.
+---
+
+### 18.1 Agent responde sem tools conectadas `[x]`
+
+**Objetivo:** Verificar que o agente executa e retorna uma resposta válida mesmo sem nenhuma tool conectada.
 
 **Passo a passo:**
-1. Criar flow: Agent + LLM configurado + Tool (ex: API Request em Tool Mode).
-2. Conectar Tool ao handle de tools do Agent.
-3. Conectar LLM ao handle de language model do Agent.
-4. Abrir Playground e enviar pergunta que requer uso da tool.
-5. Verificar que o Agent chama a tool e retorna resposta baseada no resultado.
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"What is the capital of France?"`.
+4. Aguardar execução finalizar (botão Stop desaparece ou nunca aparece).
+5. Verificar que `div-chat-message` está visível.
+6. Verificar que o texto da resposta tem conteúdo (length > 1).
 
-**Validação:** Agent chama tool e retorna resposta coerente.
+**Validação:** Agente responde corretamente sem tools conectadas.
 
 ---
 
-### 18.2 Agent exibe steps de raciocínio no Playground `[x]`
+### 18.2 Agent exibe steps de raciocínio e retorna resposta válida `[x]`
 
 **Objetivo:** Verificar que o Agent responde com conteúdo válido e, quando utiliza raciocínio interno, exibe o indicador de duração no Playground. O check de steps é soft — modelos que respondem diretamente sem tools não geram o indicador, o que é comportamento esperado.
 
-**Arquivo:** `llm-agents/agent-component-regression.spec.ts`
-
 **Passo a passo:**
-1. Carregar template "Simple Agent" e configurar modelo via `models.json` (OpenAI, Anthropic ou Gemini).
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
 2. Abrir Playground.
-3. Enviar mensagem de conhecimento geral: `"Who was the first astronaut to walk on the Moon?"`.
+3. Enviar: `"Who was the first astronaut to walk on the Moon?"`.
 4. Aguardar execução finalizar (botão Stop desaparece ou nunca aparece — ambos válidos).
-5. Verificar que a última mensagem do assistente está visível.
-6. Verificar que o texto da resposta tem conteúdo (length > 1).
-7. **(Soft check)** Se o texto `"Finished in Xs"` estiver visível, verificar que não está vazio.
+5. Verificar que `div-chat-message` está visível e tem conteúdo (length > 1).
+6. **(Soft check)** Se `"Finished in Xs"` estiver visível, verificar que não está vazio.
 
 **DOM relevante:**
 - `div-chat-message` → mensagem do assistente
-- `"Finished in"` → indicador de duração (`bot-message.tsx`), exibido quando o agente usa reasoning steps
+- `"Finished in"` → indicador de duração, exibido quando o agente usa reasoning steps
 
 **Validação:** Resposta válida retornada para todos os modelos; indicador de duração verificado quando presente.
 
 ---
 
-### 18.3 Memory History retém contexto entre mensagens na mesma sessão `[x]`
+### 18.3 Agent stop button halts execution mid-run `[x]`
+
+**Objetivo:** Verificar que o botão Stop interrompe a execução do agente durante um run em andamento.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"Write a detailed story about the life and adventures of a fictional explorer in the 18th century."`.
+4. Aguardar o botão Stop aparecer (timeout 30s). Se não aparecer, o modelo respondeu rápido demais — skip implícito.
+5. Clicar no botão Stop via `dispatchEvent("click")`.
+6. Verificar que o botão Stop some.
+7. Verificar que `input-chat-playground` volta a estar visível.
+
+**Validação:** Execução interrompida com sucesso e playground volta ao estado de entrada.
+
+---
+
+### 18.4 Agent displays duration after successful run `[x]`
+
+**Objetivo:** Verificar que o tempo de execução é exibido ao final de um run bem-sucedido.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"What are the main differences between mammals and reptiles?"`.
+4. Aguardar execução finalizar (botão Stop desaparece ou nunca aparece).
+5. Verificar que `div-chat-message` está visível.
+6. **(Soft check)** Se `"Finished in Xs"` estiver visível, verificar que não está vazio.
+
+**Validação:** Indicador de duração exibido quando presente após run bem-sucedido.
+
+---
+
+### 18.5 Agent streams response progressively in the playground `[x]`
+
+**Objetivo:** Verificar que a resposta do agente é exibida progressivamente no playground, confirmando que o streaming está ativo durante a geração.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"Write a 5-paragraph summary explaining what artificial intelligence is, covering its definition, history, main techniques, applications, and future perspectives."`.
+4. Aguardar `div-chat-message` aparecer (agente iniciou a resposta).
+5. Capturar o texto naquele momento (`textAtStart`).
+6. Aguardar 3 segundos.
+7. Capturar o texto novamente (`textAfterWait`).
+8. Se o botão Stop ainda estiver visível: assert que `textAfterWait.length > textAtStart.length`.
+9. Aguardar o Stop desaparecer e verificar que o texto final tem conteúdo (length > 1).
+
+**Validação:** Texto cresce progressivamente durante o streaming; resposta final com conteúdo válido.
+
+---
+
+### 18.6 Playground displays response time on canvas after closing `[x]`
+
+**Objetivo:** Verificar que após o agente finalizar a resposta e o playground ser fechado, o indicador de duração é exibido no nó do agente no canvas.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"What are the main differences between mammals and reptiles?"`.
+4. Aguardar a resposta finalizar (botão Stop desaparece) e `div-chat-message` estar visível.
+5. Clicar em `playground-close-button` para fechar o playground.
+6. Verificar que `node_duration_agent` está visível no canvas.
+
+**DOM relevante:**
+- `playground-close-button` → botão de fechar o playground
+- `node_duration_agent` → indicador de duração no nó do agente no canvas
+
+**Validação:** Indicador de duração exibido no canvas após fechar o playground.
+
+---
+
+### 18.7 Agent handles multiple consecutive messages in same session `[x]`
+
+**Objetivo:** Verificar que o agente responde corretamente a múltiplas mensagens em sequência na mesma sessão.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar `"Hello."` e aguardar resposta.
+4. Enviar `"Name three countries in South America."` e aguardar resposta.
+5. Verificar que há pelo menos 2 mensagens visíveis (`div-chat-message` count ≥ 2).
+
+**Validação:** Agente responde corretamente às duas mensagens na mesma sessão.
+
+---
+
+### memory-history-regression.spec.ts
+
+---
+
+### 18.8 Memory History retém contexto entre mensagens na mesma sessão `[x]`
 
 **Objetivo:** Verificar que o componente Message History mantém o histórico de conversa entre mensagens dentro da mesma sessão do Playground.
 
@@ -969,9 +1062,9 @@
 **Passo a passo:**
 1. Carregar template "Memory Chatbot" e configurar modelo OpenAI.
 2. Abrir Playground e iniciar nova sessão (`new-chat`).
-3. Enviar mensagem com dado único: `"In our conversation my name is TESTNAME_XY9Z."`.
-4. Aguardar resposta do assistente (1 mensagem exibida).
-5. Enviar segunda mensagem: `"What is my name from our conversation?"`.
+3. Enviar: `"In our conversation my name is TESTNAME_XY9Z."`.
+4. Aguardar resposta (1 mensagem exibida).
+5. Enviar: `"What is my name from our conversation?"`.
 6. Aguardar resposta (2 mensagens exibidas).
 7. Verificar que a resposta contém `"TESTNAME_XY9Z"`.
 
@@ -979,7 +1072,7 @@
 
 ---
 
-### 18.4 Isolamento de sessão: session IDs distintos têm históricos independentes `[x]`
+### 18.9 Isolamento de sessão: session IDs distintos têm históricos independentes `[x]`
 
 **Objetivo:** Verificar que duas sessões distintas não compartilham histórico.
 
@@ -987,72 +1080,54 @@
 
 **Passo a passo:**
 1. Carregar template "Memory Chatbot" e configurar modelo OpenAI.
-2. Abrir Playground — sessão A: enviar `"In our conversation my secret code is ALPHA_CODE_111."`.
+2. Sessão A: enviar `"In our conversation my secret code is ALPHA_CODE_111."`.
 3. Iniciar nova sessão (`new-chat`) — sessão B: enviar `"What secret code did I mention?"`.
-4. Aguardar resposta da sessão B.
-5. Verificar que a resposta da sessão B **não** contém `"ALPHA_CODE_111"`.
+4. Verificar que a resposta da sessão B **não** contém `"ALPHA_CODE_111"`.
 
 **Validação:** Sessão B não tem acesso ao histórico da sessão A.
 
 ---
 
-### 18.5 Mensagens persistem após fechar e reabrir o Playground `[x]`
-
-**Objetivo:** Verificar que o histórico da sessão é preservado ao fechar e reabrir o Playground.
+### 18.10 Mensagens persistem após fechar e reabrir o Playground `[x]`
 
 **Arquivo:** `llm-agents/memory-history-regression.spec.ts`
 
 **Passo a passo:**
 1. Carregar template "Memory Chatbot" e configurar modelo OpenAI.
 2. Abrir Playground, iniciar nova sessão e enviar: `"In our conversation my value is PERSIST_VALUE_42."`.
-3. Fechar o Playground (clicar fora ou no botão de fechar).
-4. Reabrir o Playground clicando em `playground-btn-flow-io`.
-5. Selecionar a mesma sessão anterior.
-6. Enviar: `"What value did I mention earlier?"`.
-7. Verificar que a resposta contém `"PERSIST_VALUE_42"`.
+3. Fechar o Playground e reabrir clicando em `playground-btn-flow-io`.
+4. Selecionar a mesma sessão e enviar: `"What value did I mention earlier?"`.
+5. Verificar que a resposta contém `"PERSIST_VALUE_42"`.
 
 **Validação:** Histórico persistiu entre aberturas do Playground.
 
 ---
 
-### 18.6 Sem Message History, LLM não retém contexto entre mensagens `[x]`
-
-**Objetivo:** Verificar que sem o componente Message History conectado, o LLM não tem acesso ao histórico de conversa anterior.
+### 18.11 Sem Message History, LLM não retém contexto entre mensagens `[x]`
 
 **Arquivo:** `llm-agents/memory-history-regression.spec.ts`
 
 **Passo a passo:**
-1. Carregar o template "Simple Agent" (sem Message History).
-2. Configurar modelo OpenAI.
-3. Abrir Playground e iniciar nova sessão.
-4. Enviar: `"In our conversation my secret is NOMEM5678."`.
-5. Aguardar resposta (1 mensagem).
-6. Enviar nova mensagem: `"What secret did I just tell you?"`.
-7. Aguardar resposta (2 mensagens).
-8. Verificar que a resposta **não** contém `"NOMEM5678"`.
+1. Carregar o template "Simple Agent" (sem Message History) e configurar modelo OpenAI.
+2. Abrir Playground, enviar: `"In our conversation my secret is NOMEM5678."`.
+3. Enviar: `"What secret did I just tell you?"`.
+4. Verificar que a resposta **não** contém `"NOMEM5678"`.
 
 **Validação:** LLM sem memória não recorda informações de mensagens anteriores.
 
 ---
 
-### 18.7 Parâmetro n_messages do Message History `[ ]`
-
-**Objetivo:** Verificar que o parâmetro `n_messages` limita corretamente a janela de mensagens retidas na memória.
+### 18.12 Parâmetro n_messages do Message History `[ ]`
 
 **Arquivo:** a criar — aguardando correção de bug no backend.
 
-> ⚠️ **Bug confirmado:** O parâmetro `n_messages` é salvo corretamente pelo frontend (verificado via interceptação do PATCH de autosave — payload contém `n_messages: 2`), mas o componente Message History ignora esse valor durante a execução do flow e usa o default (100 mensagens). Bug reportado ao time de desenvolvimento para correção no backend (`MemoryComponent.retrieve_messages()`).
+> ⚠️ **Bug confirmado:** O parâmetro `n_messages` é salvo corretamente pelo frontend mas ignorado na execução do backend (`MemoryComponent.retrieve_messages()`).
 
 **Passo a passo (quando o bug for corrigido):**
-1. Carregar template "Memory Chatbot" e configurar modelo OpenAI.
-2. Abrir InspectionPanel do nó "Message History" e alterar `n_messages` para `2`.
-3. Abrir Playground, iniciar nova sessão.
-4. Enviar Exchange 1: `"In our conversation my value_alpha equals ALPHA_VALUE_123."`.
-5. Enviar Exchange 2: `"In our conversation my value_beta equals BETA_VALUE_456."`.
-6. Enviar Exchange 3: `"In our conversation my value_gamma equals GAMMA_VALUE_789."`.
-7. Enviar Exchange 4: `"What are value_alpha, value_beta, and value_gamma?"`.
-8. Verificar que a resposta **contém** `"GAMMA_VALUE_789"` (dentro da janela).
-9. Verificar que a resposta **não contém** `"ALPHA_VALUE_123"` (fora da janela).
+1. Carregar template "Memory Chatbot", alterar `n_messages` para `2` no nó "Message History".
+2. Enviar 3 exchanges com valores distintos (ALPHA, BETA, GAMMA).
+3. Perguntar pelos 3 valores.
+4. Verificar que GAMMA está na resposta e ALPHA não está.
 
 **Validação:** Com `n_messages=2`, apenas os últimos 2 pares de mensagens estão no contexto.
 
