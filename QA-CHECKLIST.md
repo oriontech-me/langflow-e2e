@@ -630,26 +630,76 @@
 
 ---
 
-### Prioridades para Automatizar
+## Roadmap de Implementação
 
-#### 🔴 Alta Prioridade (bloqueadores de release)
-1. Erro de API key inválida (OpenAI/Anthropic)
-2. Flow com erro Python exibe mensagem clara
-3. Atualização com breaking change — deve alertar usuário
-4. Erro de rede durante execução
+---
 
-#### 🟡 Média Prioridade (regressão importante)
-5. MCP client — consumo de tools e resources externos
-6. Agent com tool MCP externo integrado
-7. Webhook trigger externo
-8. Playground compartilhável (URL pública)
-9. Pipeline RAG completo (knowledge-ingestion)
-10. Agent — steps de raciocínio com tools usadas
+### 🟢 Fase 0 — Validado
 
-#### 🟢 Baixa Prioridade (melhorias de cobertura)
-11. Loop component — iterações corretas
-12. MCP server endpoint gerado
-13. Ollama / Groq / Mistral providers
-14. Parâmetros de modelo para agentes
-15. Editar texto da sticky note
-16. Usar variável global em componente
+> Testes com cobertura confirmada (`[x]`).
+
+#### Pages & Helpers
+- [x] `SimpleAgentTemplatePage` — carrega template Simple Agent com provider e modelo configurável → `pages/SimpleAgentTemplatePage.ts`
+- [x] `SettingsPage` — navegação à página de configurações via menu do usuário → `pages/SettingsPage.ts`
+- [x] Setup de Provider OpenAI → `helpers/provider-setup/setup-openai.ts`
+- [x] Setup de Provider Anthropic → `helpers/provider-setup/setup-anthropic.ts`
+- [x] Setup de Provider Google Generative AI → `helpers/provider-setup/setup-google.ts`
+- [x] Map de Providers (`providerSetupMap`) → `helpers/provider-setup/index.ts`
+- [x] Validação de providers via API (crédito, key válida) → `helpers/provider-setup/collect-models.ts`
+- [x] Coleta de modelos disponíveis por provider via UI → `helpers/provider-setup/collect-models.ts`
+- [x] Carregar Simple Agent com provider e modelo variável → `pages/SimpleAgentTemplatePage.ts`
+- [x] Carregar Simple Agent com OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
+
+#### core-functionality/llm-agents/
+- [x] Agent executa com múltiplos providers e modelos (OpenAI, Anthropic, Google) → `agent-component-regression.spec.ts`
+- [x] Agent exibe resposta válida para pergunta simples → `agent-component-regression.spec.ts`
+- [x] Agent responde sem tools conectadas (regressão ID 147) → `agent-component-regression.spec.ts`
+- [x] Botão Stop interrompe execução do agente → `agent-component-regression.spec.ts`
+- [x] Agent responde múltiplas mensagens consecutivas na mesma sessão → `agent-component-regression.spec.ts`
+- [x] Duração de execução exibida após run com tools → `agent-component-regression.spec.ts`
+- [x] Memory Chatbot template carrega com estrutura correta de nós e arestas → `memory-history-regression.spec.ts`
+- [x] Message History retém contexto entre mensagens na mesma sessão → `memory-history-regression.spec.ts`
+- [x] Isolamento de sessão: session IDs distintos têm históricos independentes → `memory-history-regression.spec.ts`
+- [x] Mensagens persistem após fechar e reabrir o Playground → `memory-history-regression.spec.ts`
+- [x] Sem Message History, LLM não retém contexto entre mensagens → `memory-history-regression.spec.ts`
+
+#### core-functionality/model-provider/
+- [x] Validar API keys de todos os providers via chamada real → `collect-models.spec.ts`
+- [x] Coletar modelos disponíveis por provider via UI → `collect-models.spec.ts`
+- [x] Providers inativos aparecem como skipped nos testes com motivo → `agent-component-regression.spec.ts`
+
+#### core-functionality/templates/
+- [x] Memory Chatbot → `memory-history-regression.spec.ts`
+
+---
+
+### 🔵 Fase 1 — Próxima Entrega
+
+> Validar (`[-]`) e criar (`[ ]`) nos módulos abaixo. Ver detalhes na Part II.
+
+| Módulo | Validar (`[-]`) | Criar (`[ ]`) |
+|--------|-----------------|---------------|
+| `api/` — Auth + Variáveis | 18 | 1 |
+| `api/` — API REST | 21 | 0 |
+| `core-components/` — Componentes | 36 | 11 |
+| `core-functionality/llm-agents/` | 2 | 15 |
+| `core-functionality/model-provider/` | 16 | 8 |
+| `core-functionality/playground/` | 17 | 3 |
+| `mcp/client/` | 0 | 6 |
+| `mcp/server/` | 3 | 4 |
+| `ui-ux/` — Canvas | 43 | 1 |
+
+---
+
+### 🟡 Fase 2 — Entrega Seguinte
+
+> Módulos restantes após conclusão da Fase 1. Ver detalhes na Part II.
+
+| Módulo | Validar (`[-]`) | Criar (`[ ]`) |
+|--------|-----------------|---------------|
+| `core-functionality/observability-monitoring/` | 12 | 1 |
+| `core-functionality/knowledge-ingestion/` | 4 | 4 |
+| `flow-functionality/` | 23 | 0 |
+| `core-functionality/project-management/` | 11 | 0 |
+| `core-functionality/templates/` | 34 | 0 |
+| `ui-ux/` — Settings | 5 | 0 |
