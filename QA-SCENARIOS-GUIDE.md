@@ -25,12 +25,12 @@
 10. [Componentes Principais — Prompt Template](#10-componentes-principais--prompt-template)
 11. [Componentes Principais — API Request](#11-componentes-principais--api-request)
 12. [Componentes Principais — Webhook](#12-componentes-principais--webhook)
-13. [Componentes Principais — Agent](#13-componentes-principais--agent)
+13. [Componentes Principais — Agent](#13-componentes-principais--agent) *(13.1–13.13 — inclui novos cenários de provider, memória, tools e output)*
 14. [Autenticação — Login e Logout](#14-autenticação--login-e-logout)
 15. [Gerenciamento de Usuários (Admin)](#15-gerenciamento-de-usuários-admin)
 16. [Variáveis Globais (API Keys)](#16-variáveis-globais-api-keys)
 17. [File Upload e Processamento](#17-file-upload-e-processamento)
-18. [Agentes LLM — Execução e Controle](#18-agentes-llm--execução-e-controle)
+18. [Agentes LLM — Execução e Controle](#18-agentes-llm--execução-e-controle) *(18.1–18.17 — inclui context_id, multi-tool, tool error)*
 19. [Model Providers](#19-model-providers)
 20. [Observabilidade — Traces e Notificações](#20-observabilidade--traces-e-notificações)
 21. [Playground — Chat e Sessão](#21-playground--chat-e-sessão)
@@ -616,7 +616,7 @@
 
 ## 13. Componentes Principais — Agent
 
-**Arquivo:** `core/features/agent-component-regression.spec.ts`
+**Arquivos:** `agent-reasoning-steps.spec.ts`, `agent-system-prompt.spec.ts`, `agent-provider-field-isolation.spec.ts`, `agent-config-persistence.spec.ts`, `agent-max-iterations.spec.ts`, `agent-max-tokens.spec.ts`, `agent-reasoning-effort.spec.ts`, `agent-input-sources.spec.ts`, `agent-structured-output.spec.ts`, `agent-empty-refusal-response.spec.ts`, `agent-current-date-tool.spec.ts`, `agent-parse-error-behavior.spec.ts`, `agent-multimodal-image-input.spec.ts`
 
 ---
 
@@ -632,6 +632,237 @@
 4. Verificar que campos padrão (Max Iterations, System Prompt) estão visíveis.
 
 **Validação:** Componente Agent com todos os handles e campos padrão visíveis.
+
+---
+
+### 13.2 Trocar de provider no Agent — campos do provider anterior não persistem `[ ]`
+
+**Arquivo:** `agent-provider-field-isolation.spec.ts`
+
+**Objetivo:** Garantir que ao trocar de provider, campos exclusivos do provider anterior (ex: `project_id` do WatsonX) desaparecem e a API key não é pré-preenchida com o valor anterior.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Selecionar provider WatsonX no Agent — verificar que `base_url_ibm_watsonx` e `project_id` estão visíveis.
+3. Trocar para provider OpenAI.
+4. Verificar que `base_url_ibm_watsonx` e `project_id` **não estão visíveis**.
+5. Verificar que o campo `api_key` está vazio (não pré-preenchido).
+6. Trocar de volta para WatsonX — verificar que o valor anterior de `project_id` **não persiste**.
+
+**Validação:** Campos específicos de provider aparecem e somem corretamente; sem vazamento de valores entre providers.
+
+---
+
+### 13.3 Flow com Agent salvo e reaberto — configurações persistem `[ ]`
+
+**Arquivo:** `agent-config-persistence.spec.ts`
+
+**Objetivo:** Confirmar que ao salvar um flow com Agent configurado e reabri-lo, todos os parâmetros estão preservados.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" com provider X, modelo Y.
+2. Configurar `Agent Instructions` = `"Você é um assistente especializado em Python."`.
+3. Configurar `Max Iterations` = `5`.
+4. Salvar o flow (auto-save ou Ctrl+S).
+5. Navegar para a página principal e abrir outro flow.
+6. Retornar ao flow original.
+7. Verificar que provider, modelo, `Agent Instructions` e `Max Iterations` estão com os valores configurados.
+
+**Validação:** Todas as configurações do Agent são preservadas após salvar e reabrir o flow.
+
+---
+
+### 13.4 max_iterations limita ciclos do agente `[ ]`
+
+**Arquivo:** `agent-max-iterations.spec.ts`
+
+**Objetivo:** Verificar que o parâmetro `max_iterations` é respeitado e o agente para ao atingir o limite.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" com tool (ex: Calculator) conectada.
+2. Configurar `Max Iterations` = `1` no componente Agent.
+3. Enviar prompt que normalmente exigiria múltiplos ciclos (ex: `"Calcule 5+3 e depois multiplique por 2"`).
+4. Aguardar execução finalizar.
+5. Verificar que o agente respondeu (não falhou silenciosamente).
+6. Verificar nos "Agent Steps" que houve no máximo 1 iteração de raciocínio.
+
+**Validação:** Agente para após 1 iteração e retorna resposta ou mensagem de limite atingido.
+
+---
+
+### 13.5 max_tokens limita tamanho da resposta `[ ]`
+
+**Arquivo:** `agent-max-tokens.spec.ts`
+
+**Objetivo:** Verificar que o parâmetro `max_tokens` é incluído no payload enviado à API do modelo.
+
+**Passo a passo:**
+1. Interceptar requisições para `**/api/v1/run/**` via `page.route`.
+2. Carregar template "Simple Agent" e configurar `Max Tokens` = `50`.
+3. Enviar prompt que normalmente gera resposta longa (ex: `"Write 500 words about AI"`).
+4. Verificar no payload interceptado que `max_tokens: 50` está presente.
+5. Verificar que a resposta é mais curta do que sem limite.
+
+**Validação:** Parâmetro `max_tokens` presente no payload e resposta truncada conforme esperado.
+
+---
+
+### 13.6 Campo reasoning_effort é condicional ao modelo `[ ]`
+
+**Arquivo:** `agent-reasoning-effort.spec.ts`
+
+**Objetivo:** Verificar que o campo de reasoning effort aparece apenas para modelos que suportam essa funcionalidade.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" com modelo que suporta reasoning (ex: `claude-sonnet-4-5`).
+2. Verificar se campo `reasoning_effort` está visível no componente Agent.
+3. Trocar para modelo que não suporta reasoning (ex: `gpt-4o-mini`).
+4. Verificar que o campo `reasoning_effort` **não está visível** (ou está desabilitado).
+
+**Validação:** Campo `reasoning_effort` aparece/some conforme capacidade do modelo selecionado.
+
+---
+
+### 13.7 Agent Instructions (system prompt) é respeitado `[ ]`
+
+**Arquivo:** `agent-system-prompt.spec.ts`
+
+**Objetivo:** Confirmar que o conteúdo do campo `Agent Instructions` é enviado como system prompt e influencia a resposta do modelo.
+
+**Pré-condição:** Provider com API key válida configurado.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Configurar `Agent Instructions` = `"Responda sempre em português, independentemente do idioma da pergunta."`.
+3. Abrir Playground.
+4. Enviar mensagem em inglês: `"What is the capital of France?"`.
+5. Aguardar resposta.
+6. Verificar que a resposta está em **português**.
+
+**Cenário B — System prompt vazio:**
+1. Limpar o campo `Agent Instructions`.
+2. Enviar qualquer mensagem.
+3. Verificar que o agente responde normalmente (sem crash ou erro).
+
+**Validação:** System prompt influencia resposta; campo vazio não causa falha.
+
+---
+
+### 13.8 Input via campo direto vs handle (ChatInput) `[ ]`
+
+**Arquivo:** `agent-input-sources.spec.ts`
+
+**Objetivo:** Verificar que o Agent aceita input tanto pelo campo `input_value` diretamente quanto via handle conectado ao ChatInput.
+
+**Passo a passo (Cenário A — campo direto):**
+1. Adicionar Agent ao canvas sem ChatInput conectado.
+2. Preencher campo `input_value` diretamente: `"Hello from direct input"`.
+3. Clicar em Run no componente.
+4. Verificar que a resposta é gerada.
+
+**Passo a passo (Cenário B — via handle):**
+1. Carregar template "Simple Agent" (ChatInput conectado ao Agent).
+2. Abrir Playground e enviar mensagem.
+3. Verificar que a mensagem chega ao Agent e a resposta é retornada.
+
+**Validação:** Ambas as formas de input funcionam corretamente.
+
+---
+
+### 13.9 Output schema estruturado gera JSON válido `[ ]`
+
+**Arquivo:** `agent-structured-output.spec.ts`
+
+**Objetivo:** Verificar que ao configurar `output_schema`, o Agent retorna JSON com os campos definidos.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Abrir configurações avançadas do Agent.
+3. Configurar `output_schema` com campos: `name` (string), `age` (integer).
+4. Configurar `format_instructions` = `"Respond with a JSON object with 'name' and 'age' fields."`.
+5. Enviar prompt: `"Generate a fictional person named João who is 30 years old."`.
+6. Aguardar resposta.
+7. Verificar que a resposta contém JSON com campos `name` e `age`.
+
+**Validação:** JSON válido retornado com os campos do schema configurado.
+
+---
+
+### 13.10 Resposta vazia ou recusa do modelo — sem crash `[ ]`
+
+**Arquivo:** `agent-empty-refusal-response.spec.ts`
+
+**Objetivo:** Verificar que o componente Agent não crasha quando o modelo recusa ou retorna resposta vazia.
+
+**Passo a passo (via mock):**
+1. Interceptar chamada à API do LLM via `page.route`.
+2. Retornar resposta vazia (body `""`, status `200`).
+3. Enviar mensagem no Playground.
+4. Verificar que o Playground não trava — alguma mensagem é exibida (resposta vazia ou erro amigável).
+5. Verificar que o campo de input volta a estar disponível (não fica em estado de loading eterno).
+
+**Validação:** Comportamento gracioso — sem crash; UI retorna ao estado interativo.
+
+---
+
+### 13.11 Toggle add_current_date_tool funciona `[ ]`
+
+**Arquivo:** `agent-current-date-tool.spec.ts`
+
+**Objetivo:** Verificar que o toggle `Add Current Date Tool` adiciona/remove a tool de data do agente.
+
+**Pré-condição:** Provider com API key válida configurado.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Habilitar o toggle `Add Current Date Tool` no componente Agent.
+3. Abrir Playground e enviar: `"What is today's date?"`.
+4. Verificar que o agente usa a date tool (aparece nos Agent Steps) e retorna a data correta.
+5. Desabilitar o toggle `Add Current Date Tool`.
+6. Enviar a mesma pergunta.
+7. Verificar que a date tool **não aparece** nos Agent Steps.
+
+**Validação:** Toggle controla presença da date tool; tool aparece/some nos steps conforme configuração.
+
+---
+
+### 13.12 handle_parsing_errors controla comportamento em falha de parse `[ ]`
+
+**Arquivo:** `agent-parse-error-behavior.spec.ts`
+
+**Objetivo:** Verificar diferença de comportamento entre `handle_parsing_errors=True` e `False`.
+
+**Passo a passo (via mock):**
+1. Configurar `handle_parsing_errors = False` no Agent.
+2. Interceptar resposta do LLM para retornar JSON malformado quando output_schema está configurado.
+3. Enviar mensagem.
+4. Verificar que o Agent retorna **erro explícito** (não tenta corrigir).
+
+**Cenário B — True:**
+1. Configurar `handle_parsing_errors = True`.
+2. Repetir o mesmo mock.
+3. Verificar que o Agent tenta se auto-corrigir (envia segundo request) ou retorna resposta parcial.
+
+**Validação:** Comportamentos distintos conforme `handle_parsing_errors`.
+
+---
+
+### 13.13 Imagem via handle de input é processada pelo Agent `[ ]`
+
+**Arquivo:** `agent-multimodal-image-input.spec.ts`
+
+**Objetivo:** Verificar que imagens passadas via handle de input (não pelo playground) são processadas corretamente pelo agente.
+
+**Pré-condição:** Modelo multimodal configurado (ex: `claude-3-5-sonnet`, `gpt-4o`).
+
+**Passo a passo:**
+1. Adicionar ao canvas: Agent + componente que gera imagem (ex: URL Extractor com imagem pública).
+2. Conectar saída de imagem ao handle de input do Agent.
+3. Configurar Agent Instructions = `"Describe what you see in the image."`.
+4. Executar o flow.
+5. Verificar que o Agent retorna uma descrição da imagem (não erro ou resposta vazia).
+
+**Validação:** Conteúdo de imagem processado corretamente via handle de input.
 
 ---
 
@@ -1041,7 +1272,7 @@
 
 **Objetivo:** Verificar que o parâmetro `n_messages` limita corretamente a janela de mensagens retidas na memória.
 
-**Arquivo:** a criar — aguardando correção de bug no backend.
+**Arquivo:** `agent-n-messages-limit.spec.ts` — aguardando correção de bug no backend.
 
 > ⚠️ **Bug confirmado:** O parâmetro `n_messages` é salvo corretamente pelo frontend (verificado via interceptação do PATCH de autosave — payload contém `n_messages: 2`), mas o componente Message History ignora esse valor durante a execução do flow e usa o default (100 mensagens). Bug reportado ao time de desenvolvimento para correção no backend (`MemoryComponent.retrieve_messages()`).
 
@@ -1057,6 +1288,103 @@
 9. Verificar que a resposta **não contém** `"ALPHA_VALUE_123"` (fora da janela).
 
 **Validação:** Com `n_messages=2`, apenas os últimos 2 pares de mensagens estão no contexto.
+
+---
+
+### 18.13 context_id fixo — continuidade entre mensagens `[ ]`
+
+**Arquivo:** `agent-context-id-continuity.spec.ts`
+
+**Objetivo:** Verificar que o Agent mantém memória entre mensagens quando um `context_id` fixo está configurado.
+
+**Pré-condição:** Provider com API key válida. Agent com `context_id` definido (ex: `"test-session-001"`).
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Configurar `context_id` = `"test-session-001"` no componente Agent.
+3. Abrir Playground.
+4. Enviar: `"My name is João"`. Aguardar resposta.
+5. Enviar: `"What is my name?"`. Aguardar resposta.
+6. Verificar que a resposta contém `"João"`.
+
+**Validação:** Agente recorda informação da mensagem anterior via `context_id`.
+
+---
+
+### 18.14 Trocar context_id — isolamento entre sessões `[ ]`
+
+**Arquivo:** `agent-context-id-isolation.spec.ts`
+
+**Objetivo:** Verificar que mudar o `context_id` inicia um contexto novo, sem acesso ao histórico anterior.
+
+**Pré-condição:** Provider com API key válida.
+
+**Passo a passo:**
+1. Configurar `context_id` = `"session-A"` no Agent.
+2. Enviar: `"My name is Ana"`. Aguardar resposta.
+3. Alterar `context_id` para `"session-B"`.
+4. Enviar: `"What is my name?"`.
+5. Verificar que a resposta **não menciona** `"Ana"` (sessão isolada).
+
+**Validação:** Histórico de `"session-A"` não vaza para `"session-B"`.
+
+---
+
+### 18.15 Múltiplas tools — agente seleciona a correta `[ ]`
+
+**Arquivo:** `agent-multi-tool-selection.spec.ts`
+
+**Objetivo:** Verificar que o agente escolhe a ferramenta correta entre múltiplas disponíveis.
+
+**Pré-condição:** Duas tools conectadas ao Agent (ex: Calculator + DuckDuckGo).
+
+**Passo a passo:**
+1. Conectar Calculator e DuckDuckGo ao Agent.
+2. Abrir Playground.
+3. Enviar: `"What is 47 times 83?"`.
+4. Aguardar resposta.
+5. Verificar nos "Agent Steps" que `Calculator` foi chamado (não DuckDuckGo).
+6. Enviar: `"Search for the latest news about artificial intelligence"`.
+7. Verificar nos "Agent Steps" que `DuckDuckGo` foi chamado (não Calculator).
+
+**Validação:** Agente seleciona a tool correta conforme a natureza do prompt.
+
+---
+
+### 18.16 Tool que retorna erro — agente não crasha `[ ]`
+
+**Arquivo:** `agent-tool-error-handling.spec.ts`
+
+**Objetivo:** Verificar comportamento do agente quando uma tool conectada retorna erro.
+
+**Passo a passo:**
+1. Criar custom component que sempre lança exceção (ex: `raise ValueError("tool error")`).
+2. Conectar como tool ao Agent.
+3. Enviar prompt que força uso da tool.
+4. Aguardar execução.
+5. Verificar que:
+   - O Playground não trava indefinidamente.
+   - O erro da tool aparece nos "Agent Steps" (ToolContent com status de erro).
+   - O agente retorna alguma resposta (alternativa ou mensagem de erro amigável).
+
+**Validação:** Falha de tool é tratada; agente não crasha; erro visível nos steps.
+
+---
+
+### 18.17 Tool com nome inválido — validação impede execução `[ ]`
+
+**Arquivo:** `agent-tool-name-validation.spec.ts`
+
+**Objetivo:** Verificar que o Agent valida o nome das tools e rejeita nomes fora do padrão `^[a-zA-Z0-9_-]+$`.
+
+**Passo a passo:**
+1. Criar custom component com nome contendo espaço ou caractere especial (ex: `"my tool!"`).
+2. Conectar como tool ao Agent.
+3. Executar o flow.
+4. Verificar que o componente Agent exibe erro de validação antes de chamar o LLM.
+5. Verificar que a mensagem de erro é clara e visível no canvas (não erro silencioso).
+
+**Validação:** Validação de nome de tool ocorre antes da execução; erro explícito exibido.
 
 ---
 
