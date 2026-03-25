@@ -24,34 +24,22 @@ async function addLoopComponent(page: any) {
 }
 
 // =============================================================================
-// UI / Canvas tests — verify component rendering and handles
+// UI / Canvas — rendering, handles and output inspection in a single test
 // =============================================================================
 
 test(
-  "Loop component — renders on canvas with title and run button",
-  { tag: ["@release", "@regression", "@components"] },
+  "Loop component — renders correctly with all handles and output inspection buttons",
+  { tag: ["@release", "@components"] },
   async ({ page }) => {
     await addLoopComponent(page);
 
-    // Node must be visible on the canvas
+    // Node must be visible on the canvas with its run button
     await expect(page.getByTestId("title-Loop")).toBeVisible();
-
-    // Run button must be present
     await expect(page.getByTestId("button_run_loop")).toBeVisible();
-
-    // Exactly one node on the canvas
     await expect(page.locator(".react-flow__node")).toHaveCount(1);
-  },
-);
-
-test(
-  "Loop component — has correct input and output handles",
-  { tag: ["@release", "@regression", "@components"] },
-  async ({ page }) => {
-    await addLoopComponent(page);
 
     // Input handles (left side)
-    // inputs — receives the full list to iterate over
+    // inputs — receives the DataFrame to iterate over
     await expect(
       page.getByTestId("handle-loopcomponent-shownode-inputs-left"),
     ).toBeVisible();
@@ -61,24 +49,16 @@ test(
     ).toBeVisible();
 
     // Output handles (right side)
-    // item — emits the current item in the iteration
+    // item — emits the current item in each iteration
     await expect(
       page.getByTestId("handle-loopcomponent-shownode-item-right"),
     ).toBeVisible();
-    // done — emits True when all items have been processed
+    // done — emits aggregated DataFrame when all items are processed
     await expect(
       page.getByTestId("handle-loopcomponent-shownode-done-right"),
     ).toBeVisible();
-  },
-);
 
-test(
-  "Loop component — output inspection buttons are present for item and done ports",
-  { tag: ["@release", "@regression", "@components"] },
-  async ({ page }) => {
-    await addLoopComponent(page);
-
-    // Both output inspection triggers must be visible in the node footer
+    // Output inspection buttons must be present in the node footer
     await expect(
       page.getByTestId("output-inspection-item-loopcomponent"),
     ).toBeVisible();
@@ -88,9 +68,13 @@ test(
   },
 );
 
+// =============================================================================
+// Error path — run without connections
+// =============================================================================
+
 test(
   "Loop component — run without connections shows build failed notification",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@release", "@components"] },
   async ({ page }) => {
     // The Loop component requires at least an `inputs` connection to execute.
     // Running it standalone (no connections) is an expected error path —
@@ -111,5 +95,83 @@ test(
     // The node must remain intact on the canvas
     await expect(page.getByTestId("title-Loop")).toBeVisible();
     await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  },
+);
+
+
+// =============================================================================
+// Wiring + Iteration — Research Translation Loop template: wiring and real execution
+// =============================================================================
+
+test(
+  "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
+  { tag: ["@release", "@components", "@templates", "@playground"] },
+  async ({ page }) => {
+    await awaitBootstrapTest(page);
+
+    // Load the Research Translation Loop template
+    await page.getByTestId("side_nav_options_all-templates").click();
+    await page.waitForSelector('[data-testid="template-research-translation-loop"]', {
+      timeout: 10000,
+    });
+    await page.getByTestId("template-research-translation-loop").click();
+    await page.waitForSelector('[data-testid="title-Loop"]', { timeout: 15000 });
+    await adjustScreenView(page);
+
+    // --- Wiring checks ---
+    await expect(page.getByTestId("title-Loop")).toBeVisible();
+    await expect(page.getByTestId("button_run_loop")).toBeVisible();
+
+    // At least one edge must exist (the template wires Loop in a cycle)
+    await expect(page.locator(".react-flow__edge").first()).toBeVisible({
+      timeout: 8000,
+    });
+
+    // Input handles: inputs (DataFrame from ArXiv) and item (LLM feedback)
+    await expect(
+      page.getByTestId("handle-loopcomponent-shownode-inputs-left"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("handle-loopcomponent-shownode-item-left"),
+    ).toBeVisible();
+
+    // Output handles: item (current iteration) and done (aggregated result)
+    await expect(
+      page.getByTestId("handle-loopcomponent-shownode-item-right"),
+    ).toBeVisible();
+    await expect(
+      page.getByTestId("handle-loopcomponent-shownode-done-right"),
+    ).toBeVisible();
+
+    // --- Iteration execution ---
+    // Limit ArXiv to 2 results so the loop runs exactly 2 iterations.
+    // The template default is 3; we reduce to 2 to keep the test fast (2 LLM calls).
+    await page.getByTestId("int_int_max_results").click({ clickCount: 3 });
+    await page.getByTestId("int_int_max_results").fill("2");
+
+    // Open the Playground and send a query — ArXiv is a public API, no key needed
+    await page.getByTestId("playground-btn-flow-io").click();
+    await page.waitForSelector('[data-testid="input-chat-playground"]', {
+      timeout: 10000,
+    });
+    await page.getByTestId("input-chat-playground").fill("transformer neural networks");
+    await page.getByTestId("button-send").click();
+
+    // The AI response element appears as soon as the flow starts streaming.
+    // Testid pattern: "chat-message-AI-{content}"
+    await page.waitForSelector('[data-testid^="chat-message-AI-"]', {
+      timeout: 120000,
+    });
+
+    // Verify the response contains at least 2 "Title" occurrences.
+    // The Parser formats every paper as "Title: {title}\nSummary: {summary}" before
+    // sending it to the LLM — so 2 ArXiv papers produce at least 2 "Title" mentions
+    // in the aggregated response, confirming the loop iterated twice.
+    const botMessage = page.locator('[data-testid^="chat-message-AI-"]').last();
+    await expect(botMessage).toBeVisible();
+    await expect(botMessage).not.toBeEmpty({ timeout: 120000 });
+    const responseText = await botMessage.textContent() ?? "";
+    const titleCount = (responseText.match(/title/gi) ?? []).length;
+    expect(titleCount).toBeGreaterThanOrEqual(2);
   },
 );

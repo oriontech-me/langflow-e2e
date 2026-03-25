@@ -186,7 +186,7 @@
 - [x] Handles corretos: inputs-left, item-left, item-right, done-right → `core-components/loop-component-regression.spec.ts`
 - [x] Botões de output inspection presentes para item e done → `core-components/loop-component-regression.spec.ts`
 - [x] Run sem conexões exibe notificação "Flow build failed" sem crash → `core-components/loop-component-regression.spec.ts`
-- [ ] Loop executa número correto de iterações com lista conectada
+- [x] Loop itera sobre 2 artigos ArXiv (template Research Translation Loop) e agrega resposta no Playground → `core-components/loop-component-regression.spec.ts`
 - [ ] Loop para ao atingir condição de saída
 
 #### 3.7 Nested / Agrupamento
