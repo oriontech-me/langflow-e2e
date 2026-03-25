@@ -39,7 +39,7 @@ function getProviderSkipReasons(): Map<string, string> {
   const reasons = new Map<string, string>();
   for (const r of records) {
     if (r.status === "inactive") {
-      reasons.set(r.provider, `Provider "${r.provider}" inativo — ${r.error}`);
+      reasons.set(r.provider, `Provider "${r.provider}" inactive — ${r.error}`);
     }
   }
   return reasons;
@@ -316,7 +316,7 @@ for (const { label, options, skipReason } of targets) {
           timeout: 30000,
         });
 
-        // Prompt longo o suficiente para manter o agente gerando por alguns segundos
+        // Long enough prompt to keep the agent generating for a few seconds
         await page
           .getByTestId("input-chat-playground")
           .last()
@@ -324,18 +324,18 @@ for (const { label, options, skipReason } of targets) {
 
         await page.getByTestId("button-send").last().click();
 
-        // Aguarda o agente iniciar (~2s) e a primeira mensagem aparecer
+        // Wait for the agent to start (~2s) and the first message to appear
         await expect(page.getByTestId("div-chat-message").last()).toBeVisible({
           timeout: 30000,
         });
 
-        // Captura o texto parcial enquanto o agente ainda pode estar gerando
+        // Capture partial text while the agent may still be generating
         const textAtStart = await page
           .getByTestId("div-chat-message")
           .last()
           .innerText();
 
-        // Aguarda alguns segundos para que mais tokens sejam recebidos
+        // Wait a few seconds for more tokens to be received
         await page.waitForTimeout(3000);
 
         const textAfterWait = await page
@@ -343,19 +343,19 @@ for (const { label, options, skipReason } of targets) {
           .last()
           .innerText();
 
-        // Se o stop button ainda estava visível, o texto deve ter crescido (streaming ativo)
-        // Se já finalizou antes dos 3s, apenas valida que a resposta tem conteúdo
+        // If stop button is still visible, text must have grown (streaming active)
+        // If already finished within 3s, just validate that the response has content
         const stopButton = page.getByRole("button", { name: "Stop" });
         const stillGenerating = await stopButton.isVisible({ timeout: 500 }).catch(() => false);
 
         if (stillGenerating) {
           expect(
             textAfterWait.trim().length,
-            "Texto deve crescer durante streaming — resposta ainda em andamento",
+            "Text must grow during streaming — response still in progress",
           ).toBeGreaterThan(textAtStart.trim().length);
         }
 
-        // Aguarda a resposta finalizar completamente
+        // Wait for the response to finish completely
         await expect(stopButton).toBeHidden({ timeout: 120000 });
 
         const finalText = await page
@@ -397,7 +397,7 @@ for (const { label, options, skipReason } of targets) {
 
         await page.getByTestId("button-send").last().click();
 
-        // Aguarda a resposta finalizar
+        // Wait for the response to finish
         const stopButton = page.getByRole("button", { name: "Stop" });
         const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
         if (stopVisible) {
@@ -406,7 +406,7 @@ for (const { label, options, skipReason } of targets) {
 
         await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
 
-        // Valida que o indicador de tempo de resposta é exibido no playground
+        // Assert that the response time indicator is displayed in the playground
         await expect(page.getByText(/Finished in \d+(\.\d+)?s/).last()).toBeVisible({ timeout: 10000 });
       },
     );
