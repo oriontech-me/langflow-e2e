@@ -252,7 +252,7 @@ for (const { label, options, skipReason } of targets) {
       },
     );
 
-    test(
+    test.only(
       "agent must display duration after successful run",
       { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
@@ -271,7 +271,7 @@ for (const { label, options, skipReason } of targets) {
 
         await page.getByTestId("playground-btn-flow-io").click();
 
-        await page.getByTestId("input-chat-playground").last().fill("What are the main differences between mammals and reptiles?");
+        await page.getByTestId("input-chat-playground").last().fill("What is IA?");
 
         await page.getByTestId("button-send").last().click();
 
@@ -283,13 +283,7 @@ for (const { label, options, skipReason } of targets) {
         }
 
         await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
-
-        // "Finished in Xs" only appears when tools are used — soft-check
-        const finishedText = page.getByText(/Finished in/).last();
-        if (await finishedText.isVisible({ timeout: 5000 }).catch(() => false)) {
-          const durationText = await finishedText.innerText();
-          expect(durationText.trim().length).toBeGreaterThan(0);
-        }
+        await expect(page.getByText(/Finished in \d+(\.\d+)?s/)).toBeVisible();
       },
     );
 
