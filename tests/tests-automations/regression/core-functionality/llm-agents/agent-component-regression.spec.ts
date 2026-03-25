@@ -294,6 +294,80 @@ for (const { label, options, skipReason } of targets) {
     );
 
     test(
+      "agent must stream response progressively in the playground",
+      { tag: ["@release", "@components", "@agents", "@playground"] },
+      async ({ page }) => {
+        test.skip(!!skipReason, skipReason ?? "");
+        test.skip(
+          !hasProviderEnvKeys(provider),
+          `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
+        );
+
+        try {
+          await new SimpleAgentTemplatePage(page).load(options);
+        } catch (e: any) {
+          if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
+          throw e;
+        }
+
+        await page.getByTestId("playground-btn-flow-io").click();
+
+        await page.waitForSelector('[data-testid="input-chat-playground"]', {
+          timeout: 30000,
+        });
+
+        // Prompt longo o suficiente para manter o agente gerando por alguns segundos
+        await page
+          .getByTestId("input-chat-playground")
+          .last()
+          .fill("Write a 5-paragraph summary explaining what artificial intelligence is, covering its definition, history, main techniques, applications, and future perspectives.");
+
+        await page.getByTestId("button-send").last().click();
+
+        // Aguarda o agente iniciar (~2s) e a primeira mensagem aparecer
+        await expect(page.getByTestId("div-chat-message").last()).toBeVisible({
+          timeout: 30000,
+        });
+
+        // Captura o texto parcial enquanto o agente ainda pode estar gerando
+        const textAtStart = await page
+          .getByTestId("div-chat-message")
+          .last()
+          .innerText();
+
+        // Aguarda alguns segundos para que mais tokens sejam recebidos
+        await page.waitForTimeout(3000);
+
+        const textAfterWait = await page
+          .getByTestId("div-chat-message")
+          .last()
+          .innerText();
+
+        // Se o stop button ainda estava visível, o texto deve ter crescido (streaming ativo)
+        // Se já finalizou antes dos 3s, apenas valida que a resposta tem conteúdo
+        const stopButton = page.getByRole("button", { name: "Stop" });
+        const stillGenerating = await stopButton.isVisible({ timeout: 500 }).catch(() => false);
+
+        if (stillGenerating) {
+          expect(
+            textAfterWait.trim().length,
+            "Texto deve crescer durante streaming — resposta ainda em andamento",
+          ).toBeGreaterThan(textAtStart.trim().length);
+        }
+
+        // Aguarda a resposta finalizar completamente
+        await expect(stopButton).toBeHidden({ timeout: 120000 });
+
+        const finalText = await page
+          .getByTestId("div-chat-message")
+          .last()
+          .innerText();
+
+        expect(finalText.trim().length).toBeGreaterThan(1);
+      },
+    );
+
+    test(
       "agent must handle multiple consecutive messages in same session",
       { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
