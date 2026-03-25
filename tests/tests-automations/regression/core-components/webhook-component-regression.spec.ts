@@ -144,7 +144,7 @@ test(
     await expect(page.getByText("built successfully").last()).toBeVisible();
 
     // Open output and verify the result is an empty object
-    await page.getByTestId("output-inspection-data-webhook").click();
+    await page.getByTestId("output-inspection-json-webhook").click();
     await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
 
     const dialog = page.locator('[role="dialog"]');
@@ -302,7 +302,7 @@ test(
     await expect(page.getByText("built successfully").last()).toBeVisible();
 
     // Open output inspection and verify the parsed object
-    await page.getByTestId("output-inspection-data-webhook").click();
+    await page.getByTestId("output-inspection-json-webhook").click();
     await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
 
     const dialog = page.locator('[role="dialog"]');
@@ -339,7 +339,7 @@ test(
     await expect(page.getByText("built successfully").last()).toBeVisible();
 
     // Open output inspection and verify the fallback wrapping
-    await page.getByTestId("output-inspection-data-webhook").click();
+    await page.getByTestId("output-inspection-json-webhook").click();
     await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
 
     const dialog = page.locator('[role="dialog"]');
