@@ -1,52 +1,26 @@
 ---
 name: Test Automation
-about: Planejamento de um novo teste automatizado para a suíte E2E
-title: "[Test] "
+about: Planejamento de teste E2E — será lido pela LLM para implementação
+title: "[Test] deve ... quando ..."
 labels: test-automation
 assignees: ""
 ---
 
-## Descrição
-<!-- O que esse teste valida? Do ponto de vista do usuário, em 1–3 frases. -->
-
----
-
-## Área
-<!-- Marque a área de produto coberta pelo teste -->
-
-- [ ] auth
-- [ ] flows / canvas
-- [ ] playground
-- [ ] agents / LLM
-- [ ] mcp
-- [ ] files
-- [ ] settings
-- [ ] templates
-- [ ] ui-ux
-- [ ] api
-
----
-
-## Classificação do teste
-
-**Esse teste deve rodar antes de todo deploy/release?**
-- [ ] Sim — cobre um caminho feliz crítico para o produto funcionar
-- [ ] Não — cobre um cenário secundário ou específico
-
-**Esse teste foi motivado por um bug identificado?**
-- [ ] Sim — link para a issue ou PR de correção: ________________
-- [ ] Não — cobertura preventiva de um fluxo ainda não automatizado
+## O que testar
+<!-- Complete: "deve [resultado observável] quando [ação ou condição]"
+     Essa frase vira o nome do teste — seja específico.
+     Ex: "deve exibir a capital correta quando o agente recebe uma pergunta direta"
+         "deve limpar o histórico quando o usuário clica em New Chat" -->
 
 ---
 
 ## Pré-condições
-<!-- O que precisa ser verdadeiro antes do teste começar?
-     Ex: usuário logado, canvas sem flows, provider com API key configurada. -->
+<!-- Estado necessário antes do teste começar.
+     Ex: usuário logado, canvas vazio, provider configurado com API key válida. -->
 
 ---
 
 ## Passos
-<!-- Sequência de ações do usuário. Linguagem natural — não precisa ser código. -->
 
 1.
 2.
@@ -54,36 +28,30 @@ assignees: ""
 
 ---
 
-## Comportamento esperado
-<!-- O que deve acontecer ao final dos passos?
-     Descreva o que o usuário vê ou recebe — é daqui que sai a asserção principal do teste. -->
+## Resultado concreto esperado
+<!-- O que especificamente deve estar visível ou verdadeiro ao final?
+     Evite: "a mensagem aparece", "o modal abre", "o agente responde".
+     Prefira: "a resposta contém o nome da capital solicitada",
+              "o painel exibe pelo menos um tool call com nome e resultado",
+              "após New Chat, a mensagem anterior não aparece na nova sessão". -->
 
 ---
 
-## Contexto de implementação
-<!-- Preencha o que souber. Essas informações ajudam a LLM a escolher os
-     helpers, page objects e seletores corretos sem precisar adivinhar. -->
+## Tipo
+- [ ] UI — interação com o browser
+- [ ] API REST — chamada direta aos endpoints
+- [ ] Agente / Provider LLM — envolve execução de modelo
+- [ ] MCP — integração server ou client
 
-**Tipo de teste**
-- [ ] UI (interação com o browser)
-- [ ] API REST (chamada direta aos endpoints)
-- [ ] Agente / Provider LLM (envolve OpenAI, Anthropic, Google etc.)
-- [ ] MCP (server ou client)
+---
 
-**Envolve provider externo de LLM?**
-- [ ] Sim — provider(s): ________________
-- [ ] Não
+## Comportamentos não óbvios
+<!-- Opcional. Condições específicas, timing, estados intermediários que
+     a LLM não conseguiria saber sem contexto humano.
+     Ex: "o badge só aparece após a primeira execução do flow",
+         "o campo some se o usuário não tiver permissão de edição". -->
 
-**Envolve upload ou leitura de arquivo?**
-- [ ] Sim — tipo de arquivo: ________________
-- [ ] Não
+---
 
-**Elementos de UI relevantes**
-<!-- Descreva os componentes visíveis: botões, modais, campos, painéis.
-     Ex: "modal de configuração de modelo com dropdown de provider",
-         "botão Run na toolbar superior do canvas". -->
-
-**Edge cases ou comportamentos não óbvios**
-<!-- Algo que só acontece em condição específica, ou que costuma enganar.
-     Ex: "o badge de erro só aparece após o flow ser executado pelo menos uma vez",
-         "o elemento some se o usuário não tiver permissão de edição". -->
+## Referência
+<!-- Issue ou PR relacionado, se houver. -->
