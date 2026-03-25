@@ -368,6 +368,50 @@ for (const { label, options, skipReason } of targets) {
     );
 
     test(
+      "playground must display response time after agent finishes",
+      { tag: ["@release", "@components", "@agents", "@playground"] },
+      async ({ page }) => {
+        test.skip(!!skipReason, skipReason ?? "");
+        test.skip(
+          !hasProviderEnvKeys(provider),
+          `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
+        );
+
+        try {
+          await new SimpleAgentTemplatePage(page).load(options);
+        } catch (e: any) {
+          if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
+          throw e;
+        }
+
+        await page.getByTestId("playground-btn-flow-io").click();
+
+        await page.waitForSelector('[data-testid="input-chat-playground"]', {
+          timeout: 30000,
+        });
+
+        await page
+          .getByTestId("input-chat-playground")
+          .last()
+          .fill("What are the main differences between mammals and reptiles?");
+
+        await page.getByTestId("button-send").last().click();
+
+        // Aguarda a resposta finalizar
+        const stopButton = page.getByRole("button", { name: "Stop" });
+        const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
+        if (stopVisible) {
+          await expect(stopButton).toBeHidden({ timeout: 120000 });
+        }
+
+        await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
+
+        // Valida que o indicador de tempo de resposta é exibido no playground
+        await expect(page.getByText(/Finished in \d+(\.\d+)?s/).last()).toBeVisible({ timeout: 10000 });
+      },
+    );
+
+    test(
       "agent must handle multiple consecutive messages in same session",
       { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
