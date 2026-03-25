@@ -9,7 +9,7 @@ O repositório é **independente do código-fonte do Langflow** — os testes ap
 ## Setup
 
 ```bash
-git clone https://github.com/lice-reis/langflow-e2e.git
+git clone https://github.com/oriontech-me/langflow-e2e.git
 cd langflow-e2e
 npm install
 npx playwright install chromium --with-deps
@@ -27,7 +27,7 @@ cp .env.example .env  # ajuste PLAYWRIGHT_BASE_URL e API keys
 ./scripts/start-langflow-docker.sh
 
 # Docker — versão específica
-LANGFLOW_IMAGE_TAG=1.3.0 ./scripts/start-langflow-docker.sh
+./scripts/start-langflow-docker.sh 1.3.0
 
 # Instância externa (staging, PR branch, local já no ar)
 # Apenas defina PLAYWRIGHT_BASE_URL no .env ou na linha de comando
@@ -97,6 +97,22 @@ npx playwright test tests/tests-automations/regression/core-functionality/llm-ag
 
 ## Tags disponíveis
 
+As tags são divididas em dois grupos: **transversais** (severidade/camada) e **funcionais** (área de produto). Todo teste deve ter pelo menos uma tag de cada grupo.
+
+**Transversais**
+
+| Tag | Quando usar |
+|---|---|
+| `@release` | Fluxos happy-path obrigatórios antes de qualquer deploy |
+| `@regression` | Testes para bugs previamente corrigidos |
+| `@api` | Testes que exercitam endpoints REST |
+| `@components` | Configuração de componentes no canvas/sidebar |
+| `@workspace` | Gestão de flows, pastas e canvas |
+| `@database` | Testes com estado persistido no banco |
+| `@mainpage` | Testes da home/dashboard |
+
+**Funcionais** (use junto com as transversais)
+
 | Tag | Área |
 |---|---|
 | `@model-provider` | Configuração de provedores, API keys, modal de modelo |
@@ -105,12 +121,10 @@ npx playwright test tests/tests-automations/regression/core-functionality/llm-ag
 | `@playground` | Playground de chat e interações |
 | `@auth` | Autenticação, login, sessão, gestão de usuários |
 | `@observability` | Traces, latência, tokens |
-| `@files` | Ingestão de arquivos e RAG |
-| `@project-management` | Flows, pastas, navegação, bulk actions |
+| `@files` | Página de arquivos, upload, Read File / Write File components |
 | `@templates` | Starter projects e templates de flow |
+| `@settings` | Navegação e configuração na página de Settings |
 | `@ui-ux` | Interface geral, atalhos, aparência |
-| `@settings` | Navegações que usam a página de configurações |
-| `@api` | Testes que chamam a API REST do Langflow |
 
 Todo teste novo deve ter **pelo menos uma tag** e importar de `../../fixtures` (não do Playwright diretamente).
 
@@ -189,6 +203,7 @@ tests/
 
 | Workflow | Gatilho | O que faz |
 |---|---|---|
+| `pr-validation.yml` | Todo PR para `main` | TypeScript check (`tsc --noEmit`) + ESLint em paralelo — ambos devem passar antes do merge |
 | `nightly.yml` | Diário 03h BRT + manual | Roda tudo contra `langflow-nightly:latest`, abre issue se falhar |
 | `manual.yml` | Manual | Roda contra qualquer tag Docker ou URL externa, filtra por suite/tag |
 | `file-watcher.yml` | Diário 05h BRT | Monitora mudanças no source do Langflow e abre issue de revisão |
@@ -201,7 +216,8 @@ Veja [`QA_CHECKLIST.md`](./QA_CHECKLIST.md) para o mapa completo de cobertura.
 
 | Símbolo | Significado |
 |---|---|
-| `[x]` | Automatizado |
+| `[x]` | Automatizado e validado |
+| `[-]` | Automatizado, precisa validar |
 | `[ ]` | Não coberto |
 | `[~]` | Parcialmente coberto |
 | `[!]` | Flaky — precisa estabilizar |
