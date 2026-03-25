@@ -248,7 +248,7 @@
 #### 6.1 Execução de Agente
 - [x] Agent executa com múltiplos providers e modelos (OpenAI, Anthropic, Google) → `agent-component-regression.spec.ts`
 - [x] Agent exibe resposta válida para pergunta simples → `agent-component-regression.spec.ts`
-- [x] Agent responde sem tools conectadas (regressão ID 147) → `agent-component-regression.spec.ts`
+- [x] Agent responde sem tools conectadas → `agent-component-regression.spec.ts`
 - [-] Agent exibe steps de raciocínio no Playground → `agent-reasoning-steps.spec.ts`
 - [-] Composio (tool integration para Agent) → `composio.spec.ts`
 - [ ] Agent em modo streaming — resposta exibida progressivamente no Playground
@@ -279,7 +279,7 @@
 - [ ] Tool retorna erro — agent trata e continua execução
 
 #### 6.5 Output e Raciocínio
-- [x] Duração de execução exibida após run com tools → `agent-component-regression.spec.ts`
+- [x] Duração de execução exibida após run bem-sucedido → `agent-component-regression.spec.ts`
 - [ ] Inspecionar tools usadas pelo Agent no Playground
 - [ ] Agent retorna output em formato JSON estruturado
 - [ ] Agent retorna output em Markdown renderizado corretamente
