@@ -252,7 +252,7 @@ for (const { label, options, skipReason } of targets) {
       },
     );
 
-    test.only(
+    test(
       "agent must display duration after successful run",
       { tag: ["@release", "@components", "@agents"] },
       async ({ page }) => {
