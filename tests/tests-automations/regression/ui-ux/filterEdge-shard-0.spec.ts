@@ -26,7 +26,7 @@ test(
     const outputElements = await page
       .getByTestId("handle-retrievalqa-shownode-text-right")
       .all();
-    let visibleElementHandle;
+    let visibleElementHandle: import("@playwright/test").Locator | undefined;
 
     for (const element of outputElements) {
       if (await element.isVisible()) {
