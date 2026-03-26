@@ -1465,7 +1465,7 @@
 
 ## 19. Model Providers
 
-**Arquivos:** `core/features/globalVariables.spec.ts`, `claude-model-switch.spec.ts`, `modelProviderModal.spec.ts`
+**Arquivos:** `core/features/globalVariables.spec.ts`, `claude-model-switch.spec.ts`, `modelProviderModal.spec.ts`, `collect-models.spec.ts`
 
 ---
 
@@ -1538,6 +1538,48 @@
 4. Clicar em um provider e verificar que é possível configurar a API key.
 
 **Validação:** Modal abre, lista providers e permite configuração.
+
+---
+
+### 19.7 Configurar API key de provider — primeiro setup (Save Configuration) `[x]`
+
+**Arquivo:** `helpers/provider-setup/collect-models.ts` — `collectModelsForProvider`
+
+**Objetivo:** Verificar que o helper consegue configurar uma API key em um provider que ainda não possui chave salva.
+
+**Pré-condição:** Provider sem API key configurada no Langflow (campo com placeholder `sk-ant-...`, `AIza...` ou `sk-...` visível).
+
+**Passo a passo:**
+1. Navegar para Settings → Model Providers.
+2. Clicar no provider desejado (ex: Anthropic).
+3. Verificar que o input com placeholder `sk-ant-...` está visível.
+4. Clicar no input — botão "Save Configuration" aparece habilitado.
+5. Digitar a API key via `pressSequentially`.
+6. Clicar em "Save Configuration".
+7. Aguardar o botão "Replace Configuration" aparecer na tela como confirmação.
+
+**Validação:** Botão "Replace Configuration" exibido após o save, indicando que a chave foi persistida.
+
+---
+
+### 19.8 Substituir API key de provider — chave existente (Replace Configuration) `[x]`
+
+**Arquivo:** `helpers/provider-setup/collect-models.ts` — `collectModelsForProvider`
+
+**Objetivo:** Verificar que o helper consegue substituir uma API key já configurada em um provider.
+
+**Pré-condição:** Provider com API key já salva (botão "Replace Configuration" presente).
+
+**Passo a passo:**
+1. Navegar para Settings → Model Providers.
+2. Clicar no provider desejado.
+3. Verificar que o input com placeholder `sk-ant-...` está visível.
+4. Clicar no input — valor anterior some e o botão "Replace Configuration" fica desabilitado.
+5. Digitar a nova API key via `pressSequentially` — o `onChange` do React habilita o botão.
+6. Clicar em "Replace Configuration".
+7. Aguardar o botão "Replace Configuration" reaparecer como confirmação.
+
+**Validação:** Botão "Replace Configuration" reexibido após o clique, confirmando que a nova chave foi salva.
 
 ---
 

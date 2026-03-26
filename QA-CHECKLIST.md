@@ -305,6 +305,8 @@
 - [x] Validar API keys de todos os providers via chamada real → `collect-models.spec.ts`
 - [x] Coletar modelos disponíveis por provider via UI → `collect-models.spec.ts`
 - [x] Providers inativos aparecem como skipped nos testes com motivo → `agent-component-regression.spec.ts`
+- [x] Configurar API key de provider via Save Configuration (primeiro setup) → `collect-models.spec.ts`
+- [x] Substituir API key de provider via Replace Configuration (chave existente) → `collect-models.spec.ts`
 
 #### 7.2 OpenAI
 - [-] Configurar API key OpenAI via GlobalVariables

@@ -153,10 +153,21 @@ async function collectModelsForProvider(
 ): Promise<ModelRecord[]> {
   await page.getByTestId(providerTestId).click();
 
-  const saveConfigBtn = page.getByRole("button", { name: "Save Configuration" });
-  if ((await saveConfigBtn.count()) > 0) {
-    await page.getByPlaceholder(apiKeyPlaceholder).fill(process.env[apiKeyEnvVar] ?? "");
-    await saveConfigBtn.click();
+  const apiKeyInput = page.getByPlaceholder(apiKeyPlaceholder);
+  if ((await apiKeyInput.count()) > 0) {
+    await apiKeyInput.click();
+    await apiKeyInput.pressSequentially(process.env[apiKeyEnvVar] ?? "", { delay: 0 });
+
+    const saveConfigBtn = page.getByRole("button", { name: "Save Configuration" });
+    const replaceConfigBtn = page.getByRole("button", { name: "Replace Configuration" });
+
+    if ((await saveConfigBtn.count()) > 0) {
+      await saveConfigBtn.click();
+    } else if ((await replaceConfigBtn.count()) > 0) {
+      await replaceConfigBtn.click();
+    }
+
+    await replaceConfigBtn.waitFor({ state: "visible" });
   }
 
   const toggles = page.locator('[data-testid^="llm-toggle"]');
