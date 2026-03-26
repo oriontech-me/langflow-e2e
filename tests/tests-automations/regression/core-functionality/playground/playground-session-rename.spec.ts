@@ -9,8 +9,10 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
  * Rename availability is controlled server-side by:
  *   canRenameSession = !isDefaultSession && hasMessages
  *
- * When false, the rename-session-option element is not rendered in the DOM at
- * all — no need to open the more-menu to assert its absence.
+ * When false, the rename-session-option element is not rendered in the DOM.
+ * However, SelectContent (Radix) only renders its children when the menu is
+ * open — there is no forceMount. The more-menu must be opened before asserting
+ * the item's absence, otherwise the assertion is a false positive.
  *
  * The more-menu button uses a dynamic testid: session-{id}-more-menu.
  * We target it with the partial-match pattern ^session- + $-more-menu.
@@ -78,6 +80,10 @@ test.describe("Playground – Session Rename (B2)", () => {
 
   test.afterEach(async ({ page }) => {
     await page.goto("/");
+    // Wait for the page to fully settle before cleanAllFlows attempts clicks.
+    // Without this, a Radix overlay from the playground modal can still be
+    // mounted and intercept pointer events.
+    await page.waitForLoadState("networkidle");
     await cleanAllFlows(page);
   });
 
@@ -94,13 +100,19 @@ test.describe("Playground – Session Rename (B2)", () => {
       );
 
       await test.step(
-        "Verify rename-session-option is absent for the Default Session",
+        "Open the more-menu and verify rename-session-option is absent for the Default Session",
         async () => {
           // canRenameSession = !isDefaultSession && hasMessages
-          // isDefaultSession = true → option is never rendered in DOM
-          await expect(
-            page.getByTestId("rename-session-option"),
-          ).toBeHidden();
+          // isDefaultSession = true → showRename = false → item not rendered in DOM.
+          // Menu must be open first: SelectContent only renders when open.
+          await page
+            .locator('[data-testid^="session-"][data-testid$="-more-menu"]')
+            .first()
+            .click();
+          await expect(page.getByTestId("rename-session-option")).toHaveCount(
+            0,
+          );
+          await page.keyboard.press("Escape");
         },
       );
     },
@@ -126,13 +138,19 @@ test.describe("Playground – Session Rename (B2)", () => {
       });
 
       await test.step(
-        "Verify rename-session-option is absent for a session with no messages",
+        "Open the more-menu and verify rename-session-option is absent for a session with no messages",
         async () => {
           // canRenameSession = !isDefaultSession && hasMessages
-          // hasMessages = false → option is never rendered in DOM
-          await expect(
-            page.getByTestId("rename-session-option"),
-          ).toBeHidden();
+          // hasMessages = false → showRename = false → item not rendered in DOM.
+          // Menu must be open first: SelectContent only renders when open.
+          await page
+            .locator('[data-testid^="session-"][data-testid$="-more-menu"]')
+            .last()
+            .click();
+          await expect(page.getByTestId("rename-session-option")).toHaveCount(
+            0,
+          );
+          await page.keyboard.press("Escape");
         },
       );
     },
