@@ -77,9 +77,11 @@ test("deve configurar o model provider", { tag: ["@model-provider"] }, async ({ 
 
 Veja a tabela de tags disponíveis no [README](./README.md#tags-disponíveis).
 
-**6. Atualize o `QA_CHECKLIST.md`**
+**6. Atualize o `QA_CHECKLIST.md` e o `QA-SCENARIOS-GUIDE.md`**
 
-Após criar o teste, localize o item correspondente no checklist e marque como `[-]` (automatizado, precisa validar). Somente mude para `[x]` após seguir o processo de validação abaixo.
+Após criar o teste, localize o item correspondente no `QA_CHECKLIST.md` e marque como `[-]` (automatizado, precisa validar). Somente mude para `[x]` após seguir o processo de validação abaixo.
+
+Adicione também uma entrada no `QA-SCENARIOS-GUIDE.md` descrevendo o cenário em linguagem humana — objetivo, pré-condições, passo a passo e critério de validação. Os dois documentos devem estar sempre sincronizados com os testes existentes.
 
 ---
 
@@ -352,6 +354,59 @@ Todo trabalho entra via PR — sem push direto em `main`.
 - O que ele adiciona ou corrige
 - Como o teste foi validado (os 5 passos do guia)
 - Issue relacionada, se vier de um alerta do file-watcher
+
+### Descrevendo um PR de novo teste
+
+A descrição de um PR de teste tem uma responsabilidade diferente da de um PR de feature ou fix: ela precisa comunicar não apenas *o que foi feito*, mas *o que está sendo garantido*. O revisor deve conseguir, sem abrir nenhum arquivo, avaliar se o teste cobre o comportamento correto, se a abordagem é sólida e quais são os limites da cobertura adicionada.
+
+> **Para o revisor:** consulte o `QA-SCENARIOS-GUIDE.md` e localize o cenário correspondente. Verifique se o teste implementado cobre o comportamento especificado — objetivo, pré-condições e critério de validação. Divergências entre a especificação e a implementação devem ser sinalizadas como bloqueantes.
+
+**1. Tabela de testes cobertos**
+
+Liste cada teste com uma descrição do **comportamento do sistema** que ele valida — não os passos de execução, mas a propriedade que quebraria em caso de regressão:
+
+| # | Teste | O que valida |
+|---|---|---|
+| 1 | `nome do teste` | Descrição do comportamento do sistema que seria detectado se regredisse |
+| 2 | `nome do teste` | Descrição do comportamento do sistema que seria detectado se regredisse |
+
+**2. Como cada teste foi construído**
+
+Descreva as decisões de implementação não óbvias. Se o teste usa interceptação de resposta, injeção via API, arquivo de flow pré-construído ou qualquer mecanismo indireto em vez da interação direta pela UI, justifique a escolha — o que torna a abordagem direta inviável ou inadequada para o cenário:
+
+> Ex: o campo X não possui UI editável em condições normais de uso; o teste injeta o valor via interceptação da resposta da API para exercitar o comportamento sem depender de efeitos colaterais externos.
+
+**3. Dependências**
+
+Declare explicitamente o que o teste precisa para executar corretamente:
+
+- PRs ou helpers que devem estar mergeados antes
+- Se requer LLM: provider, modelo e variáveis de ambiente necessárias no `.env`
+- Modo de execução: `serial` ou paralelo, e por quê
+- Presença de `afterEach` de cleanup e o que ele descarta
+
+**4. O que este teste não cobre**
+
+Declare o escopo negativo — comportamentos relacionados que o revisor poderia razoavelmente esperar ver cobertos, mas que estão fora desta PR e por quê:
+
+> Ex: não cobre o comportamento do componente quando a API retorna erro 5xx; não valida a integração com o campo Y, que pertence a outra área funcional.
+
+**5. Limitações conhecidas** *(se houver)*
+
+Registre workarounds, timeouts empíricos, race conditions aceitas ou qualquer decisão que um mantenedor futuro precisaria entender para não introduzir regressões ao modificar o teste:
+
+> Ex: o teste aguarda N ms para garantir o autosave antes de navegar; esse valor é empírico e pode ser insuficiente em ambientes com latência elevada. A solução correta dependeria de um sinal explícito do backend que não está disponível na versão atual.
+
+**6. Atualize o `QA-SCENARIOS-GUIDE.md`**
+
+Para cada novo cenário coberto, adicione uma entrada no `QA-SCENARIOS-GUIDE.md` com:
+
+- **Objetivo** — o que o cenário valida em termos de comportamento do sistema
+- **Pré-condições** — o que precisa estar configurado ou em execução
+- **Passo a passo** — a sequência de ações que o teste executa
+- **Validação** — o critério que determina sucesso ou falha
+
+O guide é a especificação em linguagem humana dos testes automatizados. Mantê-lo atualizado permite que o revisor compare o teste implementado com o comportamento especificado e avalie se a cobertura está correta — sem precisar ler o código.
 
 ---
 

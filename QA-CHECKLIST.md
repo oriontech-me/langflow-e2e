@@ -642,43 +642,76 @@
 
 ---
 
-### Prioridades para Automatizar
+## Roadmap de Implementação
 
-#### 🔴 Alta Prioridade (bloqueadores de release)
-1. Erro de API key inválida (OpenAI/Anthropic)
-2. Flow com erro Python exibe mensagem clara
-3. Atualização com breaking change — deve alertar usuário
-4. Erro de rede durante execução
-5. **Agent Instructions (system prompt) respeitado** → `agent-system-prompt.spec.ts`
-6. **Tool retorna erro → agente não crasha** → `agent-tool-error-handling.spec.ts`
-7. **context_id fixo → continuidade entre mensagens** → `agent-context-id-continuity.spec.ts`
+---
 
-#### 🟡 Média Prioridade (regressão importante)
-8. MCP client — consumo de tools e resources externos
-9. Agent com tool MCP externo integrado
-10. Webhook trigger externo
-11. Playground compartilhável (URL pública)
-12. Pipeline RAG completo (knowledge-ingestion)
-13. Agent — steps de raciocínio com tools usadas
-14. **Trocar context_id → isolamento entre sessões** → `agent-context-id-isolation.spec.ts`
-15. **max_iterations limita ciclos do agente** → `agent-max-iterations.spec.ts`
-16. **Múltiplas tools → seleção correta por prompt** → `agent-multi-tool-selection.spec.ts`
-17. **Troca de provider → campos anteriores não persistem** → `agent-provider-field-isolation.spec.ts`
-18. **Flow salvo e reaberto → configurações preservadas** → `agent-config-persistence.spec.ts`
+### 🟢 Fase 0 — Validado
 
-#### 🟢 Baixa Prioridade (melhorias de cobertura)
-19. Loop component — iterações corretas
-20. MCP server endpoint gerado
-21. Ollama / Groq / Mistral providers
-22. Editar texto da sticky note
-23. Usar variável global em componente
-24. **max_tokens trunca resposta** → `agent-max-tokens.spec.ts`
-25. **reasoning_effort campo condicional** → `agent-reasoning-effort.spec.ts`
-26. **output_schema gera JSON válido** → `agent-structured-output.spec.ts`
-27. **Resposta vazia / recusa — sem crash** → `agent-empty-refusal-response.spec.ts`
-28. **Toggle add_current_date_tool** → `agent-current-date-tool.spec.ts`
-29. **handle_parsing_errors comportamento** → `agent-parse-error-behavior.spec.ts`
-30. **Input via handle vs campo direto** → `agent-input-sources.spec.ts`
-31. **Imagem via handle de input** → `agent-multimodal-image-input.spec.ts`
-32. **n_messages limita histórico** → `agent-n-messages-limit.spec.ts`
-33. **Tool com nome inválido** → `agent-tool-name-validation.spec.ts`
+> Testes com cobertura confirmada (`[x]`).
+
+#### Pages & Helpers
+- [x] `SimpleAgentTemplatePage` — carrega template Simple Agent com provider e modelo configurável → `pages/SimpleAgentTemplatePage.ts`
+- [x] `SettingsPage` — navegação à página de configurações via menu do usuário → `pages/SettingsPage.ts`
+- [x] Setup de Provider OpenAI → `helpers/provider-setup/setup-openai.ts`
+- [x] Setup de Provider Anthropic → `helpers/provider-setup/setup-anthropic.ts`
+- [x] Setup de Provider Google Generative AI → `helpers/provider-setup/setup-google.ts`
+- [x] Map de Providers (`providerSetupMap`) → `helpers/provider-setup/index.ts`
+- [x] Validação de providers via API (crédito, key válida) → `helpers/provider-setup/collect-models.ts`
+- [x] Coleta de modelos disponíveis por provider via UI → `helpers/provider-setup/collect-models.ts`
+- [x] Carregar Simple Agent com provider e modelo variável → `pages/SimpleAgentTemplatePage.ts`
+- [x] Carregar Simple Agent com OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
+
+#### core-functionality/llm-agents/
+- [x] Agent executa com múltiplos providers e modelos (OpenAI, Anthropic, Google) → `agent-component-regression.spec.ts`
+- [x] Agent exibe resposta válida para pergunta simples → `agent-component-regression.spec.ts`
+- [x] Agent responde sem tools conectadas (regressão ID 147) → `agent-component-regression.spec.ts`
+- [x] Botão Stop interrompe execução do agente → `agent-component-regression.spec.ts`
+- [x] Agent responde múltiplas mensagens consecutivas na mesma sessão → `agent-component-regression.spec.ts`
+- [x] Duração de execução exibida após run com tools → `agent-component-regression.spec.ts`
+- [x] Memory Chatbot template carrega com estrutura correta de nós e arestas → `memory-history-regression.spec.ts`
+- [x] Message History retém contexto entre mensagens na mesma sessão → `memory-history-regression.spec.ts`
+- [x] Isolamento de sessão: session IDs distintos têm históricos independentes → `memory-history-regression.spec.ts`
+- [x] Mensagens persistem após fechar e reabrir o Playground → `memory-history-regression.spec.ts`
+- [x] Sem Message History, LLM não retém contexto entre mensagens → `memory-history-regression.spec.ts`
+
+#### core-functionality/model-provider/
+- [x] Validar API keys de todos os providers via chamada real → `collect-models.spec.ts`
+- [x] Coletar modelos disponíveis por provider via UI → `collect-models.spec.ts`
+- [x] Providers inativos aparecem como skipped nos testes com motivo → `agent-component-regression.spec.ts`
+
+#### core-functionality/templates/
+- [x] Memory Chatbot → `memory-history-regression.spec.ts`
+
+---
+
+### 🔵 Fase 1 — Próxima Entrega
+
+> Validar (`[-]`) e criar (`[ ]`) nos módulos abaixo. Ver detalhes na Part II.
+
+| Módulo | Validar (`[-]`) | Criar (`[ ]`) |
+|--------|-----------------|---------------|
+| `api/` — Auth + Variáveis | 18 | 1 |
+| `api/` — API REST | 21 | 0 |
+| `core-components/` — Componentes | 36 | 11 |
+| `core-functionality/llm-agents/` | 2 | 15 |
+| `core-functionality/model-provider/` | 16 | 8 |
+| `core-functionality/playground/` | 17 | 3 |
+| `mcp/client/` | 0 | 6 |
+| `mcp/server/` | 3 | 4 |
+| `ui-ux/` — Canvas | 43 | 1 |
+
+---
+
+### 🟡 Fase 2 — Entrega Seguinte
+
+> Módulos restantes após conclusão da Fase 1. Ver detalhes na Part II.
+
+| Módulo | Validar (`[-]`) | Criar (`[ ]`) |
+|--------|-----------------|---------------|
+| `core-functionality/observability-monitoring/` | 12 | 1 |
+| `core-functionality/knowledge-ingestion/` | 4 | 4 |
+| `flow-functionality/` | 23 | 0 |
+| `core-functionality/project-management/` | 11 | 0 |
+| `core-functionality/templates/` | 34 | 0 |
+| `ui-ux/` — Settings | 5 | 0 |
