@@ -75,6 +75,9 @@ async function configureProviderApiKey(
   keyPlaceholder: string,
   apiKey: string,
 ): Promise<void> {
+  await page.goto("/");
+  await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
+
   const settingsPage = new SettingsPage(page);
   await settingsPage.navigate();
   await page.getByTestId("sidebar-nav-Model Providers").click();
