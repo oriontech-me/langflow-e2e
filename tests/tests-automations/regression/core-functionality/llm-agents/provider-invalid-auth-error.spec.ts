@@ -134,7 +134,7 @@ for (const {
             const errorBox = page.locator(".error-build-message");
             await expect(
               errorBox.getByText(/Invalid API key/i),
-            ).toBeVisible({ timeout: 30000 });
+            ).toBeVisible({ timeout: 2000 });
           });
         } finally {
           await test.step(`Restaurar autenticação válida do provider ${provider}`, async () => {
