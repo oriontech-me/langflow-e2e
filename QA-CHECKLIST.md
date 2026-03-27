@@ -311,6 +311,7 @@
 #### 7.4 Google Generative AI
 - [-] Configurar API key Google no agente
 - [-] Selecionar modelo Gemini no agente
+- [-] Erro de API key Google inválida → `provider-invalid-auth-error.spec.ts`
 
 #### 7.5 Gerenciamento de Providers
 - [-] Modal "Manage Model Providers"
@@ -616,7 +617,7 @@
 | `core-components/` — Componentes | 22 | 16 | 0 | 6 |
 | `core-functionality/playground/` | 17 | 14 | 0 | 3 |
 | `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
-| `core-functionality/model-provider/` | 20 | 13 | 0 | 7 |
+| `core-functionality/model-provider/` | 21 | 13 | 0 | 8 |
 | `core-functionality/llm-agents/` | 15 | 8 | 0 | 7 |
 | `core-functionality/knowledge-ingestion/` | 8 | 4 | 0 | 4 |
 | `flow-functionality/` | 20 | 18 | 1 | 1 |
@@ -626,7 +627,7 @@
 | `templates/` | 35 | 33 | 0 | 2 |
 | `ui-ux/` — Canvas | 30 | 28 | 1 | 1 |
 | `ui-ux/` — Settings | 4 | 4 | 0 | 0 |
-| **TOTAL** | **265** | **213 (80%)** | **3** | **49 (18%)** |
+| **TOTAL** | **266** | **213 (80%)** | **3** | **50 (19%)** |
 
 ---
 
