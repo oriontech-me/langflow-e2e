@@ -27,7 +27,6 @@ await new SimpleAgentTemplatePage(page).load(options);
 ### Configurar strategy no .env
 
 ```bash
-MODEL_TEST_STRATEGY=model
 MODEL_TEST_ID=gpt-4o-mini
 ```
 

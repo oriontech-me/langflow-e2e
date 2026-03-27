@@ -172,12 +172,15 @@ Esta é a etapa mais importante — e a mais ignorada.
 Quebre intencionalmente o comportamento que o teste deveria detectar e confirme que o teste **falha**. Se ele continuar passando, a asserção não está validando nada de real.
 
 # Rodar todos os modelos de um provider
-MODEL_TEST_STRATEGY=provider MODEL_TEST_PROVIDER=openai \
+MODEL_TEST_PROVIDER=openai \
   npx playwright test caminho/do/teste.spec.ts --workers=1
 
-# Rodar todos os modelos do JSON
-MODEL_TEST_STRATEGY=all \
+# Rodar somente um modelo específico
+MODEL_TEST_ID=gpt-4o-mini \
   npx playwright test caminho/do/teste.spec.ts --workers=1
+
+# Rodar todos os modelos do JSON (padrão)
+npx playwright test caminho/do/teste.spec.ts --workers=1
 ```
 
 Para testes de agente, a forma de forçar falha depende do comportamento validado:
