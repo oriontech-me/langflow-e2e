@@ -1525,14 +1525,15 @@
 **Pré-condição:** `OPENAI_API_KEY` configurado no `.env`.
 
 **Passo a passo:**
-1. Navegar para `Settings > Model Providers > OpenAI`.
-2. Substituir a API key por uma chave inválida (ex: `sk-invalid-openai-key-for-testing`).
-3. Carregar o template Simple Agent com provider OpenAI.
-4. Abrir o Playground e enviar uma mensagem.
-5. Verificar que `.error-build-message` exibe texto correspondendo a `/Invalid API key/i`.
-6. (Cleanup) Restaurar a chave válida via `Settings > Model Providers`.
+1. Navegar para `Settings` via menu do usuário.
+2. Clicar no ícone `icon-Brain` para acessar Model Providers.
+3. Clicar no provider OpenAI.
+4. Selecionar todo o conteúdo do campo de API key e inserir uma chave inválida (ex: `sk-invalid-openai-key-for-testing`).
+5. Clicar em `Save Configuration` (primeira vez) ou `Replace Configuration` (chave já existente).
+6. Verificar que `.error-build-message` exibe texto correspondendo a `/Invalid API key/i`.
+7. (Cleanup) Selecionar o campo, inserir a chave válida do `.env` e clicar em `Replace Configuration`.
 
-**Validação:** O Langflow exibe mensagem de erro de autenticação no canvas quando a chave OpenAI é inválida.
+**Validação:** O Langflow exibe `.error-build-message` com `/Invalid API key/i` imediatamente após salvar uma chave inválida na página de configuração do provider.
 
 ---
 
@@ -1543,14 +1544,15 @@
 **Pré-condição:** `ANTHROPIC_API_KEY` configurado no `.env`.
 
 **Passo a passo:**
-1. Navegar para `Settings > Model Providers > Anthropic`.
-2. Substituir a API key por uma chave inválida (ex: `sk-ant-invalid-for-testing`).
-3. Carregar o template Simple Agent com provider Anthropic.
-4. Abrir o Playground e enviar uma mensagem.
-5. Verificar que `.error-build-message` exibe texto correspondendo a `/Invalid API key|authentication_error|invalid.*key/i`.
-6. (Cleanup) Restaurar a chave válida via `Settings > Model Providers`.
+1. Navegar para `Settings` via menu do usuário.
+2. Clicar no ícone `icon-Brain` para acessar Model Providers.
+3. Clicar no provider Anthropic.
+4. Selecionar todo o conteúdo do campo de API key e inserir uma chave inválida (ex: `sk-ant-invalid-for-testing`).
+5. Clicar em `Save Configuration` ou `Replace Configuration`.
+6. Verificar que `.error-build-message` exibe texto correspondendo a `/Invalid API key/i`.
+7. (Cleanup) Selecionar o campo, inserir a chave válida do `.env` e clicar em `Replace Configuration`.
 
-**Validação:** O Langflow exibe mensagem de erro de autenticação no canvas quando a chave Anthropic é inválida.
+**Validação:** O Langflow exibe `.error-build-message` com `/Invalid API key/i` imediatamente após salvar uma chave inválida na página de configuração do provider.
 
 ---
 
@@ -1561,14 +1563,15 @@
 **Pré-condição:** `GOOGLE_API_KEY` configurado no `.env`.
 
 **Passo a passo:**
-1. Navegar para `Settings > Model Providers > Google Generative AI`.
-2. Substituir a API key por uma chave inválida (ex: `AIza-invalid-google-key-for-testing`).
-3. Carregar o template Simple Agent com provider Google.
-4. Abrir o Playground e enviar uma mensagem.
-5. Verificar que `.error-build-message` exibe texto correspondendo a `/Invalid API key|API key not valid|invalid.*key/i`.
-6. (Cleanup) Restaurar a chave válida via `Settings > Model Providers`.
+1. Navegar para `Settings` via menu do usuário.
+2. Clicar no ícone `icon-Brain` para acessar Model Providers.
+3. Clicar no provider Google Generative AI.
+4. Selecionar todo o conteúdo do campo de API key e inserir uma chave inválida (ex: `AIza-invalid-google-key-for-testing`).
+5. Clicar em `Save Configuration` ou `Replace Configuration`.
+6. Verificar que `.error-build-message` exibe texto correspondendo a `/Invalid API key/i`.
+7. (Cleanup) Selecionar o campo, inserir a chave válida do `.env` e clicar em `Replace Configuration`.
 
-**Validação:** O Langflow exibe mensagem de erro de autenticação no canvas quando a chave Google é inválida.
+**Validação:** O Langflow exibe `.error-build-message` com `/Invalid API key/i` imediatamente após salvar uma chave inválida na página de configuração do provider.
 
 ---
 
