@@ -1064,7 +1064,7 @@
 
 ## 19. Model Providers
 
-**Arquivos:** `core/features/globalVariables.spec.ts`, `claude-model-switch.spec.ts`, `modelProviderModal.spec.ts`
+**Arquivos:** `core/features/globalVariables.spec.ts`, `claude-model-switch.spec.ts`, `modelProviderModal.spec.ts`, `provider-invalid-auth-error.spec.ts`
 
 ---
 
@@ -1117,18 +1117,61 @@
 
 ---
 
-### 19.5 Erro de API key inválida `[-]` (mocked)
+### 19.5 Erro de autenticação inválida — OpenAI `[-]`
+
+**Arquivo:** `provider-invalid-auth-error.spec.ts`
+
+**Pré-condição:** `OPENAI_API_KEY` configurado no `.env`.
 
 **Passo a passo:**
-1. Configurar componente LLM com API key inválida (`sk-invalida`).
-2. Executar flow ou enviar mensagem no Playground.
-3. Verificar que mensagem de erro sobre API key inválida é exibida.
+1. Navegar para `Settings > Model Providers > OpenAI`.
+2. Substituir a API key por uma chave inválida (ex: `sk-invalid-openai-key-for-testing`).
+3. Carregar o template Simple Agent com provider OpenAI.
+4. Abrir o Playground e enviar uma mensagem.
+5. Verificar que `.error-build-message` exibe texto correspondendo a `/Invalid API key/i`.
+6. (Cleanup) Restaurar a chave válida via `Settings > Model Providers`.
 
-**Validação:** Erro de autenticação com LLM exibido ao usuário.
+**Validação:** O Langflow exibe mensagem de erro de autenticação no canvas quando a chave OpenAI é inválida.
 
 ---
 
-### 19.6 Modal "Manage Model Providers" `[-]`
+### 19.6 Erro de autenticação inválida — Anthropic `[-]`
+
+**Arquivo:** `provider-invalid-auth-error.spec.ts`
+
+**Pré-condição:** `ANTHROPIC_API_KEY` configurado no `.env`.
+
+**Passo a passo:**
+1. Navegar para `Settings > Model Providers > Anthropic`.
+2. Substituir a API key por uma chave inválida (ex: `sk-ant-invalid-for-testing`).
+3. Carregar o template Simple Agent com provider Anthropic.
+4. Abrir o Playground e enviar uma mensagem.
+5. Verificar que `.error-build-message` exibe texto correspondendo a `/Invalid API key|authentication_error|invalid.*key/i`.
+6. (Cleanup) Restaurar a chave válida via `Settings > Model Providers`.
+
+**Validação:** O Langflow exibe mensagem de erro de autenticação no canvas quando a chave Anthropic é inválida.
+
+---
+
+### 19.7 Erro de autenticação inválida — Google `[-]`
+
+**Arquivo:** `provider-invalid-auth-error.spec.ts`
+
+**Pré-condição:** `GOOGLE_API_KEY` configurado no `.env`.
+
+**Passo a passo:**
+1. Navegar para `Settings > Model Providers > Google Generative AI`.
+2. Substituir a API key por uma chave inválida (ex: `AIza-invalid-google-key-for-testing`).
+3. Carregar o template Simple Agent com provider Google.
+4. Abrir o Playground e enviar uma mensagem.
+5. Verificar que `.error-build-message` exibe texto correspondendo a `/Invalid API key|API key not valid|invalid.*key/i`.
+6. (Cleanup) Restaurar a chave válida via `Settings > Model Providers`.
+
+**Validação:** O Langflow exibe mensagem de erro de autenticação no canvas quando a chave Google é inválida.
+
+---
+
+### 19.8 Modal "Manage Model Providers" `[-]`
 
 **Passo a passo:**
 1. Clicar no botão de gerenciamento de providers.
@@ -1775,14 +1818,14 @@
 | Componentes Principais | 22 | 16 | 6 |
 | Playground | 17 | 14 | 3 |
 | Observabilidade | 16 | 13 | 3 |
-| Model Providers | 16 | 10 | 6 |
+| Model Providers | 19 | 10 | 9 |
 | Knowledge Ingestion | 8 | 4 | 4 |
 | Flow Operations | 20 | 18 | 2 |
 | MCP | 13 | 3 | 10 |
 | Gestão de Projetos | 11 | 9 | 2 |
 | Templates | 35 | 33 | 2 |
 | UI/UX Canvas | 34 | 32 | 2 |
-| **TOTAL** | **246** | **202 (82%)** | **44 (18%)** |
+| **TOTAL** | **249** | **202 (81%)** | **47 (19%)** |
 
 ---
 
