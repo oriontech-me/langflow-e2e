@@ -25,12 +25,12 @@
 10. [Componentes Principais — Prompt Template](#10-componentes-principais--prompt-template)
 11. [Componentes Principais — API Request](#11-componentes-principais--api-request)
 12. [Componentes Principais — Webhook](#12-componentes-principais--webhook)
-13. [Componentes Principais — Agent](#13-componentes-principais--agent)
+13. [Componentes Principais — Agent](#13-componentes-principais--agent) *(13.1–13.13 — inclui novos cenários de provider, memória, tools e output)*
 14. [Autenticação — Login e Logout](#14-autenticação--login-e-logout)
 15. [Gerenciamento de Usuários (Admin)](#15-gerenciamento-de-usuários-admin)
 16. [Variáveis Globais (API Keys)](#16-variáveis-globais-api-keys)
 17. [File Upload e Processamento](#17-file-upload-e-processamento)
-18. [Agentes LLM — Execução e Controle](#18-agentes-llm--execução-e-controle)
+18. [Agentes LLM — Execução e Controle](#18-agentes-llm--execução-e-controle) *(18.1–18.17 — inclui context_id, multi-tool, tool error)*
 19. [Model Providers](#19-model-providers)
 20. [Observabilidade — Traces e Notificações](#20-observabilidade--traces-e-notificações)
 21. [Playground — Chat e Sessão](#21-playground--chat-e-sessão)
@@ -616,7 +616,7 @@
 
 ## 13. Componentes Principais — Agent
 
-**Arquivo:** `core/features/agent-component-regression.spec.ts`
+**Arquivos:** `agent-reasoning-steps.spec.ts`, `agent-system-prompt.spec.ts`, `agent-provider-field-isolation.spec.ts`, `agent-config-persistence.spec.ts`, `agent-max-iterations.spec.ts`, `agent-max-tokens.spec.ts`, `agent-reasoning-effort.spec.ts`, `agent-input-sources.spec.ts`, `agent-structured-output.spec.ts`, `agent-empty-refusal-response.spec.ts`, `agent-current-date-tool.spec.ts`, `agent-parse-error-behavior.spec.ts`, `agent-multimodal-image-input.spec.ts`
 
 ---
 
@@ -632,6 +632,237 @@
 4. Verificar que campos padrão (Max Iterations, System Prompt) estão visíveis.
 
 **Validação:** Componente Agent com todos os handles e campos padrão visíveis.
+
+---
+
+### 13.2 Trocar de provider no Agent — campos do provider anterior não persistem `[ ]`
+
+**Arquivo:** `agent-provider-field-isolation.spec.ts`
+
+**Objetivo:** Garantir que ao trocar de provider, campos exclusivos do provider anterior (ex: `project_id` do WatsonX) desaparecem e a API key não é pré-preenchida com o valor anterior.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Selecionar provider WatsonX no Agent — verificar que `base_url_ibm_watsonx` e `project_id` estão visíveis.
+3. Trocar para provider OpenAI.
+4. Verificar que `base_url_ibm_watsonx` e `project_id` **não estão visíveis**.
+5. Verificar que o campo `api_key` está vazio (não pré-preenchido).
+6. Trocar de volta para WatsonX — verificar que o valor anterior de `project_id` **não persiste**.
+
+**Validação:** Campos específicos de provider aparecem e somem corretamente; sem vazamento de valores entre providers.
+
+---
+
+### 13.3 Flow com Agent salvo e reaberto — configurações persistem `[ ]`
+
+**Arquivo:** `agent-config-persistence.spec.ts`
+
+**Objetivo:** Confirmar que ao salvar um flow com Agent configurado e reabri-lo, todos os parâmetros estão preservados.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" com provider X, modelo Y.
+2. Configurar `Agent Instructions` = `"Você é um assistente especializado em Python."`.
+3. Configurar `Max Iterations` = `5`.
+4. Salvar o flow (auto-save ou Ctrl+S).
+5. Navegar para a página principal e abrir outro flow.
+6. Retornar ao flow original.
+7. Verificar que provider, modelo, `Agent Instructions` e `Max Iterations` estão com os valores configurados.
+
+**Validação:** Todas as configurações do Agent são preservadas após salvar e reabrir o flow.
+
+---
+
+### 13.4 max_iterations limita ciclos do agente `[ ]`
+
+**Arquivo:** `agent-max-iterations.spec.ts`
+
+**Objetivo:** Verificar que o parâmetro `max_iterations` é respeitado e o agente para ao atingir o limite.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" com tool (ex: Calculator) conectada.
+2. Configurar `Max Iterations` = `1` no componente Agent.
+3. Enviar prompt que normalmente exigiria múltiplos ciclos (ex: `"Calcule 5+3 e depois multiplique por 2"`).
+4. Aguardar execução finalizar.
+5. Verificar que o agente respondeu (não falhou silenciosamente).
+6. Verificar nos "Agent Steps" que houve no máximo 1 iteração de raciocínio.
+
+**Validação:** Agente para após 1 iteração e retorna resposta ou mensagem de limite atingido.
+
+---
+
+### 13.5 max_tokens limita tamanho da resposta `[ ]`
+
+**Arquivo:** `agent-max-tokens.spec.ts`
+
+**Objetivo:** Verificar que o parâmetro `max_tokens` é incluído no payload enviado à API do modelo.
+
+**Passo a passo:**
+1. Interceptar requisições para `**/api/v1/run/**` via `page.route`.
+2. Carregar template "Simple Agent" e configurar `Max Tokens` = `50`.
+3. Enviar prompt que normalmente gera resposta longa (ex: `"Write 500 words about AI"`).
+4. Verificar no payload interceptado que `max_tokens: 50` está presente.
+5. Verificar que a resposta é mais curta do que sem limite.
+
+**Validação:** Parâmetro `max_tokens` presente no payload e resposta truncada conforme esperado.
+
+---
+
+### 13.6 Campo reasoning_effort é condicional ao modelo `[ ]`
+
+**Arquivo:** `agent-reasoning-effort.spec.ts`
+
+**Objetivo:** Verificar que o campo de reasoning effort aparece apenas para modelos que suportam essa funcionalidade.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" com modelo que suporta reasoning (ex: `claude-sonnet-4-5`).
+2. Verificar se campo `reasoning_effort` está visível no componente Agent.
+3. Trocar para modelo que não suporta reasoning (ex: `gpt-4o-mini`).
+4. Verificar que o campo `reasoning_effort` **não está visível** (ou está desabilitado).
+
+**Validação:** Campo `reasoning_effort` aparece/some conforme capacidade do modelo selecionado.
+
+---
+
+### 13.7 Agent Instructions (system prompt) é respeitado `[ ]`
+
+**Arquivo:** `agent-system-prompt.spec.ts`
+
+**Objetivo:** Confirmar que o conteúdo do campo `Agent Instructions` é enviado como system prompt e influencia a resposta do modelo.
+
+**Pré-condição:** Provider com API key válida configurado.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Configurar `Agent Instructions` = `"Responda sempre em português, independentemente do idioma da pergunta."`.
+3. Abrir Playground.
+4. Enviar mensagem em inglês: `"What is the capital of France?"`.
+5. Aguardar resposta.
+6. Verificar que a resposta está em **português**.
+
+**Cenário B — System prompt vazio:**
+1. Limpar o campo `Agent Instructions`.
+2. Enviar qualquer mensagem.
+3. Verificar que o agente responde normalmente (sem crash ou erro).
+
+**Validação:** System prompt influencia resposta; campo vazio não causa falha.
+
+---
+
+### 13.8 Input via campo direto vs handle (ChatInput) `[ ]`
+
+**Arquivo:** `agent-input-sources.spec.ts`
+
+**Objetivo:** Verificar que o Agent aceita input tanto pelo campo `input_value` diretamente quanto via handle conectado ao ChatInput.
+
+**Passo a passo (Cenário A — campo direto):**
+1. Adicionar Agent ao canvas sem ChatInput conectado.
+2. Preencher campo `input_value` diretamente: `"Hello from direct input"`.
+3. Clicar em Run no componente.
+4. Verificar que a resposta é gerada.
+
+**Passo a passo (Cenário B — via handle):**
+1. Carregar template "Simple Agent" (ChatInput conectado ao Agent).
+2. Abrir Playground e enviar mensagem.
+3. Verificar que a mensagem chega ao Agent e a resposta é retornada.
+
+**Validação:** Ambas as formas de input funcionam corretamente.
+
+---
+
+### 13.9 Output schema estruturado gera JSON válido `[ ]`
+
+**Arquivo:** `agent-structured-output.spec.ts`
+
+**Objetivo:** Verificar que ao configurar `output_schema`, o Agent retorna JSON com os campos definidos.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Abrir configurações avançadas do Agent.
+3. Configurar `output_schema` com campos: `name` (string), `age` (integer).
+4. Configurar `format_instructions` = `"Respond with a JSON object with 'name' and 'age' fields."`.
+5. Enviar prompt: `"Generate a fictional person named João who is 30 years old."`.
+6. Aguardar resposta.
+7. Verificar que a resposta contém JSON com campos `name` e `age`.
+
+**Validação:** JSON válido retornado com os campos do schema configurado.
+
+---
+
+### 13.10 Resposta vazia ou recusa do modelo — sem crash `[ ]`
+
+**Arquivo:** `agent-empty-refusal-response.spec.ts`
+
+**Objetivo:** Verificar que o componente Agent não crasha quando o modelo recusa ou retorna resposta vazia.
+
+**Passo a passo (via mock):**
+1. Interceptar chamada à API do LLM via `page.route`.
+2. Retornar resposta vazia (body `""`, status `200`).
+3. Enviar mensagem no Playground.
+4. Verificar que o Playground não trava — alguma mensagem é exibida (resposta vazia ou erro amigável).
+5. Verificar que o campo de input volta a estar disponível (não fica em estado de loading eterno).
+
+**Validação:** Comportamento gracioso — sem crash; UI retorna ao estado interativo.
+
+---
+
+### 13.11 Toggle add_current_date_tool funciona `[ ]`
+
+**Arquivo:** `agent-current-date-tool.spec.ts`
+
+**Objetivo:** Verificar que o toggle `Add Current Date Tool` adiciona/remove a tool de data do agente.
+
+**Pré-condição:** Provider com API key válida configurado.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Habilitar o toggle `Add Current Date Tool` no componente Agent.
+3. Abrir Playground e enviar: `"What is today's date?"`.
+4. Verificar que o agente usa a date tool (aparece nos Agent Steps) e retorna a data correta.
+5. Desabilitar o toggle `Add Current Date Tool`.
+6. Enviar a mesma pergunta.
+7. Verificar que a date tool **não aparece** nos Agent Steps.
+
+**Validação:** Toggle controla presença da date tool; tool aparece/some nos steps conforme configuração.
+
+---
+
+### 13.12 handle_parsing_errors controla comportamento em falha de parse `[ ]`
+
+**Arquivo:** `agent-parse-error-behavior.spec.ts`
+
+**Objetivo:** Verificar diferença de comportamento entre `handle_parsing_errors=True` e `False`.
+
+**Passo a passo (via mock):**
+1. Configurar `handle_parsing_errors = False` no Agent.
+2. Interceptar resposta do LLM para retornar JSON malformado quando output_schema está configurado.
+3. Enviar mensagem.
+4. Verificar que o Agent retorna **erro explícito** (não tenta corrigir).
+
+**Cenário B — True:**
+1. Configurar `handle_parsing_errors = True`.
+2. Repetir o mesmo mock.
+3. Verificar que o Agent tenta se auto-corrigir (envia segundo request) ou retorna resposta parcial.
+
+**Validação:** Comportamentos distintos conforme `handle_parsing_errors`.
+
+---
+
+### 13.13 Imagem via handle de input é processada pelo Agent `[ ]`
+
+**Arquivo:** `agent-multimodal-image-input.spec.ts`
+
+**Objetivo:** Verificar que imagens passadas via handle de input (não pelo playground) são processadas corretamente pelo agente.
+
+**Pré-condição:** Modelo multimodal configurado (ex: `claude-3-5-sonnet`, `gpt-4o`).
+
+**Passo a passo:**
+1. Adicionar ao canvas: Agent + componente que gera imagem (ex: URL Extractor com imagem pública).
+2. Conectar saída de imagem ao handle de input do Agent.
+3. Configurar Agent Instructions = `"Describe what you see in the image."`.
+4. Executar o flow.
+5. Verificar que o Agent retorna uma descrição da imagem (não erro ou resposta vazia).
+
+**Validação:** Conteúdo de imagem processado corretamente via handle de input.
 
 ---
 
@@ -918,51 +1149,142 @@
 
 ## 18. Agentes LLM — Execução e Controle
 
-**Arquivos:** `llm-agents/agent-component-regression.spec.ts`, `llm-agents/agent-reasoning-steps.spec.ts`, `llm-agents/memory-history-regression.spec.ts`
+**Arquivos:** `llm-agents/agent-component-regression.spec.ts`, `llm-agents/memory-history-regression.spec.ts`
 
 ---
 
-### 18.1 Agent com tool calling executa corretamente `[-]`
-
-**Objetivo:** Verificar que o Agent consegue usar ferramentas para responder perguntas.
-
-**Passo a passo:**
-1. Criar flow: Agent + LLM configurado + Tool (ex: API Request em Tool Mode).
-2. Conectar Tool ao handle de tools do Agent.
-3. Conectar LLM ao handle de language model do Agent.
-4. Abrir Playground e enviar pergunta que requer uso da tool.
-5. Verificar que o Agent chama a tool e retorna resposta baseada no resultado.
-
-**Validação:** Agent chama tool e retorna resposta coerente.
+### agent-component-regression.spec.ts
 
 ---
 
-### 18.2 Agent exibe steps de raciocínio no Playground `[x]`
+### 18.1 Agent responde sem tools conectadas `[x]`
 
-**Objetivo:** Verificar que os passos de raciocínio do Agent são visíveis no Playground.
-
-**Arquivo:** `core/features/agent-reasoning-steps.spec.ts`
+**Objetivo:** Verificar que o agente executa e retorna uma resposta válida mesmo sem nenhuma tool conectada.
 
 **Passo a passo:**
-1. Carregar template "Simple Agent" e configurar modelo (OpenAI, Anthropic ou Gemini).
-2. Abrir Playground e iniciar nova sessão.
-3. Enviar mensagem que force uso de tool: `"You MUST use the Calculator tool. Compute 987 multiplied by 654."`.
-4. Aguardar execução finalizar (botão Stop desaparece).
-5. Verificar que o texto `"Finished in Xs"` aparece na mensagem do assistente.
-6. Verificar que ao menos um item `"Called tool <nome>"` está visível (accordion).
-7. Clicar no item `"Called tool"` para expandir.
-8. Verificar que o conteúdo expande (`data-state="open"`).
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"What is the capital of France?"`.
+4. Aguardar execução finalizar (botão Stop desaparece ou nunca aparece).
+5. Verificar que `div-chat-message` está visível.
+6. Verificar que o texto da resposta tem conteúdo (length > 1).
+
+**Validação:** Agente responde corretamente sem tools conectadas.
+
+---
+
+### 18.2 Agent exibe steps de raciocínio e retorna resposta válida `[x]`
+
+**Objetivo:** Verificar que o Agent responde com conteúdo válido e, quando utiliza raciocínio interno, exibe o indicador de duração no Playground. O check de steps é soft — modelos que respondem diretamente sem tools não geram o indicador, o que é comportamento esperado.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"Who was the first astronaut to walk on the Moon?"`.
+4. Aguardar execução finalizar (botão Stop desaparece ou nunca aparece — ambos válidos).
+5. Verificar que `div-chat-message` está visível e tem conteúdo (length > 1).
+6. **(Soft check)** Se `"Finished in Xs"` estiver visível, verificar que não está vazio.
 
 **DOM relevante:**
-- `"Finished in"` → `bot-message.tsx` status text
-- `"Called tool"` → `ContentBlockDisplay.tsx` AccordionTrigger (renderizado como `<div>`, não `<button>`)
-- `[data-state="open"]` → Radix AccordionItem/AccordionContent após expansão
+- `div-chat-message` → mensagem do assistente
+- `"Finished in"` → indicador de duração, exibido quando o agente usa reasoning steps
 
-**Validação:** Steps de raciocínio visíveis, clicáveis e expansíveis no Playground.
+**Validação:** Resposta válida retornada para todos os modelos; indicador de duração verificado quando presente.
 
 ---
 
-### 18.3 Memory History retém contexto entre mensagens na mesma sessão `[x]`
+### 18.3 Agent stop button halts execution mid-run `[x]`
+
+**Objetivo:** Verificar que o botão Stop interrompe a execução do agente durante um run em andamento.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"Write a detailed story about the life and adventures of a fictional explorer in the 18th century."`.
+4. Aguardar o botão Stop aparecer (timeout 30s). Se não aparecer, o modelo respondeu rápido demais — skip implícito.
+5. Clicar no botão Stop via `dispatchEvent("click")`.
+6. Verificar que o botão Stop some.
+7. Verificar que `input-chat-playground` volta a estar visível.
+
+**Validação:** Execução interrompida com sucesso e playground volta ao estado de entrada.
+
+---
+
+### 18.4 Agent displays duration after successful run `[x]`
+
+**Objetivo:** Verificar que o tempo de execução é exibido ao final de um run bem-sucedido.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"What are the main differences between mammals and reptiles?"`.
+4. Aguardar execução finalizar (botão Stop desaparece ou nunca aparece).
+5. Verificar que `div-chat-message` está visível.
+6. **(Soft check)** Se `"Finished in Xs"` estiver visível, verificar que não está vazio.
+
+**Validação:** Indicador de duração exibido quando presente após run bem-sucedido.
+
+---
+
+### 18.5 Agent streams response progressively in the playground `[x]`
+
+**Objetivo:** Verificar que a resposta do agente é exibida progressivamente no playground, confirmando que o streaming está ativo durante a geração.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"Write a 5-paragraph summary explaining what artificial intelligence is, covering its definition, history, main techniques, applications, and future perspectives."`.
+4. Aguardar `div-chat-message` aparecer (agente iniciou a resposta).
+5. Capturar o texto naquele momento (`textAtStart`).
+6. Aguardar 3 segundos.
+7. Capturar o texto novamente (`textAfterWait`).
+8. Se o botão Stop ainda estiver visível: assert que `textAfterWait.length > textAtStart.length`.
+9. Aguardar o Stop desaparecer e verificar que o texto final tem conteúdo (length > 1).
+
+**Validação:** Texto cresce progressivamente durante o streaming; resposta final com conteúdo válido.
+
+---
+
+### 18.6 Playground displays response time on canvas after closing `[x]`
+
+**Objetivo:** Verificar que após o agente finalizar a resposta e o playground ser fechado, o indicador de duração é exibido no nó do agente no canvas.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar: `"What are the main differences between mammals and reptiles?"`.
+4. Aguardar a resposta finalizar (botão Stop desaparece) e `div-chat-message` estar visível.
+5. Clicar em `playground-close-button` para fechar o playground.
+6. Verificar que `node_duration_agent` está visível no canvas.
+
+**DOM relevante:**
+- `playground-close-button` → botão de fechar o playground
+- `node_duration_agent` → indicador de duração no nó do agente no canvas
+
+**Validação:** Indicador de duração exibido no canvas após fechar o playground.
+
+---
+
+### 18.7 Agent handles multiple consecutive messages in same session `[x]`
+
+**Objetivo:** Verificar que o agente responde corretamente a múltiplas mensagens em sequência na mesma sessão.
+
+**Passo a passo:**
+1. Carregar template "Simple Agent" e configurar modelo via `models.json`.
+2. Abrir Playground.
+3. Enviar `"Hello."` e aguardar resposta.
+4. Enviar `"Name three countries in South America."` e aguardar resposta.
+5. Verificar que há pelo menos 2 mensagens visíveis (`div-chat-message` count ≥ 2).
+
+**Validação:** Agente responde corretamente às duas mensagens na mesma sessão.
+
+---
+
+### memory-history-regression.spec.ts
+
+---
+
+### 18.8 Memory History retém contexto entre mensagens na mesma sessão `[x]`
 
 **Objetivo:** Verificar que o componente Message History mantém o histórico de conversa entre mensagens dentro da mesma sessão do Playground.
 
@@ -971,9 +1293,9 @@
 **Passo a passo:**
 1. Carregar template "Memory Chatbot" e configurar modelo OpenAI.
 2. Abrir Playground e iniciar nova sessão (`new-chat`).
-3. Enviar mensagem com dado único: `"In our conversation my name is TESTNAME_XY9Z."`.
-4. Aguardar resposta do assistente (1 mensagem exibida).
-5. Enviar segunda mensagem: `"What is my name from our conversation?"`.
+3. Enviar: `"In our conversation my name is TESTNAME_XY9Z."`.
+4. Aguardar resposta (1 mensagem exibida).
+5. Enviar: `"What is my name from our conversation?"`.
 6. Aguardar resposta (2 mensagens exibidas).
 7. Verificar que a resposta contém `"TESTNAME_XY9Z"`.
 
@@ -981,7 +1303,7 @@
 
 ---
 
-### 18.4 Isolamento de sessão: session IDs distintos têm históricos independentes `[x]`
+### 18.9 Isolamento de sessão: session IDs distintos têm históricos independentes `[x]`
 
 **Objetivo:** Verificar que duas sessões distintas não compartilham histórico.
 
@@ -989,74 +1311,153 @@
 
 **Passo a passo:**
 1. Carregar template "Memory Chatbot" e configurar modelo OpenAI.
-2. Abrir Playground — sessão A: enviar `"In our conversation my secret code is ALPHA_CODE_111."`.
+2. Sessão A: enviar `"In our conversation my secret code is ALPHA_CODE_111."`.
 3. Iniciar nova sessão (`new-chat`) — sessão B: enviar `"What secret code did I mention?"`.
-4. Aguardar resposta da sessão B.
-5. Verificar que a resposta da sessão B **não** contém `"ALPHA_CODE_111"`.
+4. Verificar que a resposta da sessão B **não** contém `"ALPHA_CODE_111"`.
 
 **Validação:** Sessão B não tem acesso ao histórico da sessão A.
 
 ---
 
-### 18.5 Mensagens persistem após fechar e reabrir o Playground `[x]`
-
-**Objetivo:** Verificar que o histórico da sessão é preservado ao fechar e reabrir o Playground.
+### 18.10 Mensagens persistem após fechar e reabrir o Playground `[x]`
 
 **Arquivo:** `llm-agents/memory-history-regression.spec.ts`
 
 **Passo a passo:**
 1. Carregar template "Memory Chatbot" e configurar modelo OpenAI.
 2. Abrir Playground, iniciar nova sessão e enviar: `"In our conversation my value is PERSIST_VALUE_42."`.
-3. Fechar o Playground (clicar fora ou no botão de fechar).
-4. Reabrir o Playground clicando em `playground-btn-flow-io`.
-5. Selecionar a mesma sessão anterior.
-6. Enviar: `"What value did I mention earlier?"`.
-7. Verificar que a resposta contém `"PERSIST_VALUE_42"`.
+3. Fechar o Playground e reabrir clicando em `playground-btn-flow-io`.
+4. Selecionar a mesma sessão e enviar: `"What value did I mention earlier?"`.
+5. Verificar que a resposta contém `"PERSIST_VALUE_42"`.
 
 **Validação:** Histórico persistiu entre aberturas do Playground.
 
 ---
 
-### 18.6 Sem Message History, LLM não retém contexto entre mensagens `[x]`
-
-**Objetivo:** Verificar que sem o componente Message History conectado, o LLM não tem acesso ao histórico de conversa anterior.
+### 18.11 Sem Message History, LLM não retém contexto entre mensagens `[x]`
 
 **Arquivo:** `llm-agents/memory-history-regression.spec.ts`
 
 **Passo a passo:**
-1. Carregar o template "Simple Agent" (sem Message History).
-2. Configurar modelo OpenAI.
-3. Abrir Playground e iniciar nova sessão.
-4. Enviar: `"In our conversation my secret is NOMEM5678."`.
-5. Aguardar resposta (1 mensagem).
-6. Enviar nova mensagem: `"What secret did I just tell you?"`.
-7. Aguardar resposta (2 mensagens).
-8. Verificar que a resposta **não** contém `"NOMEM5678"`.
+1. Carregar o template "Simple Agent" (sem Message History) e configurar modelo OpenAI.
+2. Abrir Playground, enviar: `"In our conversation my secret is NOMEM5678."`.
+3. Enviar: `"What secret did I just tell you?"`.
+4. Verificar que a resposta **não** contém `"NOMEM5678"`.
 
 **Validação:** LLM sem memória não recorda informações de mensagens anteriores.
 
 ---
 
-### 18.7 Parâmetro n_messages do Message History `[ ]`
+### 18.12 Parâmetro n_messages do Message History `[ ]`
 
-**Objetivo:** Verificar que o parâmetro `n_messages` limita corretamente a janela de mensagens retidas na memória.
+**Arquivo:** `agent-n-messages-limit.spec.ts` — aguardando correção de bug no backend.
 
-**Arquivo:** a criar — aguardando correção de bug no backend.
-
-> ⚠️ **Bug confirmado:** O parâmetro `n_messages` é salvo corretamente pelo frontend (verificado via interceptação do PATCH de autosave — payload contém `n_messages: 2`), mas o componente Message History ignora esse valor durante a execução do flow e usa o default (100 mensagens). Bug reportado ao time de desenvolvimento para correção no backend (`MemoryComponent.retrieve_messages()`).
+> ⚠️ **Bug confirmado:** O parâmetro `n_messages` é salvo corretamente pelo frontend mas ignorado na execução do backend (`MemoryComponent.retrieve_messages()`).
 
 **Passo a passo (quando o bug for corrigido):**
-1. Carregar template "Memory Chatbot" e configurar modelo OpenAI.
-2. Abrir InspectionPanel do nó "Message History" e alterar `n_messages` para `2`.
-3. Abrir Playground, iniciar nova sessão.
-4. Enviar Exchange 1: `"In our conversation my value_alpha equals ALPHA_VALUE_123."`.
-5. Enviar Exchange 2: `"In our conversation my value_beta equals BETA_VALUE_456."`.
-6. Enviar Exchange 3: `"In our conversation my value_gamma equals GAMMA_VALUE_789."`.
-7. Enviar Exchange 4: `"What are value_alpha, value_beta, and value_gamma?"`.
-8. Verificar que a resposta **contém** `"GAMMA_VALUE_789"` (dentro da janela).
-9. Verificar que a resposta **não contém** `"ALPHA_VALUE_123"` (fora da janela).
+1. Carregar template "Memory Chatbot", alterar `n_messages` para `2` no nó "Message History".
+2. Enviar 3 exchanges com valores distintos (ALPHA, BETA, GAMMA).
+3. Perguntar pelos 3 valores.
+4. Verificar que GAMMA está na resposta e ALPHA não está.
 
 **Validação:** Com `n_messages=2`, apenas os últimos 2 pares de mensagens estão no contexto.
+
+---
+
+### 18.13 context_id fixo — continuidade entre mensagens `[ ]`
+
+**Arquivo:** `agent-context-id-continuity.spec.ts`
+
+**Objetivo:** Verificar que o Agent mantém memória entre mensagens quando um `context_id` fixo está configurado.
+
+**Pré-condição:** Provider com API key válida. Agent com `context_id` definido (ex: `"test-session-001"`).
+
+**Passo a passo:**
+1. Carregar template "Simple Agent".
+2. Configurar `context_id` = `"test-session-001"` no componente Agent.
+3. Abrir Playground.
+4. Enviar: `"My name is João"`. Aguardar resposta.
+5. Enviar: `"What is my name?"`. Aguardar resposta.
+6. Verificar que a resposta contém `"João"`.
+
+**Validação:** Agente recorda informação da mensagem anterior via `context_id`.
+
+---
+
+### 18.14 Trocar context_id — isolamento entre sessões `[ ]`
+
+**Arquivo:** `agent-context-id-isolation.spec.ts`
+
+**Objetivo:** Verificar que mudar o `context_id` inicia um contexto novo, sem acesso ao histórico anterior.
+
+**Pré-condição:** Provider com API key válida.
+
+**Passo a passo:**
+1. Configurar `context_id` = `"session-A"` no Agent.
+2. Enviar: `"My name is Ana"`. Aguardar resposta.
+3. Alterar `context_id` para `"session-B"`.
+4. Enviar: `"What is my name?"`.
+5. Verificar que a resposta **não menciona** `"Ana"` (sessão isolada).
+
+**Validação:** Histórico de `"session-A"` não vaza para `"session-B"`.
+
+---
+
+### 18.15 Múltiplas tools — agente seleciona a correta `[ ]`
+
+**Arquivo:** `agent-multi-tool-selection.spec.ts`
+
+**Objetivo:** Verificar que o agente escolhe a ferramenta correta entre múltiplas disponíveis.
+
+**Pré-condição:** Duas tools conectadas ao Agent (ex: Calculator + DuckDuckGo).
+
+**Passo a passo:**
+1. Conectar Calculator e DuckDuckGo ao Agent.
+2. Abrir Playground.
+3. Enviar: `"What is 47 times 83?"`.
+4. Aguardar resposta.
+5. Verificar nos "Agent Steps" que `Calculator` foi chamado (não DuckDuckGo).
+6. Enviar: `"Search for the latest news about artificial intelligence"`.
+7. Verificar nos "Agent Steps" que `DuckDuckGo` foi chamado (não Calculator).
+
+**Validação:** Agente seleciona a tool correta conforme a natureza do prompt.
+
+---
+
+### 18.16 Tool que retorna erro — agente não crasha `[ ]`
+
+**Arquivo:** `agent-tool-error-handling.spec.ts`
+
+**Objetivo:** Verificar comportamento do agente quando uma tool conectada retorna erro.
+
+**Passo a passo:**
+1. Criar custom component que sempre lança exceção (ex: `raise ValueError("tool error")`).
+2. Conectar como tool ao Agent.
+3. Enviar prompt que força uso da tool.
+4. Aguardar execução.
+5. Verificar que:
+   - O Playground não trava indefinidamente.
+   - O erro da tool aparece nos "Agent Steps" (ToolContent com status de erro).
+   - O agente retorna alguma resposta (alternativa ou mensagem de erro amigável).
+
+**Validação:** Falha de tool é tratada; agente não crasha; erro visível nos steps.
+
+---
+
+### 18.17 Tool com nome inválido — validação impede execução `[ ]`
+
+**Arquivo:** `agent-tool-name-validation.spec.ts`
+
+**Objetivo:** Verificar que o Agent valida o nome das tools e rejeita nomes fora do padrão `^[a-zA-Z0-9_-]+$`.
+
+**Passo a passo:**
+1. Criar custom component com nome contendo espaço ou caractere especial (ex: `"my tool!"`).
+2. Conectar como tool ao Agent.
+3. Executar o flow.
+4. Verificar que o componente Agent exibe erro de validação antes de chamar o LLM.
+5. Verificar que a mensagem de erro é clara e visível no canvas (não erro silencioso).
+
+**Validação:** Validação de nome de tool ocorre antes da execução; erro explícito exibido.
 
 ---
 
@@ -1180,6 +1581,48 @@
 4. Clicar em um provider e verificar que é possível configurar a API key.
 
 **Validação:** Modal abre, lista providers e permite configuração.
+
+---
+
+### 19.7 Configurar API key de provider — primeiro setup (Save Configuration) `[x]`
+
+**Arquivo:** `helpers/provider-setup/collect-models.ts` — `collectModelsForProvider`
+
+**Objetivo:** Verificar que o helper consegue configurar uma API key em um provider que ainda não possui chave salva.
+
+**Pré-condição:** Provider sem API key configurada no Langflow (campo com placeholder `sk-ant-...`, `AIza...` ou `sk-...` visível).
+
+**Passo a passo:**
+1. Navegar para Settings → Model Providers.
+2. Clicar no provider desejado (ex: Anthropic).
+3. Verificar que o input com placeholder `sk-ant-...` está visível.
+4. Clicar no input — botão "Save Configuration" aparece habilitado.
+5. Digitar a API key via `pressSequentially`.
+6. Clicar em "Save Configuration".
+7. Aguardar o botão "Replace Configuration" aparecer na tela como confirmação.
+
+**Validação:** Botão "Replace Configuration" exibido após o save, indicando que a chave foi persistida.
+
+---
+
+### 19.8 Substituir API key de provider — chave existente (Replace Configuration) `[x]`
+
+**Arquivo:** `helpers/provider-setup/collect-models.ts` — `collectModelsForProvider`
+
+**Objetivo:** Verificar que o helper consegue substituir uma API key já configurada em um provider.
+
+**Pré-condição:** Provider com API key já salva (botão "Replace Configuration" presente).
+
+**Passo a passo:**
+1. Navegar para Settings → Model Providers.
+2. Clicar no provider desejado.
+3. Verificar que o input com placeholder `sk-ant-...` está visível.
+4. Clicar no input — valor anterior some e o botão "Replace Configuration" fica desabilitado.
+5. Digitar a nova API key via `pressSequentially` — o `onChange` do React habilita o botão.
+6. Clicar em "Replace Configuration".
+7. Aguardar o botão "Replace Configuration" reaparecer como confirmação.
+
+**Validação:** Botão "Replace Configuration" reexibido após o clique, confirmando que a nova chave foi salva.
 
 ---
 

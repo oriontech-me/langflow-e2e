@@ -3,7 +3,7 @@
 > **Repositório:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Testes:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Última atualização:** 2026-03-19
+> **Última atualização:** 2026-03-25
 
 ---
 
@@ -178,8 +178,8 @@
 
 #### 3.5 Agent (Componente)
 - [-] Componente Agent exibido no canvas com configurações padrão
-- [ ] Configurar system prompt no componente Agent
-- [ ] Configurar model provider diretamente no componente Agent
+- [ ] Configurar system prompt no componente Agent → `agent-system-prompt.spec.ts`
+- [ ] Configurar model provider diretamente no componente Agent → `agent-provider-field-isolation.spec.ts`
 
 #### 3.6 Loop Component
 - [-] Componente Loop no canvas
@@ -245,44 +245,54 @@
 > Rode `npx playwright test tests/collect-models.spec.ts` antes de executar estes testes.
 > Veja `CLAUDE.md` nesta pasta para o guia completo.
 
-#### 6.1 Execução de Agente
-- [x] Agent executa com múltiplos providers e modelos (OpenAI, Anthropic, Google) → `agent-component-regression.spec.ts`
-- [x] Agent exibe resposta válida para pergunta simples → `agent-component-regression.spec.ts`
-- [x] Agent responde sem tools conectadas (regressão ID 147) → `agent-component-regression.spec.ts`
+#### 6.1 agent-component-regression.spec.ts — Regressão de Comportamento do Agente
+- [x] Agent responde sem tools conectadas
+- [x] Agent exibe resposta válida e opcionalmente steps de raciocínio
+- [x] Botão Stop interrompe execução do agente
+- [x] Duração de execução exibida após run bem-sucedido
+- [x] Resposta exibida progressivamente no Playground (streaming)
+- [x] Indicador de duração exibido no canvas (`node_duration_agent`) após fechar o playground
+- [x] Agent responde múltiplas mensagens consecutivas na mesma sessão
+
+#### 6.2 Outros testes de execução
 - [-] Agent exibe steps de raciocínio no Playground → `agent-reasoning-steps.spec.ts`
 - [-] Composio (tool integration para Agent) → `composio.spec.ts`
-- [ ] Agent em modo streaming — resposta exibida progressivamente no Playground
-
-#### 6.2 Controle de Execução
-- [x] Botão Stop interrompe execução do agente → `agent-component-regression.spec.ts`
 - [ ] Agent para ao atingir stop condition configurada
-- [ ] Agent para ao atingir número máximo de iterações
-- [ ] Agent com múltiplas tools configuradas executa corretamente
+- [ ] Agent para ao atingir número máximo de iterações → `agent-max-iterations.spec.ts`
+- [ ] Agent com múltiplas tools configuradas executa corretamente → `agent-multi-tool-selection.spec.ts`
 - [ ] Agent com timeout configurado respeita o limite
+- [ ] Trocar de provider no Agent → campos do provider anterior não persistem → `agent-provider-field-isolation.spec.ts`
+- [ ] Flow com Agent salvo e reaberto → configurações preservadas → `agent-config-persistence.spec.ts`
+- [ ] max_tokens trunca resposta conforme configurado → `agent-max-tokens.spec.ts`
+- [ ] Campo reasoning_effort aparece/some conforme modelo selecionado → `agent-reasoning-effort.spec.ts`
 
 #### 6.3 Memória e Contexto
-- [x] Agent responde múltiplas mensagens consecutivas na mesma sessão → `agent-component-regression.spec.ts`
-- [ ] Agent com memória persistente entre mensagens
-- [ ] Agent usa `context_id` customizado
 - [x] Memory Chatbot template carrega com estrutura correta de nós e arestas → `llm-agents/memory-history-regression.spec.ts`
 - [x] Message History retém contexto entre mensagens na mesma sessão do Playground → `llm-agents/memory-history-regression.spec.ts`
 - [x] Isolamento de sessão: session IDs distintos têm históricos independentes → `llm-agents/memory-history-regression.spec.ts`
 - [x] Mensagens persistem após fechar e reabrir o Playground → `llm-agents/memory-history-regression.spec.ts`
 - [x] Sem Message History, LLM não retém contexto entre mensagens → `llm-agents/memory-history-regression.spec.ts`
-- [ ] Parâmetro n_messages limita quantidade de mensagens retidas (**bug confirmado**: valor salvo corretamente pelo frontend mas ignorado na execução do backend)
-- [ ] Agent usa `context_id` customizado — memória isolada por contexto
-- [ ] Trocar `context_id` reseta histórico do agente
+- [ ] Parâmetro n_messages limita quantidade de mensagens retidas → `agent-n-messages-limit.spec.ts` (**bug confirmado**: valor salvo corretamente pelo frontend mas ignorado na execução do backend)
+- [ ] Agent usa `context_id` customizado — continuidade entre mensagens na sessão → `agent-context-id-continuity.spec.ts`
+- [ ] Trocar `context_id` isola histórico entre sessões distintas → `agent-context-id-isolation.spec.ts`
 
 #### 6.4 Tools e Integrações
 - [ ] Agent com tool MCP externo integrado executa ação e retorna resultado
 - [ ] Agent executa múltiplas tools em sequência
-- [ ] Tool retorna erro — agent trata e continua execução
+- [ ] Tool retorna erro — agent trata e continua execução → `agent-tool-error-handling.spec.ts`
+- [ ] Múltiplas tools conectadas — agente seleciona a correta para cada prompt → `agent-multi-tool-selection.spec.ts`
+- [ ] Tool com nome inválido — validação impede execução com mensagem clara → `agent-tool-name-validation.spec.ts`
 
 #### 6.5 Output e Raciocínio
-- [x] Duração de execução exibida após run com tools → `agent-component-regression.spec.ts`
 - [ ] Inspecionar tools usadas pelo Agent no Playground
-- [ ] Agent retorna output em formato JSON estruturado
+- [ ] Agent retorna output em formato JSON estruturado (output_schema) → `agent-structured-output.spec.ts`
 - [ ] Agent retorna output em Markdown renderizado corretamente
+- [ ] Agent Instructions (system prompt) é respeitado na resposta do modelo → `agent-system-prompt.spec.ts`
+- [ ] Input via campo direto vs handle (ChatInput) — ambos funcionam → `agent-input-sources.spec.ts`
+- [ ] Resposta vazia ou recusa do modelo — componente não crasha → `agent-empty-refusal-response.spec.ts`
+- [ ] Toggle add_current_date_tool funciona (liga/desliga tool de data) → `agent-current-date-tool.spec.ts`
+- [ ] handle_parsing_errors=False falha explicitamente vs True auto-corrige → `agent-parse-error-behavior.spec.ts`
+- [ ] Imagem passada via handle de input é processada corretamente → `agent-multimodal-image-input.spec.ts`
 
 ---
 
@@ -295,6 +305,8 @@
 - [x] Validar API keys de todos os providers via chamada real → `collect-models.spec.ts`
 - [x] Coletar modelos disponíveis por provider via UI → `collect-models.spec.ts`
 - [x] Providers inativos aparecem como skipped nos testes com motivo → `agent-component-regression.spec.ts`
+- [x] Configurar API key de provider via Save Configuration (primeiro setup) → `collect-models.spec.ts`
+- [x] Substituir API key de provider via Replace Configuration (chave existente) → `collect-models.spec.ts`
 
 #### 7.2 OpenAI
 - [-] Configurar API key OpenAI via GlobalVariables
@@ -327,12 +339,12 @@
 - [ ] Configurar e executar flow com Mistral
 
 #### 7.7 Parâmetros de Modelo (Agent)
-- [ ] Parâmetro de temperatura
-- [ ] Parâmetro de esforço (reasoning effort)
-- [ ] Quantidade máxima de tokens
-- [ ] Quantidade máxima de tentativas do agente
-- [ ] Uso de `context_id` customizado
-- [ ] Formatação do output (JSON, Markdown, texto simples)
+- [ ] Parâmetro de temperatura (verificar via network payload) → `agent-max-tokens.spec.ts`
+- [ ] Parâmetro de esforço (reasoning effort) — campo condicional ao modelo → `agent-reasoning-effort.spec.ts`
+- [ ] Quantidade máxima de tokens — resposta truncada conforme configurado → `agent-max-tokens.spec.ts`
+- [ ] Quantidade máxima de iterações do agente → `agent-max-iterations.spec.ts`
+- [ ] Uso de `context_id` customizado para isolamento de memória → `agent-context-id-isolation.spec.ts`
+- [ ] Formatação do output (JSON via output_schema, Markdown, texto simples) → `agent-structured-output.spec.ts`
 
 ---
 

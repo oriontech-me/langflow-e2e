@@ -70,17 +70,16 @@ Esse comando:
 
 ### 2. Configurar a estratégia de teste no `.env`
 
+A estratégia é detectada automaticamente pela prioridade das variáveis definidas:
+
 ```bash
-# Rodar todos os modelos do JSON
-MODEL_TEST_STRATEGY=all
+# Rodar somente um modelo específico (maior prioridade)
+MODEL_TEST_ID=gpt-4o-mini
 
 # Rodar somente modelos de um provider
-MODEL_TEST_STRATEGY=provider
 MODEL_TEST_PROVIDER=openai
 
-# Rodar somente um modelo específico
-MODEL_TEST_STRATEGY=model
-MODEL_TEST_ID=gpt-4o-mini
+# Rodar todos os modelos do JSON (padrão — deixar as variáveis vazias)
 ```
 
 ### 3. Rodar com --workers=1
