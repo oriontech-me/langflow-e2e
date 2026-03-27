@@ -73,9 +73,6 @@ async function configureProviderApiKey(
   apiKeyPlaceholder: string,
   apiKey: string,
 ): Promise<void> {
-  await page.goto("/");
-  await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
-
   const settingsPage = new SettingsPage(page);
   await settingsPage.navigate();
 
@@ -118,6 +115,8 @@ for (const {
         (page as any).allowFlowErrors();
 
         await test.step(`Configurar autenticação inválida para ${provider}`, async () => {
+          await page.goto("/");
+          await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
           await configureProviderApiKey(
             page,
             providerTestId,
