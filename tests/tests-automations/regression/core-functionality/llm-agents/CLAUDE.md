@@ -46,7 +46,7 @@ for (const { label, options, skipReason } of targets) {
 }
 ```
 
-Isso cria automaticamente um describe por modelo — o teste roda para cada modelo do `models.json`, respeitando o `MODEL_TEST_STRATEGY` do `.env`.
+Isso cria automaticamente um describe por modelo — o teste roda para cada modelo do `models.json`, respeitando as variáveis `MODEL_TEST_ID` e `MODEL_TEST_PROVIDER` do `.env` (por prioridade).
 
 ### 4. Tratar MODEL_NOT_AVAILABLE
 
