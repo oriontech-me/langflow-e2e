@@ -1,7 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { SimpleAgentTemplatePage } from "../../../../pages";
 import { SettingsPage } from "../../../../pages/SettingsPage";
 import {
   hasProviderEnvKeys,
@@ -58,31 +57,18 @@ function getProviderTargets(): ProviderTarget[] {
     }));
 }
 
-// ─── Helper: configure API key via Settings > Model Providers ─────────────────
-// Follows the same pattern as collect-models.ts / collectModelsForProvider:
-//   1. page.goto("/") → navigate to home
-//   2. SettingsPage.navigate() → open settings via user menu
-//   3. icon-Brain → navigate to Model Providers
-//   4. click provider item
-//   5. click input + pressSequentially (simulates real keypresses)
-//   6. Save Configuration (new key) or Replace Configuration (existing key)
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-async function configureProviderApiKey(
+// Fills the API key input on the current provider page and clicks Save/Replace.
+// Use when already on the provider configuration screen.
+async function fillProviderApiKey(
   page: any,
-  providerTestId: string,
   apiKeyPlaceholder: string,
   apiKey: string,
 ): Promise<void> {
-  const settingsPage = new SettingsPage(page);
-  await settingsPage.navigate();
-
-  await page.getByTestId("icon-Brain").click();
-
-  await page.getByTestId(providerTestId).click();
-
   const apiKeyInput = page.getByPlaceholder(apiKeyPlaceholder);
   if ((await apiKeyInput.count()) > 0) {
-    await apiKeyInput.click();
+    await apiKeyInput.click({ clickCount: 3 });
     await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
 
     const saveConfigBtn = page.getByRole("button", { name: "Save Configuration" });
@@ -94,6 +80,23 @@ async function configureProviderApiKey(
       await replaceConfigBtn.click();
     }
   }
+}
+
+// Navigates to Settings > Model Providers > provider and fills the API key.
+// Use when not yet on the provider configuration screen.
+async function navigateAndFillProviderApiKey(
+  page: any,
+  providerTestId: string,
+  apiKeyPlaceholder: string,
+  apiKey: string,
+): Promise<void> {
+  const settingsPage = new SettingsPage(page);
+  await settingsPage.navigate();
+
+  await page.getByTestId("icon-Brain").click();
+  await page.getByTestId(providerTestId).click();
+
+  await fillProviderApiKey(page, apiKeyPlaceholder, apiKey);
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -114,10 +117,11 @@ for (const {
       async ({ page }) => {
         (page as any).allowFlowErrors();
 
+        await page.goto("/");
+        await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
+
         await test.step(`Configurar autenticação inválida para ${provider}`, async () => {
-          await page.goto("/");
-          await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
-          await configureProviderApiKey(
+          await navigateAndFillProviderApiKey(
             page,
             providerTestId,
             keyPlaceholder,
@@ -126,26 +130,6 @@ for (const {
         });
 
         try {
-          await test.step("Carregar Simple Agent template com o provider configurado", async () => {
-            try {
-              await new SimpleAgentTemplatePage(page).load({ provider });
-            } catch (e: any) {
-              if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) {
-                test.skip(true, e.message);
-              }
-              throw e;
-            }
-          });
-
-          await test.step("Abrir playground e enviar mensagem para acionar o erro", async () => {
-            await page.getByTestId("playground-btn-flow-io").click();
-            await page.waitForSelector('[data-testid="input-chat-playground"]', {
-              timeout: 15000,
-            });
-            await page.getByTestId("input-chat-playground").last().fill("Olá");
-            await page.getByTestId("button-send").last().click();
-          });
-
           await test.step("Validar que o erro de autenticação inválida é exibido", async () => {
             const errorBox = page.locator(".error-build-message");
             await expect(
@@ -154,9 +138,8 @@ for (const {
           });
         } finally {
           await test.step(`Restaurar autenticação válida do provider ${provider}`, async () => {
-            await configureProviderApiKey(
+            await fillProviderApiKey(
               page,
-              providerTestId,
               keyPlaceholder,
               process.env[primaryEnvVar] ?? "",
             );
