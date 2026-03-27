@@ -312,18 +312,18 @@
 - [-] Configurar API key OpenAI via GlobalVariables
 - [-] Selecionar modelo GPT no agente
 - [-] Executar flow com OpenAI
-- [-] Erro de API key inválida — exibir mensagem de erro
+- [x] Erro de API key inválida — exibir mensagem de erro → `provider-invalid-auth-error.spec.ts`
 
 #### 7.3 Anthropic
 - [-] Configurar API key Anthropic
 - [-] Selecionar modelo Claude no agente
 - [-] Trocar entre modelos Claude (Sonnet, Haiku, Opus)
-- [-] Erro de API key Anthropic inválida
+- [x] Erro de API key Anthropic inválida → `provider-invalid-auth-error.spec.ts`
 
 #### 7.4 Google Generative AI
 - [-] Configurar API key Google no agente
 - [-] Selecionar modelo Gemini no agente
-- [-] Erro de API key Google inválida → `provider-invalid-auth-error.spec.ts`
+- [x] Erro de API key Google inválida → `provider-invalid-auth-error.spec.ts`
 
 #### 7.5 Gerenciamento de Providers
 - [-] Modal "Manage Model Providers"
