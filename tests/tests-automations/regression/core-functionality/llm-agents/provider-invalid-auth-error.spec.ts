@@ -21,7 +21,6 @@ type ProviderAuthConfig = {
   providerTestId: string;
   keyPlaceholder: string;
   invalidKey: string;
-  errorPattern: RegExp;
 };
 
 const providerAuthConfigMap: Record<Provider, ProviderAuthConfig> = {
@@ -29,19 +28,16 @@ const providerAuthConfigMap: Record<Provider, ProviderAuthConfig> = {
     providerTestId: "provider-item-OpenAI",
     keyPlaceholder: "sk-...",
     invalidKey: "sk-invalid-openai-key-for-testing-12345",
-    errorPattern: /Invalid API key/i,
   },
   anthropic: {
     providerTestId: "provider-item-Anthropic",
     keyPlaceholder: "sk-ant-...",
     invalidKey: "sk-ant-invalid-for-testing-12345",
-    errorPattern: /Invalid API key|authentication_error|invalid.*key/i,
   },
   google: {
     providerTestId: "provider-item-Google Generative AI",
     keyPlaceholder: "AIza...",
     invalidKey: "AIza-invalid-google-key-for-testing-12345",
-    errorPattern: /Invalid API key|API key not valid|invalid.*key/i,
   },
 };
 
@@ -63,16 +59,18 @@ function getProviderTargets(): ProviderTarget[] {
 }
 
 // ─── Helper: configure API key via Settings > Model Providers ─────────────────
-// Follows the same setup pattern as collect-models.ts:
-//   - SettingsPage.navigate() + sidebar-nav-Model Providers
-//   - click input + pressSequentially (simulates real keypresses)
-//   - handles "Save Configuration" (new key) and "Replace Configuration" (existing key)
-//   - waits for "Replace Configuration" to confirm the key was persisted
+// Follows the same pattern as collect-models.ts / collectModelsForProvider:
+//   1. page.goto("/") → navigate to home
+//   2. SettingsPage.navigate() → open settings via user menu
+//   3. icon-Brain → navigate to Model Providers
+//   4. click provider item
+//   5. click input + pressSequentially (simulates real keypresses)
+//   6. Save Configuration (new key) or Replace Configuration (existing key)
 
 async function configureProviderApiKey(
   page: any,
   providerTestId: string,
-  keyPlaceholder: string,
+  apiKeyPlaceholder: string,
   apiKey: string,
 ): Promise<void> {
   await page.goto("/");
@@ -80,11 +78,12 @@ async function configureProviderApiKey(
 
   const settingsPage = new SettingsPage(page);
   await settingsPage.navigate();
-  await page.getByTestId("sidebar-nav-Model Providers").click();
+
+  await page.getByTestId("icon-Brain").click();
 
   await page.getByTestId(providerTestId).click();
 
-  const apiKeyInput = page.getByPlaceholder(keyPlaceholder);
+  const apiKeyInput = page.getByPlaceholder(apiKeyPlaceholder);
   if ((await apiKeyInput.count()) > 0) {
     await apiKeyInput.click();
     await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
@@ -97,16 +96,7 @@ async function configureProviderApiKey(
     } else if ((await replaceConfigBtn.count()) > 0) {
       await replaceConfigBtn.click();
     }
-
-    await replaceConfigBtn.waitFor({ state: "visible" });
   }
-
-  await page.getByTestId("sidebar-nav-Model Providers").click();
-
-  await page.goto("/");
-  await page.waitForSelector('[data-testid="mainpage_title"]', {
-    timeout: 15000,
-  });
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
@@ -119,7 +109,6 @@ for (const {
   providerTestId,
   keyPlaceholder,
   invalidKey,
-  errorPattern,
 } of targets) {
   test.describe.serial(`Invalid Auth Error — ${provider}`, () => {
     test(
@@ -161,7 +150,7 @@ for (const {
           await test.step("Validar que o erro de autenticação inválida é exibido", async () => {
             const errorBox = page.locator(".error-build-message");
             await expect(
-              errorBox.getByText(errorPattern),
+              errorBox.getByText(/Invalid API key/i),
             ).toBeVisible({ timeout: 30000 });
           });
         } finally {
