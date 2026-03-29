@@ -6,6 +6,7 @@ import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../.
 import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
+  providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
 import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
@@ -85,8 +86,9 @@ function getTestTargets(): TestTarget[] {
   const allModels = getModelsFromJson();
 
   if (allModels.length === 0) {
+    const fallbackProvider = Object.keys(providerConfigMap)[0] as Provider;
     console.warn("models.json not found or empty — run collect-models.spec.ts first.");
-    return [{ label: "provider:openai (fallback)", options: { provider: "openai" } }];
+    return [{ label: `provider:${fallbackProvider} (fallback)`, options: { provider: fallbackProvider } }];
   }
 
   let models = allModels;
@@ -105,7 +107,7 @@ function getTestTargets(): TestTarget[] {
 const targets = getTestTargets();
 
 for (const { label, options, skipReason } of targets) {
-  const provider = options.provider ?? "openai";
+  const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe.serial(`Agent Component Regression [${label}]`, () => {
     test(
