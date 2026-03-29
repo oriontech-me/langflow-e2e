@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import path from "path";
 import fs from "fs";
 import { SettingsPage } from "../../pages/SettingsPage";
+import { providerConfigMap, type Provider } from "./provider-config";
 
 const DATA_DIR = path.join(__dirname, "data");
 const PROVIDERS_PATH = path.join(DATA_DIR, "providers.json");
@@ -200,9 +201,17 @@ async function collectModels(page: Page): Promise<ModelRecord[]> {
 
   const allModels: ModelRecord[] = [];
 
-  allModels.push(...await collectModelsForProvider(page, "provider-item-Anthropic", "anthropic", "sk-ant-...", "ANTHROPIC_API_KEY"));
-  allModels.push(...await collectModelsForProvider(page, "provider-item-Google Generative AI", "google", "AIza...", "GOOGLE_API_KEY"));
-  allModels.push(...await collectModelsForProvider(page, "provider-item-OpenAI", "openai", "sk-...", "OPENAI_API_KEY"));
+  for (const [provider, config] of Object.entries(providerConfigMap) as [Provider, typeof providerConfigMap[Provider]][]) {
+    allModels.push(
+      ...(await collectModelsForProvider(
+        page,
+        config.providerTestId,
+        provider,
+        config.keyPlaceholder,
+        config.envKeys[0],
+      )),
+    );
+  }
 
   return allModels;
 }

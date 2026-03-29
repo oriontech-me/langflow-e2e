@@ -4,7 +4,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage } from "../../../../pages/SettingsPage";
 import {
   hasProviderEnvKeys,
-  providerEnvKeyMap,
+  providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
 
@@ -12,48 +12,26 @@ if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
 }
 
-// ─── Auth config per provider ─────────────────────────────────────────────────
-// When adding a new provider to helpers/provider-setup/index.ts, add its entry
-// here so the invalid-auth test covers it automatically.
+// ─── Target builder ───────────────────────────────────────────────────────────
+// Configuração por provider centralizada em helpers/provider-setup/provider-config.ts
 
-type ProviderAuthConfig = {
+type ProviderTarget = {
+  provider: Provider;
+  primaryEnvVar: string;
   providerTestId: string;
   keyPlaceholder: string;
   invalidKey: string;
 };
 
-const providerAuthConfigMap: Record<Provider, ProviderAuthConfig> = {
-  openai: {
-    providerTestId: "provider-item-OpenAI",
-    keyPlaceholder: "sk-...",
-    invalidKey: "sk-invalid-openai-key-for-testing-12345",
-  },
-  anthropic: {
-    providerTestId: "provider-item-Anthropic",
-    keyPlaceholder: "sk-ant-...",
-    invalidKey: "sk-ant-invalid-for-testing-12345",
-  },
-  google: {
-    providerTestId: "provider-item-Google Generative AI",
-    keyPlaceholder: "AIza...",
-    invalidKey: "AIza-invalid-google-key-for-testing-12345",
-  },
-};
-
-// ─── Target builder ───────────────────────────────────────────────────────────
-
-type ProviderTarget = ProviderAuthConfig & {
-  provider: Provider;
-  primaryEnvVar: string;
-};
-
 function getProviderTargets(): ProviderTarget[] {
-  return (Object.keys(providerAuthConfigMap) as Provider[])
+  return (Object.keys(providerConfigMap) as Provider[])
     .filter(hasProviderEnvKeys)
     .map((provider) => ({
       provider,
-      primaryEnvVar: providerEnvKeyMap[provider][0],
-      ...providerAuthConfigMap[provider],
+      primaryEnvVar: providerConfigMap[provider].envKeys[0],
+      providerTestId: providerConfigMap[provider].providerTestId,
+      keyPlaceholder: providerConfigMap[provider].keyPlaceholder,
+      invalidKey: providerConfigMap[provider].invalidKey,
     }));
 }
 
