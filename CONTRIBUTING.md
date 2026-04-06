@@ -83,6 +83,19 @@ Após criar o teste, localize o item correspondente no `QA_CHECKLIST.md` e marqu
 
 Adicione também uma entrada no `QA-SCENARIOS-GUIDE.md` descrevendo o cenário em linguagem humana — objetivo, pré-condições, passo a passo e critério de validação. Os dois documentos devem estar sempre sincronizados com os testes existentes.
 
+**7. Crie o arquivo de documentação do spec**
+
+Para cada spec, crie um arquivo `.md` correspondente em `docs/`, espelhando o caminho relativo a partir de `regression/`. Por exemplo:
+
+```
+tests/tests-automations/regression/core-functionality/playground/playground-session-id.spec.ts
+→ docs/core-functionality/playground/playground-session-id.md
+```
+
+Use `docs/TEMPLATE.md` como base. As seções obrigatórias são: **Motivação**, **O que este teste valida**, **Tags**, **Critério de validação** e **Dependências externas**.
+
+> A seção **Dependências externas** lista arquivos do repositório upstream do Langflow que, se alterados, podem quebrar o teste. Ela é lida pelo `file-watcher.yml` para determinar quais testes precisam ser revisados quando o Langflow muda. Preencha com atenção.
+
 ---
 
 ## Criando testes com LLM (agentes, providers, MCP)

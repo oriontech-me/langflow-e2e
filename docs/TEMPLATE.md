@@ -1,29 +1,41 @@
 # [Nome do Spec]
 
 ## Objetivo *(obrigatório)*
-Validar que o usuário consegue fazer upload de um arquivo, processá-lo e visualizar os vetores gerados.
+O que o teste valida em termos funcionais, em uma ou duas frases. Pense: "se este teste falhar, o que quebrou no produto?"
+
+---
+
+## Motivação *(obrigatório)*
+Por que este teste existe. Se veio de um bug, referencie a issue. Se é cobertura preventiva de release, diga qual funcionalidade protege.
+
+---
+
+## Tags *(obrigatório)*
+`@release` `@playground`
 
 ---
 
 ## Passo a passo *(obrigatório)*
-1. Acessar a página de Knowledge Base
-2. Clicar em "Upload File" e selecionar um `.pdf` válido
-3. Aguardar o processamento completar (spinner desaparecer)
-4. Navegar para a aba "Vectors"
-5. Verificar que os chunks gerados estão listados
+1. Passo 1
+2. Passo 2
+3. Passo 3
 
 ---
 
 ## Critério de validação *(obrigatório)*
-- O arquivo aparece na lista com status `processed`
-- A aba "Vectors" exibe ao menos 1 chunk
-- Nenhum erro é exibido na interface durante o fluxo
+- O que deve ser verdade para o teste passar
+- Asserções principais em linguagem humana, não em código
+
+---
+
+## O que este teste não cobre *(opcional)*
+- Comportamentos adjacentes que parecem relacionados mas estão intencionalmente fora do escopo
+- Ajuda o mantenedor a distinguir lacuna de decisão consciente
 
 ---
 
 ## Pré-condições *(opcional)*
-- Usuário autenticado com permissão de escrita
-- Arquivo `sample.pdf` presente em `fixtures/files/`
+- O que precisa estar configurado ou em execução antes de rodar o teste
 
 ---
 
@@ -31,17 +43,15 @@ Validar que o usuário consegue fazer upload de um arquivo, processá-lo e visua
 <!-- Arquivos do repositório do Langflow que, se alterados, podem quebrar este teste.
      Esta lista é lida pelo workflow de monitoramento — preencha com atenção. -->
 
-- `src/lfx/src/lfx/components/files_and_knowledge/file.py` — lógica de upload e processamento do File Component
-- `src/lfx/src/lfx/components/files_and_knowledge/vector_store.py` — geração e listagem de vetores
+- `src/frontend/...` — descrição do que este arquivo faz e por que impacta o teste
+- `src/backend/...` — idem
 
 ---
 
-## Critério de revisão *(opcional)*
-- Revisar se o comportamento do spinner ou dos status labels mudar na UI
-- Revisar se o formato de resposta da API de vetores for alterado
+## Quando revisar este teste *(opcional)*
+- Situações específicas que indicam que o teste pode estar desatualizado, sem ser uma quebra direta
 
 ---
 
 ## Notas *(opcional)*
-- O processamento pode levar até 10s em ambiente de CI — o teste usa `waitForSelector` com timeout estendido
-- Flaky em arquivos maiores que 5MB; manter fixture abaixo desse limite
+- Observações sobre flakiness, timeouts empíricos, workarounds ou decisões que um mantenedor futuro precisaria entender
