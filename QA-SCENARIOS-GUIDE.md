@@ -39,6 +39,7 @@
 24. [Flow — CRUD e Operações](#24-flow--crud-e-operações)
 25. [MCP — Client e Server](#25-mcp--client-e-server)
 26. [UI/UX — Sidebar e Canvas](#26-uiux--sidebar-e-canvas)
+27. [Componentes Principais — Loop](#27-componentes-principais--loop)
 
 ---
 
@@ -2291,11 +2292,88 @@
 9. Pipeline RAG completo
 
 ### 🟢 Baixa Prioridade
-10. Loop component — iterações corretas
+10. [x] Loop component — iterações corretas (coberto em seção 27)
 11. Provedores Ollama, Groq, Mistral
 12. Parâmetros de modelo (temperatura, max tokens)
 13. Editar texto de sticky note
 14. Usar variável global diretamente em componente
+
+---
+
+## 27. Componentes Principais — Loop
+
+**Arquivo:** `tests/tests-automations/regression/core-components/loop-component-regression.spec.ts`
+
+---
+
+### 27.1 Componente Loop renderiza no canvas com todos os handles `[x]`
+
+**Objetivo:** Verificar que o Loop aparece corretamente no canvas com todos os handles de entrada/saída e botões de output inspection.
+
+**Pré-condições:** Langflow em execução.
+
+**Passo a passo:**
+1. Criar um blank flow.
+2. Buscar "Loop" na sidebar e adicionar ao canvas.
+3. Verificar que o título `title-Loop` está visível.
+4. Verificar que o botão de run `button_run_loop` está visível.
+5. Verificar que existe exatamente 1 nó no canvas.
+6. Verificar handles de entrada (lado esquerdo):
+   - `handle-loopcomponent-shownode-inputs-left` — recebe o DataFrame a iterar
+   - `handle-loopcomponent-shownode-item-left` — porta de feedback: recebe o item processado
+7. Verificar handles de saída (lado direito):
+   - `handle-loopcomponent-shownode-item-right` — emite o item atual da iteração
+   - `handle-loopcomponent-shownode-done-right` — emite o DataFrame agregado ao fim
+8. Verificar botões de output inspection no rodapé do nó:
+   - `output-inspection-item-loopcomponent`
+   - `output-inspection-done-loopcomponent`
+
+**Validação:** Todos os handles e botões de inspection visíveis; canvas com exatamente 1 nó.
+
+---
+
+### 27.2 Loop sem conexões exibe notificação "Flow build failed" `[x]`
+
+**Objetivo:** Verificar que executar o Loop isolado (sem conexões) resulta em falha controlada — sem crash da aplicação.
+
+**Pré-condições:** Langflow em execução.
+
+**Passo a passo:**
+1. Criar um blank flow.
+2. Adicionar o componente Loop ao canvas.
+3. Clicar em `button_run_loop` (nó sem nenhuma conexão).
+4. Aguardar a notificação de erro aparecer.
+
+**Validação:**
+- Texto "Flow build failed" visível na tela.
+- Botão `button_run_loop` ainda acessível após a falha.
+- Nó `title-Loop` permanece intacto no canvas (1 nó).
+- Aplicação não trava nem recarrega.
+
+---
+
+### 27.3 Loop itera sobre 2 artigos ArXiv via template Research Translation Loop `[x]`
+
+**Objetivo:** Validar wiring completo do Loop e que ele itera corretamente — cada item do DataFrame entra no ciclo, é processado pelo LLM e retorna via porta `item`, até o `done` disparar com o resultado agregado.
+
+**Pré-condições:** Langflow em execução, OPENAI_API_KEY configurada.
+
+**Passo a passo:**
+1. Acessar a aba de Templates (`side_nav_options_all-templates`).
+2. Clicar no template `template-research-translation-loop`.
+3. Aguardar o canvas carregar com o nó Loop visível.
+4. Verificar wiring:
+   - Pelo menos 1 edge presente no canvas (template já conecta o Loop em ciclo).
+   - Handles `inputs-left`, `item-left`, `item-right` e `done-right` do Loop visíveis.
+5. Reduzir o campo `int_int_max_results` do ArXiv para `2` (mínimo para validar iteração sem esperar muito).
+6. Abrir o Playground (`playground-btn-flow-io`).
+7. Enviar a mensagem `"transformer neural networks"`.
+8. Aguardar a resposta do bot (`chat-message-AI-`).
+9. Verificar que a resposta contém pelo menos 2 ocorrências de "title" (case-insensitive) — cada artigo ArXiv tem um título, confirmando que o loop processou os 2 artigos.
+
+**Validação:** Resposta do bot não vazia; contagem de "title" ≥ 2 (confirma 2 iterações do loop).
+
+**Observação:** A validação via "Title" é intencional e levemente frágil — depende do formato de saída do Parser. Se o template mudar o template de prompt, o contador pode não bater. O foco do teste é confirmar que o Loop iterou, não o conteúdo exato.
 
 ---
 
