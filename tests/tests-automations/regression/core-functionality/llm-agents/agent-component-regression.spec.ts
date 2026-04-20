@@ -88,7 +88,11 @@ function getTestTargets(): TestTarget[] {
   if (allModels.length === 0) {
     const fallbackProvider = Object.keys(providerConfigMap)[0] as Provider;
     console.warn("models.json not found or empty — run collect-models.spec.ts first.");
-    return [{ label: `provider:${fallbackProvider} (fallback)`, options: { provider: fallbackProvider } }];
+    return [{
+      label: `provider:${fallbackProvider} (fallback)`,
+      options: { provider: fallbackProvider },
+      skipReason: skipReasons.get(fallbackProvider),
+    }];
   }
 
   let models = allModels;
