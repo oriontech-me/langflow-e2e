@@ -1,7 +1,6 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
 async function setupPlayground(page: any) {
@@ -54,13 +53,18 @@ test.describe("Playground — open and close behavior", () => {
   test.describe.configure({ mode: "serial" });
 
   test.afterEach(async ({ page }) => {
-    await page.goto("/");
-    await cleanAllFlows(page);
+    const flowsRes = await page.request.get("/api/v1/flows/?get_all=true");
+    if (flowsRes.ok()) {
+      const flows: Array<{ id: string }> = await flowsRes.json();
+      for (const flow of flows) {
+        await page.request.delete(`/api/v1/flows/${flow.id}`);
+      }
+    }
   });
 
   test(
     "playground opens in fullscreen with chat input visible",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow", async () => {
         await setupPlayground(page);
@@ -81,7 +85,7 @@ test.describe("Playground — open and close behavior", () => {
 
   test(
     "playground closes and reopens correctly from the flow editor",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow and open playground", async () => {
         await setupPlayground(page);
