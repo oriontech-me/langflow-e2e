@@ -248,7 +248,7 @@
 > Rode `npx playwright test tests/collect-models.spec.ts` antes de executar estes testes.
 > Veja `CLAUDE.md` nesta pasta para o guia completo.
 
-#### 6.1 agent-component-regression.spec.ts — Regressão de Comportamento do Agente
+#### 6.1 agent-component-regression.spec.ts — Regressão de Comportamento do Agente `@stable`
 - [x] Agent responde sem tools conectadas
 - [x] Agent exibe resposta válida e opcionalmente steps de raciocínio
 - [x] Botão Stop interrompe execução do agente
