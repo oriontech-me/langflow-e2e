@@ -136,10 +136,11 @@ Tags are split into two groups: **transversais** (severidade/camada) e **funcion
 
 ## CI/CD
 
-Four GitHub Actions workflows:
+Five GitHub Actions workflows:
 
 - **`pr-validation.yml`** — Runs on every PR to `main`; two parallel jobs: TypeScript check (`tsc --noEmit`) and ESLint. Both must pass before merge.
 - **`nightly.yml`** — Runs daily at 03:00 BRT against `langflowai/langflow-nightly:latest`; opens a GitHub issue on failure assigned to @Victor-w-Madeira.
+- **`weekly-stable.yml`** — Runs every Monday against `langflowai/langflow-nightly:latest`; runs only `@stable` tests; opens a GitHub issue on failure for triage.
 - **`manual.yml`** — Parameterized manual run; accepts a Docker tag or full URL, a specific test suite, and an optional grep filter.
 - **`file-watcher.yml`** — Detects upstream Langflow changes in critical paths and opens a GitHub issue with the exact `--grep` command needed to revalidate affected areas.
 

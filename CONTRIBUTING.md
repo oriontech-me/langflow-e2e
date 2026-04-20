@@ -77,11 +77,9 @@ test("deve configurar o model provider", { tag: ["@model-provider"] }, async ({ 
 
 Veja a tabela de tags disponíveis no [README](./README.md#tags-disponíveis).
 
-**6. Atualize o `QA_CHECKLIST.md` e o `QA-SCENARIOS-GUIDE.md`**
+**6. Atualize o `QA-CHECKLIST.md`**
 
-Após criar o teste, localize o item correspondente no `QA_CHECKLIST.md` e marque como `[-]` (automatizado, precisa validar). Somente mude para `[x]` após seguir o processo de validação abaixo.
-
-Adicione também uma entrada no `QA-SCENARIOS-GUIDE.md` descrevendo o cenário em linguagem humana — objetivo, pré-condições, passo a passo e critério de validação. Os dois documentos devem estar sempre sincronizados com os testes existentes.
+Após criar o teste, localize o item correspondente no `QA-CHECKLIST.md` e marque como `[-]` (automatizado, precisa validar). Somente mude para `[x]` após seguir o processo de validação abaixo.
 
 **7. Crie o arquivo de documentação do spec**
 
