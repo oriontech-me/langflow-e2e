@@ -102,6 +102,7 @@ Tags are split into two groups: **transversais** (severidade/camada) e **funcion
 
 | Tag | When to apply |
 |---|---|
+| `@stable` | Teste validado pelo time — roda no workflow semanal; falhas abrem issue para triagem |
 | `@release` | Happy-path flows required before any deploy |
 | `@regression` | Tests for previously fixed bugs |
 | `@api` | Tests exercising REST API endpoints |
