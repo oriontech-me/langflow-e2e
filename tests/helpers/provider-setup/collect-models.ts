@@ -158,9 +158,10 @@ async function collectModelsForProvider(
   // Wait for the form panel to animate in before checking visibility
   await apiKeyInput.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
 
-  if ((await apiKeyInput.count()) > 0) {
+  const apiKey = process.env[apiKeyEnvVar] ?? "";
+  if ((await apiKeyInput.count()) > 0 && apiKey) {
     await apiKeyInput.click();
-    await apiKeyInput.pressSequentially(process.env[apiKeyEnvVar] ?? "", { delay: 0 });
+    await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
 
     const saveBtn = page.getByRole("button", { name: "Save", exact: true });
     const replaceBtn = page.getByRole("button", { name: "Replace", exact: true });
