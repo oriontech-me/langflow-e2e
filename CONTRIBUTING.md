@@ -461,3 +461,41 @@ O `file-watcher.yml` roda todo dia às 05h BRT e verifica se houve commits no re
 3. Para cada teste que falhar ou parecer desatualizado, siga o guia de validação acima
 4. Atualize os testes necessários e marque o `QA_CHECKLIST.md`
 5. Feche a issue
+
+---
+
+## Tag @stable — testes validados
+
+### O que é
+
+`@stable` identifica testes que foram revisados pelo time e estão confirmados como corretos e confiáveis. Apenas esses testes rodam no workflow semanal (`weekly-stable.yml`). Uma falha nesse workflow abre automaticamente uma issue para triagem.
+
+### Como adicionar
+
+O teste **entra com a tag no próprio PR**. O revisor, ao aprovar o merge, está confirmando que:
+
+1. O teste passou pelos 5 passos do guia de validação (trace, falha forçada, debug, sem backend errors, checklist)
+2. O comportamento validado é real e relevante para o monitoramento semanal
+
+```typescript
+test("deve criar um flow e executar com sucesso", { tag: ["@workspace", "@stable"] }, async ({ page }) => {
+```
+
+> A tag `@stable` coexiste com as demais tags funcionais e transversais — não as substitui.
+
+### Como remover e corrigir
+
+O fluxo tem dois passos para separar triagem de correção:
+
+**Passo 1 — Analista (ao receber a issue do workflow):**
+1. Identifique o teste que falhou
+2. Abra um PR removendo a tag `@stable` do teste
+3. Após merge, o teste para de rodar no workflow semanal imediatamente
+4. Atualize a issue indicando qual teste precisa de correção e por quê
+
+**Passo 2 — Dev (ao corrigir o teste):**
+1. Corrija o teste seguindo o guia de validação
+2. Devolva a tag `@stable` no mesmo PR de correção
+3. Referencie a issue no PR
+
+Esse processo garante rastreabilidade: fica registrado quando o teste saiu e quando voltou ao monitoramento semanal.
