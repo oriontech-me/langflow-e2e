@@ -77,11 +77,9 @@ test("deve configurar o model provider", { tag: ["@model-provider"] }, async ({ 
 
 Veja a tabela de tags disponíveis no [README](./README.md#tags-disponíveis).
 
-**6. Atualize o `QA_CHECKLIST.md` e o `QA-SCENARIOS-GUIDE.md`**
+**6. Atualize o `QA-CHECKLIST.md`**
 
-Após criar o teste, localize o item correspondente no `QA_CHECKLIST.md` e marque como `[-]` (automatizado, precisa validar). Somente mude para `[x]` após seguir o processo de validação abaixo.
-
-Adicione também uma entrada no `QA-SCENARIOS-GUIDE.md` descrevendo o cenário em linguagem humana — objetivo, pré-condições, passo a passo e critério de validação. Os dois documentos devem estar sempre sincronizados com os testes existentes.
+Após criar o teste, localize o item correspondente no `QA-CHECKLIST.md` e marque como `[-]` (automatizado, precisa validar). Somente mude para `[x]` após seguir o processo de validação abaixo.
 
 **7. Crie o arquivo de documentação do spec**
 
@@ -92,7 +90,9 @@ tests/tests-automations/regression/core-functionality/playground/playground-sess
 → docs/core-functionality/playground/playground-session-id.md
 ```
 
-Use `docs/TEMPLATE.md` como base. As seções obrigatórias são: **Motivação**, **O que este teste valida**, **Tags**, **Critério de validação** e **Dependências externas**.
+Use `docs/TEST-SPEC-TEMPLATE.md` como base. As seções obrigatórias são: **O que este teste valida**, **Tags**, **Critério de validação** e **Dependências externas**.
+
+No campo **Última validação**, registre o ciclo de release do Langflow em que o teste foi desenvolvido ou revisado pela última vez (ex: `Langflow 1.10.x`). Valide preferencialmente contra a imagem `langflowai/langflow-nightly:latest`, que acompanha a branch de release em desenvolvimento. Se a nightly estiver instável, use a branch de release correspondente (`release-1.x.x`) diretamente. Em ambos os casos, o campo deve refletir o ciclo, não o build exato.
 
 > A seção **Dependências externas** lista arquivos do repositório upstream do Langflow que, se alterados, podem quebrar o teste. Ela é lida pelo `file-watcher.yml` para determinar quais testes precisam ser revisados quando o Langflow muda. Preencha com atenção.
 
@@ -470,12 +470,15 @@ O `file-watcher.yml` roda todo dia às 05h BRT e verifica se houve commits no re
 
 `@stable` identifica testes que foram revisados pelo time e estão confirmados como corretos e confiáveis. Apenas esses testes rodam no workflow semanal (`weekly-stable.yml`). Uma falha nesse workflow abre automaticamente uma issue para triagem.
 
-### Como adicionar
+### Padrão: todo teste novo entra com @stable
 
-O teste **entra com a tag no próprio PR**. O revisor, ao aprovar o merge, está confirmando que:
+`@stable` é o padrão para qualquer teste novo. O teste **entra com a tag no próprio PR**, junto com o arquivo de documentação em `docs/` (ver passo 7 do guia acima). O revisor, ao aprovar o merge, está confirmando que:
 
 1. O teste passou pelos 5 passos do guia de validação (trace, falha forçada, debug, sem backend errors, checklist)
 2. O comportamento validado é real e relevante para o monitoramento semanal
+3. O arquivo de documentação em `docs/` está presente e com as seções obrigatórias preenchidas
+
+Se qualquer um desses pontos estiver ausente ou incompleto, o revisor deve **solicitar mudanças** antes de aprovar.
 
 ```typescript
 test("deve criar um flow e executar com sucesso", { tag: ["@workspace", "@stable"] }, async ({ page }) => {
@@ -483,9 +486,19 @@ test("deve criar um flow e executar com sucesso", { tag: ["@workspace", "@stable
 
 > A tag `@stable` coexiste com as demais tags funcionais e transversais — não as substitui.
 
+### Exceções — quando o teste não terá @stable
+
+Dois casos em que a tag está intencionalmente ausente:
+
+1. **Testes herdados ainda não revisados** — existem no repositório mas ainda não passaram pelo processo de validação e documentação.
+2. **Testes com falha no workflow** — a tag foi temporariamente removida enquanto o teste aguarda correção (ver fluxo abaixo).
+
 ### Como remover e corrigir
 
-O fluxo tem dois passos para separar triagem de correção:
+Ao receber uma issue do workflow semanal, avalie a causa da falha:
+
+- **Regressão no Langflow** (produto quebrou, teste está correto): o teste cumpriu seu papel. Sinalize a issue para o time de produto e acompanhe o upstream. A tag permanece.
+- **Mudança de comportamento no produto ou teste incorreto**: siga o fluxo abaixo.
 
 **Passo 1 — Analista (ao receber a issue do workflow):**
 1. Identifique o teste que falhou
