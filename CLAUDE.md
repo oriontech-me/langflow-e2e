@@ -94,6 +94,14 @@ regression/
 4. Confirm no backend errors logged (`🚨 Backend Error:`)
 5. Update `QA-CHECKLIST.md` coverage symbols
 
+**PR review checklist** — request changes if any of these are missing:
+- `@stable` tag is present in the test (required for all new tests)
+- Spec doc exists under `docs/` mirroring the test's path under `regression/`
+- Spec doc has all mandatory sections filled: **O que este teste valida**, **Tags**, **Critério de validação**, **Dependências externas**
+- `Última validação` field reflects the current Langflow release cycle (ex: `1.10.x`)
+
+Exceptions where `@stable` is absent: inherited tests not yet reviewed, and tests temporarily without the tag while under correction.
+
 ### Tag Semantics
 
 Tags are split into two groups: **transversais** (severidade/camada) e **funcionais** (área de produto).

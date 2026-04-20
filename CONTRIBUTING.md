@@ -472,12 +472,15 @@ O `file-watcher.yml` roda todo dia às 05h BRT e verifica se houve commits no re
 
 `@stable` identifica testes que foram revisados pelo time e estão confirmados como corretos e confiáveis. Apenas esses testes rodam no workflow semanal (`weekly-stable.yml`). Uma falha nesse workflow abre automaticamente uma issue para triagem.
 
-### Como adicionar
+### Padrão: todo teste novo entra com @stable
 
-O teste **entra com a tag no próprio PR**. O revisor, ao aprovar o merge, está confirmando que:
+`@stable` é o padrão para qualquer teste novo. O teste **entra com a tag no próprio PR**, junto com o arquivo de documentação em `docs/` (ver passo 7 do guia acima). O revisor, ao aprovar o merge, está confirmando que:
 
 1. O teste passou pelos 5 passos do guia de validação (trace, falha forçada, debug, sem backend errors, checklist)
 2. O comportamento validado é real e relevante para o monitoramento semanal
+3. O arquivo de documentação em `docs/` está presente e com as seções obrigatórias preenchidas
+
+Se qualquer um desses pontos estiver ausente ou incompleto, o revisor deve **solicitar mudanças** antes de aprovar.
 
 ```typescript
 test("deve criar um flow e executar com sucesso", { tag: ["@workspace", "@stable"] }, async ({ page }) => {
@@ -485,9 +488,19 @@ test("deve criar um flow e executar com sucesso", { tag: ["@workspace", "@stable
 
 > A tag `@stable` coexiste com as demais tags funcionais e transversais — não as substitui.
 
+### Exceções — quando o teste não terá @stable
+
+Dois casos em que a tag está intencionalmente ausente:
+
+1. **Testes herdados ainda não revisados** — existem no repositório mas ainda não passaram pelo processo de validação e documentação.
+2. **Testes com falha no workflow** — a tag foi temporariamente removida enquanto o teste aguarda correção (ver fluxo abaixo).
+
 ### Como remover e corrigir
 
-O fluxo tem dois passos para separar triagem de correção:
+Ao receber uma issue do workflow semanal, avalie a causa da falha:
+
+- **Regressão no Langflow** (produto quebrou, teste está correto): o teste cumpriu seu papel. Sinalize a issue para o time de produto e acompanhe o upstream. A tag permanece.
+- **Mudança de comportamento no produto ou teste incorreto**: siga o fluxo abaixo.
 
 **Passo 1 — Analista (ao receber a issue do workflow):**
 1. Identifique o teste que falhou
