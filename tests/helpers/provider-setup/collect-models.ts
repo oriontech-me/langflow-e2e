@@ -155,20 +155,30 @@ async function collectModelsForProvider(
   await page.getByTestId(providerTestId).click();
 
   const apiKeyInput = page.getByPlaceholder(apiKeyPlaceholder);
-  if ((await apiKeyInput.count()) > 0) {
+  // Wait for the form panel to animate in before checking visibility
+  await apiKeyInput.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+
+  const apiKey = process.env[apiKeyEnvVar] ?? "";
+  if ((await apiKeyInput.count()) > 0 && apiKey) {
     await apiKeyInput.click();
-    await apiKeyInput.pressSequentially(process.env[apiKeyEnvVar] ?? "", { delay: 0 });
+    await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
 
-    const saveConfigBtn = page.getByRole("button", { name: "Save Configuration" });
-    const replaceConfigBtn = page.getByRole("button", { name: "Replace Configuration" });
+    const saveBtn = page.getByRole("button", { name: "Save", exact: true });
+    const replaceBtn = page.getByRole("button", { name: "Replace", exact: true });
 
-    if ((await saveConfigBtn.count()) > 0) {
-      await saveConfigBtn.click();
-    } else if ((await replaceConfigBtn.count()) > 0) {
-      await replaceConfigBtn.click();
+    if ((await saveBtn.count()) > 0) {
+      await saveBtn.click();
+    } else if ((await replaceBtn.count()) > 0) {
+      await replaceBtn.click();
     }
 
-    await replaceConfigBtn.waitFor({ state: "visible" });
+    // Wait for save to complete — button becomes "Replace" when provider is configured
+    await replaceBtn.waitFor({ state: "visible", timeout: 30000 });
+
+    // Wait for model toggles to load after provider is configured
+    await page.locator('[data-testid^="llm-toggle"]').first()
+      .waitFor({ state: "visible", timeout: 15000 })
+      .catch(() => {});
   }
 
   const toggles = page.locator('[data-testid^="llm-toggle"]');
