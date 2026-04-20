@@ -112,7 +112,7 @@ for (const { label, options, skipReason } of targets) {
   test.describe.serial(`Agent Component Regression [${label}]`, () => {
     test(
       "agent must run and respond without any tools connected",
-      { tag: ["@release", "@components", "@agents"] },
+      { tag: ["@stable", "@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -163,7 +163,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent must show reasoning steps and produce a valid response",
-      { tag: ["@release", "@components", "@agents"] },
+      { tag: ["@stable", "@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -210,7 +210,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent stop button must halt execution mid-run",
-      { tag: ["@release", "@components", "@agents"] },
+      { tag: ["@stable", "@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -255,7 +255,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent must display duration after successful run",
-      { tag: ["@release", "@components", "@agents"] },
+      { tag: ["@stable", "@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -290,7 +290,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent must stream response progressively in the playground",
-      { tag: ["@release", "@components", "@agents", "@playground"] },
+      { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -364,7 +364,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "playground must display response time after agent finishes",
-      { tag: ["@release", "@components", "@agents", "@playground"] },
+      { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -410,7 +410,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent must handle multiple consecutive messages in same session",
-      { tag: ["@release", "@components", "@agents"] },
+      { tag: ["@stable", "@release", "@components", "@agents"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
