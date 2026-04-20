@@ -92,7 +92,9 @@ tests/tests-automations/regression/core-functionality/playground/playground-sess
 → docs/core-functionality/playground/playground-session-id.md
 ```
 
-Use `docs/TEMPLATE.md` como base. As seções obrigatórias são: **Motivação**, **O que este teste valida**, **Tags**, **Critério de validação** e **Dependências externas**.
+Use `docs/TEST-SPEC-TEMPLATE.md` como base. As seções obrigatórias são: **O que este teste valida**, **Tags**, **Critério de validação** e **Dependências externas**.
+
+No campo **Última validação**, registre o ciclo de release do Langflow em que o teste foi desenvolvido ou revisado pela última vez (ex: `Langflow 1.10.x`). Valide preferencialmente contra a imagem `langflowai/langflow-nightly:latest`, que acompanha a branch de release em desenvolvimento. Se a nightly estiver instável, use a branch de release correspondente (`release-1.x.x`) diretamente. Em ambos os casos, o campo deve refletir o ciclo, não o build exato.
 
 > A seção **Dependências externas** lista arquivos do repositório upstream do Langflow que, se alterados, podem quebrar o teste. Ela é lida pelo `file-watcher.yml` para determinar quais testes precisam ser revisados quando o Langflow muda. Preencha com atenção.
 

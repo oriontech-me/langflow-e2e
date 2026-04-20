@@ -1,12 +1,13 @@
 # [Nome do Spec]
 
-## Objetivo *(obrigatório)*
-O que o teste valida em termos funcionais, em uma ou duas frases. Pense: "se este teste falhar, o que quebrou no produto?"
+**Última validação:** Langflow X.X.x
 
 ---
 
-## Motivação *(obrigatório)*
-Por que este teste existe. Se veio de um bug, referencie a issue. Se é cobertura preventiva de release, diga qual funcionalidade protege.
+## O que este teste valida *(obrigatório)*
+O que o teste valida em termos funcionais e por que existe. Se veio de um bug, referencie a issue.
+Se é cobertura preventiva de release, diga qual funcionalidade protege.
+Pense: "se este teste falhar, o que quebrou no produto?"
 
 ---
 
@@ -28,6 +29,15 @@ Por que este teste existe. Se veio de um bug, referencie a issue. Se é cobertur
 
 ---
 
+## Dependências externas *(obrigatório)*
+<!-- Arquivos do repositório do Langflow que, se alterados, podem quebrar este teste.
+     Esta lista é lida pelo workflow de monitoramento — preencha com atenção. -->
+
+- `src/frontend/...` — descrição do que este arquivo faz e por que impacta o teste
+- `src/backend/...` — idem
+
+---
+
 ## O que este teste não cobre *(opcional)*
 - Comportamentos adjacentes que parecem relacionados mas estão intencionalmente fora do escopo
 - Ajuda o mantenedor a distinguir lacuna de decisão consciente
@@ -36,15 +46,6 @@ Por que este teste existe. Se veio de um bug, referencie a issue. Se é cobertur
 
 ## Pré-condições *(opcional)*
 - O que precisa estar configurado ou em execução antes de rodar o teste
-
----
-
-## Dependências externas *(obrigatório)*
-<!-- Arquivos do repositório do Langflow que, se alterados, podem quebrar este teste.
-     Esta lista é lida pelo workflow de monitoramento — preencha com atenção. -->
-
-- `src/frontend/...` — descrição do que este arquivo faz e por que impacta o teste
-- `src/backend/...` — idem
 
 ---
 
