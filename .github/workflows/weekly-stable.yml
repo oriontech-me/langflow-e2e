@@ -1,4 +1,4 @@
-name: Weekly Release E2E
+name: Weekly Stable E2E
 
 on:
   schedule:
@@ -11,8 +11,8 @@ on:
         default: "latest"
 
 jobs:
-  e2e-weekly-release:
-    name: Weekly Release E2E (langflow-nightly:${{ github.event.inputs.langflow_image_tag || 'latest' }})
+  e2e-weekly-stable:
+    name: Weekly Stable E2E (langflow-nightly:${{ github.event.inputs.langflow_image_tag || 'latest' }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -47,8 +47,8 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
-      - name: Run @release tests
-        run: npx playwright test --grep "@release" --reporter=github
+      - name: Run @stable tests
+        run: npx playwright test --grep "@stable" --reporter=github
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
@@ -79,9 +79,9 @@ jobs:
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `[Weekly Failure] @release tests failed on ${today} (langflow:${tag})`,
+              title: `[Weekly Failure] @stable tests failed on ${today} (langflow:${tag})`,
               body: [
-                '## Weekly @release E2E Failure',
+                '## Weekly @stable E2E Failure',
                 '',
                 `- **Date:** ${today}`,
                 `- **Langflow version:** \`langflowai/langflow-nightly:${tag}\``,
@@ -90,10 +90,10 @@ jobs:
                 '### Próximos passos',
                 '1. Abra o relatório Playwright no artefato da run acima',
                 '2. Determine se a falha é um bug no teste ou uma regressão no Langflow',
-                '3. Se o teste estiver incorreto ou desatualizado: remova a tag `@release` do teste e abra um PR de correção',
+                '3. Se o teste estiver incorreto ou desatualizado: remova a tag `@stable` do teste e abra um PR de correção',
                 '4. Se for regressão no Langflow: sinalize para o time e acompanhe o upstream',
                 '',
-                '/cc @Victor-w-Madeira',
+                '/cc @Victor-w-Madeira @daniellicnerski1',
               ].join('\n'),
               labels: ['weekly-failure', 'needs-triage'],
             });
