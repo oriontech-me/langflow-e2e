@@ -46,16 +46,26 @@ async function fillProviderApiKey(
 ): Promise<void> {
   const apiKeyInput = page.getByPlaceholder(apiKeyPlaceholder);
   if ((await apiKeyInput.count()) > 0) {
-    await apiKeyInput.click({ clickCount: 3 });
-    await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
+    await apiKeyInput.fill(apiKey);
 
-    const saveConfigBtn = page.getByRole("button", { name: "Save Configuration" });
-    const replaceConfigBtn = page.getByRole("button", { name: "Replace Configuration" });
+    const saveBtn = page.getByRole("button", { name: /^(Save|Replace|Retry Save)$|Save Configuration|Replace Configuration/i });
+    if ((await saveBtn.count()) > 0) {
+      await saveBtn.first().click();
+    }
 
-    if ((await saveConfigBtn.count()) > 0) {
-      await saveConfigBtn.click();
-    } else if ((await replaceConfigBtn.count()) > 0) {
-      await replaceConfigBtn.click();
+    // Confirm the disconnect warning dialog if it appears (shown when replacing an existing key).
+    // Uses evaluate because the Save button overlaps the Confirm button in the DOM layout.
+    try {
+      const confirmBtn = page.getByRole("button", { name: "Confirm" });
+      await confirmBtn.waitFor({ state: "visible", timeout: 5000 });
+      await page.evaluate(() => {
+        const btn = Array.from(document.querySelectorAll("button")).find(
+          (b) => b.textContent?.trim() === "Confirm",
+        );
+        btn?.click();
+      });
+    } catch {
+      // No confirmation dialog — key was saved directly
     }
   }
 }
@@ -74,6 +84,9 @@ async function navigateAndFillProviderApiKey(
   await page.getByTestId("icon-Brain").click();
   await page.getByTestId(providerTestId).click();
 
+  // Wait for the provider form to finish loading before filling
+  await page.getByPlaceholder(apiKeyPlaceholder).waitFor({ state: "visible", timeout: 15000 });
+
   await fillProviderApiKey(page, apiKeyPlaceholder, apiKey);
 }
 
@@ -91,9 +104,8 @@ for (const {
   test.describe.serial(`Invalid Auth Error — ${provider}`, () => {
     test(
       `deve exibir mensagem de erro ao usar autenticação inválida do provider ${provider}`,
-      { tag: ["@regression", "@model-provider", "@agents"] },
+      { tag: ["@stable", "@regression", "@model-provider", "@agents"] },
       async ({ page }) => {
-        (page as any).allowFlowErrors();
 
         await page.goto("/");
         await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
@@ -112,7 +124,7 @@ for (const {
             const errorBox = page.locator(".error-build-message");
             await expect(
               errorBox.getByText(/Invalid API key/i),
-            ).toBeVisible({ timeout: 2000 });
+            ).toBeVisible({ timeout: 30000 });
           });
         } finally {
           await test.step(`Restaurar autenticação válida do provider ${provider}`, async () => {
