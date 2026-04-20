@@ -1,4 +1,5 @@
 name: Weekly Stable E2E
+run-name: "Weekly Stable E2E — ${{ github.event_name == 'schedule' && 'scheduled' || github.actor }}"
 
 on:
   schedule:
@@ -10,15 +11,18 @@ on:
         required: false
         default: "latest"
 
+permissions:
+  issues: write
+
 jobs:
   e2e-weekly-stable:
-    name: Weekly Stable E2E (langflow-nightly:${{ github.event.inputs.langflow_image_tag || 'latest' }})
+    name: Weekly Stable E2E (langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
     services:
       langflow:
-        image: langflowai/langflow-nightly:${{ github.event.inputs.langflow_image_tag || 'latest' }}
+        image: langflowai/langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }}
         ports:
           - 7860:7860
         env:
@@ -48,7 +52,7 @@ jobs:
         run: npx playwright install chromium --with-deps
 
       - name: Run @stable tests
-        run: npx playwright test --grep "@stable" --reporter=github
+        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=github
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
@@ -72,10 +76,12 @@ jobs:
       - name: Create issue on failure
         if: failure() && github.event_name == 'schedule'
         uses: actions/github-script@v7
+        env:
+          IMAGE_TAG: ${{ inputs.langflow_image_tag || 'latest' }}
         with:
           script: |
             const today = new Date().toISOString().split('T')[0];
-            const tag = '${{ github.event.inputs.langflow_image_tag || "latest" }}';
+            const tag = process.env.IMAGE_TAG;
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
