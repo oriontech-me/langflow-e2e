@@ -137,6 +137,8 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Component Regression [${label}]`, () => {
+    test.describe.configure({ mode: "serial" });
+
     test(
       "agent interaction suite",
       { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
