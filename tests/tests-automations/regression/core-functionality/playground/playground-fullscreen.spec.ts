@@ -3,7 +3,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
-async function setupPlayground(page: any) {
+async function setupPlayground(page: any): Promise<string> {
   await awaitBootstrapTest(page);
   await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
   await page.getByTestId("blank-flow").click();
@@ -47,18 +47,22 @@ async function setupPlayground(page: any) {
   await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
     timeout: 8000,
   });
+
+  const match = page
+    .url()
+    .match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
+  return match?.[1] ?? "";
 }
 
 test.describe("Playground — open and close behavior", () => {
   test.describe.configure({ mode: "serial" });
 
+  let createdFlowId: string | null = null;
+
   test.afterEach(async ({ page }) => {
-    const flowsRes = await page.request.get("/api/v1/flows/?get_all=true");
-    if (flowsRes.ok()) {
-      const flows: Array<{ id: string }> = await flowsRes.json();
-      for (const flow of flows) {
-        await page.request.delete(`/api/v1/flows/${flow.id}`);
-      }
+    if (createdFlowId) {
+      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      createdFlowId = null;
     }
   });
 
@@ -67,7 +71,7 @@ test.describe("Playground — open and close behavior", () => {
     { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow", async () => {
-        await setupPlayground(page);
+        createdFlowId = await setupPlayground(page);
       });
 
       await test.step("open playground and confirm it opens in fullscreen with chat input", async () => {
@@ -88,7 +92,7 @@ test.describe("Playground — open and close behavior", () => {
     { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow and open playground", async () => {
-        await setupPlayground(page);
+        createdFlowId = await setupPlayground(page);
         await page.getByTestId("playground-btn-flow-io").click();
         await expect(
           page.getByTestId("playground-close-button"),
