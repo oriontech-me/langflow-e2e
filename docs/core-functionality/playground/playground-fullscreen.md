@@ -50,7 +50,7 @@ O Playground migrou de um modal com botão de expandir para um fullscreen direto
 
 ## Pré-condições *(opcional)*
 - Langflow rodando e acessível em `PLAYWRIGHT_BASE_URL`
-- Nenhum flow pré-existente necessário (o teste cria e limpa o próprio flow via API)
+- Nenhum flow pré-existente necessário; o teste cria o flow, registra o ID retornado na URL e o apaga via API no `afterEach`
 
 ---
 
@@ -69,5 +69,5 @@ O Playground migrou de um modal com botão de expandir para um fullscreen direto
 
 ## Notas *(opcional)*
 - Os dois testes rodam em modo `serial` para evitar conflitos de flow no editor
-- Limpeza de flows feita via API (`DELETE /api/v1/flows/{id}`) para evitar instabilidade do dropdown Radix UI no `cleanAllFlows`
+- Limpeza feita via API (`DELETE /api/v1/flows/{id}`) somente para o flow criado pelo próprio teste; o ID é extraído da URL após o setup
 - Última validação: 1.10.x (abril 2026)
