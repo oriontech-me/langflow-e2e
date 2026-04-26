@@ -29,7 +29,7 @@ async function addLoopComponent(page: any) {
 
 test(
   "Loop component — renders correctly with all handles and output inspection buttons",
-  { tag: ["@release", "@components"] },
+  { tag: ["@stable", "@release", "@components"] },
   async ({ page }) => {
     await addLoopComponent(page);
 
@@ -74,7 +74,7 @@ test(
 
 test(
   "Loop component — run without connections shows build failed notification",
-  { tag: ["@release", "@components"] },
+  { tag: ["@stable", "@release", "@components"] },
   async ({ page }) => {
     // The Loop component requires at least an `inputs` connection to execute.
     // Running it standalone (no connections) is an expected error path —
@@ -105,7 +105,7 @@ test(
 
 test(
   "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
-  { tag: ["@release", "@components", "@templates", "@playground"] },
+  { tag: ["@stable", "@release", "@components", "@templates", "@playground"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
