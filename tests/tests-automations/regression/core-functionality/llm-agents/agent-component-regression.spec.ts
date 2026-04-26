@@ -100,7 +100,11 @@ function getTestTargets(): TestTarget[] {
     models = models.filter((m) => m.provider === process.env.MODEL_TEST_PROVIDER);
   } else if (process.env.ALL_MODELS !== "true") {
     const seen = new Set<string>();
-    models = models.filter((m) => !seen.has(m.provider) && seen.add(m.provider));
+    models = models.filter((m) => {
+      if (seen.has(m.provider)) return false;
+      seen.add(m.provider);
+      return true;
+    });
   }
 
   return models.map((m) => ({
