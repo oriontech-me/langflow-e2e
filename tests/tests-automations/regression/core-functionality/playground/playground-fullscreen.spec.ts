@@ -6,6 +6,16 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 async function setupPlayground(page: any): Promise<string> {
   await awaitBootstrapTest(page);
   await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
+
+  // Intercept the flow creation response to get the authoritative backend ID
+  const flowCreationPromise = page.waitForResponse(
+    (resp: { url: () => string; request: () => { method: () => string }; status: () => number }) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 15000 },
+  );
+
   await page.getByTestId("blank-flow").click();
 
   await page.getByTestId("sidebar-search-input").fill("chat output");
@@ -48,10 +58,9 @@ async function setupPlayground(page: any): Promise<string> {
     timeout: 8000,
   });
 
-  const match = page
-    .url()
-    .match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-  return match?.[1] ?? "";
+  const creationResponse = await flowCreationPromise;
+  const flowData = await creationResponse.json();
+  return (flowData.id as string) ?? "";
 }
 
 test.describe("Playground — open and close behavior", () => {
@@ -61,6 +70,10 @@ test.describe("Playground — open and close behavior", () => {
 
   test.afterEach(async ({ page }) => {
     if (createdFlowId) {
+      // Navigate to home before deleting to stop background browser requests
+      // for the current flow; without this, pending polling GETs complete
+      // after the DELETE and trigger spurious 404 fixture errors.
+      await page.goto("/");
       await page.request.delete(`/api/v1/flows/${createdFlowId}`);
       createdFlowId = null;
     }
