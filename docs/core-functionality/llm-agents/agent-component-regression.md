@@ -1,12 +1,13 @@
 # Agent Component Regression
 
-## Objetivo *(obrigatório)*
-Valida o comportamento core do componente Agent no Langflow: resposta sem tools, exibição de reasoning steps, interrupção via botão Stop, streaming progressivo, indicador de duração e múltiplas mensagens consecutivas. Se qualquer um desses testes falhar, o Agente LLM está quebrado para uso no Playground.
+**Última validação:** Langflow 1.10.x
 
 ---
 
-## Motivação *(obrigatório)*
-Cobre a regressão ID 147 (agente falhava quando nenhuma tool estava conectada) e garante que os comportamentos fundamentais de execução do Agent permaneçam estáveis a cada ciclo de release. É parametrizado por provider/modelo via `models.json`, cobrindo OpenAI, Anthropic e Google automaticamente.
+## O que este teste valida *(obrigatório)*
+Valida o comportamento core do componente Agent no Langflow: resposta sem tools, exibição de reasoning steps, streaming progressivo, indicador de duração e múltiplas mensagens consecutivas. Cobre a regressão ID 147 (agente falhava quando nenhuma tool estava conectada) e garante que os comportamentos fundamentais de execução do Agent permaneçam estáveis a cada ciclo de release. É parametrizado por provider/modelo via `models.json`, cobrindo OpenAI, Anthropic e Google automaticamente.
+
+Se qualquer um desses testes falhar, o Agente LLM está quebrado para uso no Playground.
 
 ---
 
@@ -111,4 +112,3 @@ Separado do suite porque interrompe o estado da execução.
 - **"Finished in Xs" no Playground**: verificação condicional — o texto aparece no `BotMessage` com base no ciclo `isBuilding` do `useFlowStore`; não é garantido em sessões multi-mensagem ou modelos que respondem muito rápido. A assertion canônica de duração é `node_duration_agent` no canvas.
 - O Stop button é verificado com `isVisible({ timeout: 30000 }).catch(() => false)` — modelos rápidos podem responder antes do botão aparecer, e isso é comportamento válido.
 - `dispatchEvent("click")` no Stop button contorna checagens de cobertura do React sem perder o handler.
-- Última validação: Langflow 1.10.x (abril 2026)
