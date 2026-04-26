@@ -397,7 +397,7 @@
 - [-] Histórico persiste ao reabrir Playground
 
 #### 9.3 Features Avançadas do Playground
-- [-] Modo fullscreen do Playground
+- [x] Modo fullscreen do Playground → `playground/playground-fullscreen.spec.ts`
 - [ ] Playground compartilhável (URL pública, sem autenticação)
 - [-] Voice mode (assistente de voz)
 - [-] Botão Stop no Playground
