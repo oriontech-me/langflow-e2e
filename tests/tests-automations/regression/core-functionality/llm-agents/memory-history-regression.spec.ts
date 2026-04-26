@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { updateOldComponents } from "../../../../helpers/flows/update-old-components";
-import { FlowEditorPage, PlaygroundPage } from "../../../../pages";
+import { PlaygroundPage } from "../../../../pages";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -43,11 +43,62 @@ async function loadMemoryChatbot(page: Page): Promise<void> {
   await adjustScreenView(page);
 }
 
-async function configureOpenAIApiKey(page: Page): Promise<void> {
-  const apiKeyInput = page.getByTestId("popover-anchor-input-api_key");
-  if (await apiKeyInput.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await apiKeyInput.fill(process.env.OPENAI_API_KEY ?? "");
+async function setupLanguageModelOpenAI(page: Page): Promise<void> {
+  const modelDropdown = page.getByTestId("model_model");
+  const hasModelDropdown = await modelDropdown.isVisible({ timeout: 5000 }).catch(() => false);
+
+  if (!hasModelDropdown) {
+    // "Setup Provider" opens the provider modal (no data-testid on this button)
+    await page.getByRole("button", { name: "Setup Provider" }).click();
+    await page.waitForSelector('[data-testid="provider-item-OpenAI"]', { timeout: 10000 });
+    await page.getByTestId("provider-item-OpenAI").click();
+
+    const apiKeyInput = page.getByPlaceholder("sk-...");
+    // Wait for the form panel to animate in before checking visibility
+    await apiKeyInput.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+
+    const apiKey = process.env.OPENAI_API_KEY ?? "";
+    if ((await apiKeyInput.count()) > 0 && apiKey) {
+      await apiKeyInput.click();
+      await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
+
+      const saveBtn = page.getByRole("button", { name: "Save", exact: true });
+      const replaceBtn = page.getByRole("button", { name: "Replace", exact: true });
+
+      if ((await saveBtn.count()) > 0) {
+        await saveBtn.click();
+      } else if ((await replaceBtn.count()) > 0) {
+        await replaceBtn.click();
+      }
+
+      // After save the button becomes "Replace" — wait for that to confirm save completed
+      await replaceBtn.waitFor({ state: "visible", timeout: 30000 });
+      // Wait for model toggles to load
+      await page.locator('[data-testid^="llm-toggle"]').first()
+        .waitFor({ state: "visible", timeout: 15000 })
+        .catch(() => {});
+    }
+
+    // Enable any model toggles that are off
+    const toggles = page.locator('[data-testid^="llm-toggle"]');
+    const toggleCount = await toggles.count();
+    for (let i = 0; i < toggleCount; i++) {
+      if ((await toggles.nth(i).getAttribute("aria-checked")) !== "true") {
+        await toggles.nth(i).click();
+      }
+    }
+
+    // Escape closes the Dialog and triggers refreshAllModelInputs on the node
+    await page.keyboard.press("Escape");
+    await modelDropdown.waitFor({ state: "visible", timeout: 30000 });
   }
+
+  await modelDropdown.click();
+  await page
+    .locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" })
+    .first()
+    .waitFor({ state: "visible", timeout: 10000 });
+  await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().click();
 }
 
 async function waitForChatResponse(page: Page): Promise<void> {
@@ -69,9 +120,9 @@ test.describe("Memory Chatbot Regression", () => {
         await expect.soft(page.getByTestId("title-Chat Input")).toBeVisible({ timeout: 10000 });
         await expect.soft(page.getByTestId("title-Chat Output")).toBeVisible({ timeout: 10000 });
         await expect.soft(page.getByTestId("title-Message History")).toBeVisible({ timeout: 10000 });
-        await expect.soft(page.getByTestId("title-OpenAI")).toBeVisible({ timeout: 10000 });
+        await expect.soft(page.getByTestId("title-Language Model")).toBeVisible({ timeout: 10000 });
         await expect.soft(page.getByTestId("title-Prompt Template")).toBeVisible({ timeout: 10000 });
-        await expect.soft(page.getByTestId("title-Type Convert")).toBeVisible({ timeout: 10000 });
+        await expect.soft(page.getByTestId("note_node")).toBeVisible({ timeout: 10000 });
       });
 
       await test.step("canvas has exactly 6 nodes", async () => {
@@ -91,12 +142,10 @@ test.describe("Memory Chatbot Regression", () => {
       );
 
       await loadMemoryChatbot(page);
-      await configureOpenAIApiKey(page);
+      await setupLanguageModelOpenAI(page);
 
-      const flowEditor = new FlowEditorPage(page);
       const playground = new PlaygroundPage(page);
 
-      await flowEditor.waitForCanvas();
       await page.getByTestId("playground-btn-flow-io").click();
       await page.waitForSelector('[data-testid="input-chat-playground"]', { timeout: 30000 });
 
@@ -113,8 +162,9 @@ test.describe("Memory Chatbot Regression", () => {
       });
 
       await test.step("multiple consecutive messages accumulate in history", async () => {
+        // div-chat-message marks bot responses only; 2 exchanges → 2 bot responses
         const count = await page.getByTestId("div-chat-message").count();
-        expect.soft(count).toBeGreaterThanOrEqual(4);
+        expect.soft(count).toBeGreaterThanOrEqual(2);
       });
 
       await test.step("messages persist after closing and reopening playground", async () => {
@@ -142,7 +192,7 @@ test.describe("Memory Chatbot Regression", () => {
       );
 
       await loadMemoryChatbot(page);
-      await configureOpenAIApiKey(page);
+      await setupLanguageModelOpenAI(page);
 
       const playground = new PlaygroundPage(page);
 
@@ -153,9 +203,10 @@ test.describe("Memory Chatbot Regression", () => {
       await waitForChatResponse(page);
       await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
 
-      await page.getByTestId("session-selector-trigger").click();
-      await page.getByText("New Session").click();
-      await page.waitForSelector('[data-testid="input-chat-playground"]', { timeout: 10000 });
+      // "new-chat" button is in the sessions sidebar (data-testid="new-chat")
+      await page.getByTestId("new-chat").click();
+      // Brief wait for session state to reset
+      await page.waitForTimeout(500);
 
       const messagesInNewSession = await page.getByTestId("div-chat-message").count();
       expect(messagesInNewSession).toBe(0);
