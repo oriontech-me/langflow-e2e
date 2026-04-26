@@ -3,7 +3,7 @@
 > **Repositório:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Testes:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Última atualização:** 2026-03-25
+> **Última atualização:** 2026-04-26
 
 ---
 
