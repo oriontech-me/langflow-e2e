@@ -48,12 +48,13 @@ async function setupMockDataFlow(
   });
 
   if (selectDataOutput) {
-    // Default output is dataframe_output; switch to data_output (Data → JSON code block).
+    // Default output is the Table (DataFrame) output; switch to JSON output.
     // testid "dropdown-output-undefined" reflects data.node.key being undefined in the component.
+    // Item label in 1.10.x: "Result\nJSON" (was "Result\nData" in earlier versions).
     await page.getByTestId("dropdown-output-undefined").click();
     const dataItem = page
       .getByTestId("dropdown-item-output-undefined-result")
-      .filter({ hasText: "Result\nData" });
+      .filter({ hasText: "JSON" });
     await expect(dataItem).toBeVisible({ timeout: 5000 });
     await dataItem.click();
   }
