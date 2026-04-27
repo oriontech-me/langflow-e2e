@@ -43,7 +43,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: "npm"
 
       - name: Install dependencies
@@ -53,7 +53,7 @@ jobs:
         run: npx playwright install chromium --with-deps
 
       - name: Run @stable tests
-        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=github
+        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=blob,github
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
@@ -64,7 +64,7 @@ jobs:
         if: always()
         with:
           name: playwright-report-weekly-${{ github.run_id }}
-          path: playwright-report/
+          path: blob-report/
           retention-days: 14
 
       - name: Upload test results on failure
