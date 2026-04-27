@@ -51,10 +51,15 @@ Valida o comportamento de UX do chat no Playground usando um flow determinístic
 
 ## Dependências externas *(obrigatório)*
 
-- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-input/components/text-area-wrapper.tsx` — `data-testid="input-chat-playground"`
-- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-input/components/button-send-wrapper.tsx` — `data-testid="button-send"`
-- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-messages/components/bot-message.tsx` — `data-testid="div-chat-message"`
-- `src/frontend/src/components/ui/simple-sidebar.tsx` — `data-testid="playground-btn-flow-io"`
+Referências no **repositório principal do Langflow** (compatíveis com Langflow 1.10.x):
+
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-input/components/text-area-wrapper.tsx` — define `data-testid="input-chat-playground"`
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-input/components/button-send-wrapper.tsx` — define `data-testid="button-send"`
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-messages/components/bot-message.tsx` — renderiza mensagens no chat com `data-testid="div-chat-message"`
+- `src/frontend/src/components/ui/simple-sidebar.tsx` — define `data-testid="playground-btn-flow-io"`
+
+Referências neste repositório:
+
 - `tests/helpers/flows/setup-playground.ts` — helper compartilhado que monta o flow e retorna o ID para cleanup
 
 ---
