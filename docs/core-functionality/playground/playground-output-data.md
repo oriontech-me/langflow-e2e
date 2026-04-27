@@ -6,8 +6,8 @@
 
 Verifica que o Playground renderiza corretamente saídas de dados estruturados gerados pelo componente Mock Data:
 
-1. `data_output` (tipo `Data`) é serializado via `_serialize_data` e exibido como um bloco de código JSON (`\`\`\`json`) no chat.
-2. `dataframe_output` (tipo `DataFrame`) é serializado via `df.to_markdown(index=False)` e exibido como uma tabela Markdown no chat.
+1. `data_output` (tipo `JSON`) é serializado via `_serialize_data` e exibido como um bloco de código JSON (`\`\`\`json`) no chat.
+2. `dataframe_output` (tipo `Table`) é serializado via `df.to_markdown(index=False)` e exibido como uma tabela Markdown no chat.
 
 ## Tags
 
@@ -17,8 +17,8 @@ Verifica que o Playground renderiza corretamente saídas de dados estruturados g
 
 | Teste | Critério |
 |---|---|
-| B0 – JSON Data | Mensagem do chat contém elemento `<code>` e o texto inclui `"records"` (chave raiz do JSON serializado) |
-| B0b – DataFrame | Mensagem do chat contém elemento `<table>` renderizado pelo react-markdown com remarkGfm |
+| JSON Data output como code block | Mensagem do chat contém elemento `<code>` e o texto inclui `"records"` (chave raiz do JSON serializado) |
+| DataFrame output como tabela Markdown | Mensagem do chat contém elemento `<table>` renderizado pelo react-markdown com remarkGfm |
 
 ## Dependências externas
 
