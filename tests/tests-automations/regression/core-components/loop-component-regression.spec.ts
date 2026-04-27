@@ -105,7 +105,7 @@ test(
 
 test(
   "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
-  { tag: ["@stable", "@release", "@components", "@templates", "@playground"] },
+  { tag: ["@release", "@components", "@templates", "@playground"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
