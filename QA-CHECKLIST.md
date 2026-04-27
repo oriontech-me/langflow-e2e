@@ -365,7 +365,7 @@
 
 #### 9.5 Output de Dados Estruturados
 - [x] JSON Data output renderiza como code block → `core-functionality/playground/playground-output-data.spec.ts`
-- [x] DataFrame output renderiza como tabela markdown → `core-functionality/playground/playground-output-data.spec.ts`
+- [x] DataFrame output renderiza como tabela Markdown → `core-functionality/playground/playground-output-data.spec.ts`
 
 ---
 

@@ -49,11 +49,16 @@ async function setupMockDataFlow(
 
   if (selectDataOutput) {
     // Default output is the Table (DataFrame) output; switch to JSON output.
-    // testid "dropdown-output-undefined" reflects data.node.key being undefined in the component.
+    // Scope to the Mock Data node to avoid ambiguity if other nodes expose a similar dropdown.
+    // Uses ^= (starts-with) so the selector survives if Langflow sets data.node.key in the future
+    // (test ID pattern: dropdown-output-${data.node.key?.toLowerCase() ?? "undefined"}).
     // Item label in 1.10.x: "Result\nJSON" (was "Result\nData" in earlier versions).
-    await page.getByTestId("dropdown-output-undefined").click();
-    const dataItem = page
-      .getByTestId("dropdown-item-output-undefined-result")
+    const mockDataNode = page
+      .locator('[data-testid="div-generic-node"]')
+      .filter({ hasText: "Mock Data" });
+    await mockDataNode.locator('[data-testid^="dropdown-output-"]').click();
+    const dataItem = mockDataNode
+      .locator('[data-testid^="dropdown-item-output-"]')
       .filter({ hasText: "JSON" });
     await expect(dataItem).toBeVisible({ timeout: 5000 });
     await dataItem.click();

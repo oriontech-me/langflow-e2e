@@ -22,7 +22,7 @@ Verifica que o Playground renderiza corretamente saídas de dados estruturados g
 
 ## Dependências externas
 
-Nenhuma. Os testes usam o componente **Mock Data** nativo do Langflow — nenhuma API key ou LLM é necessário.
+Nenhuma. Os testes usam o componente **Mock Data** nativo do Langflow — nenhuma API key ou LLM é necessária.
 
 ## Última validação
 
