@@ -5,22 +5,11 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
-/**
- * Mock Data has 3 outputs all with display_name "Result".
- * Only 1 handle is visible at a time: handle-mockdatagenerator-shownode-result-right
- * Default selected output is dataframe_output (DataFrame).
- * To switch output, use the dropdown trigger (dropdown-output-undefined) and select by index:
- *   nth(0) → dataframe_output (DataFrame)
- *   nth(1) → message_output  (Message)
- *   nth(2) → data_output     (Data → ```json code block)
- * Confirmed via diagnostic: item texts are "Result\nDataFrame", "Result\nMessage", "Result\nData"
- *
- * NOTE: dropdown-output-undefined testid reflects data.node.key being undefined in the component.
- */
+type SetupOptions = { selectDataOutput?: boolean };
 
 async function setupMockDataFlow(
   page: Page,
-  selectDataOutput: boolean = false,
+  { selectDataOutput = false }: SetupOptions = {},
 ): Promise<void> {
   await awaitBootstrapTest(page);
   await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
@@ -38,6 +27,7 @@ async function setupMockDataFlow(
       await page.getByTestId("add-component-button-chat-output").click();
     });
 
+  // Zoom out before dragging so the canvas target is not off-screen
   await zoomOut(page, 2);
 
   // Add Mock Data (section: data_source → testid prefix "data_source")
@@ -57,14 +47,15 @@ async function setupMockDataFlow(
     timeout: 10000,
   });
 
-  // Switch to data_output when needed (default is dataframe_output)
   if (selectDataOutput) {
+    // Default output is dataframe_output; switch to data_output (Data → JSON code block).
+    // testid "dropdown-output-undefined" reflects data.node.key being undefined in the component.
     await page.getByTestId("dropdown-output-undefined").click();
-    // data_output is at index 2: "Result\nData"
-    await page
+    const dataItem = page
       .getByTestId("dropdown-item-output-undefined-result")
-      .nth(2)
-      .click();
+      .filter({ hasText: "Result\nData" });
+    await expect(dataItem).toBeVisible({ timeout: 5000 });
+    await dataItem.click();
   }
 
   // Connect the selected Mock Data output → Chat Output input
@@ -81,7 +72,6 @@ async function setupMockDataFlow(
 }
 
 async function runNoInputFlow(page: Page): Promise<void> {
-  // No-input playground: button-send = "Run Flow", button-stop appears while building
   await page.getByTestId("button-send").click();
   await expect(page.getByTestId("button-stop")).toBeVisible({
     timeout: 30000,
@@ -96,7 +86,7 @@ async function runNoInputFlow(page: Page): Promise<void> {
   });
 }
 
-test.describe("Playground Output – Structured Data (IDs B0 + B0b)", () => {
+test.describe("Playground Output – Structured Data", () => {
   test.afterEach(async ({ page }) => {
     await page.goto("/");
     await cleanAllFlows(page);
@@ -104,12 +94,12 @@ test.describe("Playground Output – Structured Data (IDs B0 + B0b)", () => {
 
   test(
     "playground must render JSON Data output as a code block",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step(
         "Set up Mock Data (data_output) → Chat Output flow and open playground",
         async () => {
-          await setupMockDataFlow(page, true);
+          await setupMockDataFlow(page, { selectDataOutput: true });
           await page.getByTestId("playground-btn-flow-io").click();
           await expect(page.getByTestId("button-send")).toBeVisible({
             timeout: 15000,
@@ -124,15 +114,14 @@ test.describe("Playground Output – Structured Data (IDs B0 + B0b)", () => {
 
           // Chat Output serialises Data via _serialize_data → ```json\n...\n```
           // react-markdown renders this as a <code> element inside a div-chat-message.
-          // The empty user-trigger message is also a div-chat-message, so we filter
-          // specifically for the one that contains a <code> element.
           const chatMessage = page
             .getByTestId("div-chat-message")
             .filter({ has: page.locator("code") });
           await expect(chatMessage).toBeVisible({ timeout: 10000 });
 
           const text = await chatMessage.innerText();
-          expect(text).toContain("records");
+          // "records": is the top-level key in the Mock Data JSON serialisation
+          expect(text).toContain('"records"');
         },
       );
     },
@@ -140,7 +129,7 @@ test.describe("Playground Output – Structured Data (IDs B0 + B0b)", () => {
 
   test(
     "playground must render DataFrame output as a markdown table",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step(
         "Set up Mock Data (dataframe_output) → Chat Output flow and open playground",
