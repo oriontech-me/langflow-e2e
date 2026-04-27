@@ -17,47 +17,59 @@ export async function setupPlayground(page: Page): Promise<string> {
 
   await page.getByTestId("blank-flow").click();
 
-  await page.getByTestId("sidebar-search-input").fill("chat output");
-  await page.waitForSelector('[data-testid="input_outputChat Output"]', {
-    timeout: 30000,
-  });
-  await page
-    .getByTestId("input_outputChat Output")
-    .hover()
-    .then(async () => {
-      await page.getByTestId("add-component-button-chat-output").click();
-    });
-
-  await zoomOut(page, 2);
-
-  await page.getByTestId("sidebar-search-input").fill("chat input");
-  await page.waitForSelector('[data-testid="input_outputChat Input"]', {
-    timeout: 30000,
-  });
-  await page
-    .getByTestId("input_outputChat Input")
-    .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-      targetPosition: { x: 100, y: 100 },
-    });
-
-  await adjustScreenView(page);
-
-  await expect(page.locator(".react-flow__node")).toHaveCount(2, {
-    timeout: 10000,
-  });
-
-  await page
-    .getByTestId("handle-chatinput-noshownode-chat message-source")
-    .click();
-  await page
-    .getByTestId("handle-chatoutput-noshownode-inputs-target")
-    .click();
-
-  await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
-    timeout: 8000,
-  });
-
   const creationResponse = await flowCreationPromise;
   const flowData = await creationResponse.json();
-  return (flowData.id as string) ?? "";
+  const flowId = flowData.id as string | undefined;
+  if (!flowId || flowId.trim() === "") {
+    throw new Error(
+      "Flow creation response did not include a valid non-empty id.",
+    );
+  }
+
+  try {
+    await page.getByTestId("sidebar-search-input").fill("chat output");
+    await page.waitForSelector('[data-testid="input_outputChat Output"]', {
+      timeout: 30000,
+    });
+    await page
+      .getByTestId("input_outputChat Output")
+      .hover()
+      .then(async () => {
+        await page.getByTestId("add-component-button-chat-output").click();
+      });
+
+    await zoomOut(page, 2);
+
+    await page.getByTestId("sidebar-search-input").fill("chat input");
+    await page.waitForSelector('[data-testid="input_outputChat Input"]', {
+      timeout: 30000,
+    });
+    await page
+      .getByTestId("input_outputChat Input")
+      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
+        targetPosition: { x: 100, y: 100 },
+      });
+
+    await adjustScreenView(page);
+
+    await expect(page.locator(".react-flow__node")).toHaveCount(2, {
+      timeout: 10000,
+    });
+
+    await page
+      .getByTestId("handle-chatinput-noshownode-chat message-source")
+      .click();
+    await page
+      .getByTestId("handle-chatoutput-noshownode-inputs-target")
+      .click();
+
+    await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
+      timeout: 8000,
+    });
+  } catch (err) {
+    await page.request.delete(`/api/v1/flows/${flowId}`).catch(() => {});
+    throw err;
+  }
+
+  return flowId;
 }
