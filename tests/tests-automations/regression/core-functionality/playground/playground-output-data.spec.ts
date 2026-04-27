@@ -49,13 +49,15 @@ async function setupMockDataFlow(
 
   if (selectDataOutput) {
     // Default output is the Table (DataFrame) output; switch to JSON output.
-    // Scope to the Mock Data node to avoid ambiguity if other nodes expose a similar dropdown.
+    // Scope to the Mock Data node via its React Flow container (.react-flow__node).
+    // div-generic-node only holds the node header; outputs are rendered in a sibling div outside it.
     // Uses ^= (starts-with) so the selector survives if Langflow sets data.node.key in the future
     // (test ID pattern: dropdown-output-${data.node.key?.toLowerCase() ?? "undefined"}).
+    // "title-Mock Data" is data-testid set by NodeName as `"title-" + display_name`.
     // Item label in 1.10.x: "Result\nJSON" (was "Result\nData" in earlier versions).
     const mockDataNode = page
-      .locator('[data-testid="div-generic-node"]')
-      .filter({ hasText: "Mock Data" });
+      .locator(".react-flow__node")
+      .filter({ has: page.getByTestId("title-Mock Data") });
     await mockDataNode.locator('[data-testid^="dropdown-output-"]').click();
     const dataItem = mockDataNode
       .locator('[data-testid^="dropdown-item-output-"]')
