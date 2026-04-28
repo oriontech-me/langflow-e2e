@@ -1,26 +1,26 @@
 ---
 name: Test Automation
-about: Planejamento de teste E2E — será lido pela LLM para implementação
-title: "[Test] deve ... quando ..."
+about: E2E test plan — will be read by the LLM for implementation
+title: "[Test] should ... when ..."
 labels: test-automation
 assignees: ""
 ---
 
-## O que testar
-<!-- Complete: "deve [resultado observável] quando [ação ou condição]"
-     Essa frase vira o nome do teste — seja específico.
-     Ex: "deve exibir a capital correta quando o agente recebe uma pergunta direta"
-         "deve limpar o histórico quando o usuário clica em New Chat" -->
+## What to test
+<!-- Complete: "should [observable result] when [action or condition]"
+     This sentence becomes the test name — be specific.
+     Ex: "should display the correct capital when the agent receives a direct question"
+         "should clear the history when the user clicks New Chat" -->
 
 ---
 
-## Pré-condições
-<!-- Estado necessário antes do teste começar.
-     Ex: usuário logado, canvas vazio, provider configurado com API key válida. -->
+## Preconditions
+<!-- State required before the test begins.
+     Ex: user logged in, empty canvas, provider configured with a valid API key. -->
 
 ---
 
-## Passos
+## Steps
 
 1.
 2.
@@ -28,30 +28,30 @@ assignees: ""
 
 ---
 
-## Resultado concreto esperado
-<!-- O que especificamente deve estar visível ou verdadeiro ao final?
-     Evite: "a mensagem aparece", "o modal abre", "o agente responde".
-     Prefira: "a resposta contém o nome da capital solicitada",
-              "o painel exibe pelo menos um tool call com nome e resultado",
-              "após New Chat, a mensagem anterior não aparece na nova sessão". -->
+## Expected concrete result
+<!-- What specifically should be visible or true at the end?
+     Avoid: "the message appears", "the modal opens", "the agent responds".
+     Prefer: "the response contains the name of the requested capital",
+             "the panel shows at least one tool call with name and result",
+             "after New Chat, the previous message does not appear in the new session". -->
 
 ---
 
-## Tipo
-- [ ] UI — interação com o browser
-- [ ] API REST — chamada direta aos endpoints
-- [ ] Agente / Provider LLM — envolve execução de modelo
-- [ ] MCP — integração server ou client
+## Type
+- [ ] UI — browser interaction
+- [ ] API REST — direct call to endpoints
+- [ ] Agent / LLM Provider — involves model execution
+- [ ] MCP — server or client integration
 
 ---
 
-## Comportamentos não óbvios
-<!-- Opcional. Condições específicas, timing, estados intermediários que
-     a LLM não conseguiria saber sem contexto humano.
-     Ex: "o badge só aparece após a primeira execução do flow",
-         "o campo some se o usuário não tiver permissão de edição". -->
+## Non-obvious behaviors
+<!-- Optional. Specific conditions, timing, intermediate states that
+     the LLM could not know without human context.
+     Ex: "the badge only appears after the first flow execution",
+         "the field disappears if the user does not have edit permission". -->
 
 ---
 
-## Referência
-<!-- Issue ou PR relacionado, se houver. -->
+## Reference
+<!-- Related issue or PR, if any. -->

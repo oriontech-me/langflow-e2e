@@ -1,20 +1,20 @@
-# mcp/ — Guia para criação de testes
+# mcp/ — Guide for creating tests
 
-Testes nesta pasta validam integração MCP (Model Context Protocol) — tanto o consumo de tools/resources externos (client) quanto a exposição de flows como MCP server.
+Tests in this folder validate MCP (Model Context Protocol) integration — both consuming external tools/resources (client) and exposing flows as an MCP server.
 
 ---
 
-## Testes MCP que envolvem agentes LLM
+## MCP tests that involve LLM agents
 
-Se o teste MCP executa um agente (ex: agent usando uma tool MCP), **deve** usar o setup de modelos do projeto.
+If the MCP test executes an agent (e.g.: agent using an MCP tool), it **must** use the project's model setup.
 
-### Setup obrigatório antes de testar
+### Required setup before testing
 
 ```bash
 npx playwright test tests/collect-models.spec.ts
 ```
 
-### Carregar o agente com provider configurável
+### Load the agent with a configurable provider
 
 ```typescript
 import { SimpleAgentTemplatePage } from "../../../../pages";
@@ -24,7 +24,7 @@ await new SimpleAgentTemplatePage(page).load(options);
 // options: { provider: "openai", model: "gpt-4o-mini" }
 ```
 
-### Configurar strategy no .env
+### Configure strategy in .env
 
 ```bash
 MODEL_TEST_ID=gpt-4o-mini
@@ -32,33 +32,33 @@ MODEL_TEST_ID=gpt-4o-mini
 
 ---
 
-## Testes MCP sem LLM
+## MCP tests without LLM
 
-Testes que validam apenas configuração do MCP server/client (UI, endpoints, modal) **não** precisam do setup de modelos. Use diretamente o `page` da fixture.
+Tests that only validate MCP server/client configuration (UI, endpoints, modal) **do not** need the model setup. Use the `page` from the fixture directly.
 
 ---
 
-## Tags obrigatórias para esta pasta
+## Required tags for this folder
 
 ```typescript
-{ tag: ["@mcp"] }                        // mínimo para todos os testes desta pasta
-{ tag: ["@mcp", "@agents"] }             // se o teste executa um agente LLM via MCP
-{ tag: ["@mcp", "@settings"] }           // se o teste navega pela página de configurações
+{ tag: ["@mcp"] }                        // minimum for all tests in this folder
+{ tag: ["@mcp", "@agents"] }             // if the test executes an LLM agent via MCP
+{ tag: ["@mcp", "@settings"] }           // if the test navigates the settings page
 ```
 
 ---
 
-## Estrutura das subpastas
+## Subfolder structure
 
-| Pasta | O que testar |
+| Folder | What to test |
 |---|---|
-| `client/` | Consumo de tools e resources de um MCP server externo |
-| `server/` | Exposição de flows como MCP server (endpoint, tools, resources) |
+| `client/` | Consuming tools and resources from an external MCP server |
+| `server/` | Exposing flows as an MCP server (endpoint, tools, resources) |
 
 ---
 
-## Referências
+## References
 
 - `SimpleAgentTemplatePage` → `tests/pages/SimpleAgentTemplatePage.ts`
-- Setup de providers → `tests/helpers/provider-setup/`
-- Coleta de modelos → `tests/collect-models.spec.ts`
+- Provider setup → `tests/helpers/provider-setup/`
+- Model collection → `tests/collect-models.spec.ts`

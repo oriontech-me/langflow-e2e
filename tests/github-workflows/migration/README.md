@@ -1,67 +1,67 @@
 # Migration Test
 
-Testes Python que verificam se o banco de dados do Langflow migra corretamente de `latest` para `nightly`. Executados pelo workflow `.github/workflows/migration-test.yml`, acionado manualmente via `workflow_dispatch`.
+Python tests that verify whether the Langflow database migrates correctly from `latest` to `nightly`. Executed by the workflow `.github/workflows/migration-test.yml`, triggered manually via `workflow_dispatch`.
 
-## O que o workflow faz
+## What the workflow does
 
-O workflow sobe dois containers Docker sequencialmente contra o mesmo banco PostgreSQL, simulando um upgrade real em produção.
+The workflow starts two Docker containers sequentially against the same PostgreSQL database, simulating a real production upgrade.
 
-### Fase 1 — Langflow Latest
+### Phase 1 — Langflow Latest
 
-1. Sobe `langflowai/langflow:latest` com um banco PostgreSQL vazio.
-2. Autentica na API e localiza o template de agente nos starter projects.
-3. Cria um flow a partir desse template.
-4. Cria a variável de ambiente `OPENAI_API_KEY` no Langflow.
-5. Executa o flow via API e salva o estado (flow ID, resultados) em `/tmp/migration-test-state.json`.
+1. Starts `langflowai/langflow:latest` with an empty PostgreSQL database.
+2. Authenticates with the API and locates the agent template in the starter projects.
+3. Creates a flow from that template.
+4. Creates the `OPENAI_API_KEY` environment variable in Langflow.
+5. Executes the flow via API and saves the state (flow ID, results) to `/tmp/migration-test-state.json`.
 
-### Fase 2 — Upgrade para Nightly
+### Phase 2 — Upgrade to Nightly
 
-6. Para o container `latest` (o banco PostgreSQL permanece intacto).
-7. Sobe `langflowai/langflow-nightly:latest` apontando para o mesmo banco — as migrações Alembic rodam automaticamente na inicialização.
-8. Aguarda o Langflow ficar disponível (timeout de 180s para dar tempo às migrações).
+6. Stops the `latest` container (the PostgreSQL database remains intact).
+7. Starts `langflowai/langflow-nightly:latest` pointing to the same database — the Alembic migrations run automatically on startup.
+8. Waits for Langflow to become available (180s timeout to allow time for migrations).
 
-### Fase 3 — Verificação
+### Phase 3 — Verification
 
-Dois scripts verificam que a migração não quebrou nada:
+Two scripts verify that the migration did not break anything:
 
-**`verify_migration_api.py`** — verificações via API REST:
-- O flow criado na Fase 1 ainda existe pelo mesmo ID.
-- Todos os flows aparecem na listagem.
-- A variável `OPENAI_API_KEY` foi preservada.
-- O flow executa com sucesso no nightly.
+**`verify_migration_api.py`** — verifications via REST API:
+- The flow created in Phase 1 still exists by the same ID.
+- All flows appear in the listing.
+- The `OPENAI_API_KEY` variable was preserved.
+- The flow executes successfully on nightly.
 
-**`test_ui_migration.py`** — verificações via Playwright (Chromium):
-- O flow abre no editor sem erros de componente.
-- O banner "Updates are available" é detectado e reportado.
-- Os componentes são atualizados via "Review All → Select All → Update Components".
-- O flow executa no Playground da UI.
-- O flow executa via API após a atualização dos componentes.
+**`test_ui_migration.py`** — verifications via Playwright (Chromium):
+- The flow opens in the editor without component errors.
+- The "Updates are available" banner is detected and reported.
+- Components are updated via "Review All → Select All → Update Components".
+- The flow runs in the Playground UI.
+- The flow runs via API after the component update.
 
-### Fase 4 — Relatório
+### Phase 4 — Report
 
-`generate_report.py` consolida o estado coletado em `/tmp/migration-report.md` com status por fase e step (`PASS` / `FAIL` / `WARN` / `SKIP`).
+`generate_report.py` consolidates the collected state into `/tmp/migration-report.md` with status per phase and step (`PASS` / `FAIL` / `WARN` / `SKIP`).
 
-Em caso de falha, o workflow abre ou atualiza uma issue no repositório com label `migration-test`, incluindo o relatório completo e link para a run.
+On failure, the workflow opens or updates an issue in the repository with the `migration-test` label, including the full report and a link to the run.
 
-## Artefatos gerados
+## Generated artifacts
 
-| Arquivo | Conteúdo |
+| File | Content |
 |---|---|
-| `test-results/` | Traces e screenshots do Playwright |
-| `/tmp/migration-report.md` | Relatório consolidado em Markdown |
-| `/tmp/langflow-latest.log` | Logs do container latest |
-| `/tmp/langflow-nightly.log` | Logs do container nightly |
-| `/tmp/migration-test-state.json` | Estado bruto coletado entre as fases |
-| `/tmp/latest-digest.txt` | Digest da imagem latest usada |
-| `/tmp/nightly-digest.txt` | Digest da imagem nightly usada |
+| `test-results/` | Playwright traces and screenshots |
+| `/tmp/migration-report.md` | Consolidated Markdown report |
+| `/tmp/langflow-latest.log` | Latest container logs |
+| `/tmp/langflow-nightly.log` | Nightly container logs |
+| `/tmp/migration-test-state.json` | Raw state collected between phases |
+| `/tmp/latest-digest.txt` | Digest of the latest image used |
+| `/tmp/nightly-digest.txt` | Digest of the nightly image used |
 
-## Como executar manualmente
+## How to run manually
 
-No GitHub: **Actions → Langflow Migration Test: Latest → Nightly → Run workflow**.
+On GitHub: **Actions → Langflow Migration Test: Latest → Nightly → Run workflow**.
 
-Requer o secret `OPENAI_API_KEY` configurado no repositório (usado para criar a variável no Langflow e executar o flow de agente).
+Requires the `OPENAI_API_KEY` secret configured in the repository (used to create the variable in Langflow and execute the agent flow).
 
-## Dependências Python
+## Python dependencies
 
 ```
 requests

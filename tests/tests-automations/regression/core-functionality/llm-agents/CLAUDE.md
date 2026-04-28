@@ -1,44 +1,44 @@
-# llm-agents — Guia para criação de testes
+# llm-agents — Guide for creating tests
 
-Testes nesta pasta validam comportamento de agentes LLM, raciocínio, tool calling e execução no Playground.
-
----
-
-## Obrigatório: usar o setup de modelos
-
-Todo teste que executa um agente com LLM **deve** usar a infraestrutura de providers e modelos do projeto.
-Não hardcode provider, API key ou modelo diretamente no teste.
+Tests in this folder validate LLM agent behavior, reasoning, tool calling and Playground execution.
 
 ---
 
-## Passo a passo para criar um teste de agente
+## Required: use the model setup
 
-### 1. Rodar o collect-models antes de testar
+Every test that executes an agent with an LLM **must** use the project's provider and model infrastructure.
+Do not hardcode provider, API key or model directly in the test.
+
+---
+
+## Step by step to create an agent test
+
+### 1. Run collect-models before testing
 
 ```bash
 npx playwright test tests/collect-models.spec.ts
 ```
 
-Isso gera `tests/helpers/provider-setup/data/providers.json` e `models.json`.
+This generates `tests/helpers/provider-setup/data/providers.json` and `models.json`.
 
-### 2. Usar SimpleAgentTemplatePage para carregar o flow
+### 2. Use SimpleAgentTemplatePage to load the flow
 
 ```typescript
 import { SimpleAgentTemplatePage } from "../../../../pages";
 
-// Carrega o template Simple Agent com o provider/modelo configurado
+// Loads the Simple Agent template with the configured provider/model
 await new SimpleAgentTemplatePage(page).load(options);
-// options vem do models.json: { provider: "openai", model: "gpt-4o-mini" }
+// options comes from models.json: { provider: "openai", model: "gpt-4o-mini" }
 ```
 
-### 3. Parametrizar o teste por modelo (padrão do projeto)
+### 3. Parameterize the test by model (project standard)
 
 ```typescript
-import { getTestTargets } from "../../../../helpers/provider-setup"; // ou inline como em agent-component-regression.spec.ts
+import { getTestTargets } from "../../../../helpers/provider-setup"; // or inline as in agent-component-regression.spec.ts
 
 for (const { label, options, skipReason } of targets) {
-  test.describe.serial(`Meu Teste [${label}]`, () => {
-    test("deve ...", async ({ page }) => {
+  test.describe.serial(`My Test [${label}]`, () => {
+    test("should ...", async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");
       // ...
     });
@@ -46,11 +46,11 @@ for (const { label, options, skipReason } of targets) {
 }
 ```
 
-Isso cria automaticamente um describe por modelo — o teste roda para cada modelo do `models.json`, respeitando as variáveis `MODEL_TEST_ID` e `MODEL_TEST_PROVIDER` do `.env` (por prioridade).
+This automatically creates one describe per model — the test runs for each model in `models.json`, respecting the `MODEL_TEST_ID` and `MODEL_TEST_PROVIDER` variables from `.env` (by priority).
 
-### 4. Tratar MODEL_NOT_AVAILABLE
+### 4. Handle MODEL_NOT_AVAILABLE
 
-Alguns modelos existem no JSON mas não estão disponíveis no dropdown do agente:
+Some models exist in the JSON but are not available in the agent dropdown:
 
 ```typescript
 try {
@@ -61,29 +61,29 @@ try {
 }
 ```
 
-### 5. Rodar com --workers=1
+### 5. Run with --workers=1
 
 ```bash
-npx playwright test tests/tests-automations/regression/core-functionality/llm-agents/meu-teste.spec.ts --workers=1
+npx playwright test tests/tests-automations/regression/core-functionality/llm-agents/my-test.spec.ts --workers=1
 ```
 
-Obrigatório — testes de agente criam flows no Langflow e conflitam se rodarem em paralelo.
+Required — agent tests create flows in Langflow and conflict if run in parallel.
 
 ---
 
-## Tags obrigatórias para esta pasta
+## Required tags for this folder
 
 ```typescript
-{ tag: ["@agents"] }                     // mínimo
-{ tag: ["@agents", "@playground"] }     // se validar interação no playground
-{ tag: ["@agents", "@model-provider"] } // se validar seleção de provider/modelo
+{ tag: ["@agents"] }                     // minimum
+{ tag: ["@agents", "@playground"] }     // if validating playground interaction
+{ tag: ["@agents", "@model-provider"] } // if validating provider/model selection
 ```
 
 ---
 
-## Referências
+## References
 
 - `SimpleAgentTemplatePage` → `tests/pages/SimpleAgentTemplatePage.ts`
-- Setup de providers → `tests/helpers/provider-setup/setup-openai.ts` / `setup-anthropic.ts` / `setup-google.ts`
-- Coleta de modelos → `tests/helpers/provider-setup/collect-models.ts`
-- Exemplo completo → `agent-component-regression.spec.ts` (nesta pasta)
+- Provider setup → `tests/helpers/provider-setup/setup-openai.ts` / `setup-anthropic.ts` / `setup-google.ts`
+- Model collection → `tests/helpers/provider-setup/collect-models.ts`
+- Full example → `agent-component-regression.spec.ts` (in this folder)

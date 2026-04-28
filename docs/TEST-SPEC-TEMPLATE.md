@@ -1,58 +1,58 @@
-# [Nome do Spec]
+# [Spec Name]
 
-**Última validação:** Langflow X.X.x
-
----
-
-## O que este teste valida *(obrigatório)*
-O que o teste valida em termos funcionais e por que existe. Se veio de um bug, referencie a issue.
-Se é cobertura preventiva de release, diga qual funcionalidade protege.
-Pense: "se este teste falhar, o que quebrou no produto?"
+**Last validated:** Langflow X.X.x
 
 ---
 
-## Tags *(obrigatório)*
+## What this test validates *(required)*
+What the test validates in functional terms and why it exists. If it came from a bug, reference the issue.
+If it is preventive release coverage, state which feature it protects.
+Think: "if this test fails, what broke in the product?"
+
+---
+
+## Tags *(required)*
 `@release` `@playground`
 
 ---
 
-## Passo a passo *(obrigatório)*
-1. Passo 1
-2. Passo 2
-3. Passo 3
+## Step by step *(required)*
+1. Step 1
+2. Step 2
+3. Step 3
 
 ---
 
-## Critério de validação *(obrigatório)*
-- O que deve ser verdade para o teste passar
-- Asserções principais em linguagem humana, não em código
+## Validation criterion *(required)*
+- What must be true for the test to pass
+- Main assertions in human language, not in code
 
 ---
 
-## Dependências externas *(obrigatório)*
-<!-- Arquivos do repositório do Langflow que, se alterados, podem quebrar este teste.
-     Esta lista é lida pelo workflow de monitoramento — preencha com atenção. -->
+## External dependencies *(required)*
+<!-- Files from the Langflow repository that, if changed, could break this test.
+     This list is read by the monitoring workflow — fill it in carefully. -->
 
-- `src/frontend/...` — descrição do que este arquivo faz e por que impacta o teste
-- `src/backend/...` — idem
-
----
-
-## O que este teste não cobre *(opcional)*
-- Comportamentos adjacentes que parecem relacionados mas estão intencionalmente fora do escopo
-- Ajuda o mantenedor a distinguir lacuna de decisão consciente
+- `src/frontend/...` — description of what this file does and why it impacts the test
+- `src/backend/...` — same
 
 ---
 
-## Pré-condições *(opcional)*
-- O que precisa estar configurado ou em execução antes de rodar o teste
+## What this test does not cover *(optional)*
+- Adjacent behaviors that appear related but are intentionally out of scope
+- Helps the maintainer distinguish a gap from a conscious decision
 
 ---
 
-## Quando revisar este teste *(opcional)*
-- Situações específicas que indicam que o teste pode estar desatualizado, sem ser uma quebra direta
+## Preconditions *(optional)*
+- What needs to be configured or running before the test executes
 
 ---
 
-## Notas *(opcional)*
-- Observações sobre flakiness, timeouts empíricos, workarounds ou decisões que um mantenedor futuro precisaria entender
+## When to review this test *(optional)*
+- Specific situations that indicate the test may be outdated, without being a direct break
+
+---
+
+## Notes *(optional)*
+- Observations about flakiness, empirical timeouts, workarounds or decisions that a future maintainer would need to understand

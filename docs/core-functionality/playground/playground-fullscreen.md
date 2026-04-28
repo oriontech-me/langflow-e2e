@@ -1,73 +1,73 @@
 # Playground — Open and Close Behavior
 
-**Última validação:** Langflow 1.10.x
+**Last validated:** Langflow 1.10.x
 
 ---
 
-## O que este teste valida *(obrigatório)*
-Valida que o Playground abre diretamente em modo fullscreen ao ser acionado no editor de flows e que pode ser fechado e reaberto corretamente. Se este teste falhar, o acesso ao Playground a partir do editor está quebrado.
+## What this test validates *(required)*
+Validates that the Playground opens directly in fullscreen when triggered from the flow editor and that it can be closed and reopened correctly. If this test fails, access to the Playground from the editor is broken.
 
-O Playground migrou de um modal com botão de expandir para um fullscreen direto. O teste anterior tentava localizar um botão de fullscreen com seletores genéricos (`[data-testid*="maximize"]`) e fazia skip silencioso quando não encontrava — o que mascarava regressões. Esta spec fixa os seletores contra o comportamento real da versão atual (1.10.x+).
+The Playground migrated from a modal with an expand button to a direct fullscreen. The previous test tried to locate a fullscreen button with generic selectors (`[data-testid*="maximize"]`) and silently skipped when not found — which masked regressions. This spec anchors the selectors to the real behavior of the current version (1.10.x+).
 
 ---
 
-## Tags *(obrigatório)*
+## Tags *(required)*
 `@stable` `@release` `@regression` `@playground`
 
 ---
 
-## Passo a passo *(obrigatório)*
+## Step by step *(required)*
 
-**Teste 1 — playground opens in fullscreen with chat input visible**
-1. Criar flow em branco com ChatInput conectado ao ChatOutput
-2. Clicar no botão `playground-btn-flow-io` na toolbar
-3. Confirmar que `playground-close-button` aparece imediatamente (indica fullscreen)
-4. Confirmar que `input-chat-playground` está visível
+**Test 1 — playground opens in fullscreen with chat input visible**
+1. Create a blank flow with ChatInput connected to ChatOutput
+2. Click the `playground-btn-flow-io` button in the toolbar
+3. Confirm that `playground-close-button` appears immediately (indicates fullscreen)
+4. Confirm that `input-chat-playground` is visible
 
-**Teste 2 — playground closes and reopens correctly from the flow editor**
-1. Criar flow em branco com ChatInput conectado ao ChatOutput
-2. Abrir o Playground e aguardar `playground-close-button`
-3. Clicar no botão de fechar (`playground-close-button`)
-4. Confirmar que `input-chat-playground` não está mais visível
-5. Reabrir o Playground via `playground-btn-flow-io`
-6. Confirmar que `input-chat-playground` volta a estar visível
-
----
-
-## Critério de validação *(obrigatório)*
-- O Playground abre em fullscreen (sem etapa de expansão): `playground-close-button` presente imediatamente após abrir
-- O chat input (`input-chat-playground`) está visível após abrir
-- Após fechar, o chat input deixa de estar visível
-- Após reabrir, o chat input volta a estar visível
+**Test 2 — playground closes and reopens correctly from the flow editor**
+1. Create a blank flow with ChatInput connected to ChatOutput
+2. Open the Playground and wait for `playground-close-button`
+3. Click the close button (`playground-close-button`)
+4. Confirm that `input-chat-playground` is no longer visible
+5. Reopen the Playground via `playground-btn-flow-io`
+6. Confirm that `input-chat-playground` is visible again
 
 ---
 
-## Dependências externas *(obrigatório)*
-
-- `src/frontend/src/components/core/playgroundComponent/` — componente principal do Playground; mudanças em `data-testid="playground-close-button"` ou `data-testid="input-chat-playground"` quebram este teste
-- `src/frontend/src/components/core/flowToolbarComponent/` — botão `playground-btn-flow-io` que abre o Playground a partir do editor
-
----
-
-## O que este teste não cobre *(opcional)*
-- Envio de mensagens ou execução de flows no Playground
-- Voice mode e funcionalidades avançadas do Playground
-- Comportamento com múltiplas sessões abertas
+## Validation criterion *(required)*
+- The Playground opens in fullscreen (without an expansion step): `playground-close-button` present immediately after opening
+- The chat input (`input-chat-playground`) is visible after opening
+- After closing, the chat input is no longer visible
+- After reopening, the chat input is visible again
 
 ---
 
-## Pré-condições *(opcional)*
-- Langflow rodando e acessível em `PLAYWRIGHT_BASE_URL`
-- Nenhum flow pré-existente necessário; o teste cria o flow, registra o ID retornado na URL e o apaga via API no `afterEach`
+## External dependencies *(required)*
+
+- `src/frontend/src/components/core/playgroundComponent/` — main Playground component; changes to `data-testid="playground-close-button"` or `data-testid="input-chat-playground"` break this test
+- `src/frontend/src/components/core/flowToolbarComponent/` — `playground-btn-flow-io` button that opens the Playground from the editor
 
 ---
 
-## Quando revisar este teste *(opcional)*
-- Se o Playground voltar a ter um modo não-fullscreen (botão de expansão separado): o teste de abertura precisaria ser atualizado
-- Se o botão de fechar for removido ou renomeado
+## What this test does not cover *(optional)*
+- Sending messages or executing flows in the Playground
+- Voice mode and advanced Playground features
+- Behavior with multiple open sessions
 
 ---
 
-## Notas *(opcional)*
-- Os dois testes rodam em modo `serial` para evitar conflitos de flow no editor
-- Limpeza feita via API (`DELETE /api/v1/flows/{id}`) somente para o flow criado pelo próprio teste; o ID é extraído da URL após o setup
+## Preconditions *(optional)*
+- Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
+- No pre-existing flow needed; the test creates the flow, records the ID returned in the URL and deletes it via API in the `afterEach`
+
+---
+
+## When to review this test *(optional)*
+- If the Playground returns to a non-fullscreen mode (separate expand button): the opening test would need to be updated
+- If the close button is removed or renamed
+
+---
+
+## Notes *(optional)*
+- Both tests run in `serial` mode to avoid flow conflicts in the editor
+- Cleanup done via API (`DELETE /api/v1/flows/{id}`) only for the flow created by the test itself; the ID is extracted from the URL after setup
