@@ -65,6 +65,12 @@ async function sendMessage(page: Page, text: string): Promise<void> {
   await expect(
     page.getByTestId("input-chat-playground"),
   ).toHaveValue("", { timeout: 15000 });
+  await expect(page.getByText(text, { exact: true }).first()).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(page.getByTestId("button-stop")).toBeHidden({
+    timeout: 15000,
+  });
 }
 
 // Duplicate clear-chat coverage was consolidated into
