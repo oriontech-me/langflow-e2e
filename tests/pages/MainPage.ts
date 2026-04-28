@@ -78,8 +78,14 @@ export class MainPage extends BasePage {
       "empty_page_description",
     );
     while ((await emptyPageDescription.count()) === 0) {
-      await this.page.getByTestId("home-dropdown-menu").first().click();
-      await this.page.getByTestId("btn_delete_dropdown_menu").first().click();
+      await this.page
+        .getByTestId("home-dropdown-menu")
+        .first()
+        .click({ force: true });
+      await this.page
+        .getByTestId("btn_delete_dropdown_menu")
+        .first()
+        .click({ force: true });
       await this.page
         .getByTestId("btn_delete_delete_confirmation_modal")
         .first()
