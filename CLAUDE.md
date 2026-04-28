@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Language
+
+**All content in this repository must be written in English** — without exception.
+
+This applies to:
+- Test files (`.spec.ts`): test names, `test.step()` labels, comments, and `test.describe()` blocks
+- Spec documents under `docs/` and area `CLAUDE.md` guides
+- Checklist and guide files (`QA-CHECKLIST.md`, `QA-SCENARIOS-GUIDE.md`, `CONTRIBUTING.md`, etc.)
+- Inline code comments and JSDoc in `.ts` / `.js` files
+- GitHub Actions workflow comments and issue/PR body strings
+
+If you receive a prompt in another language, respond and write all generated content in English regardless.
+
 ## Project Overview
 
 This is an independent end-to-end regression test suite for [Langflow](https://github.com/langflow-ai/langflow), built with Playwright and TypeScript. It tests any running Langflow instance via URL — it is fully decoupled from Langflow's source code.
