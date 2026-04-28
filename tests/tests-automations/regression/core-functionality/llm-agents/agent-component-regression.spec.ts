@@ -123,7 +123,7 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
   }
 }
 
-async function waitForAgentResponse(page: Page): Promise<void> {
+async function waitForAgentToFinish(page: Page): Promise<void> {
   const stopButton = page.getByRole("button", { name: "Stop" });
   const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
   if (stopVisible) {
@@ -154,12 +154,12 @@ for (const { label, options, skipReason } of targets) {
 
         await loadAgent(page, options);
         await page.getByTestId("playground-btn-flow-io").click();
-        await page.waitForSelector('[data-testid="input-chat-playground"]', { timeout: 30000 });
+        await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({ timeout: 30000 });
 
         await test.step("responds without tools connected", async () => {
           await page.getByTestId("input-chat-playground").last().fill("What is the capital of France?");
           await page.getByTestId("button-send").last().click();
-          await waitForAgentResponse(page);
+          await waitForAgentToFinish(page);
           await expect.soft(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
           const text = await page.getByTestId("div-chat-message").last().innerText();
           expect.soft(text.trim().length).toBeGreaterThan(1);
@@ -168,7 +168,7 @@ for (const { label, options, skipReason } of targets) {
         await test.step("shows reasoning steps", async () => {
           await page.getByTestId("input-chat-playground").last().fill("Who was the first astronaut to walk on the Moon?");
           await page.getByTestId("button-send").last().click();
-          await waitForAgentResponse(page);
+          await waitForAgentToFinish(page);
           await expect.soft(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
           const finishedText = page.getByText(/Finished in/).last();
           if (await finishedText.isVisible({ timeout: 5000 }).catch(() => false)) {
