@@ -446,7 +446,7 @@
 - [-] Simple Agent (Anthropic)
 - [-] Simple Agent with memory
 - [-] Vector Store RAG
-- [-] Memory Chatbot
+- [x] Memory Chatbot
 - [-] **Basic Prompting** (OpenAI) → `core/integrations/Basic Prompting.spec.ts`
 - [-] **Basic Prompting** (Anthropic) → `core/integrations/Basic Prompting Anthropic.spec.ts`
 - [-] **Simple Agent** (OpenAI) → `core/integrations/Simple Agent.spec.ts`
