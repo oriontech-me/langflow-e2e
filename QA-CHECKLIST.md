@@ -377,7 +377,7 @@
 - [-] Configurar session ID customizado
 - [-] Trocar session ID — inicia nova conversa
 - [-] Deletar mensagem individual do histórico
-- [ ] Limpar histórico completo de sessão
+- [x] Limpar histórico completo de sessão → `core-functionality/playground/playground-session-clear.spec.ts`
 - [-] Histórico persiste ao reabrir Playground
 - [x] Rename indisponível na sessão Default → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename indisponível em sessão sem mensagens → `core-functionality/playground/playground-session-rename.spec.ts`
