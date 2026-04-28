@@ -13,7 +13,7 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
  *   - Menu trigger: data-testid="chat-header-more-menu"
  *   - Shows "Clear chat" (clear-chat-option) — clears messages, session persists
  *   - Never shows rename or delete options
- *   - NOTE: button is inside AnimatedConditional (framer-motion); use { force: true } to click
+ *   - NOTE: button is inside AnimatedConditional (framer-motion); this test clicks it via evaluate((el) => el.click())
  *
  * User-created session:
  *   - Menu trigger: data-testid="session-{id}-more-menu" (in sessions sidebar)
