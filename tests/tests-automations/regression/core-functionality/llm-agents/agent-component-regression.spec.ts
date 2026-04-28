@@ -226,7 +226,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent stop button must halt execution mid-run",
-      { tag: ["@stable", "@release", "@components", "@agents"] },
+      { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -250,7 +250,7 @@ for (const { label, options, skipReason } of targets) {
           return;
         }
 
-        // dispatchEvent bypasses coverage/stability checks while triggering React's click handler
+        // dispatchEvent bypasses Playwright actionability checks — stop button may be transitioning during stream teardown
         await stopButton.dispatchEvent("click");
         await expect(stopButton).toBeHidden({ timeout: 30000 });
         await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({ timeout: 10000 });
