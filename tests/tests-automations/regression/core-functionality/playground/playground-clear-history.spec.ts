@@ -2,7 +2,6 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
 /**
@@ -25,9 +24,18 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
  * cleanAllFlows in afterEach deletes ALL flows — parallel execution causes race conditions.
  */
 
-async function setupChatFlow(page: Page): Promise<void> {
+async function setupChatFlow(page: Page): Promise<string> {
   await awaitBootstrapTest(page);
   await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
+
+  const flowCreationPromise = page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 15000 },
+  );
+
   await page.getByTestId("blank-flow").click();
 
   // Add Chat Output via button
@@ -72,6 +80,10 @@ async function setupChatFlow(page: Page): Promise<void> {
   await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
     timeout: 8000,
   });
+
+  const creationResponse = await flowCreationPromise;
+  const flowData = await creationResponse.json();
+  return (flowData.id as string) ?? "";
 }
 
 async function sendMessage(page: Page, text: string): Promise<void> {
@@ -84,9 +96,14 @@ async function sendMessage(page: Page, text: string): Promise<void> {
 test.describe.configure({ mode: "serial" });
 
 test.describe("Playground – Clear History & Session Delete", () => {
+  let createdFlowId: string | null = null;
+
   test.afterEach(async ({ page }) => {
-    await page.goto("/");
-    await cleanAllFlows(page);
+    if (createdFlowId) {
+      await page.goto("/");
+      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      createdFlowId = null;
+    }
   });
 
   test(
@@ -94,7 +111,7 @@ test.describe("Playground – Clear History & Session Delete", () => {
     { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
-        await setupChatFlow(page);
+        createdFlowId = await setupChatFlow(page);
         await page.getByTestId("playground-btn-flow-io").click();
         await expect(page.getByTestId("button-send")).toBeVisible({
           timeout: 15000,
@@ -138,7 +155,7 @@ test.describe("Playground – Clear History & Session Delete", () => {
     { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
-        await setupChatFlow(page);
+        createdFlowId = await setupChatFlow(page);
         await page.getByTestId("playground-btn-flow-io").click();
         await expect(page.getByTestId("button-send")).toBeVisible({
           timeout: 15000,
@@ -157,6 +174,13 @@ test.describe("Playground – Clear History & Session Delete", () => {
       });
 
       await test.step("Delete the user-created session via the header menu", async () => {
+        // Capture how many session sidebar entries exist before deletion
+        const sessionMenus = page.locator(
+          '[data-testid$="-more-menu"]:not([data-testid="chat-header-more-menu"])',
+        );
+        const countBefore = await sessionMenus.count();
+        expect(countBefore, "Expected at least one session entry in sidebar before delete").toBeGreaterThanOrEqual(1);
+
         // When a user-created session is active, chat-header-more-menu shows delete-session-option
         // (showDelete={!isDefaultSession} in chat-header.tsx)
         await page
@@ -166,6 +190,9 @@ test.describe("Playground – Clear History & Session Delete", () => {
           timeout: 5000,
         });
         await page.getByTestId("delete-session-option").click();
+
+        // Session entry must be removed from the sidebar
+        await expect(sessionMenus).toHaveCount(countBefore - 1, { timeout: 5000 });
       });
 
       await test.step("Verify session is removed and Default session is active", async () => {
