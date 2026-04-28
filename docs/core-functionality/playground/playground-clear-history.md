@@ -48,7 +48,7 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 ## Critério de validação *(obrigatório)*
 
 - After clearing: `div-chat-message` count is 0 and `chat-header-more-menu` remains visible
-- After deleting: app shows Default session menu (`clear-chat-option` visible, `delete-session-option` absent)
+- After deleting: session sidebar entry count decreases by 1; app shows Default session menu (`clear-chat-option` visible, `delete-session-option` absent)
 
 ---
 
