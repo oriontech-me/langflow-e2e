@@ -1,6 +1,9 @@
 import type { Page } from "@playwright/test";
 
-export async function setupOpenAI(page: Page): Promise<void> {
+export async function setupOpenAI(
+  page: Page,
+  modelTestId?: string,
+): Promise<void> {
   // Step 1: Check if an Agent node exists on the canvas
   const modelDropdown = page.getByTestId("model_model");
 
@@ -39,7 +42,18 @@ export async function setupOpenAI(page: Page): Promise<void> {
   // Step 6: Close the provider management panel
   await page.getByRole("button", { name: "Close" }).click();
 
-  // Step 7: Select the first GPT model
+  // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
   await page.getByTestId("model_model").click();
-  await page.locator('[data-testid*="gpt"]').first().click();
+  if (modelTestId) {
+    const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${modelTestId}$`) });
+    const isAvailable = await modelOption.isVisible({ timeout: 10000 }).catch(() => false);
+    if (!isAvailable) {
+      await page.keyboard.press("Escape");
+      throw new Error(`MODEL_NOT_AVAILABLE: "${modelTestId}" not found in dropdown — model may not be supported.`);
+    }
+    await modelOption.click();
+  } else {
+    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().waitFor({ state: "visible", timeout: 10000 });
+    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().click();
+  }
 }

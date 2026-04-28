@@ -10,3 +10,7 @@ dist/
 *.zip
 .claude/
 docs/superpowers/
+
+# Artefatos gerados localmente — cada dev gera via collect-models.spec.ts
+tests/helpers/provider-setup/data/models.json
+tests/helpers/provider-setup/data/providers.json

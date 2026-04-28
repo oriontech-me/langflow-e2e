@@ -1,0 +1,107 @@
+name: Weekly Stable E2E
+run-name: "Weekly Stable E2E — ${{ github.event_name == 'schedule' && 'scheduled' || github.actor }}"
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # 03:00 BRT (UTC-3), every Monday
+  workflow_dispatch:
+    inputs:
+      langflow_image_tag:
+        description: "Langflow nightly image tag (e.g. latest, 1.5.1.dev36)"
+        required: false
+        default: "latest"
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  e2e-weekly-stable:
+    name: Weekly Stable E2E (langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    services:
+      langflow:
+        image: langflowai/langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }}
+        ports:
+          - 7860:7860
+        env:
+          LANGFLOW_AUTO_LOGIN: "true"
+          LANGFLOW_SUPERUSER: langflow
+          LANGFLOW_SUPERUSER_PASSWORD: langflow
+          LANGFLOW_DEACTIVATE_TRACING: "true"
+        options: >-
+          --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 10
+          --health-start-period 90s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Run @stable tests
+        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=blob,github
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-weekly-${{ github.run_id }}
+          path: blob-report/
+          retention-days: 14
+
+      - name: Upload test results on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-weekly-${{ github.run_id }}
+          path: test-results/
+          retention-days: 7
+
+      - name: Create issue on failure
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        env:
+          IMAGE_TAG: ${{ inputs.langflow_image_tag || 'latest' }}
+        with:
+          script: |
+            const today = new Date().toISOString().split('T')[0];
+            const tag = process.env.IMAGE_TAG;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Weekly Failure] @stable tests failed on ${today} (langflow:${tag})`,
+              body: [
+                '## Weekly @stable E2E Failure',
+                '',
+                `- **Date:** ${today}`,
+                `- **Langflow version:** \`langflowai/langflow-nightly:${tag}\``,
+                `- **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+                '',
+                '### Next steps',
+                '1. Open the Playwright report in the artifact from the run above',
+                '2. Determine if the failure is a test bug or a Langflow regression',
+                '3. If the test is incorrect or outdated: remove the `@stable` tag from the test and open a fix PR',
+                '4. If it is a Langflow regression: flag it to the team and monitor upstream',
+                '',
+                '/cc @Victor-w-Madeira @daniellicnerski1',
+              ].join('\n'),
+              labels: ['weekly-failure', 'needs-triage'],
+            });

@@ -1,7 +1,8 @@
 import type { Page } from "@playwright/test";
-import { BasePage } from "../BasePage";
-import { SidebarComponent } from "../components/SidebarComponent";
-import { addFlowToTestOnEmptyLangflow } from "../../helpers/flows/add-flow-to-test-on-empty-langflow";
+import { BasePage } from "./BasePage";
+import { SidebarComponent } from "./SidebarComponent";
+import { addFlowToTestOnEmptyLangflow } from "../helpers/flows/add-flow-to-test-on-empty-langflow";
+import { cleanAllFlows as cleanAllFlowsHelper } from "../helpers/flows/clean-all-flows";
 
 export class MainPage extends BasePage {
   readonly sidebar: SidebarComponent;
@@ -74,18 +75,7 @@ export class MainPage extends BasePage {
   }
 
   async cleanAllFlows() {
-    const emptyPageDescription = this.page.getByTestId(
-      "empty_page_description",
-    );
-    while ((await emptyPageDescription.count()) === 0) {
-      await this.page.getByTestId("home-dropdown-menu").first().click();
-      await this.page.getByTestId("btn_delete_dropdown_menu").first().click();
-      await this.page
-        .getByTestId("btn_delete_delete_confirmation_modal")
-        .first()
-        .click();
-      await this.page.waitForTimeout(1000);
-    }
+    await cleanAllFlowsHelper(this.page);
   }
 
   // Folders / Projects
