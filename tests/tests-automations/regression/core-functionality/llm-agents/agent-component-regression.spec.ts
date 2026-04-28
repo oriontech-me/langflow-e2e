@@ -133,11 +133,14 @@ async function waitForAgentResponse(page: Page): Promise<void> {
 
 const targets = getTestTargets();
 
+// SimpleAgentTemplatePage.load() deletes all flows before loading the template.
+// File-level serial mode prevents parallel provider blocks from wiping each other's flows.
+test.describe.configure({ mode: "serial" });
+
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Component Regression [${label}]`, () => {
-    test.describe.configure({ mode: "serial" });
 
     test(
       "agent interaction suite",
