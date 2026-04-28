@@ -8,12 +8,15 @@ export const cleanAllFlows = async (page: Page) => {
       { timeout: 20000 },
     );
     if ((await emptyPageDescription.count()) > 0) break;
-    await page.getByTestId("home-dropdown-menu").first().click();
+    await page.getByTestId("home-dropdown-menu").first().click({ force: true });
     await page.waitForSelector('[data-testid="btn_delete_dropdown_menu"]', {
       state: "visible",
       timeout: 5000,
     });
-    await page.getByTestId("btn_delete_dropdown_menu").first().click();
+    await page
+      .getByTestId("btn_delete_dropdown_menu")
+      .first()
+      .click({ force: true });
     await page
       .getByTestId("btn_delete_delete_confirmation_modal")
       .first()
