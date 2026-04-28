@@ -248,7 +248,7 @@
 > Run `npx playwright test tests/collect-models.spec.ts` before executing these tests.
 > See `CLAUDE.md` in this folder for the complete guide.
 
-#### 6.1 agent-component-regression.spec.ts — Agent Behavior Regression
+#### 6.1 agent-component-regression.spec.ts — Agent Behavior Regression `@stable`
 - [x] Agent responds without connected tools
 - [x] Agent displays valid response and optionally reasoning steps
 - [x] Stop button interrupts agent execution
@@ -390,11 +390,12 @@
 - [ ] Send message while response is in progress — should wait or queue
 
 #### 9.2 History and Session
-- [-] Configure custom session ID
-- [-] Switch session ID — starts new conversation
-- [-] Delete individual message from history
-- [ ] Clear full session history
-- [-] History persists when reopening Playground
+- [-] Configure custom session ID → `playground/playground-session-id.spec.ts`
+- [-] Switch session ID — starts new conversation → `playground/playground-session-id.spec.ts`
+- [-] Delete individual message from history → `playground/playground-message-delete.spec.ts`
+- [x] Clear full session history (Default session) → `playground/playground-clear-history.spec.ts`
+- [x] Delete user-created session → `playground/playground-clear-history.spec.ts`
+- [-] History persists when reopening Playground → `playground/playground-history-persist.spec.ts`
 
 #### 9.3 Advanced Playground Features
 - [x] Playground fullscreen mode → `playground/playground-fullscreen.spec.ts`
