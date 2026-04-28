@@ -11,7 +11,7 @@ Verifica que o Playground lida corretamente com upload de imagem via chat input:
 
 ## Tags
 
-`@regression` `@playground`
+`@stable` `@regression` `@playground`
 
 ## Critério de validação
 
