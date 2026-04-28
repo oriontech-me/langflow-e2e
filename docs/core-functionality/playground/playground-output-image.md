@@ -1,29 +1,29 @@
 # Spec: Playground Output – Image Upload
 
-**Arquivo de teste:** `tests/tests-automations/regression/core-functionality/playground/playground-output-image.spec.ts`
+**Test file:** `tests/tests-automations/regression/core-functionality/playground/playground-output-image.spec.ts`
 
-## O que este teste valida
+## What this test validates
 
-Verifica que o Playground lida corretamente com upload de imagem via chat input:
+Verifies that the Playground correctly handles image uploads via the chat input:
 
-1. Após anexar uma imagem, um preview compacto aparece na área de input antes do envio.
-2. Após enviar a mensagem, a imagem é renderizada na bolha da mensagem do usuário no histórico de chat.
+1. After attaching an image, a compact preview appears in the input area before sending.
+2. After sending the message, the image is rendered in the user message bubble in the chat history.
 
 ## Tags
 
 `@stable` `@regression` `@playground`
 
-## Critério de validação
+## Validation criterion
 
-| Teste | Critério |
+| Test | Criterion |
 |---|---|
-| Preview compacto no input | `img[alt="chain.png"]` visível dentro de `[data-testid="input-wrapper"]` após `setInputFiles()` |
-| Imagem renderizada na mensagem do usuário | `img[src*="/files/images/"]` visível após envio e resposta do bot — o servidor prefixa o nome do arquivo com timestamp, então o seletor usa `src` em vez de `alt` |
+| Compact preview in input | `img[alt="chain.png"]` visible inside `[data-testid="input-wrapper"]` after `setInputFiles()` |
+| Image rendered in user message | `img[src*="/files/images/"]` visible after sending and bot response — the server prefixes the filename with a timestamp, so the selector uses `src` instead of `alt` |
 
-## Dependências externas
+## External dependencies
 
-Nenhuma. O flow usa apenas ChatInput → ChatOutput (echo) — nenhuma API key ou LLM é necessária.
+None. The flow uses only ChatInput → ChatOutput (echo) — no API key or LLM is required.
 
-## Última validação
+## Last validated
 
 1.10.x
