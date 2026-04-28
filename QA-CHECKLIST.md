@@ -388,6 +388,8 @@
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
 - [!] Send empty message — should disable send button → `playground/playground-empty-message-send.spec.ts` (**BUG: button enabled even when empty**)
 - [ ] Send message while response is in progress — should wait or queue
+- [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
+- [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
 
 #### 9.2 History and Session
 - [-] Configure custom session ID → `playground/playground-session-id.spec.ts`
@@ -635,7 +637,7 @@
 | `api/` — REST API | 17 | 17 | 0 | 0 |
 | `core-components/` — Config | 20 | 18 | 0 | 2 |
 | `core-components/` — Components | 22 | 16 | 0 | 6 |
-| `core-functionality/playground/` | 17 | 14 | 0 | 3 |
+| `core-functionality/playground/` | 19 | 16 | 0 | 3 |
 | `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
 | `core-functionality/model-provider/` | 21 | 13 | 0 | 8 |
 | `core-functionality/llm-agents/` | 15 | 8 | 0 | 7 |
