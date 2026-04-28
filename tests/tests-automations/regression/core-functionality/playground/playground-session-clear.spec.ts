@@ -67,53 +67,5 @@ async function sendMessage(page: Page, text: string): Promise<void> {
   ).toHaveValue("", { timeout: 15000 });
 }
 
-test.describe("Playground – Clear Session History", () => {
-  test.afterEach(async ({ page }) => {
-    await page.goto("/");
-    await cleanAllFlows(page);
-  });
-
-  test(
-    "clear-chat removes all messages from Default Session",
-    { tag: ["@regression", "@playground"] },
-    async ({ page }) => {
-      await test.step(
-        "Set up ChatInput → ChatOutput echo flow and open playground",
-        async () => {
-          await setupChatEchoFlow(page);
-          await openPlayground(page);
-        },
-      );
-
-      await test.step("Send a message and wait for bot response", async () => {
-        await sendMessage(page, "hello clear test");
-        await expect(page.getByTestId("div-chat-message")).toBeVisible({
-          timeout: 15000,
-        });
-      });
-
-      await test.step("Assert at least one message exists (pre-condition)", async () => {
-        const count = await page.getByTestId("div-chat-message").count();
-        expect(count).toBeGreaterThanOrEqual(1);
-      });
-
-      await test.step("Open chat header more-menu", async () => {
-        // dispatchEvent required — an overlay div intercepts pointer events on this button
-        await page.getByTestId("chat-header-more-menu").dispatchEvent("click");
-        await expect(page.getByTestId("clear-chat-option")).toBeVisible({
-          timeout: 5000,
-        });
-      });
-
-      await test.step(
-        "Click clear-chat-option and assert all messages are removed",
-        async () => {
-          await page.getByTestId("clear-chat-option").click();
-          await expect(page.getByTestId("div-chat-message")).toHaveCount(0, {
-            timeout: 8000,
-          });
-        },
-      );
-    },
-  );
-});
+// Duplicate clear-chat coverage was consolidated into
+// `playground-clear-history.spec.ts`.
