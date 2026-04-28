@@ -1,114 +1,114 @@
 # Agent Component Regression
 
-**Última validação:** Langflow 1.10.x
+**Last validated:** Langflow 1.10.x
 
 ---
 
-## O que este teste valida *(obrigatório)*
-Valida o comportamento core do componente Agent no Langflow: resposta sem tools, exibição de reasoning steps, streaming progressivo, indicador de duração e múltiplas mensagens consecutivas. Cobre a regressão ID 147 (agente falhava quando nenhuma tool estava conectada) e garante que os comportamentos fundamentais de execução do Agent permaneçam estáveis a cada ciclo de release. É parametrizado por provider/modelo via `models.json`, cobrindo OpenAI, Anthropic e Google automaticamente.
+## What this test validates *(required)*
+Validates the core behavior of the Agent component in Langflow: response without tools, reasoning steps display, progressive streaming, duration indicator, and multiple consecutive messages. Covers regression ID 147 (agent failed when no tool was connected) and ensures that the fundamental Agent execution behaviors remain stable across each release cycle. Parameterized by provider/model via `models.json`, automatically covering OpenAI, Anthropic, and Google.
 
-Se qualquer um desses testes falhar, o Agente LLM está quebrado para uso no Playground.
+If any of these tests fail, the LLM Agent is broken for Playground use.
 
 ---
 
-## Tags *(obrigatório)*
+## Tags *(required)*
 `@stable` `@release` `@components` `@agents` `@playground`
 
 ---
 
-## Passo a passo *(obrigatório)*
+## Step-by-step *(required)*
 
-O spec gera **2 testes por modelo ativo** via `getTestTargets()`. Por padrão (nightly/CI) roda 1 modelo por provider; `ALL_MODELS=true` executa todos os modelos do `models.json`.
+The spec generates **2 tests per active model** via `getTestTargets()`. By default (nightly/CI) it runs 1 model per provider; `ALL_MODELS=true` runs all models from `models.json`.
 
 ---
 
-**Teste 1 — agent interaction suite**
+**Test 1 — agent interaction suite**
 
-Único `load()` por modelo — todas as validações compartilham a mesma sessão de Playground via `expect.soft` (todas rodam mesmo que uma falhe).
+Single `load()` per model — all validations share the same Playground session via `expect.soft` (all run even if one fails).
 
-1. Carregar o template Simple Agent via `SimpleAgentTemplatePage.load(options)`
-2. Abrir o Playground (`playground-btn-flow-io`) e aguardar `input-chat-playground`
+1. Load the Simple Agent template via `SimpleAgentTemplatePage.load(options)`
+2. Open the Playground (`playground-btn-flow-io`) and wait for `input-chat-playground`
 
 *Step: responds without tools connected*
-3. Enviar "What is the capital of France?" e aguardar `waitForAgentResponse`
-4. `expect.soft`: `div-chat-message` visível com texto não vazio
+3. Send "What is the capital of France?" and wait for `waitForAgentToFinish`
+4. `expect.soft`: `div-chat-message` visible with non-empty text
 
 *Step: shows reasoning steps*
-5. Enviar "Who was the first astronaut to walk on the Moon?" e aguardar resposta
-6. `expect.soft`: `div-chat-message` visível; verificar (soft, condicional) se "Finished in" aparece
+5. Send "Who was the first astronaut to walk on the Moon?" and wait for response
+6. `expect.soft`: `div-chat-message` visible; conditionally check (soft) if "Finished in" appears
 
 *Step: streams response progressively and displays duration*
-7. Enviar prompt longo (5-paragraph AI summary) e aguardar primeira mensagem
-8. Capturar texto inicial; aguardar 3s; se Stop ainda visível: `expect.soft` texto cresceu
-9. Aguardar Stop desaparecer; `expect.soft` resposta final não vazia
-10. Verificar (soft, condicional) se "Finished in Xs" aparece
+7. Send a long prompt (5-paragraph AI summary) and wait for the first message
+8. Capture initial text; wait 3s; if Stop is still visible: `expect.soft` that text grew
+9. Wait for Stop to disappear; `expect.soft` final response is non-empty
+10. Conditionally check (soft) if "Finished in Xs" appears
 
 *Step: handles multiple consecutive messages*
-11. `expect.soft`: contagem de `div-chat-message` ≥ 2
+11. `expect.soft`: count of `div-chat-message` ≥ 2
 
 *Step: response time visible on canvas after closing playground*
-12. Clicar em `playground-close-button`
-13. `expect.soft`: `node_duration_agent` visível no canvas
+12. Click `playground-close-button`
+13. `expect.soft`: `node_duration_agent` visible on the canvas
 
 ---
 
-**Teste 2 — agent stop button must halt execution mid-run**
+**Test 2 — agent stop button must halt execution mid-run**
 
-Separado do suite porque interrompe o estado da execução.
+Kept separate from the suite because it interrupts the execution state.
 
-1. Carregar o template Simple Agent (novo `load()` independente)
-2. Abrir o Playground e enviar prompt longo (história de explorador do século 18)
-3. Se Stop button não aparecer em 30s: teste passa (modelo respondeu antes — comportamento válido)
-4. Clicar no Stop button via `dispatchEvent("click")`
-5. Confirmar que Stop button some e `input-chat-playground` fica visível
-
----
-
-## Critério de validação *(obrigatório)*
-- Agente responde com texto não vazio mesmo sem tools conectadas
-- Reasoning steps ("Finished in Xs") aparecem quando o modelo os usa (verificação condicional)
-- Botão Stop interrompe geração e o input volta ao estado normal
-- `node_duration_agent` visível no canvas após fechar o Playground (assertion canônica de duração — vem do backend)
-- Texto do Playground cresce durante geração longa (streaming confirmado)
-- Múltiplas mensagens consecutivas acumulam no histórico do Playground
+1. Load the Simple Agent template (new independent `load()`)
+2. Open the Playground and send a long prompt (18th century explorer story)
+3. If Stop button does not appear within 30s: test passes (model responded early — valid behavior)
+4. Click the Stop button via `dispatchEvent("click")`
+5. Confirm that Stop button disappears and `input-chat-playground` becomes visible
 
 ---
 
-## O que este teste não cobre *(opcional)*
-- Configuração de tools externas (Composio, MCP) no Agent
-- Validação de tool calling com ferramentas reais
-- Comportamento de memória/contexto entre sessões distintas
+## Validation criteria *(required)*
+- Agent responds with non-empty text even without connected tools
+- Reasoning steps ("Finished in Xs") appear when the model uses them (conditional check)
+- Stop button halts generation and the input returns to its normal state
+- `node_duration_agent` visible on canvas after closing the Playground (canonical duration assertion — comes from the backend)
+- Playground text grows during long generation (streaming confirmed)
+- Multiple consecutive messages accumulate in the Playground history
+
+---
+
+## What this test does not cover *(optional)*
+- Configuration of external tools (Composio, MCP) in the Agent
+- Tool calling validation with real tools
+- Memory/context behavior across distinct sessions
 - Structured output (JSON schema)
 
 ---
 
-## Pré-condições *(opcional)*
-- Langflow rodando e acessível em `PLAYWRIGHT_BASE_URL`
-- `models.json` e `providers.json` gerados via `npx playwright test tests/collect-models.spec.ts`
-- Ao menos uma API key ativa no `.env` (OpenAI, Anthropic ou Google)
-- Rodar com `--workers=1` para evitar conflitos de flow no Langflow
+## Preconditions *(optional)*
+- Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
+- `models.json` and `providers.json` generated via `npx playwright test tests/collect-models.spec.ts`
+- At least one active API key in `.env` (OpenAI, Anthropic, or Google)
+- Run with `--workers=1` to avoid flow conflicts in Langflow
 
 ---
 
-## Dependências externas *(obrigatório)*
+## External dependencies *(required)*
 
-- `src/frontend/src/components/core/playgroundComponent/` — componente principal do Playground; mudanças em `input-chat-playground`, `button-send`, `div-chat-message` ou `playground-close-button` quebram este spec
-- `src/frontend/src/components/core/flowToolbarComponent/` — botão `playground-btn-flow-io` que abre o Playground a partir do editor
-- `src/frontend/src/CustomNodes/GenericNode/components/NodeStatus/index.tsx` — exibe `node_duration_agent` no canvas após execução
-- `src/backend/base/langflow/components/agents/` — lógica de execução do Agent; mudanças no streaming ou na geração do campo de duração afetam múltiplos testes
-
----
-
-## Quando revisar este teste *(opcional)*
-- Se o template "Simple Agent" for renomeado ou removido do Langflow
-- Se o comportamento padrão de streaming mudar (ex.: resposta em batch em vez de tokens progressivos)
-- Se o campo `node_duration_agent` for renomeado ou removido do canvas
+- `src/frontend/src/components/core/playgroundComponent/` — main Playground component; changes to `input-chat-playground`, `button-send`, `div-chat-message`, or `playground-close-button` break this spec
+- `src/frontend/src/components/core/flowToolbarComponent/` — `playground-btn-flow-io` button that opens the Playground from the editor
+- `src/frontend/src/CustomNodes/GenericNode/components/NodeStatus/index.tsx` — renders `node_duration_agent` on the canvas after execution
+- `src/backend/base/langflow/components/agents/` — Agent execution logic; changes to streaming or duration field generation affect multiple tests
 
 ---
 
-## Notas *(opcional)*
-- **Estrutura de testes**: 2 testes por modelo — `agent interaction suite` (5 validações em `test.step` com `expect.soft`) e `agent stop button` (separado por ser destrutivo). Usar `expect.soft` garante que todas as validações rodam mesmo se uma falhar, sem perda de visibilidade.
-- **Seleção de modelos**: por padrão (`ALL_MODELS` omitido), `getTestTargets()` retorna 1 modelo por provider ativo (o primeiro do `models.json`). Para rodar todos os modelos: `ALL_MODELS=true`. Para filtrar por provider: `MODEL_TEST_PROVIDER=openai`. Para modelo específico: `MODEL_TEST_ID=gpt-4o-mini`.
-- **"Finished in Xs" no Playground**: verificação condicional — o texto aparece no `BotMessage` com base no ciclo `isBuilding` do `useFlowStore`; não é garantido em sessões multi-mensagem ou modelos que respondem muito rápido. A assertion canônica de duração é `node_duration_agent` no canvas.
-- O Stop button é verificado com `isVisible({ timeout: 30000 }).catch(() => false)` — modelos rápidos podem responder antes do botão aparecer, e isso é comportamento válido.
-- `dispatchEvent("click")` no Stop button contorna checagens de cobertura do React sem perder o handler.
+## When to revisit this test *(optional)*
+- If the "Simple Agent" template is renamed or removed from Langflow
+- If the default streaming behavior changes (e.g., batch response instead of progressive tokens)
+- If the `node_duration_agent` field is renamed or removed from the canvas
+
+---
+
+## Notes *(optional)*
+- **Test structure**: 2 tests per model — `agent interaction suite` (5 validations in `test.step` with `expect.soft`) and `agent stop button` (kept separate because it is destructive). Using `expect.soft` ensures all validations run even if one fails, without losing visibility.
+- **Model selection**: by default (`ALL_MODELS` omitted), `getTestTargets()` returns 1 model per active provider (the first one in `models.json`). To run all models: `ALL_MODELS=true`. To filter by provider: `MODEL_TEST_PROVIDER=openai`. For a specific model: `MODEL_TEST_ID=gpt-4o-mini`.
+- **"Finished in Xs" in the Playground**: conditional check — the text appears in `BotMessage` based on the `isBuilding` cycle of `useFlowStore`; not guaranteed in multi-message sessions or with models that respond very quickly. The canonical duration assertion is `node_duration_agent` on the canvas.
+- The Stop button is checked with `isVisible({ timeout: 30000 }).catch(() => false)` — fast models may respond before the button appears, and that is valid behavior.
+- `dispatchEvent("click")` on the Stop button bypasses Playwright actionability checks — the button may be transitioning during stream teardown.
