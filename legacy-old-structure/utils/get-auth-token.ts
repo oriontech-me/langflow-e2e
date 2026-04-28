@@ -1,9 +1,9 @@
 import type { APIRequestContext } from "@playwright/test";
 
 /**
- * Obtém token de autenticação do Langflow.
- * Em modo auto_login (padrão), usa /api/v1/auto_login.
- * Retorna o header Authorization pronto para uso.
+ * Retrieves a Langflow authentication token.
+ * In auto_login mode (default), uses /api/v1/auto_login.
+ * Returns the Authorization header ready for use.
  */
 export async function getAuthToken(request: APIRequestContext): Promise<string> {
   const res = await request.get("/api/v1/auto_login");
@@ -15,6 +15,6 @@ export async function getAuthToken(request: APIRequestContext): Promise<string> 
     }
   }
 
-  // fallback: sem token (ambiente sem auth)
+  // fallback: no token (environment without auth)
   return "";
 }

@@ -83,16 +83,10 @@ test(
       { timeout: 30000 },
     );
 
-    // Hover to reveal add button, then click it
-    // Prompt Template is in "models_and_agents" section
-    await page
-      .getByTestId("models_and_agentsPrompt Template")
-      .hover()
-      .then(async () => {
-        await page
-          .getByTestId("add-component-button-prompt-template")
-          .click();
-      });
+    // Hover the component card to reveal add button, then click it
+    const addBtn = page.getByTestId("add-component-button-prompt-template");
+    await addBtn.locator("xpath=../..").hover();
+    await addBtn.click();
 
     await adjustScreenView(page);
 

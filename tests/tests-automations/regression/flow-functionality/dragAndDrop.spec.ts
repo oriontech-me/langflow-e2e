@@ -33,7 +33,7 @@ test(
 
     await simulateDragAndDrop(
       page,
-      "tests/assets/collection.json",
+      "tests/assets/flows/collection.json",
       "cards-wrapper",
     );
 
@@ -86,7 +86,7 @@ test(
     });
     // Read your file into a buffer.
     const jsonContent = readFileSync(
-      "tests/assets/flow_test_drag_and_drop.json",
+      "tests/assets/flows/flow_test_drag_and_drop.json",
       "utf-8",
     );
 
@@ -98,7 +98,7 @@ test(
 
     await simulateDragAndDrop(
       page,
-      "tests/assets/flow_test_drag_and_drop.json",
+      "tests/assets/flows/flow_test_drag_and_drop.json",
       "cards-wrapper",
       jsonContentWithNewName,
     );

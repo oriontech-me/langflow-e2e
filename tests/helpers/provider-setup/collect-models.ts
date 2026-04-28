@@ -3,6 +3,7 @@ import type { Page } from "@playwright/test";
 import path from "path";
 import fs from "fs";
 import { SettingsPage } from "../../pages/SettingsPage";
+import { providerConfigMap, type Provider } from "./provider-config";
 
 const DATA_DIR = path.join(__dirname, "data");
 const PROVIDERS_PATH = path.join(DATA_DIR, "providers.json");
@@ -12,6 +13,7 @@ const MODELS_PATH = path.join(DATA_DIR, "models.json");
 
 export interface ProviderRecord {
   provider: string;
+  model: string | null;
   status: "active" | "inactive";
   error: string | null;
   checkedAt: string;
@@ -24,12 +26,12 @@ interface ModelRecord {
 
 // ─── Provider validation (API calls) ──────────────────────────────────────────
 
-async function validateOpenAI(): Promise<ProviderRecord> {
+async function validateOpenAI(model: string): Promise<ProviderRecord> {
   const apiKey = process.env.OPENAI_API_KEY ?? "";
   const provider = "openai";
 
   if (!apiKey) {
-    return { provider, status: "inactive", error: "OPENAI_API_KEY not set", checkedAt: new Date().toISOString() };
+    return { provider, model, status: "inactive", error: "OPENAI_API_KEY not set", checkedAt: new Date().toISOString() };
   }
 
   try {
@@ -37,29 +39,28 @@ async function validateOpenAI(): Promise<ProviderRecord> {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
-        max_tokens: 1,
+        model,
         messages: [{ role: "user", content: "hi" }],
       }),
     });
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { provider, status: "inactive", error: (body as any)?.error?.message ?? `HTTP ${res.status}`, checkedAt: new Date().toISOString() };
+      return { provider, model, status: "inactive", error: (body as any)?.error?.message ?? `HTTP ${res.status}`, checkedAt: new Date().toISOString() };
     }
 
-    return { provider, status: "active", error: null, checkedAt: new Date().toISOString() };
+    return { provider, model, status: "active", error: null, checkedAt: new Date().toISOString() };
   } catch (e: any) {
-    return { provider, status: "inactive", error: e?.message ?? "Unknown error", checkedAt: new Date().toISOString() };
+    return { provider, model, status: "inactive", error: e?.message ?? "Unknown error", checkedAt: new Date().toISOString() };
   }
 }
 
-async function validateAnthropic(): Promise<ProviderRecord> {
+async function validateAnthropic(model: string): Promise<ProviderRecord> {
   const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
   const provider = "anthropic";
 
   if (!apiKey) {
-    return { provider, status: "inactive", error: "ANTHROPIC_API_KEY not set", checkedAt: new Date().toISOString() };
+    return { provider, model, status: "inactive", error: "ANTHROPIC_API_KEY not set", checkedAt: new Date().toISOString() };
   }
 
   try {
@@ -71,7 +72,7 @@ async function validateAnthropic(): Promise<ProviderRecord> {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
+        model,
         max_tokens: 1,
         messages: [{ role: "user", content: "hi" }],
       }),
@@ -79,26 +80,26 @@ async function validateAnthropic(): Promise<ProviderRecord> {
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { provider, status: "inactive", error: (body as any)?.error?.message ?? `HTTP ${res.status}`, checkedAt: new Date().toISOString() };
+      return { provider, model, status: "inactive", error: (body as any)?.error?.message ?? `HTTP ${res.status}`, checkedAt: new Date().toISOString() };
     }
 
-    return { provider, status: "active", error: null, checkedAt: new Date().toISOString() };
+    return { provider, model, status: "active", error: null, checkedAt: new Date().toISOString() };
   } catch (e: any) {
-    return { provider, status: "inactive", error: e?.message ?? "Unknown error", checkedAt: new Date().toISOString() };
+    return { provider, model, status: "inactive", error: e?.message ?? "Unknown error", checkedAt: new Date().toISOString() };
   }
 }
 
-async function validateGoogle(): Promise<ProviderRecord> {
+async function validateGoogle(model: string): Promise<ProviderRecord> {
   const apiKey = process.env.GOOGLE_API_KEY ?? "";
   const provider = "google";
 
   if (!apiKey) {
-    return { provider, status: "inactive", error: "GOOGLE_API_KEY not set", checkedAt: new Date().toISOString() };
+    return { provider, model, status: "inactive", error: "GOOGLE_API_KEY not set", checkedAt: new Date().toISOString() };
   }
 
   try {
     const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -111,28 +112,32 @@ async function validateGoogle(): Promise<ProviderRecord> {
 
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      return { provider, status: "inactive", error: (body as any)?.error?.message ?? `HTTP ${res.status}`, checkedAt: new Date().toISOString() };
+      return { provider, model, status: "inactive", error: (body as any)?.error?.message ?? `HTTP ${res.status}`, checkedAt: new Date().toISOString() };
     }
 
-    return { provider, status: "active", error: null, checkedAt: new Date().toISOString() };
+    return { provider, model, status: "active", error: null, checkedAt: new Date().toISOString() };
   } catch (e: any) {
-    return { provider, status: "inactive", error: e?.message ?? "Unknown error", checkedAt: new Date().toISOString() };
+    return { provider, model, status: "inactive", error: e?.message ?? "Unknown error", checkedAt: new Date().toISOString() };
   }
 }
 
-async function collectProviders(): Promise<ProviderRecord[]> {
+function firstModelFor(models: ModelRecord[], provider: string): string {
+  return models.find((m) => m.provider === provider)?.model ?? "";
+}
+
+async function collectProviders(models: ModelRecord[]): Promise<ProviderRecord[]> {
   console.log("Validando provedores via API...");
 
   const results = await Promise.all([
-    validateOpenAI(),
-    validateAnthropic(),
-    validateGoogle(),
+    validateOpenAI(firstModelFor(models, "openai")),
+    validateAnthropic(firstModelFor(models, "anthropic")),
+    validateGoogle(firstModelFor(models, "google")),
   ]);
 
   for (const r of results) {
     const icon = r.status === "active" ? "✅" : "❌";
     const detail = r.error ? ` — ${r.error}` : "";
-    console.log(`${icon} ${r.provider}${detail}`);
+    console.log(`${icon} ${r.provider} (${r.model ?? "no model"})${detail}`);
   }
 
   return results;
@@ -149,10 +154,31 @@ async function collectModelsForProvider(
 ): Promise<ModelRecord[]> {
   await page.getByTestId(providerTestId).click();
 
-  const saveConfigBtn = page.getByRole("button", { name: "Save Configuration" });
-  if ((await saveConfigBtn.count()) > 0) {
-    await page.getByPlaceholder(apiKeyPlaceholder).fill(process.env[apiKeyEnvVar] ?? "");
-    await saveConfigBtn.click();
+  const apiKeyInput = page.getByPlaceholder(apiKeyPlaceholder);
+  // Wait for the form panel to animate in before checking visibility
+  await apiKeyInput.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+
+  const apiKey = process.env[apiKeyEnvVar] ?? "";
+  if ((await apiKeyInput.count()) > 0 && apiKey) {
+    await apiKeyInput.click();
+    await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
+
+    const saveBtn = page.getByRole("button", { name: "Save", exact: true });
+    const replaceBtn = page.getByRole("button", { name: "Replace", exact: true });
+
+    if ((await saveBtn.count()) > 0) {
+      await saveBtn.click();
+    } else if ((await replaceBtn.count()) > 0) {
+      await replaceBtn.click();
+    }
+
+    // Wait for save to complete — button becomes "Replace" when provider is configured
+    await replaceBtn.waitFor({ state: "visible", timeout: 30000 });
+
+    // Wait for model toggles to load after provider is configured
+    await page.locator('[data-testid^="llm-toggle"]').first()
+      .waitFor({ state: "visible", timeout: 15000 })
+      .catch(() => {});
   }
 
   const toggles = page.locator('[data-testid^="llm-toggle"]');
@@ -185,9 +211,17 @@ async function collectModels(page: Page): Promise<ModelRecord[]> {
 
   const allModels: ModelRecord[] = [];
 
-  allModels.push(...await collectModelsForProvider(page, "provider-item-Anthropic", "anthropic", "sk-ant-...", "ANTHROPIC_API_KEY"));
-  allModels.push(...await collectModelsForProvider(page, "provider-item-Google Generative AI", "google", "AIza...", "GOOGLE_API_KEY"));
-  allModels.push(...await collectModelsForProvider(page, "provider-item-OpenAI", "openai", "sk-...", "OPENAI_API_KEY"));
+  for (const [provider, config] of Object.entries(providerConfigMap) as [Provider, typeof providerConfigMap[Provider]][]) {
+    allModels.push(
+      ...(await collectModelsForProvider(
+        page,
+        config.providerTestId,
+        provider,
+        config.keyPlaceholder,
+        config.envKeys[0],
+      )),
+    );
+  }
 
   return allModels;
 }
@@ -199,13 +233,13 @@ export async function collectAll(page: Page): Promise<void> {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  // Step 1: Validate providers via API (no browser needed)
-  const providers = await collectProviders();
-  fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
-  console.log(`providers.json salvo com ${providers.length} provedores.`);
-
-  // Step 2: Collect models from UI via Settings
+  // Step 1: Collect models from UI via Settings
   const models = await collectModels(page);
   fs.writeFileSync(MODELS_PATH, JSON.stringify(models, null, 2), "utf-8");
   console.log(`models.json salvo com ${models.length} modelos.`);
+
+  // Step 2: Validate providers via API using the first model of each provider
+  const providers = await collectProviders(models);
+  fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
+  console.log(`providers.json salvo com ${providers.length} provedores.`);
 }

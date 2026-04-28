@@ -2,6 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Language
+
+**All content in this repository must be written in English** — without exception.
+
+This applies to:
+- Test files (`.spec.ts`): test names, `test.step()` labels, comments, and `test.describe()` blocks
+- Spec documents under `docs/` and area `CLAUDE.md` guides
+- Checklist and guide files (`QA-CHECKLIST.md`, `QA-SCENARIOS-GUIDE.md`, `CONTRIBUTING.md`, etc.)
+- Inline code comments and JSDoc in `.ts` / `.js` files
+- GitHub Actions workflow comments and issue/PR body strings
+
+If you receive a prompt in another language, respond and write all generated content in English regardless.
+
 ## Project Overview
 
 This is an independent end-to-end regression test suite for [Langflow](https://github.com/langflow-ai/langflow), built with Playwright and TypeScript. It tests any running Langflow instance via URL — it is fully decoupled from Langflow's source code.
@@ -41,7 +54,7 @@ npm run test:grep <pattern>                   # Filter by grep pattern
 npx playwright test tests/path/to/file.spec.ts  # Single file
 npm run report                                # Open HTML report
 npm run typecheck                             # TypeScript check (tsc --noEmit)
-npm run lint                                  # ESLint (mesmo check do CI de PR)
+npm run lint                                  # ESLint (same check as PR CI)
 ```
 
 Filter by tag: `npx playwright test --grep "@api"` — available tags listed in the Tag Semantics section below.
@@ -94,14 +107,23 @@ regression/
 4. Confirm no backend errors logged (`🚨 Backend Error:`)
 5. Update `QA-CHECKLIST.md` coverage symbols
 
+**PR review checklist** — request changes if any of these are missing:
+- `@stable` tag is present in the test (required for all new tests)
+- Spec doc exists under `docs/` mirroring the test's path under `regression/`
+- Spec doc has all mandatory sections filled: **What this test validates**, **Tags**, **Validation criterion**, **External dependencies**
+- `Last validated` field reflects the current Langflow release cycle (e.g.: `1.10.x`)
+
+Exceptions where `@stable` is absent: inherited tests not yet reviewed, and tests temporarily without the tag while under correction.
+
 ### Tag Semantics
 
-Tags are split into two groups: **transversais** (severidade/camada) e **funcionais** (área de produto).
+Tags are split into two groups: **cross-cutting** (severity/layer) and **functional** (product area).
 
-**Transversais**
+**Cross-cutting**
 
 | Tag | When to apply |
 |---|---|
+| `@stable` | Team-validated test — runs in the weekly workflow; failures open an issue for triage |
 | `@release` | Happy-path flows required before any deploy |
 | `@regression` | Tests for previously fixed bugs |
 | `@api` | Tests exercising REST API endpoints |
@@ -110,27 +132,28 @@ Tags are split into two groups: **transversais** (severidade/camada) e **funcion
 | `@database` | Tests with persistent saved state |
 | `@mainpage` | Home/dashboard UI tests |
 
-**Funcionais** (área de produto — use junto com as transversais)
+**Functional** (product area — use alongside cross-cutting tags)
 
-| Tag | Área |
+| Tag | Area |
 |---|---|
-| `@model-provider` | Configuração de provedores, API keys, modal de modelo |
-| `@agents` | Comportamento de agentes LLM, raciocínio, steps |
-| `@mcp` | Integração MCP (server e client) |
-| `@playground` | Playground de chat e interações |
-| `@auth` | Autenticação, login, sessão, gestão de usuários |
-| `@observability` | Traces, latência, tokens |
-| `@files` | Página de arquivos, upload, Read File / Write File components |
-| `@templates` | Starter projects e templates de flow |
-| `@settings` | Navegação e configuração na página de Settings |
-| `@ui-ux` | Interface geral, atalhos, aparência |
+| `@model-provider` | Provider configuration, API keys, model modal |
+| `@agents` | LLM agent behavior, reasoning, steps |
+| `@mcp` | MCP integration (server and client) |
+| `@playground` | Chat playground and interactions |
+| `@auth` | Authentication, login, session, user management |
+| `@observability` | Traces, latency, tokens |
+| `@files` | Files page, upload, Read File / Write File components |
+| `@templates` | Starter projects and flow templates |
+| `@settings` | Navigation and configuration on the Settings page |
+| `@ui-ux` | General interface, shortcuts, appearance |
 
 ## CI/CD
 
-Four GitHub Actions workflows:
+Five GitHub Actions workflows:
 
 - **`pr-validation.yml`** — Runs on every PR to `main`; two parallel jobs: TypeScript check (`tsc --noEmit`) and ESLint. Both must pass before merge.
 - **`nightly.yml`** — Runs daily at 03:00 BRT against `langflowai/langflow-nightly:latest`; opens a GitHub issue on failure assigned to @Victor-w-Madeira.
+- **`weekly-stable.yml`** — Runs every Monday against `langflowai/langflow-nightly:latest`; runs only `@stable` tests; opens a GitHub issue on failure for triage.
 - **`manual.yml`** — Parameterized manual run; accepts a Docker tag or full URL, a specific test suite, and an optional grep filter.
 - **`file-watcher.yml`** — Detects upstream Langflow changes in critical paths and opens a GitHub issue with the exact `--grep` command needed to revalidate affected areas.
 
