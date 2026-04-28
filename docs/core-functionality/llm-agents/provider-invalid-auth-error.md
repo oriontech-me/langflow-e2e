@@ -1,70 +1,70 @@
 # provider-invalid-auth-error
 
-**Última validação:** Langflow 1.10.x
+**Last validated:** Langflow 1.10.x
 
 ---
 
-## O que este teste valida *(obrigatório)*
+## What this test validates *(required)*
 
-Valida que o Langflow exibe uma mensagem de erro ao usuário quando ele tenta salvar uma API key inválida na tela de configuração de Model Providers (Settings → Model Providers). A chave não deve ser aceita e o provider não deve ser configurado com sucesso.
+Validates that Langflow displays an error message to the user when they try to save an invalid API key on the Model Providers configuration screen (Settings → Model Providers). The key must not be accepted and the provider must not be configured successfully.
 
-Protege contra regressões na integração entre o frontend (ProviderConfigurationForm) e o endpoint `POST /api/v1/models/validate-provider`, que valida a credencial contra o provider externo antes de persistir.
+Protects against regressions in the integration between the frontend (ProviderConfigurationForm) and the `POST /api/v1/models/validate-provider` endpoint, which validates the credential against the external provider before persisting.
 
 ---
 
-## Tags *(obrigatório)*
+## Tags *(required)*
 
 `@stable` `@regression` `@model-provider` `@agents`
 
 ---
 
-## Passo a passo *(obrigatório)*
+## Step by step *(required)*
 
-1. Navega para Settings → Model Providers → [provider]
-2. Preenche o campo de API key com uma chave inválida (ex: `sk-invalid-openai-key-for-testing-12345`)
-3. Clica em "Save Configuration"
-4. Aguarda o toast de erro `.error-build-message` com texto correspondente a "Invalid API key"
-5. (finally) Restaura a chave válida original do provider
+1. Navigate to Settings → Model Providers → [provider]
+2. Fill the API key field with an invalid key (e.g.: `sk-invalid-openai-key-for-testing-12345`)
+3. Click "Save Configuration"
+4. Wait for the error toast `.error-build-message` with text matching "Invalid API key"
+5. (finally) Restore the provider's original valid key
 
-O teste é parametrizado: roda para cada provider que tiver env var configurada (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`).
-
----
-
-## Critério de validação *(obrigatório)*
-
-- O toast `.error-build-message` deve ficar visível após clicar em Save com chave inválida
-- O texto do toast deve corresponder a `/Invalid API key/i`
-- O timeout é de 30 segundos pois a validação faz uma chamada HTTP real ao provider externo
+The test is parameterized: runs for each provider that has an env var configured (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`).
 
 ---
 
-## Dependências externas *(obrigatório)*
+## Validation criterion *(required)*
 
-- `src/frontend/src/modals/modelProviderModal/components/ProviderConfigurationForm.tsx` — renderiza o formulário de API key e dispara o toast de erro
-- `src/frontend/src/modals/modelProviderModal/hooks/useProviderConfiguration.ts` — lógica de validação, chama o endpoint e gerencia o estado `validationState`
-- `src/frontend/src/alerts/error/index.tsx` — componente visual do toast `.error-build-message`
+- The toast `.error-build-message` must be visible after clicking Save with an invalid key
+- The toast text must match `/Invalid API key/i`
+- The timeout is 30 seconds because the validation makes a real HTTP call to the external provider
+
+---
+
+## External dependencies *(required)*
+
+- `src/frontend/src/modals/modelProviderModal/components/ProviderConfigurationForm.tsx` — renders the API key form and triggers the error toast
+- `src/frontend/src/modals/modelProviderModal/hooks/useProviderConfiguration.ts` — validation logic, calls the endpoint and manages the `validationState`
+- `src/frontend/src/alerts/error/index.tsx` — visual component of the toast `.error-build-message`
 - `src/backend/base/langflow/api/v1/models.py` — endpoint `POST /api/v1/models/validate-provider`
-- `src/backend/base/langflow/services/credentials.py` — função `validate_model_provider_key`, que testa a key contra o provider e retorna `"Invalid API key for {provider}"`
+- `src/backend/base/langflow/services/credentials.py` — function `validate_model_provider_key`, which tests the key against the provider and returns `"Invalid API key for {provider}"`
 
 ---
 
-## O que este teste não cobre *(opcional)*
+## What this test does not cover *(optional)*
 
-- Validação de keys com formato correto mas expiradas ou revogadas (comportamento idêntico, mas depende do estado da key no provider)
-- Providers além de OpenAI, Anthropic e Google (ex: IBM WatsonX, Ollama)
-- Persistência do estado após erro (verificar que a key anterior permanece ativa)
-
----
-
-## Pré-condições *(opcional)*
-
-- Pelo menos uma env var de provider configurada no `.env` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` ou `GOOGLE_API_KEY`)
-- Langflow rodando e acessível via `PLAYWRIGHT_BASE_URL`
-- Acesso à internet para que o backend consiga chamar o provider externo durante a validação
+- Validation of keys with correct format but expired or revoked (identical behavior, but depends on the key state at the provider)
+- Providers beyond OpenAI, Anthropic and Google (e.g.: IBM WatsonX, Ollama)
+- State persistence after error (verifying that the previous key remains active)
 
 ---
 
-## Notas *(opcional)*
+## Preconditions *(optional)*
 
-- O timeout de 30s no `expect` é necessário porque o backend faz `llm.invoke("test")` contra o provider real — a resposta de erro do provider pode levar vários segundos
-- O `data-testid` dos providers na sidebar segue o padrão `provider-item-{NomeDoProvider}` (ex: `provider-item-OpenAI`)
+- At least one provider env var configured in `.env` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `GOOGLE_API_KEY`)
+- Langflow running and accessible via `PLAYWRIGHT_BASE_URL`
+- Internet access so the backend can call the external provider during validation
+
+---
+
+## Notes *(optional)*
+
+- The 30s timeout in `expect` is required because the backend calls `llm.invoke("test")` against the real provider — the error response from the provider can take several seconds
+- The `data-testid` of providers in the sidebar follows the pattern `provider-item-{ProviderName}` (e.g.: `provider-item-OpenAI`)

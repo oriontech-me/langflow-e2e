@@ -55,15 +55,15 @@ test(
   },
 );
 
-// TODO: revisar e reativar este teste.
-// Este teste tinha uma assertion que não executava nenhuma verificação (no-op).
-// Ao corrigi-la, o teste passou a falhar — indicando que o comportamento atual
-// do Langflow pode não corresponder ao que era esperado.
+// TODO: review and re-enable this test.
+// This test had an assertion that executed no actual check (no-op).
+// After fixing it, the test started failing — indicating that the current
+// Langflow behavior may not match what was originally expected.
 //
-// Para revisar:
-// 1. Rode o teste manualmente com `--debug` e observe o estado real dos elementos
-// 2. Verifique se o texto "Input Schema (2)" ainda aparece no fluxo de tweaks
-// 3. Corrija a assertion para refletir o comportamento correto e remova o skip
+// To review:
+// 1. Run the test manually with `--debug` and observe the real state of the elements
+// 2. Check if the text "Input Schema (2)" still appears in the tweaks flow
+// 3. Fix the assertion to reflect the correct behavior and remove the skip
 test.skip("check if tweaks are updating when someothing on the flow changes", async ({
   page,
 }) => {

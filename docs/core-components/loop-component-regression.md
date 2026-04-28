@@ -1,104 +1,104 @@
-# Loop Component — Renderização, Erro e Iteração
+# Loop Component — Rendering, Error and Iteration
 
-**Última validação:** Langflow 1.10.x
-
----
-
-## O que este teste valida *(obrigatório)*
-
-Valida três comportamentos fundamentais do componente Loop no canvas do Langflow:
-
-1. **Renderização correta** — o nó aparece no canvas com todos os handles esperados (`inputs-left`, `item-left`, `item-right`, `done-right`) e com os botões de inspeção de output presentes no rodapé do nó.
-2. **Caminho de erro sem conexões** — executar o Loop sem nenhuma conexão exibe a notificação "Flow build failed" sem travar a interface; o nó permanece intacto e o botão de run continua acessível.
-3. **Iteração real via template** — usando o template "Research Translation Loop", o Loop itera sobre 2 artigos do ArXiv e produz uma resposta agregada no Playground contendo pelo menos 2 menções a "Title", confirmando que o loop completou ambas as iterações.
-
-Se qualquer um destes testes falhar, o componente Loop está quebrado no produto: seja na renderização, no tratamento de erros, ou na execução real do ciclo de iteração.
+**Last validated:** Langflow 1.10.x
 
 ---
 
-## Tags *(obrigatório)*
+## What this test validates *(required)*
+
+Validates three fundamental behaviors of the Loop component on the Langflow canvas:
+
+1. **Correct rendering** — the node appears on the canvas with all expected handles (`inputs-left`, `item-left`, `item-right`, `done-right`) and with the output inspection buttons present in the node footer.
+2. **Error path without connections** — running the Loop with no connections shows the "Flow build failed" notification without freezing the interface; the node remains intact and the run button stays accessible.
+3. **Real iteration via template** — using the "Research Translation Loop" template, the Loop iterates over 2 ArXiv articles and produces an aggregated response in the Playground containing at least 2 mentions of "Title", confirming the loop completed both iterations.
+
+If any of these tests fails, the Loop component is broken in the product: either in rendering, error handling, or actual iteration cycle execution.
+
+---
+
+## Tags *(required)*
 
 `@stable` `@release` `@components` `@templates` `@playground`
 
 ---
 
-## Passo a passo *(obrigatório)*
+## Step by step *(required)*
 
-**Teste 1 — renders correctly with all handles and output inspection buttons**
-1. Navegar para a home e criar um flow em branco
-2. Pesquisar "Loop" na sidebar e adicionar o componente ao canvas via `add-component-button-loop`
-3. Ajustar zoom com `adjustScreenView`
-4. Verificar que `title-Loop` e `button_run_loop` estão visíveis
-5. Verificar os 4 handles: `handle-loopcomponent-shownode-inputs-left`, `handle-loopcomponent-shownode-item-left`, `handle-loopcomponent-shownode-item-right`, `handle-loopcomponent-shownode-done-right`
-6. Verificar os botões de inspeção: `output-inspection-item-loopcomponent`, `output-inspection-done-loopcomponent`
+**Test 1 — renders correctly with all handles and output inspection buttons**
+1. Navigate to the home and create a blank flow
+2. Search "Loop" in the sidebar and add the component to the canvas via `add-component-button-loop`
+3. Adjust zoom with `adjustScreenView`
+4. Verify that `title-Loop` and `button_run_loop` are visible
+5. Verify the 4 handles: `handle-loopcomponent-shownode-inputs-left`, `handle-loopcomponent-shownode-item-left`, `handle-loopcomponent-shownode-item-right`, `handle-loopcomponent-shownode-done-right`
+6. Verify the inspection buttons: `output-inspection-item-loopcomponent`, `output-inspection-done-loopcomponent`
 
-**Teste 2 — run without connections shows build failed notification**
-1. Criar flow em branco e adicionar o Loop component
-2. Chamar `page.allowFlowErrors()` para indicar que erros de flow são esperados
-3. Clicar em `button_run_loop`
-4. Aguardar e confirmar que aparece o texto "Flow build failed"
-5. Verificar que `button_run_loop` ainda está acessível e `title-Loop` ainda está visível com um único nó no canvas
+**Test 2 — run without connections shows build failed notification**
+1. Create a blank flow and add the Loop component
+2. Call `page.allowFlowErrors()` to indicate flow errors are expected
+3. Click `button_run_loop`
+4. Wait and confirm that the text "Flow build failed" appears
+5. Verify that `button_run_loop` is still accessible and `title-Loop` is still visible with a single node on the canvas
 
-**Teste 3 — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers**
-1. Navegar para "All Templates" e aguardar o card `template-research-translation-loop`
-2. Clicar no template e aguardar `title-Loop` aparecer
-3. Verificar que existem arestas no canvas (confirma wiring do template)
-4. Verificar os 4 handles do Loop (mesmo critério do Teste 1)
-5. Alterar `int_int_max_results` para `2` (limitar o ArXiv a 2 resultados)
-6. Abrir o Playground via `playground-btn-flow-io`
-7. Digitar "transformer neural networks" no `input-chat-playground` e enviar
-8. Aguardar `chat-message-AI-*` aparecer (timeout 120 s)
-9. Extrair o texto da última mensagem AI e contar ocorrências de "title" (case-insensitive); deve ser ≥ 2
-
----
-
-## Critério de validação *(obrigatório)*
-
-- Todos os 4 handles (`inputs-left`, `item-left`, `item-right`, `done-right`) estão visíveis no nó
-- Os 2 botões de inspeção de output (`item`, `done`) estão visíveis no rodapé do nó
-- Executar sem conexões produz notificação "Flow build failed" sem crash; nó e botão de run permanecem acessíveis
-- O template "Research Translation Loop" carrega com arestas visíveis (wiring intacto)
-- A resposta final no Playground contém ≥ 2 ocorrências da palavra "title", confirmando 2 iterações completas do loop
+**Test 3 — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers**
+1. Navigate to "All Templates" and wait for the `template-research-translation-loop` card
+2. Click the template and wait for `title-Loop` to appear
+3. Verify that there are edges on the canvas (confirms template wiring)
+4. Verify the 4 handles of the Loop (same criterion as Test 1)
+5. Change `int_int_max_results` to `2` (limit ArXiv to 2 results)
+6. Open the Playground via `playground-btn-flow-io`
+7. Type "transformer neural networks" in `input-chat-playground` and send
+8. Wait for `chat-message-AI-*` to appear (timeout 120 s)
+9. Extract the text of the last AI message and count occurrences of "title" (case-insensitive); must be ≥ 2
 
 ---
 
-## Dependências externas *(obrigatório)*
+## Validation criterion *(required)*
 
-- `src/lfx/src/lfx/components/flow_controls/loop.py` — implementação do LoopComponent; mudanças nas portas `inputs`, `item`, `done` ou no display name quebram os seletores de handle
-- `src/backend/base/langflow/initial_setup/starter_projects/Research Translation Loop.json` — template carregado no Teste 3; renomear ou remover o template quebra o seletor `template-research-translation-loop`
-- `src/frontend/src/CustomNodes/GenericNode/components/NodeOutputParameter/` — renderiza os botões de inspeção de output; mudanças no padrão `output-inspection-{port}-{component}` quebram os seletores do Teste 1
-- `src/frontend/src/CustomNodes/GenericNode/` — renderiza os handles; padrão `handle-{component}-shownode-{port}-{side}` deve se manter estável
-
----
-
-## O que este teste não cobre *(opcional)*
-
-- Condição de saída do loop (porta `done` ativada por critério do LLM): coberta separadamente por issue futura no QA-CHECKLIST
-- Comportamento com DataFrames muito grandes ou loops de centenas de iterações
-- Cancelamento de execução no meio de um loop em andamento
-- Modo de execução com modelos que não o padrão do template
+- All 4 handles (`inputs-left`, `item-left`, `item-right`, `done-right`) are visible on the node
+- The 2 output inspection buttons (`item`, `done`) are visible in the node footer
+- Running without connections produces "Flow build failed" notification without crash; node and run button remain accessible
+- The "Research Translation Loop" template loads with visible edges (wiring intact)
+- The final response in the Playground contains ≥ 2 occurrences of the word "title", confirming 2 complete loop iterations
 
 ---
 
-## Pré-condições *(opcional)*
+## External dependencies *(required)*
 
-- Langflow rodando e acessível em `PLAYWRIGHT_BASE_URL`
-- Testes 1 e 2 não precisam de API key (sem execução de LLM)
-- Teste 3 usa o ArXiv (API pública, sem key), mas o template inclui um modelo LLM — verificar se a instância tem um modelo padrão configurado ou se é necessário um `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` no `.env`
-- Os testes rodam em modo `serial` para evitar erros 400 de autosave paralelo ("flow must be unique")
-
----
-
-## Quando revisar este teste *(opcional)*
-
-- Se o componente Loop for renomeado ou suas portas mudarem de nome
-- Se o template "Research Translation Loop" for renomeado, removido ou tiver seu wiring alterado
-- Se o padrão de `data-testid` dos handles ou botões de output inspection mudar no frontend
+- `src/lfx/src/lfx/components/flow_controls/loop.py` — LoopComponent implementation; changes to the `inputs`, `item`, `done` ports or the display name break the handle selectors
+- `src/backend/base/langflow/initial_setup/starter_projects/Research Translation Loop.json` — template loaded in Test 3; renaming or removing the template breaks the `template-research-translation-loop` selector
+- `src/frontend/src/CustomNodes/GenericNode/components/NodeOutputParameter/` — renders the output inspection buttons; changes to the `output-inspection-{port}-{component}` pattern break the Test 1 selectors
+- `src/frontend/src/CustomNodes/GenericNode/` — renders the handles; the `handle-{component}-shownode-{port}-{side}` pattern must remain stable
 
 ---
 
-## Notas *(opcional)*
+## What this test does not cover *(optional)*
 
-- O timeout do Teste 3 é de 120 s para a resposta do LLM — o template faz 2 chamadas sequenciais ao modelo (uma por artigo ArXiv); aumentar `max_results` além de 2 torna o teste mais lento sem ganho de cobertura
-- O critério de validação conta ocorrências de "title" (case-insensitive) na resposta agregada: o Parser formata cada artigo como `Title: {titulo}\nSummary: {resumo}`, portanto 2 artigos garantem ≥ 2 "title" no output final
-- `allowFlowErrors()` é necessário no Teste 2 para desativar o monitor automático de erros de flow injetado pelo fixture
+- Loop exit condition (the `done` port activated by an LLM criterion): covered separately by a future issue in QA-CHECKLIST
+- Behavior with very large DataFrames or loops of hundreds of iterations
+- Cancellation of execution in the middle of an ongoing loop
+- Execution mode with models other than the template default
+
+---
+
+## Preconditions *(optional)*
+
+- Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
+- Tests 1 and 2 do not need an API key (no LLM execution)
+- Test 3 uses ArXiv (public API, no key needed), but the template includes an LLM model — verify if the instance has a default model configured or if an `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` is needed in `.env`
+- Tests run in `serial` mode to avoid 400 errors from parallel autosave ("flow must be unique")
+
+---
+
+## When to review this test *(optional)*
+
+- If the Loop component is renamed or its ports change names
+- If the "Research Translation Loop" template is renamed, removed or has its wiring altered
+- If the `data-testid` pattern of handles or output inspection buttons changes in the frontend
+
+---
+
+## Notes *(optional)*
+
+- The timeout in Test 3 is 120 s for the LLM response — the template makes 2 sequential model calls (one per ArXiv article); increasing `max_results` beyond 2 makes the test slower without coverage gain
+- The validation criterion counts occurrences of "title" (case-insensitive) in the aggregated response: the Parser formats each article as `Title: {title}\nSummary: {summary}`, so 2 articles guarantee ≥ 2 "title" in the final output
+- `allowFlowErrors()` is required in Test 2 to disable the automatic flow error monitor injected by the fixture

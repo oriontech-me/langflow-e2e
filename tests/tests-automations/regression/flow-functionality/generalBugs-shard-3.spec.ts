@@ -128,15 +128,15 @@ test(
   },
 );
 
-// TODO: revisar e reativar este teste.
-// Este teste tinha assertions que não executavam nenhuma verificação (no-op).
-// Ao corrigi-las, o teste passou a falhar — indicando que o comportamento atual
-// do Langflow pode não corresponder ao que era esperado.
+// TODO: review and re-enable this test.
+// This test had assertions that executed no actual checks (no-op).
+// After fixing them, the test started failing — indicating that the current
+// Langflow behavior may not match what was originally expected.
 //
-// Para revisar:
-// 1. Rode o teste manualmente com `--debug` e observe o estado real dos elementos
-// 2. Verifique se o botão playground-btn-flow deve estar disabled com flow vazio
-// 3. Corrija as assertions para refletir o comportamento correto e remova o skip
+// To review:
+// 1. Run the test manually with `--debug` and observe the real state of the elements
+// 2. Check if the playground-btn-flow button should be disabled with an empty flow
+// 3. Fix the assertions to reflect the correct behavior and remove the skip
 test.skip(
   "playground button should be enabled or disabled",
   { tag: ["@release", "@api", "@workspace"] },

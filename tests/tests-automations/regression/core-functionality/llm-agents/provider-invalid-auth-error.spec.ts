@@ -103,14 +103,14 @@ for (const {
 } of targets) {
   test.describe.serial(`Invalid Auth Error — ${provider}`, () => {
     test(
-      `deve exibir mensagem de erro ao usar autenticação inválida do provider ${provider}`,
+      `should display error message when using invalid authentication for provider ${provider}`,
       { tag: ["@stable", "@regression", "@model-provider", "@agents"] },
       async ({ page }) => {
 
         await page.goto("/");
         await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
 
-        await test.step(`Configurar autenticação inválida para ${provider}`, async () => {
+        await test.step(`Set invalid authentication for ${provider}`, async () => {
           await navigateAndFillProviderApiKey(
             page,
             providerTestId,
@@ -120,14 +120,14 @@ for (const {
         });
 
         try {
-          await test.step("Validar que o erro de autenticação inválida é exibido", async () => {
+          await test.step("Validate that the invalid authentication error is displayed", async () => {
             const errorBox = page.locator(".error-build-message");
             await expect(
               errorBox.getByText(/Invalid API key/i),
             ).toBeVisible({ timeout: 30000 });
           });
         } finally {
-          await test.step(`Restaurar autenticação válida do provider ${provider}`, async () => {
+          await test.step(`Restore valid authentication for provider ${provider}`, async () => {
             await fillProviderApiKey(
               page,
               keyPlaceholder,

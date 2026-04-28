@@ -3,7 +3,7 @@ run-name: "Weekly Stable E2E — ${{ github.event_name == 'schedule' && 'schedul
 
 on:
   schedule:
-    - cron: "0 6 * * 1" # 03:00 BRT (UTC-3), toda segunda-feira
+    - cron: "0 6 * * 1" # 03:00 BRT (UTC-3), every Monday
   workflow_dispatch:
     inputs:
       langflow_image_tag:
@@ -95,11 +95,11 @@ jobs:
                 `- **Langflow version:** \`langflowai/langflow-nightly:${tag}\``,
                 `- **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
                 '',
-                '### Próximos passos',
-                '1. Abra o relatório Playwright no artefato da run acima',
-                '2. Determine se a falha é um bug no teste ou uma regressão no Langflow',
-                '3. Se o teste estiver incorreto ou desatualizado: remova a tag `@stable` do teste e abra um PR de correção',
-                '4. Se for regressão no Langflow: sinalize para o time e acompanhe o upstream',
+                '### Next steps',
+                '1. Open the Playwright report in the artifact from the run above',
+                '2. Determine if the failure is a test bug or a Langflow regression',
+                '3. If the test is incorrect or outdated: remove the `@stable` tag from the test and open a fix PR',
+                '4. If it is a Langflow regression: flag it to the team and monitor upstream',
                 '',
                 '/cc @Victor-w-Madeira @daniellicnerski1',
               ].join('\n'),
