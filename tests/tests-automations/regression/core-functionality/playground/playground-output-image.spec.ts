@@ -41,7 +41,7 @@ test.describe("Playground Output – Image Upload (ID B0c)", () => {
         "Attach image via hidden file input and verify compact preview appears",
         async () => {
           await page
-            .locator('[data-testid="input-chat-playground"] input[type="file"]')
+            .locator('[data-testid="input-wrapper"] input[type="file"]')
             .setInputFiles(IMAGE_PATH);
 
           await expect(
@@ -69,7 +69,7 @@ test.describe("Playground Output – Image Upload (ID B0c)", () => {
 
       await test.step("Attach image and send message", async () => {
         await page
-          .locator('[data-testid="input-chat-playground"] input[type="file"]')
+          .locator('[data-testid="input-wrapper"] input[type="file"]')
           .setInputFiles(IMAGE_PATH);
 
         await expect(
