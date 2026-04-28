@@ -91,7 +91,7 @@ test.describe("Playground – Clear History & Session Delete", () => {
 
   test(
     "clear chat on Default session must remove messages but keep the session",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
         await setupChatFlow(page);
@@ -135,7 +135,7 @@ test.describe("Playground – Clear History & Session Delete", () => {
 
   test(
     "deleting a user-created session must remove it and return to Default session",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
         await setupChatFlow(page);
