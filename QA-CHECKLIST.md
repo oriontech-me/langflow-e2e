@@ -390,12 +390,12 @@
 - [ ] Enviar mensagem enquanto resposta em curso — deve aguardar ou enfileirar
 
 #### 9.2 Histórico e Sessão
-- [-] Configurar session ID customizado → `core/features/settings-message-history.spec.ts`
-- [-] Trocar session ID — inicia nova conversa → `core/features/playground-session-id.spec.ts`
-- [-] Deletar mensagem individual do histórico → `core/features/playground-message-delete.spec.ts`
+- [-] Configurar session ID customizado → `playground/playground-session-id.spec.ts`
+- [-] Trocar session ID — inicia nova conversa → `playground/playground-session-id.spec.ts`
+- [-] Deletar mensagem individual do histórico → `playground/playground-message-delete.spec.ts`
 - [x] Limpar histórico completo de sessão (Default session) → `playground/playground-clear-history.spec.ts`
 - [x] Deletar sessão criada pelo usuário → `playground/playground-clear-history.spec.ts`
-- [-] Histórico persiste ao reabrir Playground → `core/features/playground-history-persist.spec.ts`
+- [-] Histórico persiste ao reabrir Playground → `playground/playground-history-persist.spec.ts`
 
 #### 9.3 Features Avançadas do Playground
 - [x] Modo fullscreen do Playground → `playground/playground-fullscreen.spec.ts`
