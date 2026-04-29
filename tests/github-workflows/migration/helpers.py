@@ -50,23 +50,41 @@ def get_starter_projects(token: str) -> list:
 
 
 def find_agent_template(starter_projects: list) -> dict | None:
-    """Find 'Simple Agent' or similar agent template."""
+    """Find 'Simple Agent' or similar agent template.
+
+    Tries top-level name first; falls back to inspecting node display_names
+    (Langflow latest returns starter projects with name=null at top level).
+    """
+    # Pass 1: top-level name match
     for project in starter_projects:
         name = (project.get("name") or "").lower()
         if "simple agent" in name or "basic agent" in name:
             return project
-    # Fallback: any template with "agent" in the name
     for project in starter_projects:
         name = (project.get("name") or "").lower()
         if "agent" in name:
             return project
+
+    # Pass 2: inspect node display_names inside data
+    for project in starter_projects:
+        nodes = (project.get("data") or {}).get("nodes", [])
+        for node in nodes:
+            display = (node.get("data", {}).get("node", {}).get("display_name") or "").lower()
+            if "agent" in display:
+                return project
+
+    # Pass 3: any project that has flow data
+    for project in starter_projects:
+        if project.get("data"):
+            return project
+
     return None
 
 
 def create_flow(token: str, template: dict) -> dict:
     """Create a flow from a starter project template."""
     flow_data = {
-        "name": template.get("name", "Migration Test Agent"),
+        "name": template.get("name") or "Migration Test Agent",
         "description": "Auto-created for migration testing",
         "data": template.get("data"),
         "endpoint_name": template.get("endpoint_name"),
