@@ -62,6 +62,7 @@ jobs:
             --network host \
             -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
             -e LANGFLOW_AUTO_LOGIN=true \
+            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
@@ -95,6 +96,7 @@ jobs:
             --network host \
             -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
             -e LANGFLOW_AUTO_LOGIN=true \
+            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
