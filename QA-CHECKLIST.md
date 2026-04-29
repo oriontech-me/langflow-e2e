@@ -539,9 +539,9 @@
 ### mcp/client/ — Tool and Context Consumption
 
 #### 13.1 MCP Client
-- [ ] Configure connection with external MCP server (stdio or HTTP)
-- [ ] List available tools via MCP protocol
-- [ ] Execute MCP server tool and receive result in flow
+- [-] Configure connection with external MCP server (stdio or HTTP) → `mcp/client/mcp-client-regression.spec.ts`
+- [-] List available tools via MCP protocol → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Execute MCP server tool and receive result in flow → `mcp/client/mcp-client-regression.spec.ts`
 - [ ] List available resources via MCP protocol
 - [ ] Consume resource URI and inject content into flow
 - [ ] MCP server connection error displays clear message
