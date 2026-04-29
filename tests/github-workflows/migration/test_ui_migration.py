@@ -100,11 +100,9 @@ class TestMigrationUI:
         self._save_results()
 
         if has_errors:
-            # Take a screenshot of errors before asserting
             self.page.screenshot(path="test-results/component-errors.png")
-
-        # Don't fail the test here — we want to continue with update components
-        # The report will flag this as an issue
+            self._save_results()
+            pytest.fail(f"Component errors detected after migration: {error_texts}")
 
     def test_03_check_update_banner(self):
         """Check if 'Updates are available' banner appears."""

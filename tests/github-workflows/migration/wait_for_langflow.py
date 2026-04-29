@@ -4,9 +4,11 @@ import argparse
 import sys
 import time
 
+import os
+
 import requests
 
-BASE_URL = "http://localhost:7860"
+BASE_URL = os.environ.get("LANGFLOW_URL", "http://localhost:7860")
 
 
 def wait_for_langflow(timeout: int = 120) -> bool:
