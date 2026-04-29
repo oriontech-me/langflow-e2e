@@ -12,7 +12,7 @@ STATE_FILE = os.environ.get("STATE_FILE", "/tmp/migration-test-state.json")
 
 def get_auth_token() -> str:
     """Get auth token via auto_login."""
-    r = requests.post(f"{BASE_URL}/api/v1/auto_login", timeout=10)
+    r = requests.get(f"{BASE_URL}/api/v1/auto_login", timeout=10)
     r.raise_for_status()
     data = r.json()
     return data.get("access_token", "")

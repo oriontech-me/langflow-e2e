@@ -12,6 +12,9 @@ env:
   STATE_FILE: /tmp/migration-test-state.json
   REPORT_FILE: /tmp/migration-report.md
 
+permissions:
+  issues: write
+
 jobs:
   migration-test:
     runs-on: ubuntu-latest

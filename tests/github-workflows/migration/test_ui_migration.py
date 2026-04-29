@@ -310,7 +310,7 @@ class TestMigrationUI:
         """Execute the flow via API after component updates."""
         import requests
 
-        token_resp = requests.post(f"{self.base_url}/api/v1/auto_login", timeout=10)
+        token_resp = requests.get(f"{self.base_url}/api/v1/auto_login", timeout=10)
         token_resp.raise_for_status()
         token = token_resp.json().get("access_token", "")
 
