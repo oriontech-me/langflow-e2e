@@ -260,6 +260,8 @@
 #### 6.2 Other execution tests
 - [-] Agent displays reasoning steps in Playground → `agent-reasoning-steps.spec.ts`
 - [-] Composio (tool integration for Agent) → `composio.spec.ts`
+- [-] Playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
+- [-] Playground input remains usable after API error (mocked) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
 - [ ] Agent stops when configured stop condition is reached
 - [ ] Agent stops when maximum number of iterations is reached → `agent-max-iterations.spec.ts`
 - [ ] Agent with multiple configured tools executes correctly → `agent-multi-tool-selection.spec.ts`
