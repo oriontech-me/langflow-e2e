@@ -52,12 +52,12 @@ def get_starter_projects(token: str) -> list:
 def find_agent_template(starter_projects: list) -> dict | None:
     """Find 'Simple Agent' or similar agent template."""
     for project in starter_projects:
-        name = project.get("name", "").lower()
+        name = (project.get("name") or "").lower()
         if "simple agent" in name or "basic agent" in name:
             return project
     # Fallback: any template with "agent" in the name
     for project in starter_projects:
-        name = project.get("name", "").lower()
+        name = (project.get("name") or "").lower()
         if "agent" in name:
             return project
     return None
