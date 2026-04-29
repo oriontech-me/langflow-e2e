@@ -70,6 +70,22 @@ jobs:
       - name: Wait for Langflow latest
         run: python tests/github-workflows/migration/wait_for_langflow.py
 
+      - name: Debug starter-projects API response
+        run: |
+          python3 -c "
+          import requests, json
+          token = requests.get('http://localhost:7860/api/v1/auto_login', timeout=10).json().get('access_token','')
+          r = requests.get('http://localhost:7860/api/v1/starter-projects/', headers={'Authorization': f'Bearer {token}'}, timeout=30)
+          print('Status:', r.status_code)
+          data = r.json()
+          print('Type:', type(data).__name__, '| Count:', len(data) if isinstance(data, list) else 'N/A')
+          if isinstance(data, list) and data:
+              print('First item keys:', list(data[0].keys()) if isinstance(data[0], dict) else type(data[0]))
+              print('First item (truncated):', json.dumps(data[0], default=str)[:500])
+          else:
+              print('Response (truncated):', json.dumps(data, default=str)[:500])
+          "
+
       - name: Create flow, configure and execute on latest
         run: python tests/github-workflows/migration/setup_latest.py
         env:
