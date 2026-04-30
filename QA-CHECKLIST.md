@@ -403,7 +403,7 @@
 - [-] Response polling → `withEventDeliveryModes` (polling mode)
 - [-] Direct response → `withEventDeliveryModes` (direct mode)
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
-- [!] Send empty message — should disable send button → `playground/playground-empty-message-send.spec.ts` (**BUG: button enabled even when empty**)
+- [x] Send empty message — should disable send button → `playground/playground-empty-message-send.spec.ts` (**BUG: button enabled even when empty**)
 - [ ] Send message while response is in progress — should wait or queue
 - [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
