@@ -1,12 +1,15 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { cleanAllFlows } from "../../../helpers/flows/clean-all-flows";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 
 // Reusable helper: create blank flow and add the Webhook component.
 // After this call the component is visible on the canvas and the inspector is open.
 async function addWebhookComponent(page: any) {
   await awaitBootstrapTest(page);
+  // Clean existing flows first to avoid 400 "flow must be unique" under parallelism
+  await cleanAllFlows(page);
   await page.getByTestId("blank-flow").click();
   await page.getByTestId("sidebar-search-input").click();
   await page.getByTestId("sidebar-search-input").fill("webhook");
