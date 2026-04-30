@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
@@ -7,7 +8,7 @@ test.describe.configure({ mode: "serial" });
 
 // Helper: create a blank flow and add the Loop component to the canvas.
 // After this call the component node is visible and the inspector is open.
-async function addLoopComponent(page: any) {
+async function addLoopComponent(page: Page) {
   await awaitBootstrapTest(page);
   await page.getByTestId("blank-flow").click();
   await page.getByTestId("sidebar-search-input").fill("Loop");
@@ -21,6 +22,65 @@ async function addLoopComponent(page: any) {
   await page.waitForSelector('[data-testid="title-Loop"]', {
     timeout: 15000,
   });
+}
+
+// Configure the Language Model component's provider via "Setup Provider".
+// The Research Translation Loop template ships with an unconfigured Language Model
+// node — without this step the flow fails with "A model selection is required".
+// Mirrors the pattern from memory-history-regression.spec.ts.
+async function setupLanguageModelOpenAI(page: Page): Promise<void> {
+  const modelDropdown = page.getByTestId("model_model");
+  const hasModelDropdown = await modelDropdown.isVisible({ timeout: 5000 }).catch(() => false);
+
+  if (!hasModelDropdown) {
+    await page.getByRole("button", { name: "Setup Provider" }).click();
+    await page.waitForSelector('[data-testid="provider-item-OpenAI"]', { timeout: 10000 });
+    await page.getByTestId("provider-item-OpenAI").click();
+
+    const apiKeyInput = page.getByPlaceholder("sk-...");
+    await apiKeyInput.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
+
+    const apiKey = process.env.OPENAI_API_KEY ?? "";
+    if ((await apiKeyInput.count()) > 0 && apiKey) {
+      await apiKeyInput.click();
+      await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
+
+      const saveBtn = page.getByRole("button", { name: "Save", exact: true });
+      const replaceBtn = page.getByRole("button", { name: "Replace", exact: true });
+
+      if ((await saveBtn.count()) > 0) {
+        await saveBtn.click();
+      } else if ((await replaceBtn.count()) > 0) {
+        await replaceBtn.click();
+      }
+
+      await replaceBtn.waitFor({ state: "visible", timeout: 30000 });
+      await page.locator('[data-testid^="llm-toggle"]').first()
+        .waitFor({ state: "visible", timeout: 15000 })
+        .catch(() => {});
+    }
+
+    const toggles = page.locator('[data-testid^="llm-toggle"]');
+    const toggleCount = await toggles.count();
+    for (let i = 0; i < toggleCount; i++) {
+      if ((await toggles.nth(i).getAttribute("aria-checked")) !== "true") {
+        await toggles.nth(i).click();
+      }
+    }
+
+    await page.keyboard.press("Escape");
+    await modelDropdown.waitFor({ state: "visible", timeout: 30000 });
+  }
+
+  await modelDropdown.click();
+  await page
+    .locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" })
+    .first()
+    .waitFor({ state: "visible", timeout: 10000 });
+  await page
+    .locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" })
+    .first()
+    .click();
 }
 
 // =============================================================================
@@ -107,6 +167,11 @@ test(
   "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
   { tag: ["@stable", "@release", "@components", "@templates", "@playground"] },
   async ({ page }) => {
+    test.skip(
+      !process.env.OPENAI_API_KEY,
+      "OPENAI_API_KEY required to execute the Language Model component in the Research Translation Loop template",
+    );
+
     // Override the global 5-minute cap: this flow makes 2 sequential LLM calls
     // (one per ArXiv paper) which can take 3-4 minutes on CI infrastructure.
     test.setTimeout(8 * 60 * 1000);
@@ -152,6 +217,11 @@ test(
     // The template default is 3; we reduce to 2 to keep the test fast (2 LLM calls).
     await page.getByTestId("int_int_max_results").click({ clickCount: 3 });
     await page.getByTestId("int_int_max_results").fill("2");
+
+    // Configure the Language Model component with OpenAI before executing.
+    // The template ships unconfigured; without this step the flow fails with
+    // "A model selection is required" and the Playground shows "An error occurred".
+    await setupLanguageModelOpenAI(page);
 
     // Open the Playground and send a query — ArXiv is a public API, no key needed
     await page.getByTestId("playground-btn-flow-io").click();

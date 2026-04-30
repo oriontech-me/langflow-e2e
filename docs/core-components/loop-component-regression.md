@@ -40,15 +40,17 @@ If any of these tests fails, the Loop component is broken in the product: either
 5. Verify that `button_run_loop` is still accessible and `title-Loop` is still visible with a single node on the canvas
 
 **Test 3 — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers**
-1. Navigate to "All Templates" and wait for the `template-research-translation-loop` card
-2. Click the template and wait for `title-Loop` to appear
-3. Verify that there are edges on the canvas (confirms template wiring)
-4. Verify the 4 handles of the Loop (same criterion as Test 1)
-5. Change `int_int_max_results` to `2` (limit ArXiv to 2 results)
-6. Open the Playground via `playground-btn-flow-io`
-7. Type "transformer neural networks" in `input-chat-playground` and send
-8. Wait for `chat-message-AI-*` to appear (timeout 240 s)
-9. Extract the text of the last AI message and count occurrences of "title" (case-insensitive); must be ≥ 2
+1. Skip the test if `OPENAI_API_KEY` is not set in the environment
+2. Navigate to "All Templates" and wait for the `template-research-translation-loop` card
+3. Click the template and wait for `title-Loop` to appear
+4. Verify that there are edges on the canvas (confirms template wiring)
+5. Verify the 4 handles of the Loop (same criterion as Test 1)
+6. Change `int_int_max_results` to `2` (limit ArXiv to 2 results)
+7. Click "Setup Provider" on the Language Model component, select OpenAI, fill in `OPENAI_API_KEY`, save and select `gpt-4o-mini`
+8. Open the Playground via `playground-btn-flow-io`
+9. Type "transformer neural networks" in `input-chat-playground` and send
+10. Wait for `chat-message-AI-*` to appear (timeout 240 s)
+11. Extract the text of the last AI message and count occurrences of "title" (case-insensitive); must be ≥ 2
 
 ---
 
@@ -84,7 +86,7 @@ If any of these tests fails, the Loop component is broken in the product: either
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
 - Tests 1 and 2 do not need an API key (no LLM execution)
-- Test 3 uses ArXiv (public API, no key needed), but the template includes an LLM model — verify if the instance has a default model configured or if an `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` is needed in `.env`
+- Test 3 requires `OPENAI_API_KEY` in the environment; it is skipped gracefully when the key is absent. The test configures the Language Model component via the "Setup Provider" UI before executing the flow — the template ships unconfigured and fails with "A model selection is required" without this step
 - Tests run in `serial` mode to avoid 400 errors from parallel autosave ("flow must be unique")
 
 ---
@@ -99,6 +101,8 @@ If any of these tests fails, the Loop component is broken in the product: either
 
 ## Notes *(optional)*
 
+- Test 3 configures the Language Model component before running the Playground — the template ships without a provider selected, causing "A model selection is required" if the setup step is skipped
 - The timeout in Test 3 is 240 s for the LLM response and the test-level timeout is set to 8 minutes via `test.setTimeout` — the template makes 2 sequential model calls (one per ArXiv article) which can take 3-4 minutes on CI infrastructure; the global 5-minute cap is insufficient for this flow
+- The test is skipped automatically (not failed) when `OPENAI_API_KEY` is absent, so it does not block local runs without API keys
 - The validation criterion counts occurrences of "title" (case-insensitive) in the aggregated response: the Parser formats each article as `Title: {title}\nSummary: {summary}`, so 2 articles guarantee ≥ 2 "title" in the final output
 - `allowFlowErrors()` is required in Test 2 to disable the automatic flow error monitor injected by the fixture
