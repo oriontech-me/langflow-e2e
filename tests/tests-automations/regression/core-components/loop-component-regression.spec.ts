@@ -160,6 +160,11 @@ test(
     await page.getByTestId("int_int_max_results").click({ clickCount: 3 });
     await page.getByTestId("int_int_max_results").fill("2");
 
+    // Click the Language Model node to bring it into the viewport and select it
+    // before configuring the provider — interacting with int_int_max_results
+    // (ArXiv node) may have shifted focus away from Language Model.
+    await page.getByTestId("title-Language Model").click();
+
     // Configure the Language Model component with OpenAI before executing.
     // The template ships unconfigured; without this step the flow fails with
     // "A model selection is required" and the Playground shows "An error occurred".
