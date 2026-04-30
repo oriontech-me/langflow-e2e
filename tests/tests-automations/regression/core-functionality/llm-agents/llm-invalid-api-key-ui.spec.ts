@@ -1,60 +1,22 @@
 import { expect, test } from "../../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { zoomOut } from "../../../../helpers/ui/zoom-out";
-
-// Helper: builds a connected ChatInput → ChatOutput flow and opens the Playground.
-async function setupPlayground(page: any) {
-  await awaitBootstrapTest(page);
-  await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
-  await page.getByTestId("blank-flow").click();
-
-  // Add ChatOutput first via hover-click
-  await page.getByTestId("sidebar-search-input").fill("chat output");
-  await page.waitForSelector('[data-testid="input_outputChat Output"]', {
-    timeout: 30000,
-  });
-  await page.getByTestId("input_outputChat Output").hover();
-  await page.getByTestId("add-component-button-chat-output").click();
-
-  await zoomOut(page, 2);
-
-  // Add ChatInput via dragTo to a different position
-  await page.getByTestId("sidebar-search-input").fill("chat input");
-  await page.waitForSelector('[data-testid="input_outputChat Input"]', {
-    timeout: 30000,
-  });
-  await page
-    .getByTestId("input_outputChat Input")
-    .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-      targetPosition: { x: 100, y: 100 },
-    });
-
-  await adjustScreenView(page);
-
-  await expect(page.locator(".react-flow__node")).toHaveCount(2, {
-    timeout: 10000,
-  });
-
-  // Connect handles sequentially
-  await page
-    .getByTestId("handle-chatinput-noshownode-chat message-source")
-    .click();
-  await page
-    .getByTestId("handle-chatoutput-noshownode-inputs-target")
-    .click();
-
-  await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
-    timeout: 8000,
-  });
-}
+import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 
 test.describe("LLM Invalid API Key UI Error Display", () => {
+  let createdFlowId: string | null = null;
+
+  test.afterEach(async ({ page }) => {
+    if (createdFlowId) {
+      await page.goto("/");
+      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      createdFlowId = null;
+    }
+  });
+
   test(
     "playground shows error when LLM run endpoint returns 500 (mocked invalid API key)",
     { tag: ["@release", "@workspace", "@regression", "@agents"] },
     async ({ page }) => {
-      await setupPlayground(page);
+      createdFlowId = await setupPlayground(page);
 
       // Mock the run endpoint to simulate an invalid API-key error from the LLM
       await page.route("**/api/v1/run/**", async (route) => {
@@ -107,7 +69,7 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
     "playground input remains usable after API error (mocked)",
     { tag: ["@release", "@workspace", "@regression", "@agents"] },
     async ({ page }) => {
-      await setupPlayground(page);
+      createdFlowId = await setupPlayground(page);
 
       // Mock the run endpoint to return a 500 error
       await page.route("**/api/v1/run/**", async (route) => {
