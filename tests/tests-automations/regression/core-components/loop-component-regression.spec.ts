@@ -105,8 +105,12 @@ test(
 
 test(
   "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
-  { tag: ["@release", "@components", "@templates", "@playground"] },
+  { tag: ["@stable", "@release", "@components", "@templates", "@playground"] },
   async ({ page }) => {
+    // Override the global 5-minute cap: this flow makes 2 sequential LLM calls
+    // (one per ArXiv paper) which can take 3-4 minutes on CI infrastructure.
+    test.setTimeout(8 * 60 * 1000);
+
     await awaitBootstrapTest(page);
 
     // Load the Research Translation Loop template
@@ -160,7 +164,7 @@ test(
     // The AI response element appears as soon as the flow starts streaming.
     // Testid pattern: "chat-message-AI-{content}"
     await page.waitForSelector('[data-testid^="chat-message-AI-"]', {
-      timeout: 120000,
+      timeout: 240000,
     });
 
     // Verify the response contains at least 2 "Title" occurrences.
@@ -169,7 +173,7 @@ test(
     // in the aggregated response, confirming the loop iterated twice.
     const botMessage = page.locator('[data-testid^="chat-message-AI-"]').last();
     await expect(botMessage).toBeVisible();
-    await expect(botMessage).not.toBeEmpty({ timeout: 120000 });
+    await expect(botMessage).not.toBeEmpty({ timeout: 240000 });
     const responseText = await botMessage.textContent() ?? "";
     const titleCount = (responseText.match(/title/gi) ?? []).length;
     expect(titleCount).toBeGreaterThanOrEqual(2);

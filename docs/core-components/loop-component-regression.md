@@ -1,6 +1,6 @@
 # Loop Component — Rendering, Error and Iteration
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.10.x (timeout corrected 2026-04-30, fixes #87)
 
 ---
 
@@ -47,7 +47,7 @@ If any of these tests fails, the Loop component is broken in the product: either
 5. Change `int_int_max_results` to `2` (limit ArXiv to 2 results)
 6. Open the Playground via `playground-btn-flow-io`
 7. Type "transformer neural networks" in `input-chat-playground` and send
-8. Wait for `chat-message-AI-*` to appear (timeout 120 s)
+8. Wait for `chat-message-AI-*` to appear (timeout 240 s)
 9. Extract the text of the last AI message and count occurrences of "title" (case-insensitive); must be ≥ 2
 
 ---
@@ -99,6 +99,6 @@ If any of these tests fails, the Loop component is broken in the product: either
 
 ## Notes *(optional)*
 
-- The timeout in Test 3 is 120 s for the LLM response — the template makes 2 sequential model calls (one per ArXiv article); increasing `max_results` beyond 2 makes the test slower without coverage gain
+- The timeout in Test 3 is 240 s for the LLM response and the test-level timeout is set to 8 minutes via `test.setTimeout` — the template makes 2 sequential model calls (one per ArXiv article) which can take 3-4 minutes on CI infrastructure; the global 5-minute cap is insufficient for this flow
 - The validation criterion counts occurrences of "title" (case-insensitive) in the aggregated response: the Parser formats each article as `Title: {title}\nSummary: {summary}`, so 2 articles guarantee ≥ 2 "title" in the final output
 - `allowFlowErrors()` is required in Test 2 to disable the automatic flow error monitor injected by the fixture
