@@ -1776,6 +1776,28 @@
 
 ---
 
+### 21.8 Shareable Playground — URL generation `[-]`
+
+**File:** `tests/tests-automations/regression/core-functionality/playground/playground-shareable-url.spec.ts`
+
+**Objective:** Verify that enabling the Shareable Playground feature on a flow with Chat I/O generates a valid public URL in the format `/playground/{uuid}`.
+
+**Preconditions:** Langflow running. The `ENABLE_PUBLISH` feature flag must be active (enabled by default). Flow must contain Chat Input and Chat Output (Simple Agent template satisfies this).
+
+**Step by step:**
+1. Load the Simple Agent template.
+2. Click the `publish-button` (Share button in the flow toolbar) to open the Share dropdown.
+3. Verify that the `shareable-playground` item is visible and the `publish-switch` is unchecked (sharing off by default).
+4. Click `publish-switch` to enable sharing.
+5. Verify the switch becomes checked.
+6. Verify that a link `<a href="/playground/{uuid}">` appears inside the `shareable-playground` item.
+7. Assert the `href` matches `/\/playground\/[0-9a-f-]{36}/`.
+8. Click `publish-switch` again to disable sharing (cleanup).
+
+**Validation:** After enabling the switch, `[data-testid="shareable-playground"] a` is visible and its `href` attribute matches the `/playground/{uuid}` pattern. The switch returns to unchecked after cleanup.
+
+---
+
 ---
 
 ## 22. Project and Folder Management
@@ -2288,7 +2310,7 @@
 5. MCP client — consumption of external tools and resources
 6. Webhook trigger via external HTTP request
 7. Agent — inspect tools used in Playground
-8. Shareable Playground (public URL without authentication)
+8. [x] Shareable Playground URL generation (see 21.8)
 9. Complete RAG pipeline
 
 ### 🟢 Low Priority
