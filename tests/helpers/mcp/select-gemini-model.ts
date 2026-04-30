@@ -41,9 +41,7 @@ export const selectGeminiModel = async (page: Page) => {
     await page.keyboard.type(process.env.GOOGLE_API_KEY!);
 
     // Button label varies: "Save Configuration" (new) or "Replace Configuration" (existing key)
-    const saveBtn = page.getByRole("button", {
-      name: /Save Configuration|Replace Configuration/,
-    });
+    const saveBtn = page.getByRole("button", { name: /^Save$|^Replace$/ });
     await expect(saveBtn).toBeEnabled({ timeout: 5000 });
     await saveBtn.click();
     await page.waitForSelector("text=Google Generative AI Configuration Saved", {
