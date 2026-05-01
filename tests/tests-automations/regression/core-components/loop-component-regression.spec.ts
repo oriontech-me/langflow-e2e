@@ -118,6 +118,12 @@ test(
     // (one per ArXiv paper) which can take 3-4 minutes on CI infrastructure.
     test.setTimeout(8 * 60 * 1000);
 
+    // The template loads with an unconfigured Language Model which triggers a
+    // background auto-build that immediately fails with "A model selection is
+    // required". Allow those pre-setup flow errors so the fixture doesn't kill
+    // the test before we have a chance to configure the provider.
+    (page as any).allowFlowErrors();
+
     await awaitBootstrapTest(page);
 
     // Load the Research Translation Loop template
@@ -154,21 +160,19 @@ test(
       page.getByTestId("handle-loopcomponent-shownode-done-right"),
     ).toBeVisible();
 
+    // --- Setup before any node interaction ---
+    // Configure the Language Model with OpenAI BEFORE touching other nodes.
+    // Any interaction (e.g., editing int_int_max_results) can trigger a background
+    // auto-build; if the provider is not yet configured that build fails with
+    // "A model selection is required" and the fixture would abort the test.
+    await page.getByTestId("title-Language Model").click();
+    await setupLanguageModelOpenAI(page);
+
     // --- Iteration execution ---
     // Limit ArXiv to 2 results so the loop runs exactly 2 iterations.
     // The template default is 3; we reduce to 2 to keep the test fast (2 LLM calls).
     await page.getByTestId("int_int_max_results").click({ clickCount: 3 });
     await page.getByTestId("int_int_max_results").fill("2");
-
-    // Click the Language Model node to bring it into the viewport and select it
-    // before configuring the provider — interacting with int_int_max_results
-    // (ArXiv node) may have shifted focus away from Language Model.
-    await page.getByTestId("title-Language Model").click();
-
-    // Configure the Language Model component with OpenAI before executing.
-    // The template ships unconfigured; without this step the flow fails with
-    // "A model selection is required" and the Playground shows "An error occurred".
-    await setupLanguageModelOpenAI(page);
 
     // Open the Playground and send a query — ArXiv is a public API, no key needed
     await page.getByTestId("playground-btn-flow-io").click();
