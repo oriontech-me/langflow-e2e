@@ -14,7 +14,7 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
 
   test(
     "playground shows error when LLM run endpoint returns 500 (mocked invalid API key)",
-    { tag: ["@release", "@workspace", "@regression", "@agents"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@agents", "@playground"] },
     async ({ page }) => {
       createdFlowId = await setupPlayground(page);
 
@@ -67,7 +67,7 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
 
   test(
     "playground input remains usable after API error (mocked)",
-    { tag: ["@release", "@workspace", "@regression", "@agents"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@agents", "@playground"] },
     async ({ page }) => {
       createdFlowId = await setupPlayground(page);
 
@@ -90,9 +90,6 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
 
       await page.getByTestId("input-chat-playground").last().fill("trigger error");
       await page.getByTestId("button-send").last().click();
-
-      // Wait briefly for the error to be processed
-      await page.waitForTimeout(3000);
 
       // The chat input must still be visible and interactive after the error
       const input = page.getByTestId("input-chat-playground").last();
