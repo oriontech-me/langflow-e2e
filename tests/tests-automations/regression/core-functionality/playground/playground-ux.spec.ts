@@ -16,7 +16,7 @@ test.describe("Playground UX", () => {
 
   test(
     "user message must appear instantly in playground before AI responds",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@release", "@regression", "@playground", "@stable"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);
@@ -46,7 +46,7 @@ test.describe("Playground UX", () => {
 
   test(
     "playground must scroll to latest message after sending",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@release", "@regression", "@playground", "@stable"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);
@@ -80,7 +80,7 @@ test.describe("Playground UX", () => {
 
   test(
     "playground input field must be ready after flow responds",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@release", "@regression", "@playground", "@stable"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);
