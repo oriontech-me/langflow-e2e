@@ -1,10 +1,10 @@
 # Playground — Clear History & Session Delete
 
-**Última validação:** Langflow 1.10.x
+**Last validated:** Langflow 1.10.x
 
 ---
 
-## O que este teste valida *(obrigatório)*
+## What this test validates *(required)*
 
 Validates session management actions in the Playground:
 
@@ -15,13 +15,13 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 ---
 
-## Tags *(obrigatório)*
+## Tags *(required)*
 
 `@stable` `@release` `@regression` `@playground`
 
 ---
 
-## Passo a passo *(obrigatório)*
+## Step by step *(required)*
 
 **Test 1 — clear chat on Default session must remove messages but keep the session**
 
@@ -45,21 +45,21 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 ---
 
-## Critério de validação *(obrigatório)*
+## Validation criterion *(required)*
 
 - After clearing: `div-chat-message` count is 0 and `chat-header-more-menu` remains visible
 - After deleting: session sidebar entry count decreases by 1; app shows Default session menu (`clear-chat-option` visible, `delete-session-option` absent)
 
 ---
 
-## Dependências externas *(obrigatório)*
+## External dependencies *(required)*
 
 - `src/frontend/src/components/core/chatComponents/chatHeader/chat-header.tsx` — `isDefaultSession` logic controls which menu options are shown (`clear-chat-option` vs `delete-session-option`). Any change to this conditional or to the `data-testid` attributes will break these tests.
 - `src/frontend/src/components/core/chatComponents/chatHeader/` — `data-testid="chat-header-more-menu"` menu trigger; wrapped in `AnimatedConditional` (framer-motion), which is why `evaluate((el) => el.click())` is used instead of a coordinate-based click.
 
 ---
 
-## O que este teste não cobre *(opcional)*
+## What this test does not cover *(optional)*
 
 - Renaming a session (covered separately)
 - Deleting individual messages within a session
@@ -68,7 +68,7 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 ---
 
-## Pré-condições *(opcional)*
+## Preconditions *(optional)*
 
 - Langflow running and reachable at `PLAYWRIGHT_BASE_URL`
 - No pre-existing flows required; the setup creates a flow per test and `cleanAllFlows` removes it in `afterEach`
@@ -76,7 +76,7 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 ---
 
-## Quando revisar este teste *(opcional)*
+## When to review this test *(optional)*
 
 - If the session menu trigger (`chat-header-more-menu`) is renamed or restructured
 - If `isDefaultSession` logic changes (e.g., session IDs are no longer compared to the flow ID)
@@ -84,7 +84,7 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 ---
 
-## Notas *(opcional)*
+## Notes *(optional)*
 
 - Tests run in `serial` mode to prevent race conditions from `cleanAllFlows` deleting flows mid-execution
 - `evaluate((el) => el.click())` is intentional: the menu trigger sits inside an `AnimatedConditional` that may have an overlapping sibling div during the animation, making coordinate-based clicks unreliable
