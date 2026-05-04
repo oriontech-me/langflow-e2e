@@ -82,5 +82,5 @@ References in this repository:
 
 ## Notes *(optional)*
 
-- Test 1 intentionally documents a **known Langflow bug**: the send button remains enabled on empty input. The assertion uses `toBeEnabled()` to reflect actual behavior; once the bug is fixed, the assertion must be changed to `toBeDisabled()` and the test name updated.
+- Test 1 intentionally documents a **known Langflow bug**: the send button remains enabled on empty input. It reflects actual behavior; once the bug is fixed, the assertion must be updated to expect the button to be disabled and the test name updated accordingly.
 - The ChatInput → ChatOutput flow is deterministic and requires no LLM or API keys.
