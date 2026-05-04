@@ -52,6 +52,14 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
+      - name: Collect models
+        run: npx playwright test tests/collect-models.spec.ts --reporter=line
+        continue-on-error: true
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
       - name: Run @stable tests
         run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=blob,github
         env:
