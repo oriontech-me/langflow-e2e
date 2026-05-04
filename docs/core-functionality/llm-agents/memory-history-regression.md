@@ -1,119 +1,119 @@
-# Memory Chatbot — Regressão de Histórico e Memória
+# Memory Chatbot — History and Memory Regression
 
-**Última validação:** Langflow 1.10.x
-
----
-
-## O que este teste valida *(obrigatório)*
-
-Valida o comportamento core do template **Memory Chatbot**: carregamento da estrutura do flow, retenção de contexto entre mensagens dentro da mesma sessão do Playground, persistência do histórico após fechar e reabrir o Playground, e isolamento de sessão (sessões distintas têm históricos independentes). Se qualquer um desses testes falhar, o Memory Chatbot está quebrado para uso real.
+**Last validated:** Langflow 1.10.x
 
 ---
 
-## Tags *(obrigatório)*
+## What this test validates *(required)*
+
+Validates the core behavior of the **Memory Chatbot** template: loading the flow structure, context retention between messages within the same Playground session, history persistence after closing and reopening the Playground, and session isolation (distinct sessions have independent histories). If any of these tests fail, the Memory Chatbot is broken for real use.
+
+---
+
+## Tags *(required)*
 
 `@stable` `@release` `@agents` `@playground`
 
 ---
 
-## Passo a passo *(obrigatório)*
+## Step by step *(required)*
 
-O spec contém **3 testes** dentro de `test.describe("Memory Chatbot Regression")`.
+The spec contains **3 tests** inside `test.describe("Memory Chatbot Regression")`.
 
 ---
 
-**Teste 1 — memory chatbot template loads with correct node structure**
+**Test 1 — memory chatbot template loads with correct node structure**
 
-Não requer API key. Valida somente a estrutura do canvas.
+Does not require an API key. Validates only the canvas structure.
 
-1. Apagar flows existentes e carregar o template "Memory Chatbot" em `All Templates`
-2. Aguardar `canvas_controls_dropdown` aparecer; ajustar view e atualizar componentes
-3. *Step: canvas has all 6 required nodes* — `expect.soft` para cada um dos 6 nós:
+1. Delete existing flows and load the "Memory Chatbot" template from `All Templates`
+2. Wait for `canvas_controls_dropdown` to appear; adjust view and update components
+3. *Step: canvas has all 6 required nodes* — `expect.soft` for each of the 6 nodes:
    - `title-Chat Input`, `title-Chat Output`, `title-Message History`
    - `title-Language Model`, `title-Prompt Template`, `note_node`
-4. *Step: canvas has exactly 6 nodes* — contar `.react-flow__node` e verificar `=== 6`
+4. *Step: canvas has exactly 6 nodes* — count `.react-flow__node` and assert `=== 6`
 
 ---
 
-**Teste 2 — message history context retention suite**
+**Test 2 — message history context retention suite**
 
-Requer `OPENAI_API_KEY`. Agrupa as validações de comportamento em `test.step` com `expect.soft`.
+Requires `OPENAI_API_KEY`. Groups behavior validations in `test.step` with `expect.soft`.
 
-1. Carregar o template Memory Chatbot e configurar OpenAI via `setupLanguageModelOpenAI`:
-   - Se `model_model` não estiver visível (providers não configurados): clicar no botão "Setup Provider" (sem data-testid) → selecionar `provider-item-OpenAI` → preencher API key com `pressSequentially` → clicar "Save" → aguardar botão "Replace" aparecer → habilitar toggles `[data-testid^="llm-toggle"]` → fechar com Escape → aguardar `model_model` aparecer
-   - Clicar `model_model` e selecionar `gpt-4o-mini`
-2. Abrir o Playground (`playground-btn-flow-io`) e aguardar `input-chat-playground`
-3. *Step: context retention* — Enviar `"My name is Alice..."`, aguardar resposta, enviar `"What is my name?"` e verificar que a resposta contém "Alice"
-4. *Step: multiple messages* — contar `div-chat-message` ≥ 2 (testid marca apenas respostas do bot)
-5. *Step: persistence* — fechar o Playground via `playground-close-button`, reabrir, confirmar que a contagem de mensagens é ≥ ao valor anterior
-
----
-
-**Teste 3 — session isolation: new session has no context from previous session**
-
-Requer `OPENAI_API_KEY`. Separado por ser destrutivo (cria nova sessão).
-
-1. Carregar template, configurar API key (mesmo fluxo do Teste 2)
-2. Abrir Playground, enviar `"My name is Bob..."`
-3. Aguardar resposta aparecer
-4. Clicar em `new-chat` (botão "+" no painel de sessões do sidebar)
-5. Aguardar 500ms para reset do estado de sessão
-6. Verificar que `div-chat-message` count é `=== 0` (sessão começa vazia)
+1. Load the Memory Chatbot template and configure OpenAI via `setupLanguageModelOpenAI`:
+   - If `model_model` is not visible (providers not configured): click the "Setup Provider" button (no data-testid) → select `provider-item-OpenAI` → fill the API key with `pressSequentially` → click "Save" → wait for the "Replace" button to appear → enable `[data-testid^="llm-toggle"]` toggles → close with Escape → wait for `model_model` to appear
+   - Click `model_model` and select `gpt-4o-mini`
+2. Open the Playground (`playground-btn-flow-io`) and wait for `input-chat-playground`
+3. *Step: context retention* — Send `"My name is Alice..."`, wait for response, send `"What is my name?"` and assert the response contains "Alice"
+4. *Step: multiple messages* — count `div-chat-message` ≥ 2 (testid is present only on bot responses)
+5. *Step: persistence* — close the Playground via `playground-close-button`, reopen it, confirm the message count is ≥ the previous value
 
 ---
 
-## Critério de validação *(obrigatório)*
+**Test 3 — session isolation: new session has no context from previous session**
 
-- Template carrega com exatamente 6 nós: Chat Input, Chat Output, Message History, Language Model, Prompt Template, note (README)
-- O LLM recorda o nome informado em mensagem anterior da mesma sessão ("Alice")
-- Respostas do bot acumulam no histórico (div-chat-message ≥ 2 após 2 trocas)
-- O histórico persiste após fechar e reabrir o Playground
-- Uma nova sessão começa com 0 mensagens, sem herdar contexto de sessões anteriores
+Requires `OPENAI_API_KEY`. Kept separate because it is destructive (creates a new session).
 
----
-
-## Dependências externas *(obrigatório)*
-
-- `src/backend/base/langflow/initial_setup/starter_projects/Memory Chatbot.json` — define o grafo do template em runtime (sobrescreve o `.py`); mudanças nos nós ou arestas quebram o Teste 1
-- `src/lfx/src/lfx/components/models_and_agents/memory.py` — `MemoryComponent` (`display_name = "Message History"`); renomear ou remover quebra o Teste 1 e o Teste 2
-- `src/lfx/src/lfx/components/models_and_agents/language_model.py` — `LanguageModelComponent` (`display_name = "Language Model"`); mudanças no campo `model` ou no `display_name` afetam Testes 1, 2 e 3
-- `src/frontend/src/components/core/playgroundComponent/` — `input-chat-playground`, `div-chat-message`, `playground-close-button`, `new-chat` — qualquer renomeação quebra Testes 2 e 3
-- `src/frontend/src/CustomNodes/GenericNode/components/NodeName/index.tsx` — `data-testid="title-{display_name}"` — mudança no padrão de testid quebra o Teste 1
-- `src/frontend/src/modals/modelProviderModal/components/ProviderConfigurationForm.tsx` — botão "Save" (texto exato para salvar API key); mudar para outro texto quebra `setupLanguageModelOpenAI`
+1. Load the template and configure the API key (same flow as Test 2)
+2. Open the Playground, send `"My name is Bob..."`
+3. Wait for the response to appear
+4. Click `new-chat` (the "+" button in the sessions sidebar)
+5. Wait 500ms for session state reset
+6. Assert that `div-chat-message` count is `=== 0` (session starts empty)
 
 ---
 
-## O que este teste não cobre *(opcional)*
+## Validation criterion *(required)*
 
-- Comportamento do Memory Chatbot com outros providers (Anthropic, Google) — `setupLanguageModelOpenAI` configura apenas OpenAI
-- Validação do conteúdo da resposta da IA além da referência ao nome ("Alice")
-- Verificação de que, sem o nó `Message History` conectado, o contexto se perde
-- Persistência do histórico após restart do servidor Langflow
-
----
-
-## Pré-condições *(opcional)*
-
-- Langflow rodando e acessível em `PLAYWRIGHT_BASE_URL`
-- `OPENAI_API_KEY` definida no `.env` para os Testes 2 e 3
-- Rodar com `--workers=1` para evitar conflito de flows
+- Template loads with exactly 6 nodes: Chat Input, Chat Output, Message History, Language Model, Prompt Template, note (README)
+- The LLM recalls the name provided in a previous message within the same session ("Alice")
+- Bot responses accumulate in the history (`div-chat-message` ≥ 2 after 2 exchanges)
+- History persists after closing and reopening the Playground
+- A new session starts with 0 messages, with no context inherited from previous sessions
 
 ---
 
-## Quando revisar este teste *(opcional)*
+## External dependencies *(required)*
 
-- Se o template "Memory Chatbot" for removido ou renomeado em `starter_projects`
-- Se o `LanguageModelComponent` mudar de `display_name` ou a sessão padrão mudar de comportamento
-- Se o botão "Save" no provider modal mudar de texto (quebra `setupLanguageModelOpenAI`)
-- Se o botão `new-chat` no sidebar de sessões for renomeado (quebra Teste 3)
-- Se o Playground ganhar confirmação modal ao criar nova sessão (Teste 3 precisará de step extra)
+- `src/backend/base/langflow/initial_setup/starter_projects/Memory Chatbot.json` — defines the template graph at runtime (overrides the `.py`); changes to nodes or edges break Test 1
+- `src/lfx/src/lfx/components/models_and_agents/memory.py` — `MemoryComponent` (`display_name = "Message History"`); renaming or removing it breaks Tests 1 and 2
+- `src/lfx/src/lfx/components/models_and_agents/language_model.py` — `LanguageModelComponent` (`display_name = "Language Model"`); changes to the `model` field or `display_name` affect Tests 1, 2, and 3
+- `src/frontend/src/components/core/playgroundComponent/` — `input-chat-playground`, `div-chat-message`, `playground-close-button`, `new-chat` — any rename breaks Tests 2 and 3
+- `src/frontend/src/CustomNodes/GenericNode/components/NodeName/index.tsx` — `data-testid="title-{display_name}"` — a change to this testid pattern breaks Test 1
+- `src/frontend/src/modals/modelProviderModal/components/ProviderConfigurationForm.tsx` — "Save" button (exact text to save the API key); changing it breaks `setupLanguageModelOpenAI`
 
 ---
 
-## Notas *(opcional)*
+## What this test does not cover *(optional)*
 
-- **Estrutura do template em runtime**: o template carrega de `Memory Chatbot.json` (não do `.py`), com 6 nós: Chat Input, Chat Output, Prompt Template, Message History, Language Model (não OpenAI direto), note/README.
-- **`div-chat-message`**: testid presente apenas em respostas do bot (`bot-message.tsx`), não em mensagens do usuário. 2 trocas → count = 2 (não 4).
-- **`setupLanguageModelOpenAI`**: função local ao spec que configura OpenAI via modal "Setup Provider". Usa `pressSequentially` (não `fill`) para garantir eventos de teclado no input controlado do React. Aguarda botão "Replace" aparecer para confirmar que o save completou.
-- **`new-chat`**: botão "+" no painel lateral de sessões (`chat-sidebar.tsx`). Equivalente funcional ao "New Session" do dropdown `session-selector-trigger` (que pode estar oculto por animação em certas builds).
-- **Teste 1 sem API key**: validação de estrutura pura — útil em CI sem keys configuradas.
+- Memory Chatbot behavior with other providers (Anthropic, Google) — `setupLanguageModelOpenAI` configures OpenAI only
+- Validation of AI response content beyond the name reference ("Alice")
+- Verification that, without the `Message History` node connected, context is lost
+- History persistence after a Langflow server restart
+
+---
+
+## Preconditions *(optional)*
+
+- Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
+- `OPENAI_API_KEY` defined in `.env` for Tests 2 and 3
+- Run with `--workers=1` to avoid flow conflicts
+
+---
+
+## When to review this test *(optional)*
+
+- If the "Memory Chatbot" template is removed or renamed in `starter_projects`
+- If the `LanguageModelComponent` changes its `display_name` or the default session behavior changes
+- If the "Save" button in the provider modal changes its text (breaks `setupLanguageModelOpenAI`)
+- If the `new-chat` button in the sessions sidebar is renamed (breaks Test 3)
+- If the Playground adds a confirmation modal when creating a new session (Test 3 will need an extra step)
+
+---
+
+## Notes *(optional)*
+
+- **Template structure at runtime**: the template loads from `Memory Chatbot.json` (not the `.py`), with 6 nodes: Chat Input, Chat Output, Prompt Template, Message History, Language Model (not OpenAI directly), note/README.
+- **`div-chat-message`**: testid present only on bot responses (`bot-message.tsx`), not on user messages. 2 exchanges → count = 2 (not 4).
+- **`setupLanguageModelOpenAI`**: local function in the spec that configures OpenAI via the "Setup Provider" modal. Uses `pressSequentially` (not `fill`) to ensure keyboard events on React controlled inputs. Waits for the "Replace" button to appear to confirm the save completed.
+- **`new-chat`**: the "+" button in the sessions sidebar (`chat-sidebar.tsx`). Functional equivalent of "New Session" in the `session-selector-trigger` dropdown (which may be hidden by animation in certain builds).
+- **Test 1 without API key**: pure structure validation — useful in CI without configured keys.
