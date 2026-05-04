@@ -45,9 +45,9 @@ Validates send button state and input field behavior in the Playground when deal
 
 ## Validation criterion *(required)*
 
-- **Test 1 (bug documentation):** `button-send` is enabled even when `input-chat-playground` is empty. This assertion reflects the **current buggy behavior**; it must be updated to `toBeDisabled()` once Langflow fixes the issue.
+- **Test 1 (bug documentation):** `button-send` is enabled even when `input-chat-playground` is empty. This reflects the **current buggy behavior**; the assertion must be updated to expect the button to be disabled once Langflow fixes the issue.
 - **Test 2:** `button-send` is enabled after the user types a non-empty message.
-- **Test 3:** `input-chat-playground` has value `""` after `input.clear()` is called on a previously filled field.
+- **Test 3:** The message input field is empty after previously entered text is cleared.
 
 ---
 
