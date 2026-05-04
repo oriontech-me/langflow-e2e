@@ -206,7 +206,6 @@ for (const { label, options, skipReason } of targets) {
 
           // Poll while Stop is visible (max 5s) to detect text growth deterministically.
           // prevLength is captured after Stop appears so the model has already started.
-          let streamingObserved = false;
           const prevLength = (await chatMessage.innerText()).trim().length;
           const deadline = Date.now() + 5000;
 
@@ -214,10 +213,7 @@ for (const { label, options, skipReason } of targets) {
             const stopVisible = await stopButton.isVisible().catch(() => false);
             if (!stopVisible) break;
             const currentLength = (await chatMessage.innerText()).trim().length;
-            if (currentLength > prevLength) {
-              streamingObserved = true;
-              break;
-            }
+            if (currentLength > prevLength) break;
             await page.waitForTimeout(100);
           }
 
@@ -230,9 +226,6 @@ for (const { label, options, skipReason } of targets) {
           // or div-chat-message may only be applied after streaming completes (making .last()
           // point at the previous stable response throughout). The finalText check above
           // catches truly broken streaming (empty response). No assertion when unobservable.
-          if (streamingObserved) {
-            expect.soft(streamingObserved, "Text must grow while Stop button is visible").toBe(true);
-          }
 
           // "Finished in Xs" only appears when the frontend duration timer fires
           // (depends on isBuilding cycle + React render). node_duration_agent in the
