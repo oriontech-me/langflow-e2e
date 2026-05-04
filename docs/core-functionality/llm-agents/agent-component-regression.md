@@ -16,7 +16,7 @@ If any of these tests fail, the LLM Agent is broken for Playground use.
 
 ---
 
-## Step-by-step *(required)*
+## Step by step *(required)*
 
 The spec generates **2 tests per active model** via `getTestTargets()`. By default (nightly/CI) it runs 1 model per provider; `ALL_MODELS=true` runs all models from `models.json`.
 
@@ -64,7 +64,7 @@ Kept separate from the suite because it interrupts the execution state.
 
 ---
 
-## Validation criteria *(required)*
+## Validation criterion *(required)*
 - Agent responds with non-empty text even without connected tools
 - Reasoning steps ("Finished in Xs") appear when the model uses them (conditional check)
 - Stop button halts generation and the input returns to its normal state
@@ -99,7 +99,7 @@ Kept separate from the suite because it interrupts the execution state.
 
 ---
 
-## When to revisit this test *(optional)*
+## When to review this test *(optional)*
 - If the "Simple Agent" template is renamed or removed from Langflow
 - If the default streaming behavior changes (e.g., batch response instead of progressive tokens)
 - If the `node_duration_agent` field is renamed or removed from the canvas

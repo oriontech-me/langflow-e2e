@@ -1,12 +1,10 @@
-# Spec: collect-models
-
-**Test file:** `tests/collect-models.spec.ts`
+# Collect Models
 
 **Last validated:** Langflow 1.10.x
 
 ---
 
-## What this test validates
+## What this test validates *(required)*
 
 This is a utility spec — not a regression assertion test. It exists to populate two local data files used by LLM agent and model-provider specs as preconditions:
 
@@ -17,13 +15,13 @@ If this spec is not run before the LLM agent specs, those specs fall back to a h
 
 ---
 
-## Tags
+## Tags *(required)*
 
 _(none — this is a setup helper, not a validation test)_
 
 ---
 
-## Step by step
+## Step by step *(required)*
 
 1. Navigate to Settings → Model Providers
 2. For each configured provider (OpenAI, Anthropic, Google):
@@ -37,7 +35,7 @@ _(none — this is a setup helper, not a validation test)_
 
 ---
 
-## Validation criterion
+## Validation criterion *(required)*
 
 - `data/models.json` is written with at least one model per provider whose API key is set in the environment
 - `data/providers.json` is written with one record per provider; `status` is `"active"` if the direct API call returned 2xx, `"inactive"` otherwise
@@ -45,7 +43,7 @@ _(none — this is a setup helper, not a validation test)_
 
 ---
 
-## External dependencies
+## External dependencies *(required)*
 
 - `src/frontend/src/pages/SettingsPage/pages/GlobalVariablesPage/index.tsx` — Settings navigation; if the `sidebar-nav-Model Providers` testid changes, the spec cannot reach the provider list
 - `src/frontend/src/components/core/modelProviderTag/` — provider list items (testids like `provider-item-OpenAI`) and model toggles (`llm-toggle-*`); any rename breaks model collection
@@ -53,7 +51,7 @@ _(none — this is a setup helper, not a validation test)_
 
 ---
 
-## What this test does not cover
+## What this test does not cover *(optional)*
 
 - Does not assert that specific models are returned — only that the collection and file-write succeed
 - Does not validate provider responses in detail — only checks HTTP status 2xx vs non-2xx
@@ -61,21 +59,21 @@ _(none — this is a setup helper, not a validation test)_
 
 ---
 
-## Preconditions
+## Preconditions *(optional)*
 
 - Langflow instance running and accessible at `PLAYWRIGHT_BASE_URL`
 - At least one provider API key set in `.env` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GOOGLE_API_KEY`)
 
 ---
 
-## When to review this test
+## When to review this test *(optional)*
 
 - Whenever the Settings → Model Providers UI changes button labels, testids, or layout
 - Whenever a new provider is added to Langflow and should be included in the model collection
 
 ---
 
-## Notes
+## Notes *(optional)*
 
 - In CI (`weekly-stable.yml`) this spec runs as a dedicated **Collect models** step before the `@stable` suite, ensuring `models.json` is on disk before Playwright's collection phase. The step uses `continue-on-error: true` so a missing API key does not block the rest of the run.
 - Run this spec locally before any LLM agent or model-provider specs: `npx playwright test tests/collect-models.spec.ts`
