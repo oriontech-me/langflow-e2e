@@ -59,10 +59,10 @@ Three behaviors are covered:
 
 ## External dependencies *(required)*
 
-- `components/core/playgroundComponent/chat-view/chat-messages/components/message-options.tsx` — `EditMessageButton` renders the Pen icon; the icon gets `data-testid="icon-Pen"` from `genericIconComponent` when no explicit `dataTestId` is provided
-- `components/core/playgroundComponent/chat-view/chat-messages/components/edit-message-field.tsx` — `data-testid="save-button"` and `data-testid="cancel-button"` must remain stable
-- `components/core/playgroundComponent/chat-view/chat-header/components/session-more-menu.tsx` — `data-testid="message-logs-option"` triggers the Session Logs modal
-- `components/core/playgroundComponent/chat-view/chat-header/components/chat-header.tsx` — `dataTestid="chat-header-more-menu"` is the more-menu trigger in the chat header
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-messages/components/message-options.tsx` — `EditMessageButton` renders the Pen icon; the icon gets `data-testid="icon-Pen"` from `genericIconComponent` when no explicit `dataTestId` is provided
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-messages/components/edit-message-field.tsx` — `data-testid="save-button"` and `data-testid="cancel-button"` must remain stable
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/session-more-menu.tsx` — `data-testid="message-logs-option"` triggers the Session Logs modal
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/chat-header.tsx` — `dataTestid="chat-header-more-menu"` is the more-menu trigger in the chat header
 
 ---
 
