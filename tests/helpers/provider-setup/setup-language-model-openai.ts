@@ -1,17 +1,6 @@
 import type { Page } from "@playwright/test";
 
-/**
- * Configures the Language Model node via "Setup Provider" and selects gpt-4o-mini.
- *
- * The Language Model component ships unconfigured in Langflow templates; without
- * this step the flow fails with "A model selection is required".
- *
- * Requires OPENAI_API_KEY in the environment — guard the test with
- * test.skip(!process.env.OPENAI_API_KEY) before calling this helper.
- *
- * Call site must first click the Language Model node so its inline fields
- * are in the viewport before invoking this helper.
- */
+// Requires the Language Model node to be clicked before calling so its fields are in the viewport.
 export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
   const modelDropdown = page.getByTestId("model_model");
   const hasModelDropdown = await modelDropdown.isVisible({ timeout: 5000 }).catch(() => false);
@@ -52,7 +41,7 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
     const toggles = page.locator('[data-testid^="llm-toggle"]');
     const toggleCount = await toggles.count();
     for (let i = 0; i < toggleCount; i++) {
-      if ((await toggles.nth(i).getAttribute("aria-checked")) !== "true") {
+      if (!(await toggles.nth(i).isChecked())) {
         await toggles.nth(i).click();
       }
     }
@@ -63,12 +52,9 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
   }
 
   await modelDropdown.click();
-  await page
+  const gpt4oMiniOption = page
     .locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" })
-    .first()
-    .waitFor({ state: "visible", timeout: 10000 });
-  await page
-    .locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" })
-    .first()
-    .click();
+    .first();
+  await gpt4oMiniOption.waitFor({ state: "visible", timeout: 10000 });
+  await gpt4oMiniOption.click();
 }

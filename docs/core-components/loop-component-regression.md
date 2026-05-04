@@ -1,6 +1,6 @@
 # Loop Component — Rendering, Error and Iteration
 
-**Last validated:** Langflow 1.10.x (timeout corrected 2026-04-30, fixes #87)
+**Last validated:** Langflow 1.10.x
 
 ---
 
@@ -45,8 +45,8 @@ If any of these tests fails, the Loop component is broken in the product: either
 3. Click the template and wait for `title-Loop` to appear
 4. Verify that there are edges on the canvas (confirms template wiring)
 5. Verify the 4 handles of the Loop (same criterion as Test 1)
-6. Change `int_int_max_results` to `2` (limit ArXiv to 2 results)
-7. Click "Setup Provider" on the Language Model component, select OpenAI, fill in `OPENAI_API_KEY`, save and select `gpt-4o-mini`
+6. Click "Setup Provider" on the Language Model component, select OpenAI, fill in `OPENAI_API_KEY`, save and select `gpt-4o-mini`
+7. Change `int_int_max_results` to `2` (limit ArXiv to 2 results)
 8. Open the Playground via `playground-btn-flow-io`
 9. Type "transformer neural networks" in `input-chat-playground` and send
 10. Wait for `chat-message-AI-*` to appear (timeout 240 s)
