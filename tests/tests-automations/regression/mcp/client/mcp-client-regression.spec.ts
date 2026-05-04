@@ -150,6 +150,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
 
   test(
     "unreachable HTTP server results in empty tool dropdown",
+    // @stable intentionally omitted — add after validating against a running Langflow instance
     { tag: ["@mcp", "@regression"] },
     async ({ page }) => {
       const BAD_SERVER = "bad-server";
@@ -213,6 +214,24 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
             document.querySelector('[data-testid="dropdown_str_tool"]') as HTMLElement
           )?.click();
         });
+
+        // Confirm the dropdown is actually open before asserting zero options.
+        // This prevents a false-positive where the evaluate click fails silently
+        // and toHaveCount(0) trivially passes because the dropdown never opened.
+        await page.waitForFunction(
+          () => {
+            const el = document.querySelector('[data-testid="dropdown_str_tool"]');
+            return (
+              el?.getAttribute("aria-expanded") === "true" ||
+              !!document.querySelector('[role="listbox"]') ||
+              !!document.querySelector("[data-radix-popper-content-wrapper]")
+            );
+          },
+          { timeout: 5000 },
+        );
+
+        // Confirm the dropdown component is still visible (guards against crash/disappear)
+        await expect(page.getByTestId("dropdown_str_tool")).toBeVisible({ timeout: 3000 });
 
         // No tool options should appear — the server is unreachable
         const toolOptions = page.locator('[data-testid$="-option"]');
