@@ -14,25 +14,30 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
 
   test(
     "playground shows error when LLM run endpoint returns 500 (mocked invalid API key)",
-    { tag: ["@release", "@workspace", "@regression", "@agents"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@agents", "@playground"] },
     async ({ page }) => {
       createdFlowId = await setupPlayground(page);
 
-      // Mock the run endpoint to simulate an invalid API-key error from the LLM
-      await page.route("**/api/v1/run/**", async (route) => {
-        await route.fulfill({
-          status: 500,
-          contentType: "application/json",
-          body: JSON.stringify({
-            detail: "Invalid API key. Please check your OpenAI API key.",
-          }),
-        });
-      });
-
-      // Open Playground
+      // Open Playground first so initialization build calls are not intercepted
       await page.getByTestId("playground-btn-flow-io").click();
       await page.waitForSelector('[data-testid="input-chat-playground"]', {
         timeout: 15000,
+      });
+
+      // Langflow's playground uses /api/v1/build/{flowId}/flow for execution (not /run).
+      // Mock only the /flow call; let other build calls (e.g. vertices order) pass through.
+      await page.route("**/api/v1/build/**", async (route) => {
+        if (route.request().url().includes("/flow")) {
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({
+              detail: "Invalid API key. Please check your OpenAI API key.",
+            }),
+          });
+        } else {
+          await route.continue();
+        }
       });
 
       // Send a message to trigger the mocked error
@@ -67,32 +72,43 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
 
   test(
     "playground input remains usable after API error (mocked)",
-    { tag: ["@release", "@workspace", "@regression", "@agents"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@agents", "@playground"] },
     async ({ page }) => {
       createdFlowId = await setupPlayground(page);
 
-      // Mock the run endpoint to return a 500 error
-      await page.route("**/api/v1/run/**", async (route) => {
-        await route.fulfill({
-          status: 500,
-          contentType: "application/json",
-          body: JSON.stringify({
-            detail: "Invalid API key. Please check your OpenAI API key.",
-          }),
-        });
-      });
-
-      // Open Playground and send a message
+      // Open Playground first so initialization build calls are not intercepted
       await page.getByTestId("playground-btn-flow-io").click();
       await page.waitForSelector('[data-testid="input-chat-playground"]', {
         timeout: 15000,
       });
 
+      // Mock only the /flow execution call; let other build calls pass through
+      await page.route("**/api/v1/build/**", async (route) => {
+        if (route.request().url().includes("/flow")) {
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({
+              detail: "Invalid API key. Please check your OpenAI API key.",
+            }),
+          });
+        } else {
+          await route.continue();
+        }
+      });
+
+      // Register the response waiter before triggering the request so we can
+      // confirm the full mocked 500 cycle completed before asserting recovery
+      const runResponsePromise = page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/v1/build/") && resp.url().includes("/flow"),
+        { timeout: 10000 },
+      );
+
       await page.getByTestId("input-chat-playground").last().fill("trigger error");
       await page.getByTestId("button-send").last().click();
 
-      // Wait briefly for the error to be processed
-      await page.waitForTimeout(3000);
+      await runResponsePromise;
 
       // The chat input must still be visible and interactive after the error
       const input = page.getByTestId("input-chat-playground").last();
