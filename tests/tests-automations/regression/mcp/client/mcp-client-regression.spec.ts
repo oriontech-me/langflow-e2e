@@ -15,6 +15,7 @@ const MCP_JSON_CONFIG = JSON.stringify({
 
 test.describe("MCP Client – Configure and Execute Tool", () => {
   test.afterEach(async ({ page }) => {
+    const serversToClean = [MCP_SERVER_NAME, "bad-server", "http-form-server"];
     try {
       const token = await page.request
         .post("/api/v1/login", {
@@ -22,9 +23,11 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
         })
         .then((r) => r.json())
         .then((d) => d.access_token as string);
-      await page.request.delete(`/api/v2/mcp/servers/${MCP_SERVER_NAME}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      for (const name of serversToClean) {
+        await page.request.delete(`/api/v2/mcp/servers/${name}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      }
     } catch {
       // best-effort
     }
@@ -141,6 +144,79 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
         await expect(outputBtn).toBeVisible({ timeout: 60000 });
         await outputBtn.click();
         await expect(page.getByText("oi").first()).toBeVisible({ timeout: 10000 });
+      });
+    },
+  );
+
+  test(
+    "unreachable HTTP server results in empty tool dropdown",
+    { tag: ["@mcp", "@regression"] },
+    async ({ page }) => {
+      const BAD_SERVER = "bad-server";
+
+      await test.step("Open blank flow", async () => {
+        await awaitBootstrapTest(page);
+        await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
+        await page.getByTestId("blank-flow").click();
+      });
+
+      await test.step("Pre-clean: delete bad-server if it exists", async () => {
+        const token = await page.request
+          .post("/api/v1/login", {
+            form: { username: "langflow", password: "langflow" },
+          })
+          .then((r) => r.json())
+          .then((d) => d.access_token as string);
+        await page.request.delete(`/api/v2/mcp/servers/${BAD_SERVER}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      });
+
+      await test.step("Register unreachable HTTP server via HTTP tab", async () => {
+        await page.getByTestId("sidebar-nav-mcp").click();
+        await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
+          timeout: 15000,
+        });
+        await page.getByTestId("sidebar-add-mcp-server-button").click();
+        await expect(page.getByTestId("add-mcp-server-button")).toBeVisible({
+          timeout: 15000,
+        });
+
+        await page.getByTestId("http-tab").click();
+        await expect(page.getByTestId("http-name-input")).toBeVisible({ timeout: 5000 });
+        await page.getByTestId("http-name-input").fill(BAD_SERVER);
+        await page.getByTestId("http-url-input").fill("http://localhost:1/mcp");
+
+        await page.getByTestId("add-mcp-server-button").click();
+        await expect(page.getByTestId("add-mcp-server-button")).toBeHidden({
+          timeout: 10000,
+        });
+
+        await expect(
+          page.getByTestId(`add-component-button-${BAD_SERVER}`),
+        ).toBeVisible({ timeout: 30000 });
+      });
+
+      await test.step("Add MCPTools component and verify empty tool dropdown", async () => {
+        await page.getByTestId(`add-component-button-${BAD_SERVER}`).click();
+        await expect(page.getByTestId("dropdown_str_tool")).toBeVisible({
+          timeout: 15000,
+        });
+        await zoomOut(page, 3);
+
+        // Wait for backend to attempt connection (it may fail silently)
+        await page.waitForTimeout(5000);
+
+        // Open dropdown and verify it has no selectable tool options
+        await page.evaluate(() => {
+          (
+            document.querySelector('[data-testid="dropdown_str_tool"]') as HTMLElement
+          )?.click();
+        });
+
+        // No tool options should appear — the server is unreachable
+        const toolOptions = page.locator('[data-testid$="-option"]');
+        await expect(toolOptions).toHaveCount(0, { timeout: 5000 });
       });
     },
   );
