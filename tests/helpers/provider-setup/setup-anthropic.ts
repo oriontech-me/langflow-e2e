@@ -42,7 +42,7 @@ export async function setupAnthropic(
 
   if (apiKeyInputVisible) {
     await apiKeyInput.fill(process.env.ANTHROPIC_API_KEY ?? "");
-    await page.getByRole("button", { name: /^(Save|Replace|Retry)$/i }).click();
+    await page.getByRole("button", { name: /Save|Replace|Retry/i }).click();
   }
 
   // Step 5: Enable all available Anthropic models.

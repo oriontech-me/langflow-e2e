@@ -42,7 +42,7 @@ export async function setupGoogle(
 
   if (apiKeyInputVisible) {
     await apiKeyInput.fill(process.env.GOOGLE_API_KEY ?? "");
-    await page.getByRole("button", { name: /^(Save|Replace|Retry)$/i }).click();
+    await page.getByRole("button", { name: /Save|Replace|Retry/i }).click();
   }
 
   // Step 5: Enable all available Google Generative AI models.
