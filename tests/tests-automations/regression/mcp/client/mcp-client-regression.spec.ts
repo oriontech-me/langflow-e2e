@@ -239,4 +239,75 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       });
     },
   );
+
+  test(
+    "configures MCP server via HTTP form tab and verifies registration",
+    { tag: ["@mcp", "@regression"] },
+    async ({ page }) => {
+      const HTTP_SERVER = "http-form-server";
+
+      await test.step("Open blank flow", async () => {
+        await awaitBootstrapTest(page);
+        await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
+        await page.getByTestId("blank-flow").click();
+      });
+
+      await test.step("Pre-clean: delete http-form-server if it exists", async () => {
+        const token = await page.request
+          .post("/api/v1/login", {
+            form: { username: "langflow", password: "langflow" },
+          })
+          .then((r) => r.json())
+          .then((d) => d.access_token as string);
+        await page.request.delete(`/api/v2/mcp/servers/${HTTP_SERVER}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      });
+
+      await test.step("Register server via HTTP form tab", async () => {
+        await page.getByTestId("sidebar-nav-mcp").click();
+        await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
+          timeout: 15000,
+        });
+        await page.getByTestId("sidebar-add-mcp-server-button").click();
+        await expect(page.getByTestId("add-mcp-server-button")).toBeVisible({
+          timeout: 15000,
+        });
+
+        await page.getByTestId("http-tab").click();
+        await expect(page.getByTestId("http-name-input")).toBeVisible({ timeout: 5000 });
+        await page.getByTestId("http-name-input").fill(HTTP_SERVER);
+        await page.getByTestId("http-url-input").fill("http://localhost:1/mcp");
+
+        await page.getByTestId("add-mcp-server-button").click();
+        await expect(page.getByTestId("add-mcp-server-button")).toBeHidden({
+          timeout: 10000,
+        });
+      });
+
+      await test.step("Verify server appears in sidebar", async () => {
+        await expect(
+          page.getByTestId(`add-component-button-${HTTP_SERVER}`),
+        ).toBeVisible({ timeout: 30000 });
+      });
+
+      await test.step("Verify server is persisted in the database", async () => {
+        const token = await page.request
+          .post("/api/v1/login", {
+            form: { username: "langflow", password: "langflow" },
+          })
+          .then((r) => r.json())
+          .then((d) => d.access_token as string);
+
+        const resp = await page.request.get("/api/v2/mcp/servers", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        expect(resp.status()).toBe(200);
+
+        const servers: Array<{ name: string }> = await resp.json();
+        const registered = servers.find((s) => s.name === HTTP_SERVER);
+        expect(registered, `Server "${HTTP_SERVER}" not found in API response`).toBeTruthy();
+      });
+    },
+  );
 });
