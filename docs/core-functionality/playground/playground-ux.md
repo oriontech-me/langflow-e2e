@@ -12,7 +12,7 @@ Validates the chat UX behavior in the Playground using a deterministic flow (Cha
 
 ## Tags *(required)*
 
-`@release` `@regression` `@playground`
+`@release` `@regression` `@playground` `@stable`
 
 ---
 
