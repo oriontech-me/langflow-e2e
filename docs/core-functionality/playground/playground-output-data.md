@@ -13,7 +13,7 @@ Verifies that the Playground correctly renders structured data outputs generated
 
 | Test | Tags |
 |---|---|
-| JSON Data output as code block | `@release` `@regression` `@playground` _(`@stable` removed — tracked in [#120](https://github.com/oriontech-me/langflow-e2e/issues/120))_ |
+| JSON Data output as code block | `@stable` `@release` `@regression` `@playground` |
 | DataFrame output as Markdown table | `@stable` `@release` `@regression` `@playground` |
 
 ## Validation criterion
@@ -29,4 +29,4 @@ None. The tests use the native Langflow **Mock Data** component — no API key o
 
 ## Last validated
 
-1.10.x
+1.10.x (re-validated after #120 — `runNoInputFlow` now waits for first message instead of exact count 2; `cleanAllFlows` replaced with REST API-based flow deletion)
