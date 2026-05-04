@@ -13,6 +13,9 @@ const MCP_JSON_CONFIG = JSON.stringify({
   },
 });
 
+// Serial mode required — Tests 1 and 4 share the "everything" npx server and conflict when run in parallel
+test.describe.configure({ mode: "serial" });
+
 test.describe("MCP Client – Configure and Execute Tool", () => {
   test.afterEach(async ({ page }) => {
     const serversToClean = [MCP_SERVER_NAME, "bad-server", "http-form-server"];
