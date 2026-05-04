@@ -242,6 +242,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
 
   test(
     "configures MCP server via HTTP form tab and verifies registration",
+    // @stable intentionally omitted — add after validating against a running Langflow instance
     { tag: ["@mcp", "@regression"] },
     async ({ page }) => {
       const HTTP_SERVER = "http-form-server";
@@ -313,6 +314,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
 
   test(
     "selects get-sum tool, provides numeric inputs, and verifies sum in output",
+    // @stable intentionally omitted — add after validating against a running Langflow instance
     { tag: ["@mcp", "@regression"] },
     async ({ page }) => {
       // Allow backend errors — npx server may return transient errors while starting
@@ -385,7 +387,8 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
             document.querySelector('[data-testid="dropdown_str_tool"]') as HTMLElement
           )?.click();
         });
-        // get-sum is the numeric addition tool exposed by server-everything (index 6)
+        // get-sum is the numeric addition tool exposed by server-everything (index 6 in the tool list)
+        // — index may shift if server-everything reorders tools in a future release
         await page.waitForFunction(
           () => !!document.querySelector('[data-testid="get-sum-6-option"]'),
           { timeout: 15000 },
@@ -416,7 +419,10 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
           .first();
         await expect(outputBtn).toBeVisible({ timeout: 60000 });
         await outputBtn.click();
-        await expect(page.getByText("8").first()).toBeVisible({ timeout: 10000 });
+        const outputModal = page.locator('[role="dialog"]');
+        await expect(outputModal).toBeVisible({ timeout: 10000 });
+        // The get-sum tool returns "The sum of 3 and 5 is 8." — match the full sentence to avoid false positives
+        await expect(outputModal.getByText("The sum of 3 and 5 is 8.")).toBeVisible({ timeout: 5000 });
       });
     },
   );
