@@ -643,7 +643,7 @@
 #### 15.10 Settings and UI Configuration
 - [-] Access Settings page
 - [-] Message history settings
-- [-] Change appearance/theme settings
+- [x] Change appearance/theme settings — dark/light toggle updates #body.dark class → `ui-ux/settings-theme-toggle.spec.ts`
 - [-] Keyboard shortcuts work in editor
 - [~] All documented shortcuts work
 
