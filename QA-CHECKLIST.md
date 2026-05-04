@@ -411,9 +411,9 @@
 #### 9.2 History and Session
 - [-] Configure custom session ID → `playground/playground-session-id.spec.ts`
 - [-] Switch session ID — starts new conversation → `playground/playground-session-id.spec.ts`
-- [-] Edit user message — hover reveals edit button, saved changes replace original text → `core-functionality/playground/playground-message-edit.spec.ts`
-- [-] Cancel message edit — original text is preserved → `core-functionality/playground/playground-message-edit.spec.ts`
-- [-] Message edited in playground is reflected in Session Logs → `core-functionality/playground/playground-message-edit.spec.ts`
+- [x] Edit user message — hover reveals edit button, saved changes replace original text → `core-functionality/playground/playground-message-edit.spec.ts`
+- [x] Cancel message edit — original text is preserved → `core-functionality/playground/playground-message-edit.spec.ts`
+- [x] Message edited in playground is reflected in Session Logs → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Clear full session history (Default session) → `playground/playground-clear-history.spec.ts`
 - [x] Delete user-created session → `playground/playground-clear-history.spec.ts`
 - [-] History persists when reopening Playground → `playground/playground-history-persist.spec.ts`
