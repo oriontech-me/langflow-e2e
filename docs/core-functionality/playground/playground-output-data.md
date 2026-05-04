@@ -11,7 +11,10 @@ Verifies that the Playground correctly renders structured data outputs generated
 
 ## Tags
 
-`@stable` `@release` `@regression` `@playground`
+| Test | Tags |
+|---|---|
+| JSON Data output as code block | `@release` `@regression` `@playground` _(`@stable` removed — tracked in [#120](https://github.com/oriontech-me/langflow-e2e/issues/120))_ |
+| DataFrame output as Markdown table | `@stable` `@release` `@regression` `@playground` |
 
 ## Validation criterion
 

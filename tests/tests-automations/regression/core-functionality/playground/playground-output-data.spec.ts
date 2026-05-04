@@ -102,7 +102,7 @@ test.describe("Playground Output – Structured Data", () => {
 
   test(
     "playground must render JSON Data output as a code block",
-    { tag: ["@stable", "@release", "@regression", "@playground"] },
+    { tag: ["@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step(
         "Set up Mock Data (data_output) → Chat Output flow and open playground",
