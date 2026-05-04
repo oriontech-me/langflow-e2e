@@ -14,7 +14,7 @@ test.describe("Playground Empty-Message Send Behavior", () => {
 
   test(
     "send button is enabled when input is empty (Langflow bug)",
-    { tag: ["@release", "@workspace", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       createdFlowId = await setupPlayground(page);
       await page.getByTestId("playground-btn-flow-io").click();
@@ -40,7 +40,7 @@ test.describe("Playground Empty-Message Send Behavior", () => {
 
   test(
     "send button becomes enabled after typing a message",
-    { tag: ["@release", "@workspace", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       createdFlowId = await setupPlayground(page);
       await page.getByTestId("playground-btn-flow-io").click();
@@ -62,7 +62,7 @@ test.describe("Playground Empty-Message Send Behavior", () => {
 
   test(
     "clearing the input after typing leaves the field empty",
-    { tag: ["@release", "@workspace", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       createdFlowId = await setupPlayground(page);
       await page.getByTestId("playground-btn-flow-io").click();
