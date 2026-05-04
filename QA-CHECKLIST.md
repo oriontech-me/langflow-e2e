@@ -542,9 +542,12 @@
 - [-] Configure connection with external MCP server (stdio or HTTP) → `mcp/client/mcp-client-regression.spec.ts`
 - [-] List available tools via MCP protocol → `mcp/client/mcp-client-regression.spec.ts`
 - [-] Execute MCP server tool and receive result in flow → `mcp/client/mcp-client-regression.spec.ts`
+- [-] MCP server connection error — unreachable server produces empty tool dropdown → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Configure connection via HTTP form tab → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
 - [ ] List available resources via MCP protocol
 - [ ] Consume resource URI and inject content into flow
-- [ ] MCP server connection error displays clear message
 
 ---
 
@@ -647,12 +650,12 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 4 | 0 | 4 |
 | `flow-functionality/` | 20 | 18 | 1 | 1 |
 | `mcp/server/` | 7 | 3 | 0 | 4 |
-| `mcp/client/` | 6 | 0 | 0 | 6 |
+| `mcp/client/` | 9 | 7 | 0 | 2 |
 | `project-management/` | 11 | 9 | 1 | 1 |
 | `templates/` | 35 | 33 | 0 | 2 |
 | `ui-ux/` — Canvas | 30 | 28 | 1 | 1 |
 | `ui-ux/` — Settings | 4 | 4 | 0 | 0 |
-| **TOTAL** | **266** | **213 (80%)** | **3** | **50 (19%)** |
+| **TOTAL** | **269** | **220 (82%)** | **3** | **46 (17%)** |
 
 ---
 
