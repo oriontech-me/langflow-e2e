@@ -310,4 +310,114 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       });
     },
   );
+
+  test(
+    "selects get-sum tool, provides numeric inputs, and verifies sum in output",
+    { tag: ["@mcp", "@regression"] },
+    async ({ page }) => {
+      // Allow backend errors — npx server may return transient errors while starting
+      (page as any).allowFlowErrors();
+
+      await test.step("Open blank flow", async () => {
+        await awaitBootstrapTest(page);
+        await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
+        await page.getByTestId("blank-flow").click();
+      });
+
+      await test.step("Register everything server via JSON and wait for tools", async () => {
+        const token = await page.request
+          .post("/api/v1/login", {
+            form: { username: "langflow", password: "langflow" },
+          })
+          .then((r) => r.json())
+          .then((d) => d.access_token as string);
+        await page.request.delete(`/api/v2/mcp/servers/${MCP_SERVER_NAME}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        await page.getByTestId("sidebar-nav-mcp").click();
+        await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
+          timeout: 15000,
+        });
+        await page.getByTestId("sidebar-add-mcp-server-button").click();
+        await expect(page.getByTestId("add-mcp-server-button")).toBeVisible({
+          timeout: 15000,
+        });
+        await page.getByTestId("json-tab").click();
+        await expect(page.getByTestId("json-input")).toBeVisible({ timeout: 5000 });
+        await page.getByTestId("json-input").fill(MCP_JSON_CONFIG);
+
+        await page.getByTestId("add-mcp-server-button").click();
+        await expect(page.getByTestId("add-mcp-server-button")).toBeHidden({
+          timeout: 10000,
+        });
+
+        await expect(
+          page.getByTestId(`add-component-button-${MCP_SERVER_NAME}`),
+        ).toBeVisible({ timeout: 30000 });
+
+        await expect
+          .poll(
+            async () => {
+              const resp = await page.request.get(
+                "/api/v2/mcp/servers?action_count=true",
+              );
+              const servers: Array<{ name: string; toolsCount: number | null }> =
+                await resp.json();
+              return servers.find((s) => s.name === MCP_SERVER_NAME)?.toolsCount ?? null;
+            },
+            { timeout: 90000, intervals: [3000] },
+          )
+          .not.toBeNull();
+      });
+
+      await test.step("Add MCPTools component to canvas", async () => {
+        await page.getByTestId(`add-component-button-${MCP_SERVER_NAME}`).click();
+        await expect(page.getByTestId("dropdown_str_tool")).toBeVisible({
+          timeout: 15000,
+        });
+        await zoomOut(page, 3);
+      });
+
+      await test.step("Select get-sum tool from dropdown", async () => {
+        await page.evaluate(() => {
+          (
+            document.querySelector('[data-testid="dropdown_str_tool"]') as HTMLElement
+          )?.click();
+        });
+        // get-sum is the numeric addition tool exposed by server-everything (index 6)
+        await page.waitForFunction(
+          () => !!document.querySelector('[data-testid="get-sum-6-option"]'),
+          { timeout: 15000 },
+        );
+        await page.evaluate(() => {
+          (
+            document.querySelector('[data-testid="get-sum-6-option"]') as HTMLElement
+          )?.click();
+        });
+      });
+
+      await test.step("Fill numeric inputs a=3 and b=5", async () => {
+        // server-everything's get-sum tool exposes float inputs with testids float_float_a / float_float_b
+        await expect(page.getByTestId("float_float_a")).toBeVisible({
+          timeout: 30000,
+        });
+        await expect(page.getByTestId("float_float_b")).toBeVisible({
+          timeout: 10000,
+        });
+        await page.getByTestId("float_float_a").fill("3");
+        await page.getByTestId("float_float_b").fill("5");
+      });
+
+      await test.step("Run node and verify output contains 8", async () => {
+        await page.getByTestId("button_run_mcp tools").click();
+        const outputBtn = page
+          .locator('[data-testid^="output-inspection-response-"]')
+          .first();
+        await expect(outputBtn).toBeVisible({ timeout: 60000 });
+        await outputBtn.click();
+        await expect(page.getByText("8").first()).toBeVisible({ timeout: 10000 });
+      });
+    },
+  );
 });
