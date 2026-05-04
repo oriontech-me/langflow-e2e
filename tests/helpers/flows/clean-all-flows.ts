@@ -29,8 +29,9 @@ export const cleanAllFlows = async (page: Page) => {
 
   if (!listRes.ok()) return;
 
-  const flows: Array<{ id: string }> = await listRes.json();
-  if (!Array.isArray(flows) || flows.length === 0) return;
+  const raw = await listRes.json();
+  const flows: Array<{ id: string }> = Array.isArray(raw) ? raw : (raw.flows ?? []);
+  if (flows.length === 0) return;
 
   for (const flow of flows) {
     await page.request.delete(`/api/v1/flows/${flow.id}`, { headers });

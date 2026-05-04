@@ -29,4 +29,4 @@ None. The tests use the native Langflow **Mock Data** component — no API key o
 
 ## Last validated
 
-1.10.x (re-validated after #120 — `runNoInputFlow` now waits for first message instead of exact count 2; `cleanAllFlows` retry wrapper added for Radix dropdown race)
+1.10.x (re-validated after #120 — `runNoInputFlow` now waits for first message instead of exact count 2; `cleanAllFlows` replaced with REST API-based flow deletion)
