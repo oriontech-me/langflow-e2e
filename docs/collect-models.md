@@ -19,7 +19,7 @@ If this spec is not run before the LLM agent specs, those specs fall back to a h
 
 ## Tags
 
-`@stable`
+_(none — this is a setup helper, not a validation test)_
 
 ---
 
@@ -77,5 +77,6 @@ If this spec is not run before the LLM agent specs, those specs fall back to a h
 
 ## Notes
 
-- Run this spec before any LLM agent or model-provider specs: `npx playwright test tests/collect-models.spec.ts`
+- In CI (`weekly-stable.yml`) this spec runs as a dedicated **Collect models** step before the `@stable` suite, ensuring `models.json` is on disk before Playwright's collection phase. The step uses `continue-on-error: true` so a missing API key does not block the rest of the run.
+- Run this spec locally before any LLM agent or model-provider specs: `npx playwright test tests/collect-models.spec.ts`
 - If `models.json` is empty after running, check that the provider panel animates in before the form is read and that button labels match (`Save` / `Replace`)
