@@ -119,18 +119,13 @@ class CustomComponent(Component):
     });
 
     await test.step("click stop button", async () => {
-      await page.waitForSelector('[data-testid="button-stop"]', {
-        timeout: 30000,
-      });
-
       await expect(page.getByTestId("button-stop").last()).toBeVisible({ timeout: 30000 });
 
       await page.getByTestId("button-stop").last().click();
     });
 
     await test.step("assert build stopped confirmation", async () => {
-      await page.waitForSelector("text=build stopped", { timeout: 30000 });
-      await expect(page.getByText("build stopped")).toBeVisible({ timeout: 5000 });
+      await expect(page.getByText("build stopped")).toBeVisible({ timeout: 30000 });
     });
   },
 );
