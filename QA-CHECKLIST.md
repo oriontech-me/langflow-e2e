@@ -418,6 +418,13 @@
 - [x] Rename unavailable for the Default Session → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename unavailable for a session with no messages → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename available and functional for a session with messages (Enter confirms, Escape cancels) → `core-functionality/playground/playground-session-rename.spec.ts`
+- [x] new-chat button creates a new session with isolated message history → `core-functionality/playground/playground-session-create-switch.spec.ts`
+- [x] Switching sessions via sidebar preserves message isolation in both directions → `core-functionality/playground/playground-session-create-switch.spec.ts`
+- [x] message-logs-option opens Session Logs modal → `core-functionality/playground/playground-session-logs.spec.ts`
+- [-] Delete messages from Session Logs table (disabled in playground context — playgroundPage === true disables row selection) → `core-functionality/playground/playground-session-logs.spec.ts`
+- [x] Individual session checkbox reveals bulk-delete-button → `core-functionality/playground/playground-session-bulk-delete.spec.ts`
+- [x] select-all-checkbox selects/deselects all non-default sessions → `core-functionality/playground/playground-session-bulk-delete.spec.ts`
+- [x] bulk-delete-button removes all selected sessions from the sidebar → `core-functionality/playground/playground-session-bulk-delete.spec.ts`
 
 #### 9.3 Advanced Playground Features
 - [x] Playground fullscreen mode → `playground/playground-fullscreen.spec.ts`
