@@ -414,6 +414,7 @@
 - [x] Edit user message — hover reveals edit button, saved changes replace original text → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Cancel message edit — original text is preserved → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Message edited in playground is reflected in Session Logs → `core-functionality/playground/playground-message-edit.spec.ts`
+- [x] Clear chat removes all messages from Default Session (clear-chat-option via header menu) → `core-functionality/playground/playground-session-clear.spec.ts`
 - [x] Clear full session history (Default session) → `playground/playground-clear-history.spec.ts`
 - [x] Delete user-created session → `playground/playground-clear-history.spec.ts`
 - [-] History persists when reopening Playground → `playground/playground-history-persist.spec.ts`
@@ -666,7 +667,7 @@
 | `api/` — REST API | 17 | 17 | 0 | 0 |
 | `core-components/` — Config | 20 | 18 | 0 | 2 |
 | `core-components/` — Components | 22 | 16 | 0 | 6 |
-| `core-functionality/playground/` | 26 | 23 | 0 | 3 |
+| `core-functionality/playground/` | 27 | 24 | 0 | 3 |
 | `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
 | `core-functionality/model-provider/` | 21 | 13 | 0 | 8 |
 | `core-functionality/llm-agents/` | 15 | 8 | 0 | 7 |
@@ -678,7 +679,7 @@
 | `templates/` | 35 | 33 | 0 | 2 |
 | `ui-ux/` — Canvas | 30 | 28 | 1 | 1 |
 | `ui-ux/` — Settings | 4 | 4 | 0 | 0 |
-| **TOTAL** | **266** | **213 (80%)** | **3** | **50 (19%)** |
+| **TOTAL** | **267** | **214 (80%)** | **3** | **50 (19%)** |
 
 ---
 
