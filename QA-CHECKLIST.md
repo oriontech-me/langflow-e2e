@@ -548,7 +548,7 @@
 - [-] Lock flow — prevents editing
 - [-] Unlock flow
 - [-] Move flow between folders via API
-- [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
+- [-] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [-] Save flow components as template
 
 #### 12.6 Flow Execution
@@ -677,14 +677,14 @@
 | `core-functionality/playground/` | 38 | 29 | 7 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 23 | 1 | 20 | 2 | 0 |
+| `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
 | `mcp/client/` | 6 | 0 | 0 | 0 | 6 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **370** | **66 (18%)** | **229 (62%)** | **6 (2%)** | **69 (19%)** |
+| **TOTAL** | **370** | **65 (18%)** | **230 (62%)** | **6 (2%)** | **69 (19%)** |
 
-> Note: `Validated [x]` = checklist bullets, not unique tests. A single `@stable` test may cover multiple bullets (e.g. the agent suite covers 7 bullets via `test.step()`). The canonical list of 53 unique `@stable` tests is in **Phase 0 — Validated** below.
+> Note: `Validated [x]` = checklist bullets, not unique tests. A single `@stable` test may cover multiple bullets (e.g. the agent suite covers 7 bullets via `test.step()`). The canonical list of 51 unique `@stable` tests is in **Phase 0 — Validated** below.
 
 ---
 
@@ -694,7 +694,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> Tests carrying the `@stable` tag — included in the weekly stable workflow. **53 tests across 21 spec files.**
+> Tests carrying the `@stable` tag — included in the weekly stable workflow. **51 tests across 20 spec files.**
 
 #### core-components/
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `core-components/loop-component-regression.spec.ts`
@@ -751,10 +751,6 @@
 - [x] playground must scroll to latest message after sending → `playground-ux.spec.ts`
 - [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
-
-#### flow-functionality/
-- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
-- [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 
 #### ui-ux/
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
