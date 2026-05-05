@@ -17,7 +17,7 @@ def wait_for_langflow(timeout: int = 120) -> bool:
 
     while time.time() - start < timeout:
         try:
-            r = requests.get(f"{BASE_URL}/health", timeout=5)
+            r = requests.get(f"{BASE_URL}/health_check", timeout=5)
             if r.status_code == 200:
                 elapsed = time.time() - start
                 print(f"Langflow is healthy after {elapsed:.1f}s")
