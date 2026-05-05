@@ -30,8 +30,10 @@ Three behaviors are covered:
 2. Open Playground (`playground-btn-flow-io`), send "Original message", wait for bot reply
 3. Hover the message group container to reveal the edit button (`icon-Pen`)
 4. Click `icon-Pen`; wait for `save-button` to confirm EditMessageField is mounted
-5. Press `Control+a` and type "Edited message"; click `save-button`
-6. Assert "Edited message" is visible and "Original message" has count 0
+5. Set textarea value via `setEditTextareaValue("Edited message")`; click `save-button`
+6. Wait for `save-button` to have count 0 (edit field closed on `onSuccess`)
+7. Assert `data-testid="chat-message-User-Edited message"` is visible
+8. Assert `data-testid="chat-message-User-Original message"` has count 0
 
 **Test 2 — Cancel edit**
 
@@ -86,4 +88,6 @@ Three behaviors are covered:
 ## Notes *(optional)*
 
 - The edit button (`icon-Pen`) is inside an `invisible group-hover:visible` container. The test hovers the `.group` container (not just the message text) and scopes the icon lookup to within it, ensuring the CSS hover state is never lost when the mouse moves to the button.
-- `save-button` visibility is used as the readiness signal for `EditMessageField` being mounted and the textarea being auto-focused, before sending keyboard input.
+- `save-button` visibility is used as the readiness signal for `EditMessageField` being mounted. After clicking save, the test waits for `save-button` count to reach 0 — this confirms `onSuccess` fired and `setEditMessage(false)` was called before asserting the result.
+- The edit textarea value is set via `setEditTextareaValue`, which calls the native `HTMLTextAreaElement.prototype.value` setter and then invokes React's `onChange` handler directly through `__reactProps$`. This is required because React 19's controlled textarea ignores synthetic DOM events dispatched by Playwright.
+- Assertions on text after edit use `data-testid="chat-message-User-{text}"` (set by `user-message.tsx`) rather than `getByText`. The playground renders bot messages via `SanitizedMarkdown` which can incidentally match user-input text; scoping to the user bubble's testid avoids false failures.
