@@ -418,6 +418,13 @@
 - [x] Rename unavailable for the Default Session → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename unavailable for a session with no messages → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename available and functional for a session with messages (Enter confirms, Escape cancels) → `core-functionality/playground/playground-session-rename.spec.ts`
+- [x] Create new session via new-chat button → `core-functionality/playground/playground-session-nav.spec.ts`
+- [x] Switch between sessions via session selector dropdown (header) → `core-functionality/playground/playground-session-nav.spec.ts`
+- [x] Open Message Logs via session more-menu → `core-functionality/playground/playground-message-logs.spec.ts`
+- [x] Delete messages inside Message Logs table → `core-functionality/playground/playground-message-logs.spec.ts`
+- [x] Select individual session checkbox → reveals bulk-delete-button → `core-functionality/playground/playground-bulk-delete.spec.ts`
+- [x] Select all non-default sessions via select-all-checkbox → `core-functionality/playground/playground-bulk-delete.spec.ts`
+- [x] Bulk delete selected sessions → Default Session preserved → `core-functionality/playground/playground-bulk-delete.spec.ts`
 
 #### 9.3 Advanced Playground Features
 - [x] Playground fullscreen mode → `playground/playground-fullscreen.spec.ts`
@@ -657,7 +664,7 @@
 | `api/` — REST API | 17 | 17 | 0 | 0 |
 | `core-components/` — Config | 20 | 18 | 0 | 2 |
 | `core-components/` — Components | 22 | 16 | 0 | 6 |
-| `core-functionality/playground/` | 19 | 16 | 0 | 3 |
+| `core-functionality/playground/` | 26 | 23 | 0 | 3 |
 | `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
 | `core-functionality/model-provider/` | 21 | 13 | 0 | 8 |
 | `core-functionality/llm-agents/` | 15 | 8 | 0 | 7 |
