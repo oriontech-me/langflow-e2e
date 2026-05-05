@@ -36,14 +36,14 @@ The Default session is excluded from bulk operations by design: `selectableSessi
 
 1. Create a ChatInput → ChatOutput flow and open the Playground
 2. Click `new-chat` twice to create two non-default sessions
-3. Click `select-all-checkbox`
-4. Assert `bulk-delete-button` is visible (at least one session selected)
+3. Assert `select-all-checkbox` is visible; click it; assert `bulk-delete-button` is visible
+4. Assert every per-session checkbox (`[data-testid$="-checkbox"]:not([data-testid="select-all-checkbox"])`) is in checked state; assert count ≥ 2
 
 **Test 3 — bulk-delete-button must delete selected sessions**
 
 1. Create a ChatInput → ChatOutput flow and open the Playground
-2. Click `new-chat` twice; record total `session-selector` count and selectable count
-3. Click `select-all-checkbox`; assert `bulk-delete-button` is visible
+2. Click `new-chat` twice; record total `session-selector` count (`totalBefore`)
+3. Assert `select-all-checkbox` is visible; click it; assert `bulk-delete-button` is visible; record selectable checkbox count (`selectableCount`)
 4. Click `bulk-delete-button`
 5. Assert `session-selector` count is `totalBefore - selectableCount`
 6. Assert "Default Session" entry is still visible
