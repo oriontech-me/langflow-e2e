@@ -548,7 +548,7 @@
 - [-] Lock flow — prevents editing
 - [-] Unlock flow
 - [-] Move flow between folders via API
-- [-] Publish flow
+- [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [-] Save flow components as template
 
 #### 12.6 Flow Execution
