@@ -54,9 +54,10 @@ test.describe("Playground – Message Logs", () => {
         await expect(
           page.getByText("Session logs").first(),
         ).toBeVisible({ timeout: 10000 });
-        // The sent message must appear inside the logs table.
+        // Scope to the dialog to avoid matching the chat history in the background.
+        // The table shows both the user message and bot echo, so .first() disambiguates.
         await expect(
-          page.getByText("log-test-message").last(),
+          page.locator('[role="dialog"]').getByText("log-test-message").first(),
         ).toBeVisible({ timeout: 10000 });
       });
     },
@@ -70,8 +71,10 @@ test.describe("Playground – Message Logs", () => {
   // skipped and documents the finding for future re-evaluation.
   test(
     "delete-row-button removes selected messages from the Session Logs table",
-    { tag: ["@stable", "@regression", "@playground"] },
+    { tag: ["@regression", "@playground"] },
     async ({ page }) => {
+      // @stable is intentionally absent: this test is permanently skipped because the feature
+      // under test (row deletion) is disabled in the playground context — it cannot be validated.
       test.skip(
         true,
         "Row selection and delete are disabled in playground context (playgroundPage === true). " +
