@@ -548,7 +548,7 @@
 - [-] Lock flow — prevents editing
 - [-] Unlock flow
 - [-] Move flow between folders via API
-- [-] Publish flow
+- [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [-] Save flow components as template
 
 #### 12.6 Flow Execution
@@ -773,7 +773,7 @@
 | `core-functionality/auth/` | 18 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
 | `core-functionality/model-provider/` | 18 | 9 |
-| `core-functionality/playground/` | 13 | 1 |
+| `core-functionality/playground/` | 7 | 1 |
 | `mcp/client/` | 0 | 6 |
 | `mcp/server/` | 3 | 4 |
 | `ui-ux/` — Canvas | 40 | 1 |
