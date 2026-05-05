@@ -419,7 +419,7 @@
 - [x] Rename unavailable for a session with no messages → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename available and functional for a session with messages (Enter confirms, Escape cancels) → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Create new session via new-chat button → `core-functionality/playground/playground-session-nav.spec.ts`
-- [x] Switch between sessions via session selector dropdown (header) → `core-functionality/playground/playground-session-nav.spec.ts`
+- [x] Switch between sessions via session selector sidebar → `core-functionality/playground/playground-session-nav.spec.ts`
 - [x] Open Message Logs via session more-menu → `core-functionality/playground/playground-message-logs.spec.ts`
 - [x] Delete messages inside Message Logs table → `core-functionality/playground/playground-message-logs.spec.ts`
 - [x] Select individual session checkbox → reveals bulk-delete-button → `core-functionality/playground/playground-bulk-delete.spec.ts`
