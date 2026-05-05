@@ -1,19 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 
-/**
- * Session creation (new-chat) and session switching (session-selector-trigger).
- *
- * Source files:
- *   chat-sidebar.tsx      — data-testid="new-chat", data-testid="session-selector"
- *   chat-sessions-dropdown.tsx — data-testid="session-selector-trigger"
- *
- * Overlap note: playground.spec.ts (line 127) also clicks new-chat and asserts
- * getByTitle("New Session 0"). That test is a monolithic integration spec without
- * @stable; this spec is the dedicated, isolated, @stable coverage for the same
- * behavior with different assertions (session-selector count). The header dropdown
- * (session-selector-trigger) is not covered anywhere else.
- */
+// Overlap: playground.spec.ts also clicks new-chat but is a monolithic, non-@stable spec; this is the dedicated @stable coverage with independent assertions.
 
 test.describe.configure({ mode: "serial" });
 
@@ -40,9 +28,8 @@ test.describe("Playground – Session Creation and Navigation", () => {
         });
       });
 
-      const countBefore = await page.getByTestId("session-selector").count();
-
       await test.step("click new-chat and verify session count increases by one", async () => {
+        const countBefore = await page.getByTestId("session-selector").count();
         await page.getByTestId("new-chat").click();
         await expect(page.getByTestId("session-selector")).toHaveCount(
           countBefore + 1,
