@@ -9,9 +9,11 @@
 Covers two related session navigation behaviors in the Playground:
 
 1. **New session creation via `new-chat`** — clicking the button adds a new entry to the session sidebar and opens an empty chat input.
-2. **Session switching via the header dropdown (`session-selector-trigger`)** — opening the dropdown lists all sessions; selecting one loads that session's messages and hides the others.
+2. **Session switching via the sidebar (`session-selector`)** — clicking a session entry in the sidebar loads that session's messages and hides the others.
 
 These ensure users can manage multiple parallel conversations without cross-contamination between sessions.
+
+> Note: the header dropdown (`session-selector-trigger`) exists only in the fullscreen playground (`playgroundComponent`), not in the IOModal opened via `playground-btn-flow-io`. Session switching in this context is done via the sidebar.
 
 ---
 
@@ -31,29 +33,27 @@ These ensure users can manage multiple parallel conversations without cross-cont
 4. Assert `session-selector` count is `before + 1`
 5. Assert `input-chat-playground` is visible (new empty chat is active)
 
-**Test 2 — session selector dropdown must switch to the selected session**
+**Test 2 — session selector sidebar must switch to the selected session**
 
 1. Create a ChatInput → ChatOutput flow and open the Playground
 2. Send "default session message" in the Default session; wait for the echo to appear
 3. Click `new-chat`; send "new session message"; wait for the echo
-4. Click `session-selector-trigger` to open the header dropdown
-5. Assert the `Default Session` menu item is visible
-6. Click `Default Session`
-7. Assert "default session message" is visible and "new session message" count is 0
+4. Click the `session-selector` sidebar entry that contains "Default Session"
+5. Assert "default session message" is visible and "new session message" count is 0
 
 ---
 
 ## Validation criterion *(required)*
 
 - After `new-chat`: `session-selector` count increases by 1 and `input-chat-playground` is visible
-- After switching sessions: only the target session's messages are shown; the other session's messages have count 0
+- After clicking a sidebar session entry: only that session's messages are shown; the other session's messages have count 0
 
 ---
 
 ## External dependencies *(required)*
 
-- `chat-sidebar.tsx` — `data-testid="new-chat"` (creates session) and `data-testid="session-selector"` (sidebar items)
-- `chat-sessions-dropdown.tsx` — `data-testid="session-selector-trigger"` (header dropdown trigger); dropdown items labeled "Default Session" or the session ID (Radix `role="menuitem"`)
+- `chat-sidebar.tsx` — `data-testid="new-chat"` (creates session)
+- `IOModal/components/IOFieldView/components/session-selector.tsx` — `data-testid="session-selector"` (sidebar items); clicking an item calls `toggleVisibility()` to switch the active session; item text is "Default Session" when `session === currentFlowId`
 - No API key required: ChatInput → ChatOutput is a synchronous echo flow
 
 ---

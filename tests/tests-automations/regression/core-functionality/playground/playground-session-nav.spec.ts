@@ -2,6 +2,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 
 // Overlap: playground.spec.ts also clicks new-chat but is a monolithic, non-@stable spec; this is the dedicated @stable coverage with independent assertions.
+// Session switching is tested via sidebar click (session-selector); the header dropdown (session-selector-trigger) only exists in the fullscreen playground, not in the IOModal.
 
 test.describe.configure({ mode: "serial" });
 
@@ -43,7 +44,7 @@ test.describe("Playground – Session Creation and Navigation", () => {
   );
 
   test(
-    "session selector dropdown must list sessions and switch to the selected one",
+    "session selector sidebar must switch to the selected session",
     { tag: ["@stable", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow and open playground", async () => {
@@ -80,16 +81,12 @@ test.describe("Playground – Session Creation and Navigation", () => {
         });
       });
 
-      await test.step("open the session selector dropdown and verify Default Session is listed", async () => {
-        await page.getByTestId("session-selector-trigger").click();
-        await expect(
-          page.getByRole("menuitem", { name: "Default Session" }),
-        ).toBeVisible({ timeout: 5000 });
-      });
-
-      await test.step("switch to Default Session and verify its messages are shown", async () => {
-        await page.getByRole("menuitem", { name: "Default Session" }).click();
-        await expect(page.getByText("default session message")).toBeVisible({
+      await test.step("click the Default Session sidebar entry and verify its messages are shown", async () => {
+        await page
+          .getByTestId("session-selector")
+          .filter({ hasText: "Default Session" })
+          .click();
+        await expect(page.getByText("default session message").first()).toBeVisible({
           timeout: 10000,
         });
         await expect(page.getByText("new session message")).toHaveCount(0);
