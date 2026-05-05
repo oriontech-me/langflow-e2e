@@ -3,14 +3,14 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-05-04
+> **Last updated:** 2026-05-05
 
 ---
 
 ## How to use this checklist
 
-- `[x]` → automated and **validated**
-- `[-]` → automated, **needs validation**
+- `[x]` → automated and **validated** — only assigned when the underlying Playwright test carries the `@stable` tag
+- `[-]` → automated, **needs validation** (test exists but is not yet `@stable`, or the entry refers to a Page/Helper rather than a test)
 - `[ ]` (empty) → **needs automation**
 - `[~]` → **partially** covered
 - `[!]` → covered but **flaky / unstable**
@@ -25,8 +25,8 @@
 
 ## Pages
 
-- [x] `SimpleAgentTemplatePage` — loads Simple Agent template with configurable provider and model → `pages/SimpleAgentTemplatePage.ts`
-- [x] `SettingsPage` — navigation to the settings page via user menu → `pages/SettingsPage.ts`
+- [-] `SimpleAgentTemplatePage` — loads Simple Agent template with configurable provider and model → `pages/SimpleAgentTemplatePage.ts`
+- [-] `SettingsPage` — navigation to the settings page via user menu → `pages/SettingsPage.ts`
 - [ ] Component sidebar — component navigation bar with searchable parameter support
 - [ ] Model Provider — navigation to the model provider management tab
 - [ ] API Keys — navigation to the API keys / global variables tab
@@ -41,19 +41,19 @@
 
 ### Provider Setup
 
-- [x] OpenAI Provider Setup → `helpers/provider-setup/setup-openai.ts`
-- [x] Anthropic Provider Setup → `helpers/provider-setup/setup-anthropic.ts`
-- [x] Google Generative AI Provider Setup → `helpers/provider-setup/setup-google.ts`
-- [x] Provider Map (`providerSetupMap`) — central registration point → `helpers/provider-setup/index.ts`
-- [x] Provider validation via API (credit, valid key) → `helpers/provider-setup/collect-models.ts`
-- [x] Collection of available models via UI (Settings → Model Providers) → `helpers/provider-setup/collect-models.ts`
-- [x] `providers.json` — status of each provider (active/inactive + reason) → `data/providers.json`
-- [x] `models.json` — list of models per provider → `data/models.json`
+- [-] OpenAI Provider Setup → `helpers/provider-setup/setup-openai.ts`
+- [-] Anthropic Provider Setup → `helpers/provider-setup/setup-anthropic.ts`
+- [-] Google Generative AI Provider Setup → `helpers/provider-setup/setup-google.ts`
+- [-] Provider Map (`providerSetupMap`) — central registration point → `helpers/provider-setup/index.ts`
+- [-] Provider validation via API (credit, valid key) → `helpers/provider-setup/collect-models.ts`
+- [-] Collection of available models via UI (Settings → Model Providers) → `helpers/provider-setup/collect-models.ts`
+- [-] `providers.json` — status of each provider (active/inactive + reason) → `data/providers.json`
+- [-] `models.json` — list of models per provider → `data/models.json`
 
 ### Flows
 
-- [x] Load Simple Agent with variable provider and model → `pages/SimpleAgentTemplatePage.ts`
-- [x] Load Simple Agent with OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
+- [-] Load Simple Agent with variable provider and model → `pages/SimpleAgentTemplatePage.ts`
+- [-] Load Simple Agent with OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
 
 ### To implement
 
@@ -322,11 +322,11 @@
 > See `helpers/provider-setup/` for the setup helpers of each provider.
 
 #### 7.1 Provider Collection and Validation
-- [x] Validate API keys of all providers via real call → `collect-models.spec.ts`
-- [x] Collect available models per provider via UI → `collect-models.spec.ts`
+- [-] Validate API keys of all providers via real call → `collect-models.spec.ts`
+- [-] Collect available models per provider via UI → `collect-models.spec.ts`
 - [x] Inactive providers appear as skipped in tests with reason → `agent-component-regression.spec.ts`
-- [x] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
-- [x] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
+- [-] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
+- [-] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
 
 #### 7.2 OpenAI
 - [-] Configure OpenAI API key via GlobalVariables
@@ -661,25 +661,30 @@
 
 ## Coverage Summary — Test Automation Coverage
 
-| Module | Total | Covered | Partial | Not covered |
-|--------|-------|----------|---------|--------------|
-| `api/` — Auth + Variables | 17 | 15 | 0 | 2 |
-| `api/` — REST API | 17 | 17 | 0 | 0 |
-| `core-components/` — Config | 20 | 18 | 0 | 2 |
-| `core-components/` — Components | 22 | 16 | 0 | 6 |
-| `core-functionality/playground/` | 27 | 24 | 0 | 3 |
-| `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
-| `core-functionality/model-provider/` | 21 | 13 | 0 | 8 |
-| `core-functionality/llm-agents/` | 15 | 8 | 0 | 7 |
-| `core-functionality/knowledge-ingestion/` | 8 | 4 | 0 | 4 |
-| `flow-functionality/` | 20 | 18 | 1 | 1 |
-| `mcp/server/` | 7 | 3 | 0 | 4 |
-| `mcp/client/` | 6 | 0 | 0 | 6 |
-| `project-management/` | 11 | 9 | 1 | 1 |
-| `templates/` | 35 | 33 | 0 | 2 |
-| `ui-ux/` — Canvas | 30 | 28 | 1 | 1 |
-| `ui-ux/` — Settings | 4 | 4 | 0 | 0 |
-| **TOTAL** | **267** | **214 (80%)** | **3** | **50 (19%)** |
+> **Validated** = test carries the `@stable` tag.
+> **Needs validation** = automated but not yet `@stable` (bug, flake under investigation, or pending team review).
+
+| Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
+|--------|-------|-----------------|------------------------|---------------------|---------------------|
+| `api/flows/` — REST API | 21 | 0 | 21 | 0 | 0 |
+| `core-components/` — Component Config | 22 | 0 | 20 | 0 | 2 |
+| `core-components/` — Core Components | 42 | 15 | 18 | 0 | 9 |
+| `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
+| `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
+| `core-functionality/llm-agents/` | 41 | 14 | 2 | 0 | 25 |
+| `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
+| `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
+| `core-functionality/playground/` | 38 | 24 | 13 | 0 | 1 |
+| `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
+| `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
+| `flow-functionality/` | 23 | 1 | 20 | 2 | 0 |
+| `mcp/client/` | 6 | 0 | 0 | 0 | 6 |
+| `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
+| `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
+| `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
+| **TOTAL** | **370** | **61 (16%)** | **241 (65%)** | **5 (1%)** | **63 (17%)** |
+
+> Note: `Validated [x]` = checklist bullets, not unique tests. A single `@stable` test may cover multiple bullets (e.g. the agent suite covers 7 bullets via `test.step()`). The canonical list of 53 unique `@stable` tests is in **Phase 0 — Validated** below.
 
 ---
 
@@ -689,40 +694,70 @@
 
 ### 🟢 Phase 0 — Validated
 
-> Tests with confirmed coverage (`[x]`).
+> Tests carrying the `@stable` tag — included in the weekly stable workflow. **53 tests across 21 spec files.**
 
-#### Pages & Helpers
-- [x] `SimpleAgentTemplatePage` — loads Simple Agent template with configurable provider and model → `pages/SimpleAgentTemplatePage.ts`
-- [x] `SettingsPage` — navigation to the settings page via user menu → `pages/SettingsPage.ts`
-- [x] OpenAI Provider Setup → `helpers/provider-setup/setup-openai.ts`
-- [x] Anthropic Provider Setup → `helpers/provider-setup/setup-anthropic.ts`
-- [x] Google Generative AI Provider Setup → `helpers/provider-setup/setup-google.ts`
-- [x] Provider Map (`providerSetupMap`) → `helpers/provider-setup/index.ts`
-- [x] Provider validation via API (credit, valid key) → `helpers/provider-setup/collect-models.ts`
-- [x] Collection of available models per provider via UI → `helpers/provider-setup/collect-models.ts`
-- [x] Load Simple Agent with variable provider and model → `pages/SimpleAgentTemplatePage.ts`
-- [x] Load Simple Agent with OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
+#### core-components/
+- [x] Loop component — renders correctly with all handles and output inspection buttons → `core-components/loop-component-regression.spec.ts`
+- [x] Loop component — run without connections shows build failed notification → `core-components/loop-component-regression.spec.ts`
+- [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `core-components/loop-component-regression.spec.ts`
+- [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `core-components/webhook-component-regression.spec.ts`
+- [x] Webhook component — flow is saved to database and contains the Webhook node → `core-components/webhook-component-regression.spec.ts`
+- [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `core-components/webhook-component-regression.spec.ts`
+- [x] Webhook component — empty data field returns empty Data object → `core-components/webhook-component-regression.spec.ts`
+- [x] Webhook component — endpoint field renders the actual webhook URL → `core-components/webhook-component-regression.spec.ts`
+- [x] Webhook component — copy button copies the endpoint URL to clipboard → `core-components/webhook-component-regression.spec.ts`
+- [x] Webhook component — POST to non-existent flow name returns 404 → `core-components/webhook-component-regression.spec.ts`
+- [x] Webhook component — valid JSON payload is propagated as structured Data output → `core-components/webhook-component-regression.spec.ts`
+- [x] Webhook component — invalid JSON payload is encapsulated in `{payload: ...}` → `core-components/webhook-component-regression.spec.ts`
+- [x] GET `/api/v1/monitor/messages` returns 200 with array response → `core-components/webhook-component-regression.spec.ts`
 
 #### core-functionality/llm-agents/
-- [x] Agent executes with multiple providers and models (OpenAI, Anthropic, Google) → `agent-component-regression.spec.ts`
-- [x] Agent displays valid response to simple question → `agent-component-regression.spec.ts`
-- [x] Agent responds without connected tools (regression ID 147) → `agent-component-regression.spec.ts`
-- [x] Stop button interrupts agent execution → `agent-component-regression.spec.ts`
-- [x] Agent responds to multiple consecutive messages in the same session → `agent-component-regression.spec.ts`
-- [x] Execution duration displayed after run with tools → `agent-component-regression.spec.ts`
-- [x] Memory Chatbot template loads with correct node and edge structure → `memory-history-regression.spec.ts`
-- [x] Message History retains context between messages in the same session → `memory-history-regression.spec.ts`
-- [x] Session isolation: distinct session IDs have independent histories → `memory-history-regression.spec.ts`
-- [x] Messages persist after closing and reopening the Playground → `memory-history-regression.spec.ts`
-- [x] Without Message History, LLM does not retain context between messages → `memory-history-regression.spec.ts`
+- [x] agent interaction suite (parameterized per provider/model: tools-free response, reasoning steps, streaming + duration, multiple consecutive messages, canvas duration indicator) → `agent-component-regression.spec.ts`
+- [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
+- [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
+- [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
+- [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
+- [x] message history context retention suite (within-session retention, accumulation, persistence after reopen) → `memory-history-regression.spec.ts`
+- [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
+- [x] should display error message when using invalid authentication for provider (parameterized per provider) → `provider-invalid-auth-error.spec.ts`
 
-#### core-functionality/model-provider/
-- [x] Validate API keys of all providers via real call → `collect-models.spec.ts`
-- [x] Collect available models per provider via UI → `collect-models.spec.ts`
-- [x] Inactive providers appear as skipped in tests with reason → `agent-component-regression.spec.ts`
+#### core-functionality/playground/
+- [x] selecting an individual session checkbox must reveal the bulk-delete-button → `playground-bulk-delete.spec.ts`
+- [x] select-all-checkbox must select all non-default sessions → `playground-bulk-delete.spec.ts`
+- [x] bulk-delete-button must remove all selected sessions from the sidebar → `playground-bulk-delete.spec.ts`
+- [x] clear chat on Default session must remove messages but keep the session → `playground-clear-history.spec.ts`
+- [x] deleting a user-created session must remove it and return to Default session → `playground-clear-history.spec.ts`
+- [x] send button is enabled when input is empty (Langflow bug) → `playground-empty-message-send.spec.ts`
+- [x] send button becomes enabled after typing a message → `playground-empty-message-send.spec.ts`
+- [x] clearing the input after typing leaves the field empty → `playground-empty-message-send.spec.ts`
+- [x] playground opens in fullscreen with chat input visible → `playground-fullscreen.spec.ts`
+- [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
+- [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
+- [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
+- [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
+- [x] message-logs-option must open the Session Logs modal for the active session → `playground-message-logs.spec.ts`
+- [x] selecting messages in the log table and deleting them must reduce the row count → `playground-message-logs.spec.ts`
+- [x] playground must render JSON Data output as a code block → `playground-output-data.spec.ts`
+- [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
+- [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
+- [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
+- [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
+- [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
+- [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
+- [x] rename option must not be available for the Default Session → `playground-session-rename.spec.ts`
+- [x] rename option must not be available for a session with no messages → `playground-session-rename.spec.ts`
+- [x] rename option must be available and functional for a session with messages → `playground-session-rename.spec.ts`
+- [x] user message must appear instantly in playground before AI responds → `playground-ux.spec.ts`
+- [x] playground must scroll to latest message after sending → `playground-ux.spec.ts`
+- [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
+- [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
-#### core-functionality/templates/
-- [x] Memory Chatbot → `memory-history-regression.spec.ts`
+#### flow-functionality/
+- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
+- [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
+
+#### ui-ux/
+- [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 
 ---
 
@@ -732,15 +767,16 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/` — Auth + Variables | 18 | 1 |
-| `api/` — REST API | 21 | 0 |
-| `core-components/` — Components | 36 | 11 |
-| `core-functionality/llm-agents/` | 2 | 15 |
-| `core-functionality/model-provider/` | 16 | 8 |
-| `core-functionality/playground/` | 17 | 3 |
+| `api/flows/` — REST API | 21 | 0 |
+| `core-components/` — Component Config | 20 | 2 |
+| `core-components/` — Core Components | 18 | 9 |
+| `core-functionality/auth/` | 18 | 1 |
+| `core-functionality/llm-agents/` | 2 | 25 |
+| `core-functionality/model-provider/` | 18 | 9 |
+| `core-functionality/playground/` | 13 | 1 |
 | `mcp/client/` | 0 | 6 |
 | `mcp/server/` | 3 | 4 |
-| `ui-ux/` — Canvas | 43 | 1 |
+| `ui-ux/` — Canvas | 40 | 1 |
 
 ---
 
@@ -752,7 +788,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 12 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 23 | 0 |
-| `core-functionality/project-management/` | 11 | 0 |
-| `core-functionality/templates/` | 34 | 0 |
-| `ui-ux/` — Settings | 5 | 0 |
+| `flow-functionality/` | 20 | 0 |
+| `core-functionality/project-management/` | 10 | 0 |
+| `core-functionality/templates/` | 39 | 0 |
+| `ui-ux/` — Settings | 3 | 0 |
