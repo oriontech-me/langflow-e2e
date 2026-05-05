@@ -96,7 +96,6 @@ class CustomComponent(Component):
     });
 
     await test.step("connect custom component output to chat output input", async () => {
-      // Connect CustomComponent → ChatOutput (click-click pattern)
       await page
         .getByTestId("handle-customcomponent-shownode-output-right")
         .first()
