@@ -172,12 +172,12 @@
 - [ ] Query parameters embedded in URL are sent and echoed in response
 - [ ] Invalid URL error shows notification with descriptive error message
 - [ ] Flow state persisted in database after autosave
-- [-] Executar request PUT e verificar que o verbo PUT é enviado → pendente
-- [-] Executar request PATCH e verificar que o verbo PATCH é enviado → pendente
-- [-] Executar request DELETE e verificar que o verbo DELETE é enviado → pendente
-- [-] Adicionar headers e body (key-value pairs no inspector) → pendente
-- [-] Tab cURL alterna modo e exibe campo de input cURL → pendente
-- [-] Modo cURL executa GET e retorna 200 com dados de resposta → pendente
+- [ ] Execute PUT request and verify PUT verb is sent
+- [ ] Execute PATCH request and verify PATCH verb is sent
+- [ ] Execute DELETE request and verify DELETE verb is sent
+- [ ] Add headers and body (key-value pairs in inspector)
+- [ ] cURL tab switches mode and displays cURL input field
+- [ ] cURL mode executes GET and returns 200 with response data
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
@@ -396,12 +396,12 @@
 ### core-functionality/playground/ — Chat, Rendering and Output Tests
 
 #### 9.1 Chat Interactions
-- [-] Open Playground → (via playground-btn-flow-io)
-- [-] Send text message → (via input-chat-playground + button-send)
-- [-] Receive LLM response → (via div-chat-message)
-- [-] Response streaming (SSE) → `withEventDeliveryModes` (streaming mode)
-- [-] Response polling → `withEventDeliveryModes` (polling mode)
-- [-] Direct response → `withEventDeliveryModes` (direct mode)
+- [x] Open Playground → exercised by every `@stable` playground spec via `playground-btn-flow-io`
+- [x] Send text message → exercised by `playground-ux.spec.ts`, `playground-message-edit.spec.ts`, `playground-session-nav.spec.ts` and others
+- [x] Receive LLM response → exercised by all specs that send a message via ChatInput → ChatOutput echo flow
+- [-] Response streaming (SSE) → no dedicated spec; exercised implicitly by `playground-ux.spec.ts`
+- [-] Response polling → no dedicated spec
+- [-] Direct response → no dedicated spec
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
 - [x] Send empty message — should disable send button → `playground/playground-empty-message-send.spec.ts` (**BUG: button enabled even when empty**)
 - [ ] Send message while response is in progress — should wait or queue
@@ -409,15 +409,15 @@
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
 
 #### 9.2 History and Session
-- [-] Configure custom session ID → `playground/playground-session-id.spec.ts`
-- [-] Switch session ID — starts new conversation → `playground/playground-session-id.spec.ts`
+- [-] Configure custom session ID → `playground/playground-session-id.spec.ts` (needs rewrite — see issue)
+- [x] Switch session — messages are isolated per session → `core-functionality/playground/playground-session-nav.spec.ts`
 - [x] Edit user message — hover reveals edit button, saved changes replace original text → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Cancel message edit — original text is preserved → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Message edited in playground is reflected in Session Logs → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Clear chat removes all messages from Default Session (clear-chat-option via header menu) → `core-functionality/playground/playground-session-clear.spec.ts`
 - [x] Clear full session history (Default session) → `playground/playground-clear-history.spec.ts`
 - [x] Delete user-created session → `playground/playground-clear-history.spec.ts`
-- [-] History persists when reopening Playground → `playground/playground-history-persist.spec.ts`
+- [x] History persists when reopening Playground → `llm-agents/memory-history-regression.spec.ts`
 - [x] Rename unavailable for the Default Session → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename unavailable for a session with no messages → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename available and functional for a session with messages (Enter confirms, Escape cancels) → `core-functionality/playground/playground-session-rename.spec.ts`
@@ -432,12 +432,12 @@
 #### 9.3 Advanced Playground Features
 - [x] Playground fullscreen mode → `playground/playground-fullscreen.spec.ts`
 - [-] Shareable Playground — URL generation validated (switch enables sharing, href matches /playground/uuid) → `playground/playground-shareable-url.spec.ts`
-- [-] Voice mode (voice assistant)
+- [!] Voice mode (voice assistant) → `ui-ux/voice-assistant.spec.ts` (**all tests unconditionally skipped — spec is a stub**)
 - [x] Stop button in Playground → `core-functionality/playground/stop-button-playground.spec.ts`
 
 #### 9.4 Output Modal
-- [-] Copy component output
-- [-] Copy button in output
+- [-] Copy component output → `playground/output-modal-copy-button.spec.ts` (needs rewrite — see issue)
+- [-] Copy button in output → `playground/output-modal-copy-button.spec.ts` (needs rewrite — see issue)
 
 #### 9.5 Structured Data Output
 - [x] JSON Data output renders as code block → `core-functionality/playground/playground-output-data.spec.ts`
@@ -548,7 +548,7 @@
 - [-] Lock flow — prevents editing
 - [-] Unlock flow
 - [-] Move flow between folders via API
-- [-] Publish flow
+- [-] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [-] Save flow components as template
 
 #### 12.6 Flow Execution
@@ -668,23 +668,23 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 0 | 21 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 0 | 20 | 0 | 2 |
-| `core-components/` — Core Components | 42 | 15 | 18 | 0 | 9 |
+| `core-components/` — Core Components | 42 | 15 | 12 | 0 | 15 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 41 | 14 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
-| `core-functionality/playground/` | 38 | 24 | 13 | 0 | 1 |
+| `core-functionality/playground/` | 38 | 29 | 7 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 23 | 1 | 20 | 2 | 0 |
+| `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
 | `mcp/client/` | 6 | 0 | 0 | 0 | 6 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **370** | **61 (16%)** | **241 (65%)** | **5 (1%)** | **63 (17%)** |
+| **TOTAL** | **370** | **65 (18%)** | **230 (62%)** | **6 (2%)** | **69 (19%)** |
 
-> Note: `Validated [x]` = checklist bullets, not unique tests. A single `@stable` test may cover multiple bullets (e.g. the agent suite covers 7 bullets via `test.step()`). The canonical list of 53 unique `@stable` tests is in **Phase 0 — Validated** below.
+> Note: `Validated [x]` = checklist bullets, not unique tests. A single `@stable` test may cover multiple bullets (e.g. the agent suite covers 7 bullets via `test.step()`). The canonical list of 51 unique `@stable` tests is in **Phase 0 — Validated** below.
 
 ---
 
@@ -694,7 +694,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> Tests carrying the `@stable` tag — included in the weekly stable workflow. **53 tests across 21 spec files.**
+> Tests carrying the `@stable` tag — included in the weekly stable workflow. **51 tests across 20 spec files.**
 
 #### core-components/
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `core-components/loop-component-regression.spec.ts`
@@ -752,10 +752,6 @@
 - [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
-#### flow-functionality/
-- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
-- [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
-
 #### ui-ux/
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 
@@ -773,7 +769,7 @@
 | `core-functionality/auth/` | 18 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
 | `core-functionality/model-provider/` | 18 | 9 |
-| `core-functionality/playground/` | 13 | 1 |
+| `core-functionality/playground/` | 7 | 1 |
 | `mcp/client/` | 0 | 6 |
 | `mcp/server/` | 3 | 4 |
 | `ui-ux/` — Canvas | 40 | 1 |
