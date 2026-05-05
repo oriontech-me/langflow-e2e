@@ -303,7 +303,7 @@
 
 ---
 
-### 5.1 Generate curl for execution `[-]`
+### 5.1 Generate curl for execution `[x]`
 
 **Objective:** Verify that Langflow generates a valid `curl` command for flow execution.
 

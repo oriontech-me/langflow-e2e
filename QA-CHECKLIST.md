@@ -108,7 +108,7 @@
 - [-] GET with session_id filter returns only messages from that session
 
 #### 1.6 Integration Code Generation
-- [-] Generate curl for API execution
+- [x] Generate curl for API execution → `flow-functionality/curlApiGeneration.spec.ts`
 - [-] Generate Python code for integration
 - [-] API access modal
 
