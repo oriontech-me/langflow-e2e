@@ -70,7 +70,7 @@ test.describe("Playground – Message Logs", () => {
 
       await test.step("verify the Session Logs modal opens with message rows in the table", async () => {
         await expect(page.getByText("Session logs")).toBeVisible({ timeout: 10000 });
-        await page.waitForSelector(".ag-row", { timeout: 10000 });
+        await expect(page.locator(".ag-row").first()).toBeVisible({ timeout: 10000 });
         const rowCount = await page.locator(".ag-row").count();
         expect(rowCount, "Session Logs table must contain at least one message row").toBeGreaterThan(0);
       });
@@ -100,7 +100,8 @@ test.describe("Playground – Message Logs", () => {
         });
       });
 
-      await test.step("open the Session Logs modal", async () => {
+      let rowsBefore = 0;
+      await test.step("open the Session Logs modal and record initial row count", async () => {
         await page
           .locator('[data-testid^="session-"][data-testid$="-more-menu"]')
           .first()
@@ -110,10 +111,9 @@ test.describe("Playground – Message Logs", () => {
         });
         await page.getByTestId("message-logs-option").click();
         await expect(page.getByText("Session logs")).toBeVisible({ timeout: 10000 });
-        await page.waitForSelector(".ag-row", { timeout: 10000 });
+        await expect(page.locator(".ag-row").first()).toBeVisible({ timeout: 10000 });
+        rowsBefore = await page.locator(".ag-row").count();
       });
-
-      const rowsBefore = await page.locator(".ag-row").count();
 
       await test.step("select the first row via its checkbox", async () => {
         await page.locator(".ag-checkbox-input").first().click();
