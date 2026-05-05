@@ -13,8 +13,6 @@ Covers two related session navigation behaviors in the Playground:
 
 These ensure users can manage multiple parallel conversations without cross-contamination between sessions.
 
-> Note: the header dropdown (`session-selector-trigger`) exists only in the fullscreen playground (`playgroundComponent`), not in the IOModal opened via `playground-btn-flow-io`. Session switching in this context is done via the sidebar.
-
 ---
 
 ## Tags *(required)*
@@ -52,8 +50,8 @@ These ensure users can manage multiple parallel conversations without cross-cont
 
 ## External dependencies *(required)*
 
-- `chat-sidebar.tsx` — `data-testid="new-chat"` (creates session)
-- `IOModal/components/IOFieldView/components/session-selector.tsx` — `data-testid="session-selector"` (sidebar items); clicking an item calls `toggleVisibility()` to switch the active session; item text is "Default Session" when `session === currentFlowId`
+- `src/frontend/src/modals/IOModal/components/sidebar-open-view.tsx` — `data-testid="new-chat"` (creates session)
+- `src/frontend/src/modals/IOModal/components/IOFieldView/components/session-selector.tsx` — `data-testid="session-selector"` (sidebar items); clicking an item switches the active session; item displays "Default Session" when `session === currentFlowId`
 - No API key required: ChatInput → ChatOutput is a synchronous echo flow
 
 ---
@@ -70,3 +68,9 @@ These ensure users can manage multiple parallel conversations without cross-cont
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
 - No LLM or API key needed
+
+---
+
+## Notes *(optional)*
+
+- `session-selector-trigger` (the header dropdown) exists only in the fullscreen `playgroundComponent`, not in the IOModal opened via `playground-btn-flow-io`. Session switching in this test is done via the sidebar `session-selector` items.
