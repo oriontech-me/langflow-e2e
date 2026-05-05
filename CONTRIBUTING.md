@@ -489,27 +489,57 @@ test("should create a flow and run successfully", { tag: ["@workspace", "@stable
 
 ### Exceptions — when the test will not have @stable
 
-Two cases where the tag is intentionally absent:
+Three cases where the tag is intentionally absent:
 
 1. **Inherited tests not yet reviewed** — they exist in the repository but have not yet gone through the validation and documentation process.
-2. **Tests failing in the workflow** — the tag was temporarily removed while the test awaits correction (see flow below).
+2. **Tests temporarily removed while failing** — the tag was removed while the test awaits correction (see lifecycle below).
+3. **Utility specs** — scripts that collect data or configure infrastructure rather than asserting product behavior (e.g. `collect-models.spec.ts`). These are not regression tests and must never enter the weekly workflow.
 
-### How to remove and fix
+**When `@stable` is permanently absent** (case 3): state the reason in the spec doc's **Tags** section so it is visible without reading PR history.
 
-When receiving an issue from the weekly workflow, evaluate the cause of the failure:
+**When `@stable` is temporarily absent** (cases 1 and 2): no spec doc update is required — the absence is tracked via the GitHub issue and the PR that removed the tag.
 
-- **Regression in Langflow** (product broke, test is correct): the test fulfilled its role. Flag the issue to the product team and monitor upstream. The tag remains.
-- **Product behavior change or incorrect test**: follow the flow below.
+### @stable lifecycle when a weekly failure occurs
+
+```
+@stable present
+      │
+      │  weekly-stable.yml opens a failure issue
+      ▼
+Evaluate: did the product break, or is the test wrong?
+      │
+      ├─► Product broke (test is correct)
+      │       Flag the issue to the product team.
+      │       Monitor upstream. The tag remains.
+      │
+      └─► Test is wrong or behavior changed
+              │
+              ▼
+          @stable removed  ◄── PR references the issue; tag removed; test exits weekly workflow
+              │
+              │  Test is corrected and re-validated (5-step guide)
+              ▼
+          @stable restored  ◄── Same correction PR restores the tag; issue is closed
+```
+
+**Criteria for deciding "product broke" vs "test wrong":**
+
+| Observation | Classification |
+|---|---|
+| Assertion fails because the UI element moved or was renamed | Test wrong — update selector |
+| Assertion fails because the feature no longer exists or changed flow | Behavior change — update test and spec doc |
+| Assertion fails but the UI works correctly in manual testing | Test wrong — fix assertion logic |
+| Assertion fails and manual testing confirms the same failure | Product broke — flag upstream |
 
 **Step 1 — Analyst (upon receiving the workflow issue):**
-1. Identify the failing test
-2. Open a PR removing the `@stable` tag from the test
+1. Identify the failing test and classify the failure using the table above
+2. Open a PR removing the `@stable` tag from the test; reference the issue in the PR body
 3. After merge, the test immediately stops running in the weekly workflow
-4. Update the issue indicating which test needs correction and why
+4. Update the issue with the classification and the name of the test that needs correction
 
 **Step 2 — Dev (upon fixing the test):**
-1. Fix the test following the validation guide
+1. Fix the test following the validation guide (all 5 steps)
 2. Restore the `@stable` tag in the same correction PR
-3. Reference the issue in the PR
+3. Reference the issue in the PR body; close the issue upon merge
 
-This process ensures traceability: it is recorded when the test left and when it returned to weekly monitoring.
+The spec doc is **not updated** during this cycle — the issue and the two PRs are the traceability record.
