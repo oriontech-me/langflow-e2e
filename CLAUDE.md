@@ -108,12 +108,10 @@ regression/
 5. Update `QA-CHECKLIST.md` coverage symbols
 
 **PR review checklist** — request changes if any of these are missing:
-- `@stable` tag is present in the test (required for all new tests)
+- `@stable` is present **or** its absence is explicitly explained: utility specs state the reason in the spec doc's **Tags** section; temporary removals are tracked via a GitHub issue (no spec doc change required)
 - Spec doc exists under `docs/` mirroring the test's path under `regression/`
 - Spec doc has all mandatory sections filled: **What this test validates**, **Tags**, **Validation criterion**, **External dependencies**
 - `Last validated` field reflects the current Langflow release cycle (e.g.: `1.10.x`)
-
-Exceptions where `@stable` is absent: inherited tests not yet reviewed, and tests temporarily without the tag while under correction.
 
 ### Tag Semantics
 
