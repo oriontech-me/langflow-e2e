@@ -433,7 +433,7 @@
 - [x] Playground fullscreen mode → `playground/playground-fullscreen.spec.ts`
 - [-] Shareable Playground — URL generation validated (switch enables sharing, href matches /playground/uuid) → `playground/playground-shareable-url.spec.ts`
 - [-] Voice mode (voice assistant)
-- [-] Stop button in Playground
+- [x] Stop button in Playground → `core-functionality/playground/stop-button-playground.spec.ts`
 
 #### 9.4 Output Modal
 - [-] Copy component output
