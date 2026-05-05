@@ -164,14 +164,14 @@
 - [-] Removing a variable from the prompt deletes the corresponding port
 
 #### 3.3 API Request (HTTP)
-- [x] Renderiza no canvas com handles de URL e API Response corretos → `core-components/api-request-component-regression.spec.ts`
-- [x] Configurar URL e método HTTP (validação de campos UI) → `core-components/api-request-component-regression.spec.ts`
-- [x] Executar request GET e verificar resposta status 200 e estrutura de output → `core-components/api-request-component-regression.spec.ts`
-- [x] Executar request POST e verificar que o verbo POST é enviado (status 200) → `core-components/api-request-component-regression.spec.ts`
-- [x] Resposta HTTP não-2xx (404) propagada como status_code sem crash → `core-components/api-request-component-regression.spec.ts`
-- [x] Query parameters embutidos na URL são enviados e ecoados na resposta → `core-components/api-request-component-regression.spec.ts`
-- [x] Erro de URL inválida exibe notificação com mensagem de erro descritiva → `core-components/api-request-component-regression.spec.ts`
-- [x] Estado do flow é persistido no banco após autosave → `core-components/api-request-component-regression.spec.ts`
+- [-] Renders on canvas with URL and API Response handles → `api/flows/api-request-component-ui.spec.ts`
+- [-] Configure URL and HTTP method (UI field validation) → `api/flows/api-request-component-ui.spec.ts`
+- [ ] Execute GET request and verify 200 status and output structure
+- [ ] Execute POST request and verify POST verb is sent (status 200)
+- [ ] Non-2xx HTTP response (404) propagated as status_code without crash
+- [ ] Query parameters embedded in URL are sent and echoed in response
+- [ ] Invalid URL error shows notification with descriptive error message
+- [ ] Flow state persisted in database after autosave
 - [-] Executar request PUT e verificar que o verbo PUT é enviado → pendente
 - [-] Executar request PATCH e verificar que o verbo PATCH é enviado → pendente
 - [-] Executar request DELETE e verificar que o verbo DELETE é enviado → pendente
@@ -332,18 +332,18 @@
 - [-] Configure OpenAI API key via GlobalVariables
 - [-] Select GPT model in agent
 - [-] Execute flow with OpenAI
-- [x] Invalid API key error — display error message → `provider-invalid-auth-error.spec.ts`
+- [x] Invalid API key error — display error message → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.3 Anthropic
 - [-] Configure Anthropic API key
 - [-] Select Claude model in agent
 - [-] Switch between Claude models (Sonnet, Haiku, Opus)
-- [x] Invalid Anthropic API key error → `provider-invalid-auth-error.spec.ts`
+- [x] Invalid Anthropic API key error → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.4 Google Generative AI
 - [-] Configure Google API key in agent
 - [-] Select Gemini model in agent
-- [x] Invalid Google API key error → `provider-invalid-auth-error.spec.ts`
+- [x] Invalid Google API key error → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.5 Provider Management
 - [-] "Manage Model Providers" modal
