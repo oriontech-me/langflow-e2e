@@ -9,19 +9,12 @@ async function sendMessage(page: Page, text: string): Promise<void> {
   await expect(page.getByTestId("button-stop")).toBeHidden({ timeout: 30000 });
 }
 
-async function createSession(page: Page, message: string): Promise<string> {
+async function createSession(page: Page, message: string): Promise<void> {
   await page.getByTestId("new-chat").click();
   await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
     timeout: 10000,
   });
   await sendMessage(page, message);
-  // Read the session ID from the last sidebar entry's more-menu testid
-  const lastMenuTestid = await page
-    .locator('[data-testid^="session-"][data-testid$="-more-menu"]')
-    .last()
-    .getAttribute("data-testid");
-  // testid format: session-{id}-more-menu
-  return (lastMenuTestid ?? "").replace(/^session-/, "").replace(/-more-menu$/, "");
 }
 
 test.describe.configure({ mode: "serial" });
@@ -126,14 +119,11 @@ test.describe("Playground – Bulk Session Deletion", () => {
         await expect(page.getByTestId("bulk-delete-button")).toBeVisible({
           timeout: 5000,
         });
-        const sessionCountBefore = await page
-          .locator('[data-testid="session-selector"]')
-          .count();
         await page.getByTestId("bulk-delete-button").click();
-        // Only Default session remains after bulk delete
+        // Only the Default session remains after bulk delete
         await expect(
           page.locator('[data-testid="session-selector"]'),
-        ).toHaveCount(sessionCountBefore - 2, { timeout: 10000 });
+        ).toHaveCount(1, { timeout: 10000 });
       });
 
       await test.step("Verify no session checkboxes remain (all user sessions deleted)", async () => {
