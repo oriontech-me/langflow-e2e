@@ -172,12 +172,12 @@
 - [ ] Query parameters embedded in URL are sent and echoed in response
 - [ ] Invalid URL error shows notification with descriptive error message
 - [ ] Flow state persisted in database after autosave
-- [-] Executar request PUT e verificar que o verbo PUT é enviado → pendente
-- [-] Executar request PATCH e verificar que o verbo PATCH é enviado → pendente
-- [-] Executar request DELETE e verificar que o verbo DELETE é enviado → pendente
-- [-] Adicionar headers e body (key-value pairs no inspector) → pendente
-- [-] Tab cURL alterna modo e exibe campo de input cURL → pendente
-- [-] Modo cURL executa GET e retorna 200 com dados de resposta → pendente
+- [ ] Execute PUT request and verify PUT verb is sent
+- [ ] Execute PATCH request and verify PATCH verb is sent
+- [ ] Execute DELETE request and verify DELETE verb is sent
+- [ ] Add headers and body (key-value pairs in inspector)
+- [ ] cURL tab switches mode and displays cURL input field
+- [ ] cURL mode executes GET and returns 200 with response data
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
@@ -432,7 +432,7 @@
 #### 9.3 Advanced Playground Features
 - [x] Playground fullscreen mode → `playground/playground-fullscreen.spec.ts`
 - [-] Shareable Playground — URL generation validated (switch enables sharing, href matches /playground/uuid) → `playground/playground-shareable-url.spec.ts`
-- [-] Voice mode (voice assistant)
+- [!] Voice mode (voice assistant) → `ui-ux/voice-assistant.spec.ts` (**all tests unconditionally skipped — spec is a stub**)
 - [x] Stop button in Playground → `core-functionality/playground/stop-button-playground.spec.ts`
 
 #### 9.4 Output Modal
