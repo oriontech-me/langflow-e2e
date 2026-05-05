@@ -2,8 +2,6 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 
-import { zoomOut } from "../../../../helpers/ui/zoom-out";
-
 test(
   "User must be able to stop building from inside Playground",
   { tag: ["@stable", "@release", "@api", "@playground"] },
