@@ -317,7 +317,7 @@
 
 ---
 
-### 5.2 Generate Python code for integration `[-]`
+### 5.2 Generate Python code for integration `[x]`
 
 **Objective:** Verify that Langflow generates functional Python code to call the flow.
 

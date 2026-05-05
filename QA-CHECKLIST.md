@@ -109,7 +109,7 @@
 
 #### 1.6 Integration Code Generation
 - [-] Generate curl for API execution
-- [-] Generate Python code for integration
+- [x] Generate Python code for integration → `flow-functionality/pythonApiGeneration.spec.ts`
 - [-] API access modal
 
 ---
