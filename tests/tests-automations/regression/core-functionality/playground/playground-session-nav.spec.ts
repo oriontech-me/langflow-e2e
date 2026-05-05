@@ -7,6 +7,12 @@ import { setupPlayground } from "../../../../helpers/flows/setup-playground";
  * Source files:
  *   chat-sidebar.tsx      — data-testid="new-chat", data-testid="session-selector"
  *   chat-sessions-dropdown.tsx — data-testid="session-selector-trigger"
+ *
+ * Overlap note: playground.spec.ts (line 127) also clicks new-chat and asserts
+ * getByTitle("New Session 0"). That test is a monolithic integration spec without
+ * @stable; this spec is the dedicated, isolated, @stable coverage for the same
+ * behavior with different assertions (session-selector count). The header dropdown
+ * (session-selector-trigger) is not covered anywhere else.
  */
 
 test.describe.configure({ mode: "serial" });

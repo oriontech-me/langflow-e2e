@@ -14,6 +14,11 @@ import { setupPlayground } from "../../../../helpers/flows/setup-playground";
  *
  * playgroundPage is false in the embedded playground (flow editor),
  * so row deletion is available.
+ *
+ * Overlap note: playground.spec.ts (line 119-124) also opens message-logs-option
+ * and asserts "Page 1 of 1". That test is a monolithic integration spec without
+ * @stable; this spec is the dedicated, isolated, @stable coverage with different
+ * assertions (.ag-row count). Row deletion (Test 2) is not covered anywhere else.
  */
 
 test.describe.configure({ mode: "serial" });
