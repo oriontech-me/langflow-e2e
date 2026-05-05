@@ -85,22 +85,25 @@ test.describe("Playground – Bulk Session Operations", () => {
       });
 
       await test.step("click select-all-checkbox and verify bulk-delete-button is visible", async () => {
+        await expect(page.getByTestId("select-all-checkbox")).toBeVisible({ timeout: 5000 });
         await page.getByTestId("select-all-checkbox").click();
         await expect(page.getByTestId("bulk-delete-button")).toBeVisible({
           timeout: 5000,
         });
       });
 
-      await test.step("verify all per-session checkboxes are selectable and bulk-delete-button remains visible", async () => {
-        const checkboxCount = await page
-          .locator('[data-testid$="-checkbox"]:not([data-testid="select-all-checkbox"])')
-          .count();
+      await test.step("verify all per-session checkboxes are in checked state", async () => {
+        const checkboxes = page.locator(
+          '[data-testid$="-checkbox"]:not([data-testid="select-all-checkbox"])',
+        );
+        const checkboxCount = await checkboxes.count();
         expect(
           checkboxCount,
           "Expected at least two selectable session checkboxes after creating two sessions",
         ).toBeGreaterThanOrEqual(2);
-        // bulk-delete-button visible confirms all sessions are selected
-        await expect(page.getByTestId("bulk-delete-button")).toBeVisible({ timeout: 3000 });
+        for (let i = 0; i < checkboxCount; i++) {
+          await expect(checkboxes.nth(i)).toBeChecked();
+        }
       });
     },
   );
@@ -117,7 +120,8 @@ test.describe("Playground – Bulk Session Operations", () => {
         });
       });
 
-      await test.step("create two new sessions", async () => {
+      let totalBefore = 0;
+      await test.step("create two new sessions and record total session count", async () => {
         await page.getByTestId("new-chat").click();
         await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
           timeout: 10000,
@@ -126,20 +130,20 @@ test.describe("Playground – Bulk Session Operations", () => {
         await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
           timeout: 10000,
         });
+        totalBefore = await page.getByTestId("session-selector").count();
       });
 
-      const totalBefore = await page.getByTestId("session-selector").count();
-
+      let selectableCount = 0;
       await test.step("select all non-default sessions via select-all-checkbox", async () => {
+        await expect(page.getByTestId("select-all-checkbox")).toBeVisible({ timeout: 5000 });
         await page.getByTestId("select-all-checkbox").click();
         await expect(page.getByTestId("bulk-delete-button")).toBeVisible({
           timeout: 5000,
         });
+        selectableCount = await page
+          .locator('[data-testid$="-checkbox"]:not([data-testid="select-all-checkbox"])')
+          .count();
       });
-
-      const selectableCount = await page
-        .locator('[data-testid$="-checkbox"]:not([data-testid="select-all-checkbox"])')
-        .count();
 
       await test.step("click bulk-delete-button and verify sessions are removed", async () => {
         await page.getByTestId("bulk-delete-button").click();
