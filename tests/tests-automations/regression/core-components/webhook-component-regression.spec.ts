@@ -27,7 +27,7 @@ async function addWebhookComponent(page: any) {
 
 test(
   "Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page, request }) => {
     await addWebhookComponent(page);
 
@@ -59,7 +59,7 @@ test(
 
 test(
   "Webhook component — flow is saved to database and contains the Webhook node",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page, request }) => {
     await addWebhookComponent(page);
 
@@ -99,7 +99,7 @@ test(
 
 test(
   "Webhook component — cURL command in inspector shows valid POST URL with flow ID",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page }) => {
     await addWebhookComponent(page);
 
@@ -133,7 +133,7 @@ test(
 
 test(
   "Webhook component — empty data field returns empty Data object",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page }) => {
     await addWebhookComponent(page);
 
@@ -165,7 +165,7 @@ test(
 
 test(
   "Webhook component — endpoint field renders the actual webhook URL",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page }) => {
     await addWebhookComponent(page);
 
@@ -190,7 +190,7 @@ test(
 
 test(
   "Webhook component — copy button copies the endpoint URL to clipboard",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page }) => {
     await addWebhookComponent(page);
 
@@ -225,7 +225,7 @@ test(
 
 test(
   "Webhook component — POST to non-existent flow name returns 404",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ request }) => {
     // The webhook endpoint returns 404 when the flow_id_or_name cannot be resolved.
     // This is confirmed by the backend unit test: test_webhook_not_found_invalid_endpoint.
@@ -282,7 +282,7 @@ async function loadFlowWithDataField(
 
 test(
   "Webhook component — valid JSON payload is propagated as structured Data output",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page }) => {
     await addWebhookComponent(page);
     const flowId = page.url().split("/").slice(-1)[0];
@@ -322,7 +322,7 @@ test(
 
 test(
   "Webhook component — invalid JSON payload is encapsulated in {payload: ...}",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page }) => {
     await addWebhookComponent(page);
     const flowId = page.url().split("/").slice(-1)[0];
@@ -359,7 +359,7 @@ test(
 
 test(
   "GET /api/v1/monitor/messages returns 200 with array response",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
