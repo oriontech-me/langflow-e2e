@@ -101,8 +101,10 @@ test.describe("Playground – Bulk Session Operations", () => {
           checkboxCount,
           "Expected at least two selectable session checkboxes after creating two sessions",
         ).toBeGreaterThanOrEqual(2);
+        // Checkboxes are custom divs (not native inputs); selected state is indicated
+        // by the text-status-red class on the icon rendered inside the div.
         for (let i = 0; i < checkboxCount; i++) {
-          await expect(checkboxes.nth(i)).toBeChecked();
+          await expect(checkboxes.nth(i).locator(".text-status-red")).toBeVisible();
         }
       });
     },

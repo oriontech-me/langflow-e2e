@@ -37,7 +37,7 @@ The Default session is excluded from bulk operations by design: `selectableSessi
 1. Create a ChatInput → ChatOutput flow and open the Playground
 2. Click `new-chat` twice to create two non-default sessions
 3. Assert `select-all-checkbox` is visible; click it; assert `bulk-delete-button` is visible
-4. Assert every per-session checkbox (`[data-testid$="-checkbox"]:not([data-testid="select-all-checkbox"])`) is in checked state; assert count ≥ 2
+4. Assert count ≥ 2 and every per-session checkbox has a `.text-status-red` child visible (custom div — selected state is indicated by the icon CSS class, not a native checked attribute)
 
 **Test 3 — bulk-delete-button must delete selected sessions**
 
@@ -61,7 +61,7 @@ The Default session is excluded from bulk operations by design: `selectableSessi
 ## External dependencies *(required)*
 
 - `chat-sidebar.tsx` — `data-testid="select-all-checkbox"` (appears between Default session and first non-default session when `selectableSessions.length > 0`); `data-testid="bulk-delete-button"` (appears when `selectedSessions.size > 0`)
-- `session-selector.tsx` — `data-testid="session-${session}-checkbox"` (dynamic; rendered only when `showCheckbox={selectableSessions.includes(session)}`)
+- `session-selector.tsx` — `data-testid="session-${session}-checkbox"` (dynamic; rendered only when `showCheckbox={selectableSessions.includes(session)}`); a custom `div` — selected state is indicated by `.text-status-red` on the inner icon (`SquareCheck`), not by a native checked attribute
 - Default session is never selectable; its entry never has a checkbox
 
 ---
