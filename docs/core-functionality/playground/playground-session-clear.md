@@ -38,8 +38,8 @@ This is a focused regression guard for the `clear-chat-option` path: open the he
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/components/core/chatComponents/chatHeader/chat-header.tsx` — `clear-chat-option` is rendered only when `isDefaultSession` is true; clicking it fires `clearDefaultSession`. Any rename of the `data-testid` or change to the default-session condition will break the test.
-- `src/frontend/src/components/core/chatComponents/chatHeader/` — `chat-header-more-menu` trigger wrapped in `AnimatedConditional` (framer-motion); that is why `evaluate((el) => el.click())` is used instead of a coordinate-based click.
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/chat-header.tsx` — `clear-chat-option` is rendered only when `isDefaultSession` is true; clicking it fires `clearDefaultSession`. Any rename of the `data-testid` or change to the default-session condition will break the test.
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/session-more-menu.tsx` — `chat-header-more-menu` trigger wrapped in `AnimatedConditional` (framer-motion); that is why `evaluate((el) => el.click())` is used instead of a coordinate-based click.
 
 ---
 
