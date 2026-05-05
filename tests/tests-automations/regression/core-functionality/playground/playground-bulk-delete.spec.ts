@@ -51,7 +51,8 @@ test.describe("Playground – Bulk Session Operations", () => {
 
       await test.step("click the per-session checkbox and verify bulk-delete-button appears", async () => {
         await page
-          .locator('[data-testid$="-checkbox"]:not([data-testid="select-all-checkbox"])')
+          .locator('[data-testid="session-selector"]')
+          .locator('[data-testid$="-checkbox"]')
           .first()
           .click();
         await expect(page.getByTestId("bulk-delete-button")).toBeVisible({
@@ -93,9 +94,9 @@ test.describe("Playground – Bulk Session Operations", () => {
       });
 
       await test.step("verify all per-session checkboxes are in checked state", async () => {
-        const checkboxes = page.locator(
-          '[data-testid$="-checkbox"]:not([data-testid="select-all-checkbox"])',
-        );
+        const checkboxes = page
+          .locator('[data-testid="session-selector"]')
+          .locator('[data-testid$="-checkbox"]');
         const checkboxCount = await checkboxes.count();
         expect(
           checkboxCount,
@@ -143,7 +144,8 @@ test.describe("Playground – Bulk Session Operations", () => {
           timeout: 5000,
         });
         selectableCount = await page
-          .locator('[data-testid$="-checkbox"]:not([data-testid="select-all-checkbox"])')
+          .locator('[data-testid="session-selector"]')
+          .locator('[data-testid$="-checkbox"]')
           .count();
       });
 

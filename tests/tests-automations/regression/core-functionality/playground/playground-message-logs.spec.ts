@@ -12,6 +12,10 @@ import { setupPlayground } from "../../../../helpers/flows/setup-playground";
  *   session-view.tsx            — ag-grid table; onDelete enabled when !playgroundPage
  *   tableComponent/TableOptions — data-testid="delete-row-button" (disabled until selection)
  *
+ * Row targeting uses .ag-row (ag-Grid internal class) because neither session-view.tsx
+ * nor ag-Grid itself exposes data-testid on individual rows. See tracking issue for a
+ * Langflow-side fix: https://github.com/oriontech-me/langflow-e2e/issues/135
+ *
  * playgroundPage is false in the embedded playground (flow editor),
  * so row deletion is available.
  *

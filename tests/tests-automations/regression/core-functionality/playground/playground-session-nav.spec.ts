@@ -86,10 +86,11 @@ test.describe("Playground – Session Creation and Navigation", () => {
           .getByTestId("session-selector")
           .filter({ hasText: "Default Session" })
           .click();
-        await expect(page.getByText("default session message").first()).toBeVisible({
+        // Use the user-bubble test ID (chat-message-User-{text}) to avoid matching the echoed AI reply.
+        await expect(page.getByTestId("chat-message-User-default session message")).toBeVisible({
           timeout: 10000,
         });
-        await expect(page.getByText("new session message")).toHaveCount(0);
+        await expect(page.getByTestId("chat-message-User-new session message")).toHaveCount(0);
       });
     },
   );
