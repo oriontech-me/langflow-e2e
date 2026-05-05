@@ -2,17 +2,18 @@ import type { Page } from "@playwright/test";
 import { setupOpenAI } from "./setup-openai";
 import { setupAnthropic } from "./setup-anthropic";
 import { setupGoogle } from "./setup-google";
+import { providerConfigMap, type Provider } from "./provider-config";
 
-export type Provider = "openai" | "anthropic" | "google";
+export type { Provider } from "./provider-config";
+export { providerConfigMap } from "./provider-config";
 
-// Chaves de ambiente correspondentes às definidas no arquivo .env
-// Ao adicionar um novo provider, inclua aqui todas as chaves necessárias declaradas no .env
-// O test.skip irá verificar se TODAS as chaves do provider estão presentes antes de rodar
-export const providerEnvKeyMap: Record<Provider, string[]> = {
-  openai: ["OPENAI_API_KEY"],
-  anthropic: ["ANTHROPIC_API_KEY"],
-  google: ["GOOGLE_API_KEY"],
-};
+// Derivado de provider-config.ts — edite lá para alterar as chaves de ambiente
+export const providerEnvKeyMap: Record<string, string[]> = Object.fromEntries(
+  (Object.keys(providerConfigMap) as (keyof typeof providerConfigMap)[]).map((p) => [
+    p,
+    providerConfigMap[p].envKeys,
+  ]),
+);
 
 export const providerSetupMap: Record<
   Provider,

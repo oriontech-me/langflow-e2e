@@ -1,12 +1,12 @@
-# model-provider — Guia para criação de testes
+# model-provider — Guide for creating tests
 
-Testes nesta pasta validam configuração de providers (API keys, modal de providers, seleção de modelos) via UI.
+Tests in this folder validate provider configuration (API keys, provider modal, model selection) via UI.
 
 ---
 
-## Testes que navegam pelas configurações
+## Tests that navigate through settings
 
-Use `SettingsPage` para navegar até a página de configurações:
+Use `SettingsPage` to navigate to the settings page:
 
 ```typescript
 import { SettingsPage } from "../../../../pages";
@@ -18,12 +18,12 @@ await page.getByTestId("sidebar-nav-Model Providers").click();
 
 ---
 
-## Testes que executam um agente com o provider configurado
+## Tests that execute an agent with the configured provider
 
-Se o teste vai além da configuração e executa um agente, **use o setup de modelos**:
+If the test goes beyond configuration and executes an agent, **use the model setup**:
 
 ```bash
-# Antes de rodar
+# Before running
 npx playwright test tests/collect-models.spec.ts
 ```
 
@@ -33,23 +33,23 @@ import { SimpleAgentTemplatePage } from "../../../../pages";
 await new SimpleAgentTemplatePage(page).load({ provider: "openai", model: "gpt-4o-mini" });
 ```
 
-Para testes parametrizados por modelo, siga o padrão de `agent-component-regression.spec.ts` em `llm-agents/`.
+For tests parameterized by model, follow the pattern from `agent-component-regression.spec.ts` in `llm-agents/`.
 
 ---
 
-## Tags obrigatórias para esta pasta
+## Required tags for this folder
 
 ```typescript
-{ tag: ["@model-provider"] }                        // mínimo para todos os testes
-{ tag: ["@model-provider", "@settings"] }           // se navega via Settings
-{ tag: ["@model-provider", "@agents"] }             // se executa um agente após configurar
+{ tag: ["@model-provider"] }                        // minimum for all tests
+{ tag: ["@model-provider", "@settings"] }           // if navigating via Settings
+{ tag: ["@model-provider", "@agents"] }             // if executing an agent after configuring
 ```
 
 ---
 
-## Referências
+## References
 
 - `SettingsPage` → `tests/pages/SettingsPage.ts`
 - `SimpleAgentTemplatePage` → `tests/pages/SimpleAgentTemplatePage.ts`
-- Setup de providers → `tests/helpers/provider-setup/`
-- Coleta de modelos → `tests/collect-models.spec.ts`
+- Provider setup → `tests/helpers/provider-setup/`
+- Model collection → `tests/collect-models.spec.ts`

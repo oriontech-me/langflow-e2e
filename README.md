@@ -1,131 +1,144 @@
 # Langflow E2E
 
-Testes de regressão end-to-end do [Langflow](https://github.com/langflow-ai/langflow) com Playwright.
+End-to-end regression tests for [Langflow](https://github.com/langflow-ai/langflow) with Playwright.
 
-O repositório é **independente do código-fonte do Langflow** — os testes apontam para qualquer instância via URL, sem precisar clonar ou buildar o projeto.
+This repository is **independent from the Langflow source code** — the tests point to any running instance via URL, without needing to clone or build the project.
 
 ---
 
 ## Setup
 
 ```bash
-git clone https://github.com/lice-reis/langflow-e2e.git
+git clone https://github.com/oriontech-me/langflow-e2e.git
 cd langflow-e2e
 npm install
 npx playwright install chromium --with-deps
-cp .env.example .env  # ajuste PLAYWRIGHT_BASE_URL e API keys
+cp .env.example .env  # adjust PLAYWRIGHT_BASE_URL and API keys
 ```
 
-**Pré-requisitos:** Node.js 20+, Playwright 1.57+ (instalado via `npm install`), Docker (opcional).
+**Prerequisites:** Node.js 20+, Playwright 1.57+ (installed via `npm install`), Docker (optional).
 
 ---
 
-## Subindo o Langflow
+## Starting Langflow
 
 ```bash
-# Docker — nightly (padrão)
+# Docker — nightly (default)
 ./scripts/start-langflow-docker.sh
 
-# Docker — versão específica
-LANGFLOW_IMAGE_TAG=1.3.0 ./scripts/start-langflow-docker.sh
+# Docker — specific version
+./scripts/start-langflow-docker.sh 1.3.0
 
-# Instância externa (staging, PR branch, local já no ar)
-# Apenas defina PLAYWRIGHT_BASE_URL no .env ou na linha de comando
+# External instance (staging, PR branch, already running locally)
+# Just set PLAYWRIGHT_BASE_URL in .env or on the command line
 ```
 
-> Para testar uma branch específica: faça checkout da branch no repo do Langflow, suba com `uv run langflow run`, e aponte `PLAYWRIGHT_BASE_URL=http://localhost:7860`.
+> To test a specific branch: check out the branch in the Langflow repo, start it with `uv run langflow run`, and point `PLAYWRIGHT_BASE_URL=http://localhost:7860`.
 
 ---
 
-## Rodando os testes
+## Running the tests
 
 ```bash
-npm test                                              # suíte completa
-npm run test:core                                     # somente testes core
-npm run test:extended                                 # somente testes extended
-npm run test:regression                               # somente regressão de bugs
-npx playwright test --grep "@api"                    # por tag
-npx playwright test path/ao/arquivo.spec.ts          # arquivo específico
-npm run report                                        # abre o último relatório HTML
+npm test                                              # full suite
+npm run test:core                                     # core tests only
+npm run test:extended                                 # extended tests only
+npm run test:regression                               # regression-only
+npx playwright test --grep "@api"                    # by tag
+npx playwright test path/to/file.spec.ts             # specific file
+npm run report                                        # open the last HTML report
 ```
 
 ---
 
-## Testes com LLM (agentes, providers, MCP)
+## Tests with LLM (agents, providers, MCP)
 
-Testes que dependem de modelos de linguagem exigem dois passos antes de rodar:
+Tests that depend on language models require two steps before running:
 
-### 1. Coletar providers e modelos
+### 1. Collect providers and models
 
 ```bash
 npx playwright test tests/collect-models.spec.ts
 ```
 
-Esse comando:
-- Valida as API keys de OpenAI, Anthropic e Google via chamada real à API
-- Coleta a lista de modelos disponíveis na UI via Settings → Model Providers
-- Salva dois arquivos em `tests/helpers/provider-setup/data/`:
-  - `providers.json` — status de cada provider (`active` / `inactive` + motivo)
-  - `models.json` — lista de todos os modelos disponíveis por provider
+This command:
+- Validates API keys for OpenAI, Anthropic and Google via a real API call
+- Collects the list of available models in the UI via Settings → Model Providers
+- Saves two files in `tests/helpers/provider-setup/data/`:
+  - `providers.json` — status of each provider (`active` / `inactive` + reason)
+  - `models.json` — list of all available models per provider
 
-### 2. Configurar a estratégia de teste no `.env`
+### 2. Configure the test strategy in `.env`
+
+The strategy is automatically detected by the priority of the defined variables:
 
 ```bash
-# Rodar todos os modelos do JSON
-MODEL_TEST_STRATEGY=all
+# Run only a specific model (highest priority)
+MODEL_TEST_ID=gpt-4o-mini
 
-# Rodar somente modelos de um provider
-MODEL_TEST_STRATEGY=provider
+# Run only models from one provider
 MODEL_TEST_PROVIDER=openai
 
-# Rodar somente um modelo específico
-MODEL_TEST_STRATEGY=model
-MODEL_TEST_ID=gpt-4o-mini
+# Run all models from the JSON (default — leave variables empty)
 ```
 
-### 3. Rodar com --workers=1
+### 3. Run with --workers=1
 
-Testes de agentes criam flows no Langflow e exigem `--workers=1` para evitar conflito de nomes:
+Agent tests create flows in Langflow and require `--workers=1` to avoid name conflicts:
 
 ```bash
 npx playwright test tests/tests-automations/regression/core-functionality/llm-agents/agent-component-regression.spec.ts --workers=1
 ```
 
-> Providers com `status: "inactive"` no `providers.json` aparecem como `skipped` no output com o motivo exato (ex: saldo insuficiente, key inválida).
+> Providers with `status: "inactive"` in `providers.json` appear as `skipped` in the output with the exact reason (e.g.: insufficient balance, invalid key).
 
 ---
 
-## Tags disponíveis
+## Available tags
 
-| Tag | Área |
+Tags are split into two groups: **cross-cutting** (severity/layer) and **functional** (product area). Every test must have at least one tag from each group.
+
+**Cross-cutting**
+
+| Tag | When to use |
 |---|---|
-| `@model-provider` | Configuração de provedores, API keys, modal de modelo |
-| `@agents` | Comportamento de agentes LLM, raciocínio, steps |
-| `@mcp` | Integração MCP (server e client) |
-| `@playground` | Playground de chat e interações |
-| `@auth` | Autenticação, login, sessão, gestão de usuários |
-| `@observability` | Traces, latência, tokens |
-| `@files` | Ingestão de arquivos e RAG |
-| `@project-management` | Flows, pastas, navegação, bulk actions |
-| `@templates` | Starter projects e templates de flow |
-| `@ui-ux` | Interface geral, atalhos, aparência |
-| `@settings` | Navegações que usam a página de configurações |
-| `@api` | Testes que chamam a API REST do Langflow |
+| `@release` | Happy-path flows required before any deploy |
+| `@regression` | Tests for previously fixed bugs |
+| `@api` | Tests exercising REST API endpoints |
+| `@components` | Canvas/sidebar component configuration |
+| `@workspace` | Flow, folder and canvas management |
+| `@database` | Tests with persisted state in the database |
+| `@mainpage` | Home/dashboard UI tests |
 
-Todo teste novo deve ter **pelo menos uma tag** e importar de `../../fixtures` (não do Playwright diretamente).
+**Functional** (use alongside the cross-cutting ones)
+
+| Tag | Area |
+|---|---|
+| `@model-provider` | Provider configuration, API keys, model modal |
+| `@agents` | LLM agent behavior, reasoning, steps |
+| `@mcp` | MCP integration (server and client) |
+| `@playground` | Chat playground and interactions |
+| `@auth` | Authentication, login, session, user management |
+| `@observability` | Traces, latency, tokens |
+| `@files` | Files page, upload, Read File / Write File components |
+| `@templates` | Starter projects and flow templates |
+| `@settings` | Navigation and configuration on the Settings page |
+| `@ui-ux` | General interface, shortcuts, appearance |
+
+Every new test must have **at least one tag** and import from `../../fixtures` (not directly from Playwright).
 
 ---
 
-## Estrutura
+## Structure
 
-| Pasta | Responsabilidade |
+| Folder | Responsibility |
 |---|---|
-| `assets/` | Arquivos estáticos usados nos testes: documentos para upload, flows JSON prontos para importação e arquivos de mídia. Nenhum código aqui — só dados. |
-| `fixtures/` | Ponto de entrada para todos os testes. Estende o `test` do Playwright com monitoramento automático de erros de backend. Todo teste importa daqui, nunca do Playwright diretamente. |
-| `helpers/` | Funções de ações específicas reutilizáveis. Encapsulam operações concretas da aplicação. |
-| `helpers/provider-setup/` | Setup de providers (OpenAI, Anthropic, Google), coleta de modelos e validação de credenciais. |
-| `pages/` | Page Objects para navegação da interface. Cada arquivo representa uma área da UI. |
-| `tests-automations/` | Onde vivem os testes, organizados por área funcional. |
+| `assets/` | Static files used in tests: documents for upload, ready-to-import flow JSONs and media files. No code here — data only. |
+| `fixtures/` | Entry point for all tests. Extends Playwright's `test` with automatic backend error monitoring. Every test imports from here, never from Playwright directly. |
+| `helpers/` | Reusable action functions. Encapsulate concrete application operations. |
+| `helpers/provider-setup/` | Provider setup (OpenAI, Anthropic, Google), model collection and credential validation. |
+| `pages/` | Page Objects for UI navigation. Each file represents an area of the UI. |
+| `tests-automations/` | Where tests live, organized by functional area. |
 
 ```
 tests/
@@ -134,7 +147,7 @@ tests/
 │   ├── flows/
 │   └── media/
 │
-├── collect-models.spec.ts          # coleta providers.json + models.json (rodar antes de testes LLM)
+├── collect-models.spec.ts          # collects providers.json + models.json (run before LLM tests)
 │
 ├── fixtures/
 │
@@ -145,20 +158,20 @@ tests/
 │   ├── flows/
 │   ├── mcp/
 │   ├── other/
-│   ├── provider-setup/             # setup de providers e coleta de modelos
-│   │   ├── collect-models.ts       # helper: valida providers via API + coleta modelos via UI
+│   ├── provider-setup/             # provider setup and model collection
+│   │   ├── collect-models.ts       # helper: validates providers via API + collects models via UI
 │   │   ├── setup-openai.ts
 │   │   ├── setup-anthropic.ts
 │   │   ├── setup-google.ts
 │   │   ├── index.ts                # providerSetupMap + hasProviderEnvKeys
 │   │   └── data/
-│   │       ├── providers.json      # gerado por collect-models.spec.ts
-│   │       └── models.json         # gerado por collect-models.spec.ts
+│   │       ├── providers.json      # generated by collect-models.spec.ts
+│   │       └── models.json         # generated by collect-models.spec.ts
 │   └── ui/
 │
 ├── pages/
 │   ├── BasePage.ts
-│   ├── SimpleAgentTemplatePage.ts  # carrega template Simple Agent com provider/modelo configurável
+│   ├── SimpleAgentTemplatePage.ts  # loads Simple Agent template with configurable provider/model
 │   ├── SettingsPage.ts
 │   └── ...
 │
@@ -187,27 +200,29 @@ tests/
 
 ## CI (GitHub Actions)
 
-| Workflow | Gatilho | O que faz |
+| Workflow | Trigger | What it does |
 |---|---|---|
-| `nightly.yml` | Diário 03h BRT + manual | Roda tudo contra `langflow-nightly:latest`, abre issue se falhar |
-| `manual.yml` | Manual | Roda contra qualquer tag Docker ou URL externa, filtra por suite/tag |
-| `file-watcher.yml` | Diário 05h BRT | Monitora mudanças no source do Langflow e abre issue de revisão |
+| `pr-validation.yml` | Every PR to `main` | TypeScript check (`tsc --noEmit`) + ESLint in parallel — both must pass before merge |
+| `nightly.yml` | Daily 03:00 BRT + manual | Runs everything against `langflow-nightly:latest`, opens an issue on failure |
+| `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag |
+| `file-watcher.yml` | Daily 05:00 BRT | Monitors changes in Langflow source and opens a review issue |
 
 ---
 
 ## Regression Checklist
 
-Veja [`QA_CHECKLIST.md`](./QA_CHECKLIST.md) para o mapa completo de cobertura.
+See [`QA_CHECKLIST.md`](./QA_CHECKLIST.md) for the full coverage map.
 
-| Símbolo | Significado |
+| Symbol | Meaning |
 |---|---|
-| `[x]` | Automatizado |
-| `[ ]` | Não coberto |
-| `[~]` | Parcialmente coberto |
-| `[!]` | Flaky — precisa estabilizar |
+| `[x]` | Automated and validated |
+| `[-]` | Automated, needs validation |
+| `[ ]` | Not covered |
+| `[~]` | Partially covered |
+| `[!]` | Flaky — needs stabilization |
 
 ---
 
-## Contribuindo
+## Contributing
 
-Veja [`CONTRIBUTING.md`](./CONTRIBUTING.md) para o guia completo de como criar testes, validar cobertura e responder a issues do file-watcher.
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the complete guide on how to create tests, validate coverage and respond to file-watcher issues.

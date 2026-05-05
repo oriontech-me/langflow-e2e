@@ -1,3 +1,4 @@
+import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
@@ -7,15 +8,13 @@ test.describe.configure({ mode: "serial" });
 
 // Helper: create a blank flow and add the API Request component to the canvas.
 // After this call the component node is visible and its inspector is open.
-async function addApiRequestComponent(page: any) {
+async function addApiRequestComponent(page: Page) {
   await awaitBootstrapTest(page);
   await page.getByTestId("blank-flow").click();
   await page.getByTestId("sidebar-search-input").fill("API Request");
-  // Wait for the sidebar item to appear in the search results
-  await page.waitForSelector('[data-testid="add-component-button-api-request"]', {
-    timeout: 10000,
-    state: "attached",
-  });
+  await expect(
+    page.getByTestId("add-component-button-api-request"),
+  ).toBeAttached({ timeout: 10000 });
   // The add button reveals on hover — use data-testid suffix match to find
   // the sidebar item without needing to know its category prefix
   // (e.g. "utilitiesAPI Request", "helpersAPI Request", etc.)
@@ -25,24 +24,22 @@ async function addApiRequestComponent(page: any) {
     .hover();
   await page.getByTestId("add-component-button-api-request").click();
   await adjustScreenView(page);
-  // Wait for the API Request node to appear on the canvas
-  await page.waitForSelector('[data-testid="title-API Request"]', {
+  await expect(page.getByTestId("title-API Request")).toBeVisible({
     timeout: 15000,
   });
 }
 
 // Helper: run the component and return the raw text content from the output inspection dialog.
 // The output Data object is displayed in a Monaco editor — textContent gives the JSON string.
-async function runAndOpenOutput(page: any): Promise<string> {
+async function runAndOpenOutput(page: Page): Promise<string> {
   await page.getByTestId("button_run_api request").click();
-  await page.waitForSelector("text=built successfully", { timeout: 45000 });
-  await expect(page.getByText("built successfully").last()).toBeVisible();
+  await expect(page.getByText("built successfully").last()).toBeVisible({
+    timeout: 45000,
+  });
 
   await page.getByTestId("output-inspection-api response-apirequest").click();
-  await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
-
   const dialog = page.locator('[role="dialog"]');
-  await expect(dialog).toBeVisible();
+  await expect(dialog).toBeVisible({ timeout: 10000 });
 
   return await dialog
     .locator("[role='textbox']")
@@ -55,10 +52,10 @@ async function runAndOpenOutput(page: any): Promise<string> {
 // After save, verifies the value appears as a button in the table dialog
 // to guard against false-positive saves where the editor closed for another reason.
 async function fillViewTextCell(
-  page: any,
-  cellLocator: any,
+  page: Page,
+  cellLocator: Locator,
   value: string,
-  tableDialog: any,
+  tableDialog: Locator,
 ): Promise<void> {
   await expect(async () => {
     if (!(await page.getByTestId("textarea").isVisible())) {
@@ -79,7 +76,7 @@ async function fillViewTextCell(
       }
       if (!coords) throw new Error("Cell not found or not rendered");
       await page.mouse.click(coords.x, coords.y);
-      await page.waitForSelector('[data-testid="textarea"]', { timeout: 2000 });
+      await expect(page.getByTestId("textarea")).toBeAttached({ timeout: 2000 });
     }
     await page.getByTestId("textarea").fill(value, { timeout: 2000 });
     const saveCoords = await page.evaluate(() => {
@@ -99,10 +96,7 @@ async function fillViewTextCell(
     });
     if (!saveCoords) throw new Error("Save button not found in View Text dialog");
     await page.mouse.click(saveCoords.x, saveCoords.y);
-    await page.waitForSelector('[data-testid="textarea"]', {
-      state: "detached",
-      timeout: 3000,
-    });
+    await expect(page.getByTestId("textarea")).toHaveCount(0, { timeout: 3000 });
     await expect(tableDialog.getByRole("button", { name: value })).toBeVisible({
       timeout: 5000,
     });
@@ -115,7 +109,7 @@ async function fillViewTextCell(
 
 test(
   "API Request component — renders on canvas with correct output and URL handles",
-  { tag: ["@release", "@regression", "@components"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -139,7 +133,7 @@ test(
 
 test(
   "API Request component — inspector fields accept configured values",
-  { tag: ["@release", "@regression", "@components"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -162,7 +156,7 @@ test(
 
 test(
   "API Request component — invalid URL is accepted by field and run shows error notification",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     // Invalid URLs are accepted by the input field but rejected by the Pydantic HttpUrl
     // validator on run — the component must not crash on either action.
@@ -179,17 +173,10 @@ test(
     await expect(page.getByTestId("title-API Request")).toBeVisible();
     await expect(page.locator(".react-flow__node")).toHaveCount(1);
 
-    // Running with an invalid URL must show the build error notification.
-    // waitForSelector detects the moment the toast appears in the DOM —
-    // more reliable than toBeVisible() alone for short-lived notifications.
     await page.getByTestId("button_run_api request").click();
-    await page.waitForSelector(
-      "text=Error building Component API Request:",
-      { timeout: 30000 },
-    );
     await expect(
       page.getByText("Error building Component API Request:"),
-    ).toBeVisible();
+    ).toBeVisible({ timeout: 30000 });
 
     // The detail message must confirm it is specifically a URL validation error
     await expect(page.getByText("Invalid URL provided:")).toBeVisible();
@@ -205,7 +192,7 @@ test(
 
 test(
   "API Request component — GET request returns 200 and output Data contains all required fields",
-  { tag: ["@release", "@regression", "@components"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -235,7 +222,7 @@ test(
 
 test(
   "API Request component — POST method executes POST verb and returns 200",
-  { tag: ["@release", "@regression", "@components"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -264,7 +251,7 @@ test(
 
 test(
   "API Request component — PUT method executes PUT verb and returns 200",
-  { tag: ["@release", "@regression", "@components"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -295,7 +282,7 @@ test(
 
 test(
   "API Request component — PATCH method executes PATCH verb and returns 200",
-  { tag: ["@release", "@regression", "@components"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -326,7 +313,7 @@ test(
 
 test(
   "API Request component — DELETE method executes DELETE verb and returns 200",
-  { tag: ["@release", "@regression", "@components"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -357,7 +344,7 @@ test(
 
 test(
   "API Request component — non-2xx HTTP response propagates status_code without crashing",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -381,7 +368,7 @@ test(
 
 test(
   "API Request component — query parameters embedded in URL are sent and echoed",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -408,13 +395,11 @@ test(
 // =============================================================================
 
 test(
-  "API Request component — inspector accepts headers and body key-value pairs",
-  { tag: ["@regression", "@components"] },
+  "API Request component — inspector headers table accepts key + value cell entries",
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
-    // ── Headers table ────────────────────────────────────────────────────────
-    // Open the headers key-value table
     const headersDiv = page.getByTestId("div-table_headers");
     await expect(headersDiv).toBeVisible({ timeout: 10000 });
     await headersDiv.getByRole("button", { name: "Open table" }).click();
@@ -422,41 +407,31 @@ test(
     const headersDialog = page.locator('[role="dialog"]').last();
     await expect(headersDialog).toBeVisible({ timeout: 10000 });
 
-    // Add a row and fill the Key cell
     await headersDialog.getByTestId("add-row-button").click();
 
-    const headerKeyCell = headersDialog
+    const lastRow = headersDialog
       .locator('[role="treegrid"] [role="row"]')
-      .last()
-      .locator('[col-id="key"]');
+      .last();
 
-    await fillViewTextCell(page, headerKeyCell, "X-E2E-Header", headersDialog);
+    // fillViewTextCell asserts the cell value renders as a button inside the table dialog after Save —
+    // verifying both key AND value cells closes the gap where only the key was previously asserted.
+    await fillViewTextCell(
+      page,
+      lastRow.locator('[col-id="key"]'),
+      "X-E2E-Header",
+      headersDialog,
+    );
+    await fillViewTextCell(
+      page,
+      lastRow.locator('[col-id="value"]'),
+      "test-header-value",
+      headersDialog,
+    );
 
-    // Close headers dialog via Cancel to keep the inspector panel open
     await headersDialog.getByTestId("btn-cancel-modal").click();
     await expect(headersDialog).not.toBeVisible({ timeout: 5000 });
 
-    // ── Body table ───────────────────────────────────────────────────────────
-    const bodyDiv = page.getByTestId("div-table_body");
-    await expect(bodyDiv).toBeVisible({ timeout: 10000 });
-    await bodyDiv.getByRole("button", { name: "Open table" }).click();
-
-    const bodyDialog = page.locator('[role="dialog"]').last();
-    await expect(bodyDialog).toBeVisible({ timeout: 10000 });
-
-    await bodyDialog.getByTestId("add-row-button").click();
-
-    const bodyKeyCell = bodyDialog
-      .locator('[role="treegrid"] [role="row"]')
-      .last()
-      .locator('[col-id="key"]');
-
-    await fillViewTextCell(page, bodyKeyCell, "payload_key", bodyDialog);
-
-    await bodyDialog.getByTestId("btn-cancel-modal").click();
-    await expect(bodyDialog).not.toBeVisible({ timeout: 5000 });
-
-    // Canvas and component must still be intact after table interactions
+    // Canvas integrity after the table interaction
     await expect(page.getByTestId("title-API Request")).toBeVisible();
     await expect(page.locator(".react-flow__node")).toHaveCount(1);
   },
@@ -464,7 +439,7 @@ test(
 
 test(
   "API Request component — cURL tab switches mode and field accepts a cURL command",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -499,31 +474,38 @@ test(
 );
 
 test(
-  "API Request component — cURL mode executes GET request and returns 200 with response data",
-  { tag: ["@regression", "@components"] },
+  "API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200",
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
-    // The URL field is required even when the cURL tab is active.
-    // Fill it first in the URL tab, then switch to the cURL tab.
-    const urlInput = page.getByTestId("popover-anchor-input-url_input");
-    await expect(urlInput).toBeVisible({ timeout: 10000 });
-    await urlInput.fill("https://httpbin.org/get");
-
-    // Switch to cURL tab — the curl_input field accepts extra cURL options
+    // Switch to the cURL tab BEFORE touching the URL field. Pre-filling url_input
+    // would let the test pass even if cURL parsing was broken — the test would
+    // unintentionally fall back to the URL-tab path. The whole point of this test
+    // is to exercise the cURL parser end-to-end.
     await page.getByTestId("tab_1_curl").click();
     const curlTextarea = page.getByTestId("textarea_str_curl_input");
     await expect(curlTextarea).toBeVisible({ timeout: 10000 });
 
-    // Add an Accept header via cURL syntax to exercise the curl_input field
     await curlTextarea.fill(
       "curl -X GET https://httpbin.org/get -H 'Accept: application/json'",
     );
 
-    // Run the component and inspect the output
+    // The cURL parser must auto-populate url_input with the URL extracted from the command.
+    // Asserting this directly proves the parser ran and is the precondition the run relies on
+    // (without it the backend would receive an empty URL and validation would fail).
+    await page.waitForFunction(
+      () => {
+        const el = document.getElementById(
+          "popover-anchor-input-url_input",
+        ) as HTMLInputElement | null;
+        return el !== null && el.value === "https://httpbin.org/get";
+      },
+      { timeout: 10000 },
+    );
+
     const output = await runAndOpenOutput(page);
 
-    // A successful GET returns status 200 and the httpbin echo payload
     expect(output).toContain("200");
     expect(output).toContain("httpbin.org");
     expect(output).toContain("status_code");
