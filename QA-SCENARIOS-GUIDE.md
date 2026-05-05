@@ -1798,8 +1798,6 @@
 
 ---
 
----
-
 ## 22. Project and Folder Management
 
 **File:** `core/features/folders.spec.ts`, `folder-deletion-integrity.spec.ts`
@@ -2310,7 +2308,7 @@
 5. MCP client — consumption of external tools and resources
 6. Webhook trigger via external HTTP request
 7. Agent — inspect tools used in Playground
-8. [x] Shareable Playground URL generation (see 21.8)
+8. [-] Shareable Playground URL generation (see 21.8)
 9. Complete RAG pipeline
 
 ### 🟢 Low Priority

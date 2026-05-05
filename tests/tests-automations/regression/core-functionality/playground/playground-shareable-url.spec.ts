@@ -31,7 +31,8 @@ test.describe("Playground — Shareable URL Generation", () => {
 
         const flowUrl = page.url();
         const flowIdMatch = flowUrl.match(/\/flow\/([0-9a-f-]{36})/);
-        createdFlowId = flowIdMatch?.[1] ?? null;
+        expect(flowIdMatch, `Could not extract flow ID from URL: ${flowUrl}`).not.toBeNull();
+        createdFlowId = flowIdMatch![1];
       });
 
       await test.step("open Share dropdown and verify initial state", async () => {
