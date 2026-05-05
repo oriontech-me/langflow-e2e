@@ -12,24 +12,23 @@ const FLOW_BASE = {
 test.describe("Flow Rename via Header", () => {
   test(
     "flow can be renamed via the header edit",
-    { tag: ["@release", "@regression"] },
+    { tag: ["@release", "@workspace", "@stable"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
-      await page.waitForSelector('[data-testid="blank-flow"]', {
+      await expect(page.getByTestId("blank-flow")).toBeVisible({
         timeout: 30000,
       });
       await page.getByTestId("blank-flow").click();
 
-      // Wait for canvas to load (sidebar-search-input visible means editor is ready)
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
+      await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
         timeout: 30000,
       });
 
-      // Use the shared renameFlow utility (handles dirty-state and save)
       const newName = `My Renamed Flow ${Date.now()}`;
       await renameFlow(page, { flowName: newName });
 
-      // The header must show the new name
+      // Header reflects the new name (renameFlow's waitForFunction already confirms the DOM
+      // committed before returning — this expect is the test-framework-visible guard)
       await expect(page.getByTestId("flow_name")).toHaveText(newName, {
         timeout: 10000,
       });
@@ -38,7 +37,7 @@ test.describe("Flow Rename via Header", () => {
 
   test(
     "flow name persists after rename via API PATCH and GET",
-    { tag: ["@release", "@regression"] },
+    { tag: ["@release", "@workspace", "@api", "@stable"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const originalName = `Rename Test Flow - ${Date.now()}`;
