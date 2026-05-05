@@ -26,7 +26,7 @@ async function sendMessage(page: Page, text: string): Promise<void> {
 
 test.describe.configure({ mode: "serial" });
 
-test.describe("Playground – Session Create & Switch", () => {
+test.describe("Playground – Session Creation and Switching", () => {
   let createdFlowId: string | null = null;
 
   test.afterEach(async ({ page }) => {
@@ -53,24 +53,19 @@ test.describe("Playground – Session Create & Switch", () => {
         await sendMessage(page, "default-session-message");
       });
 
-      const sessionsBefore = page.getByTestId("session-selector");
-      let countBefore: number;
-
-      await test.step("Record session count before creating new session", async () => {
-        countBefore = await sessionsBefore.count();
-      });
-
       await test.step("Click new-chat and verify sidebar count increases by 1", async () => {
+        const countBefore = await page.getByTestId("session-selector").count();
         await page.getByTestId("new-chat").click();
-        await expect(sessionsBefore).toHaveCount(countBefore + 1, {
-          timeout: 10000,
-        });
+        await expect(page.getByTestId("session-selector")).toHaveCount(
+          countBefore + 1,
+          { timeout: 10000 },
+        );
       });
 
       await test.step("Verify new session starts with 0 messages", async () => {
-        await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
-          timeout: 10000,
-        });
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 10000 });
         await expect(page.getByTestId("div-chat-message")).toHaveCount(0, {
           timeout: 5000,
         });
@@ -83,17 +78,20 @@ test.describe("Playground – Session Create & Switch", () => {
       await test.step("Switch back to Default session via sidebar", async () => {
         // The first session-selector item is the Default session
         await page.getByTestId("session-selector").first().click();
-        await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
-          timeout: 10000,
-        });
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 10000 });
       });
 
       await test.step("Verify Default session shows its message and not the new session's message", async () => {
-        await expect(page.getByText("default-session-message").last()).toBeVisible({
-          timeout: 10000,
-        });
         await expect(
-          page.getByText("new-session-message"),
+          page
+            .getByTestId("div-chat-message")
+            .getByText("default-session-message")
+            .last(),
+        ).toBeVisible({ timeout: 10000 });
+        await expect(
+          page.getByTestId("div-chat-message").getByText("new-session-message"),
         ).toHaveCount(0, { timeout: 5000 });
       });
     },
@@ -125,9 +123,9 @@ test.describe("Playground – Session Create & Switch", () => {
 
       await test.step("Create a new session and send a message", async () => {
         await page.getByTestId("new-chat").click();
-        await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
-          timeout: 10000,
-        });
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 10000 });
         await expect(page.getByTestId("div-chat-message")).toHaveCount(0, {
           timeout: 5000,
         });
@@ -137,31 +135,41 @@ test.describe("Playground – Session Create & Switch", () => {
       await test.step("Switch back to Default session via sidebar and verify isolation", async () => {
         // First session-selector is Default; clicking it switches the active session
         await page.getByTestId("session-selector").first().click();
-        await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
-          timeout: 10000,
-        });
-        await expect(page.getByText("switch-test-default").last()).toBeVisible({
-          timeout: 10000,
-        });
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 10000 });
+        await expect(
+          page
+            .getByTestId("div-chat-message")
+            .getByText("switch-test-default")
+            .last(),
+        ).toBeVisible({ timeout: 10000 });
         // New-session message must not appear in Default session
-        await expect(page.getByText("switch-test-new-session")).toHaveCount(0, {
-          timeout: 5000,
-        });
+        await expect(
+          page
+            .getByTestId("div-chat-message")
+            .getByText("switch-test-new-session"),
+        ).toHaveCount(0, { timeout: 5000 });
       });
 
       await test.step("Switch back to new session and verify its message is preserved", async () => {
         // Second session-selector is the user-created session
         await page.getByTestId("session-selector").last().click();
-        await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
-          timeout: 10000,
-        });
-        await expect(page.getByText("switch-test-new-session").last()).toBeVisible({
-          timeout: 10000,
-        });
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 10000 });
+        await expect(
+          page
+            .getByTestId("div-chat-message")
+            .getByText("switch-test-new-session")
+            .last(),
+        ).toBeVisible({ timeout: 10000 });
         // Default session message must not bleed into new session
-        await expect(page.getByText("switch-test-default")).toHaveCount(0, {
-          timeout: 5000,
-        });
+        await expect(
+          page
+            .getByTestId("div-chat-message")
+            .getByText("switch-test-default"),
+        ).toHaveCount(0, { timeout: 5000 });
       });
     },
   );
