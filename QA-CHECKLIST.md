@@ -431,7 +431,7 @@
 
 #### 9.3 Advanced Playground Features
 - [x] Playground fullscreen mode → `playground/playground-fullscreen.spec.ts`
-- [ ] Shareable Playground (public URL, no authentication)
+- [-] Shareable Playground — URL generation validated (switch enables sharing, href matches /playground/uuid) → `playground/playground-shareable-url.spec.ts`
 - [-] Voice mode (voice assistant)
 - [-] Stop button in Playground
 
