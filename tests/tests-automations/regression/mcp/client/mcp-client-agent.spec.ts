@@ -159,8 +159,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent calls echo MCP tool and returns echoed message",
-      // @stable intentionally omitted — add after validating against a running Langflow instance
-      { tag: ["@mcp", "@agents", "@regression"] },
+      { tag: ["@mcp", "@agents", "@regression", "@stable"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

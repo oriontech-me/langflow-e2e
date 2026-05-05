@@ -153,8 +153,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
 
   test(
     "unreachable HTTP server results in empty tool dropdown",
-    // @stable intentionally omitted — add after validating against a running Langflow instance
-    { tag: ["@mcp", "@regression"] },
+    { tag: ["@mcp", "@regression", "@stable"] },
     async ({ page }) => {
       const BAD_SERVER = "bad-server";
 
@@ -245,8 +244,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
 
   test(
     "configures MCP server via HTTP form tab and verifies registration",
-    // @stable intentionally omitted — add after validating against a running Langflow instance
-    { tag: ["@mcp", "@regression"] },
+    { tag: ["@mcp", "@regression", "@stable"] },
     async ({ page }) => {
       const HTTP_SERVER = "http-form-server";
 
@@ -317,8 +315,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
 
   test(
     "selects get-sum tool, provides numeric inputs, and verifies sum in output",
-    // @stable intentionally omitted — add after validating against a running Langflow instance
-    { tag: ["@mcp", "@regression"] },
+    { tag: ["@mcp", "@regression", "@stable"] },
     async ({ page }) => {
       // Allow backend errors — npx server may return transient errors while starting
       (page as any).allowFlowErrors();
