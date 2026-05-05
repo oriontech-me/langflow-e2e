@@ -1,145 +1,63 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
-test(
-  "user profile menu has theme toggle buttons",
-  { tag: ["@release", "@workspace", "@regression", "@settings"] },
-  async ({ page }) => {
-    await awaitBootstrapTest(page, { skipModal: true });
-
-    // Open user profile menu
-    await page.getByTestId("user-profile-settings").click();
-    await page.waitForTimeout(400);
-
-    // Menu should show Theme section
-    const themeText = await page
-      .getByText(/theme/i)
-      .first()
-      .isVisible({ timeout: 5000 })
-      .catch(() => false);
-
-    expect(themeText, "User profile menu should have a Theme section").toBe(true);
-  },
-);
-
-test(
-  "theme can be toggled between light and dark mode",
-  { tag: ["@release", "@workspace", "@regression", "@settings"] },
-  async ({ page }) => {
-    await awaitBootstrapTest(page, { skipModal: true });
-
-    // Capture initial theme by checking html class
-    const initialHtmlClass = await page
-      .locator("html")
-      .getAttribute("class")
-      .catch(() => "");
-    const initialTheme = initialHtmlClass?.includes("dark") ? "dark" : "light";
-
-    // Open user profile menu
-    await page.getByTestId("user-profile-settings").click();
-    await page.waitForTimeout(400);
-
-    // Look for dark mode / light mode toggle button
-    const darkBtn = page
-      .locator('[data-testid*="dark"], button[aria-label*="dark"]')
-      .first();
-    const lightBtn = page
-      .locator('[data-testid*="light"], button[aria-label*="light"]')
-      .first();
-
-    const hasDarkBtn = await darkBtn
-      .isVisible({ timeout: 3000 })
-      .catch(() => false);
-    const hasLightBtn = await lightBtn
-      .isVisible({ timeout: 3000 })
-      .catch(() => false);
-
-    if (!hasDarkBtn && !hasLightBtn) {
-      // Try clicking a Theme button by text
-      const themeBtn = page.getByRole("button", { name: /dark|light|system/i }).first();
-      const hasThemeBtn = await themeBtn
-        .isVisible({ timeout: 3000 })
-        .catch(() => false);
-
-      if (!hasThemeBtn) {
-        console.log("INFO: Theme toggle buttons not found in expected location, skipping");
-        return;
-      }
-
-      await themeBtn.click();
-      await page.waitForTimeout(500);
-    } else {
-      // Click the opposite of current theme
-      if (initialTheme === "dark" && hasLightBtn) {
-        await lightBtn.click();
-      } else if (hasDarkBtn) {
-        await darkBtn.click();
-      }
-      await page.waitForTimeout(500);
-    }
-
-    // Close menu
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(300);
-
-    // Verify the html class changed to reflect the new theme
-    const newHtmlClass = await page
-      .locator("html")
-      .getAttribute("class")
-      .catch(() => "");
-
-    // The class should be different from initial OR contain the expected theme class
-    const themeChanged = newHtmlClass !== initialHtmlClass;
-    const safeClass = newHtmlClass ?? "";
-    const themeClassPresent = safeClass.includes("dark") || safeClass.includes("light");
-
-    // Langflow may apply theme via data-theme attribute or body class instead of html class
-    if (!themeChanged && !themeClassPresent) {
-      console.log("INFO: Theme not detectable via html.class — may use data-theme attribute or body class");
-      return;
-    }
-
-    expect(
-      themeChanged || themeClassPresent,
-      "Theme toggle should update the document class",
-    ).toBe(true);
-  },
-);
-
-test(
-  "settings page displays current theme configuration",
-  { tag: ["@release", "@workspace", "@regression", "@settings"] },
-  async ({ page }) => {
-    await awaitBootstrapTest(page, { skipModal: true });
-
-    // Navigate directly to settings
-    await page.goto("/settings");
-    await page.waitForTimeout(1000);
-
-    const currentUrl = page.url();
-
-    if (!currentUrl.includes("/settings")) {
-      // Redirected to main page — settings not available at this URL
-      await expect(page.getByTestId("mainpage_title")).toBeVisible({
-        timeout: 10000,
+test.describe("Settings — Theme Toggle", () => {
+  test(
+    "dark and light mode toggle correctly updates the body class",
+    { tag: ["@release", "@stable", "@settings", "@ui-ux"] },
+    async ({ page }) => {
+      await test.step("load home page", async () => {
+        await awaitBootstrapTest(page, { skipModal: true });
       });
-      return;
-    }
 
-    // Settings page has loaded — look for appearance/theme section
-    const appearanceSection = await page
-      .getByText(/appearance|theme|dark.*mode|display/i)
-      .first()
-      .isVisible({ timeout: 8000 })
-      .catch(() => false);
+      await test.step("normalize to light mode", async () => {
+        await page.getByTestId("user-profile-settings").click();
+        await expect(page.getByTestId("menu_light_button")).toBeVisible({
+          timeout: 5000,
+        });
+        await page.getByTestId("menu_light_button").click();
+        await expect(page.locator("#body.dark")).not.toBeAttached({
+          timeout: 5000,
+        });
+        // Theme buttons are not DropdownMenuItems and do not close the dropdown automatically.
+        // Press Escape to dismiss the menu before the next step.
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("menu")).toBeHidden({ timeout: 5000 });
+      });
 
-    const settingsContent = await page
-      .locator("body")
-      .evaluate((el) => (el as HTMLElement).innerText.length > 50);
+      await test.step("switch to dark mode and verify body class", async () => {
+        await page.getByTestId("user-profile-settings").click();
+        await expect(page.getByTestId("menu_dark_button")).toBeVisible({
+          timeout: 5000,
+        });
+        await page.getByTestId("menu_dark_button").click();
+        await expect(page.locator("#body.dark")).toBeAttached({ timeout: 5000 });
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("menu")).toBeHidden({ timeout: 5000 });
+      });
 
-    expect(
-      appearanceSection || settingsContent,
-      "Settings page should show appearance or theme options",
-    ).toBe(true);
-  },
-);
+      await test.step("switch to light mode and verify body class", async () => {
+        await page.getByTestId("user-profile-settings").click();
+        await expect(page.getByTestId("menu_light_button")).toBeVisible({
+          timeout: 5000,
+        });
+        await page.getByTestId("menu_light_button").click();
+        await expect(page.locator("#body.dark")).not.toBeAttached({
+          timeout: 5000,
+        });
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("menu")).toBeHidden({ timeout: 5000 });
+      });
+
+      await test.step("restore system theme", async () => {
+        await page.getByTestId("user-profile-settings").click();
+        await expect(page.getByTestId("menu_system_button")).toBeVisible({
+          timeout: 5000,
+        });
+        await page.getByTestId("menu_system_button").click();
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("menu")).toBeHidden({ timeout: 5000 });
+      });
+    },
+  );
+});
