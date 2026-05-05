@@ -37,7 +37,7 @@ Message Logs give users a structured view of a session's full message history an
 1. Create a ChatInput → ChatOutput flow and open the Playground
 2. Send "message to delete" and wait for the echo
 3. Open Message Logs modal (same steps as Test 1); wait for `.ag-row` to be visible and record the initial row count (`rowsBefore`)
-4. Click `.ag-checkbox-input` (first row checkbox in ag-grid)
+4. Click `.ag-row .ag-checkbox-input` (first row-level checkbox; scoped to `.ag-row` to skip the header select-all checkbox)
 5. Assert `delete-row-button` is enabled
 6. Click `delete-row-button`
 7. Assert row count is `rowsBefore - 1`
@@ -55,7 +55,7 @@ Message Logs give users a structured view of a session's full message history an
 
 - `session-more-menu.tsx` — `data-testid="message-logs-option"` (visible by default for all sessions; `showMessageLogs` defaults to `true`)
 - `session-logs-modal.tsx` — renders `SessionView` inside `BaseModal`
-- `session-view.tsx` — ag-grid table with `rowSelection="multiple"` and `onDelete` enabled when `playgroundPage = false` (which is the case in the embedded playground); row and checkbox selectors (`.ag-row`, `.ag-checkbox-input`) are ag-grid internal CSS classes — ag-grid does not expose `data-testid` on row elements
+- `session-view.tsx` — ag-grid table with `rowSelection="multiple"` and `onDelete` enabled when `playgroundPage = false` (which is the case in the embedded playground); row and checkbox selectors (`.ag-row`, `.ag-row .ag-checkbox-input`) are ag-grid internal CSS classes — ag-grid does not expose `data-testid` on row elements; the header row also has a `.ag-checkbox-input` (select-all), so the selector must be scoped to `.ag-row` to target individual row checkboxes
 - `tableComponent/TableOptions/index.tsx` — `data-testid="delete-row-button"` (disabled until `hasSelection = true`)
 - `flowStore.ts` — `playgroundPage` defaults to `false`; deletion is only disabled on the standalone shareable playground page
 

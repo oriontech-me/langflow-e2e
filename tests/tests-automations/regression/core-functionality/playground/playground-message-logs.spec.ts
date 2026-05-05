@@ -116,7 +116,7 @@ test.describe("Playground – Message Logs", () => {
       });
 
       await test.step("select the first row via its checkbox", async () => {
-        await page.locator(".ag-checkbox-input").first().click();
+        await page.locator(".ag-row .ag-checkbox-input").first().click();
         await expect(page.getByTestId("delete-row-button")).toBeEnabled({ timeout: 5000 });
       });
 
