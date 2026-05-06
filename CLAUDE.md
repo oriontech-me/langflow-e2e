@@ -154,11 +154,16 @@ GitHub Actions workflows:
 - **`weekly-stable.yml`** — Runs every Monday against `langflowai/langflow-nightly:latest`; runs only `@stable` tests; opens a GitHub issue on failure for triage.
 - **`manual.yml`** — Parameterized manual run; accepts a Docker tag or full URL, a specific test suite, and an optional grep filter.
 - **`file-watcher.yml`** — Detects upstream Langflow changes in critical paths and opens a GitHub issue with the exact `--grep` command needed to revalidate affected areas.
-- **`update-coverage-summary.yml`** — Runs on every push to `main` that touches `QA-CHECKLIST.md` (or the script itself); regenerates the Coverage Summary table from the bullets above it and commits any change with `[skip ci]`.
+- **`update-coverage-summary.yml`** — Runs on every push to `main` that touches `QA-CHECKLIST.md`, the regeneration scripts, or `tests/**/*.spec.ts`; regenerates the Coverage Summary table and the `Phase 0 — Validated` block (counts + bulleted list) from source and commits any change with `[skip ci]`.
 
 ## QA-CHECKLIST.md
 
-The **Coverage Summary table** at the bottom of `QA-CHECKLIST.md` is **auto-generated** from the bullet markers (`[x]` / `[-]` / `[ ]` / `[~]` / `[!]`) above it. Never propose manual edits to the table's numbers, percentages, or `**TOTAL**` row — only edit the bullets in Part II, and the `update-coverage-summary.yml` workflow will refresh the table on the next merge to `main`. Locally the same logic is available via `npm run coverage:summary` (or `npx ts-node scripts/coverage-summary.ts`); the script lives at `scripts/coverage-summary.ts`. If a new module section is added to Part II, update the `MODULES` array in the script.
+Two passages in `QA-CHECKLIST.md` are **auto-generated**:
+
+1. The **Coverage Summary table** is derived from the bullet markers (`[x]` / `[-]` / `[ ]` / `[~]` / `[!]`) inside Part II. Never propose manual edits to the table's numbers, percentages, or `**TOTAL**` row — only edit the bullets, and the workflow regenerates the table on the next merge to `main`. Logic lives in `scripts/coverage-summary.ts`. If a new module section is added to Part II, update the `MODULES` array in the script.
+2. The **Coverage Summary Note** and the **`Phase 0 — Validated`** block (header counts and bulleted list) are derived from `@stable` `test()` calls parsed out of `tests/tests-automations/regression/**.spec.ts`. Never edit those by hand. Add or remove the `@stable` tag on the relevant `test(...)` and the workflow regenerates on the next merge to `main`. Logic lives in `scripts/stable-tests.ts`.
+
+Both regenerators run together via `npm run coverage:summary` (locally or in `update-coverage-summary.yml`) and are idempotent — a second run produces no diff when in sync.
 
 ## Playwright Configuration
 
