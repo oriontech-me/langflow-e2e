@@ -61,7 +61,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
       - name: Run @stable tests
-        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=blob,github
+        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=html,github
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
@@ -72,16 +72,8 @@ jobs:
         if: always()
         with:
           name: playwright-report-weekly-${{ github.run_id }}
-          path: blob-report/
+          path: playwright-report/
           retention-days: 14
-
-      - name: Upload test results on failure
-        uses: actions/upload-artifact@v4
-        if: failure()
-        with:
-          name: test-results-weekly-${{ github.run_id }}
-          path: test-results/
-          retention-days: 7
 
       - name: Create issue on failure
         if: failure() && github.event_name == 'schedule'
