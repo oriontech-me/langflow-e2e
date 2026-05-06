@@ -81,6 +81,8 @@ See the available tags table in the [README](./README.md#available-tags).
 
 After creating the test, find the corresponding item in `QA-CHECKLIST.md` and mark it as `[-]` (automated, needs validation). Only change to `[x]` after following the validation process below.
 
+> **Do not edit the Coverage Summary table** at the bottom of the checklist. It is derived data — the counts of `[x]`/`[-]`/`[ ]`/`[~]`/`[!]` bullets per module — and is regenerated automatically. The `update-coverage-summary.yml` workflow runs on every push to `main` and commits the refreshed table; the same logic is available locally via `npm run coverage:summary` (or `npx ts-node scripts/coverage-summary.ts`). Touch only the bullets above the table.
+
 **7. Create the spec documentation file**
 
 For each spec, create a corresponding `.md` file in `docs/`, mirroring the relative path from `regression/`. For example:
