@@ -409,7 +409,7 @@
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
 
 #### 9.2 History and Session
-- [-] Configure custom session ID → `playground/playground-session-id.spec.ts` (needs rewrite — see issue)
+- [x] Configure custom session ID → `core-functionality/playground/playground-session-id.spec.ts`
 - [x] Switch session — messages are isolated per session → `core-functionality/playground/playground-session-nav.spec.ts`
 - [x] Edit user message — hover reveals edit button, saved changes replace original text → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Cancel message edit — original text is preserved → `core-functionality/playground/playground-message-edit.spec.ts`
