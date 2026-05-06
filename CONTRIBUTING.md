@@ -465,6 +465,28 @@ The guide is the human-language specification of the automated tests. Keeping it
 4. Update the necessary tests and mark `QA_CHECKLIST.md`
 5. Close the issue
 
+### Adaptive impacted-tests subset
+
+`adaptive-impacted.yml` is a finer-grained companion to `nightly.yml`. Each day at 04:00 BRT it:
+
+1. Queries Docker Hub for the current `langflowai/langflow-nightly:latest` digest and resolves the matching git SHA in the Langflow repo.
+2. Compares to the SHA of the last nightly we tested (repo variable `LAST_TESTED_NIGHTLY_SHA`).
+   - **Same** → skip the run (no new image).
+   - **Different** → diff Langflow source between the two SHAs and run only the specs whose `## External dependencies` reference the changed paths.
+3. On success, advances `LAST_TESTED_NIGHTLY_SHA` to the current SHA.
+
+The mapping comes from each spec doc's `## External dependencies` section — keep that section accurate when you add or rename Langflow source paths a test depends on. Any path starting with `src/` is parsed; trailing `/` matches anything inside the directory.
+
+CLI for local inspection:
+
+```bash
+npm run impacted -- src/backend/.../webhook.py     # → list of impacted spec files
+npm run validate:specs                              # → which specs have/lack External dependencies
+npm run check:nightly-delta                         # → would the workflow skip or run today?
+```
+
+State persistence requires the secret `GH_PAT_VARIABLES` (a PAT with `Variables: read & write`); without it the workflow still runs but does not advance the cursor.
+
 ---
 
 ## Tag @stable — validated tests

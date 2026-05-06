@@ -1,0 +1,265 @@
+name: Adaptive Impacted Tests
+
+# Runs only the spec files whose `External dependencies` reference Langflow
+# source paths that changed since the last nightly we tested against. Skips
+# entirely when no new nightly image has been published since the last
+# successful run.
+#
+# State is kept in repository variable LAST_TESTED_NIGHTLY_SHA. Updating it
+# requires a PAT with "Variables: read & write" exposed as the secret
+# GH_PAT_VARIABLES; without it the workflow still runs but cannot persist
+# state, so the same delta is recomputed each day until the variable is set
+# manually.
+
+on:
+  schedule:
+    - cron: "0 7 * * *" # 04:00 BRT (UTC-3) — after the Langflow 00:00 UTC nightly settles
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Run even if no new nightly is detected"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  decide:
+    name: Decide whether to run
+    runs-on: ubuntu-latest
+    outputs:
+      decision: ${{ steps.delta.outputs.decision }}
+      reason: ${{ steps.delta.outputs.reason }}
+      currentSha: ${{ steps.delta.outputs.currentSha }}
+      currentTag: ${{ steps.delta.outputs.currentTag }}
+      baseSha: ${{ steps.delta.outputs.baseSha }}
+      isBootstrap: ${{ steps.delta.outputs.isBootstrap }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - id: delta
+        name: Resolve current and previous nightly SHA
+        env:
+          LAST_TESTED_NIGHTLY_SHA: ${{ vars.LAST_TESTED_NIGHTLY_SHA }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          OUT=$(npx ts-node scripts/check-nightly-delta.ts)
+          echo "$OUT" | jq .
+          {
+            echo "decision=$(echo "$OUT" | jq -r .decision)"
+            echo "reason=$(echo "$OUT" | jq -r .reason)"
+            echo "currentSha=$(echo "$OUT" | jq -r .currentSha)"
+            echo "currentTag=$(echo "$OUT" | jq -r .currentTag)"
+            echo "baseSha=$(echo "$OUT" | jq -r .baseSha)"
+            echo "isBootstrap=$(echo "$OUT" | jq -r .isBootstrap)"
+          } >> "$GITHUB_OUTPUT"
+
+  compute-impact:
+    name: Compute impacted specs
+    needs: decide
+    if: needs.decide.outputs.decision == 'run' || (github.event_name == 'workflow_dispatch' && inputs.force_run)
+    runs-on: ubuntu-latest
+    outputs:
+      run_full: ${{ steps.impact.outputs.run_full }}
+      specs: ${{ steps.impact.outputs.specs }}
+      summary: ${{ steps.impact.outputs.summary }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: langflow-ai/langflow
+          path: langflow-upstream
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+      - run: npm ci
+      - id: impact
+        name: Diff Langflow + map to specs
+        env:
+          DECISION: ${{ needs.decide.outputs.decision }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.force_run || 'false' }}
+        run: |
+          BASE="${{ needs.decide.outputs.baseSha }}"
+          CURRENT="${{ needs.decide.outputs.currentSha }}"
+
+          if [ "$FORCE_RUN" = "true" ] && [ "$DECISION" = "skip" ]; then
+            echo "force_run=true and no new nightly — running full suite."
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "specs=" >> "$GITHUB_OUTPUT"
+            echo "summary=Full suite (force_run, no new nightly)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ -z "$BASE" ]; then
+            echo "Bootstrap with no previous nightly available — running full suite."
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "specs=" >> "$GITHUB_OUTPUT"
+            echo "summary=Full suite (bootstrap, no previous nightly)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          cd langflow-upstream
+          CHANGED=$(git diff --name-only "$BASE".."$CURRENT" || true)
+          cd ..
+
+          if [ -z "$CHANGED" ]; then
+            echo "Empty diff between $BASE..$CURRENT — nothing to run."
+            echo "run_full=false" >> "$GITHUB_OUTPUT"
+            echo "specs=" >> "$GITHUB_OUTPUT"
+            echo "summary=No changes between base and current SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Changed paths in Langflow:"
+          echo "$CHANGED"
+
+          IMPACT=$(echo "$CHANGED" | npx ts-node scripts/impacted-tests.ts --stdin --format=json)
+          echo "$IMPACT" | jq .
+
+          CATCH_ALL=$(echo "$IMPACT" | jq -r .catchAll)
+          if [ "$CATCH_ALL" = "true" ]; then
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "specs=" >> "$GITHUB_OUTPUT"
+            echo "summary=Full suite (catch-all path changed)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          SPEC_LIST=$(echo "$IMPACT" | jq -r '.specs | join(" ")')
+          SPEC_COUNT=$(echo "$IMPACT" | jq -r '.specs | length')
+          echo "run_full=false" >> "$GITHUB_OUTPUT"
+          echo "specs=$SPEC_LIST" >> "$GITHUB_OUTPUT"
+          echo "summary=$SPEC_COUNT impacted spec(s)" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: Run impacted tests
+    needs: [decide, compute-impact]
+    if: needs.compute-impact.outputs.run_full == 'true' || needs.compute-impact.outputs.specs != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    services:
+      langflow:
+        image: langflowai/langflow-nightly:${{ needs.decide.outputs.currentTag }}
+        ports:
+          - 7860:7860
+        env:
+          LANGFLOW_AUTO_LOGIN: "true"
+          LANGFLOW_SUPERUSER: langflow
+          LANGFLOW_SUPERUSER_PASSWORD: langflow
+          LANGFLOW_DEACTIVATE_TRACING: "true"
+        options: >-
+          --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 10
+          --health-start-period 90s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - run: npx playwright install chromium --with-deps
+
+      - name: Run tests
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          RUN_FULL: ${{ needs.compute-impact.outputs.run_full }}
+          SPECS: ${{ needs.compute-impact.outputs.specs }}
+          SUMMARY: ${{ needs.compute-impact.outputs.summary }}
+          REASON: ${{ needs.decide.outputs.reason }}
+        run: |
+          echo "Reason: $REASON"
+          echo "Subset: $SUMMARY"
+          if [ "$RUN_FULL" = "true" ]; then
+            npx playwright test --reporter=github
+          else
+            # shellcheck disable=SC2086
+            npx playwright test $SPECS --reporter=github
+          fi
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-adaptive-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload test results on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-adaptive-${{ github.run_id }}
+          path: test-results/
+          retention-days: 7
+
+      - name: Create issue on failure
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const today = new Date().toISOString().split('T')[0];
+            const tag = '${{ needs.decide.outputs.currentTag }}';
+            const summary = '${{ needs.compute-impact.outputs.summary }}';
+            const baseSha = '${{ needs.decide.outputs.baseSha }}';
+            const currentSha = '${{ needs.decide.outputs.currentSha }}';
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Adaptive Failure] Impacted tests failed on ${today} (langflow:${tag})`,
+              body: [
+                '## Adaptive Impacted Tests Failure',
+                '',
+                `- **Date:** ${today}`,
+                `- **Langflow image:** \`langflowai/langflow-nightly:${tag}\``,
+                `- **Diff range:** \`${baseSha}..${currentSha}\``,
+                `- **Subset:** ${summary}`,
+                `- **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+                '',
+                '### Next steps',
+                '1. Check the Playwright report artifact in the run above',
+                '2. Determine if the failure is a test bug or a Langflow regression',
+                '3. Update or fix the affected tests',
+                '',
+                '/cc @Victor-w-Madeira',
+              ].join('\n'),
+              labels: ['adaptive-failure', 'needs-triage'],
+            });
+
+  update-state:
+    name: Persist last-tested SHA
+    needs: [decide, test]
+    if: needs.test.result == 'success' && needs.decide.outputs.currentSha != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update LAST_TESTED_NIGHTLY_SHA
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_VARIABLES }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ needs.decide.outputs.currentSha }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::warning::GH_PAT_VARIABLES is not set; skipping LAST_TESTED_NIGHTLY_SHA update. The next run will recompute the same delta."
+            exit 0
+          fi
+          if gh variable set LAST_TESTED_NIGHTLY_SHA --body "$SHA" --repo "$REPO"; then
+            echo "Persisted LAST_TESTED_NIGHTLY_SHA=$SHA"
+          else
+            echo "::warning::Failed to update LAST_TESTED_NIGHTLY_SHA via gh variable set."
+          fi

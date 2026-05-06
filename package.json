@@ -16,7 +16,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint tests/",
     "lint:ci": "eslint tests/ --quiet",
-    "coverage:summary": "ts-node scripts/coverage-summary.ts"
+    "coverage:summary": "ts-node scripts/coverage-summary.ts",
+    "impacted": "ts-node scripts/impacted-tests.ts",
+    "validate:specs": "ts-node scripts/validate-spec-deps.ts",
+    "check:nightly-delta": "ts-node scripts/check-nightly-delta.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5"
