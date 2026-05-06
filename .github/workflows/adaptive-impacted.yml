@@ -83,9 +83,20 @@ jobs:
       - run: npm ci
       - id: impact
         name: Diff Langflow + map to specs
+        env:
+          DECISION: ${{ needs.decide.outputs.decision }}
+          FORCE_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.force_run || 'false' }}
         run: |
           BASE="${{ needs.decide.outputs.baseSha }}"
           CURRENT="${{ needs.decide.outputs.currentSha }}"
+
+          if [ "$FORCE_RUN" = "true" ] && [ "$DECISION" = "skip" ]; then
+            echo "force_run=true and no new nightly — running full suite."
+            echo "run_full=true" >> "$GITHUB_OUTPUT"
+            echo "specs=" >> "$GITHUB_OUTPUT"
+            echo "summary=Full suite (force_run, no new nightly)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
 
           if [ -z "$BASE" ]; then
             echo "Bootstrap with no previous nightly available — running full suite."

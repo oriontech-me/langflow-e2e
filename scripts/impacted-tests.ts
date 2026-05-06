@@ -11,9 +11,6 @@
  *   files  (default) — newline-separated spec file paths, ready to pass as
  *                      positional args to `npx playwright test`
  *   json             — `{ specs: string[], catchAll: boolean, unmapped: string[] }`
- *   grep             — best-effort regex over spec basenames; only useful if
- *                      the consumer matches against file paths, not test titles
- *                      (Playwright's `--grep` matches titles, so prefer `files`)
  *
  * Behavior:
  *   - File-level matching: a doc bullet `src/foo/bar.py` matches an exact diff
@@ -59,7 +56,7 @@ interface ImpactResult {
 }
 
 interface CliOptions {
-  format: "grep" | "files" | "json";
+  format: "files" | "json";
   paths: string[];
   fromStdin: boolean;
 }
@@ -71,8 +68,8 @@ function readArgs(argv: string[]): CliOptions {
       opts.fromStdin = true;
     } else if (arg.startsWith("--format=")) {
       const v = arg.slice("--format=".length);
-      if (v !== "grep" && v !== "files" && v !== "json") {
-        throw new Error(`Invalid --format value: ${v} (expected grep|files|json)`);
+      if (v !== "files" && v !== "json") {
+        throw new Error(`Invalid --format value: ${v} (expected files|json)`);
       }
       opts.format = v;
     } else if (arg.startsWith("--")) {
@@ -111,11 +108,8 @@ function walkMarkdown(dir: string): string[] {
  */
 function specForDoc(docPath: string, repoRoot: string): string | null {
   const rel = path.relative(path.join(repoRoot, DOCS_ROOT), docPath);
-  if (rel.startsWith("..") || rel === "TEST-SPEC-TEMPLATE.md" || rel === "collect-models.md") {
-    return null;
-  }
-  if (!rel.includes(path.sep)) {
-    // Top-level doc with no area folder — not a spec.
+  if (rel.startsWith("..") || !rel.includes(path.sep)) {
+    // Outside docs/ or top-level doc with no area folder — not a spec.
     return null;
   }
   const withoutExt = rel.replace(/\.md$/, "");
@@ -222,24 +216,6 @@ function computeImpact(changedPaths: string[], docMap: DocMap): ImpactResult {
   };
 }
 
-/**
- * Builds a Playwright `--grep` regex from a list of spec paths. Uses each
- * spec's basename (without `.spec.ts`) so the regex stays readable in CI logs.
- * Playwright matches `--grep` against the test title, so we anchor on the
- * file path component instead by escaping the basename and ORing them.
- *
- * Note: Playwright's `--grep` is matched against test titles, not file paths.
- * For file-path filtering we instead use positional spec paths in the
- * workflow. This function is kept for ad-hoc CLI use where a `--grep`-style
- * pattern is convenient.
- */
-function toGrep(specs: string[]): string {
-  if (specs.length === 0) return "";
-  const names = specs.map((s) => path.basename(s, ".spec.ts"));
-  const escaped = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  return `(${escaped.join("|")})`;
-}
-
 function reportUnmapped(unmapped: string[]): void {
   if (unmapped.length === 0) return;
   console.error(
@@ -258,7 +234,7 @@ function main(): void {
   const inputs = opts.fromStdin ? readStdin() : opts.paths;
   if (inputs.length === 0) {
     console.error(
-      "Usage: impacted-tests [--format=grep|files|json] [--stdin] <path1> <path2> ..."
+      "Usage: impacted-tests [--format=files|json] [--stdin] <path1> <path2> ..."
     );
     process.exit(2);
   }
@@ -269,23 +245,16 @@ function main(): void {
   reportUnmapped(result.unmapped);
 
   if (result.catchAll) {
-    console.error("[impacted-tests] Catch-all path changed — full suite required.");
-  }
-
-  if (result.catchAll) {
     // Empty output signals "run everything" to the caller; the workflow checks
     // the catchAll flag separately via --format=json before invoking playwright.
     console.error(
-      "[impacted-tests] catch-all triggered — emitting empty output; caller should run full suite."
+      "[impacted-tests] Catch-all path changed — full suite required; emitting empty output."
     );
   }
 
   switch (opts.format) {
     case "json":
       console.log(JSON.stringify(result, null, 2));
-      break;
-    case "grep":
-      if (!result.catchAll) console.log(toGrep(result.specs));
       break;
     case "files":
     default:
