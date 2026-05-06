@@ -204,8 +204,24 @@ tests/
 |---|---|---|
 | `pr-validation.yml` | Every PR to `main` | TypeScript check (`tsc --noEmit`) + ESLint in parallel — both must pass before merge |
 | `nightly.yml` | Daily 03:00 BRT + manual | Runs everything against `langflow-nightly:latest`, opens an issue on failure |
+| `weekly-stable.yml` | Mondays 03:00 BRT + manual | Runs `@stable` tests against `langflow-nightly:latest`; opens a triage issue on failure and uploads a navigable HTML report |
 | `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag |
 | `file-watcher.yml` | Daily 05:00 BRT | Monitors changes in Langflow source and opens a review issue |
+
+### Debugging a weekly failure
+
+When the weekly `@stable` run fails, the auto-opened triage issue links to the GitHub Actions run. Open the run page and download the `playwright-report-weekly-<run-id>` artifact (retained for 14 days).
+
+The artifact unzips into a self-contained HTML report — open `index.html` to inspect:
+
+- **Failed tests** — file path, test title, and error stack
+- **Screenshots** — automatic on every failure
+- **Video** — captured on the first retry, useful when the failure only reproduces under timing pressure
+- **Trace** — captured on the first retry; click "Trace" in the report to step through the run in Playwright's trace viewer
+
+No local merge step is required: the report works offline once unzipped.
+
+If the failure is a Langflow regression, flag it to the team and keep `@stable` on the test. If it is a test bug, remove `@stable`, open a fix PR, and the next weekly run will be unblocked.
 
 ---
 
