@@ -290,7 +290,6 @@
 - [x] Memory Chatbot template loads with correct node and edge structure → `llm-agents/memory-history-regression.spec.ts`
 - [x] Message History retains context between messages in the same Playground session → `llm-agents/memory-history-regression.spec.ts`
 - [x] Session isolation: distinct session IDs have independent histories → `llm-agents/memory-history-regression.spec.ts`
-- [x] Messages persist after closing and reopening the Playground → `llm-agents/memory-history-regression.spec.ts`
 - [x] Without Message History, LLM does not retain context between messages → `llm-agents/memory-history-regression.spec.ts`
 - [ ] n_messages parameter limits the number of retained messages → `agent-n-messages-limit.spec.ts` (**confirmed bug**: value saved correctly by frontend but ignored in backend execution)
 - [ ] Agent uses custom `context_id` — continuity between session messages → `agent-context-id-continuity.spec.ts`
