@@ -39,11 +39,25 @@ async function injectChatInputValue(
   });
 }
 
+// Poll the backend until the ChatInput → ChatOutput edge is persisted, so the
+// upcoming reload renders the saved graph. Replaces a fixed-duration sleep
+// that was tuned to the autosave debounce.
+async function waitForEdgePersisted(
+  page: Page,
+  flowId: string,
+  timeoutMs = 15000,
+): Promise<void> {
+  await expect(async () => {
+    const response = await page.request.get(`/api/v1/flows/${flowId}`);
+    expect(response.ok()).toBe(true);
+    const flow = await response.json();
+    expect(flow?.data?.edges?.length ?? 0).toBeGreaterThanOrEqual(1);
+  }).toPass({ timeout: timeoutMs, intervals: [250, 500, 1000] });
+}
+
 async function setupFlowWithPrefill(page: Page): Promise<string> {
   const flowId = await setupPlayground(page);
-  // Wait for the autosave debounce to flush the ChatInput → ChatOutput
-  // connection to the database before we reload with the injected template.
-  await page.waitForTimeout(4000);
+  await waitForEdgePersisted(page, flowId);
   await injectChatInputValue(page, flowId, PREFILL_VALUE);
   await page.reload();
   await page.waitForSelector('[data-testid="playground-btn-flow-io"]', {

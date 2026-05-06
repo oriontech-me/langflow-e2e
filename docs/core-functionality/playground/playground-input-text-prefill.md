@@ -33,7 +33,8 @@ A small helper, `setupFlowWithPrefill(page)`, performs the common setup for
 all three tests:
 
 1. Call `setupPlayground(page)` to create a `ChatInput → ChatOutput` flow
-2. Wait 4 s for the autosave debounce to flush the connection to the database
+2. Poll `GET /api/v1/flows/{flowId}` until `data.edges.length >= 1`, so the
+   autosave-driven persistence of the connection is confirmed before reload
 3. Register a `page.route` interceptor on `**/api/v1/flows/{flowId}` that
    patches the response and writes `"prefill message"` into the ChatInput
    node's `template.input_value.value`
