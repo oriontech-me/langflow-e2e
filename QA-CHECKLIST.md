@@ -407,6 +407,9 @@
 - [ ] Send message while response is in progress — should wait or queue
 - [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
+- [x] ChatInput Input Text pre-fills the playground textarea on first open → `core-functionality/playground/playground-input-text-prefill.spec.ts`
+- [x] ChatInput Input Text re-pre-fills the textarea on a new session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
+- [x] Pre-filled Input Text can be sent as the first message of the session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 
 #### 9.2 History and Session
 - [-] Configure custom session ID → `playground/playground-session-id.spec.ts` (needs rewrite — see issue)
@@ -674,7 +677,7 @@
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
-| `core-functionality/playground/` | 38 | 29 | 7 | 1 | 1 |
+| `core-functionality/playground/` | 41 | 32 | 7 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
@@ -682,7 +685,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **370** | **77 (21%)** | **228 (62%)** | **6 (2%)** | **59 (16%)** |
+| **TOTAL** | **373** | **80 (21%)** | **228 (61%)** | **6 (2%)** | **59 (16%)** |
 
 > Note: `Validated [x]` = checklist bullets, not unique tests. A single `@stable` test may cover multiple bullets (e.g. the agent suite covers 7 bullets via `test.step()`). The canonical list of 51 unique `@stable` tests is in **Phase 0 — Validated** below.
 
