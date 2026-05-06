@@ -687,7 +687,11 @@
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
 | **TOTAL** | **373** | **80 (21%)** | **228 (61%)** | **6 (2%)** | **59 (16%)** |
 
-> Note: `Validated [x]` = checklist bullets, not unique tests. A single `@stable` test may cover multiple bullets (e.g. the agent suite covers 7 bullets via `test.step()`). The canonical list of 51 unique `@stable` tests is in **Phase 0 — Validated** below.
+> Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
+> `@stable` tag is per-`test()`, and a single `@stable` test may map to
+> several bullets via `test.step()` (e.g. the agent suite covers 7
+> bullets). The canonical list of `@stable` `test()` calls is in
+> **Phase 0 — Validated** below.
 
 ---
 
@@ -697,32 +701,49 @@
 
 ### 🟢 Phase 0 — Validated
 
-> Tests carrying the `@stable` tag — included in the weekly stable workflow. **51 tests across 20 spec files.**
+> 65 `test()` calls carrying the `@stable` tag, distributed across 22 spec
+> files. Run weekly by the stable workflow. New specs are merged with all
+> tests tagged `@stable`; the tag is removed per-test during weekly triage
+> when a failure is classified as a test bug — so a spec may end up with a
+> mix of tagged and untagged tests over time.
 
 #### core-components/
-- [x] Loop component — renders correctly with all handles and output inspection buttons → `core-components/loop-component-regression.spec.ts`
-- [x] Loop component — run without connections shows build failed notification → `core-components/loop-component-regression.spec.ts`
-- [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `core-components/loop-component-regression.spec.ts`
-- [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — flow is saved to database and contains the Webhook node → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — empty data field returns empty Data object → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — endpoint field renders the actual webhook URL → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — copy button copies the endpoint URL to clipboard → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — POST to non-existent flow name returns 404 → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — valid JSON payload is propagated as structured Data output → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — invalid JSON payload is encapsulated in `{payload: ...}` → `core-components/webhook-component-regression.spec.ts`
-- [x] GET `/api/v1/monitor/messages` returns 200 with array response → `core-components/webhook-component-regression.spec.ts`
+- [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
+- [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
+- [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
+- [x] API Request component — GET request returns 200 and output Data contains all required fields → `api-request-component-regression.spec.ts`
+- [x] API Request component — POST method executes POST verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — PATCH method executes PATCH verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — non-2xx HTTP response propagates status_code without crashing → `api-request-component-regression.spec.ts`
+- [x] API Request component — query parameters embedded in URL are sent and echoed → `api-request-component-regression.spec.ts`
+- [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
+- [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
+- [x] API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200 → `api-request-component-regression.spec.ts`
+- [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
+- [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
+- [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
+- [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
+- [x] Webhook component — flow is saved to database and contains the Webhook node → `webhook-component-regression.spec.ts`
+- [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
+- [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
+- [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
+- [x] Webhook component — copy button copies the endpoint URL to clipboard → `webhook-component-regression.spec.ts`
+- [x] Webhook component — POST to non-existent flow name returns 404 → `webhook-component-regression.spec.ts`
+- [x] Webhook component — valid JSON payload is propagated as structured Data output → `webhook-component-regression.spec.ts`
+- [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
+- [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
 #### core-functionality/llm-agents/
-- [x] agent interaction suite (parameterized per provider/model: tools-free response, reasoning steps, streaming + duration, multiple consecutive messages, canvas duration indicator) → `agent-component-regression.spec.ts`
+- [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
 - [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
-- [x] message history context retention suite (within-session retention, accumulation, persistence after reopen) → `memory-history-regression.spec.ts`
+- [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
-- [x] should display error message when using invalid authentication for provider (parameterized per provider) → `provider-invalid-auth-error.spec.ts`
+- [x] should display error message when using invalid authentication for provider ${provider} → `provider-invalid-auth-error.spec.ts`
 
 #### core-functionality/playground/
 - [x] selecting an individual session checkbox must reveal the bulk-delete-button → `playground-bulk-delete.spec.ts`
@@ -735,6 +756,7 @@
 - [x] clearing the input after typing leaves the field empty → `playground-empty-message-send.spec.ts`
 - [x] playground opens in fullscreen with chat input visible → `playground-fullscreen.spec.ts`
 - [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
+- [x] messages sent in playground must persist after closing and reopening → `playground-history-persist.spec.ts`
 - [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
 - [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
