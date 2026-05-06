@@ -147,13 +147,18 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 
 ## CI/CD
 
-Five GitHub Actions workflows:
+GitHub Actions workflows:
 
 - **`pr-validation.yml`** — Runs on every PR to `main`; two parallel jobs: TypeScript check (`tsc --noEmit`) and ESLint. Both must pass before merge.
 - **`nightly.yml`** — Runs daily at 03:00 BRT against `langflowai/langflow-nightly:latest`; opens a GitHub issue on failure assigned to @Victor-w-Madeira.
 - **`weekly-stable.yml`** — Runs every Monday against `langflowai/langflow-nightly:latest`; runs only `@stable` tests; opens a GitHub issue on failure for triage.
 - **`manual.yml`** — Parameterized manual run; accepts a Docker tag or full URL, a specific test suite, and an optional grep filter.
 - **`file-watcher.yml`** — Detects upstream Langflow changes in critical paths and opens a GitHub issue with the exact `--grep` command needed to revalidate affected areas.
+- **`update-coverage-summary.yml`** — Runs on every push to `main` that touches `QA-CHECKLIST.md` (or the script itself); regenerates the Coverage Summary table from the bullets above it and commits any change with `[skip ci]`.
+
+## QA-CHECKLIST.md
+
+The **Coverage Summary table** at the bottom of `QA-CHECKLIST.md` is **auto-generated** from the bullet markers (`[x]` / `[-]` / `[ ]` / `[~]` / `[!]`) above it. Never propose manual edits to the table's numbers, percentages, or `**TOTAL**` row — only edit the bullets in Part II, and the `update-coverage-summary.yml` workflow will refresh the table on the next merge to `main`. Locally the same logic is available via `npm run coverage:summary` (or `npx ts-node scripts/coverage-summary.ts`); the script lives at `scripts/coverage-summary.ts`. If a new module section is added to Part II, update the `MODULES` array in the script.
 
 ## Playwright Configuration
 

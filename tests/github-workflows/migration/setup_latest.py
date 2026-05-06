@@ -82,7 +82,8 @@ def main():
     save_state(state)
 
     if not success:
-        print("\nWARNING: Flow execution failed on latest, but continuing to test migration.")
+        print("\nERROR: Flow execution failed on latest. Cannot establish migration baseline.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
