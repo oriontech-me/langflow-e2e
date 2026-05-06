@@ -164,20 +164,21 @@
 - [-] Removing a variable from the prompt deletes the corresponding port
 
 #### 3.3 API Request (HTTP)
-- [-] Renders on canvas with URL and API Response handles → `api/flows/api-request-component-ui.spec.ts`
-- [-] Configure URL and HTTP method (UI field validation) → `api/flows/api-request-component-ui.spec.ts`
-- [ ] Execute GET request and verify 200 status and output structure
-- [ ] Execute POST request and verify POST verb is sent (status 200)
-- [ ] Non-2xx HTTP response (404) propagated as status_code without crash
-- [ ] Query parameters embedded in URL are sent and echoed in response
-- [ ] Invalid URL error shows notification with descriptive error message
+- [x] Renders on canvas with URL and API Response handles → `core-components/api-request-component-regression.spec.ts`
+- [x] Inspector fields accept URL and HTTP method values → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute GET request and verify 200 status and output structure → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute POST request and verify POST verb is sent (status 200) → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute PUT request and verify PUT verb is sent (status 200) → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute PATCH request and verify PATCH verb is sent (status 200) → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute DELETE request and verify DELETE verb is sent (status 200) → `core-components/api-request-component-regression.spec.ts`
+- [x] Non-2xx HTTP response (404) propagated as status_code without crash → `core-components/api-request-component-regression.spec.ts`
+- [x] Query parameters embedded in URL are sent and echoed in response → `core-components/api-request-component-regression.spec.ts`
+- [x] Invalid URL error shows notification with descriptive error message → `core-components/api-request-component-regression.spec.ts`
+- [x] Headers table accepts key + value cell entries via inspector → `core-components/api-request-component-regression.spec.ts`
+- [x] cURL tab switches mode and exposes the cURL input field → `core-components/api-request-component-regression.spec.ts`
+- [x] cURL parser auto-fills URL field and executes the GET, returning 200 → `core-components/api-request-component-regression.spec.ts`
+- [ ] Body table key + value entries (body field is `advanced=True`)
 - [ ] Flow state persisted in database after autosave
-- [ ] Execute PUT request and verify PUT verb is sent
-- [ ] Execute PATCH request and verify PATCH verb is sent
-- [ ] Execute DELETE request and verify DELETE verb is sent
-- [ ] Add headers and body (key-value pairs in inspector)
-- [ ] cURL tab switches mode and displays cURL input field
-- [ ] cURL mode executes GET and returns 200 with response data
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
