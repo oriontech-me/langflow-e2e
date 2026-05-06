@@ -58,17 +58,16 @@ test.describe("API Invalid Key Handling", () => {
       const authToken = await getAuthToken(request);
       const flowName = `Invalid Key Run Test - ${Date.now()}`;
 
-      // Create a real flow with valid credentials before testing the invalid-key path.
-      // The expect below guarantees flowId exists before the try/finally cleanup.
+      // Created outside try so finally runs only when flowId is guaranteed defined.
       const createRes = await request.post("/api/v1/flows/", {
         headers: { Authorization: authToken },
         data: { ...FLOW_BASE, name: flowName },
       });
       expect(createRes.status()).toBe(201);
       const { id: flowId } = await createRes.json();
+      expect(flowId).toBeTruthy();
 
       try {
-        // Attempt to run the flow with an invalid API key
         const runRes = await request.post(`/api/v1/run/${flowId}`, {
           headers: { "x-api-key": "invalid-api-key-0000" },
           data: { input_value: "test", input_type: "chat", output_type: "chat" },
@@ -104,17 +103,16 @@ test.describe("API Invalid Key Handling", () => {
       const authToken = await getAuthToken(request);
       const flowName = `Invalid Patch Test - ${Date.now()}`;
 
-      // Create a real flow with valid credentials. The expect below guarantees
-      // flowId exists before the try/finally cleanup.
+      // Created outside try so finally runs only when flowId is guaranteed defined.
       const createRes = await request.post("/api/v1/flows/", {
         headers: { Authorization: authToken },
         data: { ...FLOW_BASE, name: flowName },
       });
       expect(createRes.status()).toBe(201);
       const { id: flowId } = await createRes.json();
+      expect(flowId).toBeTruthy();
 
       try {
-        // Try to patch with an invalid token
         const patchRes = await request.patch(`/api/v1/flows/${flowId}`, {
           headers: { Authorization: "Bearer wrong-token-here" },
           data: { name: "Should Not Update" },
@@ -122,7 +120,6 @@ test.describe("API Invalid Key Handling", () => {
 
         expect([401, 403]).toContain(patchRes.status());
 
-        // Verify the name was NOT changed
         const getRes = await request.get(`/api/v1/flows/${flowId}`, {
           headers: { Authorization: authToken },
         });
