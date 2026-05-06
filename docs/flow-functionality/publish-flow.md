@@ -8,7 +8,7 @@
 
 Validates the **Shareable Playground** publish/unpublish lifecycle in two complementary ways:
 
-1. **UI test:** Creates a blank flow, adds a Chat Input (so the flow has IO and the publish toggle is enabled), opens the deploy dropdown, toggles the `publish-switch` ON, opens the public `/playground/{flowId}` URL in a new tab, sends a message, then toggles publish OFF and confirms the URL no longer loads the playground (redirects to the home page). At each toggle, the test asserts the backend's `access_type` field via API to confirm the UI switch is wired to a real backend write — not just a local state flip.
+1. **UI test:** Creates a blank flow, adds a Chat Input (so the flow has IO and the publish toggle is enabled), opens the deploy dropdown, toggles the `publish-switch` ON, reads the `href` from the rendered shareable `<a>` (the stable contract — i18n-proof and identical to the locator used by `playground-shareable-url.spec.ts`), and opens that URL in a **fresh `browser.newContext()`** so the access check does not piggyback on the editor's cookies. The fresh context sends a message and asserts the `Stop` button appears. The editor then toggles publish OFF; the same shared page re-navigates to the URL and must redirect to the home page. At each toggle the test asserts the backend's `access_type` field via API to confirm the UI switch is wired to a real backend write — not just a local state flip. The flow is deleted in `finally` so repeated runs do not accumulate workspace artifacts.
 
 2. **API test:** Mirrors the publish hook (`handlePublishedSwitch` → `usePatchUpdateFlow` → `PATCH /api/v1/flows/{id}`) by directly toggling `access_type` between `PUBLIC` and `PRIVATE`. Asserts each PATCH echoes the new value AND a follow-up GET round-trip persists the change.
 
@@ -38,13 +38,14 @@ API test: `@release` `@workspace` `@api` `@stable`
 9. Assert `publish-switch` is **unchecked** (default `access_type` is `PRIVATE`)
 10. Click `publish-switch` and assert it becomes **checked**
 11. `GET /api/v1/flows/{flowId}` — assert `access_type === "PUBLIC"`
-12. Click `shareable-playground` and capture the new tab via `context.waitForEvent("page")`
-13. Assert the new tab URL matches `/playground/{flowId}`
-14. Send a message in the public playground; assert the `Stop` button becomes visible (build started, so the public URL accepts input)
-15. Close the new tab, return to the editor
-16. Click `publish-button`, then click `publish-switch` again to unpublish; assert it becomes **unchecked**
+12. Read the `href` from `[data-testid="shareable-playground"] a`; assert it matches `/playground/{flowId}`
+13. Open `browser.newContext()` and navigate the fresh page to the captured URL
+14. Assert `sharedPage.url()` matches `/playground/{flowId}` and the chat input placeholder is visible — proves the public URL renders the playground
+15. Send a message in the public playground; assert the `Stop` button becomes visible (build started, so the public URL accepts input)
+16. Bring the editor page to the front, click `publish-button`, then click `publish-switch` again to unpublish; assert it becomes **unchecked**
 17. `GET /api/v1/flows/{flowId}` — assert `access_type === "PRIVATE"`
-18. Navigate to the previously-public URL; assert `mainpage_title` is visible (the SPA redirected because the flow is no longer public)
+18. Re-navigate the same fresh `sharedPage` to the previously-public URL; assert `mainpage_title` is visible (the SPA redirected because the flow is no longer public)
+19. `finally` blocks: close the shared context, then `DELETE /api/v1/flows/{flowId}` to clean up
 
 ### API test — `publish flow via API toggles access_type between PUBLIC and PRIVATE`
 
@@ -62,11 +63,13 @@ API test: `@release` `@workspace` `@api` `@stable`
 
 The UI test must:
 
-- Use `getByTestId("publish-switch")` and `getByTestId("shareable-playground")` — i18n-proof
+- Use `getByTestId("publish-switch")` and the inner `[data-testid="shareable-playground"] a` — i18n-proof and aligned with the sibling `playground-shareable-url.spec.ts` so a wrapper-vs-anchor regression is caught the same way in both specs
 - Assert `publish-switch` is **unchecked** before clicking, then **checked** after — proves the click landed *and* changed state, not just hit the DOM
 - Assert `access_type === "PUBLIC"` via API after publish toggle — UI switch state alone does not prove the backend stored `PUBLIC` (could be local-state-only with a silent failed PATCH)
-- Assert the new tab URL matches `/playground/{flowId}` — proves the shareable link contract that public consumers rely on
-- After unpublish, assert `mainpage_title` is visible at the previously-public URL — proves the URL was effectively revoked (not just that the toggle visually flipped)
+- Read the `href` from the shareable `<a>` and assert it matches `/playground/{flowId}` — proves the contract consumers rely on without depending on the wrapper element delegating clicks to its child anchor
+- Open the public URL in `browser.newContext()` and assert the playground renders — does not piggyback on the editor's cookies, so a regression that makes `/playground/{id}` require an existing editor session would fail here
+- After unpublish, re-navigate the same fresh page to the URL and assert `mainpage_title` is visible — proves the route is gated by `access_type` and not by stale cached state on the original tab
+- `finally` blocks delete the flow via API — repeated runs do not accumulate workspace artifacts
 
 The API test must assert **all** of:
 
@@ -92,7 +95,7 @@ The API test must assert **all** of:
 
 ## What this test does not cover *(optional)*
 
-- Anonymous user access to the public URL (the test reuses the authenticated `page` to navigate; a true anonymous request from a fresh context is not tested)
+- Truly anonymous access to the public URL — the test opens a fresh `browser.newContext()` (no inherited cookies), but `LANGFLOW_AUTO_LOGIN=true` (the default) auto-authenticates the new context as well. Verifying access with auth disabled requires `LANGFLOW_AUTO_LOGIN=false`, which is not exercised here
 - That the public flow actually responds with a meaningful answer (the Chat Input flow has no LLM; the test only confirms the build *started* via the `Stop` button appearing)
 - HTTP status differences between PUBLIC and PRIVATE flows on the `/playground/{id}` route (both return HTTP 200; the SPA handles the redirect client-side)
 - Cross-org / multi-tenant publishing (the test runs as `LANGFLOW_SUPERUSER`)
@@ -125,3 +128,5 @@ The API test must assert **all** of:
 - The previous version had no assertion on the new tab URL pattern. The shareable URL format is the public contract of this feature — testing it explicitly catches regressions where the URL pattern changes or the wrong flow is opened.
 - Empirical confirmation of the `access_type` PATCH behavior was captured by direct `curl` round-trips against the running backend: `POST` defaults to `PRIVATE`, `PATCH {access_type: "PUBLIC"}` echoes `PUBLIC`, `PATCH {access_type: "PRIVATE"}` echoes `PRIVATE`. The API test asserts this exact round-trip.
 - The UI test mixes UI action (click) with API verification (`access_type` GET). This is intentional: the switch's visual state is a frontend store value; only the API GET proves the backend committed.
+- The shareable URL is read via `getAttribute("href")` rather than clicking the wrapper and waiting for `context.waitForEvent("page")`. Two reasons: (1) Copilot review on PR #143 flagged that clicking the wrapper depends on click delegation to the child `<a>` — a regression where the wrapper stops delegating would hang the wait silently; (2) the `href` value is the contract Langflow exposes to consumers, so asserting it directly is the cleanest expression of the test's intent.
+- The test creates a new flow each run and deletes it in `finally`. Without this, repeated runs accumulated workspace artifacts (flagged by Copilot review on PR #143).
