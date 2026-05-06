@@ -73,7 +73,7 @@ async function setupFlowWithPrefill(page: Page): Promise<string> {
   await waitForEdgePersisted(page, flowId);
   await injectChatInputValue(page, flowId, PREFILL_VALUE);
   await page.reload();
-  await page.waitForSelector('[data-testid="playground-btn-flow-io"]', {
+  await expect(page.getByTestId("playground-btn-flow-io")).toBeVisible({
     timeout: 30000,
   });
   return flowId;
