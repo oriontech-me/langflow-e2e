@@ -417,7 +417,7 @@
 - [x] Clear chat removes all messages from Default Session (clear-chat-option via header menu) → `core-functionality/playground/playground-session-clear.spec.ts`
 - [x] Clear full session history (Default session) → `playground/playground-clear-history.spec.ts`
 - [x] Delete user-created session → `playground/playground-clear-history.spec.ts`
-- [x] History persists when reopening Playground → `llm-agents/memory-history-regression.spec.ts`
+- [x] History persists when reopening Playground → `llm-agents/memory-history-regression.spec.ts`, `core-functionality/playground/playground-history-persist.spec.ts`
 - [x] Rename unavailable for the Default Session → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename unavailable for a session with no messages → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename available and functional for a session with messages (Enter confirms, Escape cancels) → `core-functionality/playground/playground-session-rename.spec.ts`
