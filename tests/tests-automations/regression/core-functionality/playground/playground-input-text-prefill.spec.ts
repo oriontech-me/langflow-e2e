@@ -27,6 +27,9 @@ async function injectChatInputValue(
   value: string,
 ): Promise<void> {
   await page.route(`**/api/v1/flows/${flowId}`, async (route) => {
+    if (route.request().method() !== "GET") {
+      return route.fallback();
+    }
     const response = await route.fetch();
     const json = await response.json();
     const chatInputNode = (json?.data?.nodes ?? []).find(

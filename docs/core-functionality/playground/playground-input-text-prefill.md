@@ -137,6 +137,9 @@ References in this repository:
 
 ## Notes *(optional)*
 
+- The interceptor only handles `GET` requests — `PATCH`/`DELETE` to the
+  same URL fall through with `route.fallback()` so autosave traffic and the
+  cleanup `DELETE /api/v1/flows/{id}` are not touched
 - The injected value is written into the **response** of
   `GET /api/v1/flows/{flowId}` — the database row keeps `input_value=""`,
   so cleanup via `DELETE /api/v1/flows/{id}` still works with no extra
