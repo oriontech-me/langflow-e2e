@@ -11,7 +11,7 @@ const FLOW_BASE = {
 test.describe("API Invalid Key Handling", () => {
   test(
     "POST /api/v1/flows/ with invalid Bearer token returns 401, 403, or 422",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@workspace", "@regression"] },
     async ({ request }) => {
       const res = await request.post("/api/v1/flows/", {
         headers: { Authorization: "Bearer invalid-token-xyz" },
@@ -27,7 +27,7 @@ test.describe("API Invalid Key Handling", () => {
 
   test(
     "GET /api/v1/flows/ without Authorization header returns 401 or 403",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@workspace", "@regression"] },
     async ({ request }) => {
       const res = await request.get("/api/v1/flows/", {
         headers: {},
@@ -39,7 +39,7 @@ test.describe("API Invalid Key Handling", () => {
 
   test(
     "GET /api/v1/flows/{id} with invalid Bearer token returns 401 or 403",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@workspace", "@regression"] },
     async ({ request }) => {
       const fakeId = "00000000-0000-0000-0000-000000000001";
 
@@ -53,23 +53,21 @@ test.describe("API Invalid Key Handling", () => {
 
   test(
     "POST /api/v1/run/{id} with invalid x-api-key returns 401 or 403",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@workspace", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const flowName = `Invalid Key Run Test - ${Date.now()}`;
-      let flowId: string | null = null;
+
+      // Create a real flow with valid credentials before testing the invalid-key path.
+      // The expect below guarantees flowId exists before the try/finally cleanup.
+      const createRes = await request.post("/api/v1/flows/", {
+        headers: { Authorization: authToken },
+        data: { ...FLOW_BASE, name: flowName },
+      });
+      expect(createRes.status()).toBe(201);
+      const { id: flowId } = await createRes.json();
 
       try {
-        // Create a real flow with valid credentials
-        const createRes = await request.post("/api/v1/flows/", {
-          headers: { Authorization: authToken },
-          data: { ...FLOW_BASE, name: flowName },
-        });
-        expect(createRes.status()).toBe(201);
-
-        const body = await createRes.json();
-        flowId = body.id;
-
         // Attempt to run the flow with an invalid API key
         const runRes = await request.post(`/api/v1/run/${flowId}`, {
           headers: { "x-api-key": "invalid-api-key-0000" },
@@ -78,18 +76,16 @@ test.describe("API Invalid Key Handling", () => {
 
         expect([401, 403]).toContain(runRes.status());
       } finally {
-        if (flowId) {
-          await request.delete(`/api/v1/flows/${flowId}`, {
-            headers: { Authorization: authToken },
-          });
-        }
+        await request.delete(`/api/v1/flows/${flowId}`, {
+          headers: { Authorization: authToken },
+        });
       }
     },
   );
 
   test(
     "DELETE /api/v1/flows/{id} without Authorization header returns 401 or 403",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@workspace", "@regression"] },
     async ({ request }) => {
       const fakeId = "00000000-0000-0000-0000-000000000002";
 
@@ -103,23 +99,21 @@ test.describe("API Invalid Key Handling", () => {
 
   test(
     "PATCH /api/v1/flows/{id} with wrong token does not update the flow",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@workspace", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const flowName = `Invalid Patch Test - ${Date.now()}`;
-      let flowId: string | null = null;
+
+      // Create a real flow with valid credentials. The expect below guarantees
+      // flowId exists before the try/finally cleanup.
+      const createRes = await request.post("/api/v1/flows/", {
+        headers: { Authorization: authToken },
+        data: { ...FLOW_BASE, name: flowName },
+      });
+      expect(createRes.status()).toBe(201);
+      const { id: flowId } = await createRes.json();
 
       try {
-        // Create flow with valid credentials
-        const createRes = await request.post("/api/v1/flows/", {
-          headers: { Authorization: authToken },
-          data: { ...FLOW_BASE, name: flowName },
-        });
-        expect(createRes.status()).toBe(201);
-
-        const body = await createRes.json();
-        flowId = body.id;
-
         // Try to patch with an invalid token
         const patchRes = await request.patch(`/api/v1/flows/${flowId}`, {
           headers: { Authorization: "Bearer wrong-token-here" },
@@ -136,11 +130,9 @@ test.describe("API Invalid Key Handling", () => {
         const flow = await getRes.json();
         expect(flow.name).toBe(flowName);
       } finally {
-        if (flowId) {
-          await request.delete(`/api/v1/flows/${flowId}`, {
-            headers: { Authorization: authToken },
-          });
-        }
+        await request.delete(`/api/v1/flows/${flowId}`, {
+          headers: { Authorization: authToken },
+        });
       }
     },
   );

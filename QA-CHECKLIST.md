@@ -96,7 +96,7 @@
 - [-] POST with `tweaks` → parameters override flow configuration
 - [-] POST with custom `session_id`
 - [-] POST with `input_type: "chat"` and `output_type: "chat"`
-- [-] POST with invalid API key → returns 401/403
+- [x] POST with invalid API key → returns 401/403 → `api-invalid-key.spec.ts`
 - [-] POST to non-existent flow → returns 404
 
 #### 1.4 Components via API
