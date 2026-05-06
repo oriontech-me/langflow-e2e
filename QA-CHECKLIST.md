@@ -701,7 +701,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 65 `test()` calls carrying the `@stable` tag, distributed across 22 spec
+> 68 `test()` calls carrying the `@stable` tag, distributed across 23 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -743,7 +743,7 @@
 - [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
 - [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
-- [x] should display error message when using invalid authentication for provider ${provider} → `provider-invalid-auth-error.spec.ts`
+- [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
 
 #### core-functionality/playground/
 - [x] selecting an individual session checkbox must reveal the bulk-delete-button → `playground-bulk-delete.spec.ts`
@@ -757,6 +757,9 @@
 - [x] playground opens in fullscreen with chat input visible → `playground-fullscreen.spec.ts`
 - [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
 - [x] messages sent in playground must persist after closing and reopening → `playground-history-persist.spec.ts`
+- [x] playground opens with chat textarea pre-filled from ChatInput Input Text → `playground-input-text-prefill.spec.ts`
+- [x] creating a new session re-applies the Input Text pre-fill → `playground-input-text-prefill.spec.ts`
+- [x] pre-filled value is sent as the first message of the session → `playground-input-text-prefill.spec.ts`
 - [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
 - [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`

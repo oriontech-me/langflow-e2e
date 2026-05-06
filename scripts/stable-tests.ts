@@ -7,6 +7,11 @@
  *
  * Idempotent: a second run produces no diff when Phase 0 is in sync with the
  * `@stable` tags in the test source.
+ *
+ * Test titles are now the source of truth for the Phase 0 bullet text — they
+ * surface in the rendered checklist as well as the Playwright report. Prefer
+ * self-explanatory titles; wrap code substrings in backticks (Markdown inline
+ * code) and template `${expr}` placeholders are rendered as `<expr>`.
  */
 
 import * as fs from "fs";
@@ -23,6 +28,8 @@ const REGRESSION_ROOT = path.join(
 const CHECKLIST_PATH = path.join(REPO_ROOT, "QA-CHECKLIST.md");
 
 const STABLE_TAG = "@stable";
+
+const warnings: string[] = [];
 
 interface StableTest {
   /** Title as written in the `test(...)` first argument (template `${...}` placeholders preserved). */
@@ -67,8 +74,17 @@ function literalText(node: ts.Node): string | null {
   return null;
 }
 
-function readTagsArray(node: ts.Node): string[] | null {
-  if (!ts.isObjectLiteralExpression(node)) return null;
+interface TagReadResult {
+  /** Tags extracted from the inline array literal, or null if no `tag` property was found. */
+  tags: string[] | null;
+  /** True when a `tag` property exists but its value is not a parseable inline array literal. */
+  unparseable: boolean;
+}
+
+function readTagsArray(node: ts.Node): TagReadResult {
+  if (!ts.isObjectLiteralExpression(node)) {
+    return { tags: null, unparseable: false };
+  }
   for (const prop of node.properties) {
     if (
       !ts.isPropertyAssignment(prop) ||
@@ -78,15 +94,22 @@ function readTagsArray(node: ts.Node): string[] | null {
       continue;
     }
     const init = prop.initializer;
-    if (!ts.isArrayLiteralExpression(init)) return null;
+    if (!ts.isArrayLiteralExpression(init)) {
+      return { tags: null, unparseable: true };
+    }
     const tags: string[] = [];
     for (const el of init.elements) {
       const t = literalText(el);
       if (t !== null) tags.push(t);
+      else {
+        // Non-literal element (spread, identifier, etc.) — treat as unparseable
+        // so an `@stable` constant referenced indirectly does not silently slip past.
+        return { tags: null, unparseable: true };
+      }
     }
-    return tags;
+    return { tags, unparseable: false };
   }
-  return null;
+  return { tags: null, unparseable: false };
 }
 
 /** Match exactly `test(...)` — not `test.describe`, `test.skip`, `test.only`, etc. */
@@ -110,11 +133,18 @@ function parseStableTestsInFile(
       const args = node.arguments;
       if (args.length >= 2) {
         const title = literalText(args[0]);
-        const tags = readTagsArray(args[1]);
-        if (title !== null && tags && tags.includes(STABLE_TAG)) {
-          const { line } = source.getLineAndCharacterOfPosition(
-            node.getStart(source),
+        const { tags, unparseable } = readTagsArray(args[1]);
+        const { line } = source.getLineAndCharacterOfPosition(
+          node.getStart(source),
+        );
+        if (unparseable) {
+          warnings.push(
+            `${relativePath}:${line + 1} — \`tag\` option is not an inline array of string literals; ` +
+              "the script cannot determine if this test is `@stable`. Inline the array " +
+              "(e.g. `tag: [\"@stable\", ...]`) so it shows up in Phase 0.",
           );
+        }
+        if (title !== null && tags && tags.includes(STABLE_TAG)) {
           out.push({
             title,
             modulePath,
@@ -156,6 +186,16 @@ function collectStableTests(): StableTest[] {
 
 // ─── Markdown block builders ─────────────────────────────────────────────────
 
+/**
+ * Render a test title for the checklist. Replaces template literal
+ * placeholders (e.g. `${provider}`) with angle-bracket markers (e.g.
+ * `<provider>`) so they read as parameter names rather than leaking raw
+ * template syntax into the rendered Markdown.
+ */
+function renderTitle(title: string): string {
+  return title.replace(/\$\{([^}]+)\}/g, (_, expr) => `<${expr.trim()}>`);
+}
+
 function buildPhase0Block(tests: StableTest[]): string[] {
   const totalTests = tests.length;
   const distinctSpecs = new Set(tests.map((t) => t.relativePath)).size;
@@ -182,7 +222,7 @@ function buildPhase0Block(tests: StableTest[]): string[] {
   for (const [moduleKey, items] of grouped) {
     lines.push(`#### ${moduleKey}/`);
     for (const t of items) {
-      lines.push(`- [x] ${t.title} → \`${t.specFile}\``);
+      lines.push(`- [x] ${renderTitle(t.title)} → \`${t.specFile}\``);
     }
     lines.push("");
   }
@@ -294,13 +334,20 @@ function main(): void {
     console.log(
       `Phase 0 already up to date — ${tests.length} @stable test() calls across ${distinctSpecs} spec files.`,
     );
-    return;
+  } else {
+    fs.writeFileSync(CHECKLIST_PATH, output, "utf-8");
+    console.log(
+      `Phase 0 regenerated in QA-CHECKLIST.md — ${tests.length} @stable test() calls across ${distinctSpecs} spec files.`,
+    );
   }
 
-  fs.writeFileSync(CHECKLIST_PATH, output, "utf-8");
-  console.log(
-    `Phase 0 regenerated in QA-CHECKLIST.md — ${tests.length} @stable test() calls across ${distinctSpecs} spec files.`,
-  );
+  if (warnings.length > 0) {
+    console.error(
+      `\n${warnings.length} warning(s) — non-literal \`tag\` arrays may have caused @stable tests to be skipped:`,
+    );
+    for (const w of warnings) console.error(`  • ${w}`);
+    process.exit(1);
+  }
 }
 
 main();
