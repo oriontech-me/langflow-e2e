@@ -80,7 +80,7 @@
 ### api/flows/ — REST API
 
 #### 1.1 Health Check
-- [-] GET `/api/v1/health_check` → status 200, db ok
+- [x] GET `/health_check` → status 200, db ok → `api-health-check.spec.ts`
 - [-] GET `/api/v1/health` → returns uptime and version
 
 #### 1.2 Flow CRUD via API
