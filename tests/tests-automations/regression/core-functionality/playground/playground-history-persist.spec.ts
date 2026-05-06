@@ -22,33 +22,39 @@ test.describe("Playground — history persistence", () => {
         createdFlowId = await setupPlayground(page);
       });
 
-      await test.step("open playground, send message, and wait for response", async () => {
+      await test.step("open playground, send message, and wait for run completion", async () => {
         await page.getByTestId("playground-btn-flow-io").click();
-        await expect(page.getByTestId("input-chat-playground")).toBeVisible({
-          timeout: 15000,
-        });
-        await page.getByTestId("input-chat-playground").fill("history test");
-        await page.getByTestId("button-send").click();
-        await expect(page.getByTestId("div-chat-message")).toBeVisible({
-          timeout: 15000,
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 15000 });
+        await page
+          .getByTestId("input-chat-playground")
+          .last()
+          .fill("history test");
+        await page.getByTestId("button-send").last().click();
+        await expect(
+          page.getByTestId("chat-message-User-history test"),
+        ).toBeVisible({ timeout: 15000 });
+        await expect(page.getByTestId("button-stop").last()).toBeHidden({
+          timeout: 30000,
         });
       });
 
       await test.step("close playground via close button", async () => {
         await page.getByTestId("playground-close-button").click();
-        await expect(page.getByTestId("input-chat-playground")).not.toBeVisible(
-          { timeout: 5000 },
-        );
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).not.toBeVisible({ timeout: 5000 });
       });
 
-      await test.step("reopen playground and assert message is still visible", async () => {
+      await test.step("reopen playground and assert sent message is still visible", async () => {
         await page.getByTestId("playground-btn-flow-io").click();
-        await expect(page.getByTestId("input-chat-playground")).toBeVisible({
-          timeout: 15000,
-        });
-        await expect(page.getByTestId("div-chat-message")).toBeVisible({
-          timeout: 10000,
-        });
+        await expect(
+          page.getByTestId("input-chat-playground").last(),
+        ).toBeVisible({ timeout: 15000 });
+        await expect(
+          page.getByTestId("chat-message-User-history test"),
+        ).toBeVisible({ timeout: 10000 });
       });
     },
   );
