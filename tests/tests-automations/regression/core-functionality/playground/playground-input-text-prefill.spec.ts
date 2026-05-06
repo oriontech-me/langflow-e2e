@@ -19,7 +19,16 @@ import { setupPlayground } from "../../../../helpers/flows/setup-playground";
  * `webhook-component-regression.spec.ts`.
  */
 
+// Doubles as a `chat-message-User-{value}` testid suffix — keep it free of
+// characters that would invalidate that selector.
 const PREFILL_VALUE = "prefill message";
+
+type FlowNode = {
+  data?: {
+    type?: string;
+    node?: { template?: Record<string, { value?: unknown }> };
+  };
+};
 
 async function injectChatInputValue(
   page: Page,
@@ -32,11 +41,12 @@ async function injectChatInputValue(
     }
     const response = await route.fetch();
     const json = await response.json();
-    const chatInputNode = (json?.data?.nodes ?? []).find(
-      (n: any) => n?.data?.type === "ChatInput",
+    const chatInputNode = ((json?.data?.nodes ?? []) as FlowNode[]).find(
+      (n) => n?.data?.type === "ChatInput",
     );
-    if (chatInputNode) {
-      chatInputNode.data.node.template.input_value.value = value;
+    const inputValue = chatInputNode?.data?.node?.template?.input_value;
+    if (inputValue) {
+      inputValue.value = value;
     }
     await route.fulfill({ json });
   });
