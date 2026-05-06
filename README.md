@@ -206,6 +206,38 @@ tests/
 | `nightly.yml` | Daily 03:00 BRT + manual | Runs everything against `langflow-nightly:latest`, opens an issue on failure |
 | `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag |
 | `file-watcher.yml` | Daily 05:00 BRT | Monitors changes in Langflow source and opens a review issue |
+| `adaptive-impacted.yml` | Daily 04:00 BRT + manual | Runs only the specs whose `External dependencies` reference the Langflow source paths that changed since the last nightly we tested; skips entirely when no new nightly was published |
+
+---
+
+## Adaptive impacted-tests subset
+
+The `adaptive-impacted.yml` workflow narrows each daily run to the spec files whose docs reference the Langflow source paths changed in the latest nightly. The mapping comes from the **External dependencies** section in each `docs/**/*.md` spec doc.
+
+CLI usage:
+
+```bash
+# Map changed paths to spec files (default output: file paths)
+npm run impacted -- src/backend/base/langflow/components/inputs/webhook.py
+
+# Read paths from stdin (e.g. piped from `git diff --name-only`)
+git diff --name-only main..HEAD | npm run impacted -- --stdin
+
+# Structured output
+npm run impacted -- --format=json src/foo.py
+
+# Inspect which specs have/lack a populated External dependencies section
+npm run validate:specs
+
+# Decide whether the workflow would skip or run (queries Docker Hub)
+npm run check:nightly-delta
+```
+
+Behavior:
+- **File-level matching.** A bullet `src/backend/.../webhook.py` matches the exact file; a bullet ending in `/` matches anything inside the directory.
+- **Catch-all paths** (routes, feature flags) trigger the full suite.
+- **Unmapped paths** are skipped with a warning — the daily nightly still covers them.
+- **State** is persisted in repository variable `LAST_TESTED_NIGHTLY_SHA`; updating it requires the `GH_PAT_VARIABLES` secret (PAT with `Variables: read & write`). Without it the workflow still runs but does not advance the cursor.
 
 ---
 
