@@ -670,7 +670,7 @@
 | `core-components/` — Core Components | 42 | 15 | 12 | 0 | 15 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
-| `core-functionality/llm-agents/` | 41 | 14 | 2 | 0 | 25 |
+| `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
 | `core-functionality/playground/` | 38 | 29 | 7 | 1 | 1 |
@@ -681,7 +681,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **370** | **65 (18%)** | **230 (62%)** | **6 (2%)** | **69 (19%)** |
+| **TOTAL** | **369** | **64 (17%)** | **230 (62%)** | **6 (2%)** | **69 (19%)** |
 
 > Note: `Validated [x]` = checklist bullets, not unique tests. A single `@stable` test may cover multiple bullets (e.g. the agent suite covers 7 bullets via `test.step()`). The canonical list of 51 unique `@stable` tests is in **Phase 0 — Validated** below.
 
