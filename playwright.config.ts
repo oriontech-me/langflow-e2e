@@ -23,6 +23,8 @@ export default defineConfig({
     baseURL: BASE_URL,
     actionTimeout: 20000,
     trace: "on-first-retry",
+    screenshot: process.env.CI ? "only-on-failure" : "off",
+    video: process.env.CI ? "on-first-retry" : "off",
   },
 
   globalTeardown: require.resolve("./tests/globalTeardown.ts"),
