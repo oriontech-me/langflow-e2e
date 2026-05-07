@@ -216,7 +216,7 @@ jobs:
               '',
               `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
               '',
-              'cc @lice-reis',
+              '/cc @lice-reis',
             ].join('\n');
 
             if (existing.length > 0) {
