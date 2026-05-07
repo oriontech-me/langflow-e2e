@@ -33,11 +33,17 @@ async function addApiRequestComponent(page: Page) {
 // The output Data object is displayed in a Monaco editor — textContent gives the JSON string.
 async function runAndOpenOutput(page: Page): Promise<string> {
   await page.getByTestId("button_run_api request").click();
-  await expect(page.getByText("built successfully").last()).toBeVisible({
-    timeout: 45000,
-  });
 
-  await page.getByTestId("output-inspection-api response-apirequest").click();
+  // Anchor on the node-level output button instead of the global "built successfully"
+  // toast. The toast is shared across builds and can match prior runs (.last() is best-effort);
+  // the output-inspection button only becomes enabled after THIS component finishes building,
+  // so it is both the stronger signal and the exact precondition for the next click.
+  const outputButton = page.getByTestId(
+    "output-inspection-api response-apirequest",
+  );
+  await expect(outputButton).toBeEnabled({ timeout: 45000 });
+  await outputButton.click();
+
   const dialog = page.locator('[role="dialog"]');
   await expect(dialog).toBeVisible({ timeout: 10000 });
 
