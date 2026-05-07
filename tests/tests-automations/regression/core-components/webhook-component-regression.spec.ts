@@ -27,7 +27,7 @@ async function addWebhookComponent(page: any) {
 
 test(
   "Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202",
-  { tag: ["@stable", "@release", "@regression"] },
+  { tag: ["@release", "@regression"] },
   async ({ page, request }) => {
     await addWebhookComponent(page);
 
