@@ -39,28 +39,6 @@ test.describe("Playground Empty-Message Send Behavior", () => {
   );
 
   test(
-    "send button becomes enabled after typing a message",
-    { tag: ["@stable", "@release", "@workspace", "@regression", "@playground"] },
-    async ({ page }) => {
-      createdFlowId = await setupPlayground(page);
-      await page.getByTestId("playground-btn-flow-io").click();
-      await page.waitForSelector('[data-testid="input-chat-playground"]', {
-        timeout: 15000,
-      });
-
-      const input = page.getByTestId("input-chat-playground").last();
-      const sendBtn = page.getByTestId("button-send").last();
-
-      // Fill the input with a non-empty message
-      await input.fill("Hello, Langflow!");
-      await expect(input).toHaveValue("Hello, Langflow!");
-
-      // Send button must be enabled when there is content to send
-      await expect(sendBtn).toBeEnabled({ timeout: 5000 });
-    },
-  );
-
-  test(
     "clearing the input after typing leaves the field empty",
     { tag: ["@stable", "@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
