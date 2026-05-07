@@ -403,7 +403,7 @@
 - [-] Response polling → no dedicated spec
 - [-] Direct response → no dedicated spec
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
-- [x] Send empty message — should disable send button → `playground/playground-empty-message-send.spec.ts` (**BUG: button enabled even when empty**)
+- [x] Send empty message — send button stays enabled by design (only disabled while a file upload is in progress) → `playground/playground-empty-message-send.spec.ts`
 - [ ] Send message while response is in progress — should wait or queue
 - [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
@@ -751,7 +751,7 @@
 - [x] bulk-delete-button must remove all selected sessions from the sidebar → `playground-bulk-delete.spec.ts`
 - [x] clear chat on Default session must remove messages but keep the session → `playground-clear-history.spec.ts`
 - [x] deleting a user-created session must remove it and return to Default session → `playground-clear-history.spec.ts`
-- [x] send button is enabled when input is empty (Langflow bug) → `playground-empty-message-send.spec.ts`
+- [x] send button stays enabled regardless of input content → `playground-empty-message-send.spec.ts`
 - [x] send button becomes enabled after typing a message → `playground-empty-message-send.spec.ts`
 - [x] clearing the input after typing leaves the field empty → `playground-empty-message-send.spec.ts`
 - [x] playground opens in fullscreen with chat input visible → `playground-fullscreen.spec.ts`

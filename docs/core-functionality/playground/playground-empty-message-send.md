@@ -6,7 +6,7 @@
 
 ## What this test validates *(required)*
 
-Validates send button state and input field behavior in the Playground when dealing with empty input. Covers three scenarios: send button state when the input is empty (documenting a known Langflow bug), send button state after typing a message, and input field state after clearing typed content.
+Validates send button state and input field behavior in the Playground when dealing with empty input. Covers three scenarios: send button state when the input is empty (Langflow keeps it enabled by design), send button state after typing a message, and input field state after clearing typed content.
 
 ---
 
@@ -18,12 +18,12 @@ Validates send button state and input field behavior in the Playground when deal
 
 ## Step by step *(required)*
 
-**Test 1 — send button is enabled when input is empty (Langflow bug)**
+**Test 1 — send button stays enabled regardless of input content**
 1. Create a blank flow with ChatInput connected to ChatOutput via `setupPlayground`
 2. Open the Playground via `playground-btn-flow-io`
 3. Wait for `input-chat-playground` to be visible
 4. Confirm the input value is `""` (empty)
-5. Assert that `button-send` is **enabled** — documents the current buggy behavior
+5. Assert that `button-send` is **enabled** — pins Langflow's design choice of keeping send unconditionally enabled while no file upload is in flight
 
 **Test 2 — send button becomes enabled after typing a message**
 1. Create a blank flow with ChatInput connected to ChatOutput via `setupPlayground`
@@ -45,7 +45,7 @@ Validates send button state and input field behavior in the Playground when deal
 
 ## Validation criterion *(required)*
 
-- **Test 1 (bug documentation):** `button-send` is enabled even when `input-chat-playground` is empty. This reflects the **current buggy behavior**; the assertion must be updated to expect the button to be disabled once Langflow fixes the issue.
+- **Test 1:** `button-send` is enabled even when `input-chat-playground` is empty. In `button-send-wrapper.tsx`, the `disabled` attribute is tied only to `isLoading` (file upload in progress); chat-text emptiness intentionally does not gate the button. The assertion pins this contract so any regression to a content-aware disabled state surfaces for review.
 - **Test 2:** `button-send` is enabled after the user types a non-empty message.
 - **Test 3:** The message input field is empty after previously entered text is cleared.
 
@@ -82,5 +82,6 @@ References in this repository:
 
 ## Notes *(optional)*
 
-- Test 1 intentionally documents a **known Langflow bug**: the send button remains enabled on empty input. It reflects actual behavior; once the bug is fixed, the assertion must be updated to expect the button to be disabled and the test name updated accordingly.
+- Test 1 documents Langflow's intentional design: `button-send` is only disabled while a file upload is in progress, not when the textarea is empty. This is a deliberate UX choice — if the team ever switches to a content-aware disabled state, the test will fail and prompt a review of the new contract.
+- The `noInput` prop seen in the source (`flow-page-sliding-container.tsx`) signals that the flow has no `ChatInput` node and triggers a different UI (`NoInputView`); it is unrelated to whether the textarea is empty.
 - The ChatInput → ChatOutput flow is deterministic and requires no LLM or API keys.
