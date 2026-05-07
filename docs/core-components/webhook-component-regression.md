@@ -45,8 +45,10 @@ If any of these tests fails, the Webhook component is broken in one of its core 
 1. Run `addWebhookComponent`
 2. Extract `flowId` from the URL and assert it matches UUID pattern
 3. Wait 4 s for autosave to persist the flow
-4. POST `{"event": "regression-test", "value": 42}` to `/api/v1/webhook/{flowId}`; assert 202, `status === "in progress"`, `message === "Task started in the background"`
-5. POST `"regression-plain-text"` with `Content-Type: text/plain`; assert 202 and `status === "in progress"`
+4. Create a temporary API key via `POST /api/v1/api_key/` (Langflow's `WEBHOOK_AUTH_ENABLE` defaults to `True` since 1.5+, so unauthenticated webhook POSTs return 403)
+5. POST `{"event": "regression-test", "value": 42}` to `/api/v1/webhook/{flowId}` with `x-api-key`; assert 202, `status === "in progress"`, `message === "Task started in the background"`
+6. POST `"regression-plain-text"` with `x-api-key` and `Content-Type: text/plain`; assert 202 and `status === "in progress"`
+7. In `finally`, delete the temporary API key so failures don't leak credentials
 
 **Test 2 — flow is saved to database and contains the Webhook node**
 1. Run `addWebhookComponent`
@@ -153,7 +155,7 @@ If any of these tests fails, the Webhook component is broken in one of its core 
 ## Preconditions *(optional)*
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
-- No API key required — the Webhook component is a pure HTTP input with no LLM calls
+- The Webhook component is a pure HTTP input with no LLM calls, but the webhook POST endpoint requires an API key whenever `WEBHOOK_AUTH_ENABLE=True` (Langflow's default since 1.5+); test 1 creates a temporary key via `POST /api/v1/api_key/` and deletes it in `finally`
 - Tests 1, 8, and 9 require autosave to flush within 4 s of creating the flow; environments with very high DB latency may need a longer wait
 - The `output-inspection-json-webhook` testid requires Langflow version including langflow-ai/langflow#11554, which renamed the output display name from `"Data"` to `"JSON"`
 
@@ -171,5 +173,5 @@ If any of these tests fails, the Webhook component is broken in one of its core 
 ## Notes *(optional)*
 
 - Tests 8 and 9 use `page.route` to inject a value into the Webhook's `data` field (Payload, `advanced=True`), which has no editable UI in the inspector. The intercept patches the `GET /api/v1/flows/{id}` response before the page navigates to the flow, simulating what the real webhook POST would write to that field. The intercept is removed via `page.unroute` after navigation to avoid side-effects.
-- The `request` fixture used in tests 1 and 7 is unauthenticated in Langflow's auto-login mode; the webhook POST endpoint is public (no auth required), but `GET /api/v1/flows/{id}` requires session cookies — that is why test 2 uses `page.evaluate(fetch)` instead of `request.get`.
+- The `request` fixture used in tests 1 and 7 is unauthenticated by default; test 1 explicitly authenticates the webhook POSTs with a temporary `x-api-key` (required since Langflow 1.5+ where `WEBHOOK_AUTH_ENABLE` defaults to `True`). Test 7 still works without auth because FastAPI resolves `flow: Depends(get_flow_by_id_or_endpoint_name)` before the endpoint body, so the 404 fires before the auth check. `GET /api/v1/flows/{id}` requires session cookies — that is why test 2 uses `page.evaluate(fetch)` instead of `request.get`.
 - The `output-inspection-json-webhook` testid is generated dynamically by the frontend as `output-inspection-{display_name.toLowerCase()}-{component_type}`; if the output display name reverts to `"Data"`, the testid becomes `output-inspection-data-webhook`.
