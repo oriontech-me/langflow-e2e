@@ -701,7 +701,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 68 `test()` calls carrying the `@stable` tag, distributed across 23 spec
+> 67 `test()` calls carrying the `@stable` tag, distributed across 23 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -752,7 +752,6 @@
 - [x] clear chat on Default session must remove messages but keep the session → `playground-clear-history.spec.ts`
 - [x] deleting a user-created session must remove it and return to Default session → `playground-clear-history.spec.ts`
 - [x] send button stays enabled regardless of input content → `playground-empty-message-send.spec.ts`
-- [x] send button becomes enabled after typing a message → `playground-empty-message-send.spec.ts`
 - [x] clearing the input after typing leaves the field empty → `playground-empty-message-send.spec.ts`
 - [x] playground opens in fullscreen with chat input visible → `playground-fullscreen.spec.ts`
 - [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
