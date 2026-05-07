@@ -41,7 +41,8 @@ def main():
     try:
         r = requests.get(f"{BASE_URL}/api/v1/flows/", headers=headers, timeout=15)
         r.raise_for_status()
-        flows = r.json()
+        payload = r.json()
+        flows = payload if isinstance(payload, list) else payload.get("flows", [])
         print(f"   OK: {len(flows)} flows found")
         if EXPECTED_FLOW_NAME:
             names = [f.get("name", "") for f in flows]
