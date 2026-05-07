@@ -192,7 +192,7 @@ test(
 
 test(
   "API Request component — GET request returns 200 and output Data contains all required fields",
-  { tag: ["@stable", "@release", "@regression", "@components"] },
+  { tag: ["@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -251,7 +251,7 @@ test(
 
 test(
   "API Request component — PUT method executes PUT verb and returns 200",
-  { tag: ["@stable", "@release", "@regression", "@components"] },
+  { tag: ["@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -475,7 +475,7 @@ test(
 
 test(
   "API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200",
-  { tag: ["@stable", "@regression", "@components"] },
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 

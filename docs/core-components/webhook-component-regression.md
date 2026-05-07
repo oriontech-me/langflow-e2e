@@ -29,6 +29,8 @@ If any of these tests fails, the Webhook component is broken in one of its core 
 
 `@stable` `@release` `@regression`
 
+**`@stable` exception:** Test 1 (`HTTP POST accepts JSON and plain-text bodies returning 202`) does **not** carry `@stable` — removed in the triage of weekly run [25441253323](https://github.com/oriontech-me/langflow-e2e/actions/runs/25441253323) (issue #165) after the endpoint returned 403 instead of 202 on three consecutive attempts. The test fixture `request` is unauthenticated and the webhook endpoint appears to require session credentials in the current Langflow version. Tag is restored once the test is updated to authenticate (see follow-up issue).
+
 ---
 
 ## Step by step *(required)*

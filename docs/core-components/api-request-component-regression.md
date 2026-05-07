@@ -19,8 +19,10 @@ If any of these tests fails, the API Request component is broken in the product 
 
 ## Tags *(required)*
 
-All 13 tests: `@stable` `@regression` `@components`
+10 of 13 tests: `@stable` `@regression` `@components`
 8 of them additionally carry `@release` (the canvas/inspector/GET/POST/PUT/PATCH/DELETE happy paths).
+
+**`@stable` exception:** Tests 4 (`GET request returns 200`), 6 (`PUT method executes PUT verb`), and 13 (`cURL mode parses command, auto-fills URL, executes GET`) do **not** carry `@stable` — removed in the triage of weekly run [25441253323](https://github.com/oriontech-me/langflow-e2e/actions/runs/25441253323) (issue #165) after all three tests timed out on `getByText('built successfully').last()`. The shared `runAndOpenOutput` helper anchors on a fragile, repeatable toast text that can match prior toasts and gives no node-level signal. Tag is restored once the helper is hardened (see follow-up issue).
 
 ---
 
