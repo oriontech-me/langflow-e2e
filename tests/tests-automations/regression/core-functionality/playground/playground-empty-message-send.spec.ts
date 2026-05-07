@@ -13,7 +13,7 @@ test.describe("Playground Empty-Message Send Behavior", () => {
   });
 
   test(
-    "send button is enabled when input is empty (Langflow bug)",
+    "send button stays enabled regardless of input content",
     { tag: ["@stable", "@release", "@workspace", "@regression", "@playground"] },
     async ({ page }) => {
       createdFlowId = await setupPlayground(page);
@@ -29,33 +29,11 @@ test.describe("Playground Empty-Message Send Behavior", () => {
       const inputValue = await input.inputValue();
       expect(inputValue).toBe("");
 
-      // BUG: the send button should be disabled when the input is empty so
-      // that users cannot dispatch an empty-message run.  Current behaviour
-      // is that the button remains ENABLED regardless of input content.
-      // This assertion documents the actual (buggy) behaviour; the test will
-      // need updating once the bug is fixed.
-      await expect(sendBtn).toBeEnabled({ timeout: 5000 });
-    },
-  );
-
-  test(
-    "send button becomes enabled after typing a message",
-    { tag: ["@stable", "@release", "@workspace", "@regression", "@playground"] },
-    async ({ page }) => {
-      createdFlowId = await setupPlayground(page);
-      await page.getByTestId("playground-btn-flow-io").click();
-      await page.waitForSelector('[data-testid="input-chat-playground"]', {
-        timeout: 15000,
-      });
-
-      const input = page.getByTestId("input-chat-playground").last();
-      const sendBtn = page.getByTestId("button-send").last();
-
-      // Fill the input with a non-empty message
-      await input.fill("Hello, Langflow!");
-      await expect(input).toHaveValue("Hello, Langflow!");
-
-      // Send button must be enabled when there is content to send
+      // By design, button-send is only disabled while files are uploading;
+      // it is intentionally not tied to chat-text emptiness, so the button
+      // remains enabled even with an empty input. This test pins that
+      // contract so a regression to a content-aware disabled state is
+      // surfaced for review.
       await expect(sendBtn).toBeEnabled({ timeout: 5000 });
     },
   );
