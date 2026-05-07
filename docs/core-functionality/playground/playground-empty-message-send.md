@@ -6,7 +6,7 @@
 
 ## What this test validates *(required)*
 
-Validates send button state and input field behavior in the Playground when dealing with empty input. Covers three scenarios: send button state when the input is empty (Langflow keeps it enabled by design), send button state after typing a message, and input field state after clearing typed content.
+Validates send button state and input field behavior in the Playground when dealing with empty input. Covers two scenarios: send button state when the input is empty (Langflow keeps it enabled by design) and input field state after clearing typed content.
 
 ---
 
@@ -25,15 +25,7 @@ Validates send button state and input field behavior in the Playground when deal
 4. Confirm the input value is `""` (empty)
 5. Assert that `button-send` is **enabled** — pins Langflow's design choice of keeping send unconditionally enabled while no file upload is in flight
 
-**Test 2 — send button becomes enabled after typing a message**
-1. Create a blank flow with ChatInput connected to ChatOutput via `setupPlayground`
-2. Open the Playground via `playground-btn-flow-io`
-3. Wait for `input-chat-playground` to be visible
-4. Fill the input with `"Hello, Langflow!"`
-5. Confirm the input holds the typed value
-6. Assert that `button-send` is enabled
-
-**Test 3 — clearing the input after typing leaves the field empty**
+**Test 2 — clearing the input after typing leaves the field empty**
 1. Create a blank flow with ChatInput connected to ChatOutput via `setupPlayground`
 2. Open the Playground via `playground-btn-flow-io`
 3. Wait for `input-chat-playground` to be visible
@@ -46,8 +38,7 @@ Validates send button state and input field behavior in the Playground when deal
 ## Validation criterion *(required)*
 
 - **Test 1:** `button-send` is enabled even when `input-chat-playground` is empty. In `button-send-wrapper.tsx`, the `disabled` attribute is tied only to `isLoading` (file upload in progress); chat-text emptiness intentionally does not gate the button. The assertion pins this contract so any regression to a content-aware disabled state surfaces for review.
-- **Test 2:** `button-send` is enabled after the user types a non-empty message.
-- **Test 3:** The message input field is empty after previously entered text is cleared.
+- **Test 2:** The message input field is empty after previously entered text is cleared.
 
 ---
 
