@@ -1,11 +1,13 @@
 /**
- * Regenerates the Coverage Summary table in QA-CHECKLIST.md from the bullet
- * markers (`[x]`, `[-]`, `[ ]`, `[~]`, `[!]`) inside Part II.
+ * Regenerates three auto-generated blocks in QA-CHECKLIST.md:
+ *   1. The Coverage Summary table (counts per module from `[x]`/`[-]`/`[ ]`/`[~]`/`[!]` bullets in Part II).
+ *   2. The Phase 1 / Phase 2 delivery tables (per-module `[-]` and `[ ]` counts; phase membership read from the file).
+ *   3. The `> **Last updated:**` date stamp in the document header.
  *
  * Run: `npx ts-node scripts/coverage-summary.ts`
  *
- * Idempotent: a second run produces no diff when the table is already in
- * sync with the bullets above it.
+ * Idempotent within the same UTC day: a second run produces no diff when the
+ * file is already in sync with the bullets above and the date hasn't changed.
  */
 
 import * as fs from "fs";
@@ -64,6 +66,8 @@ const PHASE_TABLE_HEADER =
   "| Module | Validate (`[-]`) | Create (`[ ]`) |";
 const PHASE_TABLE_SEPARATOR =
   "|--------|-----------------|---------------|";
+
+const LAST_UPDATED_PREFIX = "> **Last updated:**";
 
 const BULLET_RE = /^- \[([x\- ~!])\] /;
 
@@ -297,6 +301,19 @@ function regeneratePhaseTables(lines: string[], counts: Counts[]): string[] {
   return working;
 }
 
+function regenerateLastUpdated(lines: string[]): string[] {
+  const idx = findLineIndex(lines, (l) => l.startsWith(LAST_UPDATED_PREFIX));
+  if (idx === -1) {
+    throw new Error(
+      `"Last updated:" line not found — expected a line starting with "${LAST_UPDATED_PREFIX}"`
+    );
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const next = lines.slice();
+  next[idx] = `${LAST_UPDATED_PREFIX} ${today}`;
+  return next;
+}
+
 function main(): void {
   const filePath = path.resolve(__dirname, "..", "QA-CHECKLIST.md");
   const original = fs.readFileSync(filePath, "utf-8");
@@ -308,6 +325,7 @@ function main(): void {
   const counts = computeCounts(lines);
   let updated = regenerateCoverageTable(lines, counts);
   updated = regeneratePhaseTables(updated, counts);
+  updated = regenerateLastUpdated(updated);
 
   let output = updated.join("\n");
   if (trailingNewline) output += "\n";
@@ -318,7 +336,7 @@ function main(): void {
   }
 
   fs.writeFileSync(filePath, output, "utf-8");
-  console.log("QA-CHECKLIST.md updated (Coverage Summary and/or Phase tables).");
+  console.log("QA-CHECKLIST.md updated (Coverage Summary, Phase tables, and/or Last updated).");
 }
 
 main();
