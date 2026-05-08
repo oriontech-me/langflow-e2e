@@ -317,9 +317,7 @@ async function runFlowAndReadDoneCount(
 
 test(
   "Loop component — stops after exhausting input DataFrame and emits aggregated done",
-  // `@stable` is added in a follow-up commit only after the full validation
-  // pipeline is green.
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     test.setTimeout(2 * 60 * 1000);
 

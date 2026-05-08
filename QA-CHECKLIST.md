@@ -203,7 +203,7 @@
 - [x] Output inspection buttons present for item and done → `core-components/loop-component-regression.spec.ts`
 - [x] Run without connections shows "Flow build failed" notification without crash → `core-components/loop-component-regression.spec.ts`
 - [x] Loop iterates over 2 ArXiv articles (Research Translation Loop template) and aggregates response in Playground → `core-components/loop-component-regression.spec.ts`
-- [ ] Loop stops when exit condition is met
+- [x] Loop stops when exit condition is met → `core-components/loop-component-regression.spec.ts`
 
 #### 3.7 Nested / Grouping
 - [-] Nested component
