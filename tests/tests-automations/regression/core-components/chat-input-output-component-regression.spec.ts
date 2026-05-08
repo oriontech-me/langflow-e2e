@@ -15,7 +15,11 @@ test.describe.configure({ mode: "serial" });
 // ChatInput / ChatOutput both default to `minimized = True` (see
 // lfx/components/input_output/chat.py); without expanding, the run button and
 // inspector fields rendered on the node body are not present in the DOM.
+// Idempotent: if the node is already expanded (no `hide-node-content` in the
+// DOM), the helper is a no-op — that future-proofs the spec against an
+// upstream change to the `minimized` default.
 async function expandFocusedNode(page: Page) {
+  if ((await page.getByTestId("hide-node-content").count()) === 0) return;
   await page.getByTestId("more-options-modal").click();
   await expect(page.getByTestId("expand-button-modal")).toBeVisible({
     timeout: 10000,
@@ -70,8 +74,8 @@ async function addChatOutputToCanvas(page: Page) {
 }
 
 // Helper: connect ChatInput "Chat Message" output → ChatOutput "Inputs" input
-// by clicking the source handle then the target handle. Both handles use the
-// noshownode variant because both components are minimized by default.
+// by clicking the source handle then the target handle. The shownode variant
+// is targeted because both components were expanded by the add helpers above.
 async function connectChatInputToChatOutput(page: Page) {
   await page
     .getByTestId("handle-chatinput-shownode-chat message-right")
@@ -119,8 +123,7 @@ test(
     // Run button must be present
     await expect(page.getByTestId("button_run_chat input")).toBeVisible();
 
-    // Output handle: "Chat Message" port on the right side (noshownode because
-    // ChatInput is minimized by default — see lfx/components/input_output/chat.py)
+    // Output handle: "Chat Message" port on the right side
     await expect(
       page.getByTestId("handle-chatinput-shownode-chat message-right"),
     ).toBeVisible();
@@ -169,7 +172,7 @@ test(
     // Run button must be present
     await expect(page.getByTestId("button_run_chat output")).toBeVisible();
 
-    // Input handle: "Inputs" port on the left side (target side, noshownode)
+    // Input handle: "Inputs" port on the left side
     await expect(
       page.getByTestId("handle-chatoutput-shownode-inputs-left"),
     ).toBeVisible();
@@ -227,9 +230,11 @@ test(
     await addChatOutputToCanvas(page);
     await connectChatInputToChatOutput(page);
 
+    // The helper waits for the "built successfully" toast before opening the
+    // dialog, so a green path here means: build ran, ChatInput emitted the
+    // Message, and the propagated text is visible in ChatOutput's inspection.
     const output = await runFlowAndOpenChatOutputInspection(page);
 
-    // The output Message must carry the same text the ChatInput emitted
     expect(output).toContain(inputText);
 
     await page.keyboard.press("Escape");
@@ -311,8 +316,13 @@ test(
     await page.getByTestId("showsender_name").click();
     await closeAdvancedOptions(page);
 
+    // Scope the field to the Chat Input node container so the assertion
+    // does not depend on DOM ordering once the second node is added.
+    const chatInputNode = page
+      .locator(".react-flow__node")
+      .filter({ has: page.getByTestId("title-Chat Input") });
     await expect(
-      page.getByTestId("popover-anchor-input-sender_name").first(),
+      chatInputNode.getByTestId("popover-anchor-input-sender_name"),
     ).toHaveValue("User", { timeout: 10000 });
 
     // Now do the same for Chat Output — its default sender_name must be "AI"
@@ -324,15 +334,17 @@ test(
     await page.getByTestId("showsender_name").click();
     await closeAdvancedOptions(page);
 
-    // After enabling sender_name on ChatOutput, two such inputs exist on the
-    // canvas. The first (.nth(0)) belongs to the ChatInput node added earlier
-    // and still holds "User"; the second (.nth(1)) is the ChatOutput's
-    // sender_name input, which must default to "AI".
+    // Scope each assertion to its node container — using the React Flow
+    // wrapper as the boundary keeps the test resilient to DOM ordering
+    // changes between Chat Input and Chat Output.
+    const chatOutputNode = page
+      .locator(".react-flow__node")
+      .filter({ has: page.getByTestId("title-Chat Output") });
     await expect(
-      page.getByTestId("popover-anchor-input-sender_name").nth(0),
+      chatInputNode.getByTestId("popover-anchor-input-sender_name"),
     ).toHaveValue("User");
     await expect(
-      page.getByTestId("popover-anchor-input-sender_name").nth(1),
+      chatOutputNode.getByTestId("popover-anchor-input-sender_name"),
     ).toHaveValue("AI");
   },
 );
