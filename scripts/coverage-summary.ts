@@ -53,6 +53,18 @@ const TABLE_HEADER =
 const TABLE_SEPARATOR =
   "|--------|-------|-----------------|------------------------|---------------------|---------------------|";
 
+const PHASE_HEADERS = [
+  "### 🔵 Phase 1 — Next Delivery",
+  "### 🟡 Phase 2 — Next Delivery",
+] as const;
+
+const PHASE_TABLE_HEADER_PREFIX = "| Module | Validate";
+
+const PHASE_TABLE_HEADER =
+  "| Module | Validate (`[-]`) | Create (`[ ]`) |";
+const PHASE_TABLE_SEPARATOR =
+  "|--------|-----------------|---------------|";
+
 const BULLET_RE = /^- \[([x\- ~!])\] /;
 
 interface Counts {
@@ -210,6 +222,81 @@ function regenerateCoverageTable(
   return [...before, ...newTable, ...after];
 }
 
+function regeneratePhaseTables(lines: string[], counts: Counts[]): string[] {
+  const labelToIndex = new Map<string, number>();
+  MODULES.forEach((m, i) => labelToIndex.set(m.label, i));
+
+  let working = lines.slice();
+
+  for (let phaseIdx = 0; phaseIdx < PHASE_HEADERS.length; phaseIdx++) {
+    const phaseNumber = phaseIdx + 1;
+    const phaseHeader = PHASE_HEADERS[phaseIdx];
+
+    const headerLine = findLineIndex(working, (l) => l.trim() === phaseHeader);
+    if (headerLine === -1) {
+      throw new Error(`Phase ${phaseNumber} header not found: "${phaseHeader}"`);
+    }
+
+    // Bound the search to before the next phase header (if any) so a missing
+    // table header in this phase fails loudly instead of silently borrowing
+    // the next phase's header.
+    const nextPhaseHeader = PHASE_HEADERS[phaseIdx + 1];
+    const upperBound =
+      nextPhaseHeader !== undefined
+        ? findLineIndex(working, (l) => l.trim() === nextPhaseHeader, headerLine + 1)
+        : working.length;
+    const searchEnd = upperBound === -1 ? working.length : upperBound;
+
+    const tableHeaderIdx = findLineIndex(
+      working,
+      (l) => l.startsWith(PHASE_TABLE_HEADER_PREFIX),
+      headerLine,
+      searchEnd
+    );
+    if (tableHeaderIdx === -1) {
+      throw new Error(
+        `Phase ${phaseNumber} table header not found after "${phaseHeader}" (expected line starting with "${PHASE_TABLE_HEADER_PREFIX}")`
+      );
+    }
+
+    let tableEndIdx = tableHeaderIdx;
+    while (tableEndIdx + 1 < working.length && working[tableEndIdx + 1].startsWith("|")) {
+      tableEndIdx++;
+    }
+
+    // Data rows are everything between the separator (tableHeaderIdx + 2) and tableEndIdx, inclusive.
+    const dataStart = tableHeaderIdx + 2;
+    const dataLines = working.slice(dataStart, tableEndIdx + 1);
+
+    if (dataLines.length === 0) {
+      throw new Error(`Phase ${phaseNumber} table is empty — at least one module required`);
+    }
+
+    const newRows: string[] = [];
+    for (const row of dataLines) {
+      // Strip leading/trailing pipes, take first cell, trim.
+      const cells = row.split("|");
+      // First element is "" (before leading pipe), second is the label cell.
+      const label = (cells[1] ?? "").trim();
+      const moduleIdx = labelToIndex.get(label);
+      if (moduleIdx === undefined) {
+        throw new Error(
+          `Phase ${phaseNumber} row "${label}" does not match any module in MODULES — rename or remove the row`
+        );
+      }
+      const c = counts[moduleIdx];
+      newRows.push(`| ${label} | ${c.needsValidation} | ${c.notAutomated} |`);
+    }
+
+    const newBlock = [PHASE_TABLE_HEADER, PHASE_TABLE_SEPARATOR, ...newRows];
+    const before = working.slice(0, tableHeaderIdx);
+    const after = working.slice(tableEndIdx + 1);
+    working = [...before, ...newBlock, ...after];
+  }
+
+  return working;
+}
+
 function main(): void {
   const filePath = path.resolve(__dirname, "..", "QA-CHECKLIST.md");
   const original = fs.readFileSync(filePath, "utf-8");
@@ -219,18 +306,19 @@ function main(): void {
   if (trailingNewline) lines.pop();
 
   const counts = computeCounts(lines);
-  const updated = regenerateCoverageTable(lines, counts);
+  let updated = regenerateCoverageTable(lines, counts);
+  updated = regeneratePhaseTables(updated, counts);
 
   let output = updated.join("\n");
   if (trailingNewline) output += "\n";
 
   if (output === original) {
-    console.log("Coverage Summary table is already up to date — no changes.");
+    console.log("QA-CHECKLIST.md is already up to date — no changes.");
     return;
   }
 
   fs.writeFileSync(filePath, output, "utf-8");
-  console.log("Coverage Summary table updated in QA-CHECKLIST.md");
+  console.log("QA-CHECKLIST.md updated (Coverage Summary and/or Phase tables).");
 }
 
 main();

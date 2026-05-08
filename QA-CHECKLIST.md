@@ -797,7 +797,7 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 21 | 0 |
 | `core-components/` — Component Config | 20 | 2 |
-| `core-components/` — Core Components | 18 | 9 |
+| `core-components/` — Core Components | 7 | 5 |
 | `core-functionality/auth/` | 18 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
 | `core-functionality/model-provider/` | 18 | 9 |
@@ -816,7 +816,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 12 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 20 | 0 |
+| `flow-functionality/` | 21 | 0 |
 | `core-functionality/project-management/` | 10 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
