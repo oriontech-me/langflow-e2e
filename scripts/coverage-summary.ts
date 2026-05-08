@@ -98,7 +98,7 @@ function fmtPercent(part: number, whole: number): string {
   return `${Math.round((part / whole) * 100)}%`;
 }
 
-function regenerate(lines: string[]): string[] {
+function computeCounts(lines: string[]): Counts[] {
   const partIIStart = findLineIndex(lines, (l) => l.trim() === PART_II_HEADER);
   if (partIIStart === -1) {
     throw new Error(`Part II header not found: "${PART_II_HEADER}"`);
@@ -113,7 +113,6 @@ function regenerate(lines: string[]): string[] {
     throw new Error(`Coverage Summary header not found: "${COVERAGE_SUMMARY_HEADER_PREFIX}"`);
   }
 
-  // Resolve each module's start line within Part II.
   const moduleStarts: number[] = MODULES.map((m) => {
     const idx = findLineIndex(
       lines,
@@ -129,7 +128,6 @@ function regenerate(lines: string[]): string[] {
     return idx;
   });
 
-  // Sanity check: starts must be strictly increasing — otherwise MODULES is misordered.
   for (let i = 1; i < moduleStarts.length; i++) {
     if (moduleStarts[i] <= moduleStarts[i - 1]) {
       throw new Error(
@@ -138,7 +136,6 @@ function regenerate(lines: string[]): string[] {
     }
   }
 
-  // Count bullets per module.
   const counts: Counts[] = MODULES.map(() => emptyCounts());
   for (let m = 0; m < MODULES.length; m++) {
     const start = moduleStarts[m] + 1;
@@ -151,7 +148,27 @@ function regenerate(lines: string[]): string[] {
     }
   }
 
-  // Aggregate TOTAL row.
+  return counts;
+}
+
+function regenerateCoverageTable(
+  lines: string[],
+  counts: Counts[]
+): string[] {
+  const partIIStart = findLineIndex(lines, (l) => l.trim() === PART_II_HEADER);
+  if (partIIStart === -1) {
+    throw new Error(`Part II header not found: "${PART_II_HEADER}"`);
+  }
+
+  const coverageHeader = findLineIndex(
+    lines,
+    (l) => l.startsWith(COVERAGE_SUMMARY_HEADER_PREFIX),
+    partIIStart
+  );
+  if (coverageHeader === -1) {
+    throw new Error(`Coverage Summary header not found: "${COVERAGE_SUMMARY_HEADER_PREFIX}"`);
+  }
+
   const tot = emptyCounts();
   for (const c of counts) {
     tot.validated += c.validated;
@@ -161,7 +178,6 @@ function regenerate(lines: string[]): string[] {
   }
   const totSum = totalOf(tot);
 
-  // Build the new table block.
   const dataRows = MODULES.map((m, i) => {
     const c = counts[i];
     return `| ${m.label} | ${totalOf(c)} | ${c.validated} | ${c.needsValidation} | ${c.partial} | ${c.notAutomated} |`;
@@ -175,8 +191,6 @@ function regenerate(lines: string[]): string[] {
 
   const newTable = [TABLE_HEADER, TABLE_SEPARATOR, ...dataRows, totalRow];
 
-  // Replace the existing table block: from the `| Module | Total |` line through the
-  // last consecutive line that starts with `|`.
   const tableHeaderIdx = findLineIndex(
     lines,
     (l) => l.startsWith(TABLE_HEADER_PREFIX),
@@ -201,12 +215,12 @@ function main(): void {
   const original = fs.readFileSync(filePath, "utf-8");
   const trailingNewline = original.endsWith("\n");
 
-  // Drop the empty trailing element produced by split when the file ends with `\n`,
-  // then add the newline back at write time so the file shape is preserved.
   const lines = original.split("\n");
   if (trailingNewline) lines.pop();
 
-  const updated = regenerate(lines);
+  const counts = computeCounts(lines);
+  const updated = regenerateCoverageTable(lines, counts);
+
   let output = updated.join("\n");
   if (trailingNewline) output += "\n";
 
