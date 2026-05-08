@@ -1,7 +1,9 @@
 import type { Page } from "@playwright/test";
+import { readFileSync } from "fs";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { cleanAllFlows } from "../../../helpers/flows/clean-all-flows";
 import { setupLanguageModelOpenAI } from "../../../helpers/provider-setup/setup-language-model-openai";
 
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
@@ -200,5 +202,135 @@ test(
     const responseText = await botMessage.textContent() ?? "";
     const titleCount = (responseText.match(/title/gi) ?? []).length;
     expect(titleCount).toBeGreaterThanOrEqual(1);
+  },
+);
+
+// =============================================================================
+// Exit condition — Loop terminates after the input DataFrame is exhausted
+// =============================================================================
+
+const LOOP_FLOW_PATH = "tests/assets/flows/loop-exit-condition.json";
+
+// Builds a fresh flow body from the asset, sets Create List `texts` to control
+// N, and randomizes the name so re-runs do not clash on the unique constraint.
+function buildFlowBody(texts: string[]): Record<string, unknown> {
+  const flow = JSON.parse(readFileSync(LOOP_FLOW_PATH, "utf-8"));
+  for (const node of flow.data.nodes) {
+    const t = node?.data?.node?.template;
+    if (t && "texts" in t) {
+      t.texts.value = texts;
+    }
+  }
+  flow.name = `loop-exit-condition-${Math.random().toString(36).slice(2, 10)}`;
+  return flow;
+}
+
+// Creates the flow server-side via POST /api/v1/flows/ and returns its id.
+// Avoids the drag-drop upload race observed when using simulateDragAndDrop:
+// API creation is deterministic and skips the home-page card render path.
+async function createFlowFromAsset(
+  page: Page,
+  texts: string[],
+): Promise<string> {
+  const body = buildFlowBody(texts);
+  return await page.evaluate(async (flowBody) => {
+    // XMLHttpRequest, not fetch — Langflow's bundled HTTP wrapper has a
+    // TypeError on Accept-Language that affects fetch in some pages.
+    const getToken = () =>
+      new Promise<string | null>((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("GET", "/api/v1/auto_login", true);
+        xhr.withCredentials = true;
+        xhr.onload = () => {
+          try {
+            resolve(JSON.parse(xhr.responseText)?.access_token ?? null);
+          } catch {
+            resolve(null);
+          }
+        };
+        xhr.onerror = () => resolve(null);
+        xhr.send();
+      });
+    const token = await getToken();
+    return await new Promise<string>((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("POST", "/api/v1/flows/", true);
+      xhr.withCredentials = true;
+      xhr.setRequestHeader("Content-Type", "application/json");
+      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+      xhr.onload = () => {
+        if (xhr.status !== 201)
+          return reject(`status ${xhr.status}: ${xhr.responseText.slice(0, 200)}`);
+        const created = JSON.parse(xhr.responseText);
+        resolve(created.id);
+      };
+      xhr.onerror = () => reject("network error");
+      xhr.send(JSON.stringify(flowBody));
+    });
+  }, body);
+}
+
+async function runFlowAndReadDoneCount(
+  page: Page,
+  texts: string[],
+): Promise<number> {
+  const flowId = await createFlowFromAsset(page, texts);
+
+  // Navigate to the new flow's canvas. After the POST + page.goto, the React
+  // app's owned-flows cache can be stale, redirecting /flow/{id} back to the
+  // flows list. Calling page.reload() forces a hard re-fetch so the route
+  // resolves to the canvas deterministically.
+  await page.goto(`/flow/${flowId}`);
+  await page.reload();
+  await page.waitForSelector('[data-testid="title-Loop"]', { timeout: 30000 });
+  await adjustScreenView(page);
+
+  await page.getByTestId("button_run_loop").click();
+  await page.waitForSelector("text=built successfully", { timeout: 60000 });
+
+  // The done output renders as a paginated treegrid (DataFrame view). Read
+  // the pagination summary "1 to N of N. Page 1 of 1" — robust to row sorting
+  // and avoids brittle DOM-row counting under virtualization.
+  await page.getByTestId("output-inspection-done-loopcomponent").click();
+  await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
+
+  const dialog = page.locator('[role="dialog"]');
+  const summaryText = await dialog
+    .locator("text=/\\d+ to \\d+ of \\d+\\. Page \\d+ of \\d+/")
+    .first()
+    .textContent();
+  await page.keyboard.press("Escape");
+
+  const match = summaryText?.match(/of (\d+)\./);
+  if (!match) {
+    throw new Error(
+      `Could not parse row count from done output dialog summary: ${summaryText}`,
+    );
+  }
+  return Number(match[1]);
+}
+
+test(
+  "Loop component — stops after exhausting input DataFrame and emits aggregated done",
+  // `@stable` is added in a follow-up commit only after the full validation
+  // pipeline is green.
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    test.setTimeout(2 * 60 * 1000);
+
+    let count: number | undefined;
+
+    await test.step("N=3: loop iterates 3 times and done aggregates 3 items", async () => {
+      await awaitBootstrapTest(page, { skipModal: true });
+      await cleanAllFlows(page);
+      count = await runFlowAndReadDoneCount(page, ["a", "b", "c"]);
+      expect(count).toBe(3);
+    });
+
+    await test.step("N=1: edge case — single iteration aggregates 1 item", async () => {
+      await cleanAllFlows(page);
+      count = await runFlowAndReadDoneCount(page, ["only"]);
+      expect(count).toBe(1);
+    });
   },
 );
