@@ -213,7 +213,10 @@ const LOOP_FLOW_PATH = "tests/assets/flows/loop-exit-condition.json";
 
 // Builds a fresh flow body from the asset, sets Create List `texts` to control
 // N, and randomizes the name so re-runs do not clash on the unique constraint.
-function buildFlowBody(texts: string[]): Record<string, unknown> {
+function buildFlowBody(texts: string[]): {
+  flow: Record<string, unknown>;
+  name: string;
+} {
   const flow = JSON.parse(readFileSync(LOOP_FLOW_PATH, "utf-8"));
   for (const node of flow.data.nodes) {
     const t = node?.data?.node?.template;
@@ -221,19 +224,19 @@ function buildFlowBody(texts: string[]): Record<string, unknown> {
       t.texts.value = texts;
     }
   }
-  flow.name = `loop-exit-condition-${Math.random().toString(36).slice(2, 10)}`;
-  return flow;
+  const name = `loop-exit-condition-${Math.random().toString(36).slice(2, 10)}`;
+  flow.name = name;
+  return { flow, name };
 }
 
-// Creates the flow server-side via POST /api/v1/flows/ and returns its id.
-// Avoids the drag-drop upload race observed when using simulateDragAndDrop:
-// API creation is deterministic and skips the home-page card render path.
+// Creates the flow server-side via POST /api/v1/flows/. Avoids the drag-drop
+// upload race observed when using simulateDragAndDrop: API creation is
+// deterministic and skips the home-page card render path.
 async function createFlowFromAsset(
   page: Page,
-  texts: string[],
-): Promise<string> {
-  const body = buildFlowBody(texts);
-  return await page.evaluate(async (flowBody) => {
+  flow: Record<string, unknown>,
+): Promise<void> {
+  await page.evaluate(async (flowBody) => {
     // XMLHttpRequest, not fetch — Langflow's bundled HTTP wrapper has a
     // TypeError on Accept-Language that affects fetch in some pages.
     const getToken = () =>
@@ -252,7 +255,7 @@ async function createFlowFromAsset(
         xhr.send();
       });
     const token = await getToken();
-    return await new Promise<string>((resolve, reject) => {
+    return await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open("POST", "/api/v1/flows/", true);
       xhr.withCredentials = true;
@@ -261,27 +264,29 @@ async function createFlowFromAsset(
       xhr.onload = () => {
         if (xhr.status !== 201)
           return reject(`status ${xhr.status}: ${xhr.responseText.slice(0, 200)}`);
-        const created = JSON.parse(xhr.responseText);
-        resolve(created.id);
+        resolve();
       };
       xhr.onerror = () => reject("network error");
       xhr.send(JSON.stringify(flowBody));
     });
-  }, body);
+  }, flow);
 }
 
 async function runFlowAndReadDoneCount(
   page: Page,
   texts: string[],
 ): Promise<number> {
-  const flowId = await createFlowFromAsset(page, texts);
+  const { flow, name } = buildFlowBody(texts);
+  await createFlowFromAsset(page, flow);
 
-  // Navigate to the new flow's canvas. After the POST + page.goto, the React
-  // app's owned-flows cache can be stale, redirecting /flow/{id} back to the
-  // flows list. Calling page.reload() forces a hard re-fetch so the route
-  // resolves to the canvas deterministically.
-  await page.goto(`/flow/${flowId}`);
-  await page.reload();
+  // Click the flow card on the home page — matches user behavior and is more
+  // reliable than deep-linking /flow/{id}, which intermittently redirects to
+  // the flows list when the React app's owned-flows cache is stale at boot.
+  await page.goto("/");
+  const flowCard = page.getByText(name, { exact: true }).first();
+  await flowCard.waitFor({ state: "visible", timeout: 30000 });
+  await flowCard.click();
+  await page.waitForURL(/\/flow\//, { timeout: 30000 });
   await page.waitForSelector('[data-testid="title-Loop"]', { timeout: 30000 });
   await adjustScreenView(page);
 
