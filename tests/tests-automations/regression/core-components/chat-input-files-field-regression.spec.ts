@@ -19,7 +19,7 @@ const IMAGE_PATH = path.resolve(
 );
 
 // Helper: expand the currently focused node from minimized to full view.
-// ChatInput defaults to `minimized = True` (lfx/components/input_output/chat.py);
+// ChatInput defaults to `minimized = True` (src/lfx/src/lfx/components/input_output/chat.py);
 // without expanding, the inspector fields rendered on the node body are not in
 // the DOM. Idempotent: no-op if the node is already expanded — that future-proofs
 // the spec against an upstream change to the `minimized` default.

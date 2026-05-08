@@ -6,7 +6,7 @@
 
 ## What this test validates *(required)*
 
-Validates the **canvas-side `Files` field** on the Chat Input node — the advanced FileInput surface declared in `lfx/components/input_output/chat.py:70-78` — without depending on an LLM. This is the inspector path users take to attach a file to a flow at design time, distinct from the Playground paperclip path covered by `playground-output-image.spec.ts`.
+Validates the **canvas-side `Files` field** on the Chat Input node — the advanced FileInput surface declared in `src/lfx/src/lfx/components/input_output/chat.py:70-78` — without depending on an LLM. This is the inspector path users take to attach a file to a flow at design time, distinct from the Playground paperclip path covered by `playground-output-image.spec.ts`.
 
 The 4 tests cover:
 
@@ -81,7 +81,7 @@ All 4 tests carry `@stable` per the project rule "spec is born 100% @stable; tag
 
 - `src/lfx/src/lfx/components/input_output/chat.py:70-78` — defines the FileInput `name="files"` with `advanced=True`, `is_list=True`, `temp_file=True`, `file_types=TEXT_FILE_TYPES + IMG_FILE_TYPES`. Renaming the field, dropping `advanced`, or flipping `temp_file=False` breaks Tests 1, 2, and 4.
 - `src/frontend/src/components/core/parameterRenderComponent/components/inputFileComponent/index.tsx` — renders the two branches based on `tempFile`. With `tempFile=True` (Chat Input case) it always renders the `input-file-component` text input + `button_upload_file` regardless of `ENABLE_FILE_MANAGEMENT`. The empty-value placeholder literal `"Upload a file..."` and the dismiss handler (which sets value/file_path to `""`) come from this file.
-- `src/frontend/src/CustomNodes/.../InspectionPanelEditField.tsx` — generates the `show${name}` toggle. Renaming the testid pattern breaks Test 1's toggle click and the helper used by Tests 2-4.
+- `src/frontend/src/pages/FlowPage/components/InspectionPanel/components/InspectionPanelEditField.tsx` — generates the `show${name}` toggle. Renaming the testid pattern breaks Test 1's toggle click and the helper used by Tests 2-4.
 - `src/lfx/src/lfx/schema/message.py` — `Message` carries `files: list[str | Image]` and serializes them so the Playground can render the user-side image. Test 3 depends on this propagation chain.
 - `src/frontend/src/helpers/create-file-upload.ts` — backs `handleButtonClick` on the FileInput; the hidden `<input type="file">` it creates is what `page.waitForEvent("filechooser")` captures.
 
@@ -110,7 +110,7 @@ All 4 tests carry `@stable` per the project rule "spec is born 100% @stable; tag
 
 ## When to review this test *(optional)*
 
-- If `temp_file=True` flips to `False` on the FileInput in `chat.py`, the rendering branch changes (`button_open_file_management` modal becomes the entry point) — the upload helper must be updated.
+- If `temp_file=True` flips to `False` on the FileInput in `src/lfx/src/lfx/components/input_output/chat.py`, the rendering branch changes (`button_open_file_management` modal becomes the entry point) — the upload helper must be updated.
 - If the placeholder literal in `inputFileComponent/index.tsx` changes from `"Upload a file..."`, Tests 2 and 4 fail.
 - If the server stops timestamp-prefixing uploaded filenames, the `img[alt$="chain.png"]` suffix match in Test 3 still works (no regression). If the alt attribute pattern changes, Test 3 must be updated.
 - If `is_list=True` flips to `False`, the value is stored as a string instead of a single-element array — `toHaveValue("chain.png")` still works because `Array.prototype.toString()` of `["chain.png"]` is `"chain.png"`.
