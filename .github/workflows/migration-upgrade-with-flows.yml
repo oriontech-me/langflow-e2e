@@ -57,12 +57,16 @@ jobs:
             --format='{{index .RepoDigests 0}}' | tee /tmp/latest-digest.txt
           echo "Latest digest: $(cat /tmp/latest-digest.txt)"
 
+      - name: Prepare flow directory for LANGFLOW_LOAD_FLOWS_PATH
+        run: |
+          mkdir -p /tmp/test-flows
+          cp tests/assets/flows/flow.json /tmp/test-flows/
+
       - name: Start Langflow latest with flow pre-loaded
         run: |
-          FLOWS_DIR="$(pwd)/tests/assets/flows"
           docker run -d --name langflow \
             --network host \
-            -v "${FLOWS_DIR}:/flows:ro" \
+            -v "/tmp/test-flows:/flows:ro" \
             -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
             -e LANGFLOW_AUTO_LOGIN=true \
             -e LANGFLOW_SUPERUSER=langflow \
@@ -99,10 +103,9 @@ jobs:
 
       - name: Start Langflow nightly with same DB and LANGFLOW_LOAD_FLOWS_PATH
         run: |
-          FLOWS_DIR="$(pwd)/tests/assets/flows"
           docker run -d --name langflow \
             --network host \
-            -v "${FLOWS_DIR}:/flows:ro" \
+            -v "/tmp/test-flows:/flows:ro" \
             -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
             -e LANGFLOW_AUTO_LOGIN=true \
             -e LANGFLOW_SUPERUSER=langflow \
