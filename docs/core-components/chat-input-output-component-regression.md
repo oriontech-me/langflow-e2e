@@ -109,7 +109,7 @@ All 6 tests carry `@stable` per the project rule "spec is born 100% @stable; tag
 
 ## What this test does not cover *(optional)*
 
-- Chat Input multimodal/file attach (future spec under `playground/` or a new `chat-input-multimodal`).
+- Chat Input multimodal/file attach via the canvas-side `Files` inspector field — covered by `chat-input-files-field-regression.spec.ts`.
 - Chat Input template variables / advanced settings beyond `sender_name`.
 - Playground rendering of the AI-side message (already covered by the Playground @stable suite).
 - Session ID isolation / context_id propagation (covered by `playground-session-id.spec.ts` and `playground-session-clear.spec.ts`).
