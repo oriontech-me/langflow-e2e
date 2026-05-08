@@ -126,8 +126,6 @@ test(
   "Chat Input — toggling `showfiles` exposes the Files inspector field",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await addChatInputComponent(page);
-
     // Scope to the Chat Input node body. The `input-file-component` testid is also
     // mounted by the advanced-options side panel even before the toggle, so an
     // unscoped assertion would always see count >= 1. The contract under test is
@@ -135,23 +133,40 @@ test(
     // is the right boundary.
     const chatInputNode = chatInputNodeScope(page);
 
-    // Before the toggle the advanced field must not render on the node body
-    await expect(
-      chatInputNode.getByTestId("input-file-component"),
-    ).toHaveCount(0);
-    await expect(
-      chatInputNode.getByTestId("button_upload_file"),
-    ).toHaveCount(0);
+    await test.step("Add Chat Input to a blank flow", async () => {
+      await addChatInputComponent(page);
+    });
 
-    await toggleFilesFieldVisible(page);
+    await test.step(
+      "Files field is absent from the node body before the showfiles toggle",
+      async () => {
+        await expect(
+          chatInputNode.getByTestId("input-file-component"),
+        ).toHaveCount(0);
+        await expect(
+          chatInputNode.getByTestId("button_upload_file"),
+        ).toHaveCount(0);
+      },
+    );
 
-    // After toggling, both controls render on the node body
-    await expect(
-      chatInputNode.getByTestId("input-file-component"),
-    ).toBeVisible({ timeout: 10000 });
-    await expect(
-      chatInputNode.getByTestId("button_upload_file"),
-    ).toBeVisible();
+    await test.step(
+      "Toggle showfiles via the advanced-options panel",
+      async () => {
+        await toggleFilesFieldVisible(page);
+      },
+    );
+
+    await test.step(
+      "Files field controls are visible on the node body after the toggle",
+      async () => {
+        await expect(
+          chatInputNode.getByTestId("input-file-component"),
+        ).toBeVisible({ timeout: 10000 });
+        await expect(
+          chatInputNode.getByTestId("button_upload_file"),
+        ).toBeVisible();
+      },
+    );
   },
 );
 
@@ -163,27 +178,51 @@ test(
   "Chat Input — uploading via the inspector populates the Files field",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await addChatInputComponent(page);
-    await toggleFilesFieldVisible(page);
-
     const chatInputNode = chatInputNodeScope(page);
     const fileInput = chatInputNode.getByTestId("input-file-component");
     const uploadButton = chatInputNode.getByTestId("button_upload_file");
 
-    // Empty state: the readonly input shows the placeholder literal
-    await expect(fileInput).toHaveValue("Upload a file...");
+    await test.step(
+      "Add Chat Input and expose the Files field via showfiles",
+      async () => {
+        await addChatInputComponent(page);
+        await toggleFilesFieldVisible(page);
+      },
+    );
 
-    await uploadFileViaInspector(page, IMAGE_PATH, chatInputNode);
+    await test.step(
+      "Empty state shows the placeholder literal in the readonly input",
+      async () => {
+        await expect(fileInput).toHaveValue("Upload a file...");
+      },
+    );
 
-    // After upload, the field value reflects the original file name. `is_list=True`
-    // stores the value as `[file.name]`; the <input> coerces a single-element array
-    // to its element string when rendering.
-    await expect(fileInput).toHaveValue(IMAGE_NAME, { timeout: 15000 });
+    await test.step(
+      "Upload chain.png via the inspector upload button",
+      async () => {
+        await uploadFileViaInspector(page, IMAGE_PATH, chatInputNode);
+      },
+    );
 
-    // Hovering the upload button reveals the dismiss icon — confirms the button
-    // has switched into "value present" mode (handleDismissClick on click).
-    await uploadButton.hover();
-    await expect(uploadButton.getByTestId("icon-X")).toHaveCSS("opacity", "1");
+    await test.step(
+      "Field value reflects the original file name after upload",
+      async () => {
+        // `is_list=True` stores the value as `[file.name]`; the <input> coerces a
+        // single-element array to its element string when rendering.
+        await expect(fileInput).toHaveValue(IMAGE_NAME, { timeout: 15000 });
+      },
+    );
+
+    await test.step(
+      "Upload button switches to dismiss mode (X icon revealed on hover)",
+      async () => {
+        await uploadButton.hover();
+        await expect(uploadButton.getByTestId("icon-X")).toHaveCSS(
+          "opacity",
+          "1",
+        );
+      },
+    );
   },
 );
 
@@ -195,33 +234,51 @@ test(
   "Chat Input → Chat Output — inspector-attached file is rendered in the Playground message",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await addChatInputComponent(page);
-    await toggleFilesFieldVisible(page);
-
     const chatInputNode = chatInputNodeScope(page);
-    await uploadFileViaInspector(page, IMAGE_PATH, chatInputNode);
-    await expect(
-      chatInputNode.getByTestId("input-file-component"),
-    ).toHaveValue(IMAGE_NAME, { timeout: 15000 });
 
-    await addChatOutputToCanvas(page);
-    await connectChatInputToChatOutput(page);
+    await test.step(
+      "Add Chat Input, expose Files, and upload chain.png via the inspector",
+      async () => {
+        await addChatInputComponent(page);
+        await toggleFilesFieldVisible(page);
+        await uploadFileViaInspector(page, IMAGE_PATH, chatInputNode);
+        await expect(
+          chatInputNode.getByTestId("input-file-component"),
+        ).toHaveValue(IMAGE_NAME, { timeout: 15000 });
+      },
+    );
 
-    // Run the flow from the Chat Output run button — this invokes ChatInput.message_response()
-    // with `self.files` populated by the inspector upload, then propagates to ChatOutput.
-    await page.getByTestId("button_run_chat output").click();
-    await expect(page.getByText("built successfully").last()).toBeVisible({
-      timeout: 45000,
-    });
+    await test.step(
+      "Add Chat Output and connect ChatInput → ChatOutput",
+      async () => {
+        await addChatOutputToCanvas(page);
+        await connectChatInputToChatOutput(page);
+      },
+    );
 
-    // Open the Playground — the run history must show the user-side message
-    // with the inspector-attached image rendered as <img>.
-    await page.getByTestId("playground-btn-flow-io").click();
-    // The server prefixes uploaded filenames with a timestamp (e.g. `2026-05-08_..._chain.png`),
-    // so match the alt attribute by suffix rather than exact value.
-    await expect(page.locator('img[alt$="chain.png"]')).toBeVisible({
-      timeout: 30000,
-    });
+    await test.step(
+      "Run the flow from the Chat Output run button",
+      async () => {
+        // Invokes ChatInput.message_response() with `self.files` populated by the
+        // inspector upload, then propagates to ChatOutput.
+        await page.getByTestId("button_run_chat output").click();
+        await expect(page.getByText("built successfully").last()).toBeVisible({
+          timeout: 45000,
+        });
+      },
+    );
+
+    await test.step(
+      "Open the Playground and verify the inspector-attached image rendered",
+      async () => {
+        await page.getByTestId("playground-btn-flow-io").click();
+        // The server prefixes uploaded filenames with a timestamp (e.g.
+        // `2026-05-08_..._chain.png`), so match the alt attribute by suffix.
+        await expect(page.locator('img[alt$="chain.png"]')).toBeVisible({
+          timeout: 30000,
+        });
+      },
+    );
   },
 );
 
@@ -233,23 +290,41 @@ test(
   "Chat Input — clicking the dismiss button on the Files field clears the value",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await addChatInputComponent(page);
-    await toggleFilesFieldVisible(page);
-
     const chatInputNode = chatInputNodeScope(page);
     const fileInput = chatInputNode.getByTestId("input-file-component");
     const uploadButton = chatInputNode.getByTestId("button_upload_file");
 
-    await uploadFileViaInspector(page, IMAGE_PATH, chatInputNode);
-    await expect(fileInput).toHaveValue(IMAGE_NAME, { timeout: 15000 });
+    await test.step(
+      "Add Chat Input, expose Files, and upload chain.png",
+      async () => {
+        await addChatInputComponent(page);
+        await toggleFilesFieldVisible(page);
+        await uploadFileViaInspector(page, IMAGE_PATH, chatInputNode);
+        await expect(fileInput).toHaveValue(IMAGE_NAME, { timeout: 15000 });
+      },
+    );
 
-    // The button is in "value present" mode: hovering reveals the X icon and
-    // clicking calls handleDismissClick (which sets value/file_path to "").
-    await uploadButton.hover();
-    await expect(uploadButton.getByTestId("icon-X")).toHaveCSS("opacity", "1");
-    await uploadButton.click();
+    await test.step(
+      "Click the upload button while a value is present (dismiss mode)",
+      async () => {
+        // Hovering must reveal the X icon — confirms the button is in
+        // "value present" mode (handleDismissClick on click).
+        await uploadButton.hover();
+        await expect(uploadButton.getByTestId("icon-X")).toHaveCSS(
+          "opacity",
+          "1",
+        );
+        await uploadButton.click();
+      },
+    );
 
-    // After dismiss, value is "" and the input falls back to the placeholder literal.
-    await expect(fileInput).toHaveValue("Upload a file...", { timeout: 10000 });
+    await test.step(
+      "Field value falls back to the placeholder literal after dismiss",
+      async () => {
+        await expect(fileInput).toHaveValue("Upload a file...", {
+          timeout: 10000,
+        });
+      },
+    );
   },
 );
