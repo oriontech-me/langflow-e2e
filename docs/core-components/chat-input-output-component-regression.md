@@ -69,7 +69,7 @@ All 6 tests carry `@stable` per the project rule "spec is born 100% @stable; tag
 **Test 5 — sender_name override via Playground**
 1. Run `addChatInputComponent`
 2. `openAdvancedOptions` → click `showsender_name` → `closeAdvancedOptions`
-3. Fill `popover-anchor-input-sender_name` (first instance) with `"QA"` and assert the value
+3. Scope a locator to the Chat Input `.react-flow__node` (filtered by `title-Chat Input`), fill its `popover-anchor-input-sender_name` with `"QA"` and assert the value
 4. Run `addChatOutputToCanvas` and `connectChatInputToChatOutput`
 5. Click `playground-btn-flow-io` and wait for `input-chat-playground` to be visible
 6. Fill the playground input with `"sender-override-regression"` and click `button-send`

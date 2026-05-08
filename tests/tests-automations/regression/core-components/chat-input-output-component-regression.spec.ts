@@ -261,13 +261,16 @@ test(
     await page.getByTestId("showsender_name").click();
     await closeAdvancedOptions(page);
 
-    // Fill the now-visible sender_name input
-    await page
+    // Scope the sender_name field to the Chat Input node container so the
+    // assertion does not depend on DOM ordering once Chat Output is added.
+    const chatInputNode = page
+      .locator(".react-flow__node")
+      .filter({ has: page.getByTestId("title-Chat Input") });
+    await chatInputNode
       .getByTestId("popover-anchor-input-sender_name")
-      .first()
       .fill(senderOverride);
     await expect(
-      page.getByTestId("popover-anchor-input-sender_name").first(),
+      chatInputNode.getByTestId("popover-anchor-input-sender_name"),
     ).toHaveValue(senderOverride);
 
     await addChatOutputToCanvas(page);
