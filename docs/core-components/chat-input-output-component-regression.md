@@ -78,10 +78,10 @@ All 6 tests carry `@stable` per the project rule "spec is born 100% @stable; tag
 **Test 6 — default sender_name values**
 1. Run `addChatInputComponent`
 2. Open advanced options, click `showsender_name`, close advanced options
-3. Assert `popover-anchor-input-sender_name` (first instance) has value `"User"`
+3. Scope a locator to the Chat Input `.react-flow__node` (filtered by `title-Chat Input`) and assert its `popover-anchor-input-sender_name` has value `"User"`
 4. Run `addChatOutputToCanvas`, click `title-Chat Output` to focus it
 5. Open advanced options, click `showsender_name`, close advanced options
-6. Assert `popover-anchor-input-sender_name.nth(0)` is `"User"` (Chat Input) and `nth(1)` is `"AI"` (Chat Output)
+6. Scope each assertion to its own `.react-flow__node` container (filtered by `title-Chat Input` / `title-Chat Output`) and assert `popover-anchor-input-sender_name` is `"User"` on Chat Input and `"AI"` on Chat Output — using node-scoped filters keeps the test resilient to DOM ordering changes
 
 ---
 
