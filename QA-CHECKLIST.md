@@ -678,7 +678,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 0 | 21 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 0 | 20 | 0 | 2 |
-| `core-components/` — Core Components | 46 | 34 | 7 | 0 | 5 |
+| `core-components/` — Core Components | 50 | 38 | 7 | 0 | 5 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
@@ -692,7 +692,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **376** | **86 (23%)** | **225 (60%)** | **6 (2%)** | **59 (16%)** |
+| **TOTAL** | **380** | **90 (24%)** | **225 (59%)** | **6 (2%)** | **59 (16%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -708,7 +708,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 69 `test()` calls carrying the `@stable` tag, distributed across 24 spec
+> 73 `test()` calls carrying the `@stable` tag, distributed across 25 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -725,6 +725,10 @@
 - [x] API Request component — query parameters embedded in URL are sent and echoed → `api-request-component-regression.spec.ts`
 - [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
+- [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input → Chat Output — inspector-attached file is rendered in the Playground message → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input — clicking the dismiss button on the Files field clears the value → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input component — renders on canvas with Message output handle and Input Text field → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Output component — renders on canvas with Inputs handle and run button → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input → Chat Output connection is accepted on canvas (Message ↔ Message) → `chat-input-output-component-regression.spec.ts`
