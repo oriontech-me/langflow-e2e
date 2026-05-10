@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-05-08
+> **Last updated:** 2026-05-10
 
 ---
 
@@ -622,7 +622,8 @@
 
 #### 15.4 Node Manipulation
 - [-] Delete component from canvas
-- [-] Copy and paste component (Ctrl+C / Ctrl+V)
+- [x] Copy and paste ChatOutput component (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
+- [x] Copy and paste Prompt Template (component with dynamic ports) (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [-] Canvas keyboard shortcuts
 - [-] Minimize component on canvas
 - [-] Move component within canvas
@@ -690,9 +691,9 @@
 | `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
 | `mcp/client/` | 6 | 0 | 0 | 0 | 6 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
-| `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
+| `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **380** | **90 (24%)** | **225 (59%)** | **6 (2%)** | **59 (16%)** |
+| **TOTAL** | **381** | **92 (24%)** | **224 (59%)** | **6 (2%)** | **59 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -708,7 +709,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 73 `test()` calls carrying the `@stable` tag, distributed across 25 spec
+> 75 `test()` calls carrying the `@stable` tag, distributed across 26 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -792,6 +793,10 @@
 - [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
+#### flow-functionality/
+- [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+- [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+
 #### ui-ux/
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 
@@ -812,7 +817,7 @@
 | `core-functionality/playground/` | 7 | 1 |
 | `mcp/client/` | 0 | 6 |
 | `mcp/server/` | 3 | 4 |
-| `ui-ux/` — Canvas | 40 | 1 |
+| `ui-ux/` — Canvas | 39 | 1 |
 
 ---
 
