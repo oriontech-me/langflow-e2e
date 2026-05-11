@@ -105,6 +105,7 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 - Tool Mode interaction (covered by `tool-mode.spec.ts`)
 - Cross-component data flow (covered by `flow-functionality/` specs)
 - Variable name validation (e.g., reserved keywords, special characters)
+- The `use_double_brackets` toggle and the mustache-mode parser (covered by `prompt-template-double-brackets-regression.spec.ts`)
 
 ---
 

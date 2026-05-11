@@ -169,6 +169,11 @@
 - [x] Prompt modal opens, accepts edits, and changes persist → `core-components/prompt-template-component-regression.spec.ts`
 - [x] Dynamic port generated when adding a variable to the prompt → `core-components/prompt-template-component-regression.spec.ts`
 - [x] Removing a variable from the prompt deletes the corresponding port → `core-components/prompt-template-component-regression.spec.ts`
+- [x] `use_double_brackets` toggle is exposed in the InspectionPanel with its upstream display name → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] Default toggle state is OFF; f-string mode extracts `{var}` and treats `{{var}}` as literal → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] Enabling toggle switches parser to mustache mode; `{{var}}` creates handle and `{var}` is ignored → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] Disabling toggle reverts to f-string mode and variables are re-extracted under the new parser → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] `use_double_brackets` value persists in the autosaved flow → `core-components/prompt-template-double-brackets-regression.spec.ts`
 
 #### 3.3 API Request (HTTP)
 - [x] Renders on canvas with URL and API Response handles → `core-components/api-request-component-regression.spec.ts`
