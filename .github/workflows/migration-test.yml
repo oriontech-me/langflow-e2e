@@ -13,9 +13,9 @@ env:
   PG_DB: langflow
   STATE_FILE: /tmp/migration-test-state.json
   REPORT_FILE: /tmp/migration-report.md
-  # Fixed key shared by both containers so credentials encrypted by latest
+  # Fixed Fernet key shared by both containers so credentials encrypted by latest
   # can be decrypted by nightly after DB migration.
-  LANGFLOW_SECRET_KEY: "migration-test-fixed-secret-32chars!!"
+  LANGFLOW_SECRET_KEY: "moCrtdRACIjpyH3gvhAbPORR9jnXfEKi6bXdqSC2BdY="
 
 permissions:
   contents: read
