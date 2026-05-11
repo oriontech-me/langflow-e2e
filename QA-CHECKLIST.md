@@ -165,10 +165,10 @@
 - [x] Dismiss button on the Files field clears the value → `core-components/chat-input-files-field-regression.spec.ts`
 
 #### 3.2 Prompt Template
-- [-] Prompt with variables in curly braces
-- [-] Prompt modal
-- [-] Dynamic port generated when adding a variable to the prompt
-- [-] Removing a variable from the prompt deletes the corresponding port
+- [x] Prompt with variables in curly braces → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Prompt modal opens, accepts edits, and changes persist → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Dynamic port generated when adding a variable to the prompt → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Removing a variable from the prompt deletes the corresponding port → `core-components/prompt-template-component-regression.spec.ts`
 
 #### 3.3 API Request (HTTP)
 - [x] Renders on canvas with URL and API Response handles → `core-components/api-request-component-regression.spec.ts`
