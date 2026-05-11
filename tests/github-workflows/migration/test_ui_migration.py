@@ -59,7 +59,7 @@ class TestMigrationUI:
 
         # Verify the flow editor loaded (look for the canvas/reactflow area)
         canvas = self.page.locator(".react-flow, [data-testid='rf__wrapper']")
-        expect(canvas.first()).to_be_visible(timeout=20_000)
+        expect(canvas.first).to_be_visible(timeout=20_000)
 
         self.results["steps"]["open_flow"] = {"status": "pass"}
         self._save_results()
