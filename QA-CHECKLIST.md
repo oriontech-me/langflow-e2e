@@ -689,7 +689,7 @@
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
-| `core-functionality/playground/` | 41 | 32 | 7 | 1 | 1 |
+| `core-functionality/playground/` | 46 | 37 | 7 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
@@ -697,7 +697,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **380** | **90 (24%)** | **225 (59%)** | **6 (2%)** | **59 (16%)** |
+| **TOTAL** | **385** | **95 (25%)** | **225 (58%)** | **6 (2%)** | **59 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -713,7 +713,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 72 `test()` calls carrying the `@stable` tag, distributed across 25 spec
+> 77 `test()` calls carrying the `@stable` tag, distributed across 26 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -763,6 +763,11 @@
 - [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
 
 #### core-functionality/playground/
+- [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
+- [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
+- [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
+- [x] playground input must return to empty state after removing the only attachment → `playground-attachments-management.spec.ts`
+- [x] playground swap flow must send only the second image when the first is removed before attaching the second → `playground-attachments-management.spec.ts`
 - [x] selecting an individual session checkbox must reveal the bulk-delete-button → `playground-bulk-delete.spec.ts`
 - [x] select-all-checkbox must select all non-default sessions → `playground-bulk-delete.spec.ts`
 - [x] bulk-delete-button must remove all selected sessions from the sidebar → `playground-bulk-delete.spec.ts`
