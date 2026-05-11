@@ -13,6 +13,9 @@ env:
   PG_DB: langflow
   STATE_FILE: /tmp/migration-test-state.json
   REPORT_FILE: /tmp/migration-report.md
+  # Fixed key shared by both containers so credentials encrypted by latest
+  # can be decrypted by nightly after DB migration.
+  LANGFLOW_SECRET_KEY: "migration-test-fixed-secret-32chars!!"
 
 permissions:
   contents: read
@@ -68,6 +71,7 @@ jobs:
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
+            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
             langflowai/langflow:latest
 
       - name: Wait for Langflow latest
@@ -102,6 +106,7 @@ jobs:
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
+            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
             langflowai/langflow-nightly:latest
 
       - name: Wait for Langflow nightly (includes migration)
