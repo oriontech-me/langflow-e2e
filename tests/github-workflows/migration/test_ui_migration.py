@@ -57,8 +57,13 @@ class TestMigrationUI:
         self.page.goto(f"{self.base_url}/flow/{self.flow_id}", wait_until="networkidle")
         self.page.wait_for_timeout(5000)
 
-        # Verify the flow editor loaded (look for the canvas/reactflow area)
-        canvas = self.page.locator(".react-flow, [data-testid='rf__wrapper']")
+        # Verify the flow editor loaded — use a broad selector resilient to
+        # ReactFlow version changes (class prefix match covers react-flow,
+        # react-flow__renderer, react-flow__pane, etc.)
+        canvas = self.page.locator("[class*='react-flow'], [data-testid='rf__wrapper']")
+        if canvas.count() == 0:
+            # Fallback: check for any generic node card present in the flow editor
+            canvas = self.page.locator(".generic-node, [data-testid*='node'], .node-card")
         expect(canvas.first).to_be_visible(timeout=20_000)
 
         self.results["steps"]["open_flow"] = {"status": "pass"}
