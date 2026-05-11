@@ -13,7 +13,7 @@ on:
 
 permissions:
   issues: write
-  contents: read
+  contents: write
 
 jobs:
   e2e-weekly-stable:
@@ -61,10 +61,11 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
       - name: Run @stable tests
-        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=html,github
+        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=html,github,json
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
       - name: Upload Playwright report
@@ -74,6 +75,30 @@ jobs:
           name: playwright-report-weekly-${{ github.run_id }}
           path: playwright-report/
           retention-days: 14
+
+      # Long-lived run history: append one JSON line per run to reports/weekly-history.jsonl
+      # and commit it back to main. See reports/README.md for schema and queries.
+      # Runs even on failure so recurring weekly breakage is recorded, not just clean runs.
+      - name: Append weekly history
+        if: always() && github.ref == 'refs/heads/main'
+        run: node scripts/append-weekly-history.mjs
+        env:
+          PLAYWRIGHT_JSON: results.json
+          WORKFLOW: weekly-stable
+          LANGFLOW_IMAGE: langflowai/langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }}
+
+      - name: Commit weekly history
+        if: always() && github.ref == 'refs/heads/main'
+        run: |
+          if git diff --quiet reports/weekly-history.jsonl 2>/dev/null; then
+            echo "No history change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/weekly-history.jsonl
+          git commit -m "chore(history): record weekly run ${{ github.run_id }} [skip ci]"
+          git push
 
       - name: Create issue on failure
         if: failure() && github.event_name == 'schedule'
