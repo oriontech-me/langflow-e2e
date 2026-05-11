@@ -14,7 +14,7 @@ Validates the **Prompt Template** component's `use_double_brackets` toggle and t
 4. **Disabling the toggle reverts to f-string mode and variables are re-extracted under the new parser** — a template saved in mustache mode (`Hello {{name}}!`) keeps its `name` handle past the toggle alone (the rendered handle set is only fully reconciled after the next save), but re-saving the same template after switching back to f-string drops the now-literal `{{name}}` handle, and a fresh `{var}` template then recreates a handle.
 5. **`use_double_brackets` value persists in the saved flow** — `GET /api/v1/flows/{id}` returns `template.use_double_brackets.value === true` after the toggle is flipped and autosave runs.
 
-If any of these tests fails, the toggle is broken in one of its core contracts: the advanced-field rendering, the f-string ↔ mustache parser switch in `update_build_config`, the real-time re-extraction of variables on mode change, or the autosave round-trip of the boolean value.
+If any of these tests fails, the toggle is broken in one of its core contracts: the InspectionPanel rendering of the bool field, the f-string ↔ mustache parser switch in `update_build_config`, the re-extraction of variables when the template is saved under the active mode, or the autosave round-trip of the boolean value.
 
 This spec complements `prompt-template-component-regression.spec.ts`, which covers only the default (f-string) mode.
 
@@ -67,14 +67,15 @@ Both modes share the post-save preview (`edit-prompt-sanitized`) and the save bu
 
 ### 4. `disabling toggle reverts to f-string mode and variables are re-extracted under the new parser`
 - Calls `flipDoubleBrackets(page, true)`, then saves `Hello {{name}}!` via the mustache modal. Asserts the `name` handle is visible.
-- Calls `flipDoubleBrackets(page, false)`. The modal-open button swaps back to the f-string variant — confirmed by `flipDoubleBrackets`' built-in wait — but the rendered `name` handle may persist past the toggle alone (the upstream cleanup-and-re-extraction inside `update_build_config` runs, but the rendered handle set is only fully reconciled after the next save).
+- Calls `flipDoubleBrackets(page, false)` and explicitly asserts `button_open_prompt_modal` is visible and `button_open_mustache_prompt_modal` has count 0 — the swap-back is surfaced as a test-level `expect()` so the HTML report carries a real assertion, not just the helper's internal wait. The rendered `name` handle may still persist past the toggle alone: the upstream cleanup-and-re-extraction inside `update_build_config` runs, but the rendered handle set is only fully reconciled after the next save.
 - Re-saves the same template `Hello {{name}}!` via the f-string modal. Asserts the `name` handle disappears and the dynamic-handle count is 0 — `{{name}}` is a literal `{name}` under f-string semantics.
 - Saves `Just one {var} here.` via the f-string modal. Asserts the `var` handle is visible and the dynamic-handle count is 1.
 
 ### 5. `use_double_brackets value persists in the autosaved flow`
 - Extracts the flow id from the URL.
+- **Baseline:** polls `GET /api/v1/flows/{id}` via `page.request` (inherits session cookies) until the Prompt Template node's `template.use_double_brackets.value` equals `false` — proves the field starts in the default OFF state before any interaction.
 - Calls `flipDoubleBrackets(page, true)`.
-- Polls `GET /api/v1/flows/{id}` via `page.request` (inherits session cookies) until the Prompt Template node's `template.use_double_brackets.value` equals `true`.
+- Polls the same endpoint until the value equals `true` — proves the toggle drove the round-trip change, not just that the final state happens to be `true`.
 
 ---
 

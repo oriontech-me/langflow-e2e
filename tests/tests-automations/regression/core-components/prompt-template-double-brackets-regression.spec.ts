@@ -124,11 +124,19 @@ test(
       async () => {
         // The literal "Use Double Brackets" comes from the upstream
         // `BoolInput(..., display_name="Use Double Brackets", ...)` declaration —
-        // asserting it catches an accidental rename at the source. The `info`
-        // string is intentionally not asserted: the InspectionPanel collapses it
-        // into a hover-tooltip icon when the panel is narrow, so the visible
-        // rendering of that text depends on layout state.
-        await expect(page.getByText("Use Double Brackets")).toBeVisible();
+        // asserting it catches an accidental rename at the source. Scoped to the
+        // toggle's enclosing field row so an unrelated occurrence of the string
+        // elsewhere on the page (a tooltip, a help string) cannot satisfy or
+        // break the assertion via Playwright strict mode. The `info` text is
+        // intentionally not asserted — the InspectionPanel collapses it into a
+        // hover-tooltip icon when the panel is narrow.
+        // `.first()` avoids Playwright strict-mode failures if "Use Double
+        // Brackets" ever shows up elsewhere (e.g. a future tooltip or help
+        // string). The toggle's existence was already asserted in the previous
+        // step, so this assertion is solely about the label string.
+        await expect(
+          page.getByText("Use Double Brackets").first(),
+        ).toBeVisible();
       },
     );
   },
@@ -230,6 +238,15 @@ test(
       "Disable mustache mode — modal-open button swaps back to the f-string variant",
       async () => {
         await flipDoubleBrackets(page, false);
+        // Explicit assertion at the test level so the HTML report shows a real
+        // `expect()` in this step, even though `flipDoubleBrackets` already
+        // waited on the same testid internally.
+        await expect(
+          page.getByTestId("button_open_prompt_modal"),
+        ).toBeVisible();
+        await expect(
+          page.getByTestId("button_open_mustache_prompt_modal"),
+        ).toHaveCount(0);
         // Note: an existing `name` handle may persist past the toggle alone —
         // the upstream cleanup-and-re-extraction runs inside `update_build_config`,
         // but the rendered handles are only fully reconciled after the next save
@@ -262,6 +279,22 @@ test(
   },
 );
 
+// Reads `template.use_double_brackets.value` for the Prompt Template node in
+// the autosaved flow. Returns `null` when the flow is not yet fetchable or the
+// node is missing — `expect.poll` retries until a definite boolean comes back.
+// Hoisted out of the test body so the `if (!res.ok())` guard does not trip the
+// `playwright/no-conditional-in-test` ESLint rule.
+async function readUseDoubleBrackets(page: Page, flowId: string) {
+  const res = await page.request.get(`/api/v1/flows/${flowId}`);
+  if (!res.ok()) return null;
+  const flow = await res.json();
+  const promptNode = (flow?.data?.nodes ?? []).find(
+    (n: { data?: { type?: string } }) =>
+      n?.data?.type === "Prompt Template",
+  );
+  return promptNode?.data?.node?.template?.use_double_brackets?.value ?? null;
+}
+
 test(
   "Prompt Template — use_double_brackets value persists in the autosaved flow",
   { tag: ["@stable", "@regression", "@components"] },
@@ -274,30 +307,30 @@ test(
       expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
     });
 
+    await test.step(
+      "Baseline — `template.use_double_brackets.value` starts as `false`",
+      async () => {
+        await expect
+          .poll(() => readUseDoubleBrackets(page, flowId), {
+            timeout: 15000,
+            intervals: [500, 1000, 2000],
+          })
+          .toBe(false);
+      },
+    );
+
     await test.step("Enable double brackets", async () => {
       await flipDoubleBrackets(page, true);
     });
 
     await test.step(
-      "Backend persistence — `template.use_double_brackets.value` is `true` in the saved flow",
+      "Backend persistence — toggling flips the saved value to `true`",
       async () => {
         await expect
-          .poll(
-            async () => {
-              const res = await page.request.get(`/api/v1/flows/${flowId}`);
-              if (!res.ok()) return null;
-              const flow = await res.json();
-              const promptNode = (flow?.data?.nodes ?? []).find(
-                (n: { data?: { type?: string } }) =>
-                  n?.data?.type === "Prompt Template",
-              );
-              return (
-                promptNode?.data?.node?.template?.use_double_brackets?.value ??
-                null
-              );
-            },
-            { timeout: 15000, intervals: [500, 1000, 2000] },
-          )
+          .poll(() => readUseDoubleBrackets(page, flowId), {
+            timeout: 15000,
+            intervals: [500, 1000, 2000],
+          })
           .toBe(true);
       },
     );
