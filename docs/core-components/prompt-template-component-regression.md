@@ -48,16 +48,14 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 - Asserts exactly one node on the canvas (`react-flow__node` count === 1).
 
 ### 2. `variables in curly braces generate dynamic input handles`
-- Records the initial count of `handle-prompt template` testids.
 - Calls `setPromptTemplate` with `Hello {name}, your job is {profession}.`.
-- Asserts the new handle count is strictly greater than the initial count.
 - Asserts both `handle-prompt template-shownode-name-left` and `handle-prompt template-shownode-profession-left` are visible.
+- Asserts the dynamic-handle locator (`-shownode-*-left` only) has count exactly 2 — sanity check that no extra handles leaked in.
 
 ### 3. `removing a variable removes its input handle`
-- Sets the template to `Hello {name}!` and asserts the `name` handle is visible.
-- Records the current handle count.
-- Sets the template to `Hello world!` and asserts the `name` handle has zero matches.
-- Asserts the new handle count is strictly less than the recorded count.
+- Sets the template to `Hello {name}!` and asserts the `name` handle is visible and the dynamic-handle count is exactly 1.
+- Sets the template to `Hello world!`.
+- Asserts the `name` handle has zero matches and the dynamic-handle count is exactly 0.
 
 ### 4. `replacing a variable updates handles accordingly`
 - Sets the template to `Hello {name}, you are {role}.` and asserts both `name` and `role` handles are visible.
@@ -65,9 +63,9 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 - Asserts `name` is still visible, `role` has zero matches, and `title` is visible.
 
 ### 5. `clearing the template removes all dynamic handles`
-- Sets the template to `{a} and {b} and {c}` and asserts the count of left-side dynamic handles is > 0.
+- Sets the template to `{a} and {b} and {c}` and asserts the dynamic-handle count is exactly 3.
 - Sets the template to `No variables here.`.
-- Asserts the count of left-side dynamic handles equals 0.
+- Asserts the dynamic-handle count is exactly 0.
 
 ### 6. `modal edits persist in UI and in saved flow`
 - Sets the template to `Persisted prompt text {topic}.` via `setPromptTemplate`.
@@ -93,9 +91,10 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 
 - `src/frontend/src/modals/promptModal/` — `genericModalBtnSave` button, `edit-prompt-sanitized` preview, and the textarea that holds the editable template; changes here break tests 2–6
 - `src/frontend/src/CustomNodes/GenericNode/components/parameterRenderComponent/components/promptAreaComponent/` — `button_open_prompt_modal` trigger on the node inspector; breaks tests 2–6
-- `src/backend/base/langflow/base/prompts/api_utils.py` — `extract_input_variables_from_prompt()` regex that derives the variable list from the template string; breaks tests 2–5
+- `src/lfx/src/lfx/interface/utils.py` — `extract_input_variables_from_prompt()`: derives the variable list from the template string using Python's `string.Formatter().parse()` (not a regex); breaks tests 2–5
+- `src/lfx/src/lfx/base/prompts/api_utils.py` — `validate_prompt()` and `_check_input_variables()`: validation layer around the extracted variables; breaks tests 2–5
+- `src/lfx/src/lfx/components/models_and_agents/prompt.py` — `PromptComponent` definition (`display_name="Prompt Template"`, template field) and `update_build_config()` that synchronizes template ↔ input fields; breaks tests 2–6 and the backend assertion in test 6
 - `src/frontend/src/CustomNodes/GenericNode/` — dynamic handle rendering for `handle-{component}-shownode-{var}-left`; breaks tests 1–5
-- `src/backend/base/langflow/base/prompts/` — `PromptComponent` template-to-input-fields synchronization; breaks tests 2–5
 - `GET /api/v1/flows/{id}` — flow read endpoint backing the autosave round-trip; the response shape `data.nodes[].data.node.template.template.value` is what test 6 asserts. A rename of the inner `template.template` nesting, or a change to `node.data.type` away from `"Prompt Template"`, breaks the backend assertion.
 
 ---
