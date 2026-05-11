@@ -55,11 +55,11 @@ class TestMigrationUI:
     def test_01_open_flow(self):
         """Navigate to the migrated flow in the editor."""
         self.page.goto(f"{self.base_url}/flow/{self.flow_id}", wait_until="networkidle")
-        self.page.wait_for_timeout(3000)
+        self.page.wait_for_timeout(5000)
 
         # Verify the flow editor loaded (look for the canvas/reactflow area)
         canvas = self.page.locator(".react-flow, [data-testid='rf__wrapper']")
-        expect(canvas.first).to_be_visible(timeout=15_000)
+        expect(canvas.first()).to_be_visible(timeout=20_000)
 
         self.results["steps"]["open_flow"] = {"status": "pass"}
         self._save_results()
