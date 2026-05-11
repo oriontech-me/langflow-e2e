@@ -688,7 +688,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 0 | 21 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 0 | 20 | 0 | 2 |
-| `core-components/` — Core Components | 50 | 42 | 3 | 0 | 5 |
+| `core-components/` — Core Components | 55 | 47 | 3 | 0 | 5 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
@@ -702,7 +702,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **385** | **99 (26%)** | **221 (57%)** | **6 (2%)** | **59 (15%)** |
+| **TOTAL** | **390** | **104 (27%)** | **221 (57%)** | **6 (2%)** | **59 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -718,7 +718,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 86 `test()` calls carrying the `@stable` tag, distributed across 27 spec
+> 91 `test()` calls carrying the `@stable` tag, distributed across 28 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -757,6 +757,11 @@
 - [x] Prompt Template component — replacing a variable updates handles accordingly → `prompt-template-component-regression.spec.ts`
 - [x] Prompt Template component — clearing the template removes all dynamic handles → `prompt-template-component-regression.spec.ts`
 - [x] Prompt Template component — modal edits persist in UI and in saved flow → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template — use_double_brackets toggle is exposed in the InspectionPanel with its upstream display name → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — default toggle state is OFF; f-string mode extracts {var} and treats {{var}} as literal → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — enabling toggle switches parser to mustache mode; {{var}} creates handle and {var} is ignored → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — disabling toggle reverts to f-string mode and variables are re-extracted under the new parser → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — use_double_brackets value persists in the autosaved flow → `prompt-template-double-brackets-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
 - [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
