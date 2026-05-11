@@ -124,19 +124,26 @@ test(
       async () => {
         // The literal "Use Double Brackets" comes from the upstream
         // `BoolInput(..., display_name="Use Double Brackets", ...)` declaration —
-        // asserting it catches an accidental rename at the source. Scoped to the
-        // toggle's enclosing field row so an unrelated occurrence of the string
-        // elsewhere on the page (a tooltip, a help string) cannot satisfy or
-        // break the assertion via Playwright strict mode. The `info` text is
-        // intentionally not asserted — the InspectionPanel collapses it into a
-        // hover-tooltip icon when the panel is narrow.
-        // `.first()` avoids Playwright strict-mode failures if "Use Double
-        // Brackets" ever shows up elsewhere (e.g. a future tooltip or help
-        // string). The toggle's existence was already asserted in the previous
-        // step, so this assertion is solely about the label string.
-        await expect(
-          page.getByText("Use Double Brackets").first(),
-        ).toBeVisible();
+        // asserting it catches an accidental rename at the source.
+        //
+        // The assertion is anchored on the toggle: XPath climbs the ancestor
+        // axis from the toggle and picks the closest ancestor whose subtree
+        // contains the label string. If the label is renamed and no ancestor
+        // of the toggle has the text anymore, the locator resolves to zero
+        // elements and `toBeVisible()` fails — proving the label-toggle
+        // wiring regressed. A bare `getByText(...).first()` would match the
+        // string anywhere on the page and could be satisfied by an unrelated
+        // tooltip elsewhere, masking the same regression.
+        //
+        // The `info` text ("Use {{variable}} syntax …") is intentionally not
+        // asserted — the InspectionPanel collapses it into a hover-tooltip
+        // icon when the panel is narrow.
+        const labelOwner = page
+          .getByTestId("toggle_bool_use_double_brackets")
+          .locator(
+            "xpath=ancestor::*[contains(., 'Use Double Brackets')][1]",
+          );
+        await expect(labelOwner).toBeVisible();
       },
     );
   },
