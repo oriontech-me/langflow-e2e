@@ -1,77 +1,180 @@
+import { readFileSync } from "fs";
+import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
-test(
-  "GET /api/v1/monitor/transactions returns items with latency/duration info",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
-  async ({ request }) => {
-    const authToken = await getAuthToken(request);
+const TRACE_FIXTURE = JSON.parse(
+  readFileSync(
+    path.resolve(
+      __dirname,
+      "../../../../assets/flows/basic-prompting-trace-fixture.json",
+    ),
+    "utf8",
+  ),
+);
 
-    const res = await request.get("/api/v1/monitor/transactions", {
-      headers: { Authorization: authToken },
+test.describe("Flow Activity / Traces — latency and tokens", () => {
+  test.describe.configure({ mode: "serial" });
+
+  let bearerToken: string;
+  let apiKey: string;
+  let apiKeyId: string;
+  let flowId: string;
+
+  test.beforeAll(async ({ request }) => {
+    bearerToken = await getAuthToken(request);
+
+    const keyRes = await request.post("/api/v1/api_key/", {
+      headers: { Authorization: bearerToken },
+      data: { name: `traces-latency-test-${Date.now()}` },
     });
+    expect(keyRes.status()).toBe(200);
+    const keyBody = await keyRes.json();
+    apiKey = keyBody.api_key;
+    apiKeyId = keyBody.id;
 
-    expect(res.status()).toBe(200);
+    const flowRes = await request.post("/api/v1/flows/", {
+      headers: { "x-api-key": apiKey },
+      data: {
+        ...TRACE_FIXTURE,
+        name: `${TRACE_FIXTURE.name} ${Date.now()}`,
+      },
+    });
+    expect(flowRes.status()).toBe(201);
+    flowId = (await flowRes.json()).id;
 
-    const body = await res.json();
+    // Run the flow once to generate a trace. The fixture has no provider configured,
+    // so the LanguageModelComponent fails with "A model selection is required" — that
+    // is intentional. The failure still emits a trace entry with totalLatencyMs and
+    // totalTokens, which is what these tests validate.
+    await request.post(`/api/v1/run/${flowId}`, {
+      headers: { "x-api-key": apiKey },
+      data: {
+        input_value: "trace-probe",
+        input_type: "chat",
+        output_type: "chat",
+      },
+    });
+  });
 
-    // The endpoint returns a paginated object: { items: [], total, page, size, pages }
-    expect(typeof body).toBe("object");
-    expect(Array.isArray(body.items)).toBe(true);
-    expect(typeof body.total).toBe("number");
-
-    // If there are transactions, check they have timing/latency fields
-    if (body.items.length > 0) {
-      const firstItem = body.items[0];
-
-      // Transactions should have some time-related field
-      const hasTimestamp =
-        "timestamp" in firstItem ||
-        "created_at" in firstItem ||
-        "time" in firstItem;
-
-      // Could also have latency, duration, or tokens fields
-      const hasPerformanceField =
-        "latency" in firstItem ||
-        "duration" in firstItem ||
-        "tokens" in firstItem ||
-        "total_tokens" in firstItem ||
-        hasTimestamp;
-
-      expect(
-        hasPerformanceField,
-        "Transaction items should include timing or performance metadata",
-      ).toBe(true);
+  test.afterAll(async ({ request }) => {
+    if (flowId) {
+      await request.delete(`/api/v1/flows/${flowId}`, {
+        headers: { "x-api-key": apiKey },
+      });
     }
-  },
-);
+    if (apiKeyId) {
+      await request.delete(`/api/v1/api_key/${apiKeyId}`, {
+        headers: { Authorization: bearerToken },
+      });
+    }
+  });
 
-test(
-  "GET /api/v1/monitor/transactions supports pagination parameters",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
-  async ({ request }) => {
-    const authToken = await getAuthToken(request);
+  test(
+    "GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run",
+    {
+      tag: [
+        "@release",
+        "@workspace",
+        "@regression",
+        "@observability",
+        "@api",
+      ],
+    },
+    async ({ request }) => {
+      const res = await request.get(
+        `/api/v1/monitor/traces?flow_id=${flowId}`,
+        { headers: { Authorization: bearerToken } },
+      );
+      expect(res.status()).toBe(200);
 
-    const res = await request.get("/api/v1/monitor/transactions?page=1&size=5", {
-      headers: { Authorization: authToken },
-    });
+      const body = await res.json();
+      expect(Array.isArray(body.traces)).toBe(true);
+      expect(body.traces.length).toBeGreaterThan(0);
+      expect(typeof body.total).toBe("number");
+      expect(body.total).toBeGreaterThan(0);
 
-    expect(res.status()).toBe(200);
+      const trace = body.traces[0];
+      expect(typeof trace.totalLatencyMs).toBe("number");
+      expect(trace.totalLatencyMs).toBeGreaterThanOrEqual(0);
+      expect(typeof trace.totalTokens).toBe("number");
+      expect(trace.totalTokens).toBeGreaterThanOrEqual(0);
+      expect(trace.flowId).toBe(flowId);
+      expect(["success", "error", "running"]).toContain(trace.status);
+      expect(typeof trace.startTime).toBe("string");
+    },
+  );
 
-    const body = await res.json();
-    expect(typeof body).toBe("object");
-    expect(Array.isArray(body.items)).toBe(true);
+  test(
+    "Flow Activity page shows latency and token columns for the run",
+    {
+      tag: ["@release", "@workspace", "@regression", "@observability"],
+    },
+    async ({ page }) => {
+      (page as any).allowFlowErrors();
 
-    // Pagination fields should be present
-    expect(typeof body.page).toBe("number");
-    expect(typeof body.size).toBe("number");
-    expect(typeof body.total).toBe("number");
-    expect(typeof body.pages).toBe("number");
+      await page.goto(`/flow/${flowId}`);
+      await expect(page.getByTestId("sidebar-nav-traces")).toBeVisible({
+        timeout: 30000,
+      });
+      await page.getByTestId("sidebar-nav-traces").click();
 
-    // Size should respect the requested limit
-    expect(body.items.length).toBeLessThanOrEqual(5);
-  },
-);
+      await expect(page.getByTestId("flow-activity-header")).toBeVisible({
+        timeout: 10000,
+      });
+
+      const latencyCell = page
+        .locator('.ag-cell[col-id="totalLatencyMs"]')
+        .first();
+      await expect(latencyCell).toBeVisible({ timeout: 15000 });
+      await expect(latencyCell).toHaveText(/^\d+\s*ms$/);
+
+      const tokensCell = page
+        .locator('.ag-cell[col-id="totalTokens"]')
+        .first();
+      await expect(tokensCell).toBeVisible();
+      await expect(tokensCell).toHaveText(/^\d+$/);
+    },
+  );
+
+  test(
+    "Trace Details modal shows span tree and per-span latency",
+    {
+      tag: ["@release", "@workspace", "@regression", "@observability"],
+    },
+    async ({ page }) => {
+      (page as any).allowFlowErrors();
+
+      await page.goto(`/flow/${flowId}`);
+      await expect(page.getByTestId("sidebar-nav-traces")).toBeVisible({
+        timeout: 30000,
+      });
+      await page.getByTestId("sidebar-nav-traces").click();
+
+      // Open the trace details by clicking on the Run cell of the first row.
+      // Whole-row click does not trigger the panel — onCellClicked is the wired event.
+      await page.locator('.ag-cell[col-id="run"]').first().click();
+
+      await expect(page.getByTestId("trace-detail-view")).toBeVisible({
+        timeout: 10000,
+      });
+      await expect(page.getByTestId("span-tree")).toBeVisible();
+      await expect(page.getByTestId("span-detail")).toBeVisible();
+
+      // 4 span nodes: 1 root + Prompt Template + Chat Input + Language Model
+      await expect(page.locator('[data-testid^="span-node-"]')).toHaveCount(4);
+
+      const spanDetail = page.getByTestId("span-detail");
+      await expect(spanDetail).toContainText(/Latency/);
+      await expect(spanDetail).toContainText(/\d+\s*ms/);
+
+      const spanTree = page.getByTestId("span-tree");
+      await expect(spanTree).toContainText("Prompt Template");
+      await expect(spanTree).toContainText("Chat Input");
+      await expect(spanTree).toContainText("Language Model");
+    },
+  );
+});
 
 test(
   "GET /api/v1/monitor/messages response contains message content",
