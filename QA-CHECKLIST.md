@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-05-05
+> **Last updated:** 2026-05-11
 
 ---
 
@@ -153,9 +153,16 @@
 ### 3. Core Components
 
 #### 3.1 Chat Input / Output
-- [-] ChatInput receives user message
-- [-] ChatOutput displays LLM response
-- [-] Chat Input/Output with user authentication
+- [x] ChatInput renders on canvas with Message output handle and Input Text field → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] ChatOutput renders on canvas with Inputs handle and run button → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] ChatInput → ChatOutput connection accepted (Message ↔ Message) → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Input Text propagates from ChatInput to ChatOutput on run → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Sender name override is reflected in the Playground chat message → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Default sender_name is "User" on input and "AI" on output → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Toggling `showfiles` exposes the Files inspector field on Chat Input → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Uploading a file via the Chat Input inspector populates the Files field → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Inspector-attached file is rendered in the Playground after running ChatInput → ChatOutput → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Dismiss button on the Files field clears the value → `core-components/chat-input-files-field-regression.spec.ts`
 
 #### 3.2 Prompt Template
 - [-] Prompt with variables in curly braces
@@ -407,6 +414,11 @@
 - [ ] Send message while response is in progress — should wait or queue
 - [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
+- [x] Attach multiple images — one compact preview per file is shown in the input → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Remove one of two attachments — the remaining preview stays intact → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Send with multiple attachments — all images render in the user message → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Remove the only attachment — input returns to empty state and text-only send still works → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Swap attachment (remove A, attach B) — only B is sent → `core-functionality/playground/playground-attachments-management.spec.ts`
 - [x] ChatInput Input Text pre-fills the playground textarea on first open → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] ChatInput Input Text re-pre-fills the textarea on a new session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] Pre-filled Input Text can be sent as the first message of the session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
@@ -671,13 +683,13 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 0 | 21 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 0 | 20 | 0 | 2 |
-| `core-components/` — Core Components | 43 | 28 | 10 | 0 | 5 |
+| `core-components/` — Core Components | 50 | 38 | 7 | 0 | 5 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
-| `core-functionality/playground/` | 41 | 32 | 7 | 1 | 1 |
+| `core-functionality/playground/` | 46 | 37 | 7 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
@@ -685,7 +697,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **373** | **80 (21%)** | **228 (61%)** | **6 (2%)** | **59 (16%)** |
+| **TOTAL** | **385** | **95 (25%)** | **225 (58%)** | **6 (2%)** | **59 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -701,7 +713,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 63 `test()` calls carrying the `@stable` tag, distributed across 23 spec
+> 80 `test()` calls carrying the `@stable` tag, distributed across 26 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -711,17 +723,29 @@
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
 - [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
 - [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
+- [x] API Request component — GET request returns 200 and output Data contains all required fields → `api-request-component-regression.spec.ts`
 - [x] API Request component — POST method executes POST verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PATCH method executes PATCH verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — non-2xx HTTP response propagates status_code without crashing → `api-request-component-regression.spec.ts`
 - [x] API Request component — query parameters embedded in URL are sent and echoed → `api-request-component-regression.spec.ts`
 - [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
+- [x] API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200 → `api-request-component-regression.spec.ts`
+- [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input → Chat Output — inspector-attached file is rendered in the Playground message → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input — clicking the dismiss button on the Files field clears the value → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input component — renders on canvas with Message output handle and Input Text field → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Output component — renders on canvas with Inputs handle and run button → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input → Chat Output connection is accepted on canvas (Message ↔ Message) → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
 - [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
-- [x] Webhook component — flow is saved to database and contains the Webhook node → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
 - [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
@@ -742,6 +766,11 @@
 - [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
 
 #### core-functionality/playground/
+- [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
+- [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
+- [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
+- [x] playground input must return to empty state after removing the only attachment → `playground-attachments-management.spec.ts`
+- [x] playground swap flow must send only the second image when the first is removed before attaching the second → `playground-attachments-management.spec.ts`
 - [x] selecting an individual session checkbox must reveal the bulk-delete-button → `playground-bulk-delete.spec.ts`
 - [x] select-all-checkbox must select all non-default sessions → `playground-bulk-delete.spec.ts`
 - [x] bulk-delete-button must remove all selected sessions from the sidebar → `playground-bulk-delete.spec.ts`
@@ -788,7 +817,7 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 21 | 0 |
 | `core-components/` — Component Config | 20 | 2 |
-| `core-components/` — Core Components | 18 | 9 |
+| `core-components/` — Core Components | 7 | 5 |
 | `core-functionality/auth/` | 18 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
 | `core-functionality/model-provider/` | 18 | 9 |
@@ -807,7 +836,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 12 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 20 | 0 |
+| `flow-functionality/` | 21 | 0 |
 | `core-functionality/project-management/` | 10 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
