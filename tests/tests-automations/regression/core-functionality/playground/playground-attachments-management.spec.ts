@@ -88,9 +88,13 @@ test.describe("Playground — Chat Input Attachments Management", () => {
       );
 
       await test.step(
-        "Remove the first preview (chain.png) via the X button",
+        "Remove the chain.png preview via its X button",
         async () => {
-          await previewDeleteButton(page).first().click();
+          await page
+            .locator(
+              '[data-testid="input-wrapper"] div:has(> img[alt="chain.png"]) button[aria-label="Delete file"]',
+            )
+            .click();
         },
       );
 

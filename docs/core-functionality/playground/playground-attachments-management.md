@@ -37,7 +37,7 @@ All five tests share the same setup: create a ChatInput → ChatOutput echo flow
 **Test 2 — remove one of two attachments leaves the other**
 
 1. Attach both images (as in Test 1).
-2. Click the first delete button (`previewDeleteButton(page).first()`).
+2. Click the delete button scoped to `chain.png` via `div:has(> img[alt="chain.png"]) button[aria-label="Delete file"]` (filename-targeted, no DOM-order assumption).
 3. Assert `img[alt="chain.png"]` count is 0; `img[alt="chain-2.png"]` is visible; delete button count is 1.
 
 **Test 3 — send with two attachments renders both in the user message**
