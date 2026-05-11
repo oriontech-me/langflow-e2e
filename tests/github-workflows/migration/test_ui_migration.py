@@ -62,8 +62,9 @@ class TestMigrationUI:
         # Avoids coupling to ReactFlow's internal CSS class names which change across versions.
         expect(self.page).to_have_url(re.compile(self.flow_id), timeout=20_000)
 
-        # Also verify the page has rendered some content (not a blank/loading screen)
-        self.page.wait_for_selector("body > *", timeout=10_000)
+        # Also verify the React app div is in the DOM (not a blank/loading screen).
+        # Uses state="attached" to avoid matching the invisible <noscript> sibling.
+        self.page.wait_for_selector("body > div", state="attached", timeout=10_000)
 
         self.results["steps"]["open_flow"] = {"status": "pass"}
         self._save_results()
