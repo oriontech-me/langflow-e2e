@@ -59,8 +59,11 @@ test(
 
 test(
   "Webhook component — flow is saved to database and contains the Webhook node",
-  { tag: ["@stable", "@release", "@regression"] },
-  async ({ page, request }) => {
+  // @stable removed: upstream Langflow regression breaks page.evaluate(fetch)
+  // with "Cannot set properties of undefined (setting 'Accept-Language')".
+  // Tracked in #180; restore @stable once upstream is fixed.
+  { tag: ["@release", "@regression"] },
+  async ({ page }) => {
     await addWebhookComponent(page);
 
     const flowId = page.url().split("/").slice(-1)[0];
