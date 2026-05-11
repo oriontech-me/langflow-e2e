@@ -520,7 +520,7 @@
 
 ## 10. Core Components — Prompt Template
 
-**Files:** `core/regression/generalBugs-prompt.spec.ts`, `core/features/prompt-dynamic-variables.spec.ts`
+**Files:** `core-components/prompt-template-component-regression.spec.ts`
 
 ---
 
