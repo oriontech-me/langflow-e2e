@@ -110,8 +110,45 @@ If a source fails (1) or (2), prefer appending to an existing file with a discri
 
 ---
 
+## Questions this history can / cannot answer
+
+The schema (v1) is **failure-centric** by design: each entry names the tests that failed or flaked, plus aggregate counts. It does **not** list the names of tests that passed. This shapes what kinds of questions you can answer cheaply.
+
+### Answers directly (cheap `jq` queries)
+
+| Question | How |
+|---|---|
+| Which `@stable` tests failed in the last N weekly runs? | `tail -n N` + filter on `.failures[]` |
+| Which tests have been flaky in 2+ runs? | `jq` on `.flaky[].test` + `uniq -c` |
+| Did a Langflow image upgrade correlate with a spike in failures? | Cross `.langflow_image` with `.totals.failed` over time |
+| What is the error signature trend for test X? | `--arg t` filter on `.failures[]` joined with `.date` via `. as $row` |
+| Was run N entirely clean? | `.totals.failed == 0 and .totals.flaky == 0` |
+| How long does a typical weekly take, and is the trend up or down? | `.date` vs `.duration_ms` |
+
+### Answers indirectly (requires cross-referencing)
+
+| Question | What's missing | Workaround |
+|---|---|---|
+| Has test X passed in 100% of recent weeklies? | Pass list is not recorded — only counts. | "Test X never appeared in `.failures[]` or `.flaky[]` for the last N runs" **and** you verify (via git log on the spec file) that X carried `@stable` throughout those N runs. Brittle when tests enter/exit `@stable` mid-window. |
+| Is test X currently part of the weekly scope? | Tags reflect run-time state, not current state. | Read the current spec file — `tags` in old entries can disagree with today's tags. |
+| How many `@stable` tests existed in run N? | Only the count of `passed/failed/flaky/skipped` totals is stored — not the nominal list. | Sum `totals.*` for a run-level count; check `Phase 0 — Validated` in `QA-CHECKLIST.md` at the matching commit for a name-level breakdown. |
+
+### Cannot answer with the current schema
+
+The following require either a future v2 schema or a separate data source:
+
+- **"Is this test *actually* stable?"** — without a recorded pass list, you can only say "it never appeared as a failure in the captured window." That is necessary but not sufficient: the test may have been removed from `@stable`, renamed, or skipped silently. A v2 schema with `passed_tests: []` (names + file:line) is the cheapest fix; it would grow each line from ~2 KB to ~10–15 KB but make "stability rate per test" a one-line `jq` query.
+- **Per-test duration trends.** `totals.duration_ms` is run-level only. Detecting "test X used to take 8 s and now takes 35 s" requires storing per-test `duration_ms` (also a v2 addition).
+- **Diff between the @stable set in run A and run B.** No nominal list of which tests ran exists.
+- **Who fixed what, and when a flake stopped flaking.** That information lives in PRs and the spec docs — the history file is intentionally not the source of truth for *resolution*, only for *occurrence*.
+
+If a recurring need for one of these answers emerges, **do not patch the schema reactively** — evaluate whether v2 (adding `passed_tests` / per-test duration) makes sense or whether the question is better answered by a derived script that reads the JSONL plus the current repo state. See `Schema evolution` above for the bump rules.
+
+---
+
 ## What this history is NOT
 
 - **Not a replacement for Playwright HTML reports.** Stack traces, screenshots, and videos still live in the run artifacts (retention 14 days). The JSONL holds only what is durable and aggregatable.
 - **Not a substitute for issues.** Recurring failures are still tracked in GitHub issues (`weekly-failure` label). The history makes recurrence visible; the issue carries the investigation and the fix.
 - **Not a flake-mitigation tool.** Adding a row does not auto-remove `@stable`. See `CONTRIBUTING.md` for the triage rules driven by this history.
+- **Not a dashboard.** No charts, no alerting. If you want trend lines or thresholds, build them on top of the JSONL — the file is the contract, not the presentation.
