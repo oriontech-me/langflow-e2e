@@ -59,7 +59,7 @@ All five tests share the same setup: create a ChatInput → ChatOutput echo flow
 1. Attach `chain.png`, then delete it, then attach `chain-2.png`.
 2. Click `button-send`.
 3. Wait for `div-chat-message`.
-4. Assert `img[src$="chain-2.png"]` is visible and `img[src$="_chain.png"]` count is 0 (the underscore disambiguates from `chain-2.png`).
+4. Assert `img[src$="chain-2.png"]` is visible and `img[src$="chain.png"]` count is 0 (the `chain.png` suffix doesn't match `chain-2.png`, so this is exact without relying on the backend's underscore separator).
 
 ---
 
@@ -69,7 +69,7 @@ All five tests share the same setup: create a ChatInput → ChatOutput echo flow
 - Test 2: removed preview disappears; sibling preview and delete button remain (count reduces from 2 to 1).
 - Test 3: both server-rendered images appear in the user message after send.
 - Test 4: input wrapper has no preview and no delete button after removal; sending text without files still works; no server-image leaks.
-- Test 5: only `chain-2.png` renders after send; `_chain.png` count is 0.
+- Test 5: only `chain-2.png` renders after send; `chain.png` count is 0.
 
 ---
 

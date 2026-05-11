@@ -216,7 +216,7 @@ test.describe("Playground — Chat Input Attachments Management", () => {
             page.locator('img[src*="/files/images/"][src$="chain-2.png"]'),
           ).toBeVisible({ timeout: 10000 });
           await expect(
-            page.locator('img[src*="/files/images/"][src$="_chain.png"]'),
+            page.locator('img[src*="/files/images/"][src$="chain.png"]'),
           ).toHaveCount(0);
         },
       );
