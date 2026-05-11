@@ -13,7 +13,7 @@ Validates the **Prompt Template** component end-to-end via 6 scenarios:
 3. **Removing a variable removes its handle** — replacing `Hello {name}!` with `Hello world!` drops the `name` handle and decreases the total handle count.
 4. **Replacing a variable updates handles in place** — switching `{role}` for `{title}` while keeping `{name}` causes the old handle to disappear and the new one to appear.
 5. **Clearing all variables removes every dynamic handle** — replacing `{a} and {b} and {c}` with a variable-free string drops the dynamic handle count to zero.
-6. **Modal persistence** — text entered in the prompt modal and saved via `genericModalBtnSave` is still present (in the sanitized preview and in the textarea after re-entering edit mode) when the modal is reopened.
+6. **Modal persistence (UI + backend)** — text entered in the prompt modal and saved via `genericModalBtnSave` is still present (in the sanitized preview and in the textarea after re-entering edit mode) when the modal is reopened, **and** the autosaved flow at `GET /api/v1/flows/{id}` contains the same string in `node.data.node.template.template.value` for the Prompt Template node.
 
 If any of these tests fails, the Prompt Template component is broken in one of its core contracts: rendering on the canvas, the regex that extracts `{variable}` placeholders from the template, the dynamic handle generation, or the modal's save-and-persist flow.
 
@@ -37,10 +37,10 @@ Every test starts with `addPromptComponent(page)` which:
 
 Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 1. Clicks `button_open_prompt_modal`
-2. Waits for the `[role="dialog"]` modal
-3. If the sanitized preview `edit-prompt-sanitized` is visible (post-save state), clicks it to re-enter edit mode
-4. Selects all in the modal textarea (`Ctrl+A`) and fills `value`
-5. Clicks `genericModalBtnSave`, waits for the dialog to hide, and waits 1.5 s for the canvas to re-render
+2. If the sanitized preview `edit-prompt-sanitized` is visible (post-save state), clicks it to re-enter edit mode
+3. Waits for the textarea `modal-promptarea_prompt_template` (unique to the prompt modal, used as anchor instead of `[role="dialog"]`) to be visible
+4. Selects all in the textarea (`Ctrl+A`) and fills `value`
+5. Clicks `genericModalBtnSave` and waits for the textarea testid to be hidden — that disappearance is the reliable signal that the modal closed. Downstream assertions then auto-retry on the expected handle state.
 
 ### 1. `renders on canvas with output handle`
 - Asserts `title-Prompt Template` is visible.
@@ -69,13 +69,11 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 - Sets the template to `No variables here.`.
 - Asserts the count of left-side dynamic handles equals 0.
 
-### 6. `modal edits persist after closing and reopening`
+### 6. `modal edits persist in UI and in saved flow`
 - Sets the template to `Persisted prompt text {topic}.` via `setPromptTemplate`.
 - Asserts `handle-prompt template-shownode-topic-left` is visible (confirms save succeeded).
-- Reopens the modal via `button_open_prompt_modal`.
-- Asserts `edit-prompt-sanitized` is visible and contains both `Persisted prompt text` and `topic`.
-- Clicks the preview to re-enter edit mode.
-- Asserts the textarea has the exact saved value via `toHaveValue`.
+- **UI layer:** reopens the modal, asserts `edit-prompt-sanitized` contains the saved text, clicks the preview to re-enter edit mode, asserts the textarea has the exact saved value via `toHaveValue`.
+- **Backend layer:** extracts the flow id from the URL, then polls `GET /api/v1/flows/{id}` via `page.request` (inherits session cookies — the endpoint requires session auth) until the Prompt Template node's `template.template.value` equals the saved string. Catches regressions where the modal shows the value but autosave does not flush it to the database.
 
 ---
 
@@ -87,6 +85,7 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 - Removing a `{variable}` from the template removes the corresponding handle
 - Replacing one variable with another removes the old handle and creates a new one
 - Saving a template via `genericModalBtnSave` makes the value retrievable on the next modal open — both in the sanitized preview and in the textarea after re-entering edit mode
+- The autosaved flow at `GET /api/v1/flows/{id}` contains the saved template string at `node.data.node.template.template.value` for the Prompt Template node
 
 ---
 
@@ -97,6 +96,7 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 - `src/backend/base/langflow/base/prompts/api_utils.py` — `extract_input_variables_from_prompt()` regex that derives the variable list from the template string; breaks tests 2–5
 - `src/frontend/src/CustomNodes/GenericNode/` — dynamic handle rendering for `handle-{component}-shownode-{var}-left`; breaks tests 1–5
 - `src/backend/base/langflow/base/prompts/` — `PromptComponent` template-to-input-fields synchronization; breaks tests 2–5
+- `GET /api/v1/flows/{id}` — flow read endpoint backing the autosave round-trip; the response shape `data.nodes[].data.node.template.template.value` is what test 6 asserts. A rename of the inner `template.template` nesting, or a change to `node.data.type` away from `"Prompt Template"`, breaks the backend assertion.
 
 ---
 
@@ -113,7 +113,7 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
 - No API key required — the Prompt Template component is a pure templating layer with no LLM calls
-- The 1.5 s wait after `genericModalBtnSave` in `setPromptTemplate` accommodates the canvas re-render that follows handle creation/removal; environments with very slow rendering may need a longer wait
+- Auto-login mode is assumed: test 6 uses `page.request.get` so the backend call inherits the page's session cookies. In an environment with explicit auth, the test should still work because the page is authenticated via the normal login flow before the assertion runs.
 
 ---
 
@@ -127,6 +127,6 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 
 ## Notes *(optional)*
 
-- Test 6 (modal persistence) asserts persistence at two layers: the sanitized preview (`edit-prompt-sanitized`, which is the post-save render) and the textarea value reached by clicking back into edit mode. Both must match the saved string for the test to pass.
+- Test 6 (modal persistence) asserts persistence at three layers: the sanitized preview (`edit-prompt-sanitized`, which is the post-save render), the textarea value reached by clicking back into edit mode, and the autosaved flow JSON fetched via `GET /api/v1/flows/{id}`. All three must match the saved string for the test to pass.
 - The `setPromptTemplate` helper deliberately handles the post-save "preview" state by detecting `edit-prompt-sanitized` and clicking through it. This is what makes the helper safe to call multiple times in a row (tests 3, 4, 5 all rely on this).
 - All assertions use the literal node-type slug `"prompt template"` (with space) in the testid, matching how the frontend renders the type. The leading space inside `handle-prompt template-...` is intentional and not a typo.

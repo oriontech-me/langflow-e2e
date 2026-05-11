@@ -11,10 +11,19 @@ test.describe.configure({ mode: "serial" });
 //   add button:      "add-component-button-prompt-template"
 //   node title:      "title-Prompt Template"
 //   modal open btn:  "button_open_prompt_modal"
+//   modal textarea:  "modal-promptarea_prompt_template"  (unique to the prompt modal — use as anchor)
 //   modal save btn:  "genericModalBtnSave"
 //   modal preview:   "edit-prompt-sanitized"  (shown after save; click to re-edit)
 //   output handle:   "handle-prompt template-shownode-prompt-right"
 //   dynamic handles: "handle-prompt template-shownode-{varname}-left"
+
+// Locator matching only the dynamic (left-side) input handles created from
+// {variable} placeholders. The output `-right` handle is excluded by the suffix
+// filter so counts reflect dynamic-handle-only deltas.
+const dynamicHandlesLocator = (page: Page) =>
+  page.locator(
+    '[data-testid^="handle-prompt template-shownode-"][data-testid$="-left"]',
+  );
 
 async function addPromptComponent(page: Page) {
   await awaitBootstrapTest(page);
@@ -34,29 +43,33 @@ async function addPromptComponent(page: Page) {
   });
 }
 
-// Open the prompt modal, replacing whatever value is currently there with `value`.
+// Open the prompt modal and replace its current value with `value`.
 // Handles the post-save preview state by clicking it to re-enter edit mode.
+// The function returns after the save dialog closes; downstream assertions
+// must wait on their specific expected handle state (auto-retry via expect()),
+// because the canvas re-render is asynchronous to the modal close.
 async function setPromptTemplate(page: Page, value: string) {
   await page.getByTestId("button_open_prompt_modal").click();
-  const dialog = page.locator('[role="dialog"]');
-  await expect(dialog).toBeVisible({ timeout: 10000 });
 
+  const textarea = page.getByTestId("modal-promptarea_prompt_template");
+
+  // After a previous save, the modal initially shows the sanitized preview
+  // (read-only) instead of the textarea. Clicking the preview re-enters edit
+  // mode and mounts the textarea.
   const preview = page.getByTestId("edit-prompt-sanitized");
   if (await preview.isVisible({ timeout: 2000 }).catch(() => false)) {
     await preview.click();
   }
 
-  const textarea = dialog.locator("textarea").first();
-  await expect(textarea).toBeVisible({ timeout: 5000 });
+  await expect(textarea).toBeVisible({ timeout: 10000 });
   await textarea.click();
   await page.keyboard.press("Control+a");
   await textarea.fill(value);
 
   await page.getByTestId("genericModalBtnSave").click();
-  await expect(dialog).toBeHidden({ timeout: 5000 });
-  // Wait for the canvas re-render that follows handle creation/removal —
-  // dynamic handles are added/removed asynchronously after the modal closes.
-  await page.waitForTimeout(1500);
+  // The textarea testid is scoped to the prompt modal, so its disappearance
+  // is a reliable signal that the modal closed and the save round-trip began.
+  await expect(textarea).toBeHidden({ timeout: 10000 });
 }
 
 test(
@@ -85,23 +98,20 @@ test(
   async ({ page }) => {
     await addPromptComponent(page);
 
-    const initialHandleCount = await page
-      .locator('[data-testid*="handle-prompt template"]')
-      .count();
-
     await setPromptTemplate(page, "Hello {name}, your job is {profession}.");
 
-    const newHandleCount = await page
-      .locator('[data-testid*="handle-prompt template"]')
-      .count();
-    expect(newHandleCount).toBeGreaterThan(initialHandleCount);
-
+    // The specific handle assertions are the contract under test — both must
+    // be rendered as left-side input handles on the node. Auto-retry covers
+    // the asynchronous canvas re-render after the modal closes.
     await expect(
       page.getByTestId("handle-prompt template-shownode-name-left"),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible({ timeout: 10000 });
     await expect(
       page.getByTestId("handle-prompt template-shownode-profession-left"),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible({ timeout: 10000 });
+
+    // Sanity: dynamic-handle count matches the variable count exactly
+    await expect(dynamicHandlesLocator(page)).toHaveCount(2);
   },
 );
 
@@ -116,20 +126,13 @@ test(
     const nameHandle = page.getByTestId(
       "handle-prompt template-shownode-name-left",
     );
-    await expect(nameHandle).toBeVisible({ timeout: 5000 });
-
-    const handleCountBefore = await page
-      .locator('[data-testid*="handle-prompt template"]')
-      .count();
+    await expect(nameHandle).toBeVisible({ timeout: 10000 });
+    await expect(dynamicHandlesLocator(page)).toHaveCount(1);
 
     await setPromptTemplate(page, "Hello world!");
 
-    await expect(nameHandle).toHaveCount(0, { timeout: 5000 });
-
-    const handleCountAfter = await page
-      .locator('[data-testid*="handle-prompt template"]')
-      .count();
-    expect(handleCountAfter).toBeLessThan(handleCountBefore);
+    await expect(nameHandle).toHaveCount(0, { timeout: 10000 });
+    await expect(dynamicHandlesLocator(page)).toHaveCount(0);
   },
 );
 
@@ -143,22 +146,22 @@ test(
 
     await expect(
       page.getByTestId("handle-prompt template-shownode-name-left"),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible({ timeout: 10000 });
     await expect(
       page.getByTestId("handle-prompt template-shownode-role-left"),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible({ timeout: 10000 });
 
     await setPromptTemplate(page, "Hello {name}, you are {title}.");
 
     await expect(
       page.getByTestId("handle-prompt template-shownode-name-left"),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible({ timeout: 10000 });
     await expect(
       page.getByTestId("handle-prompt template-shownode-role-left"),
-    ).toHaveCount(0, { timeout: 5000 });
+    ).toHaveCount(0, { timeout: 10000 });
     await expect(
       page.getByTestId("handle-prompt template-shownode-title-left"),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible({ timeout: 10000 });
   },
 );
 
@@ -170,25 +173,20 @@ test(
 
     await setPromptTemplate(page, "{a} and {b} and {c}");
 
-    const handlesBefore = await page
-      .locator(
-        '[data-testid*="handle-prompt template-shownode"][data-testid$="-left"]',
-      )
-      .count();
-    expect(handlesBefore).toBeGreaterThan(0);
+    await expect(dynamicHandlesLocator(page)).toHaveCount(3, {
+      timeout: 10000,
+    });
 
     await setPromptTemplate(page, "No variables here.");
 
-    await expect(
-      page.locator(
-        '[data-testid*="handle-prompt template-shownode"][data-testid$="-left"]',
-      ),
-    ).toHaveCount(0);
+    await expect(dynamicHandlesLocator(page)).toHaveCount(0, {
+      timeout: 10000,
+    });
   },
 );
 
 test(
-  "Prompt Template component — modal edits persist after closing and reopening",
+  "Prompt Template component — modal edits persist in UI and in saved flow",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addPromptComponent(page);
@@ -196,29 +194,50 @@ test(
     const expected = "Persisted prompt text {topic}.";
     await setPromptTemplate(page, expected);
 
-    // Dynamic handle for {topic} must appear, confirming the template was applied
+    // Confirms the save was applied: the {topic} variable produced a handle
     await expect(
       page.getByTestId("handle-prompt template-shownode-topic-left"),
-    ).toBeVisible({ timeout: 5000 });
+    ).toBeVisible({ timeout: 10000 });
 
-    // Reopen the modal — after saving the modal shows a sanitized preview
-    // containing the same text. This is the persistence assertion: opening the
-    // editor a second time must surface the value saved on the first pass.
+    // UI-layer persistence: reopening the modal must surface the saved value
+    // both in the sanitized preview and in the textarea after re-entering edit.
     await page.getByTestId("button_open_prompt_modal").click();
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog).toBeVisible({ timeout: 10000 });
-
     const preview = page.getByTestId("edit-prompt-sanitized");
-    await expect(preview).toBeVisible({ timeout: 5000 });
+    await expect(preview).toBeVisible({ timeout: 10000 });
     await expect(preview).toContainText("Persisted prompt text");
     await expect(preview).toContainText("topic");
 
-    // Click into edit mode and verify the textarea also holds the saved value
     await preview.click();
-    const textarea = dialog.locator("textarea").first();
+    const textarea = page.getByTestId("modal-promptarea_prompt_template");
     await expect(textarea).toBeVisible({ timeout: 5000 });
     await expect(textarea).toHaveValue(expected);
-
     await page.keyboard.press("Escape");
+
+    // Backend-layer persistence: the autosaved flow must contain the saved
+    // template string in the Prompt node. Without this check, a regression
+    // where the modal shows the value but never autosaves it would slip past.
+    // `page.request` is used (not the `request` fixture) so the call inherits
+    // the page's session cookies — `GET /api/v1/flows/{id}` requires session
+    // auth in Langflow's auto-login mode.
+    const flowId = page.url().split("/").slice(-1)[0];
+    expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
+
+    await expect
+      .poll(
+        async () => {
+          const res = await page.request.get(`/api/v1/flows/${flowId}`);
+          if (!res.ok()) return null;
+          const flow = await res.json();
+          // The frontend sets `node.data.type` to the human-readable name
+          // ("Prompt Template"), which is the display_name of the PromptComponent.
+          const promptNode = (flow?.data?.nodes ?? []).find(
+            (n: { data?: { type?: string } }) =>
+              n?.data?.type === "Prompt Template",
+          );
+          return promptNode?.data?.node?.template?.template?.value ?? null;
+        },
+        { timeout: 15000, intervals: [500, 1000, 2000] },
+      )
+      .toBe(expected);
   },
 );
