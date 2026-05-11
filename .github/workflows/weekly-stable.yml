@@ -76,11 +76,15 @@ jobs:
           path: playwright-report/
           retention-days: 14
 
-      # Long-lived run history: append one JSON line per run to reports/weekly-history.jsonl
-      # and commit it back to main. See reports/README.md for schema and queries.
-      # Runs even on failure so recurring weekly breakage is recorded, not just clean runs.
+      # Long-lived run history: append one JSON line per scheduled run to
+      # reports/weekly-history.jsonl and commit it back to main. See
+      # reports/README.md for schema and queries. Runs even on failure so
+      # recurring weekly breakage is recorded, not just clean runs.
+      # Gated on `schedule` only — manual dispatches (workflow_dispatch) do not
+      # write to the history file, to keep the series predictable for
+      # longitudinal analysis (one entry per week, same trigger, same cadence).
       - name: Append weekly history
-        if: always() && github.ref == 'refs/heads/main'
+        if: always() && github.event_name == 'schedule'
         run: node scripts/append-weekly-history.mjs
         env:
           PLAYWRIGHT_JSON: results.json
@@ -88,7 +92,7 @@ jobs:
           LANGFLOW_IMAGE: langflowai/langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }}
 
       - name: Commit weekly history
-        if: always() && github.ref == 'refs/heads/main'
+        if: always() && github.event_name == 'schedule'
         run: |
           if git diff --quiet reports/weekly-history.jsonl 2>/dev/null; then
             echo "No history change to commit."
