@@ -554,7 +554,7 @@
 #### 12.1 Create Flow
 - [-] Create blank flow
 - [-] Create flow from template
-- [-] Create flow by duplicating an existing one
+- [x] Create flow by duplicating an existing one → `flow-functionality/duplicate-flow.spec.ts`
 - [-] Create flow via JSON file import
 
 #### 12.2 View and Edit Flow
