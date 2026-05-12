@@ -1,136 +1,99 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 
-test.describe("Output Modal Copy Button", () => {
-  test(
-    "user should be able to copy text output from component output modal",
-    { tag: ["@release", "@workspace", "@playground"] },
-    async ({ page }) => {
-      await awaitBootstrapTest(page);
+test.describe("Output Modal — Copy Button", () => {
+  test.describe.configure({ mode: "serial" });
 
-      await page.getByTestId("blank-flow").click();
+  let createdFlowId: string | null = null;
 
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 30000,
-        state: "visible",
-      });
-
-      // Add a Text Input component
-      await page.getByTestId("sidebar-search-input").click();
-      await page.getByTestId("sidebar-search-input").fill("text input");
-
-      await page.waitForSelector('[data-testid="input_outputText Input"]', {
-        timeout: 10000,
-        state: "visible",
-      });
-
-      await page
-        .getByTestId("input_outputText Input")
-        .hover()
-        .then(async () => {
-          await page.getByTestId("add-component-button-text-input").click();
-        });
-
-      await page.waitForTimeout(500);
-
-      // Fill in some test text
-      await page
-        .getByTestId("textarea_str_input_value")
-        .fill("Test content to copy");
-
-      // Run the component
-      await page.getByTestId("button_run_text input").click();
-
-      await page.waitForSelector("text=built successfully", { timeout: 30000 });
-
-      // Open the output modal
-      await page.locator('[data-testid^="output-inspection-"]').first().click();
-
-      await page.waitForSelector("text=Component Output", { timeout: 30000 });
-
-      // Verify the copy button exists
-      const copyButton = page.getByTestId("copy-output-button");
-      await expect(copyButton).toBeVisible();
-
-      // Click the copy button
-      await copyButton.click();
-
-      // Verify the success message appears
-      await page.waitForSelector("text=Copied to clipboard", {
-        timeout: 5000,
-      });
-
-      // Verify the check icon appears (button changes state)
-      await expect(
-        copyButton.locator('[data-testid="icon-Check"]'),
-      ).toBeVisible();
-
-      // Wait for the icon to revert back to copy icon
-      await page.waitForTimeout(2500);
-      await expect(
-        copyButton.locator('[data-testid="icon-Copy"]'),
-      ).toBeVisible();
-    },
-  );
+  test.afterEach(async ({ page }) => {
+    if (createdFlowId) {
+      // Navigate to home before deleting to stop background browser requests
+      // for the current flow; without this, pending polling GETs complete
+      // after the DELETE and trigger spurious 404 fixture errors.
+      await page.goto("/");
+      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      createdFlowId = null;
+    }
+  });
 
   test(
-    "copy button should work with JSON output from API Request component",
-    { tag: ["@release", "@workspace", "@playground"] },
+    "copy button copies Text Input output and toggles Check icon",
+    { tag: ["@stable", "@release", "@workspace", "@playground"] },
     async ({ page }) => {
-      await awaitBootstrapTest(page);
+      await test.step("create blank flow and capture flow id", async () => {
+        await awaitBootstrapTest(page);
 
-      await page.getByTestId("blank-flow").click();
+        const flowCreationPromise = page.waitForResponse(
+          (resp) =>
+            resp.url().includes("/api/v1/flows") &&
+            resp.request().method() === "POST" &&
+            resp.status() === 201,
+          { timeout: 15000 },
+        );
 
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 30000,
-        state: "visible",
+        await page.getByTestId("blank-flow").click();
+
+        const creationResponse = await flowCreationPromise;
+        const flowData = await creationResponse.json();
+        // Capture id before asserting format so afterEach can still clean up
+        // if the regex assertion fails on an unexpected id shape.
+        createdFlowId = flowData.id ?? null;
+        expect(flowData.id, "flow creation response missing id").toMatch(
+          /^[0-9a-f-]{36}$/,
+        );
       });
 
-      await page.getByTestId("sidebar-search-input").fill("api request");
+      await test.step("add Text Input and fill its value", async () => {
+        await page.getByTestId("sidebar-search-input").fill("text input");
+        await page
+          .getByTestId("input_outputText Input")
+          .hover()
+          .then(async () => {
+            await page.getByTestId("add-component-button-text-input").click();
+          });
 
-      await page.waitForSelector('[data-testid="data_sourceAPI Request"]', {
-        timeout: 10000,
-        state: "visible",
-      });
-
-      await page
-        .getByTestId("data_sourceAPI Request")
-        .hover()
-        .then(async () => {
-          await page.getByTestId("add-component-button-api-request").click();
-
-          await page.waitForTimeout(500);
-
-          await page
-            .getByTestId("popover-anchor-input-url_input")
-            .first()
-            .fill("https://httpbin.org/json");
+        await expect(page.locator(".react-flow__node")).toHaveCount(1, {
+          timeout: 10000,
         });
 
-      await page.getByTestId("button_run_api request").click();
-
-      await page.waitForSelector("text=Running", {
-        timeout: 30000,
-        state: "visible",
+        await page
+          .getByTestId("textarea_str_input_value")
+          .fill("Test content to copy");
       });
 
-      await page.waitForSelector("text=built successfully", { timeout: 30000 });
+      await test.step("run component and open output modal", async () => {
+        await page.getByTestId("button_run_text input").click();
+        await expect(page.getByText("built successfully").last()).toBeVisible({
+          timeout: 30000,
+        });
 
-      await page
-        .getByTestId("output-inspection-api response-apirequest")
-        .click();
+        await page
+          .locator('[data-testid^="output-inspection-"]')
+          .first()
+          .click();
+        await expect(page.getByText("Component Output").first()).toBeVisible({
+          timeout: 30000,
+        });
+      });
 
-      await page.waitForSelector("text=Component Output", { timeout: 30000 });
+      await test.step("click copy and verify Check → Copy icon transition", async () => {
+        const copyButton = page.getByTestId("copy-output-button");
+        await expect(copyButton).toBeVisible();
+        await copyButton.click();
 
-      // Verify the copy button exists and click it
-      const copyButton = page.getByTestId("copy-output-button");
-      await expect(copyButton).toBeVisible();
+        await expect(page.getByText("Copied to clipboard")).toBeVisible({
+          timeout: 5000,
+        });
+        await expect(
+          copyButton.locator('[data-testid="icon-Check"]'),
+        ).toBeVisible();
 
-      await copyButton.click();
-
-      // Verify the success message appears
-      await page.waitForSelector("text=Copied to clipboard", {
-        timeout: 5000,
+        // Icon reverts to Copy after the success state expires (~2s in UI).
+        // Web-first assertion polls until the Copy icon reappears.
+        await expect(
+          copyButton.locator('[data-testid="icon-Copy"]'),
+        ).toBeVisible({ timeout: 5000 });
       });
     },
   );

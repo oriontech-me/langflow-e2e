@@ -15,7 +15,7 @@ When `isPublished` becomes `true`, Langflow renders a `<a href="/playground/{uui
 
 ## Tags
 
-`@release` `@playground`
+`@release` `@playground` `@stable`
 
 ## Validation criterion
 
@@ -28,7 +28,8 @@ When `isPublished` becomes `true`, Langflow renders a `<a href="/playground/{uui
 
 ## External dependencies
 
-- `src/frontend/src/components/core/flowToolbarComponent/components/deploy-dropdown.tsx` — `publish-button`, `shareable-playground`, `publish-switch` test IDs and `isPublished` toggle logic. Any rename of these test IDs or change to the `ENABLE_PUBLISH` feature flag will break this test.
+- `src/frontend/src/components/core/flowToolbarComponent/components/deploy-dropdown.tsx` — owns the `publish-button`, `shareable-playground`, and `publish-switch` test IDs as well as the `isPublished` toggle. Renaming any of these test IDs or removing the `ENABLE_PUBLISH` feature flag will break this test.
+- The `publish-switch` and `shareable-playground` items are gated by `hasIO` (`useFlowStore.hasIO`); the flow under test must contain at least one Chat Input or Chat Output. The setup uses `setupPlayground()` which builds a Chat Input → Chat Output flow, so this contract is satisfied without depending on any starter template.
 - The `publish-switch` uses `e.stopPropagation()` to keep the dropdown open after clicking — if this is removed, the dropdown closes and subsequent assertions will fail.
 
 ## Last validated
