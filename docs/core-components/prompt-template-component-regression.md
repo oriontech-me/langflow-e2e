@@ -104,7 +104,7 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 - Prompt rendering/execution behind an LLM (covered by `llm-agents` specs such as `memory-history-regression.spec.ts`)
 - Tool Mode interaction (covered by `tool-mode.spec.ts`)
 - Cross-component data flow (covered by `flow-functionality/` specs)
-- Variable name validation (e.g., reserved keywords, special characters)
+- Invalid-character rejection in variable names (e.g. `{var.attr}`, `{var name}`, `{1var}`), the empty-braces contract, and variable deduplication (covered by `prompt-template-invalid-patterns-regression.spec.ts`)
 - The `use_double_brackets` toggle and the mustache-mode parser (covered by `prompt-template-double-brackets-regression.spec.ts`)
 
 ---
