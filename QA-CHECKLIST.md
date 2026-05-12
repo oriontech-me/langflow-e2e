@@ -697,7 +697,7 @@
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
-| `core-functionality/playground/` | 48 | 41 | 5 | 1 | 1 |
+| `core-functionality/playground/` | 48 | 42 | 4 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
@@ -705,7 +705,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **393** | **111 (28%)** | **217 (55%)** | **7 (2%)** | **58 (15%)** |
+| **TOTAL** | **393** | **112 (28%)** | **216 (55%)** | **7 (2%)** | **58 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -721,7 +721,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 98 `test()` calls carrying the `@stable` tag, distributed across 32 spec
+> 99 `test()` calls carrying the `@stable` tag, distributed across 33 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -818,6 +818,7 @@
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
 - [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
 - [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
+- [x] session ID input accepts a custom value → `playground-session-id.spec.ts`
 - [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
 - [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
 - [x] rename option must not be available for the Default Session → `playground-session-rename.spec.ts`
@@ -849,7 +850,7 @@
 | `core-functionality/auth/` | 18 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
 | `core-functionality/model-provider/` | 18 | 9 |
-| `core-functionality/playground/` | 5 | 1 |
+| `core-functionality/playground/` | 4 | 1 |
 | `mcp/client/` | 0 | 6 |
 | `mcp/server/` | 3 | 4 |
 | `ui-ux/` — Canvas | 39 | 1 |
