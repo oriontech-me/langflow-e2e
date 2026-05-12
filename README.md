@@ -204,8 +204,56 @@ tests/
 |---|---|---|
 | `pr-validation.yml` | Every PR to `main` | TypeScript check (`tsc --noEmit`) + ESLint in parallel — both must pass before merge |
 | `nightly.yml` | Daily 03:00 BRT + manual | Runs everything against `langflow-nightly:latest`, opens an issue on failure |
+| `weekly-stable.yml` | Mondays 03:00 BRT + manual | Runs `@stable` tests against `langflow-nightly:latest`; opens a triage issue on failure and uploads a navigable HTML report |
 | `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag |
 | `file-watcher.yml` | Daily 05:00 BRT | Monitors changes in Langflow source and opens a review issue |
+| `adaptive-impacted.yml` | Daily 04:00 BRT + manual | Runs only the specs whose `External dependencies` reference the Langflow source paths that changed since the last nightly we tested; skips entirely when no new nightly was published |
+
+---
+
+## Adaptive impacted-tests subset
+
+The `adaptive-impacted.yml` workflow narrows each daily run to the spec files whose docs reference the Langflow source paths changed in the latest nightly. The mapping comes from the **External dependencies** section in each `docs/**/*.md` spec doc.
+
+CLI usage:
+
+```bash
+# Map changed paths to spec files (default output: file paths)
+npm run impacted -- src/backend/base/langflow/components/inputs/webhook.py
+
+# Read paths from stdin (e.g. piped from `git diff --name-only`)
+git diff --name-only main..HEAD | npm run impacted -- --stdin
+
+# Structured output
+npm run impacted -- --format=json src/foo.py
+
+# Inspect which specs have/lack a populated External dependencies section
+npm run validate:specs
+
+# Decide whether the workflow would skip or run (queries Docker Hub)
+npm run check:nightly-delta
+```
+
+Behavior:
+- **File-level matching.** A bullet `src/backend/.../webhook.py` matches the exact file; a bullet ending in `/` matches anything inside the directory.
+- **Catch-all paths** (routes, feature flags) trigger the full suite.
+- **Unmapped paths** are skipped with a warning — the daily nightly still covers them.
+- **State** is persisted in repository variable `LAST_TESTED_NIGHTLY_SHA`; updating it requires the `GH_PAT_VARIABLES` secret (PAT with `Variables: read & write`). Without it the workflow still runs but does not advance the cursor.
+
+### Debugging a weekly failure
+
+When the weekly `@stable` run fails, the auto-opened triage issue links to the GitHub Actions run. Open the run page and download the `playwright-report-weekly-<run-id>` artifact (retained for 14 days).
+
+The artifact unzips into a self-contained HTML report — open `index.html` to inspect:
+
+- **Failed tests** — file path, test title, and error stack
+- **Screenshots** — automatic on every failure
+- **Video** — captured on the first retry, useful when the failure only reproduces under timing pressure
+- **Trace** — captured on the first retry; click "Trace" in the report to step through the run in Playwright's trace viewer
+
+No local merge step is required: the report works offline once unzipped.
+
+If the failure is a Langflow regression, flag it to the team and keep `@stable` on the test. If it is a test bug, remove `@stable`, open a fix PR, and the next weekly run will be unblocked.
 
 ---
 

@@ -1,5 +1,5 @@
 import { expect, test } from "../../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 
 test.describe("Playground — Shareable URL Generation", () => {
   test.describe.configure({ mode: "serial" });
@@ -18,21 +18,11 @@ test.describe("Playground — Shareable URL Generation", () => {
   });
 
   test(
-    "Simple Agent shareable playground URL is generated when publishing is enabled",
-    { tag: ["@release", "@playground"] },
+    "Shareable playground URL is generated when publishing is enabled",
+    { tag: ["@release", "@playground", "@stable"] },
     async ({ page }) => {
-      await test.step("load Simple Agent template", async () => {
-        await awaitBootstrapTest(page);
-        await page.getByTestId("side_nav_options_all-templates").click();
-        await page.getByRole("heading", { name: "Simple Agent" }).first().click();
-        await expect(
-          page.getByTestId("canvas_controls_dropdown"),
-        ).toBeVisible({ timeout: 30000 });
-
-        const flowUrl = page.url();
-        const flowIdMatch = flowUrl.match(/\/flow\/([0-9a-f-]{36})/);
-        expect(flowIdMatch, `Could not extract flow ID from URL: ${flowUrl}`).not.toBeNull();
-        createdFlowId = flowIdMatch![1];
+      await test.step("create blank Chat Input → Chat Output flow", async () => {
+        createdFlowId = await setupPlayground(page);
       });
 
       await test.step("open Share dropdown and verify initial state", async () => {

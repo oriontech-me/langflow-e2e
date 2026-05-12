@@ -85,12 +85,22 @@ async function setEditTextareaValue(page: any, value: string): Promise<void> {
 }
 
 test.describe("Playground Message Edit", () => {
+  let createdFlowId: string | null = null;
+
+  test.afterEach(async ({ page }) => {
+    if (createdFlowId) {
+      await page.goto("/");
+      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      createdFlowId = null;
+    }
+  });
+
   test(
     "edit user message — hover reveals edit button and saved changes replace original text",
     { tag: ["@release", "@playground", "@stable"] },
     async ({ page }) => {
       await test.step("set up flow", async () => {
-        await setupPlayground(page);
+        createdFlowId = await setupPlayground(page);
       });
 
       await test.step("open playground and send initial message", async () => {
@@ -128,7 +138,7 @@ test.describe("Playground Message Edit", () => {
     { tag: ["@regression", "@playground", "@stable"] },
     async ({ page }) => {
       await test.step("set up flow and send message", async () => {
-        await setupPlayground(page);
+        createdFlowId = await setupPlayground(page);
         await openPlaygroundWithMessage(page, "Original message");
       });
 
@@ -154,7 +164,7 @@ test.describe("Playground Message Edit", () => {
     { tag: ["@regression", "@playground", "@stable"] },
     async ({ page }) => {
       await test.step("set up flow and send message", async () => {
-        await setupPlayground(page);
+        createdFlowId = await setupPlayground(page);
         await openPlaygroundWithMessage(page, "Before edit");
       });
 

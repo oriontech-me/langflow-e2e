@@ -15,7 +15,11 @@
     "report": "npx playwright show-report",
     "typecheck": "tsc --noEmit",
     "lint": "eslint tests/",
-    "lint:ci": "eslint tests/ --quiet"
+    "lint:ci": "eslint tests/ --quiet",
+    "coverage:summary": "ts-node scripts/coverage-summary.ts && ts-node scripts/stable-tests.ts",
+    "impacted": "ts-node scripts/impacted-tests.ts",
+    "validate:specs": "ts-node scripts/validate-spec-deps.ts",
+    "check:nightly-delta": "ts-node scripts/check-nightly-delta.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5"
@@ -26,7 +30,8 @@
     "eslint": "^10.1.0",
     "eslint-plugin-playwright": "^2.10.1",
     "playwright": "^1.57.0",
+    "ts-node": "^10.9.2",
     "typescript": "^5.4.5",
-    "typescript-eslint": "^8.57.1"
+    "typescript-eslint": "^8.57.2"
   }
 }

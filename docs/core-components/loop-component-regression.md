@@ -6,11 +6,12 @@
 
 ## What this test validates *(required)*
 
-Validates three fundamental behaviors of the Loop component on the Langflow canvas:
+Validates four fundamental behaviors of the Loop component on the Langflow canvas:
 
 1. **Correct rendering** — the node appears on the canvas with all expected handles (`inputs-left`, `item-left`, `item-right`, `done-right`) and with the output inspection buttons present in the node footer.
 2. **Error path without connections** — running the Loop with no connections shows the "Flow build failed" notification without freezing the interface; the node remains intact and the run button stays accessible.
-3. **Real iteration via template** — using the "Research Translation Loop" template, the Loop iterates over 2 ArXiv articles and produces an aggregated response in the Playground containing at least 2 mentions of "Title", confirming the loop completed both iterations.
+3. **Real iteration via template** — using the "Research Translation Loop" template, the Loop iterates over 2 ArXiv articles and produces an aggregated response in the Playground containing at least 1 mention of "Title". The threshold is intentionally relaxed to `>= 1` (rather than `>= 2`) because the LLM response is non-deterministic — what this assertion proves is that the loop emitted a non-empty aggregated response after running the template end-to-end; iteration count itself is covered deterministically by Test 4.
+4. **Exit-condition termination** — given a deterministic input DataFrame of N rows (no LLM, no network), the Loop's `done` output emits an aggregated DataFrame of exactly N items, proving the loop stops after the input is exhausted. Validated for N=3 and N=1 in the same test.
 
 If any of these tests fails, the Loop component is broken in the product: either in rendering, error handling, or actual iteration cycle execution.
 
@@ -52,6 +53,17 @@ If any of these tests fails, the Loop component is broken in the product: either
 10. Wait for `chat-message-AI-*` to appear (timeout 240 s)
 11. Extract the text of the last AI message and count occurrences of "title" (case-insensitive); must be ≥ 1
 
+**Test 4 — stops after exhausting input DataFrame and emits aggregated done**
+1. `awaitBootstrapTest` and `cleanAllFlows`
+2. Build a flow body in-memory from `tests/assets/flows/loop-exit-condition.json` with the Create List node's `texts.value` set to a 3-element list and a randomized flow name
+3. `POST /api/v1/flows/` with the body to create the flow server-side
+4. Navigate to "/" and click the flow card matching the randomized name (the home navigation triggers a full owned-flows re-fetch, avoiding the deep-link cache race)
+5. Wait for `title-Loop` on the canvas; call `adjustScreenView`
+6. Click `button_run_loop`; wait for "built successfully"
+7. Click `output-inspection-done-loopcomponent`, wait for `[role="dialog"]`, read the pagination summary "1 to N of N. Page 1 of 1" via regex; assert N === 3
+8. Press Escape to close the modal
+9. Repeat steps 1–8 with `texts` set to a 1-element list; assert N === 1
+
 ---
 
 ## Validation criterion *(required)*
@@ -61,6 +73,7 @@ If any of these tests fails, the Loop component is broken in the product: either
 - Running without connections produces "Flow build failed" notification without crash; node and run button remain accessible
 - The "Research Translation Loop" template loads with visible edges (wiring intact)
 - The final response in the Playground contains ≥ 1 occurrence of the word "title", confirming at least one complete loop iteration (Parser → LLM → done)
+- The aggregated `done` DataFrame has length exactly equal to the input DataFrame size (validated for N=3 and N=1 via the loop-exit-condition asset)
 
 ---
 
@@ -70,15 +83,19 @@ If any of these tests fails, the Loop component is broken in the product: either
 - `src/backend/base/langflow/initial_setup/starter_projects/Research Translation Loop.json` — template loaded in Test 3; renaming or removing the template breaks the `template-research-translation-loop` selector
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeOutputParameter/` — renders the output inspection buttons; changes to the `output-inspection-{port}-{component}` pattern break the Test 1 selectors
 - `src/frontend/src/CustomNodes/GenericNode/` — renders the handles; the `handle-{component}-shownode-{port}-{side}` pattern must remain stable
+- `tests/assets/flows/loop-exit-condition.json` — committed flow used by Test 4; rebuild via Langflow UI if upstream schema changes break the POST `/api/v1/flows/` body validation
+- `src/lfx/src/lfx/components/processing/create_list.py` — CreateListComponent; the `texts` template field is the mutation target in Test 4 and breaks if the field name changes
+- `src/lfx/src/lfx/components/processing/converter.py` — TypeConverterComponent used as the loop body (Data → Message); changes to its output ports break the asset wiring
 
 ---
 
 ## What this test does not cover *(optional)*
 
-- Loop exit condition (the `done` port activated by an LLM criterion): covered separately by a future issue in QA-CHECKLIST
 - Behavior with very large DataFrames or loops of hundreds of iterations
 - Cancellation of execution in the middle of an ongoing loop
 - Execution mode with models other than the template default
+- DataFrame size N=0 (Loop initialization short-circuit at `loop.py:181-184`, distinct code path from termination by exhaustion)
+- Conditional early-exit triggered from inside the loop body — Langflow's Loop has no such mechanism today
 
 ---
 

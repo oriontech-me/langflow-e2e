@@ -1,12 +1,10 @@
 import { expect, test } from "../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-
-import { zoomOut } from "../../../helpers/ui/zoom-out";
+import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 
 test(
   "User should be able to use components as tool",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@stable", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
     await page.getByTestId("blank-flow").click();
