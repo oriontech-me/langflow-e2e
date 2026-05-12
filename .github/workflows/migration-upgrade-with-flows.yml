@@ -1,8 +1,8 @@
-name: "Langflow Migration Test: Latest → Nightly"
+name: "Langflow Migration: Upgrade with LANGFLOW_LOAD_FLOWS_PATH"
 
 on:
   schedule:
-    - cron: "0 7 * * *" # 04:00 BRT (UTC-3)
+    - cron: "0 9 * * *" # 06:00 BRT (UTC-3)
   workflow_dispatch:
 
 env:
@@ -11,20 +11,17 @@ env:
   PG_USER: langflow
   PG_PASSWORD: langflow_test_pw
   PG_DB: langflow
-  STATE_FILE: /tmp/migration-test-state.json
-  REPORT_FILE: /tmp/migration-report.md
-  # Fixed key shared by both containers so credentials encrypted by latest
-  # can be decrypted by nightly after DB migration.
-  LANGFLOW_SECRET_KEY: "migration-test-fixed-secret-32chars!!"
+  FLOW_NAME: "Getting Started: Simple python function applied to each output"
 
 permissions:
   contents: read
   issues: write
 
 jobs:
-  migration-test:
+  upgrade-with-flows:
+    name: Upgrade latest → nightly with LANGFLOW_LOAD_FLOWS_PATH
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 25
 
     services:
       postgres:
@@ -50,119 +47,111 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: |
-          pip install requests playwright pytest pytest-playwright
-          playwright install chromium --with-deps
+        run: pip install requests
 
-      - name: Generate ephemeral Fernet key for this run
-        run: |
-          python - <<'PY'
-          import base64
-          import os
-
-          key = base64.urlsafe_b64encode(os.urandom(32)).decode()
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as github_env:
-              github_env.write(f"LANGFLOW_SECRET_KEY={key}\n")
-          PY
-
-      # ── Phase 1: Langflow Latest ──────────────────────────────
+      # ── Phase 1: Langflow Latest with LANGFLOW_LOAD_FLOWS_PATH ──
       - name: Pull Langflow latest
         run: |
           docker pull langflowai/langflow:latest
-          docker inspect langflowai/langflow:latest --format='{{index .RepoDigests 0}}' > /tmp/latest-digest.txt
+          docker inspect langflowai/langflow:latest \
+            --format='{{index .RepoDigests 0}}' | tee /tmp/latest-digest.txt
           echo "Latest digest: $(cat /tmp/latest-digest.txt)"
 
-      - name: Start Langflow latest
+      - name: Prepare flow directory for LANGFLOW_LOAD_FLOWS_PATH
+        run: |
+          mkdir -p /tmp/test-flows
+          cp tests/assets/flows/flow.json /tmp/test-flows/
+
+      - name: Start Langflow latest with flow pre-loaded
         run: |
           docker run -d --name langflow \
             --network host \
+            -v "/tmp/test-flows:/flows:ro" \
             -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
             -e LANGFLOW_AUTO_LOGIN=true \
-            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
-            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
+            -e LANGFLOW_LOAD_FLOWS_PATH=/flows \
             langflowai/langflow:latest
 
       - name: Wait for Langflow latest
-        run: python tests/github-workflows/migration/wait_for_langflow.py
-
-      - name: Create flow, configure and execute on latest
-        run: python tests/github-workflows/migration/setup_latest.py
+        run: python tests/github-workflows/migration/wait_for_langflow.py --timeout 120
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGFLOW_URL: ${{ env.LANGFLOW_URL }}
+
+      - name: Verify flow was loaded on latest
+        run: python tests/github-workflows/migration/verify_upgrade_with_flows.py
+        env:
+          LANGFLOW_URL: ${{ env.LANGFLOW_URL }}
+          EXPECTED_FLOW_NAME: ${{ env.FLOW_NAME }}
 
       - name: Save latest container logs
         if: always()
         run: docker logs langflow > /tmp/langflow-latest.log 2>&1 || true
 
-      # ── Phase 2: Upgrade to Nightly ───────────────────────────
+      # ── Phase 2: Upgrade to Nightly (same DB + same LANGFLOW_LOAD_FLOWS_PATH) ──
       - name: Stop Langflow latest
         run: docker stop langflow && docker rm langflow
 
       - name: Pull Langflow nightly
         run: |
           docker pull langflowai/langflow-nightly:latest
-          docker inspect langflowai/langflow-nightly:latest --format='{{index .RepoDigests 0}}' > /tmp/nightly-digest.txt
+          docker inspect langflowai/langflow-nightly:latest \
+            --format='{{index .RepoDigests 0}}' | tee /tmp/nightly-digest.txt
           echo "Nightly digest: $(cat /tmp/nightly-digest.txt)"
 
-      - name: Start Langflow nightly (same database)
+      - name: Start Langflow nightly with same DB and LANGFLOW_LOAD_FLOWS_PATH
         run: |
           docker run -d --name langflow \
             --network host \
+            -v "/tmp/test-flows:/flows:ro" \
             -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
             -e LANGFLOW_AUTO_LOGIN=true \
-            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
-            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
+            -e LANGFLOW_LOAD_FLOWS_PATH=/flows \
             langflowai/langflow-nightly:latest
 
-      - name: Wait for Langflow nightly (includes migration)
-        id: nightly_start
+      - name: Wait for Langflow nightly (includes DB migration)
         run: python tests/github-workflows/migration/wait_for_langflow.py --timeout 180
+        env:
+          LANGFLOW_URL: ${{ env.LANGFLOW_URL }}
 
       - name: Save nightly container logs
         if: always()
         run: docker logs langflow > /tmp/langflow-nightly.log 2>&1 || true
 
-      # ── Phase 3: Verify Migration ─────────────────────────────
-      - name: Verify migration via API
-        run: python tests/github-workflows/migration/verify_migration_api.py
+      # ── Phase 3: Verify ───────────────────────────────────────
+      - name: Check nightly logs for UniqueViolation errors
+        run: |
+          if grep -i "UniqueViolation\|unique constraint\|duplicate key" /tmp/langflow-nightly.log; then
+            echo "FAIL: UniqueViolation detected in nightly logs after upgrade with LANGFLOW_LOAD_FLOWS_PATH"
+            exit 1
+          else
+            echo "OK: No UniqueViolation errors found"
+          fi
+
+      - name: Verify flow still accessible after upgrade
+        run: python tests/github-workflows/migration/verify_upgrade_with_flows.py
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LANGFLOW_URL: ${{ env.LANGFLOW_URL }}
+          EXPECTED_FLOW_NAME: ${{ env.FLOW_NAME }}
 
-      - name: Verify migration via UI (Playwright)
-        run: pytest tests/github-workflows/migration/test_ui_migration.py -v --tracing=retain-on-failure --output=test-results
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-      # ── Phase 4: Report ───────────────────────────────────────
-      - name: Generate report
-        if: always()
-        run: python tests/github-workflows/migration/generate_report.py
-
-      - name: Print report
-        if: always()
-        run: cat /tmp/migration-report.md
-
-      - name: Upload test artifacts
+      # ── Phase 4: Artifacts ───────────────────────────────────
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: migration-test-${{ github.run_number }}
+          name: upgrade-with-flows-${{ github.run_number }}
           path: |
-            test-results/
-            /tmp/migration-report.md
             /tmp/langflow-latest.log
             /tmp/langflow-nightly.log
-            /tmp/migration-test-state.json
             /tmp/latest-digest.txt
             /tmp/nightly-digest.txt
 
-      - name: Cleanup containers
+      - name: Cleanup
         if: always()
         run: docker stop langflow 2>/dev/null; docker rm langflow 2>/dev/null; true
 
@@ -174,7 +163,7 @@ jobs:
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-test',
+              labels: 'migration-upgrade-flows',
               state: 'open',
             });
             if (existing.length > 0) {
@@ -186,7 +175,7 @@ jobs:
                 body: [
                   `## ✅ Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
                   '',
-                  'Migration test passed. Closing this issue.',
+                  'Upgrade-with-flows test passed. Closing this issue.',
                   '',
                   `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
                 ].join('\n'),
@@ -205,24 +194,28 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            let report = 'Migration test failed. See workflow artifacts for details.';
-            try {
-              report = fs.readFileSync('/tmp/migration-report.md', 'utf8');
-            } catch (e) {
-              console.log('Report not available:', e.message);
-            }
+            const latestDigest = fs.existsSync('/tmp/latest-digest.txt')
+              ? fs.readFileSync('/tmp/latest-digest.txt', 'utf8').trim().slice(-20)
+              : 'unknown';
+            const nightlyDigest = fs.existsSync('/tmp/nightly-digest.txt')
+              ? fs.readFileSync('/tmp/nightly-digest.txt', 'utf8').trim().slice(-20)
+              : 'unknown';
 
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-test',
+              labels: 'migration-upgrade-flows',
               state: 'open',
             });
 
             const body = [
-              `## Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
+              `## Upgrade-with-Flows Failure — Run #${context.runNumber}`,
               '',
-              report,
+              `- **Date:** ${new Date().toISOString().split('T')[0]}`,
+              `- **From:** \`langflowai/langflow:latest\` (\`...${latestDigest}\`)`,
+              `- **To:** \`langflowai/langflow-nightly:latest\` (\`...${nightlyDigest}\`)`,
+              `- **Scenario:** Upgrade latest → nightly with \`LANGFLOW_LOAD_FLOWS_PATH\` set (flow already in DB)`,
+              `- **Expected:** Nightly starts cleanly without \`UniqueViolation\``,
               '',
               `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
               '',
@@ -240,8 +233,8 @@ jobs:
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: `Langflow Migration Test Failed (latest → nightly)`,
+                title: 'Langflow Nightly: Upgrade with LANGFLOW_LOAD_FLOWS_PATH Failed (UniqueViolation)',
                 body,
-                labels: ['migration-test', 'automated'],
+                labels: ['migration-upgrade-flows', 'automated'],
               });
             }
