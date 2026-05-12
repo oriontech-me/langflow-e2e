@@ -558,7 +558,7 @@
 - [-] Create flow via JSON file import
 
 #### 12.2 View and Edit Flow
-- [-] Rename flow via editor header
+- [x] Rename flow via editor header → `flow-functionality/flow-rename-header.spec.ts`
 - [-] Edit flow name and description
 - [-] Flow auto-save on changes
 - [-] Flow settings
