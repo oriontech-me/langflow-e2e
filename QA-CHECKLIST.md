@@ -711,12 +711,12 @@
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
+| `flow-functionality/` | 23 | 1 | 20 | 2 | 0 |
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **404** | **123 (30%)** | **220 (54%)** | **7 (2%)** | **54 (13%)** |
+| **TOTAL** | **404** | **124 (31%)** | **219 (54%)** | **7 (2%)** | **54 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -732,7 +732,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 120 `test()` calls carrying the `@stable` tag, distributed across 39 spec
+> 122 `test()` calls carrying the `@stable` tag, distributed across 40 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -862,6 +862,8 @@
 #### flow-functionality/
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
+- [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 
 #### mcp/client/
 - [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
@@ -901,7 +903,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 12 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 21 | 0 |
+| `flow-functionality/` | 20 | 0 |
 | `core-functionality/project-management/` | 10 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
