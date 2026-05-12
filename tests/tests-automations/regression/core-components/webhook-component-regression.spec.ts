@@ -32,7 +32,7 @@ async function addWebhookComponent(page: any) {
 
 test(
   "Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202",
-  { tag: ["@stable", "@release", "@regression"] },
+  { tag: ["@release", "@regression"] },
   async ({ page, request }) => {
     await addWebhookComponent(page);
 
@@ -88,8 +88,11 @@ test(
 // When the upstream bug is fixed, remove `.fixme` and re-validate.
 test.fixme(
   "Webhook component — flow is saved to database and contains the Webhook node",
+  // @stable removed: upstream Langflow regression breaks page.evaluate(fetch)
+  // with "Cannot set properties of undefined (setting 'Accept-Language')".
+  // Tracked in #180; restore @stable once upstream is fixed.
   { tag: ["@release", "@regression"] },
-  async ({ page, request }) => {
+  async ({ page }) => {
     await addWebhookComponent(page);
 
     const flowId = page.url().split("/").slice(-1)[0];

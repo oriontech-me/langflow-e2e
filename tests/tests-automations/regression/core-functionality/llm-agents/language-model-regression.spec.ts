@@ -40,7 +40,7 @@ test.describe("Language Model Component Regression", () => {
       await page
         .getByTestId("input-chat-playground")
         .last()
-        .fill("Say hello.");
+        .fill("What is 2+2?");
 
       await page.getByTestId("button-send").last().click();
 
@@ -59,7 +59,7 @@ test.describe("Language Model Component Regression", () => {
         .last()
         .innerText();
 
-      expect(responseText.trim().length).toBeGreaterThan(1);
+      expect(responseText.trim()).toMatch(/4/);
     },
   );
 
