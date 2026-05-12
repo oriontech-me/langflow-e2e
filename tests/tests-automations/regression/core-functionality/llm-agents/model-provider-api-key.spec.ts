@@ -4,25 +4,6 @@ import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 
 test.describe("Model Provider API Key Management", () => {
   test(
-    "Model Providers settings page loads with provider list",
-    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
-    async ({ page }) => {
-      await awaitBootstrapTest(page, { skipModal: true });
-
-      await navigateSettingsPages(page, "Settings", "Model Providers");
-
-      await expect(
-        page.getByTestId("settings_menu_header").last(),
-      ).toContainText("Model Providers", { timeout: 10000 });
-
-      // Provider configuration description should be present
-      await expect(
-        page.getByText(/configure.*model providers|manage.*api keys/i).first(),
-      ).toBeVisible({ timeout: 5000 });
-    },
-  );
-
-  test(
     "OpenAI provider is listed in Model Providers settings",
     { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {

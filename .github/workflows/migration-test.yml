@@ -13,6 +13,9 @@ env:
   PG_DB: langflow
   STATE_FILE: /tmp/migration-test-state.json
   REPORT_FILE: /tmp/migration-report.md
+  # Fixed key shared by both containers so credentials encrypted by latest
+  # can be decrypted by nightly after DB migration.
+  LANGFLOW_SECRET_KEY: "migration-test-fixed-secret-32chars!!"
 
 permissions:
   contents: read
@@ -51,6 +54,17 @@ jobs:
           pip install requests playwright pytest pytest-playwright
           playwright install chromium --with-deps
 
+      - name: Generate ephemeral Fernet key for this run
+        run: |
+          python - <<'PY'
+          import base64
+          import os
+
+          key = base64.urlsafe_b64encode(os.urandom(32)).decode()
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as github_env:
+              github_env.write(f"LANGFLOW_SECRET_KEY={key}\n")
+          PY
+
       # ── Phase 1: Langflow Latest ──────────────────────────────
       - name: Pull Langflow latest
         run: |
@@ -68,6 +82,7 @@ jobs:
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
+            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
             langflowai/langflow:latest
 
       - name: Wait for Langflow latest
@@ -102,6 +117,7 @@ jobs:
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
+            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
             langflowai/langflow-nightly:latest
 
       - name: Wait for Langflow nightly (includes migration)
