@@ -3,14 +3,14 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-05-04
+> **Last updated:** 2026-05-12
 
 ---
 
 ## How to use this checklist
 
-- `[x]` → automated and **validated**
-- `[-]` → automated, **needs validation**
+- `[x]` → automated and **validated** — only assigned when the underlying Playwright test carries the `@stable` tag
+- `[-]` → automated, **needs validation** (test exists but is not yet `@stable`, or the entry refers to a Page/Helper rather than a test)
 - `[ ]` (empty) → **needs automation**
 - `[~]` → **partially** covered
 - `[!]` → covered but **flaky / unstable**
@@ -25,8 +25,8 @@
 
 ## Pages
 
-- [x] `SimpleAgentTemplatePage` — loads Simple Agent template with configurable provider and model → `pages/SimpleAgentTemplatePage.ts`
-- [x] `SettingsPage` — navigation to the settings page via user menu → `pages/SettingsPage.ts`
+- [-] `SimpleAgentTemplatePage` — loads Simple Agent template with configurable provider and model → `pages/SimpleAgentTemplatePage.ts`
+- [-] `SettingsPage` — navigation to the settings page via user menu → `pages/SettingsPage.ts`
 - [ ] Component sidebar — component navigation bar with searchable parameter support
 - [ ] Model Provider — navigation to the model provider management tab
 - [ ] API Keys — navigation to the API keys / global variables tab
@@ -41,19 +41,19 @@
 
 ### Provider Setup
 
-- [x] OpenAI Provider Setup → `helpers/provider-setup/setup-openai.ts`
-- [x] Anthropic Provider Setup → `helpers/provider-setup/setup-anthropic.ts`
-- [x] Google Generative AI Provider Setup → `helpers/provider-setup/setup-google.ts`
-- [x] Provider Map (`providerSetupMap`) — central registration point → `helpers/provider-setup/index.ts`
-- [x] Provider validation via API (credit, valid key) → `helpers/provider-setup/collect-models.ts`
-- [x] Collection of available models via UI (Settings → Model Providers) → `helpers/provider-setup/collect-models.ts`
-- [x] `providers.json` — status of each provider (active/inactive + reason) → `data/providers.json`
-- [x] `models.json` — list of models per provider → `data/models.json`
+- [-] OpenAI Provider Setup → `helpers/provider-setup/setup-openai.ts`
+- [-] Anthropic Provider Setup → `helpers/provider-setup/setup-anthropic.ts`
+- [-] Google Generative AI Provider Setup → `helpers/provider-setup/setup-google.ts`
+- [-] Provider Map (`providerSetupMap`) — central registration point → `helpers/provider-setup/index.ts`
+- [-] Provider validation via API (credit, valid key) → `helpers/provider-setup/collect-models.ts`
+- [-] Collection of available models via UI (Settings → Model Providers) → `helpers/provider-setup/collect-models.ts`
+- [-] `providers.json` — status of each provider (active/inactive + reason) → `data/providers.json`
+- [-] `models.json` — list of models per provider → `data/models.json`
 
 ### Flows
 
-- [x] Load Simple Agent with variable provider and model → `pages/SimpleAgentTemplatePage.ts`
-- [x] Load Simple Agent with OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
+- [-] Load Simple Agent with variable provider and model → `pages/SimpleAgentTemplatePage.ts`
+- [-] Load Simple Agent with OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
 
 ### To implement
 
@@ -80,7 +80,7 @@
 ### api/flows/ — REST API
 
 #### 1.1 Health Check
-- [-] GET `/api/v1/health_check` → status 200, db ok
+- [x] GET `/health_check` → status 200, db ok → `api-health-check.spec.ts`
 - [-] GET `/api/v1/health` → returns uptime and version
 
 #### 1.2 Flow CRUD via API
@@ -96,7 +96,7 @@
 - [-] POST with `tweaks` → parameters override flow configuration
 - [-] POST with custom `session_id`
 - [-] POST with `input_type: "chat"` and `output_type: "chat"`
-- [-] POST with invalid API key → returns 401/403
+- [x] POST with invalid API key → returns 401/403 → `api-invalid-key.spec.ts`
 - [-] POST to non-existent flow → returns 404
 
 #### 1.4 Components via API
@@ -108,7 +108,7 @@
 - [-] GET with session_id filter returns only messages from that session
 
 #### 1.6 Integration Code Generation
-- [-] Generate curl for API execution
+- [x] Generate curl for API execution → `flow-functionality/curlApiGeneration.spec.ts`
 - [x] Generate Python code for integration → `flow-functionality/pythonApiGeneration.spec.ts`
 - [-] API access modal
 
@@ -134,7 +134,7 @@
 - [-] Edit tab component
 
 #### 2.2 Tool Mode
-- [-] Enable Tool Mode on a component
+- [x] Enable Tool Mode on a component
 - [-] Group components in Tool Mode
 - [-] Edit tools (edit-tools)
 
@@ -153,35 +153,56 @@
 ### 3. Core Components
 
 #### 3.1 Chat Input / Output
-- [-] ChatInput receives user message
-- [-] ChatOutput displays LLM response
-- [-] Chat Input/Output with user authentication
+- [x] ChatInput renders on canvas with Message output handle and Input Text field → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] ChatOutput renders on canvas with Inputs handle and run button → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] ChatInput → ChatOutput connection accepted (Message ↔ Message) → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Input Text propagates from ChatInput to ChatOutput on run → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Sender name override is reflected in the Playground chat message → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Default sender_name is "User" on input and "AI" on output → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Toggling `showfiles` exposes the Files inspector field on Chat Input → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Uploading a file via the Chat Input inspector populates the Files field → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Inspector-attached file is rendered in the Playground after running ChatInput → ChatOutput → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Dismiss button on the Files field clears the value → `core-components/chat-input-files-field-regression.spec.ts`
 
 #### 3.2 Prompt Template
-- [-] Prompt with variables in curly braces
-- [-] Prompt modal
-- [-] Dynamic port generated when adding a variable to the prompt
-- [-] Removing a variable from the prompt deletes the corresponding port
+- [x] Prompt Template renders on canvas with output handle → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Variables in curly braces generate dynamic input handles → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Removing a variable removes its input handle → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Replacing a variable updates handles accordingly → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Clearing the template removes all dynamic handles → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Modal edits persist in UI and in saved flow → `core-components/prompt-template-component-regression.spec.ts`
+- [x] `use_double_brackets` toggle is exposed in the InspectionPanel with its upstream display name → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] Default toggle state is OFF; f-string mode extracts `{var}` and treats `{{var}}` as literal → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] Enabling toggle switches parser to mustache mode; `{{var}}` creates handle and `{var}` is ignored → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] Disabling toggle reverts to f-string mode and variables are re-extracted under the new parser → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] `use_double_brackets` value persists in the autosaved flow → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] f-string parser rejects `{var.attr}` (dot notation) with an error toast and creates no handle → `core-components/prompt-template-invalid-patterns-regression.spec.ts`
+- [x] f-string parser rejects `{var name}` (space inside identifier) with an error toast and creates no handle → `core-components/prompt-template-invalid-patterns-regression.spec.ts`
+- [x] f-string parser rejects `{var,name}` (comma inside identifier) with an error toast and creates no handle → `core-components/prompt-template-invalid-patterns-regression.spec.ts`
+- [x] f-string parser rejects `{1var}` (leading digit) with an error toast and creates no handle → `core-components/prompt-template-invalid-patterns-regression.spec.ts`
+- [x] f-string parser accepts `{}` (empty braces) silently — no error, no handle → `core-components/prompt-template-invalid-patterns-regression.spec.ts`
+- [x] f-string parser deduplicates repeated variables — `{name} and {name}` yields exactly one handle → `core-components/prompt-template-invalid-patterns-regression.spec.ts`
 
 #### 3.3 API Request (HTTP)
-- [-] Renders on canvas with URL and API Response handles → `api/flows/api-request-component-ui.spec.ts`
-- [-] Configure URL and HTTP method (UI field validation) → `api/flows/api-request-component-ui.spec.ts`
-- [ ] Execute GET request and verify 200 status and output structure
-- [ ] Execute POST request and verify POST verb is sent (status 200)
-- [ ] Non-2xx HTTP response (404) propagated as status_code without crash
-- [ ] Query parameters embedded in URL are sent and echoed in response
-- [ ] Invalid URL error shows notification with descriptive error message
+- [x] Renders on canvas with URL and API Response handles → `core-components/api-request-component-regression.spec.ts`
+- [x] Inspector fields accept URL and HTTP method values → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute GET request and verify 200 status and output structure → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute POST request and verify POST verb is sent (status 200) → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute PUT request and verify PUT verb is sent (status 200) → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute PATCH request and verify PATCH verb is sent (status 200) → `core-components/api-request-component-regression.spec.ts`
+- [x] Execute DELETE request and verify DELETE verb is sent (status 200) → `core-components/api-request-component-regression.spec.ts`
+- [x] Non-2xx HTTP response (404) propagated as status_code without crash → `core-components/api-request-component-regression.spec.ts`
+- [x] Query parameters embedded in URL are sent and echoed in response → `core-components/api-request-component-regression.spec.ts`
+- [x] Invalid URL error shows notification with descriptive error message → `core-components/api-request-component-regression.spec.ts`
+- [x] Headers table accepts key + value cell entries via inspector → `core-components/api-request-component-regression.spec.ts`
+- [x] cURL tab switches mode and exposes the cURL input field → `core-components/api-request-component-regression.spec.ts`
+- [x] cURL parser auto-fills URL field and executes the GET, returning 200 → `core-components/api-request-component-regression.spec.ts`
+- [ ] Body table key + value entries (body field is `advanced=True`)
 - [ ] Flow state persisted in database after autosave
-- [-] Executar request PUT e verificar que o verbo PUT é enviado → pendente
-- [-] Executar request PATCH e verificar que o verbo PATCH é enviado → pendente
-- [-] Executar request DELETE e verificar que o verbo DELETE é enviado → pendente
-- [-] Adicionar headers e body (key-value pairs no inspector) → pendente
-- [-] Tab cURL alterna modo e exibe campo de input cURL → pendente
-- [-] Modo cURL executa GET e retorna 200 com dados de resposta → pendente
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
-- [x] Flow salvo no banco contém o nó Webhook com endpoint="BACKEND_URL" → `core-components/webhook-component-regression.spec.ts`
+- [!] Flow salvo no banco contém o nó Webhook com endpoint="BACKEND_URL" → `core-components/webhook-component-regression.spec.ts` (fixme — upstream Accept-Language TypeError, see #165 item 2)
 - [x] Campo cURL no inspector mostra URL válida com flow ID e flags corretas (`-X POST`, `Content-Type`, `-d`) → `core-components/webhook-component-regression.spec.ts`
 - [x] Data field vazia retorna objeto Data vazio `{}` ao executar → `core-components/webhook-component-regression.spec.ts`
 - [x] Campo endpoint (`str_endpoint`) renderiza a URL real do webhook → `core-components/webhook-component-regression.spec.ts`
@@ -202,7 +223,7 @@
 - [x] Output inspection buttons present for item and done → `core-components/loop-component-regression.spec.ts`
 - [x] Run without connections shows "Flow build failed" notification without crash → `core-components/loop-component-regression.spec.ts`
 - [x] Loop iterates over 2 ArXiv articles (Research Translation Loop template) and aggregates response in Playground → `core-components/loop-component-regression.spec.ts`
-- [ ] Loop stops when exit condition is met
+- [x] Loop stops when exit condition is met → `core-components/loop-component-regression.spec.ts`
 
 #### 3.7 Nested / Grouping
 - [-] Nested component
@@ -290,7 +311,6 @@
 - [x] Memory Chatbot template loads with correct node and edge structure → `llm-agents/memory-history-regression.spec.ts`
 - [x] Message History retains context between messages in the same Playground session → `llm-agents/memory-history-regression.spec.ts`
 - [x] Session isolation: distinct session IDs have independent histories → `llm-agents/memory-history-regression.spec.ts`
-- [x] Messages persist after closing and reopening the Playground → `llm-agents/memory-history-regression.spec.ts`
 - [x] Without Message History, LLM does not retain context between messages → `llm-agents/memory-history-regression.spec.ts`
 - [ ] n_messages parameter limits the number of retained messages → `agent-n-messages-limit.spec.ts` (**confirmed bug**: value saved correctly by frontend but ignored in backend execution)
 - [ ] Agent uses custom `context_id` — continuity between session messages → `agent-context-id-continuity.spec.ts`
@@ -322,11 +342,11 @@
 > See `helpers/provider-setup/` for the setup helpers of each provider.
 
 #### 7.1 Provider Collection and Validation
-- [x] Validate API keys of all providers via real call → `collect-models.spec.ts`
-- [x] Collect available models per provider via UI → `collect-models.spec.ts`
+- [-] Validate API keys of all providers via real call → `collect-models.spec.ts`
+- [-] Collect available models per provider via UI → `collect-models.spec.ts`
 - [x] Inactive providers appear as skipped in tests with reason → `agent-component-regression.spec.ts`
-- [x] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
-- [x] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
+- [-] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
+- [-] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
 
 #### 7.2 OpenAI
 - [-] Configure OpenAI API key via GlobalVariables
@@ -396,28 +416,38 @@
 ### core-functionality/playground/ — Chat, Rendering and Output Tests
 
 #### 9.1 Chat Interactions
-- [-] Open Playground → (via playground-btn-flow-io)
-- [-] Send text message → (via input-chat-playground + button-send)
-- [-] Receive LLM response → (via div-chat-message)
-- [-] Response streaming (SSE) → `withEventDeliveryModes` (streaming mode)
-- [-] Response polling → `withEventDeliveryModes` (polling mode)
-- [-] Direct response → `withEventDeliveryModes` (direct mode)
+- [x] Open Playground → exercised by every `@stable` playground spec via `playground-btn-flow-io`
+- [x] Send text message → exercised by `playground-ux.spec.ts`, `playground-message-edit.spec.ts`, `playground-session-nav.spec.ts` and others
+- [x] Receive LLM response → exercised by all specs that send a message via ChatInput → ChatOutput echo flow
+- [-] Response streaming (SSE) → no dedicated spec; exercised implicitly by `playground-ux.spec.ts`
+- [-] Response polling → no dedicated spec
+- [-] Direct response → no dedicated spec
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
-- [x] Send empty message — should disable send button → `playground/playground-empty-message-send.spec.ts` (**BUG: button enabled even when empty**)
+- [x] Send empty message — send button stays enabled by design (only disabled while a file upload is in progress) → `playground/playground-empty-message-send.spec.ts`
 - [ ] Send message while response is in progress — should wait or queue
 - [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
+- [x] Attach non-image file (.txt) in chat — preview tile renders (delete button visible, no `<img>`) → `core-functionality/playground/playground-non-image-attachment.spec.ts`
+- [x] Non-image file rendered in user message after sending — truncated filename appears, no image emitted → `core-functionality/playground/playground-non-image-attachment.spec.ts`
+- [x] Attach multiple images — one compact preview per file is shown in the input → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Remove one of two attachments — the remaining preview stays intact → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Send with multiple attachments — all images render in the user message → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Remove the only attachment — input returns to empty state and text-only send still works → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Swap attachment (remove A, attach B) — only B is sent → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] ChatInput Input Text pre-fills the playground textarea on first open → `core-functionality/playground/playground-input-text-prefill.spec.ts`
+- [x] ChatInput Input Text re-pre-fills the textarea on a new session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
+- [x] Pre-filled Input Text can be sent as the first message of the session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 
 #### 9.2 History and Session
-- [-] Configure custom session ID → `playground/playground-session-id.spec.ts`
-- [-] Switch session ID — starts new conversation → `playground/playground-session-id.spec.ts`
+- [x] Configure custom session ID → `core-functionality/playground/playground-session-id.spec.ts`
+- [x] Switch session — messages are isolated per session → `core-functionality/playground/playground-session-nav.spec.ts`
 - [x] Edit user message — hover reveals edit button, saved changes replace original text → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Cancel message edit — original text is preserved → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Message edited in playground is reflected in Session Logs → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Clear chat removes all messages from Default Session (clear-chat-option via header menu) → `core-functionality/playground/playground-session-clear.spec.ts`
 - [x] Clear full session history (Default session) → `playground/playground-clear-history.spec.ts`
 - [x] Delete user-created session → `playground/playground-clear-history.spec.ts`
-- [-] History persists when reopening Playground → `playground/playground-history-persist.spec.ts`
+- [x] History persists when reopening Playground → `llm-agents/memory-history-regression.spec.ts`, `core-functionality/playground/playground-history-persist.spec.ts`
 - [x] Rename unavailable for the Default Session → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename unavailable for a session with no messages → `core-functionality/playground/playground-session-rename.spec.ts`
 - [x] Rename available and functional for a session with messages (Enter confirms, Escape cancels) → `core-functionality/playground/playground-session-rename.spec.ts`
@@ -431,13 +461,13 @@
 
 #### 9.3 Advanced Playground Features
 - [x] Playground fullscreen mode → `playground/playground-fullscreen.spec.ts`
-- [-] Shareable Playground — URL generation validated (switch enables sharing, href matches /playground/uuid) → `playground/playground-shareable-url.spec.ts`
-- [-] Voice mode (voice assistant)
+- [x] Shareable Playground — URL generation validated (switch enables sharing, href matches /playground/uuid) → `playground/playground-shareable-url.spec.ts`
+- [!] Voice mode (voice assistant) → `ui-ux/voice-assistant.spec.ts` (**all tests unconditionally skipped — spec is a stub**)
 - [x] Stop button in Playground → `core-functionality/playground/stop-button-playground.spec.ts`
 
 #### 9.4 Output Modal
-- [-] Copy component output
-- [-] Copy button in output
+- [x] Copy component output → `core-functionality/playground/output-modal-copy-button.spec.ts`
+- [x] Copy button in output → `core-functionality/playground/output-modal-copy-button.spec.ts`
 
 #### 9.5 Structured Data Output
 - [x] JSON Data output renders as code block → `core-functionality/playground/playground-output-data.spec.ts`
@@ -524,11 +554,11 @@
 #### 12.1 Create Flow
 - [-] Create blank flow
 - [-] Create flow from template
-- [-] Create flow by duplicating an existing one
+- [x] Create flow by duplicating an existing one → `flow-functionality/duplicate-flow.spec.ts`
 - [-] Create flow via JSON file import
 
 #### 12.2 View and Edit Flow
-- [-] Rename flow via editor header
+- [x] Rename flow via editor header → `flow-functionality/flow-rename-header.spec.ts`
 - [-] Edit flow name and description
 - [-] Flow auto-save on changes
 - [-] Flow settings
@@ -548,7 +578,7 @@
 - [-] Lock flow — prevents editing
 - [-] Unlock flow
 - [-] Move flow between folders via API
-- [-] Publish flow
+- [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [-] Save flow components as template
 
 #### 12.6 Flow Execution
@@ -566,12 +596,15 @@
 ### mcp/client/ — Tool and Context Consumption
 
 #### 13.1 MCP Client
-- [ ] Configure connection with external MCP server (stdio or HTTP)
-- [ ] List available tools via MCP protocol
-- [ ] Execute MCP server tool and receive result in flow
+- [-] Configure connection with external MCP server (stdio or HTTP) → `mcp/client/mcp-client-regression.spec.ts`
+- [-] List available tools via MCP protocol → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Execute MCP server tool and receive result in flow → `mcp/client/mcp-client-regression.spec.ts`
+- [-] MCP server connection error — unreachable server produces empty tool dropdown → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Configure connection via HTTP form tab → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
 - [ ] List available resources via MCP protocol
 - [ ] Consume resource URI and inject content into flow
-- [ ] MCP server connection error displays clear message
 
 ---
 
@@ -612,7 +645,8 @@
 
 #### 15.4 Node Manipulation
 - [-] Delete component from canvas
-- [-] Copy and paste component (Ctrl+C / Ctrl+V)
+- [x] Copy and paste ChatOutput component (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
+- [x] Copy and paste Prompt Template (component with dynamic ports) (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [-] Canvas keyboard shortcuts
 - [-] Minimize component on canvas
 - [-] Move component within canvas
@@ -661,25 +695,34 @@
 
 ## Coverage Summary — Test Automation Coverage
 
-| Module | Total | Covered | Partial | Not covered |
-|--------|-------|----------|---------|--------------|
-| `api/` — Auth + Variables | 17 | 15 | 0 | 2 |
-| `api/` — REST API | 17 | 17 | 0 | 0 |
-| `core-components/` — Config | 20 | 18 | 0 | 2 |
-| `core-components/` — Components | 22 | 16 | 0 | 6 |
-| `core-functionality/playground/` | 27 | 24 | 0 | 3 |
-| `core-functionality/observability-monitoring/` | 16 | 13 | 0 | 3 |
-| `core-functionality/model-provider/` | 21 | 13 | 0 | 8 |
-| `core-functionality/llm-agents/` | 15 | 8 | 0 | 7 |
-| `core-functionality/knowledge-ingestion/` | 8 | 4 | 0 | 4 |
-| `flow-functionality/` | 20 | 18 | 1 | 1 |
-| `mcp/server/` | 7 | 3 | 0 | 4 |
-| `mcp/client/` | 6 | 0 | 0 | 6 |
-| `project-management/` | 11 | 9 | 1 | 1 |
-| `templates/` | 35 | 33 | 0 | 2 |
-| `ui-ux/` — Canvas | 30 | 28 | 1 | 1 |
-| `ui-ux/` — Settings | 4 | 4 | 0 | 0 |
-| **TOTAL** | **267** | **214 (80%)** | **3** | **50 (19%)** |
+> **Validated** = test carries the `@stable` tag.
+> **Needs validation** = automated but not yet `@stable` (bug, flake under investigation, or pending team review).
+
+| Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
+|--------|-------|-----------------|------------------------|---------------------|---------------------|
+| `api/flows/` — REST API | 21 | 3 | 18 | 0 | 0 |
+| `core-components/` — Component Config | 22 | 1 | 19 | 0 | 2 |
+| `core-components/` — Core Components | 63 | 55 | 3 | 1 | 4 |
+| `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
+| `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
+| `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
+| `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
+| `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
+| `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
+| `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
+| `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
+| `flow-functionality/` | 23 | 3 | 18 | 2 | 0 |
+| `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
+| `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
+| `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
+| `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
+| **TOTAL** | **404** | **127 (31%)** | **216 (53%)** | **7 (2%)** | **54 (13%)** |
+
+> Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
+> `@stable` tag is per-`test()`, and a single `@stable` test may map to
+> several bullets via `test.step()` (e.g. the agent suite covers 7
+> bullets). The canonical list of `@stable` `test()` calls is in
+> **Phase 0 — Validated** below.
 
 ---
 
@@ -689,40 +732,152 @@
 
 ### 🟢 Phase 0 — Validated
 
-> Tests with confirmed coverage (`[x]`).
+> 127 `test()` calls carrying the `@stable` tag, distributed across 43 spec
+> files. Run weekly by the stable workflow. New specs are merged with all
+> tests tagged `@stable`; the tag is removed per-test during weekly triage
+> when a failure is classified as a test bug — so a spec may end up with a
+> mix of tagged and untagged tests over time.
 
-#### Pages & Helpers
-- [x] `SimpleAgentTemplatePage` — loads Simple Agent template with configurable provider and model → `pages/SimpleAgentTemplatePage.ts`
-- [x] `SettingsPage` — navigation to the settings page via user menu → `pages/SettingsPage.ts`
-- [x] OpenAI Provider Setup → `helpers/provider-setup/setup-openai.ts`
-- [x] Anthropic Provider Setup → `helpers/provider-setup/setup-anthropic.ts`
-- [x] Google Generative AI Provider Setup → `helpers/provider-setup/setup-google.ts`
-- [x] Provider Map (`providerSetupMap`) → `helpers/provider-setup/index.ts`
-- [x] Provider validation via API (credit, valid key) → `helpers/provider-setup/collect-models.ts`
-- [x] Collection of available models per provider via UI → `helpers/provider-setup/collect-models.ts`
-- [x] Load Simple Agent with variable provider and model → `pages/SimpleAgentTemplatePage.ts`
-- [x] Load Simple Agent with OpenAI (wrapper) → `helpers/flows/load-simple-agent-with-openai.ts`
+#### api/flows/
+- [x] GET /health_check returns 200 with status ok → `api-health-check.spec.ts`
+- [x] GET /health_check returns db ok → `api-health-check.spec.ts`
+- [x] GET /health_check responds within 5 seconds → `api-health-check.spec.ts`
+- [x] GET /health_check response has correct content-type → `api-health-check.spec.ts`
+- [x] POST /api/v1/flows/ with invalid Bearer token returns 401, 403, or 422 → `api-invalid-key.spec.ts`
+- [x] GET /api/v1/flows/ without Authorization header returns 401 or 403 → `api-invalid-key.spec.ts`
+- [x] GET /api/v1/flows/{id} with invalid Bearer token returns 401 or 403 → `api-invalid-key.spec.ts`
+- [x] POST /api/v1/run/{id} with invalid x-api-key returns 401 or 403 → `api-invalid-key.spec.ts`
+- [x] DELETE /api/v1/flows/{id} without Authorization header returns 401 or 403 → `api-invalid-key.spec.ts`
+- [x] PATCH /api/v1/flows/{id} with wrong token does not update the flow → `api-invalid-key.spec.ts`
+
+#### core-components/
+- [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
+- [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
+- [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
+- [x] API Request component — GET request returns 200 and output Data contains all required fields → `api-request-component-regression.spec.ts`
+- [x] API Request component — POST method executes POST verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — PATCH method executes PATCH verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — non-2xx HTTP response propagates status_code without crashing → `api-request-component-regression.spec.ts`
+- [x] API Request component — query parameters embedded in URL are sent and echoed → `api-request-component-regression.spec.ts`
+- [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
+- [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
+- [x] API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200 → `api-request-component-regression.spec.ts`
+- [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input → Chat Output — inspector-attached file is rendered in the Playground message → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input — clicking the dismiss button on the Files field clears the value → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input component — renders on canvas with Message output handle and Input Text field → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Output component — renders on canvas with Inputs handle and run button → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input → Chat Output connection is accepted on canvas (Message ↔ Message) → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
+- [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
+- [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
+- [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
+- [x] Loop component — stops after exhausting input DataFrame and emits aggregated done → `loop-component-regression.spec.ts`
+- [x] Prompt Template component — renders on canvas with output handle → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — variables in curly braces generate dynamic input handles → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — removing a variable removes its input handle → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — replacing a variable updates handles accordingly → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — clearing the template removes all dynamic handles → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — modal edits persist in UI and in saved flow → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template — use_double_brackets toggle is exposed in the InspectionPanel with its upstream display name → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — default toggle state is OFF; f-string mode extracts {var} and treats {{var}} as literal → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — enabling toggle switches parser to mustache mode; {{var}} creates handle and {var} is ignored → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — disabling toggle reverts to f-string mode and variables are re-extracted under the new parser → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — use_double_brackets value persists in the autosaved flow → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — `{var.attr}` (dot notation) is rejected with an error toast and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
+- [x] Prompt Template — `{var name}` (space inside identifier) is rejected with an error toast and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
+- [x] Prompt Template — `{var,name}` (comma inside identifier) is rejected with an error toast and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
+- [x] Prompt Template — `{1var}` (leading digit) is rejected with an error toast and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
+- [x] Prompt Template — `{}` (empty braces) is accepted by the parser and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
+- [x] Prompt Template — repeating the same variable produces exactly one handle (deduplication contract) → `prompt-template-invalid-patterns-regression.spec.ts`
+- [x] User should be able to use components as tool → `tool-mode.spec.ts`
+- [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
+- [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
+- [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
+- [x] Webhook component — copy button copies the endpoint URL to clipboard → `webhook-component-regression.spec.ts`
+- [x] Webhook component — POST to non-existent flow name returns 404 → `webhook-component-regression.spec.ts`
+- [x] Webhook component — valid JSON payload is propagated as structured Data output → `webhook-component-regression.spec.ts`
+- [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
+- [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
 #### core-functionality/llm-agents/
-- [x] Agent executes with multiple providers and models (OpenAI, Anthropic, Google) → `agent-component-regression.spec.ts`
-- [x] Agent displays valid response to simple question → `agent-component-regression.spec.ts`
-- [x] Agent responds without connected tools (regression ID 147) → `agent-component-regression.spec.ts`
-- [x] Stop button interrupts agent execution → `agent-component-regression.spec.ts`
-- [x] Agent responds to multiple consecutive messages in the same session → `agent-component-regression.spec.ts`
-- [x] Execution duration displayed after run with tools → `agent-component-regression.spec.ts`
-- [x] Memory Chatbot template loads with correct node and edge structure → `memory-history-regression.spec.ts`
-- [x] Message History retains context between messages in the same session → `memory-history-regression.spec.ts`
-- [x] Session isolation: distinct session IDs have independent histories → `memory-history-regression.spec.ts`
-- [x] Messages persist after closing and reopening the Playground → `memory-history-regression.spec.ts`
-- [x] Without Message History, LLM does not retain context between messages → `memory-history-regression.spec.ts`
+- [x] agent interaction suite → `agent-component-regression.spec.ts`
+- [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
+- [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
+- [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
+- [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
+- [x] message history context retention suite → `memory-history-regression.spec.ts`
+- [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
+- [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
 
-#### core-functionality/model-provider/
-- [x] Validate API keys of all providers via real call → `collect-models.spec.ts`
-- [x] Collect available models per provider via UI → `collect-models.spec.ts`
-- [x] Inactive providers appear as skipped in tests with reason → `agent-component-regression.spec.ts`
+#### core-functionality/playground/
+- [x] copy button copies Text Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
+- [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
+- [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
+- [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
+- [x] playground input must return to empty state after removing the only attachment → `playground-attachments-management.spec.ts`
+- [x] playground swap flow must send only the second image when the first is removed before attaching the second → `playground-attachments-management.spec.ts`
+- [x] selecting an individual session checkbox must reveal the bulk-delete-button → `playground-bulk-delete.spec.ts`
+- [x] select-all-checkbox must select all non-default sessions → `playground-bulk-delete.spec.ts`
+- [x] bulk-delete-button must remove all selected sessions from the sidebar → `playground-bulk-delete.spec.ts`
+- [x] clear chat on Default session must remove messages but keep the session → `playground-clear-history.spec.ts`
+- [x] deleting a user-created session must remove it and return to Default session → `playground-clear-history.spec.ts`
+- [x] send button stays enabled regardless of input content → `playground-empty-message-send.spec.ts`
+- [x] clearing the input after typing leaves the field empty → `playground-empty-message-send.spec.ts`
+- [x] playground opens in fullscreen with chat input visible → `playground-fullscreen.spec.ts`
+- [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
+- [x] messages sent in playground must persist after closing and reopening → `playground-history-persist.spec.ts`
+- [x] playground opens with chat textarea pre-filled from ChatInput Input Text → `playground-input-text-prefill.spec.ts`
+- [x] creating a new session re-applies the Input Text pre-fill → `playground-input-text-prefill.spec.ts`
+- [x] pre-filled value is sent as the first message of the session → `playground-input-text-prefill.spec.ts`
+- [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
+- [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
+- [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
+- [x] message-logs-option must open the Session Logs modal for the active session → `playground-message-logs.spec.ts`
+- [x] selecting messages in the log table and deleting them must reduce the row count → `playground-message-logs.spec.ts`
+- [x] playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file → `playground-non-image-attachment.spec.ts`
+- [x] playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt → `playground-non-image-attachment.spec.ts`
+- [x] playground must render JSON Data output as a code block → `playground-output-data.spec.ts`
+- [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
+- [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
+- [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
+- [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
+- [x] session ID input accepts a custom value → `playground-session-id.spec.ts`
+- [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
+- [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
+- [x] rename option must not be available for the Default Session → `playground-session-rename.spec.ts`
+- [x] rename option must not be available for a session with no messages → `playground-session-rename.spec.ts`
+- [x] rename option must be available and functional for a session with messages → `playground-session-rename.spec.ts`
+- [x] Shareable playground URL is generated when publishing is enabled → `playground-shareable-url.spec.ts`
+- [x] user message must appear instantly in playground before AI responds → `playground-ux.spec.ts`
+- [x] playground must scroll to latest message after sending → `playground-ux.spec.ts`
+- [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
+- [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
-#### core-functionality/templates/
-- [x] Memory Chatbot → `memory-history-regression.spec.ts`
+#### flow-functionality/
+- [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+- [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+- [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
+- [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
+- [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
+- [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
+- [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
+- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
+- [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
+
+#### mcp/client/
+- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
+- [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
+- [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
+- [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
+
+#### ui-ux/
+- [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 
 ---
 
@@ -732,15 +887,16 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/` — Auth + Variables | 18 | 1 |
-| `api/` — REST API | 21 | 0 |
-| `core-components/` — Components | 36 | 11 |
-| `core-functionality/llm-agents/` | 2 | 15 |
-| `core-functionality/model-provider/` | 16 | 8 |
-| `core-functionality/playground/` | 17 | 3 |
-| `mcp/client/` | 0 | 6 |
+| `api/flows/` — REST API | 18 | 0 |
+| `core-components/` — Component Config | 19 | 2 |
+| `core-components/` — Core Components | 3 | 4 |
+| `core-functionality/auth/` | 18 | 1 |
+| `core-functionality/llm-agents/` | 2 | 25 |
+| `core-functionality/model-provider/` | 18 | 9 |
+| `core-functionality/playground/` | 3 | 1 |
+| `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
-| `ui-ux/` — Canvas | 43 | 1 |
+| `ui-ux/` — Canvas | 39 | 1 |
 
 ---
 
@@ -752,7 +908,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 12 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 23 | 0 |
-| `core-functionality/project-management/` | 11 | 0 |
-| `core-functionality/templates/` | 34 | 0 |
-| `ui-ux/` — Settings | 5 | 0 |
+| `flow-functionality/` | 18 | 0 |
+| `core-functionality/project-management/` | 10 | 0 |
+| `core-functionality/templates/` | 39 | 0 |
+| `ui-ux/` — Settings | 3 | 0 |

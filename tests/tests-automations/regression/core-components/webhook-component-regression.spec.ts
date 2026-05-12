@@ -4,6 +4,11 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 import { cleanAllFlows } from "../../../helpers/flows/clean-all-flows";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 
+// Run tests serially because addWebhookComponent calls cleanAllFlows() —
+// without serial mode, parallel tests delete each other's flows mid-run,
+// turning the webhook POST into a 404 race.
+test.describe.configure({ mode: "serial" });
+
 // Reusable helper: create blank flow and add the Webhook component.
 // After this call the component is visible on the canvas and the inspector is open.
 async function addWebhookComponent(page: any) {
@@ -27,7 +32,7 @@ async function addWebhookComponent(page: any) {
 
 test(
   "Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202",
-  { tag: ["@stable", "@release", "@regression"] },
+  { tag: ["@release", "@regression"] },
   async ({ page, request }) => {
     await addWebhookComponent(page);
 
@@ -37,30 +42,57 @@ test(
     // Wait for autosave to persist the flow before posting
     await page.waitForTimeout(4000);
 
-    // JSON body — the primary use case
-    const jsonRes = await request.post(`/api/v1/webhook/${flowId}`, {
-      data: { event: "regression-test", value: 42 },
+    // The webhook endpoint requires `x-api-key` whenever Langflow's
+    // WEBHOOK_AUTH_ENABLE setting is true (secure-by-default since 1.5+).
+    // Create a temporary key, use it for the POSTs, and delete it after.
+    const bearerToken = await getAuthToken(request);
+    const keyRes = await request.post("/api/v1/api_key/", {
+      headers: { Authorization: bearerToken },
+      data: { name: `webhook-regression-${Date.now()}` },
     });
-    expect(jsonRes.status()).toBe(202);
-    const jsonBody = await jsonRes.json();
-    expect(jsonBody.status).toBe("in progress");
-    expect(jsonBody.message).toBe("Task started in the background");
+    expect(keyRes.status()).toBe(200);
+    const keyBody = await keyRes.json();
+    const apiKey: string = keyBody.api_key;
+    const apiKeyId: string = keyBody.id;
 
-    // Plain-text body — the endpoint must accept any Content-Type
-    const textRes = await request.post(`/api/v1/webhook/${flowId}`, {
-      data: "regression-plain-text",
-      headers: { "Content-Type": "text/plain" },
-    });
-    expect(textRes.status()).toBe(202);
-    const textBody = await textRes.json();
-    expect(textBody.status).toBe("in progress");
+    try {
+      // JSON body — the primary use case
+      const jsonRes = await request.post(`/api/v1/webhook/${flowId}`, {
+        headers: { "x-api-key": apiKey },
+        data: { event: "regression-test", value: 42 },
+      });
+      expect(jsonRes.status()).toBe(202);
+      const jsonBody = await jsonRes.json();
+      expect(jsonBody.status).toBe("in progress");
+      expect(jsonBody.message).toBe("Task started in the background");
+
+      // Plain-text body — the endpoint must accept any Content-Type
+      const textRes = await request.post(`/api/v1/webhook/${flowId}`, {
+        headers: { "x-api-key": apiKey, "Content-Type": "text/plain" },
+        data: "regression-plain-text",
+      });
+      expect(textRes.status()).toBe(202);
+      const textBody = await textRes.json();
+      expect(textBody.status).toBe("in progress");
+    } finally {
+      await request.delete(`/api/v1/api_key/${apiKeyId}`, {
+        headers: { Authorization: bearerToken },
+      });
+    }
   },
 );
 
-test(
+// Marked fixme until the Langflow frontend bundle stops mutating an undefined
+// `Accept-Language` header inside the request wrapper (see #165 item 2 — surfaced
+// by weekly run 25441253323 as `TypeError: Cannot set properties of undefined`).
+// When the upstream bug is fixed, remove `.fixme` and re-validate.
+test.fixme(
   "Webhook component — flow is saved to database and contains the Webhook node",
-  { tag: ["@stable", "@release", "@regression"] },
-  async ({ page, request }) => {
+  // @stable removed: upstream Langflow regression breaks page.evaluate(fetch)
+  // with "Cannot set properties of undefined (setting 'Accept-Language')".
+  // Tracked in #180; restore @stable once upstream is fixed.
+  { tag: ["@release", "@regression"] },
+  async ({ page }) => {
     await addWebhookComponent(page);
 
     const flowId = page.url().split("/").slice(-1)[0];

@@ -1,6 +1,8 @@
 name: "Langflow Migration Test: Latest → Nightly"
 
 on:
+  schedule:
+    - cron: "0 7 * * *" # 04:00 BRT (UTC-3)
   workflow_dispatch:
 
 env:
@@ -11,6 +13,13 @@ env:
   PG_DB: langflow
   STATE_FILE: /tmp/migration-test-state.json
   REPORT_FILE: /tmp/migration-report.md
+  # Fixed key shared by both containers so credentials encrypted by latest
+  # can be decrypted by nightly after DB migration.
+  LANGFLOW_SECRET_KEY: "migration-test-fixed-secret-32chars!!"
+
+permissions:
+  contents: read
+  issues: write
 
 jobs:
   migration-test:
@@ -45,6 +54,17 @@ jobs:
           pip install requests playwright pytest pytest-playwright
           playwright install chromium --with-deps
 
+      - name: Generate ephemeral Fernet key for this run
+        run: |
+          python - <<'PY'
+          import base64
+          import os
+
+          key = base64.urlsafe_b64encode(os.urandom(32)).decode()
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as github_env:
+              github_env.write(f"LANGFLOW_SECRET_KEY={key}\n")
+          PY
+
       # ── Phase 1: Langflow Latest ──────────────────────────────
       - name: Pull Langflow latest
         run: |
@@ -58,9 +78,11 @@ jobs:
             --network host \
             -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
             -e LANGFLOW_AUTO_LOGIN=true \
+            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
+            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
             langflowai/langflow:latest
 
       - name: Wait for Langflow latest
@@ -91,9 +113,11 @@ jobs:
             --network host \
             -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
             -e LANGFLOW_AUTO_LOGIN=true \
+            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
             -e LANGFLOW_SUPERUSER=langflow \
             -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
             -e LANGFLOW_STORE=false \
+            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
             langflowai/langflow-nightly:latest
 
       - name: Wait for Langflow nightly (includes migration)
@@ -138,6 +162,43 @@ jobs:
             /tmp/latest-digest.txt
             /tmp/nightly-digest.txt
 
+      - name: Cleanup containers
+        if: always()
+        run: docker stop langflow 2>/dev/null; docker rm langflow 2>/dev/null; true
+
+      - name: Close issue on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'migration-test',
+              state: 'open',
+            });
+            if (existing.length > 0) {
+              const issue = existing[0];
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: [
+                  `## ✅ Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
+                  '',
+                  'Migration test passed. Closing this issue.',
+                  '',
+                  `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+                ].join('\n'),
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+            }
+
       - name: Create or update issue on failure
         if: failure()
         uses: actions/github-script@v7
@@ -164,6 +225,8 @@ jobs:
               report,
               '',
               `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              '',
+              '/cc @lice-reis',
             ].join('\n');
 
             if (existing.length > 0) {
