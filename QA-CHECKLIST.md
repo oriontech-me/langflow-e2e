@@ -700,7 +700,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 2 | 19 | 0 | 0 |
+| `api/flows/` — REST API | 21 | 3 | 18 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 1 | 19 | 0 | 2 |
 | `core-components/` — Core Components | 63 | 55 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
@@ -716,7 +716,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **404** | **126 (31%)** | **217 (54%)** | **7 (2%)** | **54 (13%)** |
+| **TOTAL** | **404** | **127 (31%)** | **216 (53%)** | **7 (2%)** | **54 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -732,7 +732,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 126 `test()` calls carrying the `@stable` tag, distributed across 42 spec
+> 127 `test()` calls carrying the `@stable` tag, distributed across 43 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -862,6 +862,7 @@
 #### flow-functionality/
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+- [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
@@ -886,7 +887,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 19 | 0 |
+| `api/flows/` — REST API | 18 | 0 |
 | `core-components/` — Component Config | 19 | 2 |
 | `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 18 | 1 |
