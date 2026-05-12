@@ -697,7 +697,7 @@
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
-| `core-functionality/playground/` | 46 | 37 | 7 | 1 | 1 |
+| `core-functionality/playground/` | 48 | 39 | 7 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
@@ -705,7 +705,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **391** | **107 (27%)** | **219 (56%)** | **6 (2%)** | **59 (15%)** |
+| **TOTAL** | **393** | **109 (28%)** | **219 (56%)** | **6 (2%)** | **59 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -721,7 +721,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 94 `test()` calls carrying the `@stable` tag, distributed across 30 spec
+> 96 `test()` calls carrying the `@stable` tag, distributed across 31 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -809,6 +809,8 @@
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
 - [x] message-logs-option must open the Session Logs modal for the active session → `playground-message-logs.spec.ts`
 - [x] selecting messages in the log table and deleting them must reduce the row count → `playground-message-logs.spec.ts`
+- [x] playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file → `playground-non-image-attachment.spec.ts`
+- [x] playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt → `playground-non-image-attachment.spec.ts`
 - [x] playground must render JSON Data output as a code block → `playground-output-data.spec.ts`
 - [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
