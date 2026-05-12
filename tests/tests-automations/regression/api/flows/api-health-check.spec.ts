@@ -6,7 +6,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 test.describe("API Health Check", () => {
   test(
     "GET /health_check returns 200 with status ok",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const response = await request.get("/health_check");
 
@@ -20,7 +20,7 @@ test.describe("API Health Check", () => {
 
   test(
     "GET /health_check returns db ok",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const response = await request.get("/health_check");
 
@@ -34,7 +34,7 @@ test.describe("API Health Check", () => {
 
   test(
     "GET /health_check responds within 5 seconds",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const start = Date.now();
       const response = await request.get("/health_check");
@@ -47,7 +47,7 @@ test.describe("API Health Check", () => {
 
   test(
     "GET /health_check response has correct content-type",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const response = await request.get("/health_check");
 
