@@ -145,22 +145,27 @@ async function runMustacheRejectionContract(
   await test.step(
     "Error toast surfaces the upstream ValueError with the expected fragment",
     async () => {
-      // The toast auto-dismisses after 5s — assert it before any other wait.
-      // `errors.prompt` title is constant; the detail list carries the upstream
-      // message that names which branch of validate_mustache_template fired.
+      // The toast auto-dismisses after 5s — assert visibility once, then snapshot
+      // the text in a single read so the title + detail assertions can't race the
+      // dismissal timer. `toContainText`'s auto-retry would otherwise poll past
+      // the 5s window if the first call landed near the dismissal boundary.
       const toast = errorToastLocator(page);
       await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(toast).toContainText(ERROR_TOAST_TITLE);
-      await expect(toast).toContainText(detailIncludes);
+      const toastText = (await toast.textContent()) ?? "";
+      expect(toastText).toContain(ERROR_TOAST_TITLE);
+      expect(toastText).toContain(detailIncludes);
     },
   );
 
   await test.step(
     "Modal stays in edit mode so the user can correct the input",
     async () => {
+      // Bound to the toast's 5s lifetime — if `setIsEdit(true)` is broken, the
+      // textarea is already gone by the time we assert. Default expect timeout
+      // is 5s but pinning explicitly makes the intent visible.
       await expect(
         page.getByTestId("modal-mustachepromptarea_mustache_template"),
-      ).toBeVisible();
+      ).toBeVisible({ timeout: 5000 });
       await page.keyboard.press("Escape");
     },
   );
