@@ -1,6 +1,7 @@
-import type { Page } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import { readFileSync } from "fs";
 import { expect, test } from "../../../fixtures/fixtures";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { cleanAllFlows } from "../../../helpers/flows/clean-all-flows";
@@ -229,55 +230,35 @@ function buildFlowBody(texts: string[]): {
   return { flow, name };
 }
 
-// Creates the flow server-side via POST /api/v1/flows/. Avoids the drag-drop
-// upload race observed when using simulateDragAndDrop: API creation is
-// deterministic and skips the home-page card render path.
+// Creates the flow server-side via POST /api/v1/flows/ using Playwright's
+// request context. Avoids the drag-drop upload race observed with
+// simulateDragAndDrop and aligns with the pattern used by cleanAllFlows and
+// the api/flows specs (request context + getAuthToken). Returns the new flow
+// id so callers can target cleanup or deep-link if needed.
 async function createFlowFromAsset(
-  page: Page,
+  request: APIRequestContext,
   flow: Record<string, unknown>,
-): Promise<void> {
-  await page.evaluate(async (flowBody) => {
-    // XMLHttpRequest, not fetch — Langflow's bundled HTTP wrapper has a
-    // TypeError on Accept-Language that affects fetch in some pages.
-    const getToken = () =>
-      new Promise<string | null>((resolve) => {
-        const xhr = new XMLHttpRequest();
-        xhr.open("GET", "/api/v1/auto_login", true);
-        xhr.withCredentials = true;
-        xhr.onload = () => {
-          try {
-            resolve(JSON.parse(xhr.responseText)?.access_token ?? null);
-          } catch {
-            resolve(null);
-          }
-        };
-        xhr.onerror = () => resolve(null);
-        xhr.send();
-      });
-    const token = await getToken();
-    return await new Promise<void>((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-      xhr.open("POST", "/api/v1/flows/", true);
-      xhr.withCredentials = true;
-      xhr.setRequestHeader("Content-Type", "application/json");
-      if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-      xhr.onload = () => {
-        if (xhr.status !== 201)
-          return reject(`status ${xhr.status}: ${xhr.responseText.slice(0, 200)}`);
-        resolve();
-      };
-      xhr.onerror = () => reject("network error");
-      xhr.send(JSON.stringify(flowBody));
-    });
-  }, flow);
+): Promise<string> {
+  const authToken = await getAuthToken(request);
+  const res = await request.post("/api/v1/flows/", {
+    headers: authToken ? { Authorization: authToken } : {},
+    data: flow,
+  });
+  if (res.status() !== 201) {
+    const body = (await res.text()).slice(0, 200);
+    throw new Error(`POST /api/v1/flows/ failed: status ${res.status()}: ${body}`);
+  }
+  const body = (await res.json()) as { id: string };
+  return body.id;
 }
 
 async function runFlowAndReadDoneCount(
   page: Page,
+  request: APIRequestContext,
   texts: string[],
 ): Promise<number> {
   const { flow, name } = buildFlowBody(texts);
-  await createFlowFromAsset(page, flow);
+  await createFlowFromAsset(request, flow);
 
   // Click the flow card on the home page — matches user behavior and is more
   // reliable than deep-linking /flow/{id}, which intermittently redirects to
@@ -318,7 +299,7 @@ async function runFlowAndReadDoneCount(
 test(
   "Loop component — stops after exhausting input DataFrame and emits aggregated done",
   { tag: ["@stable", "@regression", "@components"] },
-  async ({ page }) => {
+  async ({ page, request }) => {
     test.setTimeout(2 * 60 * 1000);
 
     let count: number | undefined;
@@ -326,13 +307,13 @@ test(
     await test.step("N=3: loop iterates 3 times and done aggregates 3 items", async () => {
       await awaitBootstrapTest(page, { skipModal: true });
       await cleanAllFlows(page);
-      count = await runFlowAndReadDoneCount(page, ["a", "b", "c"]);
+      count = await runFlowAndReadDoneCount(page, request, ["a", "b", "c"]);
       expect(count).toBe(3);
     });
 
     await test.step("N=1: edge case — single iteration aggregates 1 item", async () => {
       await cleanAllFlows(page);
-      count = await runFlowAndReadDoneCount(page, ["only"]);
+      count = await runFlowAndReadDoneCount(page, request, ["only"]);
       expect(count).toBe(1);
     });
   },

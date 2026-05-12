@@ -10,7 +10,7 @@ Validates four fundamental behaviors of the Loop component on the Langflow canva
 
 1. **Correct rendering** — the node appears on the canvas with all expected handles (`inputs-left`, `item-left`, `item-right`, `done-right`) and with the output inspection buttons present in the node footer.
 2. **Error path without connections** — running the Loop with no connections shows the "Flow build failed" notification without freezing the interface; the node remains intact and the run button stays accessible.
-3. **Real iteration via template** — using the "Research Translation Loop" template, the Loop iterates over 2 ArXiv articles and produces an aggregated response in the Playground containing at least 2 mentions of "Title", confirming the loop completed both iterations.
+3. **Real iteration via template** — using the "Research Translation Loop" template, the Loop iterates over 2 ArXiv articles and produces an aggregated response in the Playground containing at least 1 mention of "Title". The threshold is intentionally relaxed to `>= 1` (rather than `>= 2`) because the LLM response is non-deterministic — what this assertion proves is that the loop emitted a non-empty aggregated response after running the template end-to-end; iteration count itself is covered deterministically by Test 4.
 4. **Exit-condition termination** — given a deterministic input DataFrame of N rows (no LLM, no network), the Loop's `done` output emits an aggregated DataFrame of exactly N items, proving the loop stops after the input is exhausted. Validated for N=3 and N=1 in the same test.
 
 If any of these tests fails, the Loop component is broken in the product: either in rendering, error handling, or actual iteration cycle execution.
