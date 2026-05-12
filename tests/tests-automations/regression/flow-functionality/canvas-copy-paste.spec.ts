@@ -7,6 +7,10 @@ test.describe("Canvas copy / paste", () => {
 
   test.afterEach(async ({ page }) => {
     if (createdFlowId) {
+      // Navigate to dashboard first — staying on the flow editor while the
+      // flow is deleted causes background polling/WS requests to 404, which
+      // the fixture's backend error monitor would flag as failures.
+      await page.goto("/").catch(() => {});
       await page.request.delete(`/api/v1/flows/${createdFlowId}`);
       createdFlowId = null;
     }
