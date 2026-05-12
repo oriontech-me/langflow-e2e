@@ -36,10 +36,12 @@ test.describe("Output Modal — Copy Button", () => {
 
         const creationResponse = await flowCreationPromise;
         const flowData = await creationResponse.json();
+        // Capture id before asserting format so afterEach can still clean up
+        // if the regex assertion fails on an unexpected id shape.
+        createdFlowId = flowData.id ?? null;
         expect(flowData.id, "flow creation response missing id").toMatch(
           /^[0-9a-f-]{36}$/,
         );
-        createdFlowId = flowData.id;
       });
 
       await test.step("add Text Input and fill its value", async () => {
