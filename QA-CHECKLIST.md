@@ -691,7 +691,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 0 | 21 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 1 | 19 | 0 | 2 |
-| `core-components/` — Core Components | 55 | 48 | 3 | 0 | 4 |
+| `core-components/` — Core Components | 55 | 47 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
@@ -705,7 +705,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **393** | **110 (28%)** | **219 (56%)** | **6 (2%)** | **58 (15%)** |
+| **TOTAL** | **393** | **109 (28%)** | **219 (56%)** | **7 (2%)** | **58 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -767,8 +767,6 @@
 - [x] Prompt Template — disabling toggle reverts to f-string mode and variables are re-extracted under the new parser → `prompt-template-double-brackets-regression.spec.ts`
 - [x] Prompt Template — use_double_brackets value persists in the autosaved flow → `prompt-template-double-brackets-regression.spec.ts`
 - [x] User should be able to use components as tool → `tool-mode.spec.ts`
-- [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
-- [!] Webhook component — flow is saved to database and contains the Webhook node → `webhook-component-regression.spec.ts` (fixme — upstream Accept-Language TypeError, see #165 item 2)
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
 - [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
