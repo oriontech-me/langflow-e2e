@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-05-05
+> **Last updated:** 2026-05-12
 
 ---
 
@@ -134,7 +134,7 @@
 - [-] Edit tab component
 
 #### 2.2 Tool Mode
-- [-] Enable Tool Mode on a component
+- [x] Enable Tool Mode on a component
 - [-] Group components in Tool Mode
 - [-] Edit tools (edit-tools)
 
@@ -153,15 +153,27 @@
 ### 3. Core Components
 
 #### 3.1 Chat Input / Output
-- [-] ChatInput receives user message
-- [-] ChatOutput displays LLM response
-- [-] Chat Input/Output with user authentication
+- [x] ChatInput renders on canvas with Message output handle and Input Text field → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] ChatOutput renders on canvas with Inputs handle and run button → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] ChatInput → ChatOutput connection accepted (Message ↔ Message) → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Input Text propagates from ChatInput to ChatOutput on run → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Sender name override is reflected in the Playground chat message → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Default sender_name is "User" on input and "AI" on output → `core-components/chat-input-output-component-regression.spec.ts`
+- [x] Toggling `showfiles` exposes the Files inspector field on Chat Input → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Uploading a file via the Chat Input inspector populates the Files field → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Inspector-attached file is rendered in the Playground after running ChatInput → ChatOutput → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Dismiss button on the Files field clears the value → `core-components/chat-input-files-field-regression.spec.ts`
 
 #### 3.2 Prompt Template
-- [-] Prompt with variables in curly braces
-- [-] Prompt modal
-- [-] Dynamic port generated when adding a variable to the prompt
-- [-] Removing a variable from the prompt deletes the corresponding port
+- [x] Prompt with variables in curly braces → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Prompt modal opens, accepts edits, and changes persist → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Dynamic port generated when adding a variable to the prompt → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Removing a variable from the prompt deletes the corresponding port → `core-components/prompt-template-component-regression.spec.ts`
+- [x] `use_double_brackets` toggle is exposed in the InspectionPanel with its upstream display name → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] Default toggle state is OFF; f-string mode extracts `{var}` and treats `{{var}}` as literal → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] Enabling toggle switches parser to mustache mode; `{{var}}` creates handle and `{var}` is ignored → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] Disabling toggle reverts to f-string mode and variables are re-extracted under the new parser → `core-components/prompt-template-double-brackets-regression.spec.ts`
+- [x] `use_double_brackets` value persists in the autosaved flow → `core-components/prompt-template-double-brackets-regression.spec.ts`
 
 #### 3.3 API Request (HTTP)
 - [x] Renders on canvas with URL and API Response handles → `core-components/api-request-component-regression.spec.ts`
@@ -182,7 +194,7 @@
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
-- [x] Flow salvo no banco contém o nó Webhook com endpoint="BACKEND_URL" → `core-components/webhook-component-regression.spec.ts`
+- [!] Flow salvo no banco contém o nó Webhook com endpoint="BACKEND_URL" → `core-components/webhook-component-regression.spec.ts` (fixme — upstream Accept-Language TypeError, see #165 item 2)
 - [x] Campo cURL no inspector mostra URL válida com flow ID e flags corretas (`-X POST`, `Content-Type`, `-d`) → `core-components/webhook-component-regression.spec.ts`
 - [x] Data field vazia retorna objeto Data vazio `{}` ao executar → `core-components/webhook-component-regression.spec.ts`
 - [x] Campo endpoint (`str_endpoint`) renderiza a URL real do webhook → `core-components/webhook-component-regression.spec.ts`
@@ -203,7 +215,7 @@
 - [x] Output inspection buttons present for item and done → `core-components/loop-component-regression.spec.ts`
 - [x] Run without connections shows "Flow build failed" notification without crash → `core-components/loop-component-regression.spec.ts`
 - [x] Loop iterates over 2 ArXiv articles (Research Translation Loop template) and aggregates response in Playground → `core-components/loop-component-regression.spec.ts`
-- [ ] Loop stops when exit condition is met
+- [x] Loop stops when exit condition is met → `core-components/loop-component-regression.spec.ts`
 
 #### 3.7 Nested / Grouping
 - [-] Nested component
@@ -403,13 +415,23 @@
 - [-] Response polling → no dedicated spec
 - [-] Direct response → no dedicated spec
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
-- [x] Send empty message — should disable send button → `playground/playground-empty-message-send.spec.ts` (**BUG: button enabled even when empty**)
+- [x] Send empty message — send button stays enabled by design (only disabled while a file upload is in progress) → `playground/playground-empty-message-send.spec.ts`
 - [ ] Send message while response is in progress — should wait or queue
 - [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
+- [x] Attach non-image file (.txt) in chat — preview tile renders (delete button visible, no `<img>`) → `core-functionality/playground/playground-non-image-attachment.spec.ts`
+- [x] Non-image file rendered in user message after sending — truncated filename appears, no image emitted → `core-functionality/playground/playground-non-image-attachment.spec.ts`
+- [x] Attach multiple images — one compact preview per file is shown in the input → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Remove one of two attachments — the remaining preview stays intact → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Send with multiple attachments — all images render in the user message → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Remove the only attachment — input returns to empty state and text-only send still works → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] Swap attachment (remove A, attach B) — only B is sent → `core-functionality/playground/playground-attachments-management.spec.ts`
+- [x] ChatInput Input Text pre-fills the playground textarea on first open → `core-functionality/playground/playground-input-text-prefill.spec.ts`
+- [x] ChatInput Input Text re-pre-fills the textarea on a new session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
+- [x] Pre-filled Input Text can be sent as the first message of the session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 
 #### 9.2 History and Session
-- [-] Configure custom session ID → `playground/playground-session-id.spec.ts` (needs rewrite — see issue)
+- [x] Configure custom session ID → `core-functionality/playground/playground-session-id.spec.ts`
 - [x] Switch session — messages are isolated per session → `core-functionality/playground/playground-session-nav.spec.ts`
 - [x] Edit user message — hover reveals edit button, saved changes replace original text → `core-functionality/playground/playground-message-edit.spec.ts`
 - [x] Cancel message edit — original text is preserved → `core-functionality/playground/playground-message-edit.spec.ts`
@@ -436,8 +458,8 @@
 - [x] Stop button in Playground → `core-functionality/playground/stop-button-playground.spec.ts`
 
 #### 9.4 Output Modal
-- [-] Copy component output → `playground/output-modal-copy-button.spec.ts` (needs rewrite — see issue)
-- [-] Copy button in output → `playground/output-modal-copy-button.spec.ts` (needs rewrite — see issue)
+- [x] Copy component output → `core-functionality/playground/output-modal-copy-button.spec.ts`
+- [x] Copy button in output → `core-functionality/playground/output-modal-copy-button.spec.ts`
 
 #### 9.5 Structured Data Output
 - [x] JSON Data output renders as code block → `core-functionality/playground/playground-output-data.spec.ts`
@@ -612,7 +634,8 @@
 
 #### 15.4 Node Manipulation
 - [-] Delete component from canvas
-- [-] Copy and paste component (Ctrl+C / Ctrl+V)
+- [x] Copy and paste ChatOutput component (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
+- [x] Copy and paste Prompt Template (component with dynamic ports) (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [-] Canvas keyboard shortcuts
 - [-] Minimize component on canvas
 - [-] Move component within canvas
@@ -667,24 +690,28 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 0 | 21 | 0 | 0 |
-| `core-components/` — Component Config | 22 | 0 | 20 | 0 | 2 |
-| `core-components/` — Core Components | 43 | 28 | 10 | 0 | 5 |
+| `core-components/` — Component Config | 22 | 1 | 19 | 0 | 2 |
+| `core-components/` — Core Components | 55 | 47 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
-| `core-functionality/playground/` | 38 | 29 | 7 | 1 | 1 |
+| `core-functionality/playground/` | 48 | 42 | 4 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 23 | 0 | 21 | 2 | 0 |
 | `mcp/client/` | 6 | 0 | 0 | 0 | 6 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
-| `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
+| `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **370** | **77 (21%)** | **228 (62%)** | **6 (2%)** | **59 (16%)** |
+| **TOTAL** | **393** | **112 (28%)** | **216 (55%)** | **7 (2%)** | **58 (15%)** |
 
-> Note: `Validated [x]` = checklist bullets, not unique tests. A single `@stable` test may cover multiple bullets (e.g. the agent suite covers 7 bullets via `test.step()`). The canonical list of 51 unique `@stable` tests is in **Phase 0 — Validated** below.
+> Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
+> `@stable` tag is per-`test()`, and a single `@stable` test may map to
+> several bullets via `test.step()` (e.g. the agent suite covers 7
+> bullets). The canonical list of `@stable` `test()` calls is in
+> **Phase 0 — Validated** below.
 
 ---
 
@@ -694,54 +721,104 @@
 
 ### 🟢 Phase 0 — Validated
 
-> Tests carrying the `@stable` tag — included in the weekly stable workflow. **51 tests across 20 spec files.**
+> 99 `test()` calls carrying the `@stable` tag, distributed across 33 spec
+> files. Run weekly by the stable workflow. New specs are merged with all
+> tests tagged `@stable`; the tag is removed per-test during weekly triage
+> when a failure is classified as a test bug — so a spec may end up with a
+> mix of tagged and untagged tests over time.
 
 #### core-components/
-- [x] Loop component — renders correctly with all handles and output inspection buttons → `core-components/loop-component-regression.spec.ts`
-- [x] Loop component — run without connections shows build failed notification → `core-components/loop-component-regression.spec.ts`
-- [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `core-components/loop-component-regression.spec.ts`
-- [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — flow is saved to database and contains the Webhook node → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — empty data field returns empty Data object → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — endpoint field renders the actual webhook URL → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — copy button copies the endpoint URL to clipboard → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — POST to non-existent flow name returns 404 → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — valid JSON payload is propagated as structured Data output → `core-components/webhook-component-regression.spec.ts`
-- [x] Webhook component — invalid JSON payload is encapsulated in `{payload: ...}` → `core-components/webhook-component-regression.spec.ts`
-- [x] GET `/api/v1/monitor/messages` returns 200 with array response → `core-components/webhook-component-regression.spec.ts`
+- [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
+- [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
+- [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
+- [x] API Request component — GET request returns 200 and output Data contains all required fields → `api-request-component-regression.spec.ts`
+- [x] API Request component — POST method executes POST verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — PATCH method executes PATCH verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — non-2xx HTTP response propagates status_code without crashing → `api-request-component-regression.spec.ts`
+- [x] API Request component — query parameters embedded in URL are sent and echoed → `api-request-component-regression.spec.ts`
+- [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
+- [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
+- [x] API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200 → `api-request-component-regression.spec.ts`
+- [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input → Chat Output — inspector-attached file is rendered in the Playground message → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input — clicking the dismiss button on the Files field clears the value → `chat-input-files-field-regression.spec.ts`
+- [x] Chat Input component — renders on canvas with Message output handle and Input Text field → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Output component — renders on canvas with Inputs handle and run button → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input → Chat Output connection is accepted on canvas (Message ↔ Message) → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
+- [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
+- [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
+- [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
+- [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
+- [x] Loop component — stops after exhausting input DataFrame and emits aggregated done → `loop-component-regression.spec.ts`
+- [x] Prompt Template component — renders on canvas with output handle → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — variables in curly braces generate dynamic input handles → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — removing a variable removes its input handle → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — replacing a variable updates handles accordingly → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — clearing the template removes all dynamic handles → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template component — modal edits persist in UI and in saved flow → `prompt-template-component-regression.spec.ts`
+- [x] Prompt Template — use_double_brackets toggle is exposed in the InspectionPanel with its upstream display name → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — default toggle state is OFF; f-string mode extracts {var} and treats {{var}} as literal → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — enabling toggle switches parser to mustache mode; {{var}} creates handle and {var} is ignored → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — disabling toggle reverts to f-string mode and variables are re-extracted under the new parser → `prompt-template-double-brackets-regression.spec.ts`
+- [x] Prompt Template — use_double_brackets value persists in the autosaved flow → `prompt-template-double-brackets-regression.spec.ts`
+- [x] User should be able to use components as tool → `tool-mode.spec.ts`
+- [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
+- [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
+- [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
+- [x] Webhook component — copy button copies the endpoint URL to clipboard → `webhook-component-regression.spec.ts`
+- [x] Webhook component — POST to non-existent flow name returns 404 → `webhook-component-regression.spec.ts`
+- [x] Webhook component — valid JSON payload is propagated as structured Data output → `webhook-component-regression.spec.ts`
+- [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
+- [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
 #### core-functionality/llm-agents/
-- [x] agent interaction suite (parameterized per provider/model: tools-free response, reasoning steps, streaming + duration, multiple consecutive messages, canvas duration indicator) → `agent-component-regression.spec.ts`
+- [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
 - [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
-- [x] message history context retention suite (within-session retention, accumulation, persistence after reopen) → `memory-history-regression.spec.ts`
+- [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
-- [x] should display error message when using invalid authentication for provider (parameterized per provider) → `provider-invalid-auth-error.spec.ts`
+- [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
 
 #### core-functionality/playground/
+- [x] copy button copies Text Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
+- [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
+- [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
+- [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
+- [x] playground input must return to empty state after removing the only attachment → `playground-attachments-management.spec.ts`
+- [x] playground swap flow must send only the second image when the first is removed before attaching the second → `playground-attachments-management.spec.ts`
 - [x] selecting an individual session checkbox must reveal the bulk-delete-button → `playground-bulk-delete.spec.ts`
 - [x] select-all-checkbox must select all non-default sessions → `playground-bulk-delete.spec.ts`
 - [x] bulk-delete-button must remove all selected sessions from the sidebar → `playground-bulk-delete.spec.ts`
 - [x] clear chat on Default session must remove messages but keep the session → `playground-clear-history.spec.ts`
 - [x] deleting a user-created session must remove it and return to Default session → `playground-clear-history.spec.ts`
-- [x] send button is enabled when input is empty (Langflow bug) → `playground-empty-message-send.spec.ts`
-- [x] send button becomes enabled after typing a message → `playground-empty-message-send.spec.ts`
+- [x] send button stays enabled regardless of input content → `playground-empty-message-send.spec.ts`
 - [x] clearing the input after typing leaves the field empty → `playground-empty-message-send.spec.ts`
 - [x] playground opens in fullscreen with chat input visible → `playground-fullscreen.spec.ts`
 - [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
+- [x] messages sent in playground must persist after closing and reopening → `playground-history-persist.spec.ts`
+- [x] playground opens with chat textarea pre-filled from ChatInput Input Text → `playground-input-text-prefill.spec.ts`
+- [x] creating a new session re-applies the Input Text pre-fill → `playground-input-text-prefill.spec.ts`
+- [x] pre-filled value is sent as the first message of the session → `playground-input-text-prefill.spec.ts`
 - [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
 - [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
 - [x] message-logs-option must open the Session Logs modal for the active session → `playground-message-logs.spec.ts`
 - [x] selecting messages in the log table and deleting them must reduce the row count → `playground-message-logs.spec.ts`
+- [x] playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file → `playground-non-image-attachment.spec.ts`
+- [x] playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt → `playground-non-image-attachment.spec.ts`
 - [x] playground must render JSON Data output as a code block → `playground-output-data.spec.ts`
 - [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
 - [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
 - [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
+- [x] session ID input accepts a custom value → `playground-session-id.spec.ts`
 - [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
 - [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
 - [x] rename option must not be available for the Default Session → `playground-session-rename.spec.ts`
@@ -751,6 +828,10 @@
 - [x] playground must scroll to latest message after sending → `playground-ux.spec.ts`
 - [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
+
+#### flow-functionality/
+- [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+- [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 
 #### ui-ux/
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
@@ -764,15 +845,15 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 21 | 0 |
-| `core-components/` — Component Config | 20 | 2 |
-| `core-components/` — Core Components | 18 | 9 |
+| `core-components/` — Component Config | 19 | 2 |
+| `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 18 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
 | `core-functionality/model-provider/` | 18 | 9 |
-| `core-functionality/playground/` | 7 | 1 |
+| `core-functionality/playground/` | 4 | 1 |
 | `mcp/client/` | 0 | 6 |
 | `mcp/server/` | 3 | 4 |
-| `ui-ux/` — Canvas | 40 | 1 |
+| `ui-ux/` — Canvas | 39 | 1 |
 
 ---
 
@@ -784,7 +865,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 12 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 20 | 0 |
+| `flow-functionality/` | 21 | 0 |
 | `core-functionality/project-management/` | 10 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
