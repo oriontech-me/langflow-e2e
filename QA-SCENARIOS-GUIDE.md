@@ -303,7 +303,7 @@
 
 ---
 
-### 5.1 Generate curl for execution `[-]`
+### 5.1 Generate curl for execution `[x]`
 
 **Objective:** Verify that Langflow generates a valid `curl` command for flow execution.
 
@@ -311,7 +311,7 @@
 1. Open a flow in the editor.
 2. Click the "API Access" button (api-access-button).
 3. Select the `cURL` tab.
-4. Verify that the generated code contains the correct flow URL and the `curl -X POST` method.
+4. Verify that the generated code targets the correct flow URL and uses the `POST` HTTP method (the actual `curl` invocation may use either `-X POST` or `--request POST` depending on Langflow's snippet generator).
 
 **Validation:** Generated curl code points to the correct flow endpoint.
 
