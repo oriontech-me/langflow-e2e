@@ -55,7 +55,7 @@ The spec runs **6 independent tests** via Playwright's `request` fixture. Tests 
 ---
 
 ## Validation criterion *(required)*
-- All four "rejected status" assertions return one of the documented codes (`401`, `403`, or `422` for malformed-create).
+- Every "rejected status" assertion across the 6 tests returns one of the documented codes (`401`, `403`, or `422` for malformed-create).
 - The `PATCH` rejection in Test 6 leaves the flow's `name` field unchanged when read back.
 - All created flows are cleaned up; no leaked test fixtures remain after the run.
 
