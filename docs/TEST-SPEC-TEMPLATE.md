@@ -12,7 +12,13 @@ Think: "if this test fails, what broke in the product?"
 ---
 
 ## Tags *(required)*
-`@release` `@playground`
+`@release` `@playground` `@stable`
+
+<!-- If @stable is absent, state the reason here so it is visible without reading PR history.
+     Two accepted forms:
+       - Utility spec:  _(none — setup helper, not a regression test)_
+       - Temporarily removed: handled via GitHub issue #N — no update needed here
+     All other new specs must carry @stable. -->
 
 ---
 

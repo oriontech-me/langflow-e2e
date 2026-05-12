@@ -81,6 +81,8 @@ See the available tags table in the [README](./README.md#available-tags).
 
 After creating the test, find the corresponding item in `QA-CHECKLIST.md` and mark it as `[-]` (automated, needs validation). Only change to `[x]` after following the validation process below.
 
+> **Do not edit the Coverage Summary table** at the bottom of the checklist. It is derived data — the counts of `[x]`/`[-]`/`[ ]`/`[~]`/`[!]` bullets per module — and is regenerated automatically. The `update-coverage-summary.yml` workflow runs on every push to `main` and commits the refreshed table; the same logic is available locally via `npm run coverage:summary` (or `npx ts-node scripts/coverage-summary.ts`). Touch only the bullets above the table.
+
 **7. Create the spec documentation file**
 
 For each spec, create a corresponding `.md` file in `docs/`, mirroring the relative path from `regression/`. For example:
@@ -463,6 +465,28 @@ The guide is the human-language specification of the automated tests. Keeping it
 4. Update the necessary tests and mark `QA_CHECKLIST.md`
 5. Close the issue
 
+### Adaptive impacted-tests subset
+
+`adaptive-impacted.yml` is a finer-grained companion to `nightly.yml`. Each day at 04:00 BRT it:
+
+1. Queries Docker Hub for the current `langflowai/langflow-nightly:latest` digest and resolves the matching git SHA in the Langflow repo.
+2. Compares to the SHA of the last nightly we tested (repo variable `LAST_TESTED_NIGHTLY_SHA`).
+   - **Same** → skip the run (no new image).
+   - **Different** → diff Langflow source between the two SHAs and run only the specs whose `## External dependencies` reference the changed paths.
+3. On success, advances `LAST_TESTED_NIGHTLY_SHA` to the current SHA.
+
+The mapping comes from each spec doc's `## External dependencies` section — keep that section accurate when you add or rename Langflow source paths a test depends on. Any path starting with `src/` is parsed; trailing `/` matches anything inside the directory.
+
+CLI for local inspection:
+
+```bash
+npm run impacted -- src/backend/.../webhook.py     # → list of impacted spec files
+npm run validate:specs                              # → which specs have/lack External dependencies
+npm run check:nightly-delta                         # → would the workflow skip or run today?
+```
+
+State persistence requires the secret `GH_PAT_VARIABLES` (a PAT with `Variables: read & write`); without it the workflow still runs but does not advance the cursor.
+
 ---
 
 ## Tag @stable — validated tests
@@ -489,27 +513,90 @@ test("should create a flow and run successfully", { tag: ["@workspace", "@stable
 
 ### Exceptions — when the test will not have @stable
 
-Two cases where the tag is intentionally absent:
+Three cases where the tag is intentionally absent:
 
 1. **Inherited tests not yet reviewed** — they exist in the repository but have not yet gone through the validation and documentation process.
-2. **Tests failing in the workflow** — the tag was temporarily removed while the test awaits correction (see flow below).
+2. **Tests temporarily removed while failing** — the tag was removed while the test awaits correction (see lifecycle below).
+3. **Utility specs** — scripts that collect data or configure infrastructure rather than asserting product behavior (e.g. `collect-models.spec.ts`). These are not regression tests and must never enter the weekly workflow.
 
-### How to remove and fix
+**When `@stable` is permanently absent** (case 3): state the reason in the spec doc's **Tags** section so it is visible without reading PR history.
 
-When receiving an issue from the weekly workflow, evaluate the cause of the failure:
+**When `@stable` is temporarily absent** (cases 1 and 2): no spec doc update is required — the absence is tracked via the GitHub issue and the PR that removed the tag.
 
-- **Regression in Langflow** (product broke, test is correct): the test fulfilled its role. Flag the issue to the product team and monitor upstream. The tag remains.
-- **Product behavior change or incorrect test**: follow the flow below.
+### @stable lifecycle when a weekly failure occurs
+
+```
+@stable present
+      │
+      │  weekly-stable.yml opens a failure issue
+      ▼
+Evaluate: did the product break, or is the test wrong?
+      │
+      ├─► Product broke (test is correct)
+      │       Flag the issue to the product team.
+      │       Monitor upstream. The tag remains.
+      │
+      └─► Test is wrong or behavior changed
+              │
+              ▼
+          @stable removed  ◄── PR references the issue; tag removed; test exits weekly workflow
+              │
+              │  Test is corrected and re-validated (5-step guide)
+              ▼
+          @stable restored  ◄── Same correction PR restores the tag; issue is closed
+```
+
+**Criteria for deciding "product broke" vs "test wrong":**
+
+| Observation | Classification |
+|---|---|
+| Assertion fails because the UI element moved or was renamed | Test wrong — update selector |
+| Assertion fails because the feature no longer exists or changed flow | Behavior change — update test and spec doc |
+| Assertion fails but the UI works correctly in manual testing | Test wrong — fix assertion logic |
+| Assertion fails and manual testing confirms the same failure | Product broke — flag upstream |
 
 **Step 1 — Analyst (upon receiving the workflow issue):**
-1. Identify the failing test
-2. Open a PR removing the `@stable` tag from the test
+1. Identify the failing test and classify the failure using the table above
+2. Open a PR removing the `@stable` tag from the test; reference the issue in the PR body
 3. After merge, the test immediately stops running in the weekly workflow
-4. Update the issue indicating which test needs correction and why
+4. Update the issue with the classification and the name of the test that needs correction
 
 **Step 2 — Dev (upon fixing the test):**
-1. Fix the test following the validation guide
+1. Fix the test following the validation guide (all 5 steps)
 2. Restore the `@stable` tag in the same correction PR
-3. Reference the issue in the PR
+3. Reference the issue in the PR body; close the issue upon merge
 
-This process ensures traceability: it is recorded when the test left and when it returned to weekly monitoring.
+The spec doc is **not updated** during this cycle — the issue and the two PRs are the traceability record.
+
+### Monitoring rules driven by run history
+
+Triage decisions should be informed by `reports/weekly-history.jsonl` rather than by gut feel — the file makes recurrence visible. Before deciding whether to act on a failure, check the last 4 weekly entries for the same test:
+
+```bash
+jq -r --arg t "<full test title>" \
+  '. as $row | (.failures + .flaky)[] | select(.test == $t) | "\($row.date)  \($row.workflow)  \(.error_signature // "flaky")"' \
+  reports/weekly-history.jsonl | tail -4
+```
+
+The action depends on **what kind** of failure recurred and **how many** consecutive weekly runs it appeared in:
+
+| Symptom in the latest weekly run | History context | Action |
+|---|---|---|
+| Hard failure (all retries failed) | First occurrence | Open a fix issue. Remove `@stable` only if the root cause is upstream and won't be fixed before the next weekly. |
+| Hard failure | 2nd consecutive | Remove `@stable` in a PR that references the existing issue. Re-add when fixed. |
+| Flake (passed on retry) | First occurrence | Note in the triage; **do not** open an issue yet. The retry budget exists to absorb single-run noise. |
+| Flake | 2nd consecutive | Open a dedicated issue with `bug` + `area:<...>` labels. Cite both run ids. Do not remove `@stable` yet. |
+| Flake | 3rd consecutive | Remove `@stable` in a PR that references the issue from the previous step. The test is no longer stable enough for weekly. |
+| Mix (failed one week, flaky the next) | 2+ weeks | Treat as the "Flake 2nd consecutive" row above — open the issue; the alternation between hard fail and flake is itself a signal worth tracking. |
+
+**Examples from issue #206 (2026-05-11):**
+
+- `Webhook component — flow is saved to database…` (line 60) — Hard fail, 2nd consecutive (first in 25441253323). → `@stable` removed in this PR; #180 remains open until upstream fixes the bundle.
+- `Memory Chatbot Regression › message history retains context within same session` (line 78) — Flake, first occurrence. → No action yet; if it flakes again in the next weekly, open an issue.
+- `Playground Message Edit — hover reveals edit button…` (line 98) — Flake, first occurrence. → Same: monitor; act only on the second occurrence.
+
+**Why "consecutive" and not "in the last N runs":**
+
+Two consecutive failures indicate a sustained problem (regression that didn't self-heal). Two failures separated by a passing run are more likely transient (test flake, network blip). The history file is the source of truth: walk `tail` of the JSONL, do not rely on memory of past runs.
+
+The history file is the *signal source*. The issue tracker remains the *workflow*. Do not skip opening issues just because the history shows a recurrence — issues carry the investigation and the fix; history only tells you when to open one.

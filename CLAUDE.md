@@ -108,12 +108,10 @@ regression/
 5. Update `QA-CHECKLIST.md` coverage symbols
 
 **PR review checklist** — request changes if any of these are missing:
-- `@stable` tag is present in the test (required for all new tests)
+- `@stable` is present **or** its absence is explicitly explained: utility specs state the reason in the spec doc's **Tags** section; temporary removals are tracked via a GitHub issue (no spec doc change required)
 - Spec doc exists under `docs/` mirroring the test's path under `regression/`
 - Spec doc has all mandatory sections filled: **What this test validates**, **Tags**, **Validation criterion**, **External dependencies**
 - `Last validated` field reflects the current Langflow release cycle (e.g.: `1.10.x`)
-
-Exceptions where `@stable` is absent: inherited tests not yet reviewed, and tests temporarily without the tag while under correction.
 
 ### Tag Semantics
 
@@ -149,13 +147,34 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 
 ## CI/CD
 
-Five GitHub Actions workflows:
+GitHub Actions workflows:
 
 - **`pr-validation.yml`** — Runs on every PR to `main`; two parallel jobs: TypeScript check (`tsc --noEmit`) and ESLint. Both must pass before merge.
 - **`nightly.yml`** — Runs daily at 03:00 BRT against `langflowai/langflow-nightly:latest`; opens a GitHub issue on failure assigned to @Victor-w-Madeira.
-- **`weekly-stable.yml`** — Runs every Monday against `langflowai/langflow-nightly:latest`; runs only `@stable` tests; opens a GitHub issue on failure for triage.
+- **`weekly-stable.yml`** — Runs every Monday against `langflowai/langflow-nightly:latest`; runs only `@stable` tests; opens a GitHub issue on failure for triage; appends one entry to `reports/weekly-history.jsonl` and commits it back to `main` with `[skip ci]` (runs on success and failure).
 - **`manual.yml`** — Parameterized manual run; accepts a Docker tag or full URL, a specific test suite, and an optional grep filter.
 - **`file-watcher.yml`** — Detects upstream Langflow changes in critical paths and opens a GitHub issue with the exact `--grep` command needed to revalidate affected areas.
+- **`update-coverage-summary.yml`** — Runs on every push to `main` that touches `QA-CHECKLIST.md`, the regeneration scripts, or `tests/**/*.spec.ts`; regenerates the Coverage Summary table and the `Phase 0 — Validated` block (counts + bulleted list) from source and commits any change with `[skip ci]`.
+
+## Run history (`reports/`)
+
+Append-only JSONL log of CI runs, committed to the repo so longitudinal questions ("how many weeks did test X fail in a row?", "did failures correlate with a Langflow upgrade?") can be answered without paying for an external dashboard or extending artifact retention.
+
+- **`reports/weekly-history.jsonl`** — One line per `weekly-stable.yml` run. Written by `scripts/append-weekly-history.mjs` and committed back to `main` with `[skip ci]` at the end of the weekly workflow (even on failure, so recurring breakage is captured).
+- **`reports/README.md`** — Schema (version 1), expansion criteria, and example `jq` queries. Read this before extending the mechanism.
+
+The JSONL files are **machine-written and human-read only** — never hand-edit. The schema is versioned; backwards-compatible additions ship without a version bump, breaking changes bump `version` and the script branches on it. Adding a new source (e.g. `nightly-history.jsonl`) requires meeting the three expansion criteria documented in `reports/README.md` — in particular, a different failure lifecycle from existing sources.
+
+Triage rules driven by this history (when to remove `@stable`, when to open an issue for a recurring flake) live in `CONTRIBUTING.md` under "Tag @stable — validated tests".
+
+## QA-CHECKLIST.md
+
+Two passages in `QA-CHECKLIST.md` are **auto-generated**:
+
+1. The **Coverage Summary table** is derived from the bullet markers (`[x]` / `[-]` / `[ ]` / `[~]` / `[!]`) inside Part II. Never propose manual edits to the table's numbers, percentages, or `**TOTAL**` row — only edit the bullets, and the workflow regenerates the table on the next merge to `main`. Logic lives in `scripts/coverage-summary.ts`. If a new module section is added to Part II, update the `MODULES` array in the script.
+2. The **Coverage Summary Note** and the **`Phase 0 — Validated`** block (header counts and bulleted list) are derived from `@stable` `test()` calls parsed out of `tests/tests-automations/regression/**.spec.ts`. Never edit those by hand. Add or remove the `@stable` tag on the relevant `test(...)` and the workflow regenerates on the next merge to `main`. Logic lives in `scripts/stable-tests.ts`.
+
+Both regenerators run together via `npm run coverage:summary` (locally or in `update-coverage-summary.yml`) and are idempotent — a second run produces no diff when in sync.
 
 ## Playwright Configuration
 

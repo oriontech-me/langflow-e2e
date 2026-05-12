@@ -520,11 +520,11 @@
 
 ## 10. Core Components — Prompt Template
 
-**Files:** `core/regression/generalBugs-prompt.spec.ts`, `core/features/prompt-dynamic-variables.spec.ts`
+**Files:** `core-components/prompt-template-component-regression.spec.ts`
 
 ---
 
-### 10.1 Prompt with variables in curly braces `[-]`
+### 10.1 Prompt with variables in curly braces `[x]`
 
 **Objective:** Verify that `{name}` variables in the prompt create dynamic handles.
 
@@ -539,7 +539,7 @@
 
 ---
 
-### 10.2 Removing variable from prompt deletes corresponding port `[-]`
+### 10.2 Removing variable from prompt deletes corresponding port `[x]`
 
 **Step by step:**
 1. Create prompt with variable `{name}` (handle `name` created).
@@ -555,31 +555,112 @@
 
 ## 11. Core Components — API Request
 
-**Files:** `core/features/api-component-regression.spec.ts`, `api-request-component-ui.spec.ts`
+**Files:** `core-components/api-request-component-regression.spec.ts`
 
 ---
 
-### 11.1 Configure URL and HTTP method `[-]`
+### 11.1 Renders on canvas with URL and API Response handles `[x]`
 
 **Step by step:**
 1. Add "API Request" component to canvas.
-2. In the parameters panel, fill the URL field with a valid URL.
-3. Select the desired HTTP method (GET, POST, etc.) in the dropdown.
-4. Verify that the component displays the configured URL and method.
+2. Verify the node title `title-API Request` is visible.
+3. Verify both `handle-apirequest-shownode-api response-right` (output) and `handle-apirequest-shownode-url-left` (input) handles render.
 
-**Validation:** URL and method reflected in the component fields.
+**Validation:** Exactly one node on the canvas with both URL input and API Response output handles visible.
 
 ---
 
-### 11.2 Add headers and body `[-]`
+### 11.2 Inspector accepts URL and HTTP method values `[x]`
 
 **Step by step:**
-1. With API Request component configured.
-2. Expand the Headers section and add a header (e.g.: `Content-Type: application/json`).
-3. Fill the body field with JSON.
-4. Verify that the fields were accepted without error.
+1. Add API Request component.
+2. Fill `popover-anchor-input-url_input` with `https://httpbin.org/get` and confirm the value persists.
+3. Open the method dropdown, select POST, and confirm the displayed value updates.
 
-**Validation:** Headers and body configured without validation errors.
+**Validation:** URL and method fields reflect the configured values; no validation errors.
+
+---
+
+### 11.3 Invalid URL is accepted by field but run shows error notification `[x]`
+
+**Step by step:**
+1. Call `allowFlowErrors()` (the run is expected to fail).
+2. Add the component, fill `not-a-url` in the URL field.
+3. Run the component.
+4. Assert the toast `Error building Component API Request:` and the detail `Invalid URL provided:` are visible.
+
+**Validation:** The component does not crash on an invalid URL; the toast surfaces the descriptive error and the run button remains usable.
+
+---
+
+### 11.4–11.8 Execute GET / POST / PUT / PATCH / DELETE returns 200 `[x]`
+
+**Step by step (per verb):**
+1. Add API Request component.
+2. Fill the URL with `https://httpbin.org/<verb>` (each endpoint only accepts that verb — any other returns 405).
+3. Select the matching method in the dropdown.
+4. Run the component.
+5. Open the output via `output-inspection-api response-apirequest`.
+6. Assert the output Data contains `200`, the echoed URL, `status_code`, `response_headers`, and `result`.
+
+**Validation:** Each verb correctly executes and returns 200 with the structural Data fields populated.
+
+---
+
+### 11.9 Non-2xx HTTP response (404) propagates as status_code without crashing `[x]`
+
+**Step by step:**
+1. Fill `https://httpbin.org/status/404`.
+2. Run the component.
+3. Assert the output Data contains `404`, the `source` key, and does **not** contain an `"error"` field.
+
+**Validation:** A 404 response is propagated as `status_code: 404` (not surfaced as an exception). The `error` field appears only on httpx transport exceptions.
+
+---
+
+### 11.10 Query parameters embedded in URL are sent and echoed `[x]`
+
+**Step by step:**
+1. Fill `https://httpbin.org/get?e2e_param=functional_test_value`.
+2. Run the component.
+3. Assert the output contains the parameter key (`e2e_param`) and value (`functional_test_value`) and status `200`.
+
+**Validation:** Query parameters in the URL are forwarded and echoed by httpbin.
+
+---
+
+### 11.11 Headers table accepts key + value cell entries via inspector `[x]`
+
+**Step by step:**
+1. Open the headers table via `div-table_headers` → `Open table` button.
+2. Add a row, fill the `[col-id="key"]` cell with `X-E2E-Header` and the `[col-id="value"]` cell with `test-header-value` via the inline View Text editor.
+3. Each `fillViewTextCell` call asserts the saved cell value renders as a button inside the table dialog.
+4. Close with `btn-cancel-modal`; verify canvas integrity.
+
+**Validation:** Both key and value cells accept text input through the View Text editor and render the saved value in-session.
+
+---
+
+### 11.12 cURL tab switches mode and field accepts a cURL command `[x]`
+
+**Step by step:**
+1. Switch to the cURL tab via `tab_1_curl`.
+2. Fill `textarea_str_curl_input` with a valid cURL command (`curl -X GET ... -H 'Accept: application/json'`).
+3. Assert the cURL handle `handle-apirequest-shownode-curl-left` is visible.
+
+**Validation:** The cURL tab is reachable, the textarea accepts the command, and the cURL handle is exposed on the node.
+
+---
+
+### 11.13 cURL parser auto-fills URL field and executes the GET, returning 200 `[x]`
+
+**Step by step:**
+1. Switch to the cURL tab **before** touching `url_input` (pre-filling would mask a parser regression).
+2. Fill the cURL command with the URL embedded.
+3. Wait for `url_input` to be auto-populated by the parser (`waitForFunction` polls `document.getElementById('popover-anchor-input-url_input').value`).
+4. Run the component and assert the output Data contains `200`, the echoed URL, `status_code`, and `result`.
+
+**Validation:** The cURL parser extracts the URL from the command and feeds the run end-to-end.
 
 ---
 
@@ -1776,6 +1857,26 @@
 
 ---
 
+### 21.8 Shareable Playground — URL generation `[-]`
+
+**File:** `tests/tests-automations/regression/core-functionality/playground/playground-shareable-url.spec.ts`
+
+**Objective:** Verify that enabling the Shareable Playground feature on a flow with Chat I/O generates a valid public URL in the format `/playground/{uuid}`.
+
+**Preconditions:** Langflow running. The `ENABLE_PUBLISH` feature flag must be active (enabled by default). Flow must contain Chat Input and Chat Output (Simple Agent template satisfies this).
+
+**Step by step:**
+1. Load the Simple Agent template.
+2. Click the `publish-button` (Share button in the flow toolbar) to open the Share dropdown.
+3. Verify that the `shareable-playground` item is visible and the `publish-switch` is unchecked (sharing off by default).
+4. Click `publish-switch` to enable sharing.
+5. Verify the switch becomes checked.
+6. Verify that a link `<a href="/playground/{uuid}">` appears inside the `shareable-playground` item.
+7. Assert the `href` matches `/\/playground\/[0-9a-f-]{36}/`.
+8. Click `publish-switch` again to disable sharing (cleanup).
+
+**Validation:** After enabling the switch, `[data-testid="shareable-playground"] a` is visible and its `href` attribute matches the `/playground/{uuid}` pattern. The switch returns to unchecked after cleanup.
+
 ---
 
 ## 22. Project and Folder Management
@@ -2288,7 +2389,7 @@
 5. MCP client — consumption of external tools and resources
 6. Webhook trigger via external HTTP request
 7. Agent — inspect tools used in Playground
-8. Shareable Playground (public URL without authentication)
+8. [-] Shareable Playground URL generation (see 21.8)
 9. Complete RAG pipeline
 
 ### 🟢 Low Priority

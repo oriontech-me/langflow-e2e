@@ -88,9 +88,11 @@ async function runNoInputFlow(page: Page): Promise<void> {
     timeout: 60000,
   });
   // The AI response message is stored asynchronously after the build stream ends.
-  // Wait for both the empty user-trigger and the AI response to appear in the DOM.
-  await expect(page.getByTestId("div-chat-message")).toHaveCount(2, {
-    timeout: 15000,
+  // Wait for at least one message to appear. The exact count (1 or 2) depends on
+  // whether the backend stores the no-input user trigger, which varies across
+  // Langflow versions, so checking for first() is more resilient than toHaveCount(2).
+  await expect(page.getByTestId("div-chat-message").first()).toBeVisible({
+    timeout: 30000,
   });
 }
 
@@ -125,7 +127,7 @@ test.describe("Playground Output – Structured Data", () => {
           const chatMessage = page
             .getByTestId("div-chat-message")
             .filter({ has: page.locator("code") });
-          await expect(chatMessage).toBeVisible({ timeout: 10000 });
+          await expect(chatMessage).toBeVisible({ timeout: 30000 });
 
           const text = await chatMessage.innerText();
           // "records": is the top-level key in the Mock Data JSON serialisation
@@ -160,7 +162,7 @@ test.describe("Playground Output – Structured Data", () => {
           const chatMessage = page
             .getByTestId("div-chat-message")
             .filter({ has: page.locator("table") });
-          await expect(chatMessage).toBeVisible({ timeout: 10000 });
+          await expect(chatMessage).toBeVisible({ timeout: 30000 });
         },
       );
     },

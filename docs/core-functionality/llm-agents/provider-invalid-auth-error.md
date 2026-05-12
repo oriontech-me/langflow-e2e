@@ -1,4 +1,4 @@
-# provider-invalid-auth-error
+# Provider Invalid API Key Error
 
 **Last validated:** Langflow 1.10.x
 

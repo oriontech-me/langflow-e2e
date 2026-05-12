@@ -10,6 +10,8 @@ dist/
 *.zip
 .claude/
 docs/superpowers/
+.playwright-mcp/
+.worktrees/
 
 # Artefatos gerados localmente — cada dev gera via collect-models.spec.ts
 tests/helpers/provider-setup/data/models.json

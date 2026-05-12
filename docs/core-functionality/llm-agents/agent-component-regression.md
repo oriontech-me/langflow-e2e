@@ -16,7 +16,7 @@ If any of these tests fail, the LLM Agent is broken for Playground use.
 
 ---
 
-## Step-by-step *(required)*
+## Step by step *(required)*
 
 The spec generates **2 tests per active model** via `getTestTargets()`. By default (nightly/CI) it runs 1 model per provider; `ALL_MODELS=true` runs all models from `models.json`.
 
@@ -38,17 +38,19 @@ Single `load()` per model — all validations share the same Playground session 
 6. `expect.soft`: `div-chat-message` visible; conditionally check (soft) if "Finished in" appears
 
 *Step: streams response progressively and displays duration*
-7. Send a long prompt (5-paragraph AI summary) and wait for the first message
-8. Capture initial text; wait 3s; if Stop is still visible: `expect.soft` that text grew
-9. Wait for Stop to disappear; `expect.soft` final response is non-empty
-10. Conditionally check (soft) if "Finished in Xs" appears
+7. Send a long prompt (5-paragraph AI summary) and wait for `div-chat-message` to be visible
+8. Wait for Stop button to appear (confirms model is actively generating); if Stop never appears → validate final text is non-empty and `return` (step succeeds, remaining steps continue)
+9. Poll every 100ms while Stop is visible (max 5s): if text length grows → `streamingObserved = true`; loop exits on growth or when Stop disappears
+10. Wait for Stop to disappear; `expect.soft` final response is non-empty
+11. If text growth was detected during polling → streaming confirmed (loop exited early); if not → no assertion (model renders faster than poll interval, or `div-chat-message` testid is applied after streaming completes)
+12. Conditionally check (soft) if "Finished in Xs" appears
 
 *Step: handles multiple consecutive messages*
-11. `expect.soft`: count of `div-chat-message` ≥ 2
+13. `expect.soft`: count of `div-chat-message` ≥ 2
 
 *Step: response time visible on canvas after closing playground*
-12. Click `playground-close-button`
-13. `expect.soft`: `node_duration_agent` visible on the canvas
+14. Click `playground-close-button`
+15. `expect.soft`: `node_duration_agent` visible on the canvas
 
 ---
 
@@ -64,12 +66,12 @@ Kept separate from the suite because it interrupts the execution state.
 
 ---
 
-## Validation criteria *(required)*
+## Validation criterion *(required)*
 - Agent responds with non-empty text even without connected tools
 - Reasoning steps ("Finished in Xs") appear when the model uses them (conditional check)
 - Stop button halts generation and the input returns to its normal state
 - `node_duration_agent` visible on canvas after closing the Playground (canonical duration assertion — comes from the backend)
-- Playground text grows during long generation (streaming confirmed)
+- Playground text grows while Stop is visible during long generation (streaming confirmed via polling — not a fixed sleep)
 - Multiple consecutive messages accumulate in the Playground history
 
 ---
@@ -99,7 +101,7 @@ Kept separate from the suite because it interrupts the execution state.
 
 ---
 
-## When to revisit this test *(optional)*
+## When to review this test *(optional)*
 - If the "Simple Agent" template is renamed or removed from Langflow
 - If the default streaming behavior changes (e.g., batch response instead of progressive tokens)
 - If the `node_duration_agent` field is renamed or removed from the canvas
@@ -109,6 +111,7 @@ Kept separate from the suite because it interrupts the execution state.
 ## Notes *(optional)*
 - **Test structure**: 2 tests per model — `agent interaction suite` (5 validations in `test.step` with `expect.soft`) and `agent stop button` (kept separate because it is destructive). Using `expect.soft` ensures all validations run even if one fails, without losing visibility.
 - **Model selection**: by default (`ALL_MODELS` omitted), `getTestTargets()` returns 1 model per active provider (the first one in `models.json`). To run all models: `ALL_MODELS=true`. To filter by provider: `MODEL_TEST_PROVIDER=openai`. For a specific model: `MODEL_TEST_ID=gpt-4o-mini`.
+- **Streaming assertion**: waits for Stop to appear (confirms the model is actively generating), then polls `div-chat-message` text length every 100ms for up to 5s. If text grows during the polling window → streaming confirmed, loop exits early. If Stop never appears → validates final text is non-empty and returns early (step passes, remaining steps continue). If growth is not observed (Stop gone before growth, or model renders faster than the poll interval, or `div-chat-message` testid is applied only after streaming completes) → no assertion; the final-text `expect.soft` is the safety net for truly broken streaming. This replaces the previous fixed 3s sleep + conditional guard that silently passed for fast models.
 - **"Finished in Xs" in the Playground**: conditional check — the text appears in `BotMessage` based on the `isBuilding` cycle of `useFlowStore`; not guaranteed in multi-message sessions or with models that respond very quickly. The canonical duration assertion is `node_duration_agent` on the canvas.
-- The Stop button is checked with `isVisible({ timeout: 30000 }).catch(() => false)` — fast models may respond before the button appears, and that is valid behavior.
+- The Stop button in the stop test is checked with `isVisible({ timeout: 30000 }).catch(() => false)` — fast models may respond before the button appears, and that is valid behavior.
 - `dispatchEvent("click")` on the Stop button bypasses Playwright actionability checks — the button may be transitioning during stream teardown.
