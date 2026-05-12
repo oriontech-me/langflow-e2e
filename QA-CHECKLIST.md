@@ -165,10 +165,12 @@
 - [x] Dismiss button on the Files field clears the value → `core-components/chat-input-files-field-regression.spec.ts`
 
 #### 3.2 Prompt Template
-- [x] Prompt with variables in curly braces → `core-components/prompt-template-component-regression.spec.ts`
-- [x] Prompt modal opens, accepts edits, and changes persist → `core-components/prompt-template-component-regression.spec.ts`
-- [x] Dynamic port generated when adding a variable to the prompt → `core-components/prompt-template-component-regression.spec.ts`
-- [x] Removing a variable from the prompt deletes the corresponding port → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Prompt Template renders on canvas with output handle → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Variables in curly braces generate dynamic input handles → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Removing a variable removes its input handle → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Replacing a variable updates handles accordingly → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Clearing the template removes all dynamic handles → `core-components/prompt-template-component-regression.spec.ts`
+- [x] Modal edits persist in UI and in saved flow → `core-components/prompt-template-component-regression.spec.ts`
 - [x] `use_double_brackets` toggle is exposed in the InspectionPanel with its upstream display name → `core-components/prompt-template-double-brackets-regression.spec.ts`
 - [x] Default toggle state is OFF; f-string mode extracts `{var}` and treats `{{var}}` as literal → `core-components/prompt-template-double-brackets-regression.spec.ts`
 - [x] Enabling toggle switches parser to mustache mode; `{{var}}` creates handle and `{var}` is ignored → `core-components/prompt-template-double-brackets-regression.spec.ts`
@@ -693,7 +695,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 0 | 21 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 0 | 20 | 0 | 2 |
-| `core-components/` — Core Components | 60 | 52 | 3 | 0 | 5 |
+| `core-components/` — Core Components | 62 | 54 | 3 | 0 | 5 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
@@ -707,7 +709,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 42 | 0 | 40 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **395** | **109 (28%)** | **221 (56%)** | **6 (2%)** | **59 (15%)** |
+| **TOTAL** | **397** | **111 (28%)** | **221 (56%)** | **6 (2%)** | **59 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
