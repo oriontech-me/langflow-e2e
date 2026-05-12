@@ -943,13 +943,24 @@ test(
     (page as any).allowFlowErrors();
     await awaitBootstrapTest(page);
 
-    // Get the project's streamable HTTP endpoint from the Langflow API
+    // Get the project's streamable HTTP endpoint from the Langflow API.
+    // The /api/v1/projects/ response shape varies (sometimes a bare array,
+    // sometimes `{ folders: [...] }`); api-folders-crud.spec.ts normalizes
+    // the same way.
     const projectsResp = await page.request.get("/api/v1/projects/");
-    const projects: Array<{ id: string; name: string }> =
-      await projectsResp.json();
+    const projectsRaw = await projectsResp.json();
+    const projects: Array<{ id: string; name: string }> = Array.isArray(projectsRaw)
+      ? projectsRaw
+      : (projectsRaw.folders ?? []);
     expect(projects.length).toBeGreaterThan(0);
     const projectId = projects[0].id;
-    const server = `http://localhost:7860/api/v1/mcp/project/${projectId}/streamable`;
+    // Derive base from PLAYWRIGHT_BASE_URL so the test works against any Langflow instance,
+    // not only the default localhost:7860.
+    const baseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:7860/";
+    const server = new URL(
+      `/api/v1/mcp/project/${projectId}/streamable`,
+      baseUrl,
+    ).toString();
 
     await page.waitForSelector('[data-testid="blank-flow"]', {
       timeout: 30000,
@@ -957,10 +968,15 @@ test(
     await page.getByTestId("blank-flow").click();
     await page.getByTestId("sidebar-nav-mcp").click();
 
-    // Use sidebar add button — works regardless of pre-existing servers
-    const addBtn = page.getByTestId("sidebar-add-mcp-server-button");
-    await expect(addBtn).toBeVisible({ timeout: 15000 });
-    await addBtn.evaluate((el) => (el as HTMLElement).click());
+    // Sidebar trigger has two testid variants depending on whether MCP servers already
+    // exist — match the fallback pattern used by other tests in this file (lines 211-218).
+    const sidebarButton = page.getByTestId("sidebar-add-mcp-server-button");
+    const fallbackButton = page.getByTestId("add-mcp-server-button-sidebar");
+    if (await sidebarButton.isVisible({ timeout: 15000 }).catch(() => false)) {
+      await sidebarButton.evaluate((el) => (el as HTMLElement).click());
+    } else {
+      await fallbackButton.click();
+    }
 
     await expect(page.getByTestId("add-mcp-server-button")).toBeVisible({
       timeout: 15000,

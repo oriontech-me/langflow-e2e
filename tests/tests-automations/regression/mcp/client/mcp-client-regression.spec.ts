@@ -3,7 +3,10 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 
-const MCP_SERVER_NAME = "everything";
+// Worker- and timestamp-suffixed name prevents cross-file races: this spec and
+// mcp-client-agent.spec.ts both register an MCP "everything" server, and
+// file-level serial mode does not serialize across workers.
+const MCP_SERVER_NAME = `everything-${process.env.TEST_WORKER_INDEX ?? "0"}-${Date.now()}`;
 const MCP_JSON_CONFIG = JSON.stringify({
   mcpServers: {
     [MCP_SERVER_NAME]: {
@@ -13,12 +16,18 @@ const MCP_JSON_CONFIG = JSON.stringify({
   },
 });
 
-// Serial mode required — Tests 1 and 4 share the "everything" npx server and conflict when run in parallel
+// Serial mode required — Tests 1 and 4 share the same npx server and conflict when run in parallel
 test.describe.configure({ mode: "serial" });
+
+// `bad-server` and `http-form-server` stay as fixed names — they are only used in
+// individual tests in this file, file-level serial mode prevents intra-file races,
+// and longer uniquified names can collide with Langflow's MCP server name handling.
+const BAD_SERVER_NAME = "bad-server";
+const HTTP_FORM_SERVER_NAME = "http-form-server";
 
 test.describe("MCP Client – Configure and Execute Tool", () => {
   test.afterEach(async ({ page }) => {
-    const serversToClean = [MCP_SERVER_NAME, "bad-server", "http-form-server"];
+    const serversToClean = [MCP_SERVER_NAME, BAD_SERVER_NAME, HTTP_FORM_SERVER_NAME];
     try {
       const token = await page.request
         .post("/api/v1/login", {
@@ -155,7 +164,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
     "unreachable HTTP server results in empty tool dropdown",
     { tag: ["@mcp", "@regression", "@stable"] },
     async ({ page }) => {
-      const BAD_SERVER = "bad-server";
+      const BAD_SERVER = BAD_SERVER_NAME;
 
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
@@ -246,7 +255,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
     "configures MCP server via HTTP form tab and verifies registration",
     { tag: ["@mcp", "@regression", "@stable"] },
     async ({ page }) => {
-      const HTTP_SERVER = "http-form-server";
+      const HTTP_SERVER = HTTP_FORM_SERVER_NAME;
 
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
@@ -387,17 +396,11 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
             document.querySelector('[data-testid="dropdown_str_tool"]') as HTMLElement
           )?.click();
         });
-        // get-sum is the numeric addition tool exposed by server-everything (index 6 in the tool list)
-        // — index may shift if server-everything reorders tools in a future release
-        await page.waitForFunction(
-          () => !!document.querySelector('[data-testid="get-sum-6-option"]'),
-          { timeout: 15000 },
-        );
-        await page.evaluate(() => {
-          (
-            document.querySelector('[data-testid="get-sum-6-option"]') as HTMLElement
-          )?.click();
-        });
+        // Match by name prefix — the ordinal index in `get-sum-{N}-option` shifts whenever
+        // server-everything reorders its tools across releases.
+        const getSumOption = page.locator('[data-testid^="get-sum-"][data-testid$="-option"]');
+        await expect(getSumOption).toBeVisible({ timeout: 15000 });
+        await getSumOption.evaluate((el) => (el as HTMLElement).click());
       });
 
       await test.step("Fill numeric inputs a=3 and b=5", async () => {

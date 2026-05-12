@@ -18,7 +18,10 @@ if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
 }
 
-const MCP_SERVER_NAME = "everything";
+// Worker- and timestamp-suffixed name prevents cross-file races with
+// mcp-client-regression.spec.ts (which also registers an "everything" MCP server).
+// File-level serial mode does not serialize across workers.
+const MCP_SERVER_NAME = `everything-${process.env.TEST_WORKER_INDEX ?? "0"}-${Date.now()}`;
 const MCP_JSON_CONFIG = JSON.stringify({
   mcpServers: {
     [MCP_SERVER_NAME]: {
@@ -264,13 +267,17 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("Verify agent response contains echoed message", async () => {
           await waitForAgentToFinish(page);
-          const lastMessage = page.getByTestId("div-chat-message").last();
-          await expect(lastMessage).toBeVisible({ timeout: 30000 });
-          const responseText = await lastMessage.innerText();
-          expect(
-            responseText.toLowerCase(),
-            "Agent response must contain 'hello mcp' (echoed via MCP tool)",
-          ).toContain("hello mcp");
+          // `div-chat-message` is rendered only for AI messages in the Langflow chat-message
+          // component (the `!chat.isSend` branch in chat-message.tsx renders this testid;
+          // user messages render the `chat-message-{sender_name}-{content}` testid only and
+          // never `div-chat-message`). Polling with toContainText guards against the agent
+          // still streaming when waitForAgentToFinish returns early (Stop button never appeared).
+          const lastAiMessage = page.getByTestId("div-chat-message").last();
+          await expect(lastAiMessage).toBeVisible({ timeout: 30000 });
+          await expect(lastAiMessage, "Agent response must contain 'hello mcp' (echoed via MCP tool)").toContainText(
+            /hello mcp/i,
+            { timeout: 60000 },
+          );
         });
       },
     );
