@@ -1,0 +1,56 @@
+name: Update Coverage Summary
+
+# Auto-regenerates the Coverage Summary table inside QA-CHECKLIST.md after
+# each merge to main. The table is derived data — counts of [x]/[-]/[ ]/[~]/[!]
+# bullets per module — so no developer should ever need to edit it manually.
+#
+# Pushes performed via the default GITHUB_TOKEN do not re-trigger workflows,
+# so this job cannot recurse on itself. The `[skip ci]` token in the commit
+# message is a defensive belt-and-suspenders.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "QA-CHECKLIST.md"
+      - "scripts/coverage-summary.ts"
+      - "scripts/stable-tests.ts"
+      - "tests/**/*.spec.ts"
+      - ".github/workflows/update-coverage-summary.yml"
+
+jobs:
+  update-coverage:
+    name: Regenerate Coverage Summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+
+    # Skip when this very workflow's auto-commit lands on main.
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Regenerate Coverage Summary
+        run: npm run coverage:summary
+
+      - name: Commit and push if changed
+        run: |
+          if git diff --quiet QA-CHECKLIST.md; then
+            echo "Coverage Summary table already up to date — nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add QA-CHECKLIST.md
+          git commit -m "chore(checklist): auto-update coverage summary [skip ci]"
+          git push

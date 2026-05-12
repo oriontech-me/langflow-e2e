@@ -50,8 +50,8 @@ These ensure users can manage multiple parallel conversations without cross-cont
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/modals/IOModal/components/sidebar-open-view.tsx` — `data-testid="new-chat"` (creates session)
-- `src/frontend/src/modals/IOModal/components/IOFieldView/components/session-selector.tsx` — `data-testid="session-selector"` (sidebar items); clicking an item switches the active session; item displays "Default Session" when `session === currentFlowId`
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/chat-sidebar.tsx` — `data-testid="new-chat"` (creates session)
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/session-selector.tsx` — `data-testid="session-selector"` (sidebar items); clicking an item switches the active session; item displays "Default Session" when `session === currentFlowId`
 - No API key required: ChatInput → ChatOutput is a synchronous echo flow
 
 ---
