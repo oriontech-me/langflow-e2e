@@ -520,11 +520,11 @@
 
 ## 10. Core Components — Prompt Template
 
-**Files:** `core/regression/generalBugs-prompt.spec.ts`, `core/features/prompt-dynamic-variables.spec.ts`
+**Files:** `core-components/prompt-template-component-regression.spec.ts`
 
 ---
 
-### 10.1 Prompt with variables in curly braces `[-]`
+### 10.1 Prompt with variables in curly braces `[x]`
 
 **Objective:** Verify that `{name}` variables in the prompt create dynamic handles.
 
@@ -539,7 +539,7 @@
 
 ---
 
-### 10.2 Removing variable from prompt deletes corresponding port `[-]`
+### 10.2 Removing variable from prompt deletes corresponding port `[x]`
 
 **Step by step:**
 1. Create prompt with variable `{name}` (handle `name` created).
