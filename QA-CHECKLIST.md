@@ -458,8 +458,8 @@
 - [x] Stop button in Playground → `core-functionality/playground/stop-button-playground.spec.ts`
 
 #### 9.4 Output Modal
-- [-] Copy component output → `playground/output-modal-copy-button.spec.ts` (needs rewrite — see issue)
-- [-] Copy button in output → `playground/output-modal-copy-button.spec.ts` (needs rewrite — see issue)
+- [x] Copy component output → `core-functionality/playground/output-modal-copy-button.spec.ts`
+- [x] Copy button in output → `core-functionality/playground/output-modal-copy-button.spec.ts`
 
 #### 9.5 Structured Data Output
 - [x] JSON Data output renders as code block → `core-functionality/playground/playground-output-data.spec.ts`
