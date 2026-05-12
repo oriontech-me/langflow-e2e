@@ -44,7 +44,7 @@ Validates that the Playground session ID input field is editable and correctly r
 
 ## What this test does not cover *(optional)*
 
-- Actual backend isolation between sessions (messages from session A not appearing in session B) — covered by `core-functionality/llm-agents/memory-history-regression.spec.ts`
+- Actual backend isolation between sessions (messages from session A not appearing in session B) — covered by `llm-agents/memory-history-regression.spec.ts`
 - The sidebar-based session management (create / switch / rename) introduced in Langflow 1.9+ — covered by `playground-session-nav.spec.ts` and `playground-session-rename.spec.ts`
 - Sending a message after switching the session ID — out of scope for this spec
 
