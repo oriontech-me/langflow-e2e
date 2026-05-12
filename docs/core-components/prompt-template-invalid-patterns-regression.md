@@ -100,7 +100,7 @@ Note on the fixture: the save deliberately returns HTTP 500, but `tests/fixtures
 
 - Variable extraction from valid templates and dynamic-handle rendering (covered by `prompt-template-component-regression.spec.ts`)
 - The `use_double_brackets` toggle and the f-string escape behavior `{{var}}` rendering as a literal (covered by `prompt-template-double-brackets-regression.spec.ts`, where the two parser modes are asserted side by side and the comparison is informative)
-- Invalid patterns in **mustache mode** (`{{ var }}`, `{{var.attr}}`, `{{#section}}{{/section}}`, `{{{var}}}`) — tracked as a follow-up issue, to be covered in a dedicated spec because the toggle flips a different code path (`validate_mustache_template`)
+- Invalid patterns in **mustache mode** (`{{ var }}`, `{{var.attr}}`, `{{#section}}{{/section}}`, `{{{var}}}`) — covered by `prompt-template-invalid-mustache-patterns-regression.spec.ts`, which exercises the `validate_mustache_template` code path independently from the f-string parser asserted here
 - LLM/runtime errors when a flow built on top of the Prompt Template is executed
 - Tool Mode interaction (covered by `tool-mode.spec.ts`)
 

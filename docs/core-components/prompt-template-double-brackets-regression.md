@@ -105,7 +105,7 @@ Both modes share the post-save preview (`edit-prompt-sanitized`) and the save bu
 
 ## What this test does not cover *(optional)*
 
-- Validation of invalid mustache patterns (e.g., `{{#section}}`, `{{var.attr}}`, dotted paths) — out of scope here; a companion regression is planned
+- Validation of invalid mustache patterns (e.g., `{{ var }}`, `{{var.attr}}`, `{{#section}}{{/section}}`, `{{{var}}}`) — covered by `prompt-template-invalid-mustache-patterns-regression.spec.ts`, which exercises the `validate_mustache_template` rejection contract with the toggle flipped ON
 - The `tool_placeholder` advanced input on the same component (covered by `tool-mode.spec.ts`)
 - Prompt rendering/execution behind an LLM (covered by `llm-agents` specs)
 - The single-bracket happy path and modal persistence in f-string mode (covered by `prompt-template-component-regression.spec.ts`)
