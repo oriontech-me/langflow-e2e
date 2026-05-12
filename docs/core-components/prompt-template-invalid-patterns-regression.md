@@ -92,7 +92,7 @@ Note on the fixture: the save deliberately returns HTTP 500, but `tests/fixtures
 - `src/backend/base/langflow/api/v1/validate.py` — `POST /validate/prompt`: returns HTTP 500 with `detail=str(ValueError(...))` on rejection. The HTTP status and the `detail` shape are what the frontend's `onError` callback consumes.
 - `src/frontend/src/modals/promptModal/index.tsx` — `genericModalBtnSave`, `modal-promptarea_prompt_template`, and the `usePostValidatePrompt` mutation's `onError` callback that maps the API error into the toast (title from `t("errors.prompt")`, detail from `error.response.data.detail`). Also sets `isEdit=true` so the modal stays open on error.
 - `src/frontend/src/alerts/error/index.tsx` — `ErrorAlert` component renders with CSS class `.error-build-message`; the 5-second auto-dismiss timeout there defines the maximum window in which the toast assertion must run.
-- `src/frontend/src/locales/en.json` — i18n key `errors.prompt` whose value `"There is something wrong with this prompt, please review it"` is asserted as a constant. Localizing this string would break tests 1–3.
+- `src/frontend/src/locales/en.json` — i18n key `errors.prompt` whose value `"There is something wrong with this prompt, please review it"` is the source for the toast title. All four rejection tests (1–4) assert via `toContainText("There is something wrong with this prompt")` — a substring check, not a full-string equality. Localizing this prefix (or shortening it past the asserted substring) would break tests 1–4.
 
 ---
 
@@ -118,7 +118,7 @@ Note on the fixture: the save deliberately returns HTTP 500, but `tests/fixtures
 
 - If `_INVALID_CHARACTERS` in `src/lfx/src/lfx/base/prompts/api_utils.py` changes (add/remove a character) — the rejection tests are coupled to that set.
 - If the error message format in `_check_for_errors` changes — tests 1–4 assert the leading fragment `"Input variables contain invalid characters or formats"`, and test 4 additionally anchors on `"Invalid variables: 1"`.
-- If the i18n key `errors.prompt` is renamed or its value localized — tests 1–4 assert the literal English title.
+- If the i18n key `errors.prompt` is renamed or its English value shortened past the asserted prefix `"There is something wrong with this prompt"` — tests 1–4 assert that substring.
 - If the frontend stops calling `setIsEdit(true)` in `onError` — step 5 of the rejection contract asserts the textarea stays visible.
 - If the toast component's CSS class changes from `.error-build-message` to something else, or a `data-testid` is added (the spec could then anchor on it instead of the class).
 

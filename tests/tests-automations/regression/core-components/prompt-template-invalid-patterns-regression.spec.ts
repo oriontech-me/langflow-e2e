@@ -74,26 +74,31 @@ async function fillAndSavePromptTemplate(
 
   // After a previous save, the modal initially shows the sanitized preview
   // (read-only) instead of the textarea. Clicking the preview re-enters edit
-  // mode and mounts the textarea.
+  // mode and mounts the textarea. On the first save of a fresh component the
+  // preview is absent — keep the probe short so each test only pays a ~500ms
+  // tax instead of 2s.
   const preview = page.getByTestId("edit-prompt-sanitized");
-  if (await preview.isVisible({ timeout: 2000 }).catch(() => false)) {
+  if (await preview.isVisible({ timeout: 500 }).catch(() => false)) {
     await preview.click();
   }
 
   await expect(textarea).toBeVisible({ timeout: 10000 });
   await textarea.click();
-  await page.keyboard.press("Control+a");
   await textarea.fill(value);
 
   await page.getByTestId("genericModalBtnSave").click();
 }
 
-// Runs the four-step rejection contract for a single invalid template:
+// Runs the three-step rejection contract for a single invalid template:
 //   1. submit the template via the prompt modal
 //   2. assert the error toast carries the upstream ValueError title + detail
 //      + the offending variable name (so a stale buffer regression is caught)
-//   3. assert no dynamic handle was created on the node
-//   4. assert the modal stays in edit mode (frontend sets isEdit=true on error)
+//   3. assert the modal stays in edit mode (frontend sets isEdit=true on error)
+//
+// The fourth contract piece — "no dynamic handle was created on the node" —
+// lives at the test body level instead of inside the helper so that each
+// `test()` carries a visible body-level `expect()` for the
+// `playwright/expect-expect` lint rule.
 //
 // The four rejection tests below intentionally remain as separate `test()`
 // declarations (not a parameterised loop) so the auto-generated `Phase 0 —
@@ -155,8 +160,9 @@ test(
 
     await runRejectionContract(page, "Hello {var.attr}", "var.attr");
 
-    // Final contract check on the test body so the rejection assertion is
-    // visible at the top level (and to the eslint expect-expect rule).
+    // Fourth piece of the rejection contract — kept at the test body level
+    // (rather than inside `runRejectionContract`) so each test carries a
+    // visible body-level `expect()` for the `playwright/expect-expect` rule.
     await expect(dynamicHandlesLocator(page)).toHaveCount(0);
   },
 );
