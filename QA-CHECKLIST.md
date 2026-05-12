@@ -596,12 +596,15 @@
 ### mcp/client/ — Tool and Context Consumption
 
 #### 13.1 MCP Client
-- [ ] Configure connection with external MCP server (stdio or HTTP)
-- [ ] List available tools via MCP protocol
-- [ ] Execute MCP server tool and receive result in flow
+- [-] Configure connection with external MCP server (stdio or HTTP) → `mcp/client/mcp-client-regression.spec.ts`
+- [-] List available tools via MCP protocol → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Execute MCP server tool and receive result in flow → `mcp/client/mcp-client-regression.spec.ts`
+- [-] MCP server connection error — unreachable server produces empty tool dropdown → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Configure connection via HTTP form tab → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
+- [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
 - [ ] List available resources via MCP protocol
 - [ ] Consume resource URI and inject content into flow
-- [ ] MCP server connection error displays clear message
 
 ---
 
