@@ -689,7 +689,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 0 | 21 | 0 | 0 |
+| `api/flows/` — REST API | 21 | 1 | 20 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 1 | 19 | 0 | 2 |
 | `core-components/` — Core Components | 55 | 47 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
@@ -705,7 +705,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **393** | **113 (29%)** | **215 (55%)** | **7 (2%)** | **58 (15%)** |
+| **TOTAL** | **393** | **114 (29%)** | **214 (54%)** | **7 (2%)** | **58 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -721,11 +721,19 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 100 `test()` calls carrying the `@stable` tag, distributed across 34 spec
+> 106 `test()` calls carrying the `@stable` tag, distributed across 35 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
+
+#### api/flows/
+- [x] POST /api/v1/flows/ with invalid Bearer token returns 401, 403, or 422 → `api-invalid-key.spec.ts`
+- [x] GET /api/v1/flows/ without Authorization header returns 401 or 403 → `api-invalid-key.spec.ts`
+- [x] GET /api/v1/flows/{id} with invalid Bearer token returns 401 or 403 → `api-invalid-key.spec.ts`
+- [x] POST /api/v1/run/{id} with invalid x-api-key returns 401 or 403 → `api-invalid-key.spec.ts`
+- [x] DELETE /api/v1/flows/{id} without Authorization header returns 401 or 403 → `api-invalid-key.spec.ts`
+- [x] PATCH /api/v1/flows/{id} with wrong token does not update the flow → `api-invalid-key.spec.ts`
 
 #### core-components/
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
@@ -845,7 +853,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 21 | 0 |
+| `api/flows/` — REST API | 20 | 0 |
 | `core-components/` — Component Config | 19 | 2 |
 | `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 18 | 1 |
