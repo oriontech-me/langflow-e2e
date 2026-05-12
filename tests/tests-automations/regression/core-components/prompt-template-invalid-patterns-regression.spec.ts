@@ -24,11 +24,8 @@ test.describe.configure({ mode: "serial" });
 // which renders an `ErrorAlert` toast and keeps the modal in edit mode
 // (the modal does NOT close — the textarea remains visible).
 //
-// Source upstream: src/lfx/src/lfx/base/prompts/api_utils.py — _INVALID_CHARACTERS
-// set drives `_check_input_variables`. Hyphen and the empty field name are
-// NOT in that set — `{var-name}` is accepted and `{}` is filtered out by the
-// formatter, so neither raises. They are intentionally excluded from this
-// spec's negative-path coverage.
+// See the spec doc's Notes for the rationale on why `{var-name}` and `{}`
+// rejection cases from the original issue scope were dropped after probing.
 
 const ERROR_TOAST_TITLE = "There is something wrong with this prompt";
 const ERROR_DETAIL_FRAGMENT =
@@ -98,12 +95,12 @@ async function fillAndSavePromptTemplate(
 //   3. assert no dynamic handle was created on the node
 //   4. assert the modal stays in edit mode (frontend sets isEdit=true on error)
 //
-// The three rejection tests below intentionally remain as separate `test()`
+// The four rejection tests below intentionally remain as separate `test()`
 // declarations (not a parameterised loop) so the auto-generated `Phase 0 —
 // Validated` block in QA-CHECKLIST.md surfaces one bullet per case —
 // `scripts/stable-tests.ts` renders `${expr}` template placeholders as
-// `<expr>` and would otherwise collapse the three runtime tests into a
-// single, vague bullet.
+// `<expr>` and would otherwise collapse the runtime tests into a single,
+// vague bullet.
 async function runRejectionContract(
   page: Page,
   template: string,
@@ -141,14 +138,17 @@ async function runRejectionContract(
   );
 }
 
+// Note on the fixture interaction: the save POST /api/v1/validate/prompt
+// returns HTTP 500 by design in the rejection scenarios below. The fixture
+// (tests/fixtures/fixtures.ts) only fails the test on `flow_error`-type
+// events from /build/, /run/, or /events?event_delivery= — HTTP 500s on
+// other endpoints are logged as `http_error` and do not fail the test.
+// So no `page.allowFlowErrors()` opt-out is needed here.
+
 test(
   "Prompt Template — `{var.attr}` (dot notation) is rejected with an error toast and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    // The save POST /api/v1/validate/prompt deliberately returns 500 in
-    // this scenario — opt out of the fixture's automatic backend-error fail.
-    (page as any).allowFlowErrors();
-
     await test.step("Add Prompt Template to a blank flow", async () => {
       await addPromptComponent(page);
     });
@@ -165,8 +165,6 @@ test(
   "Prompt Template — `{var name}` (space inside identifier) is rejected with an error toast and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    (page as any).allowFlowErrors();
-
     await test.step("Add Prompt Template to a blank flow", async () => {
       await addPromptComponent(page);
     });
@@ -178,16 +176,35 @@ test(
 );
 
 test(
-  "Prompt Template — `{1var}` (leading digit) is rejected with an error toast and creates no handle",
+  "Prompt Template — `{var,name}` (comma inside identifier) is rejected with an error toast and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    (page as any).allowFlowErrors();
-
+    // Comma is in `_INVALID_CHARACTERS` and users sometimes mistakenly write
+    // `{a,b}` thinking it declares multiple variables — this case catches a
+    // regression where comma is silently dropped from the set.
     await test.step("Add Prompt Template to a blank flow", async () => {
       await addPromptComponent(page);
     });
 
-    await runRejectionContract(page, "Hello {1var}", "1");
+    await runRejectionContract(page, "Hello {var,name}", "var,name");
+
+    await expect(dynamicHandlesLocator(page)).toHaveCount(0);
+  },
+);
+
+test(
+  "Prompt Template — `{1var}` (leading digit) is rejected with an error toast and creates no handle",
+  { tag: ["@stable", "@regression", "@components"] },
+  async ({ page }) => {
+    await test.step("Add Prompt Template to a blank flow", async () => {
+      await addPromptComponent(page);
+    });
+
+    // Anchor on "Invalid variables: 1" instead of just "1" — the bare digit
+    // could match incidental substrings in the toast (build numbers, icon
+    // names, etc.); the full fragment proves the upstream `_fix_variable`
+    // leading-digit branch actually fired.
+    await runRejectionContract(page, "Hello {1var}", "Invalid variables: 1");
 
     await expect(dynamicHandlesLocator(page)).toHaveCount(0);
   },
