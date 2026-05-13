@@ -67,11 +67,17 @@ export function errorToastLocator(page: Page): Locator {
 }
 
 /**
- * Flip the `use_double_brackets` toggle in the InspectionPanel and wait for the
- * matching modal-open button to mount. With `real_time_refresh=True`, toggling
- * the bool causes `update_build_config` to swap `template.type` between PROMPT
- * and MUSTACHE_PROMPT, which re-renders the modal-open button under a different
- * testid — that re-render is the reliable signal that the switch has landed.
+ * Drive the `use_double_brackets` toggle to the given state. Idempotent — if
+ * the UI is already in the requested mode the toggle is left alone; otherwise
+ * the toggle is clicked once. Either way, the post-condition is that the
+ * matching modal-open button is visible.
+ *
+ * The probe uses the modal-open button itself (not the toggle's ARIA/data
+ * state) as the canonical mode indicator: with `real_time_refresh=True`,
+ * `update_build_config` swaps `template.type` between PROMPT and
+ * MUSTACHE_PROMPT, which re-renders the modal-open button under
+ * `button_open_prompt_modal` or `button_open_mustache_prompt_modal`. That
+ * re-render is the reliable signal we already rely on downstream.
  *
  * @param enabled `true` enables mustache mode; `false` reverts to f-string.
  */
@@ -79,10 +85,16 @@ export async function setUseDoubleBrackets(
   page: Page,
   enabled: boolean,
 ): Promise<void> {
-  await page.getByTestId("toggle_bool_use_double_brackets").click();
   const expectedOpenButton = enabled
     ? MUSTACHE_OPEN_BUTTON
     : FSTRING_OPEN_BUTTON;
+  const alreadyInDesiredState = await page
+    .getByTestId(expectedOpenButton)
+    .isVisible({ timeout: 500 })
+    .catch(() => false);
+  if (!alreadyInDesiredState) {
+    await page.getByTestId("toggle_bool_use_double_brackets").click();
+  }
   await expect(page.getByTestId(expectedOpenButton)).toBeVisible({
     timeout: 10000,
   });
@@ -131,8 +143,14 @@ export async function fillPromptTemplate(
 
   const textarea = page.getByTestId(textareaTestId);
 
+  // On a fresh component (first save) or after an error path that left the
+  // modal in edit mode, the preview never mounts — keep the probe short so
+  // those callers don't each pay a 2s tax just to learn there is nothing to
+  // click. The post-save preview mounts well within 500ms in practice; the
+  // downstream `expect(textarea).toBeVisible(...)` is the real correctness
+  // gate.
   const preview = page.getByTestId("edit-prompt-sanitized");
-  if (await preview.isVisible({ timeout: 2000 }).catch(() => false)) {
+  if (await preview.isVisible({ timeout: 500 }).catch(() => false)) {
     await preview.click();
   }
 
