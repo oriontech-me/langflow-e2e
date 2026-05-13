@@ -47,7 +47,7 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
     // so the LanguageModelComponent fails with "A model selection is required" — that
     // is intentional. The failure still emits a trace entry with totalLatencyMs and
     // totalTokens, which is what these tests validate.
-    await request.post(`/api/v1/run/${flowId}`, {
+    const runRes = await request.post(`/api/v1/run/${flowId}`, {
       headers: { "x-api-key": apiKey },
       data: {
         input_value: "trace-probe",
@@ -55,6 +55,27 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
         output_type: "chat",
       },
     });
+    // Langflow returns 200 (with error payload) or 500 for component-level failures.
+    // Anything outside that range (401, 422, etc.) means the run never reached the
+    // graph executor and no trace will be emitted — fail fast instead of timing out.
+    expect([200, 500]).toContain(runRes.status());
+
+    // Trace writes are asynchronous: poll until at least one trace exists for this
+    // flow before downstream tests query /monitor/traces.
+    await expect
+      .poll(
+        async () => {
+          const res = await request.get(
+            `/api/v1/monitor/traces?flow_id=${flowId}`,
+            { headers: { Authorization: bearerToken } },
+          );
+          if (res.status() !== 200) return 0;
+          const body = await res.json();
+          return body.traces?.length ?? 0;
+        },
+        { timeout: 30000, intervals: [500, 1000, 2000] },
+      )
+      .toBeGreaterThan(0);
   });
 
   test.afterAll(async ({ request }) => {
@@ -127,13 +148,15 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
         .locator('.ag-cell[col-id="totalLatencyMs"]')
         .first();
       await expect(latencyCell).toBeVisible({ timeout: 15000 });
-      await expect(latencyCell).toHaveText(/^\d+\s*ms$/);
+      // Cell renders before metrics populate; use an explicit timeout instead of the
+      // default 5s expect timeout, which is shorter than the visibility wait above.
+      await expect(latencyCell).toHaveText(/^\d+\s*ms$/, { timeout: 15000 });
 
       const tokensCell = page
         .locator('.ag-cell[col-id="totalTokens"]')
         .first();
       await expect(tokensCell).toBeVisible();
-      await expect(tokensCell).toHaveText(/^\d+$/);
+      await expect(tokensCell).toHaveText(/^\d+$/, { timeout: 15000 });
     },
   );
 
