@@ -1,106 +1,21 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import {
+  addPromptComponent,
+  dynamicHandlesLocator,
+  fillPromptTemplate,
+  setUseDoubleBrackets,
+} from "../../../helpers/ui/prompt-template";
 
 // Run serially to avoid 500 errors from concurrent POST /api/v1/flows/
 // when several workers create a blank flow at the same time.
 test.describe.configure({ mode: "serial" });
 
-// Verified testids from live UI / frontend source inspection:
-//   add button:               "add-component-button-prompt-template"
-//   node title:               "title-Prompt Template"
-//   toggle (InspectionPanel): "toggle_bool_use_double_brackets"
-//   f-string modal open:      "button_open_prompt_modal"
-//   f-string textarea:        "modal-promptarea_prompt_template"
-//   mustache modal open:      "button_open_mustache_prompt_modal"
-//   mustache textarea:        "modal-mustachepromptarea_mustache_template"
-//   modal save btn:           "genericModalBtnSave"
-//   modal preview:            "edit-prompt-sanitized"  (shared between both modes)
-//   dynamic handles:          "handle-prompt template-shownode-{varname}-left"
-//
 // `use_double_brackets` carries `advanced=True` upstream, which only filters the
 // field from the on-canvas node body via `isCanvasVisible()`. The right-hand
 // InspectionPanel still renders advanced fields directly (no gating modal),
 // so the bool toggle is interactable as soon as the node is selected — which
 // happens automatically when it is added to a blank flow.
-
-const dynamicHandlesLocator = (page: Page) =>
-  page.locator(
-    '[data-testid^="handle-prompt template-shownode-"][data-testid$="-left"]',
-  );
-
-async function addPromptComponent(page: Page) {
-  await awaitBootstrapTest(page);
-  await expect(page.getByTestId("blank-flow")).toBeAttached({ timeout: 30000 });
-  await page.getByTestId("blank-flow").click();
-
-  await page.getByTestId("sidebar-search-input").click();
-  await page.getByTestId("sidebar-search-input").fill("prompt");
-  await expect(
-    page.getByTestId("add-component-button-prompt-template"),
-  ).toBeAttached({ timeout: 30000 });
-  await page.getByTestId("add-component-button-prompt-template").click();
-
-  await adjustScreenView(page);
-  await expect(page.locator(".react-flow__node")).toHaveCount(1, {
-    timeout: 10000,
-  });
-}
-
-// Flip the `use_double_brackets` toggle in the InspectionPanel and wait for the
-// field-type switch to take effect. With `real_time_refresh=True`, toggling the
-// bool causes `update_build_config` to swap `template.type` between PROMPT and
-// MUSTACHE_PROMPT, which re-renders the modal-open button under a different
-// testid — that re-render is the reliable signal that the switch has landed.
-async function flipDoubleBrackets(page: Page, expectMustache: boolean) {
-  await page.getByTestId("toggle_bool_use_double_brackets").click();
-  const expectedOpenButton = expectMustache
-    ? "button_open_mustache_prompt_modal"
-    : "button_open_prompt_modal";
-  await expect(page.getByTestId(expectedOpenButton)).toBeVisible({
-    timeout: 10000,
-  });
-}
-
-// Open the active prompt modal (f-string or mustache, depending on `mode`), replace
-// its current value with `value`, and save. Mirrors the helper in
-// prompt-template-component-regression.spec.ts but parameterises the testid pair
-// because the modal-open button and textarea both change when mustache mode is on.
-async function setPromptTemplate(
-  page: Page,
-  value: string,
-  mode: "fstring" | "mustache" = "fstring",
-) {
-  const openButtonTestId =
-    mode === "mustache"
-      ? "button_open_mustache_prompt_modal"
-      : "button_open_prompt_modal";
-  const textareaTestId =
-    mode === "mustache"
-      ? "modal-mustachepromptarea_mustache_template"
-      : "modal-promptarea_prompt_template";
-
-  await page.getByTestId(openButtonTestId).click();
-
-  const textarea = page.getByTestId(textareaTestId);
-
-  // After a previous save, the modal initially shows the sanitized preview
-  // (read-only) instead of the textarea. Clicking the preview re-enters edit
-  // mode and mounts the textarea.
-  const preview = page.getByTestId("edit-prompt-sanitized");
-  if (await preview.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await preview.click();
-  }
-
-  await expect(textarea).toBeVisible({ timeout: 10000 });
-  await textarea.click();
-  await page.keyboard.press("Control+a");
-  await textarea.fill(value);
-
-  await page.getByTestId("genericModalBtnSave").click();
-  await expect(textarea).toBeHidden({ timeout: 10000 });
-}
 
 test(
   "Prompt Template — use_double_brackets toggle is exposed in the InspectionPanel with its upstream display name",
@@ -160,11 +75,7 @@ test(
     await test.step(
       "Save template `Hello {single} and {{double}}!` in default (f-string) mode",
       async () => {
-        await setPromptTemplate(
-          page,
-          "Hello {single} and {{double}}!",
-          "fstring",
-        );
+        await fillPromptTemplate(page, "Hello {single} and {{double}}!");
       },
     );
 
@@ -192,17 +103,15 @@ test(
     });
 
     await test.step("Enable double brackets — switches to mustache mode", async () => {
-      await flipDoubleBrackets(page, true);
+      await setUseDoubleBrackets(page, true);
     });
 
     await test.step(
       "Save template `Hello {single} and {{double}}!` in mustache mode",
       async () => {
-        await setPromptTemplate(
-          page,
-          "Hello {single} and {{double}}!",
-          "mustache",
-        );
+        await fillPromptTemplate(page, "Hello {single} and {{double}}!", {
+          mode: "mustache",
+        });
       },
     );
 
@@ -232,8 +141,10 @@ test(
     await test.step(
       "Enable mustache mode and save `Hello {{name}}!` — `name` handle appears",
       async () => {
-        await flipDoubleBrackets(page, true);
-        await setPromptTemplate(page, "Hello {{name}}!", "mustache");
+        await setUseDoubleBrackets(page, true);
+        await fillPromptTemplate(page, "Hello {{name}}!", {
+          mode: "mustache",
+        });
         await expect(
           page.getByTestId("handle-prompt template-shownode-name-left"),
         ).toBeVisible({ timeout: 10000 });
@@ -244,9 +155,9 @@ test(
     await test.step(
       "Disable mustache mode — modal-open button swaps back to the f-string variant",
       async () => {
-        await flipDoubleBrackets(page, false);
+        await setUseDoubleBrackets(page, false);
         // Explicit assertion at the test level so the HTML report shows a real
-        // `expect()` in this step, even though `flipDoubleBrackets` already
+        // `expect()` in this step, even though `setUseDoubleBrackets` already
         // waited on the same testid internally.
         await expect(
           page.getByTestId("button_open_prompt_modal"),
@@ -265,7 +176,7 @@ test(
     await test.step(
       "Re-saving the same template in f-string mode drops the now-literal `{{name}}` handle",
       async () => {
-        await setPromptTemplate(page, "Hello {{name}}!", "fstring");
+        await fillPromptTemplate(page, "Hello {{name}}!");
         await expect(
           page.getByTestId("handle-prompt template-shownode-name-left"),
         ).toHaveCount(0, { timeout: 10000 });
@@ -276,7 +187,7 @@ test(
     await test.step(
       "Saving `{var}` in f-string mode recreates a dynamic handle",
       async () => {
-        await setPromptTemplate(page, "Just one {var} here.", "fstring");
+        await fillPromptTemplate(page, "Just one {var} here.");
         await expect(
           page.getByTestId("handle-prompt template-shownode-var-left"),
         ).toBeVisible({ timeout: 10000 });
@@ -327,7 +238,7 @@ test(
     );
 
     await test.step("Enable double brackets", async () => {
-      await flipDoubleBrackets(page, true);
+      await setUseDoubleBrackets(page, true);
     });
 
     await test.step(
