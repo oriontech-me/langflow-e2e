@@ -255,14 +255,56 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("Open Playground and send echo prompt", async () => {
           await page.getByTestId("playground-btn-flow-io").click();
+          const playgroundInput = page.getByTestId("input-chat-playground").last();
+          await expect(playgroundInput).toBeVisible({ timeout: 30000 });
+          // Cross-version Playground hardening for issue #226.
+          //
+          // Root cause on Langflow < 1.10.x: in flow-page-sliding-container.tsx the
+          // prefill useEffect has `inputs` and `nodes` in its dep array (renders
+          // produce new array refs, so the effect re-fires repeatedly). When the
+          // textarea is filled via Playwright and we then `.click()` send, the
+          // useEffect can re-execute in between and reset `chatValue` back to the
+          // Chat Input node's template `input_value` ("Hello, how are you?"), so
+          // the send dispatches the stale value even though the textarea displayed
+          // our prompt.
+          //
+          // Per issue acceptance criteria we keep `.clear()` + `.fill()` +
+          // `toHaveValue()` so the surface contract is met. Then we run the actual
+          // send as an *atomic* DOM operation inside a single `page.evaluate` — set
+          // the textarea value, dispatch the synthetic `input` event so React's
+          // controlled component picks up the change, and call `.click()` on the
+          // send button in the same synchronous tick. React useEffects only run
+          // after the current task completes, so the prefill cannot race the click.
+          const echoPrompt = "Use the echo tool to echo: hello mcp";
+          await playgroundInput.clear();
+          await playgroundInput.fill(echoPrompt);
+          await expect(playgroundInput).toHaveValue(echoPrompt);
+          await page.evaluate((value: string) => {
+            const inputs = document.querySelectorAll<HTMLTextAreaElement>(
+              '[data-testid="input-chat-playground"]',
+            );
+            const input = inputs[inputs.length - 1];
+            const sends = document.querySelectorAll<HTMLButtonElement>(
+              '[data-testid="button-send"]',
+            );
+            const send = sends[sends.length - 1];
+            const setter = Object.getOwnPropertyDescriptor(
+              HTMLTextAreaElement.prototype,
+              "value",
+            )?.set;
+            if (!setter || !input || !send) {
+              throw new Error("Playground input or send button not found in DOM");
+            }
+            setter.call(input, value);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            send.click();
+          }, echoPrompt);
+          // Verify the user message that reached the chat history is the echo prompt
+          // (not the Chat Input template default). Catches any residual race loudly.
           await expect(
-            page.getByTestId("input-chat-playground").last(),
-          ).toBeVisible({ timeout: 30000 });
-          await page
-            .getByTestId("input-chat-playground")
-            .last()
-            .fill("Use the echo tool to echo: hello mcp");
-          await page.getByTestId("button-send").last().click();
+            page.getByText(echoPrompt, { exact: true }).first(),
+            "User message in chat must match the echo prompt (not the Chat Input template default)",
+          ).toBeVisible({ timeout: 10000 });
         });
 
         await test.step("Verify agent response contains echoed message", async () => {
