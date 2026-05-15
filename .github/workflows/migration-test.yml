@@ -13,9 +13,12 @@ env:
   PG_DB: langflow
   STATE_FILE: /tmp/migration-test-state.json
   REPORT_FILE: /tmp/migration-report.md
-  # Fixed key shared by both containers so credentials encrypted by latest
-  # can be decrypted by nightly after DB migration.
-  LANGFLOW_SECRET_KEY: "migration-test-fixed-secret-32chars!!"
+  LANGFLOW_DATABASE_URL: "postgresql://langflow:langflow_test_pw@localhost:5432/langflow"
+  LANGFLOW_AUTO_LOGIN: "true"
+  LANGFLOW_SKIP_AUTH_AUTO_LOGIN: "true"
+  LANGFLOW_SUPERUSER: "langflow"
+  LANGFLOW_SUPERUSER_PASSWORD: "langflow123"
+  LANGFLOW_STORE: "false"
 
 permissions:
   contents: read
@@ -49,41 +52,41 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install test dependencies
         run: |
           pip install requests playwright pytest pytest-playwright
           playwright install chromium --with-deps
 
-      - name: Generate ephemeral Fernet key for this run
+      - name: Create virtual environment
+        run: uv venv .venv
+
+      - name: Generate ephemeral secret key for this run
         run: |
           python - <<'PY'
-          import base64
-          import os
-
+          import base64, os
           key = base64.urlsafe_b64encode(os.urandom(32)).decode()
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as github_env:
-              github_env.write(f"LANGFLOW_SECRET_KEY={key}\n")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"LANGFLOW_SECRET_KEY={key}\n")
           PY
 
       # ── Phase 1: Langflow Latest ──────────────────────────────
-      - name: Pull Langflow latest
+      - name: Install Langflow latest
         run: |
-          docker pull langflowai/langflow:latest
-          docker inspect langflowai/langflow:latest --format='{{index .RepoDigests 0}}' > /tmp/latest-digest.txt
-          echo "Latest digest: $(cat /tmp/latest-digest.txt)"
+          uv pip install langflow
+          LATEST_VERSION=$(uv pip show langflow | grep ^Version | awk '{print $2}')
+          echo "LATEST_VERSION=$LATEST_VERSION" >> "$GITHUB_ENV"
+          echo "langflow==$LATEST_VERSION" > /tmp/latest-digest.txt
+          echo "Installed Langflow $LATEST_VERSION (latest stable)"
 
       - name: Start Langflow latest
         run: |
-          docker run -d --name langflow \
-            --network host \
-            -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
-            -e LANGFLOW_AUTO_LOGIN=true \
-            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
-            -e LANGFLOW_SUPERUSER=langflow \
-            -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
-            -e LANGFLOW_STORE=false \
-            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
-            langflowai/langflow:latest
+          uv run langflow run --host 0.0.0.0 --port "$LANGFLOW_PORT" \
+            > /tmp/langflow-latest.log 2>&1 &
+          echo $! > /tmp/langflow.pid
+          echo "Langflow PID: $(cat /tmp/langflow.pid)"
 
       - name: Wait for Langflow latest
         run: python tests/github-workflows/migration/wait_for_langflow.py
@@ -93,40 +96,48 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-      - name: Save latest container logs
-        if: always()
-        run: docker logs langflow > /tmp/langflow-latest.log 2>&1 || true
+      - name: Stop Langflow latest
+        run: |
+          kill "$(cat /tmp/langflow.pid)" 2>/dev/null || true
+          sleep 3
 
       # ── Phase 2: Upgrade to Nightly ───────────────────────────
-      - name: Stop Langflow latest
-        run: docker stop langflow && docker rm langflow
-
-      - name: Pull Langflow nightly
+      - name: Resolve nightly version from PyPI
         run: |
-          docker pull langflowai/langflow-nightly:latest
-          docker inspect langflowai/langflow-nightly:latest --format='{{index .RepoDigests 0}}' > /tmp/nightly-digest.txt
-          echo "Nightly digest: $(cat /tmp/nightly-digest.txt)"
+          NIGHTLY_VERSION=$(python - <<'PY'
+          import urllib.request, json
+          data = json.loads(urllib.request.urlopen("https://pypi.org/pypi/langflow/json").read())
+          pre = [
+              v for v in data["releases"]
+              if data["releases"][v] and any(c in v for c in ("dev", "a", "b", "rc"))
+          ]
+          pre.sort(key=lambda v: data["releases"][v][0]["upload_time"])
+          print(pre[-1] if pre else "")
+          PY
+          )
+          if [ -z "$NIGHTLY_VERSION" ]; then
+            echo "ERROR: Could not determine nightly version from PyPI"
+            exit 1
+          fi
+          echo "NIGHTLY_VERSION=$NIGHTLY_VERSION" >> "$GITHUB_ENV"
+          echo "langflow==$NIGHTLY_VERSION" > /tmp/nightly-digest.txt
+          echo "Nightly version: $NIGHTLY_VERSION"
+
+      - name: Install Langflow nightly
+        run: |
+          uv pip install "langflow==$NIGHTLY_VERSION"
+          echo "Installed Langflow $NIGHTLY_VERSION (nightly)"
 
       - name: Start Langflow nightly (same database)
         run: |
-          docker run -d --name langflow \
-            --network host \
-            -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
-            -e LANGFLOW_AUTO_LOGIN=true \
-            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
-            -e LANGFLOW_SUPERUSER=langflow \
-            -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
-            -e LANGFLOW_STORE=false \
-            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
-            langflowai/langflow-nightly:latest
+          uv run langflow run --host 0.0.0.0 --port "$LANGFLOW_PORT" \
+            > /tmp/langflow-nightly.log 2>&1 &
+          echo $! > /tmp/langflow.pid
+          echo "Langflow PID: $(cat /tmp/langflow.pid)"
 
       - name: Wait for Langflow nightly (includes migration)
         id: nightly_start
         run: python tests/github-workflows/migration/wait_for_langflow.py --timeout 180
-
-      - name: Save nightly container logs
-        if: always()
-        run: docker logs langflow > /tmp/langflow-nightly.log 2>&1 || true
 
       # ── Phase 3: Verify Migration ─────────────────────────────
       - name: Verify migration via API
@@ -140,6 +151,10 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
       # ── Phase 4: Report ───────────────────────────────────────
+      - name: Stop Langflow nightly
+        if: always()
+        run: kill "$(cat /tmp/langflow.pid)" 2>/dev/null || true
+
       - name: Generate report
         if: always()
         run: python tests/github-workflows/migration/generate_report.py
@@ -161,10 +176,6 @@ jobs:
             /tmp/migration-test-state.json
             /tmp/latest-digest.txt
             /tmp/nightly-digest.txt
-
-      - name: Cleanup containers
-        if: always()
-        run: docker stop langflow 2>/dev/null; docker rm langflow 2>/dev/null; true
 
       - name: Close issue on success
         if: success()
