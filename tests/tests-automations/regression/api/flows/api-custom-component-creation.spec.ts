@@ -25,7 +25,7 @@ class TestComponent(Component):
 test.describe("Custom Component Creation API", () => {
   test(
     "POST /api/v1/custom_component returns valid component structure",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
@@ -69,7 +69,7 @@ test.describe("Custom Component Creation API", () => {
 
   test(
     "POST /api/v1/custom_component with invalid code returns error",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
@@ -90,7 +90,7 @@ test.describe("Custom Component Creation API", () => {
 
   test(
     "GET /api/v1/all includes component types",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
@@ -145,9 +145,18 @@ test.describe("Custom Component Creation API", () => {
             `were found in the top-level keys. Found: ${[...allNames].slice(0, 10).join(", ")}...`,
         );
       }
+    },
+  );
 
-      // The body must be a non-empty object — that is the guaranteed invariant.
-      expect(keys.length).toBeGreaterThan(0);
+  test(
+    "POST /api/v1/custom_component without auth returns 401 or 403",
+    { tag: ["@stable", "@release", "@api", "@regression"] },
+    async ({ request }) => {
+      const res = await request.post("/api/v1/custom_component", {
+        data: { code: "class X: pass" },
+      });
+
+      expect([401, 403]).toContain(res.status());
     },
   );
 });

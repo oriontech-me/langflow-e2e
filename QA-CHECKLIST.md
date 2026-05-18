@@ -100,8 +100,8 @@
 - [x] POST to non-existent flow → returns 404 → `api/flows/api-run-flow.spec.ts`
 
 #### 1.4 Components via API
-- [-] GET `/api/v1/all` → lists all available components
-- [-] POST `/api/v1/custom_component` → creates custom component
+- [x] GET `/api/v1/all` → lists all available components → `api/flows/api-custom-component-creation.spec.ts`
+- [x] POST `/api/v1/custom_component` → creates custom component → `api/flows/api-custom-component-creation.spec.ts`
 
 #### 1.5 Messages and Monitoring via API
 - [-] GET `/api/v1/monitor/messages` → returns 200 with array
@@ -704,7 +704,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 14 | 7 | 0 | 0 |
+| `api/flows/` — REST API | 21 | 16 | 5 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 1 | 19 | 0 | 2 |
 | `core-components/` — Core Components | 67 | 61 | 3 | 1 | 2 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
@@ -720,7 +720,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **408** | **144 (35%)** | **205 (50%)** | **7 (2%)** | **52 (13%)** |
+| **TOTAL** | **408** | **146 (36%)** | **203 (50%)** | **7 (2%)** | **52 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -736,13 +736,17 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 146 `test()` calls carrying the `@stable` tag, distributed across 47 spec
+> 150 `test()` calls carrying the `@stable` tag, distributed across 48 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
 
 #### api/flows/
+- [x] POST /api/v1/custom_component returns valid component structure → `api-custom-component-creation.spec.ts`
+- [x] POST /api/v1/custom_component with invalid code returns error → `api-custom-component-creation.spec.ts`
+- [x] GET /api/v1/all includes component types → `api-custom-component-creation.spec.ts`
+- [x] POST /api/v1/custom_component without auth returns 401 or 403 → `api-custom-component-creation.spec.ts`
 - [x] POST creates flow and returns ID → `api-flows-crud.spec.ts`
 - [x] GET lists flows and includes the created one → `api-flows-crud.spec.ts`
 - [x] GET by ID returns correct flow → `api-flows-crud.spec.ts`
@@ -910,7 +914,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 7 | 0 |
+| `api/flows/` — REST API | 5 | 0 |
 | `core-components/` — Component Config | 19 | 2 |
 | `core-components/` — Core Components | 3 | 2 |
 | `core-functionality/auth/` | 18 | 1 |
