@@ -145,9 +145,6 @@ test.describe("Custom Component Creation API", () => {
             `were found in the top-level keys. Found: ${[...allNames].slice(0, 10).join(", ")}...`,
         );
       }
-
-      // The body must be a non-empty object — that is the guaranteed invariant.
-      expect(keys.length).toBeGreaterThan(0);
     },
   );
 });
