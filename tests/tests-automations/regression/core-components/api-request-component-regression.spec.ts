@@ -415,7 +415,12 @@ test(
     await expect(headersDiv).toBeVisible({ timeout: 10000 });
     await headersDiv.getByRole("button", { name: "Open table" }).click();
 
-    const headersDialog = page.locator('[role="dialog"]').last();
+    // Scope by the TableModal's DialogTitle (Radix renders it as <h2>) so a
+    // co-mounted Radix Popover — which also reports role="dialog" — can't win
+    // the locator just by being later in DOM order. See issue #241.
+    const headersDialog = page
+      .locator('[role="dialog"]')
+      .filter({ has: page.getByRole("heading", { name: "Headers" }) });
     await expect(headersDialog).toBeVisible({ timeout: 10000 });
 
     await headersDialog.getByTestId("add-row-button").click();
@@ -556,7 +561,10 @@ test(
     await expect(bodyDiv).toBeVisible({ timeout: 10000 });
     await bodyDiv.getByRole("button", { name: "Open table" }).click();
 
-    const bodyDialog = page.locator('[role="dialog"]').last();
+    // Title-scoped — see issue #241 for why `.last()` was unsafe here.
+    const bodyDialog = page
+      .locator('[role="dialog"]')
+      .filter({ has: page.getByRole("heading", { name: "Body" }) });
     await expect(bodyDialog).toBeVisible({ timeout: 10000 });
 
     const addRowButton = bodyDialog.getByTestId("add-row-button");
@@ -643,7 +651,10 @@ test(
       await expect(headersDiv).toBeVisible({ timeout: 10000 });
       await headersDiv.getByRole("button", { name: "Open table" }).click();
 
-      const headersDialog = page.locator('[role="dialog"]').last();
+      // Title-scoped — see issue #241 for why `.last()` was unsafe here.
+      const headersDialog = page
+        .locator('[role="dialog"]')
+        .filter({ has: page.getByRole("heading", { name: "Headers" }) });
       await expect(headersDialog).toBeVisible({ timeout: 10000 });
 
       // The refresh has already completed in the step above (we waited for the
@@ -763,7 +774,10 @@ test(
         const headersDiv = page.getByTestId("div-table_headers");
         await expect(headersDiv).toBeVisible({ timeout: 10000 });
         await headersDiv.getByRole("button", { name: "Open table" }).click();
-        const headersDialog = page.locator('[role="dialog"]').last();
+        // Title-scoped — see issue #241 for why `.last()` was unsafe here.
+        const headersDialog = page
+          .locator('[role="dialog"]')
+          .filter({ has: page.getByRole("heading", { name: "Headers" }) });
         await expect(headersDialog).toBeVisible({ timeout: 10000 });
         await expect(
           headersDialog.getByRole("button", { name: headerKey, exact: true }),
