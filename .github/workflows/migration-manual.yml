@@ -165,9 +165,10 @@ jobs:
             fi
           done
 
-      - name: "[SOURCE] Create N users + witness flow"
+      - name: "[SOURCE] Create N users + witness flow + encrypted variable"
         env:
           N: ${{ inputs.concurrent_users }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -e
 
@@ -202,14 +203,55 @@ jobs:
 
           echo "Created and activated $(wc -l < /tmp/users.txt) users"
 
-          WITNESS_ID=$(curl -s -X POST "${LF_URL}/api/v1/flows/" \
-            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{"name":"migration-witness-manual","description":"Migration witness flow","data":{"nodes":[],"edges":[]}}' \
-            | jq -r '.id // empty')
-          if [[ -z "$WITNESS_ID" ]]; then
-            echo "::error::Failed to create witness flow"
-            exit 1
+          # ---- Witness flow (real Simple Agent starter if API key available) ----
+          if [[ -n "$OPENAI_API_KEY" ]]; then
+            echo "OPENAI_API_KEY secret available: using Simple Agent starter as witness"
+
+            # Find Simple Agent starter (matches helpers.find_agent_template)
+            STARTERS=$(curl -s -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+              "${LF_URL}/api/v1/starter-projects/")
+            TEMPLATE=$(echo "$STARTERS" | jq -c '
+              [.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent"))][0]
+            ')
+            if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
+              echo "::error::Simple Agent starter not found among $(echo "$STARTERS" | jq 'length') starter projects"
+              echo "$STARTERS" | jq -r '.[] | .name // "(unnamed)"' | head -20
+              exit 1
+            fi
+            FLOW_PAYLOAD=$(echo "$TEMPLATE" | jq '{
+              name: ((.name // "Simple Agent") + " — migration witness"),
+              description: "Migration test agent (auto-created)",
+              data: .data,
+              endpoint_name: .endpoint_name
+            }')
+            WITNESS_ID=$(curl -s -X POST "${LF_URL}/api/v1/flows/" \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$FLOW_PAYLOAD" \
+              | jq -r '.id // empty')
+            [[ -z "$WITNESS_ID" ]] && { echo "::error::Failed to create witness flow from starter"; exit 1; }
+
+            # Create encrypted Variable — this is the Fernet-encrypted credential
+            # that will be tested for survival across the migration
+            VAR_ID=$(curl -s -X POST "${LF_URL}/api/v1/variables/" \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"name\":\"OPENAI_API_KEY\",\"value\":\"${OPENAI_API_KEY}\",\"type\":\"Credential\",\"default_fields\":[]}" \
+              | jq -r '.id // empty')
+            [[ -z "$VAR_ID" ]] && { echo "::error::Failed to create OPENAI_API_KEY variable"; exit 1; }
+            echo "$VAR_ID" > /tmp/variable-id.txt
+
+            touch /tmp/has-openai-key
+            echo "Witness: Simple Agent flow ${WITNESS_ID} + encrypted variable ${VAR_ID}"
+          else
+            echo "::warning::OPENAI_API_KEY secret not configured. Using empty stub witness; skipping Fernet/flow-execution coverage."
+            WITNESS_ID=$(curl -s -X POST "${LF_URL}/api/v1/flows/" \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d '{"name":"migration-witness-manual","description":"Empty stub witness","data":{"nodes":[],"edges":[]}}' \
+              | jq -r '.id // empty')
+            [[ -z "$WITNESS_ID" ]] && { echo "::error::Failed to create stub witness flow"; exit 1; }
+            echo "Witness: empty stub ${WITNESS_ID}"
           fi
           echo "$WITNESS_ID" > /tmp/witness-id.txt
           echo "Witness flow id: ${WITNESS_ID}"
@@ -251,7 +293,7 @@ jobs:
             fi
           done
 
-      - name: "[TARGET] Verify witness flow + users preserved"
+      - name: "[TARGET] Verify witness flow + users + variable preserved"
         run: |
           set -e
 
@@ -285,12 +327,62 @@ jobs:
           fi
           echo "All ${EXPECTED} test users preserved"
 
+          # Variable preservation: only relevant if source created an encrypted variable.
+          # Note: this only checks the row exists. Actual Fernet decryption is checked
+          # in the next step by running the flow.
+          if [[ -f /tmp/has-openai-key ]]; then
+            VAR_COUNT=$(curl -s -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+              "${LF_URL}/api/v1/variables/" \
+              | jq '[.[] | select(.name == "OPENAI_API_KEY")] | length')
+            if [[ "$VAR_COUNT" -ne "1" ]]; then
+              echo "::error::OPENAI_API_KEY variable lost after migration (count=${VAR_COUNT})"
+              exit 1
+            fi
+            echo "OPENAI_API_KEY variable row preserved"
+          fi
+
+      - name: "[TARGET] Execute witness flow — Fernet decrypt + smoke test (1/10 OpenAI calls)"
+        if: hashFiles('/tmp/has-openai-key') != ''
+        run: |
+          set -e
+          ADMIN_TOKEN=$(curl -s -X POST "${LF_URL}/api/v1/login" \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "username=${SUPERUSER}&password=${SUPERUSER_PASSWORD}" \
+            | jq -r '.access_token // empty')
+          WITNESS_ID=$(cat /tmp/witness-id.txt)
+
+          HTTP=$(curl -s -o /tmp/run-resp.json -w "%{http_code}" \
+            -X POST "${LF_URL}/api/v1/run/${WITNESS_ID}" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -H "Content-Type: application/json" \
+            --max-time 120 \
+            -d '{"input_value":"What is 2+2? Answer with just the number.","output_type":"chat","input_type":"chat"}')
+
+          if [[ "$HTTP" != "200" ]]; then
+            echo "::error::Flow execution HTTP ${HTTP} after migration — possible Fernet decrypt or runtime regression"
+            head -c 2000 /tmp/run-resp.json
+            exit 1
+          fi
+
+          # Look for the Fernet/API-key silent-failure signature documented in the
+          # langflow-image-migration skill ("API key required" while UI shows green)
+          if grep -iE 'api[ _-]?key.{0,30}(required|missing|not[ _]?found|invalid)|fernet|invaliddecrypt|cannot[ _]decrypt' /tmp/run-resp.json; then
+            echo "::error::Flow ran but body indicates API key / Fernet decryption issue — silent regression"
+            head -c 2000 /tmp/run-resp.json
+            exit 1
+          fi
+
+          echo "Witness flow executed successfully — Fernet decryption survived migration"
+          echo "1" > /tmp/openai-calls-used
+
       # ── Phase C: stress — N concurrent users hit auth+read paths ──
-      - name: "[TARGET] Multi-user concurrent stress (issue 13157 scenario)"
+      - name: "[TARGET] Multi-user concurrent stress + paced flow runs (issue 13157 scenario)"
         env:
           DURATION: ${{ inputs.stress_duration_seconds }}
         run: |
           set -e
+
+          # ---- N user tokens ----
           : > /tmp/tokens.txt
           while IFS=: read -r USER PASS ID; do
             TOKEN=$(curl -s -X POST "${LF_URL}/api/v1/login" \
@@ -308,6 +400,40 @@ jobs:
           END_TIME=$(( $(date +%s) + DURATION ))
           echo "Stressing ${N} concurrent users for ${DURATION}s (until $(date -u -d @${END_TIME}))"
 
+          # ---- Paced flow-execution loop (only if witness is a real flow) ----
+          # Caps OpenAI cost: 1 call already in the Fernet smoke test + 9 here = 10 per matrix run.
+          if [[ -f /tmp/has-openai-key ]]; then
+            ADMIN_TOKEN=$(curl -s -X POST "${LF_URL}/api/v1/login" \
+              -H "Content-Type: application/x-www-form-urlencoded" \
+              -d "username=${SUPERUSER}&password=${SUPERUSER_PASSWORD}" \
+              | jq -r '.access_token // empty')
+            WITNESS_ID=$(cat /tmp/witness-id.txt)
+            REMAINING_CALLS=9
+            INTERVAL=$(( DURATION / (REMAINING_CALLS + 1) ))
+            [[ "$INTERVAL" -lt 5 ]] && INTERVAL=5
+
+            (
+              CALL_COUNT=0
+              for i in $(seq 1 "$REMAINING_CALLS"); do
+                sleep "$INTERVAL"
+                NOW=$(date +%s)
+                [[ "$NOW" -ge "$END_TIME" ]] && break
+                HTTP=$(curl -s -o /tmp/run-paced-${i}.json -w "%{http_code}" \
+                  -X POST "${LF_URL}/api/v1/run/${WITNESS_ID}" \
+                  -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+                  -H "Content-Type: application/json" \
+                  --max-time 60 \
+                  -d '{"input_value":"Reply with the word OK.","output_type":"chat","input_type":"chat"}' || echo "000")
+                CALL_COUNT=$((CALL_COUNT + 1))
+                echo "  paced call ${i}/${REMAINING_CALLS}: HTTP ${HTTP}"
+              done
+              echo "Paced executions done: ${CALL_COUNT}"
+            ) &
+            PACER_PID=$!
+            echo "Pacer firing ${REMAINING_CALLS} flow runs every ${INTERVAL}s (10 OpenAI calls total counting Fernet smoke test)"
+          fi
+
+          # ---- N user concurrent loops on cheap endpoints ----
           while IFS= read -r TOKEN; do
             (
               while [[ $(date +%s) -lt $END_TIME ]]; do
@@ -373,5 +499,8 @@ jobs:
             /tmp/source-digest.txt
             /tmp/target-digest.txt
             /tmp/witness-id.txt
+            /tmp/variable-id.txt
             /tmp/users.txt
+            /tmp/run-resp.json
+            /tmp/run-paced-*.json
           retention-days: 30
