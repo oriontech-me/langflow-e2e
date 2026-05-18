@@ -147,4 +147,16 @@ test.describe("Custom Component Creation API", () => {
       }
     },
   );
+
+  test(
+    "POST /api/v1/custom_component without auth returns 401 or 403",
+    { tag: ["@stable", "@release", "@api", "@regression"] },
+    async ({ request }) => {
+      const res = await request.post("/api/v1/custom_component", {
+        data: { code: "class X: pass" },
+      });
+
+      expect([401, 403]).toContain(res.status());
+    },
+  );
 });

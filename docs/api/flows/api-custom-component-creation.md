@@ -21,7 +21,7 @@ If either endpoint regresses on shape, status code, or auth contract, both the C
 
 ## Step by step *(required)*
 
-The spec runs **3 independent tests** via Playwright's `request` fixture. Each test mints its own Bearer token via `getAuthToken(request)` — no shared `beforeAll`/`afterAll` state.
+The spec runs **4 independent tests** via Playwright's `request` fixture. Tests 1–3 mint a Bearer token via `getAuthToken(request)`; Test 4 deliberately sends no `Authorization` header. No shared `beforeAll`/`afterAll` state.
 
 **Test 1 — `POST /api/v1/custom_component` returns valid component structure**
 1. Obtain a Bearer token via `getAuthToken(request)`.
@@ -43,12 +43,19 @@ The spec runs **3 independent tests** via Playwright's `request` fixture. Each t
 
 This test fully supersedes the `GET /api/v1/all` test that was removed from `api-run-flow.spec.ts` (PR #262) — the assertions here are a strict superset of the original. Issue #261 is therefore satisfied by this spec.
 
+**Test 4 — `POST /api/v1/custom_component` without auth returns 401 or 403**
+1. POST to `/api/v1/custom_component` with **no** `Authorization` header and a minimal `code` payload.
+2. Assert the response status is `401` or `403` — the endpoint must refuse anonymous access.
+
+Test 4 was migrated from the now-deleted `api-custom-component.spec.ts` to consolidate all `/custom_component` contract tests in one file.
+
 ---
 
 ## Validation criterion *(required)*
-- Tests 1, 2, and 3 each return `2xx`/error status within the documented ranges.
+- Tests 1, 2, 3, and 4 each return a status within the documented ranges.
 - Test 3 confirms `GET /api/v1/all` returns a non-empty object — the canonical signal that the component catalog is wired and reachable.
-- All 3 tests pass 5× in a row locally against `langflowai/langflow-nightly:latest`.
+- Test 4 confirms `POST /api/v1/custom_component` rejects anonymous requests with `401`/`403`.
+- All 4 tests pass 5× in a row locally against `langflowai/langflow-nightly:latest`.
 
 ---
 
@@ -56,8 +63,9 @@ This test fully supersedes the `GET /api/v1/all` test that was removed from `api
 - Persistence of a custom component to a saved flow — `POST /api/v1/custom_component` only parses code, it doesn't store anything.
 - The canvas UI for editing component code → covered separately under `core-components/`.
 - Component update / deletion via API — Langflow's component model is per-flow JSON, not a CRUD-able resource set, so there are no PATCH/DELETE counterparts to test.
-- Auth-failure modes for `POST /api/v1/custom_component` — covered by the auth-less POST test in `api-custom-component.spec.ts`. `api-invalid-key.spec.ts` covers `/flows/` and `/run/{id}`, not the component endpoints.
+- Auth-failure modes for `POST /api/v1/custom_component` — covered inline by Test 4 of this spec.
 - Auth-failure modes for `GET /api/v1/all` — not currently covered.
+- Invalid-Bearer (as opposed to no-header) on either endpoint — not covered here; `api-invalid-key.spec.ts` covers `/flows/` and `/run/{id}` but not the component endpoints.
 
 ---
 
