@@ -2,7 +2,35 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../helpers/ui/open-advanced-options";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
+
+async function selectOperator(
+  page: Page,
+  operatorName: string,
+): Promise<void> {
+  await page.getByTestId("value-dropdown-dropdown_str_operator").click();
+  // Match by exact role+name — robust across option-index churn. Click via
+  // `dispatchEvent` because the bottom of the options list (numeric operators)
+  // overlaps `main_canvas_controls`, which intercepts ordinary pointer events.
+  await page
+    .getByRole("option", { name: operatorName, exact: true })
+    .dispatchEvent("click");
+  // Confirm the trigger reflects the new value before proceeding — guards
+  // against the real_time_refresh round-trip not having landed yet.
+  await expect(
+    page.getByTestId("value-dropdown-dropdown_str_operator"),
+  ).toHaveText(operatorName);
+}
+
+async function exposeCaseSensitive(page: Page): Promise<void> {
+  await openAdvancedOptions(page);
+  await page.getByTestId("showcase_sensitive").click();
+  await closeAdvancedOptions(page);
+}
 
 // Builds: If-Else (operator=equals) + two Text Output components, one renamed
 // to `textoutputfalse` so the True/False branches can be inspected
@@ -131,6 +159,159 @@ test(
     ).toHaveCount(1);
     await expect(
       page.getByTestId("node_status_icon_text output_inactive"),
+    ).toHaveCount(1);
+  },
+);
+
+test(
+  "If-Else operator=contains routes a substring match through the True branch",
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    await buildIfElseRoutingFlow(page);
+
+    await selectOperator(page, "contains");
+
+    // `lang` is a substring of `langflow` → contains evaluates True.
+    await page.getByTestId("popover-anchor-input-input_text").fill("langflow");
+    await page.getByTestId("popover-anchor-input-match_text").fill("lang");
+
+    await page.getByTestId("button_run_text output").click();
+    await expect(page.locator("text=built successfully")).toBeVisible({
+      timeout: 30000,
+    });
+
+    await expect(page.getByTestId("node_duration_text output")).toHaveCount(1);
+    await expect(
+      page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+    ).toHaveCount(1);
+  },
+);
+
+test(
+  "If-Else operator=regex routes a valid pattern match through the True branch",
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    await buildIfElseRoutingFlow(page);
+
+    await selectOperator(page, "regex");
+
+    // `^abc` matches the start of `abc123` → regex evaluates True.
+    await page.getByTestId("popover-anchor-input-input_text").fill("abc123");
+    await page.getByTestId("popover-anchor-input-match_text").fill("^abc");
+
+    await page.getByTestId("button_run_text output").click();
+    await expect(page.locator("text=built successfully")).toBeVisible({
+      timeout: 30000,
+    });
+
+    await expect(page.getByTestId("node_duration_text output")).toHaveCount(1);
+    await expect(
+      page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+    ).toHaveCount(1);
+  },
+);
+
+test(
+  "If-Else operator=regex hides the case_sensitive advanced field",
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    await buildIfElseRoutingFlow(page);
+
+    // Focus the If-Else node — `openAdvancedOptions` operates on the
+    // currently-focused node, and the build helper leaves focus on the last
+    // Text Output it renamed.
+    await page.getByTestId("title-If-Else").click();
+
+    // Baseline: with the default operator (equals), the edit-fields modal
+    // exposes the case_sensitive toggle.
+    await openAdvancedOptions(page);
+    await expect(page.getByTestId("showcase_sensitive")).toHaveCount(1);
+    await closeAdvancedOptions(page);
+
+    // After switching to regex, `update_build_config` removes case_sensitive
+    // from the build config — the toggle should disappear.
+    await selectOperator(page, "regex");
+
+    await page.getByTestId("title-If-Else").click();
+    await openAdvancedOptions(page);
+    await expect(page.getByTestId("showcase_sensitive")).toHaveCount(0);
+    await closeAdvancedOptions(page);
+  },
+);
+
+test(
+  "If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch",
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    await buildIfElseRoutingFlow(page);
+
+    // case_sensitive is True by default in the Python source. With operator
+    // equals, `HELLO` and `hello` differ — False branch should build.
+    await page.getByTestId("popover-anchor-input-input_text").fill("HELLO");
+    await page.getByTestId("popover-anchor-input-match_text").fill("hello");
+
+    await page.getByTestId("button_run_textoutputfalse").click();
+    await expect(page.locator("text=built successfully")).toBeVisible({
+      timeout: 30000,
+    });
+
+    await expect(
+      page.getByTestId("node_duration_textoutputfalse"),
+    ).toHaveCount(1);
+    await expect(
+      page.getByTestId("node_status_icon_text output_inactive"),
+    ).toHaveCount(1);
+  },
+);
+
+test(
+  "If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch)",
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    await buildIfElseRoutingFlow(page);
+
+    // Focus If-Else and expose the case_sensitive field on the node body,
+    // then toggle the switch from ON (default) to OFF.
+    await page.getByTestId("title-If-Else").click();
+    await exposeCaseSensitive(page);
+    await page.getByTestId("toggle_bool_case_sensitive").click();
+
+    // With case-insensitive comparison, `HELLO` and `hello` are equal.
+    await page.getByTestId("popover-anchor-input-input_text").fill("HELLO");
+    await page.getByTestId("popover-anchor-input-match_text").fill("hello");
+
+    await page.getByTestId("button_run_text output").click();
+    await expect(page.locator("text=built successfully")).toBeVisible({
+      timeout: 30000,
+    });
+
+    await expect(page.getByTestId("node_duration_text output")).toHaveCount(1);
+    await expect(
+      page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+    ).toHaveCount(1);
+  },
+);
+
+test(
+  "If-Else operator=greater than routes a numeric match (10 > 5) through the True branch",
+  { tag: ["@regression", "@components"] },
+  async ({ page }) => {
+    await buildIfElseRoutingFlow(page);
+
+    await selectOperator(page, "greater than");
+
+    // Numeric: 10 > 5 → True.
+    await page.getByTestId("popover-anchor-input-input_text").fill("10");
+    await page.getByTestId("popover-anchor-input-match_text").fill("5");
+
+    await page.getByTestId("button_run_text output").click();
+    await expect(page.locator("text=built successfully")).toBeVisible({
+      timeout: 30000,
+    });
+
+    await expect(page.getByTestId("node_duration_text output")).toHaveCount(1);
+    await expect(
+      page.getByTestId("node_status_icon_textoutputfalse_inactive"),
     ).toHaveCount(1);
   },
 );
