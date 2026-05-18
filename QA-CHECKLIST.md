@@ -233,6 +233,16 @@
 - [-] Nested component
 - [-] Enter and exit grouped component
 
+#### 3.8 If-Else Component
+- [-] `operator=equals`: matching input routes through True branch (False branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
+- [-] `operator=equals`: non-matching input routes through False branch (True branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
+- [ ] `operator=contains` substring routing
+- [ ] `operator=regex` valid pattern routing
+- [ ] `operator=regex` hides `case_sensitive` field via `update_build_config`
+- [ ] Numeric operators (`greater than`, `less than`, etc.) — not exposed in docs but implemented in source
+- [ ] `case_sensitive` toggle behavior on text operators
+- [ ] `max_iterations` + `default_route` cycle break
+
 ---
 
 ## core-functionality/ — Core and Operational Logic
