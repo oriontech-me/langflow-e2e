@@ -598,6 +598,77 @@ jobs:
 
           echo "Target log clean — no langflow-ai/langflow#13157 patterns detected"
 
+      - name: Generate migration summary
+        if: always()
+        run: |
+          SOURCE_DIGEST=$(cat /tmp/source-digest.txt 2>/dev/null || echo "(direct mode only — not captured here)")
+          TARGET_DIGEST=$(cat /tmp/target-digest.txt 2>/dev/null || echo "(direct mode only — not captured here)")
+          WITNESS_ID=$(cat /tmp/witness-id.txt 2>/dev/null || echo "(unavailable)")
+          USER_COUNT=$(wc -l < /tmp/users.txt 2>/dev/null || echo "0")
+          OUTCOME="${{ job.status }}"
+          DATE=$(date -u +%Y-%m-%d)
+          HAS_OPENAI="no"
+          [[ -f /tmp/has-openai-key ]] && HAS_OPENAI="yes (Fernet + flow exec coverage active)"
+
+          {
+            echo "# Langflow Migration — Run Summary"
+            echo ""
+            echo "**Outcome:** \`${OUTCOME}\`   ·   Run #${{ github.run_number }} (${DATE}, ${{ github.event_name }})"
+            echo ""
+            echo "## Scenario"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Workflow | \`${{ github.workflow }}\` |"
+            echo "| Matrix entry | \`${{ matrix.database }}\` |"
+            echo "| Deploy mode | \`${DEPLOY_MODE}\` |"
+            echo "| Source image | \`${{ inputs.source_image }}\` (\`${SOURCE_DIGEST}\`) |"
+            echo "| Target image | \`${{ inputs.target_image }}\` (\`${TARGET_DIGEST}\`) |"
+            echo "| LANGFLOW_WORKERS | \`${{ inputs.workers }}\` (forced to 1 if SQLite) |"
+            echo "| Concurrent users | \`${{ inputs.concurrent_users }}\` |"
+            echo "| Stress duration | \`${{ inputs.stress_duration_seconds }}\`s |"
+            echo "| OPENAI_API_KEY available | ${HAS_OPENAI} |"
+            echo "| Witness flow id | \`${WITNESS_ID}\` |"
+            echo "| Test users created | \`${USER_COUNT}\` |"
+            echo ""
+            echo "## What this run verified"
+            echo ""
+            echo "- Source image boots cleanly."
+            echo "- \`${USER_COUNT}\` test users created and activated on source."
+            if [[ "$HAS_OPENAI" != "no" ]]; then
+              echo "- Simple Agent starter instantiated as witness flow on source."
+              echo "- OPENAI_API_KEY auto-imported as Credential Variable on source (env-based)."
+            else
+              echo "- Empty stub witness flow created (no OPENAI_API_KEY secret — Fernet/exec coverage skipped)."
+            fi
+            echo "- Target boots on the same database (alembic migration runs)."
+            echo "- Witness flow preserved on target (UUID matches)."
+            echo "- All \`${USER_COUNT}\` test users preserved on target."
+            if [[ "$HAS_OPENAI" != "no" ]]; then
+              echo "- OPENAI_API_KEY Credential row preserved on target."
+              echo "- Witness flow executes successfully on target (Fernet decryption preserved across migration)."
+              echo "- Paced flow execution during stress: up to 10 OpenAI calls total (1 smoke + 9 paced)."
+            fi
+            echo "- Multi-user concurrent stress: \`${USER_COUNT}\` users × \`${{ inputs.stress_duration_seconds }}\`s on whoami + flows endpoints."
+            echo "- Target log scanned for issue #13157 patterns (\`disk I/O error\`, \`database disk image is malformed\`, \`Unexpected error during token authentication\`, etc.)."
+            echo ""
+            echo "## Related artifacts in this run"
+            echo ""
+            echo "- \`logs/source-${{ matrix.database }}.log\` / \`logs/target-${{ matrix.database }}.log\` — Langflow logs per phase"
+            echo "- \`witness-id.txt\` — UUID of the witness flow (same on source and target)"
+            echo "- \`users.txt\` — list of test users created (\`username:password:uuid\`)"
+            echo "- \`run-resp.json\` — pre-migration / post-migration flow-execution response (if OPENAI_API_KEY available)"
+            echo "- \`run-paced-*.json\` — paced executions during stress"
+            if [[ "$DEPLOY_MODE" == "compose" ]]; then
+              echo "- \`logs/official-compose-snapshot.yml\` — exact upstream compose file fetched at runtime"
+              echo "- \`logs/postgres-${{ matrix.database }}.log\` — postgres service log (compose mode)"
+            fi
+          } > /tmp/migration-summary.md
+
+          echo "::group::Generated summary"
+          cat /tmp/migration-summary.md
+          echo "::endgroup::"
+
       - name: Cleanup
         if: always()
         run: |
@@ -617,6 +688,7 @@ jobs:
           name: migration-manual-${{ matrix.database }}-${{ github.run_number }}
           path: |
             /tmp/logs/
+            /tmp/migration-summary.md
             /tmp/source-digest.txt
             /tmp/target-digest.txt
             /tmp/witness-id.txt
