@@ -75,7 +75,7 @@ jobs:
       # ── Phase 1: Langflow Latest ──────────────────────────────
       - name: Install Langflow latest
         run: |
-          uv pip install langflow
+          uv pip install "langflow[postgresql]"
           LATEST_VERSION=$(uv pip show langflow | grep ^Version | awk '{print $2}')
           echo "LATEST_VERSION=$LATEST_VERSION" >> "$GITHUB_ENV"
           echo "langflow==$LATEST_VERSION" > /tmp/latest-digest.txt
@@ -125,7 +125,7 @@ jobs:
 
       - name: Install Langflow nightly
         run: |
-          uv pip install "langflow==$NIGHTLY_VERSION"
+          uv pip install "langflow[postgresql]==$NIGHTLY_VERSION"
           echo "Installed Langflow $NIGHTLY_VERSION (nightly)"
 
       - name: Start Langflow nightly (same database)
