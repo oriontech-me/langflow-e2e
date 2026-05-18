@@ -17,14 +17,15 @@ on:
         required: true
         default: "langflowai/langflow-nightly:latest"
       database:
-        description: "Database backend(s) to test"
+        description: "Scenario(s) to test. `docker-compose` uses the official compose from langflow-ai/langflow."
         required: true
         type: choice
         options:
           - postgresql
           - sqlite
-          - both
-        default: "both"
+          - docker-compose
+          - all
+        default: "all"
       workers:
         description: "LANGFLOW_WORKERS for PostgreSQL (SQLite forces 1 — see SQLite docs §2.7 fork+connection)"
         required: false
@@ -50,10 +51,11 @@ jobs:
       - id: build
         run: |
           case "${{ inputs.database }}" in
-            postgresql) echo 'databases=["postgresql"]' >> "$GITHUB_OUTPUT" ;;
-            sqlite)     echo 'databases=["sqlite"]' >> "$GITHUB_OUTPUT" ;;
-            both)       echo 'databases=["postgresql","sqlite"]' >> "$GITHUB_OUTPUT" ;;
-            *)          echo "Invalid database: ${{ inputs.database }}" && exit 1 ;;
+            postgresql)     echo 'databases=["postgresql"]' >> "$GITHUB_OUTPUT" ;;
+            sqlite)         echo 'databases=["sqlite"]' >> "$GITHUB_OUTPUT" ;;
+            docker-compose) echo 'databases=["docker-compose"]' >> "$GITHUB_OUTPUT" ;;
+            all)            echo 'databases=["postgresql","sqlite","docker-compose"]' >> "$GITHUB_OUTPUT" ;;
+            *)              echo "Invalid database: ${{ inputs.database }}" && exit 1 ;;
           esac
 
   migration:
@@ -78,10 +80,11 @@ jobs:
         run: |
           mkdir -p /tmp/logs
           SECRET_KEY=$(python3 -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+          echo "LANGFLOW_SECRET_KEY=${SECRET_KEY}" >> "$GITHUB_ENV"
 
           # SQLite forces single worker (see SQLite docs §2.7 / §8.1).
           # Multi-worker + SQLite is fragile by design (file lock + fork-after-connect),
-          # not a Langflow-specific concern. PostgreSQL uses the input value.
+          # not a Langflow-specific concern. PostgreSQL / docker-compose use the input value.
           if [[ "${{ matrix.database }}" == "sqlite" ]]; then
             EFFECTIVE_WORKERS=1
             echo "Note: SQLite forces LANGFLOW_WORKERS=1 (input value ${{ inputs.workers }} ignored)"
@@ -89,6 +92,18 @@ jobs:
             EFFECTIVE_WORKERS="${{ inputs.workers }}"
           fi
 
+          # DEPLOY_MODE drives the per-step branching for source/target start, stop, cleanup.
+          #   direct  → `docker run` against a separately managed Postgres container or sqlite volume
+          #   compose → `docker compose` against the upstream langflow-ai/langflow docker_example/docker-compose.yml
+          case "${{ matrix.database }}" in
+            docker-compose) DEPLOY_MODE=compose ;;
+            *)              DEPLOY_MODE=direct ;;
+          esac
+          echo "DEPLOY_MODE=${DEPLOY_MODE}" >> "$GITHUB_ENV"
+          echo "Deploy mode: ${DEPLOY_MODE}"
+
+          # /tmp/lf.env is consumed by `docker run --env-file` in direct mode.
+          # In compose mode it is unused — the compose override + .env handle env injection.
           {
             echo "LANGFLOW_HOST=0.0.0.0"
             echo "LANGFLOW_PORT=7860"
@@ -100,21 +115,29 @@ jobs:
             echo "LANGFLOW_WORKERS=${EFFECTIVE_WORKERS}"
           } > /tmp/lf.env
 
-          if [[ "${{ matrix.database }}" == "postgresql" ]]; then
-            echo "LANGFLOW_DATABASE_URL=postgresql://langflow:langflow_test_pw@localhost:5432/langflow" >> /tmp/lf.env
-            echo "MOUNT_FLAGS=" >> "$GITHUB_ENV"
-          else
-            mkdir -p /tmp/lf-sqlite-data
-            chmod 777 /tmp/lf-sqlite-data
-            echo "LANGFLOW_DATABASE_URL=sqlite:////data/langflow.db" >> /tmp/lf.env
-            echo "LANGFLOW_CONFIG_DIR=/data" >> /tmp/lf.env
-            echo "MOUNT_FLAGS=-v /tmp/lf-sqlite-data:/data" >> "$GITHUB_ENV"
-          fi
+          case "${{ matrix.database }}" in
+            postgresql)
+              echo "LANGFLOW_DATABASE_URL=postgresql://langflow:langflow_test_pw@localhost:5432/langflow" >> /tmp/lf.env
+              echo "MOUNT_FLAGS=" >> "$GITHUB_ENV"
+              ;;
+            sqlite)
+              mkdir -p /tmp/lf-sqlite-data && chmod 777 /tmp/lf-sqlite-data
+              echo "LANGFLOW_DATABASE_URL=sqlite:////data/langflow.db" >> /tmp/lf.env
+              echo "LANGFLOW_CONFIG_DIR=/data" >> /tmp/lf.env
+              echo "MOUNT_FLAGS=-v /tmp/lf-sqlite-data:/data" >> "$GITHUB_ENV"
+              ;;
+            docker-compose)
+              # No mount needed; compose manages its own named volumes.
+              echo "MOUNT_FLAGS=" >> "$GITHUB_ENV"
+              echo "COMPOSE_DIR=/tmp/migration-compose" >> "$GITHUB_ENV"
+              echo "EFFECTIVE_WORKERS=${EFFECTIVE_WORKERS}" >> "$GITHUB_ENV"
+              ;;
+          esac
 
           echo "Effective env file:"
           cat /tmp/lf.env
 
-      - name: Start PostgreSQL (if needed)
+      - name: Start PostgreSQL (direct mode only)
         if: matrix.database == 'postgresql'
         run: |
           docker run -d --name pg \
@@ -135,8 +158,55 @@ jobs:
             fi
           done
 
+      - name: Setup docker-compose (compose mode only)
+        if: matrix.database == 'docker-compose'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          mkdir -p "$COMPOSE_DIR"
+          # Fetch the official compose file from upstream main. Saved as artifact
+          # later for traceability of which upstream snapshot was tested.
+          curl -fsSL https://raw.githubusercontent.com/langflow-ai/langflow/main/docker_example/docker-compose.yml \
+            -o "$COMPOSE_DIR/docker-compose.yml"
+          cp "$COMPOSE_DIR/docker-compose.yml" /tmp/logs/official-compose-snapshot.yml
+          echo "Fetched upstream compose ($(wc -l < "$COMPOSE_DIR/docker-compose.yml") lines)"
+
+          # Override: inject our auth, secret_key, workers. Same env contract as
+          # the direct-mode containers (AUTO_LOGIN=false + superuser flow).
+          cat > "$COMPOSE_DIR/docker-compose.override.yml" <<'YAML'
+          services:
+            langflow:
+              image: ${LANGFLOW_IMAGE}
+              environment:
+                - LANGFLOW_SECRET_KEY=${LANGFLOW_SECRET_KEY}
+                - OPENAI_API_KEY=${OPENAI_API_KEY}
+                - LANGFLOW_AUTO_LOGIN=false
+                - LANGFLOW_SUPERUSER=${LANGFLOW_SUPERUSER}
+                - LANGFLOW_SUPERUSER_PASSWORD=${LANGFLOW_SUPERUSER_PASSWORD}
+                - LANGFLOW_STORE=false
+                - LANGFLOW_WORKERS=${LANGFLOW_WORKERS}
+          YAML
+
+          # .env consumed by docker compose. Source phase: image = source_image.
+          # The target phase rewrites both LANGFLOW_IMAGE and OPENAI_API_KEY
+          # (target clears the key so it relies on the migrated/encrypted row).
+          cat > "$COMPOSE_DIR/.env" <<EOF
+          LANGFLOW_IMAGE=${{ inputs.source_image }}
+          LANGFLOW_SECRET_KEY=${LANGFLOW_SECRET_KEY}
+          OPENAI_API_KEY=${OPENAI_API_KEY}
+          LANGFLOW_SUPERUSER=${SUPERUSER}
+          LANGFLOW_SUPERUSER_PASSWORD=${SUPERUSER_PASSWORD}
+          LANGFLOW_WORKERS=${EFFECTIVE_WORKERS}
+          EOF
+          chmod 600 "$COMPOSE_DIR/.env"
+
+          if [[ -n "$OPENAI_API_KEY" ]]; then
+            touch /tmp/has-openai-key
+          fi
+
       # ── Phase A: source — bootstrap state ─────────────────────
-      - name: "[SOURCE] Pull ${{ inputs.source_image }}"
+      - name: "[SOURCE] Pull ${{ inputs.source_image }} (direct mode)"
+        if: env.DEPLOY_MODE == 'direct'
         run: |
           docker pull "${{ inputs.source_image }}"
           docker inspect "${{ inputs.source_image }}" \
@@ -151,27 +221,35 @@ jobs:
           # Variable row, not on a re-import by the target process.
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          if [[ -n "$OPENAI_API_KEY" ]]; then
-            touch /tmp/has-openai-key
+          if [[ "$DEPLOY_MODE" == "compose" ]]; then
+            (cd "$COMPOSE_DIR" && docker compose up -d)
+          else
+            if [[ -n "$OPENAI_API_KEY" ]]; then
+              touch /tmp/has-openai-key
+            fi
+            docker run -d --name lf-source \
+              --network host \
+              $MOUNT_FLAGS \
+              --env-file /tmp/lf.env \
+              -e OPENAI_API_KEY \
+              "${{ inputs.source_image }}"
           fi
-          docker run -d --name lf-source \
-            --network host \
-            $MOUNT_FLAGS \
-            --env-file /tmp/lf.env \
-            -e OPENAI_API_KEY \
-            "${{ inputs.source_image }}"
 
       - name: "[SOURCE] Wait healthy"
         run: |
           for i in $(seq 1 72); do
             sleep 5
-            if docker logs lf-source 2>&1 | grep -q "Open Langflow"; then
+            if curl -fsS "${LF_URL}/health_check" >/dev/null 2>&1; then
               echo "Source up after $((i*5))s"
               break
             fi
             if [[ $i -eq 72 ]]; then
               echo "::error::Source did not become healthy in 360s"
-              docker logs lf-source 2>&1 | tail -100
+              if [[ "$DEPLOY_MODE" == "compose" ]]; then
+                (cd "$COMPOSE_DIR" && docker compose logs --tail=100)
+              else
+                docker logs lf-source 2>&1 | tail -100
+              fi
               exit 1
             fi
           done
@@ -272,12 +350,19 @@ jobs:
       - name: "[SOURCE] Save log and stop"
         if: always()
         run: |
-          docker logs lf-source > "/tmp/logs/source-${{ matrix.database }}.log" 2>&1 || true
-          docker stop lf-source >/dev/null 2>&1 || true
-          docker rm lf-source >/dev/null 2>&1 || true
+          if [[ "$DEPLOY_MODE" == "compose" ]]; then
+            (cd "$COMPOSE_DIR" && docker compose logs langflow > "/tmp/logs/source-${{ matrix.database }}.log" 2>&1) || true
+            # Preserve the postgres named volume; stop only the langflow service.
+            (cd "$COMPOSE_DIR" && docker compose stop langflow) || true
+          else
+            docker logs lf-source > "/tmp/logs/source-${{ matrix.database }}.log" 2>&1 || true
+            docker stop lf-source >/dev/null 2>&1 || true
+            docker rm lf-source >/dev/null 2>&1 || true
+          fi
 
       # ── Phase B: target — migration runs on first boot ────────
-      - name: "[TARGET] Pull ${{ inputs.target_image }}"
+      - name: "[TARGET] Pull ${{ inputs.target_image }} (direct mode)"
+        if: env.DEPLOY_MODE == 'direct'
         run: |
           docker pull "${{ inputs.target_image }}"
           docker inspect "${{ inputs.target_image }}" \
@@ -285,23 +370,36 @@ jobs:
 
       - name: "[TARGET] Start (migration on boot)"
         run: |
-          docker run -d --name lf-target \
-            --network host \
-            $MOUNT_FLAGS \
-            --env-file /tmp/lf.env \
-            "${{ inputs.target_image }}"
+          if [[ "$DEPLOY_MODE" == "compose" ]]; then
+            # Flip the image and clear OPENAI_API_KEY in compose .env. Target
+            # intentionally has NO OPENAI_API_KEY env so it depends entirely on
+            # the migrated/encrypted Variable row from the source phase.
+            sed -i 's|^LANGFLOW_IMAGE=.*|LANGFLOW_IMAGE=${{ inputs.target_image }}|' "$COMPOSE_DIR/.env"
+            sed -i 's|^OPENAI_API_KEY=.*|OPENAI_API_KEY=|' "$COMPOSE_DIR/.env"
+            (cd "$COMPOSE_DIR" && docker compose up -d langflow)
+          else
+            docker run -d --name lf-target \
+              --network host \
+              $MOUNT_FLAGS \
+              --env-file /tmp/lf.env \
+              "${{ inputs.target_image }}"
+          fi
 
       - name: "[TARGET] Wait healthy (alembic migration included)"
         run: |
           for i in $(seq 1 72); do
             sleep 5
-            if docker logs lf-target 2>&1 | grep -q "Open Langflow"; then
+            if curl -fsS "${LF_URL}/health_check" >/dev/null 2>&1; then
               echo "Target up after $((i*5))s"
               break
             fi
             if [[ $i -eq 72 ]]; then
               echo "::error::Target did not become healthy in 360s — likely migration failure"
-              docker logs lf-target 2>&1 | tail -100
+              if [[ "$DEPLOY_MODE" == "compose" ]]; then
+                (cd "$COMPOSE_DIR" && docker compose logs langflow --tail=100)
+              else
+                docker logs lf-target 2>&1 | tail -100
+              fi
               exit 1
             fi
           done
@@ -463,7 +561,12 @@ jobs:
       - name: "[TARGET] Save log"
         if: always()
         run: |
-          docker logs lf-target > "/tmp/logs/target-${{ matrix.database }}.log" 2>&1 || true
+          if [[ "$DEPLOY_MODE" == "compose" ]]; then
+            (cd "$COMPOSE_DIR" && docker compose logs langflow > "/tmp/logs/target-${{ matrix.database }}.log" 2>&1) || true
+            (cd "$COMPOSE_DIR" && docker compose logs postgres > "/tmp/logs/postgres-${{ matrix.database }}.log" 2>&1) || true
+          else
+            docker logs lf-target > "/tmp/logs/target-${{ matrix.database }}.log" 2>&1 || true
+          fi
 
       # ── Phase D: scan target log for issue 13157 patterns ─────
       - name: "Scan target log for runtime DB/session errors"
@@ -498,9 +601,14 @@ jobs:
       - name: Cleanup
         if: always()
         run: |
-          docker stop lf-target lf-source pg 2>/dev/null || true
-          docker rm lf-target lf-source pg 2>/dev/null || true
-          rm -rf /tmp/lf-sqlite-data 2>/dev/null || true
+          if [[ "$DEPLOY_MODE" == "compose" ]]; then
+            (cd "$COMPOSE_DIR" && docker compose down -v) 2>/dev/null || true
+            rm -rf "$COMPOSE_DIR" 2>/dev/null || true
+          else
+            docker stop lf-target lf-source pg 2>/dev/null || true
+            docker rm lf-target lf-source pg 2>/dev/null || true
+            rm -rf /tmp/lf-sqlite-data 2>/dev/null || true
+          fi
 
       - name: Upload artifacts
         if: always()
@@ -516,3 +624,6 @@ jobs:
             /tmp/run-resp.json
             /tmp/run-paced-*.json
           retention-days: 30
+        # /tmp/logs/official-compose-snapshot.yml is included in compose mode runs
+        # (recorded by the Setup docker-compose step) — captures exactly which
+        # upstream compose was tested.
