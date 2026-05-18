@@ -201,7 +201,7 @@
 - [x] Headers table accepts key + value cell entries via inspector → `core-components/api-request-component-regression.spec.ts`
 - [x] cURL tab switches mode and exposes the cURL input field → `core-components/api-request-component-regression.spec.ts`
 - [x] cURL parser auto-fills URL field and executes the GET, returning 200 → `core-components/api-request-component-regression.spec.ts`
-- [x] Body table accepts key + value cell entries via Controls modal (body field is `advanced=True`) → `core-components/api-request-component-regression.spec.ts`
+- [x] Body table accepts key + value cell entries when method is POST (body field is `advanced=True` and hidden by inspector while method is GET) → `core-components/api-request-component-regression.spec.ts`
 - [x] Flow state (URL, method, headers row) persists in database after autosave and rehydrates on reload → `core-components/api-request-component-regression.spec.ts`
 
 #### 3.4 Webhook
@@ -768,7 +768,7 @@
 - [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200 → `api-request-component-regression.spec.ts`
-- [x] API Request component — body table accepts key + value cell entries via Controls modal → `api-request-component-regression.spec.ts`
+- [x] API Request component — body table accepts key + value cell entries when method is POST → `api-request-component-regression.spec.ts`
 - [x] API Request component — flow state persists in database after autosave (URL, method, headers) → `api-request-component-regression.spec.ts`
 - [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
