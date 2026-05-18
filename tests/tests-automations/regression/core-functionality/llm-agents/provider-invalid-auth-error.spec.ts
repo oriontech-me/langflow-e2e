@@ -104,7 +104,7 @@ for (const {
   test.describe.serial(`Invalid Auth Error — ${provider}`, () => {
     test(
       `should display error message when using invalid authentication for provider ${provider}`,
-      { tag: ["@stable", "@regression", "@model-provider", "@agents"] },
+      { tag: ["@regression", "@model-provider", "@agents"] },
       async ({ page }) => {
 
         await page.goto("/");

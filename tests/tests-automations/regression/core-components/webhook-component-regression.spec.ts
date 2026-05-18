@@ -257,7 +257,7 @@ test(
 
 test(
   "Webhook component — POST to non-existent flow name returns 404",
-  { tag: ["@stable", "@release", "@regression"] },
+  { tag: ["@release", "@regression"] },
   async ({ request }) => {
     // The webhook endpoint returns 404 when the flow_id_or_name cannot be resolved.
     // This is confirmed by the backend unit test: test_webhook_not_found_invalid_endpoint.
