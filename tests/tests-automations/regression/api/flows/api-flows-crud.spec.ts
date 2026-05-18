@@ -1,9 +1,11 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
+type Flow = { id: string; name: string; description?: string };
+
 const FLOW_BASE = {
   name: "",
-  description: "Criado pelo teste automatizado Playwright",
+  description: "Created by Playwright automated test",
   data: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
   is_component: false,
 };
@@ -25,15 +27,19 @@ test.describe("CRUD /api/v1/flows", () => {
       expect(createRes.status()).toBe(201);
 
       const body = await createRes.json();
-      expect(body).toHaveProperty("id");
-      expect(typeof body.id).toBe("string");
-      expect(body.id.length).toBeGreaterThan(0);
-      expect(body.name).toBe(flowName);
 
-      // Cleanup
-      await request.delete(`/api/v1/flows/${body.id}`, {
-        headers: { Authorization: authToken },
-      });
+      try {
+        expect(body).toHaveProperty("id");
+        expect(typeof body.id).toBe("string");
+        expect(body.id.length).toBeGreaterThan(0);
+        expect(body.name).toBe(flowName);
+      } finally {
+        await request
+          .delete(`/api/v1/flows/${body.id}`, {
+            headers: { Authorization: authToken },
+          })
+          .catch(() => {});
+      }
     },
   );
 
@@ -51,21 +57,23 @@ test.describe("CRUD /api/v1/flows", () => {
       expect(createRes.status()).toBe(201);
       const { id } = await createRes.json();
 
-      const listRes = await request.get("/api/v1/flows/", {
-        headers: { Authorization: authToken },
-      });
-      expect(listRes.status()).toBe(200);
+      try {
+        const listRes = await request.get("/api/v1/flows/", {
+          headers: { Authorization: authToken },
+        });
+        expect(listRes.status()).toBe(200);
 
-      const flows = await listRes.json();
-      const flowList = Array.isArray(flows) ? flows : (flows.flows ?? []);
-      const found = flowList.find((f: any) => f.id === id);
-      expect(found).toBeDefined();
-      expect(found.name).toBe(flowName);
-
-      // Cleanup
-      await request.delete(`/api/v1/flows/${id}`, {
-        headers: { Authorization: authToken },
-      });
+        const flows = (await listRes.json()) as Flow[];
+        const found = flows.find((f) => f.id === id);
+        expect(found).toBeDefined();
+        expect(found?.name).toBe(flowName);
+      } finally {
+        await request
+          .delete(`/api/v1/flows/${id}`, {
+            headers: { Authorization: authToken },
+          })
+          .catch(() => {});
+      }
     },
   );
 
@@ -83,19 +91,22 @@ test.describe("CRUD /api/v1/flows", () => {
       expect(createRes.status()).toBe(201);
       const { id } = await createRes.json();
 
-      const getRes = await request.get(`/api/v1/flows/${id}`, {
-        headers: { Authorization: authToken },
-      });
-      expect(getRes.status()).toBe(200);
+      try {
+        const getRes = await request.get(`/api/v1/flows/${id}`, {
+          headers: { Authorization: authToken },
+        });
+        expect(getRes.status()).toBe(200);
 
-      const flow = await getRes.json();
-      expect(flow.id).toBe(id);
-      expect(flow.name).toBe(flowName);
-
-      // Cleanup
-      await request.delete(`/api/v1/flows/${id}`, {
-        headers: { Authorization: authToken },
-      });
+        const flow = await getRes.json();
+        expect(flow.id).toBe(id);
+        expect(flow.name).toBe(flowName);
+      } finally {
+        await request
+          .delete(`/api/v1/flows/${id}`, {
+            headers: { Authorization: authToken },
+          })
+          .catch(() => {});
+      }
     },
   );
 
@@ -115,28 +126,31 @@ test.describe("CRUD /api/v1/flows", () => {
       expect(createRes.status()).toBe(201);
       const { id } = await createRes.json();
 
-      const patchRes = await request.patch(`/api/v1/flows/${id}`, {
-        headers: { Authorization: authToken },
-        data: { name: updatedName, description: updatedDescription },
-      });
-      expect(patchRes.status()).toBe(200);
+      try {
+        const patchRes = await request.patch(`/api/v1/flows/${id}`, {
+          headers: { Authorization: authToken },
+          data: { name: updatedName, description: updatedDescription },
+        });
+        expect(patchRes.status()).toBe(200);
 
-      const updated = await patchRes.json();
-      expect(updated.name).toBe(updatedName);
-      expect(updated.description).toBe(updatedDescription);
+        const updated = await patchRes.json();
+        expect(updated.name).toBe(updatedName);
+        expect(updated.description).toBe(updatedDescription);
 
-      // Confirm via GET
-      const getRes = await request.get(`/api/v1/flows/${id}`, {
-        headers: { Authorization: authToken },
-      });
-      const fetched = await getRes.json();
-      expect(fetched.name).toBe(updatedName);
-      expect(fetched.description).toBe(updatedDescription);
-
-      // Cleanup
-      await request.delete(`/api/v1/flows/${id}`, {
-        headers: { Authorization: authToken },
-      });
+        // Confirm via GET
+        const getRes = await request.get(`/api/v1/flows/${id}`, {
+          headers: { Authorization: authToken },
+        });
+        const fetched = await getRes.json();
+        expect(fetched.name).toBe(updatedName);
+        expect(fetched.description).toBe(updatedDescription);
+      } finally {
+        await request
+          .delete(`/api/v1/flows/${id}`, {
+            headers: { Authorization: authToken },
+          })
+          .catch(() => {});
+      }
     },
   );
 
@@ -208,9 +222,10 @@ test.describe("CRUD /api/v1/flows", () => {
 
       const res = await request.post("/api/v1/flows/", {
         headers: { Authorization: authToken },
-        data: { description: "Flow sem nome" },
+        data: { description: "Flow without name" },
       });
-      // 422 Unprocessable Entity for missing required field
+      // Accept 400 or 422: FastAPI returns 422 for missing required fields,
+      // but the boundary may shift with backend stack changes.
       expect([400, 422]).toContain(res.status());
     },
   );
@@ -238,9 +253,8 @@ test.describe("CRUD /api/v1/flows", () => {
       });
       expect(listRes.status()).toBe(200);
 
-      const flows = await listRes.json();
-      const flowList = Array.isArray(flows) ? flows : (flows.flows ?? []);
-      const found = flowList.find((f: any) => f.id === id);
+      const flows = (await listRes.json()) as Flow[];
+      const found = flows.find((f) => f.id === id);
       expect(found).toBeUndefined();
     },
   );
