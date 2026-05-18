@@ -65,8 +65,6 @@ async function fillViewTextCell(
   page: Page,
   cellLocator: Locator,
   value: string,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  _tableDialog: Locator,
 ): Promise<void> {
   await expect(async () => {
     if (!(await page.getByTestId("textarea").isVisible())) {
@@ -432,13 +430,11 @@ test(
       page,
       lastRow.locator('[col-id="key"]'),
       "X-E2E-Header",
-      headersDialog,
     );
     await fillViewTextCell(
       page,
       lastRow.locator('[col-id="value"]'),
       "test-header-value",
-      headersDialog,
     );
 
     await headersDialog.getByTestId("btn-cancel-modal").click();
@@ -583,13 +579,11 @@ test(
       page,
       lastRow.locator('[col-id="key"]'),
       "payload",
-      bodyDialog,
     );
     await fillViewTextCell(
       page,
       lastRow.locator('[col-id="value"]'),
       "e2e-body-value",
-      bodyDialog,
     );
 
     await bodyDialog.getByTestId("btn-cancel-modal").click();
@@ -612,8 +606,15 @@ test(
 
     await test.step("Configure URL, method and a header on a new flow", async () => {
       await addApiRequestComponent(page);
-      flowId = page.url().split("/").slice(-1)[0];
-      expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
+      // Match against the pathname rather than `split("/").slice(-1)` so a
+      // trailing slash / query string / hash on the route doesn't silently
+      // turn `flowId` into a non-UUID and make the persistence test fail for
+      // a routing change unrelated to the behavior under test.
+      const flowIdMatch = new URL(page.url()).pathname.match(
+        /\/flow\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/,
+      );
+      expect(flowIdMatch).not.toBeNull();
+      flowId = flowIdMatch![1];
 
       const urlInput = page.getByTestId("popover-anchor-input-url_input");
       await expect(urlInput).toBeVisible({ timeout: 10000 });
@@ -662,13 +663,11 @@ test(
         page,
         lastRow.locator('[col-id="key"]'),
         headerKey,
-        headersDialog,
       );
       await fillViewTextCell(
         page,
         lastRow.locator('[col-id="value"]'),
         headerValue,
-        headersDialog,
       );
       // Click the dialog-level Save button — Cancel discards `tempValue`
       // (see `handleCancel` in TableNodeComponent). The persistence test must
