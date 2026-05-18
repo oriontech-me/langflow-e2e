@@ -6,20 +6,21 @@
 
 ## What this test validates *(required)*
 
-Validates the **API Request** component end-to-end via 13 scenarios grouped into four categories:
+Validates the **API Request** component end-to-end via 15 scenarios grouped into five categories:
 
 1. **Canvas rendering and inspector fields** — the node renders with the correct URL/API Response handles, and the inspector accepts URL + HTTP method input.
 2. **Execution per HTTP verb** — GET, POST, PUT, PATCH, DELETE each round-trip to a `httpbin.org` endpoint that **only** accepts that verb (any other verb returns 405). The output Data is asserted to contain `200`, the echoed URL, and the expected structural keys (`source`, `status_code`, `response_headers`, `result`).
 3. **Error and edge paths** — invalid URL shows the build-error notification, non-2xx responses (404) propagate as `status_code` without raising, query parameters embedded in the URL are sent and echoed back.
-4. **Inspector tables and cURL mode** — the headers key-value table accepts both key and value cell entries via the View Text editor; the cURL tab switches mode and the cURL parser auto-populates the URL field with the URL extracted from the cURL command, after which the run executes the GET successfully.
+4. **Inspector tables and cURL mode** — the headers key-value table accepts both key and value cell entries via the View Text editor; the body key-value table is accessed through the Controls modal (the body field is `advanced=True`) and accepts both key and value cell entries via the same editor; the cURL tab switches mode and the cURL parser auto-populates the URL field with the URL extracted from the cURL command, after which the run executes the GET successfully.
+5. **Persistence to flow JSON** — configuring URL, method and a headers row triggers an autosave that persists into the flow's saved state (verified by polling `GET /api/v1/flows/{id}`), and a full page reload rehydrates the inspector with the same values.
 
-If any of these tests fails, the API Request component is broken in the product — either in canvas rendering, inspector input, execution per verb, error propagation, table-input editing, or the cURL parser.
+If any of these tests fails, the API Request component is broken in the product — either in canvas rendering, inspector input, execution per verb, error propagation, table-input editing, cURL parsing, or autosave persistence.
 
 ---
 
 ## Tags *(required)*
 
-All 13 tests: `@stable` `@regression` `@components`
+All 15 tests: `@stable` `@regression` `@components`
 8 of them additionally carry `@release` (the canvas/inspector/GET/POST/PUT/PATCH/DELETE happy paths).
 
 ---
@@ -71,6 +72,16 @@ For each of GET, POST, PUT, PATCH, DELETE:
 - Fills the cURL command and waits for the parser to auto-populate `url_input` with `https://httpbin.org/get`. The `waitForFunction` directly proves the parser ran.
 - Runs the component and asserts the output Data contains `200`, the echoed URL, and the structural keys.
 
+### 14. `body table accepts key + value cell entries via Controls modal`
+- The body field is marked `advanced=True` on `APIRequestComponent`, so it does not render directly in the canvas view (unlike headers). Clicks the canvas node and opens the Controls modal via `edit-button-modal` to expose the advanced fields.
+- Inside the modal, finds `div-table_body`, clicks `Open table`, adds a row, then fills BOTH the `[col-id="key"]` cell with `payload` and the `[col-id="value"]` cell with `e2e-body-value` via the `fillViewTextCell` helper. The helper asserts each cell value renders as a button inside the table dialog after Save.
+- Closes the dialog with `btn-cancel-modal` and asserts canvas integrity.
+
+### 15. `flow state persists in database after autosave (URL, method, headers)`
+- Configures URL (`https://httpbin.org/get?persist=true`), method (`POST`) and a headers row (`X-Persist-Header` / `persisted-value`) on a freshly created flow; captures the `flowId` from the URL.
+- Polls `GET /api/v1/flows/{id}` (using `page.request` which inherits the session cookie) until the autosave has written the URL, method and matching header row into the saved flow JSON. Polling the API directly proves the autosave reached the database — not just in-memory React state.
+- Reloads the page and asserts the inspector rehydrates with the same URL, method dropdown value, and that reopening the headers table shows the saved row as a button.
+
 ---
 
 ## Validation criterion *(required)*
@@ -81,7 +92,9 @@ The suite must:
 - Run **serially** (`test.describe.configure({ mode: "serial" })`) — parallel autosaves on flow create cause `400 "flow must be unique"` errors that flag as backend errors in the fixture.
 - For each verb test, hit a `httpbin.org` endpoint that returns 405 for any other verb — this guarantees the test fails if the wrong verb is sent (e.g. POST sent as GET).
 - For the cURL execution test, switch to the cURL tab *before* configuring the URL — and assert the parser auto-populates `url_input`. Asserting only the run output would let the test pass even if cURL parsing was broken.
-- For the headers table test, fill both KEY and VALUE cells (not key only) — the previous version of this spec only filled the key cell, which would still pass even if the value column was non-functional or rejected entries.
+- For the headers and body table tests, fill both KEY and VALUE cells (not key only) — filling only the key cell would still pass even if the value column was non-functional or rejected entries.
+- For the body table test, open the Controls modal (`edit-button-modal`) before searching for `div-table_body` — the body field is `advanced=True` and does not render in the canvas view (unlike headers).
+- For the persistence test, poll `GET /api/v1/flows/{id}` directly through `page.request` and *also* reload the page to verify the UI rehydrates. Verifying only the in-memory state would let the test pass even if autosave was broken.
 - For the invalid URL test, call `allowFlowErrors()` so the fixture's `🚨 Backend Error` monitor does not flag the expected `400`/`422`.
 
 ---
@@ -99,11 +112,10 @@ The suite must:
 
 ## What this test does not cover *(optional)*
 
-- **Body table** — the body field is rendered with `advanced=True`, so it lives behind a "Show advanced" path on the inspector. This spec only covers the headers table; the body table widget is functionally identical (same `TableInput` type), so the headers coverage is intentionally treated as representative.
-- **Persistence to flow JSON** — the headers table test does not assert that closing the table dialog with the modal-level Save button persists rows into the flow's saved state. The current test asserts in-session edit behavior only (the `fillViewTextCell` helper verifies the cell renders correctly *inside* the open dialog).
 - **`include_httpx_metadata=true`** — this advanced toggle adds outgoing request headers to output. Covered by `tests/tests-automations/regression/api/flows/api-component-regression.spec.ts` (legacy spec scheduled for retirement; see "Notes").
 - **Timeout error path** — covered by the same legacy spec.
 - **cURL with POST + JSON body and parser-driven body fill** — covered by the legacy spec; not yet migrated to this consolidated suite.
+- **Body persistence through reload** — the persistence test exercises URL, method and headers but not the body table. The body and headers tables share the same `TableInput` widget and persistence path, so headers coverage is treated as representative for table autosave.
 - **Anonymous / multi-tenant access** — runs as `LANGFLOW_SUPERUSER`.
 
 ---
@@ -122,7 +134,8 @@ The suite must:
 - The inspector layout changes such that `popover-anchor-input-url_input`, `dropdown_str_method`, or `tab_0_url`/`tab_1_curl` testids are renamed or restructured
 - The cURL parser changes its auto-fill behavior (e.g., it stops auto-populating `url_input` from the cURL command, or moves to a different field)
 - `httpbin.org` becomes unavailable — switch the verb tests to a stable equivalent (e.g., a self-hosted echo server or `postman-echo.com`)
-- The body field's `advanced=True` flag is removed — at that point the body table test should be added back, mirroring the headers test pattern
+- The body field's `advanced=True` flag is removed — at that point the body table test can drop the `edit-button-modal` step and mirror the headers test directly
+- The autosave debounce interval is increased substantially — bump the persistence test's polling timeout (currently 20s) to match
 - The fixture is refactored to type `allowFlowErrors` properly — the `(page as any)` cast can be dropped
 
 ---

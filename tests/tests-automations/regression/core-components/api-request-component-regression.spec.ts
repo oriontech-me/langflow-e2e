@@ -520,3 +520,212 @@ test(
     await page.keyboard.press("Escape");
   },
 );
+
+test(
+  "API Request component — body table accepts key + value cell entries when method is POST",
+  { tag: ["@stable", "@regression", "@components"] },
+  async ({ page }) => {
+    await addApiRequestComponent(page);
+
+    // The body field is declared `advanced=True` AND the InspectionPanel has a
+    // hardcoded filter that hides `body` when `method === "GET"` (see
+    // InspectionPanelFields.tsx: it returns false for type === "APIRequest" +
+    // field === "body" + method.value === "GET"). Switch to POST so the body
+    // table is rendered in the inspector.
+    const methodDropdown = page.getByTestId("dropdown_str_method");
+    await expect(methodDropdown).toBeVisible({ timeout: 10000 });
+    await methodDropdown.click();
+    await page.getByText("POST", { exact: true }).click();
+    await expect(
+      page.getByTestId("value-dropdown-dropdown_str_method"),
+    ).toHaveText("POST");
+
+    const bodyDiv = page.getByTestId("div-table_body");
+    await expect(bodyDiv).toBeVisible({ timeout: 10000 });
+    await bodyDiv.getByRole("button", { name: "Open table" }).click();
+
+    const bodyDialog = page.locator('[role="dialog"]').last();
+    await expect(bodyDialog).toBeVisible({ timeout: 10000 });
+
+    const addRowButton = bodyDialog.getByTestId("add-row-button");
+    await expect(addRowButton).toBeVisible({ timeout: 5000 });
+
+    // Body is initialized as an empty list. AG Grid's `addRow` handler wires up
+    // after a 10ms `setTimeout` (TableOptions.tsx) AND switching method to POST
+    // triggers a `real_time_refresh` that re-pushes `value=[]` from the backend —
+    // a click landing in the middle of either of those gets dropped (no new row,
+    // useEffect resets `tempValue`). Force the click (the button is enabled but
+    // can momentarily lose pointer-event handling) and retry until a data row is
+    // actually rendered. Without both the test is flaky.
+    const dataRows = bodyDialog.locator('[role="treegrid"] [role="row"][row-id]');
+    await expect(async () => {
+      // eslint-disable-next-line playwright/no-force-option
+      await addRowButton.click({ force: true });
+      await expect(dataRows).toHaveCount(1, { timeout: 3000 });
+    }).toPass({ timeout: 30000 });
+    const lastRow = dataRows.last();
+
+    // Same `fillViewTextCell` pattern as the headers test — each cell is asserted
+    // to render as a button inside the table dialog after Save, guaranteeing both
+    // key and value were persisted (not just one).
+    await fillViewTextCell(
+      page,
+      lastRow.locator('[col-id="key"]'),
+      "payload",
+      bodyDialog,
+    );
+    await fillViewTextCell(
+      page,
+      lastRow.locator('[col-id="value"]'),
+      "e2e-body-value",
+      bodyDialog,
+    );
+
+    await bodyDialog.getByTestId("btn-cancel-modal").click();
+    await expect(bodyDialog).not.toBeVisible({ timeout: 5000 });
+
+    // Canvas integrity after the table interaction
+    await expect(page.getByTestId("title-API Request")).toBeVisible();
+    await expect(page.locator(".react-flow__node")).toHaveCount(1);
+  },
+);
+
+test(
+  "API Request component — flow state persists in database after autosave (URL, method, headers)",
+  { tag: ["@stable", "@regression", "@components"] },
+  async ({ page }) => {
+    const expectedUrl = "https://httpbin.org/get?persist=true";
+    const headerKey = "X-Persist-Header";
+    const headerValue = "persisted-value";
+    let flowId = "";
+
+    await test.step("Configure URL, method and a header on a new flow", async () => {
+      await addApiRequestComponent(page);
+      flowId = page.url().split("/").slice(-1)[0];
+      expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
+
+      const urlInput = page.getByTestId("popover-anchor-input-url_input");
+      await expect(urlInput).toBeVisible({ timeout: 10000 });
+      await urlInput.fill(expectedUrl);
+
+      const methodDropdown = page.getByTestId("dropdown_str_method");
+      await methodDropdown.click();
+      await page.getByText("POST", { exact: true }).click();
+      await expect(
+        page.getByTestId("value-dropdown-dropdown_str_method"),
+      ).toHaveText("POST");
+
+      const headersDiv = page.getByTestId("div-table_headers");
+      await expect(headersDiv).toBeVisible({ timeout: 10000 });
+      await headersDiv.getByRole("button", { name: "Open table" }).click();
+
+      const headersDialog = page.locator('[role="dialog"]').last();
+      await expect(headersDialog).toBeVisible({ timeout: 10000 });
+
+      // Headers starts with 1 default row (User-Agent). Click add-row-button
+      // and retry until a second data row appears — AG Grid's `addRow` handler
+      // is wired up via a 10ms setTimeout, so the first click can race.
+      const headersAddBtn = headersDialog.getByTestId("add-row-button");
+      await expect(headersAddBtn).toBeVisible({ timeout: 5000 });
+      const headersDataRows = headersDialog.locator(
+        '[role="treegrid"] [role="row"][row-id]',
+      );
+      await expect(headersDataRows).toHaveCount(1, { timeout: 5000 });
+      // AG Grid's addRow handler wires after a 10ms setTimeout — the first click
+      // can race. Force the click and retry until a second data row is actually
+      // rendered. See the body table test for the same pattern.
+      await expect(async () => {
+        // eslint-disable-next-line playwright/no-force-option
+        await headersAddBtn.click({ force: true });
+        await expect(headersDataRows).toHaveCount(2, { timeout: 3000 });
+      }).toPass({ timeout: 30000 });
+
+      const lastRow = headersDataRows.last();
+      await fillViewTextCell(
+        page,
+        lastRow.locator('[col-id="key"]'),
+        headerKey,
+        headersDialog,
+      );
+      await fillViewTextCell(
+        page,
+        lastRow.locator('[col-id="value"]'),
+        headerValue,
+        headersDialog,
+      );
+      // Click the dialog-level Save button — Cancel discards `tempValue`
+      // (see `handleCancel` in TableNodeComponent). The persistence test must
+      // commit the row so autosave can write it to the database.
+      await headersDialog.getByRole("button", { name: "Save", exact: true }).click();
+      await expect(headersDialog).not.toBeVisible({ timeout: 5000 });
+    });
+
+    await test.step(
+      "Backend persistence — poll GET /api/v1/flows/{id} until autosave wrote URL/method/header",
+      async () => {
+        // `page.request` inherits session cookies — `GET /api/v1/flows/{id}` requires
+        // session auth in Langflow's auto-login mode. Polling the API directly (rather
+        // than reloading the page first) confirms the autosave reached the database,
+        // not just the in-memory React state.
+        await expect
+          .poll(
+            async () => {
+              const res = await page.request.get(`/api/v1/flows/${flowId}`);
+              if (!res.ok()) return null;
+              const flow = await res.json();
+              // The frontend writes `node.data.type` as the component's class
+              // name (`APIRequest`) — not the human-readable display name.
+              const apiNode = (flow?.data?.nodes ?? []).find(
+                (n: { data?: { type?: string } }) =>
+                  n?.data?.type === "APIRequest",
+              );
+              const template = apiNode?.data?.node?.template;
+              if (!template) return null;
+              const urlValue = template.url_input?.value ?? "";
+              const methodValue = template.method?.value ?? "";
+              const headersValue = Array.isArray(template.headers?.value)
+                ? template.headers.value
+                : [];
+              const matchedHeader = headersValue.find(
+                (h: { key?: string; value?: string }) =>
+                  h.key === headerKey && h.value === headerValue,
+              );
+              if (
+                urlValue === expectedUrl &&
+                methodValue === "POST" &&
+                matchedHeader
+              ) {
+                return "persisted";
+              }
+              return null;
+            },
+            { timeout: 20000, intervals: [500, 1000, 2000] },
+          )
+          .toBe("persisted");
+      },
+    );
+
+    await test.step(
+      "Reload page — UI rehydrates URL and method from the saved flow",
+      async () => {
+        // Headers row persistence is already proved by the API poll above.
+        // This step is a UI sanity check that the saved flow round-trips on
+        // reload — URL and method are visible on the compact node view, so
+        // there is no need to depend on the InspectionPanel being open.
+        await page.reload();
+        await expect(
+          page.getByTestId("canvas_controls_dropdown"),
+        ).toBeVisible({ timeout: 60000 });
+        await expect(page.getByTestId("title-API Request")).toBeVisible({
+          timeout: 30000,
+        });
+
+        const urlInput = page.getByTestId("popover-anchor-input-url_input");
+        await expect(urlInput).toHaveValue(expectedUrl, { timeout: 10000 });
+        await expect(
+          page.getByTestId("value-dropdown-dropdown_str_method"),
+        ).toHaveText("POST");
+      },
+    );
+  },
+);
