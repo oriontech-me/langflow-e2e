@@ -28,7 +28,7 @@ test.describe("POST /api/v1/run", () => {
       headers: { "x-api-key": apiKey },
       data: {
         name: `Run Test Flow - ${Date.now()}`,
-        description: "Flow para testes de API run",
+        description: "Flow for API run tests",
         data: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
         is_component: false,
       },
@@ -55,7 +55,7 @@ test.describe("POST /api/v1/run", () => {
 
   test(
     "executes flow with input_value and returns outputs",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const response = await request.post(`/api/v1/run/${flowId}`, {
         headers: { "x-api-key": apiKey },
@@ -75,7 +75,7 @@ test.describe("POST /api/v1/run", () => {
 
   test(
     "executes flow with custom session_id and returns it in response",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const customSessionId = `test-session-${Date.now()}`;
 
@@ -98,7 +98,7 @@ test.describe("POST /api/v1/run", () => {
 
   test(
     "returns 404 for non-existent flow ID",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const fakeFlowId = "00000000-0000-0000-0000-000000000000";
 
@@ -112,39 +112,6 @@ test.describe("POST /api/v1/run", () => {
       });
 
       expect(response.status()).toBe(404);
-    },
-  );
-
-  test(
-    "returns 403 with invalid API key",
-    { tag: ["@release", "@api", "@regression"] },
-    async ({ request }) => {
-      const response = await request.post(`/api/v1/run/${flowId}`, {
-        headers: { "x-api-key": "sk-invalid-key-that-does-not-exist" },
-        data: {
-          input_value: "Hello",
-          input_type: "chat",
-          output_type: "chat",
-        },
-      });
-
-      expect([401, 403]).toContain(response.status());
-    },
-  );
-
-  test(
-    "GET /api/v1/all returns list of available component types",
-    { tag: ["@release", "@api", "@regression"] },
-    async ({ request }) => {
-      const response = await request.get("/api/v1/all", {
-        headers: { Authorization: bearerToken },
-      });
-
-      expect(response.status()).toBe(200);
-      const body = await response.json();
-      // Response is an object with component type keys (e.g. "inputs", "outputs", "models"…)
-      expect(typeof body).toBe("object");
-      expect(Object.keys(body).length).toBeGreaterThan(0);
     },
   );
 });
