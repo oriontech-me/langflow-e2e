@@ -84,12 +84,12 @@
 - [-] GET `/api/v1/health` → returns uptime and version
 
 #### 1.2 Flow CRUD via API
-- [-] POST `/api/v1/flows/` → creates flow, returns ID
-- [-] GET `/api/v1/flows/` → lists user flows
-- [-] GET `/api/v1/flows/{id}` → returns flow by ID
-- [-] PATCH `/api/v1/flows/{id}` → updates name/description
-- [-] DELETE `/api/v1/flows/{id}` → removes flow, returns 200
-- [-] GET `/api/v1/flows/{id}` after DELETE → should return 404
+- [x] POST `/api/v1/flows/` → creates flow, returns ID → `api/flows/api-flows-crud.spec.ts`
+- [x] GET `/api/v1/flows/` → lists user flows → `api/flows/api-flows-crud.spec.ts`
+- [x] GET `/api/v1/flows/{id}` → returns flow by ID → `api/flows/api-flows-crud.spec.ts`
+- [x] PATCH `/api/v1/flows/{id}` → updates name/description → `api/flows/api-flows-crud.spec.ts`
+- [x] DELETE `/api/v1/flows/{id}` → removes flow, returns 200 → `api/flows/api-flows-crud.spec.ts`
+- [x] GET `/api/v1/flows/{id}` after DELETE → should return 404 → `api/flows/api-flows-crud.spec.ts`
 
 #### 1.3 Flow Execution via API
 - [-] POST `/api/v1/run/{flow_id}` with `input_value` → returns response
