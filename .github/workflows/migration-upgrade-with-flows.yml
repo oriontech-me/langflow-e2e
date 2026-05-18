@@ -139,13 +139,56 @@ jobs:
           LANGFLOW_URL: ${{ env.LANGFLOW_URL }}
           EXPECTED_FLOW_NAME: ${{ env.FLOW_NAME }}
 
-      # ── Phase 4: Artifacts ───────────────────────────────────
+      # ── Phase 4: Summary + Artifacts ─────────────────────────
+      - name: Generate migration summary
+        if: always()
+        run: |
+          LATEST_DIGEST=$(cat /tmp/latest-digest.txt 2>/dev/null || echo "(unavailable)")
+          NIGHTLY_DIGEST=$(cat /tmp/nightly-digest.txt 2>/dev/null || echo "(unavailable)")
+          OUTCOME="${{ job.status }}"
+          DATE=$(date -u +%Y-%m-%d)
+
+          {
+            echo "# Langflow Migration — Run Summary"
+            echo ""
+            echo "**Outcome:** \`${OUTCOME}\`   ·   Run #${{ github.run_number }} (${DATE}, ${{ github.event_name }})"
+            echo ""
+            echo "## Scenario"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Workflow | \`${{ github.workflow }}\` |"
+            echo "| Source image | \`langflowai/langflow:latest\` (\`${LATEST_DIGEST}\`) |"
+            echo "| Target image | \`langflowai/langflow-nightly:latest\` (\`${NIGHTLY_DIGEST}\`) |"
+            echo "| Database | PostgreSQL 16 (GHA service) |"
+            echo "| Deployment | \`docker run\` + \`LANGFLOW_LOAD_FLOWS_PATH=/flows\` (bind-mounted flow JSON) |"
+            echo "| Preloaded flow | \`${{ env.FLOW_NAME }}\` |"
+            echo ""
+            echo "## What this run verified"
+            echo ""
+            echo "- Source (latest) boots with \`LANGFLOW_LOAD_FLOWS_PATH\` and ingests the pre-built flow from disk."
+            echo "- Target (nightly) boots on the same Postgres database with the same \`LANGFLOW_LOAD_FLOWS_PATH\`."
+            echo "- Nightly logs contain no \`UniqueViolation\` / unique-constraint / duplicate-key errors after the re-import."
+            echo "- The pre-loaded flow remains accessible via API after the upgrade."
+            echo ""
+            echo "## Artifacts"
+            echo ""
+            echo "- \`langflow-latest.log\` — full container log for the source phase"
+            echo "- \`langflow-nightly.log\` — full container log for the target phase (includes alembic migration)"
+            echo "- \`latest-digest.txt\` / \`nightly-digest.txt\` — exact image digests tested"
+          } > /tmp/migration-summary.md
+
+          echo "::group::Generated summary"
+          cat /tmp/migration-summary.md
+          echo "::endgroup::"
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: upgrade-with-flows-${{ github.run_number }}
           path: |
+            /tmp/migration-summary.md
             /tmp/langflow-latest.log
             /tmp/langflow-nightly.log
             /tmp/latest-digest.txt
