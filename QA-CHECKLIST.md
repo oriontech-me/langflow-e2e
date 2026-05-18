@@ -704,7 +704,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 4 | 17 | 0 | 0 |
+| `api/flows/` — REST API | 21 | 10 | 11 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 1 | 19 | 0 | 2 |
 | `core-components/` — Core Components | 67 | 61 | 3 | 1 | 2 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
@@ -720,7 +720,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **408** | **134 (33%)** | **215 (53%)** | **7 (2%)** | **52 (13%)** |
+| **TOTAL** | **408** | **140 (34%)** | **209 (51%)** | **7 (2%)** | **52 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -736,13 +736,22 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 134 `test()` calls carrying the `@stable` tag, distributed across 45 spec
+> 143 `test()` calls carrying the `@stable` tag, distributed across 46 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
 
 #### api/flows/
+- [x] POST creates flow and returns ID → `api-flows-crud.spec.ts`
+- [x] GET lists flows and includes the created one → `api-flows-crud.spec.ts`
+- [x] GET by ID returns correct flow → `api-flows-crud.spec.ts`
+- [x] PATCH updates flow name and description → `api-flows-crud.spec.ts`
+- [x] DELETE removes flow and returns 200 → `api-flows-crud.spec.ts`
+- [x] GET after DELETE returns 404 → `api-flows-crud.spec.ts`
+- [x] GET non-existent flow returns 404 → `api-flows-crud.spec.ts`
+- [x] POST with missing name returns 422 → `api-flows-crud.spec.ts`
+- [x] deleted flow does not appear in flows listing → `api-flows-crud.spec.ts`
 - [x] GET /health_check returns 200 with status ok → `api-health-check.spec.ts`
 - [x] GET /health_check returns db ok → `api-health-check.spec.ts`
 - [x] GET /health_check responds within 5 seconds → `api-health-check.spec.ts`
@@ -898,7 +907,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 17 | 0 |
+| `api/flows/` — REST API | 11 | 0 |
 | `core-components/` — Component Config | 19 | 2 |
 | `core-components/` — Core Components | 3 | 2 |
 | `core-functionality/auth/` | 18 | 1 |
