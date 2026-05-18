@@ -79,4 +79,4 @@ This test covers the QA-CHECKLIST 1.3 bullets for `input_value` and for `input_t
 - `tests/helpers/auth/get-auth-token.ts` — issues a valid `Bearer` via `/api/v1/auto_login`; if its contract changes, `beforeAll` breaks
 - `src/backend/base/langflow/api/v1/endpoints.py` — implementation of `POST /api/v1/run/{flow_id}`; changing the response shape (e.g. dropping `outputs` or `session_id` from the body) breaks Tests 1 and 2
 - `src/backend/base/langflow/api/v1/flows.py` — `POST /api/v1/flows/` used in setup and `DELETE /api/v1/flows/{id}` used in teardown
-- `src/backend/base/langflow/api/v1/api_key.py` — `POST` / `DELETE` `/api/v1/api_key/` for temporary key lifecycle
+- `src/backend/base/langflow/api/v1/api_key.py` — `POST /api/v1/api_key/` and `DELETE /api/v1/api_key/{id}` for temporary key lifecycle
