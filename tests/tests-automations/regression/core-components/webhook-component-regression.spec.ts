@@ -43,7 +43,8 @@ test(
     await page.waitForTimeout(4000);
 
     // The webhook endpoint requires `x-api-key` whenever Langflow's
-    // WEBHOOK_AUTH_ENABLE setting is true (secure-by-default since 1.5+).
+    // WEBHOOK_AUTH_ENABLE setting is true (secure-by-default since 1.9.2+
+    // via PR langflow-ai/langflow#12845).
     // Create a temporary key, use it for the POSTs, and delete it after.
     const bearerToken = await getAuthToken(request);
     const keyRes = await request.post("/api/v1/api_key/", {
@@ -260,7 +261,7 @@ test(
   { tag: ["@stable", "@release", "@regression"] },
   async ({ request }) => {
     // The webhook endpoint returns 404 when the flow_id_or_name cannot be resolved.
-    // Since Langflow 1.10 (PR langflow-ai/langflow#12845) WEBHOOK_AUTH_ENABLE defaults
+    // Since Langflow 1.9.2 (PR langflow-ai/langflow#12845) WEBHOOK_AUTH_ENABLE defaults
     // to True, so the auth dependency runs before the flow lookup — without an x-api-key
     // the endpoint short-circuits to 403 and we never reach the 404. We create a temporary
     // API key, send the POST with it, and assert the resolver-driven 404 fires.
