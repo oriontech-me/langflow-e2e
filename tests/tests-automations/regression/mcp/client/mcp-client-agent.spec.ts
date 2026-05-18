@@ -255,29 +255,129 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("Open Playground and send echo prompt", async () => {
           await page.getByTestId("playground-btn-flow-io").click();
+          const playgroundInput = page.getByTestId("input-chat-playground").last();
+          await expect(playgroundInput).toBeVisible({ timeout: 30000 });
+          // Cross-version Playground hardening for issue #226.
+          //
+          // Root cause on Langflow < 1.10.x: in flow-page-sliding-container.tsx the
+          // prefill useEffect has `inputs` and `nodes` in its dep array (renders
+          // produce new array refs, so the effect re-fires repeatedly). When the
+          // textarea is filled via Playwright and we then `.click()` send, the
+          // useEffect can re-execute in between and reset `chatValue` back to the
+          // Chat Input node's template `input_value` ("Hello, how are you?"), so
+          // the send dispatches the stale value even though the textarea displayed
+          // our prompt.
+          //
+          // Per issue acceptance criteria we keep `.clear()` + `.fill()` +
+          // `toHaveValue()` so the surface contract is met. Then we run the actual
+          // send as an *atomic* DOM operation inside a single `page.evaluate` — set
+          // the textarea value, dispatch the synthetic `input` event so React's
+          // controlled component picks up the change, and call `.click()` on the
+          // send button in the same synchronous tick. React useEffects only run
+          // after the current task completes, so the prefill cannot race the click.
+          //
+          // Keep the prompt minimal and direct — empirically, gpt-4o-mini is most
+          // reliable at calling the echo tool when the prompt is short and uses the
+          // exact tool name in single quotes. Longer prompts that enumerate forbidden
+          // tools increase refusal rate (the model second-guesses the instruction).
+          const echoPrompt = "Use the 'echo' tool to echo: hello mcp";
+          await playgroundInput.clear();
+          await playgroundInput.fill(echoPrompt);
+          await expect(playgroundInput).toHaveValue(echoPrompt);
+          await page.evaluate((value: string) => {
+            const inputs = document.querySelectorAll<HTMLTextAreaElement>(
+              '[data-testid="input-chat-playground"]',
+            );
+            const input = inputs[inputs.length - 1];
+            const sends = document.querySelectorAll<HTMLButtonElement>(
+              '[data-testid="button-send"]',
+            );
+            const send = sends[sends.length - 1];
+            const setter = Object.getOwnPropertyDescriptor(
+              HTMLTextAreaElement.prototype,
+              "value",
+            )?.set;
+            if (!setter || !input || !send) {
+              throw new Error("Playground input or send button not found in DOM");
+            }
+            setter.call(input, value);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            send.click();
+          }, echoPrompt);
+          // Verify the user message that reached the chat history is the echo prompt
+          // (not the Chat Input template default). Catches any residual race loudly.
           await expect(
-            page.getByTestId("input-chat-playground").last(),
-          ).toBeVisible({ timeout: 30000 });
-          await page
-            .getByTestId("input-chat-playground")
-            .last()
-            .fill("Use the echo tool to echo: hello mcp");
-          await page.getByTestId("button-send").last().click();
+            page.getByText(echoPrompt, { exact: true }).first(),
+            "User message in chat must match the echo prompt (not the Chat Input template default)",
+          ).toBeVisible({ timeout: 10000 });
         });
 
-        await test.step("Verify agent response contains echoed message", async () => {
+        await test.step("Verify agent invoked the echo MCP tool and returned echoed text", async () => {
           await waitForAgentToFinish(page);
-          // `div-chat-message` is rendered only for AI messages in the Langflow chat-message
-          // component (the `!chat.isSend` branch in chat-message.tsx renders this testid;
-          // user messages render the `chat-message-{sender_name}-{content}` testid only and
-          // never `div-chat-message`). Polling with toContainText guards against the agent
-          // still streaming when waitForAgentToFinish returns early (Stop button never appeared).
+
+          // Try to expand any collapsed "Steps" accordions in the chat history.
+          // chat-message.tsx renders ContentBlockDisplay with hideHeader=false (collapsed
+          // by default — chevron click required); bot-message.tsx renders it with
+          // hideHeader=true (accordion items always visible). The expansion is best-effort:
+          // if items are already visible the click is a no-op; the assertions below cover
+          // both layouts.
+          //
+          // The chevron motion.div has class "cursor-pointer" and sits in the same header
+          // row as the "Finished" / "Steps" text — click via DOM scoped to that row only,
+          // to avoid clicking unrelated cursor-pointer chevrons elsewhere in the UI.
+          await page.evaluate(() => {
+            const rows = Array.from(
+              document.querySelectorAll<HTMLElement>(
+                'div.flex.items-center.justify-between',
+              ),
+            ).filter((row) => {
+              const text = row.textContent ?? "";
+              return text.includes("Finished") || text.includes("Steps");
+            });
+            for (const row of rows) {
+              const chevron = row.querySelector<HTMLElement>(
+                "div.cursor-pointer",
+              );
+              chevron?.click();
+            }
+          });
+
+          // Proof #1: the Playground rendered at least one "Called tool" indicator.
+          // Each AccordionTrigger contains a "Called tool " + formatToolTitle(rawTitle) row.
+          // This DOM only exists after the agent invoked a tool — if the LLM hallucinated
+          // a response without using any tool, the row is absent.
+          //
+          // NOTE: Langflow's `AccordionTrigger` (src/frontend/src/components/ui/accordion.tsx)
+          // passes `asChild` to Radix and wraps a <div className="cursor-pointer ...">,
+          // NOT a <button>. Selector must therefore not constrain by tag name.
+          // Ref: src/frontend/src/components/core/chatComponents/ContentBlockDisplay.tsx
+          const calledToolTrigger = page
+            .locator("div.cursor-pointer")
+            .filter({ hasText: "Called tool" });
+          await expect(
+            calledToolTrigger.last(),
+            "Playground must show a 'Called tool' indicator — agent answered without invoking any tool",
+          ).toBeVisible({ timeout: 120000 });
+
+          // Proof #2: the tool called was 'echo'.
+          // formatToolTitle uppercases the raw tool name — for the echo MCP tool the
+          // trigger reads "Called tool ECHO". Case-insensitive match tolerates backend
+          // rawTitle variants ("echo" | "Executed **echo**" | namespaced toolset variants).
+          // Ref: formatToolTitle in src/frontend/src/components/core/playgroundComponent/chat-view/chat-messages/utils/format.ts
+          await expect(
+            calledToolTrigger.filter({ hasText: /echo/i }).last(),
+            "The MCP tool invoked must be 'echo' — agent picked a different tool from the everything server",
+          ).toBeVisible({ timeout: 5000 });
+
+          // Proof #3: the echoed payload appears in the agent's final response,
+          // confirming the round-trip through the MCP echo tool returned the
+          // expected text (and the agent surfaced it instead of dropping it).
           const lastAiMessage = page.getByTestId("div-chat-message").last();
           await expect(lastAiMessage).toBeVisible({ timeout: 30000 });
-          await expect(lastAiMessage, "Agent response must contain 'hello mcp' (echoed via MCP tool)").toContainText(
-            /hello mcp/i,
-            { timeout: 60000 },
-          );
+          await expect(
+            lastAiMessage,
+            "Agent response must contain 'hello mcp' (text echoed back through the MCP echo tool)",
+          ).toContainText(/hello mcp/i, { timeout: 60000 });
         });
       },
     );
