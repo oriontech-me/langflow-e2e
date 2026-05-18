@@ -22,8 +22,8 @@ The spec runs **3 independent tests** via Playwright's `request` fixture, sharin
 
 **Setup (`beforeAll`)**
 1. Obtain a valid Bearer token via `getAuthToken(request)`.
-2. `POST /api/v1/api_key/` with the Bearer token to mint a temporary API key (asserts `200`).
-3. `POST /api/v1/flows/` with the new `x-api-key` to create a minimal empty flow (`nodes: []`, `edges: []`), asserts `201`, and stores `flowId`.
+2. `POST /api/v1/api_key/` with the Bearer token to mint a temporary API key (asserts `200` and that the response body contains `api_key` and `id` — gives an explicit failure if the API key response shape changes).
+3. `POST /api/v1/flows/` with the new `x-api-key` to create a minimal empty flow (`nodes: []`, `edges: []`), asserts `201`, and stores `flowId`. The empty-flow + structural-assertion convention is shared with `api-run-with-tweaks.spec.ts`; semantic assertions (non-empty `outputs`, message persistence) are tracked in issue #263.
 
 **Teardown (`afterAll`)**
 1. `DELETE /api/v1/flows/{flowId}` with the `x-api-key`.
@@ -63,7 +63,8 @@ This test covers the QA-CHECKLIST 1.3 bullets for `input_value` and for `input_t
 - Invalid `x-api-key` → `api-invalid-key.spec.ts` (already `@stable`)
 - `GET /api/v1/all` (component listing) → `api-custom-component-creation.spec.ts` (issue #250)
 - Streaming responses, batch runs, file uploads, multi-turn conversations beyond a single `session_id` echo
-- Semantic correctness of `outputs` content (an empty flow produces a structurally valid but functionally empty response)
+- Semantic correctness of `outputs` content (an empty flow produces a structurally valid but functionally empty response) → tracked in issue #263
+- Message persistence under the custom `session_id` (would require a runnable flow that actually emits chat messages) → tracked in issue #263
 
 ---
 
