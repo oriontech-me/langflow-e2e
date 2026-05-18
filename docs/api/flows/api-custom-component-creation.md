@@ -32,7 +32,7 @@ The spec runs **3 independent tests** via Playwright's `request` fixture. Each t
 **Test 2 — `POST /api/v1/custom_component` with invalid code returns error**
 1. Obtain a Bearer token.
 2. POST a body whose `code` is intentionally not valid Python.
-3. Assert the response status is one of `400`, `422`, or `500` — any non-`2xx` is acceptable so long as the backend does **not** silently accept the broken snippet.
+3. Assert the response status is one of `400`, `422`, or `500`. The contract is: the backend must **not** silently accept the broken snippet — `500` is tolerated because some Langflow versions surface parser errors as 500, but this band is intentionally narrow.
 
 **Test 3 — `GET /api/v1/all` includes component types**
 1. Obtain a Bearer token.
@@ -56,18 +56,19 @@ This test fully supersedes the `GET /api/v1/all` test that was removed from `api
 - Persistence of a custom component to a saved flow — `POST /api/v1/custom_component` only parses code, it doesn't store anything.
 - The canvas UI for editing component code → covered separately under `core-components/`.
 - Component update / deletion via API — Langflow's component model is per-flow JSON, not a CRUD-able resource set, so there are no PATCH/DELETE counterparts to test.
-- Auth-failure modes for these endpoints — covered by `api-invalid-key.spec.ts` and the auth-less assertion in `api-custom-component.spec.ts`.
+- Auth-failure modes for `POST /api/v1/custom_component` — covered by the auth-less POST test in `api-custom-component.spec.ts`. `api-invalid-key.spec.ts` covers `/flows/` and `/run/{id}`, not the component endpoints.
+- Auth-failure modes for `GET /api/v1/all` — not currently covered.
 
 ---
 
 ## Preconditions *(optional)*
 - Langflow running and reachable at `PLAYWRIGHT_BASE_URL`.
-- Default superuser credentials available (`LANGFLOW_SUPERUSER` / `LANGFLOW_SUPERUSER_PASSWORD`) — consumed by `getAuthToken` to mint the Bearer token.
+- Backend running with auto-login enabled (`LANGFLOW_AUTO_LOGIN=true`, the default in the supplied Docker/pip scripts) — `getAuthToken` mints the Bearer via `GET /api/v1/auto_login`. The test fixture does not read `LANGFLOW_SUPERUSER` / `LANGFLOW_SUPERUSER_PASSWORD` directly.
 - Backend has the standard component catalog loaded (default install satisfies this).
 
 ---
 
 ## External dependencies *(required)*
 - `tests/helpers/auth/get-auth-token.ts` — issues a valid `Bearer` via `/api/v1/auto_login`; if its contract changes, every test in this spec breaks.
-- `src/backend/base/langflow/api/v1/endpoints.py` — implementation of `POST /api/v1/custom_component` and `GET /api/v1/all`. Changing the response shape (dropping `template`/`display_name` on the POST, or returning a list instead of a map on the GET) breaks the respective assertions.
+- `src/backend/base/langflow/api/v1/endpoints.py` — implementation of `POST /api/v1/custom_component` and `GET /api/v1/all`. Dropping `template`/`display_name`/`name`/`type` on the POST response breaks Test 1's shape check. For the GET, the test only enforces "non-empty object" — a list response would currently still pass the JSON-object check (`typeof === "object"`) if it carried entries, so a switch to list would degrade coverage silently rather than fail the test.
 - `src/backend/base/langflow/custom/custom_component/component.py` — the `Component` base class consumed by the inline test source. If its public surface (`MessageTextInput`, `Output`, `Data`) changes name or import path, Test 1's snippet stops parsing and the test flips to the `422` documentation branch.
