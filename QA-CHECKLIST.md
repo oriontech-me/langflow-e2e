@@ -100,8 +100,8 @@
 - [x] POST to non-existent flow → returns 404 → `api/flows/api-run-flow.spec.ts`
 
 #### 1.4 Components via API
-- [-] GET `/api/v1/all` → lists all available components
-- [-] POST `/api/v1/custom_component` → creates custom component
+- [x] GET `/api/v1/all` → lists all available components → `api/flows/api-custom-component-creation.spec.ts`
+- [x] POST `/api/v1/custom_component` → creates custom component → `api/flows/api-custom-component-creation.spec.ts`
 
 #### 1.5 Messages and Monitoring via API
 - [-] GET `/api/v1/monitor/messages` → returns 200 with array

@@ -25,7 +25,7 @@ class TestComponent(Component):
 test.describe("Custom Component Creation API", () => {
   test(
     "POST /api/v1/custom_component returns valid component structure",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
@@ -69,7 +69,7 @@ test.describe("Custom Component Creation API", () => {
 
   test(
     "POST /api/v1/custom_component with invalid code returns error",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
@@ -90,7 +90,7 @@ test.describe("Custom Component Creation API", () => {
 
   test(
     "GET /api/v1/all includes component types",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
