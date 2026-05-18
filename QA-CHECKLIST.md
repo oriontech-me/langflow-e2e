@@ -92,12 +92,12 @@
 - [x] GET `/api/v1/flows/{id}` after DELETE → should return 404 → `api/flows/api-flows-crud.spec.ts`
 
 #### 1.3 Flow Execution via API
-- [-] POST `/api/v1/run/{flow_id}` with `input_value` → returns response
+- [x] POST `/api/v1/run/{flow_id}` with `input_value` → returns response → `api/flows/api-run-flow.spec.ts`
 - [-] POST with `tweaks` → parameters override flow configuration
-- [-] POST with custom `session_id`
-- [-] POST with `input_type: "chat"` and `output_type: "chat"`
+- [x] POST with custom `session_id` → `api/flows/api-run-flow.spec.ts`
+- [x] POST with `input_type: "chat"` and `output_type: "chat"` → `api/flows/api-run-flow.spec.ts`
 - [x] POST with invalid API key → returns 401/403 → `api-invalid-key.spec.ts`
-- [-] POST to non-existent flow → returns 404
+- [x] POST to non-existent flow → returns 404 → `api/flows/api-run-flow.spec.ts`
 
 #### 1.4 Components via API
 - [-] GET `/api/v1/all` → lists all available components
@@ -704,7 +704,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 10 | 11 | 0 | 0 |
+| `api/flows/` — REST API | 21 | 14 | 7 | 0 | 0 |
 | `core-components/` — Component Config | 22 | 1 | 19 | 0 | 2 |
 | `core-components/` — Core Components | 67 | 61 | 3 | 1 | 2 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
@@ -720,7 +720,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **408** | **140 (34%)** | **209 (51%)** | **7 (2%)** | **52 (13%)** |
+| **TOTAL** | **408** | **144 (35%)** | **205 (50%)** | **7 (2%)** | **52 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -736,7 +736,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 143 `test()` calls carrying the `@stable` tag, distributed across 46 spec
+> 146 `test()` calls carrying the `@stable` tag, distributed across 47 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -762,6 +762,9 @@
 - [x] POST /api/v1/run/{id} with invalid x-api-key returns 401 or 403 → `api-invalid-key.spec.ts`
 - [x] DELETE /api/v1/flows/{id} without Authorization header returns 401 or 403 → `api-invalid-key.spec.ts`
 - [x] PATCH /api/v1/flows/{id} with wrong token does not update the flow → `api-invalid-key.spec.ts`
+- [x] executes flow with input_value and returns outputs → `api-run-flow.spec.ts`
+- [x] executes flow with custom session_id and returns it in response → `api-run-flow.spec.ts`
+- [x] returns 404 for non-existent flow ID → `api-run-flow.spec.ts`
 
 #### core-components/
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
@@ -907,7 +910,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 11 | 0 |
+| `api/flows/` — REST API | 7 | 0 |
 | `core-components/` — Component Config | 19 | 2 |
 | `core-components/` — Core Components | 3 | 2 |
 | `core-functionality/auth/` | 18 | 1 |
