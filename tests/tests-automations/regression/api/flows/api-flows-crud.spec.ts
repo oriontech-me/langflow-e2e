@@ -12,7 +12,7 @@ test.describe("CRUD /api/v1/flows", () => {
   // Each test manages its own flow to remain independent
   test(
     "POST creates flow and returns ID",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow - ${Date.now()}`;
@@ -39,7 +39,7 @@ test.describe("CRUD /api/v1/flows", () => {
 
   test(
     "GET lists flows and includes the created one",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow List - ${Date.now()}`;
@@ -71,7 +71,7 @@ test.describe("CRUD /api/v1/flows", () => {
 
   test(
     "GET by ID returns correct flow",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow Get - ${Date.now()}`;
@@ -100,12 +100,13 @@ test.describe("CRUD /api/v1/flows", () => {
   );
 
   test(
-    "PATCH updates flow name",
-    { tag: ["@release", "@api", "@regression"] },
+    "PATCH updates flow name and description",
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow Patch - ${Date.now()}`;
       const updatedName = `${flowName} - Updated`;
+      const updatedDescription = "Updated description via PATCH";
 
       const createRes = await request.post("/api/v1/flows/", {
         headers: { Authorization: authToken },
@@ -116,12 +117,13 @@ test.describe("CRUD /api/v1/flows", () => {
 
       const patchRes = await request.patch(`/api/v1/flows/${id}`, {
         headers: { Authorization: authToken },
-        data: { name: updatedName },
+        data: { name: updatedName, description: updatedDescription },
       });
       expect(patchRes.status()).toBe(200);
 
       const updated = await patchRes.json();
       expect(updated.name).toBe(updatedName);
+      expect(updated.description).toBe(updatedDescription);
 
       // Confirm via GET
       const getRes = await request.get(`/api/v1/flows/${id}`, {
@@ -129,6 +131,7 @@ test.describe("CRUD /api/v1/flows", () => {
       });
       const fetched = await getRes.json();
       expect(fetched.name).toBe(updatedName);
+      expect(fetched.description).toBe(updatedDescription);
 
       // Cleanup
       await request.delete(`/api/v1/flows/${id}`, {
@@ -139,7 +142,7 @@ test.describe("CRUD /api/v1/flows", () => {
 
   test(
     "DELETE removes flow and returns 200",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow Delete - ${Date.now()}`;
@@ -160,7 +163,7 @@ test.describe("CRUD /api/v1/flows", () => {
 
   test(
     "GET after DELETE returns 404",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow 404 - ${Date.now()}`;
@@ -185,7 +188,7 @@ test.describe("CRUD /api/v1/flows", () => {
 
   test(
     "GET non-existent flow returns 404",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const fakeId = "00000000-0000-0000-0000-000000000000";
@@ -199,7 +202,7 @@ test.describe("CRUD /api/v1/flows", () => {
 
   test(
     "POST with missing name returns 422",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
@@ -214,7 +217,7 @@ test.describe("CRUD /api/v1/flows", () => {
 
   test(
     "deleted flow does not appear in flows listing",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const flowName = `API Test Flow Deleted List - ${Date.now()}`;
