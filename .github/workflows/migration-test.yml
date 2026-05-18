@@ -63,6 +63,21 @@ jobs:
       - name: Create virtual environment
         run: uv venv .venv
 
+      - name: Verify OPENAI_API_KEY secret is configured
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # Fail fast: this workflow's flow-execution and migration-verification
+          # steps require a real OpenAI key. Without it `${{ secrets.X }}` resolves
+          # to an empty string, Langflow silently skips the credential auto-import,
+          # and the run only fails 5+ minutes later with a misleading
+          # "Missing credentials" error.
+          if [[ -z "$OPENAI_API_KEY" ]]; then
+            echo "::error::OPENAI_API_KEY repository secret is not configured. Set it in Settings → Secrets and variables → Actions before running this workflow."
+            exit 1
+          fi
+          echo "OPENAI_API_KEY secret is configured."
+
       - name: Generate ephemeral secret key for this run
         run: |
           python - <<'PY'
