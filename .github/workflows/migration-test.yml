@@ -186,6 +186,52 @@ jobs:
         if: always()
         run: cat /tmp/migration-report.md
 
+      - name: Generate migration summary
+        if: always()
+        run: |
+          LATEST_DIGEST=$(cat /tmp/latest-digest.txt 2>/dev/null || echo "(unavailable)")
+          NIGHTLY_DIGEST=$(cat /tmp/nightly-digest.txt 2>/dev/null || echo "(unavailable)")
+          OUTCOME="${{ job.status }}"
+          DATE=$(date -u +%Y-%m-%d)
+          {
+            echo "# Langflow Migration — Run Summary"
+            echo ""
+            echo "**Outcome:** \`${OUTCOME}\`   ·   Run #${{ github.run_number }} (${DATE}, ${{ github.event_name }})"
+            echo ""
+            echo "## Scenario"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Workflow | \`${{ github.workflow }}\` |"
+            echo "| Job | \`${{ github.job }}\` (pip-based) |"
+            echo "| Source | \`langflow==${LATEST_VERSION:-?}\` via \`uv pip install \"langflow[postgresql]\"\` |"
+            echo "| Target | \`langflow==${NIGHTLY_VERSION:-?}\` via \`uv pip install \"langflow[postgresql]==<version>\"\` |"
+            echo "| Database | PostgreSQL 16 (GHA service) |"
+            echo "| OPENAI_API_KEY | auto-imported as Credential on each Langflow startup |"
+            echo ""
+            echo "## What this run verified"
+            echo ""
+            echo "- Langflow latest installs via \`uv pip install \"langflow[postgresql]\"\` (psycopg2 driver present)."
+            echo "- Langflow latest boots against the GHA Postgres service."
+            echo "- Simple Agent witness flow created on latest with OPENAI_API_KEY auto-imported."
+            echo "- Witness flow executes successfully on latest."
+            echo "- Langflow nightly resolved from PyPI and installed against the same DB."
+            echo "- Nightly boot completes (alembic migration runs)."
+            echo "- Migration verified via API (\`verify_migration_api.py\`)."
+            echo "- Migration verified via UI (Playwright \`test_ui_migration.py\`)."
+            echo ""
+            echo "## Related artifacts in this run"
+            echo ""
+            echo "- \`migration-report.md\` — detailed phase-by-phase report from \`generate_report.py\`"
+            echo "- \`migration-test-state.json\` — machine-readable state file"
+            echo "- \`langflow-latest.log\` / \`langflow-nightly.log\` — Langflow process logs"
+            echo "- \`test-results/\` — Playwright traces (on failure)"
+            echo "- \`latest-digest.txt\` / \`nightly-digest.txt\` — exact PyPI versions tested"
+          } > /tmp/migration-summary.md
+          echo "::group::Generated summary"
+          cat /tmp/migration-summary.md
+          echo "::endgroup::"
+
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -193,6 +239,7 @@ jobs:
           name: migration-test-${{ github.run_number }}
           path: |
             test-results/
+            /tmp/migration-summary.md
             /tmp/migration-report.md
             /tmp/langflow-latest.log
             /tmp/langflow-nightly.log
@@ -515,6 +562,54 @@ jobs:
           docker compose logs postgres > /tmp/logs/compose-postgres.log 2>&1 || true
           docker compose down -v
 
+      - name: Generate migration summary
+        if: always()
+        run: |
+          SOURCE_DIGEST=$(cat /tmp/source-digest.txt 2>/dev/null || echo "(unavailable)")
+          TARGET_DIGEST=$(cat /tmp/target-digest.txt 2>/dev/null || echo "(unavailable)")
+          WITNESS_ID=$(cat /tmp/witness-id.txt 2>/dev/null || echo "(unavailable)")
+          OUTCOME="${{ job.status }}"
+          DATE=$(date -u +%Y-%m-%d)
+          {
+            echo "# Langflow Migration — Run Summary"
+            echo ""
+            echo "**Outcome:** \`${OUTCOME}\`   ·   Run #${{ github.run_number }} (${DATE}, ${{ github.event_name }})"
+            echo ""
+            echo "## Scenario"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Workflow | \`${{ github.workflow }}\` |"
+            echo "| Job | \`${{ github.job }}\` (docker-compose) |"
+            echo "| Source image | \`langflowai/langflow:latest\` (\`${SOURCE_DIGEST}\`) |"
+            echo "| Target image | \`langflowai/langflow-nightly:latest\` (\`${TARGET_DIGEST}\`) |"
+            echo "| Database | PostgreSQL 16-trixie (named volume \`langflow-data\`) |"
+            echo "| Compose file | upstream \`langflow-ai/langflow/docker_example/docker-compose.yml\` (snapshot in artifact) |"
+            echo "| Witness flow id | \`${WITNESS_ID}\` |"
+            echo ""
+            echo "## What this run verified"
+            echo ""
+            echo "- Source image pulled and started via \`docker compose up -d\`."
+            echo "- OPENAI_API_KEY auto-imported as Credential Variable on source."
+            echo "- Simple Agent witness flow created on source."
+            echo "- Witness flow executes successfully on source (Fernet end-to-end smoke)."
+            echo "- Source stopped; postgres named volume preserved."
+            echo "- Target image started on the same volume; alembic migration runs."
+            echo "- Witness flow + OPENAI_API_KEY Variable preserved on target."
+            echo "- Witness flow re-executes successfully on target (Fernet decrypt preserved across migration)."
+            echo ""
+            echo "## Related artifacts in this run"
+            echo ""
+            echo "- \`logs/compose-source-langflow.log\` / \`compose-target-langflow.log\` — langflow service logs"
+            echo "- \`logs/compose-postgres.log\` — postgres service log"
+            echo "- \`logs/official-compose-snapshot.yml\` — exact upstream compose file fetched"
+            echo "- \`run-source.json\` / \`run-target.json\` — full flow-execution responses"
+            echo "- \`witness-id.txt\` — witness flow UUID (same source and target)"
+          } > /tmp/migration-summary.md
+          echo "::group::Generated summary"
+          cat /tmp/migration-summary.md
+          echo "::endgroup::"
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -522,6 +617,7 @@ jobs:
           name: migration-compose-${{ github.run_number }}
           path: |
             /tmp/logs/
+            /tmp/migration-summary.md
             /tmp/witness-id.txt
             /tmp/run-source.json
             /tmp/run-target.json
