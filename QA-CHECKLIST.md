@@ -637,7 +637,7 @@
 #### 15.2 Add Components to Canvas
 - [-] Drag component from sidebar to canvas
 - [-] Double-click in sidebar adds component to canvas
-- [-] Hover + click "+" button adds component to canvas
+- [x] Hover + click "+" button adds component to canvas → `core-components/componentHoverAdd.spec.ts`
 - [-] Added component appears with default settings
 
 #### 15.3 Component Connections
