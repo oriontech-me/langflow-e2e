@@ -258,11 +258,12 @@
 - [-] Isolation flow: user A cannot see user B's flows
 
 #### 4.3 Global Variables (API Keys)
-- [-] Create global variable
+- [x] Create global variable
 - [ ] Use global variable in component (API key)
 - [-] Edit existing global variable
-- [-] Delete global variable
-- [-] Create global variable of type "Generic"
+- [x] Delete global variable
+- [x] Create global variable of type "Generic"
+- [x] Credential variable value is hidden from the variable list
 
 ---
 
