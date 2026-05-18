@@ -736,7 +736,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 148 `test()` calls carrying the `@stable` tag, distributed across 47 spec
+> 149 `test()` calls carrying the `@stable` tag, distributed across 47 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -826,6 +826,7 @@
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
 - [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
 - [x] Webhook component — copy button copies the endpoint URL to clipboard → `webhook-component-regression.spec.ts`
+- [x] Webhook component — POST to non-existent flow name returns 404 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — valid JSON payload is propagated as structured Data output → `webhook-component-regression.spec.ts`
 - [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
