@@ -143,11 +143,22 @@ jobs:
             --format='{{index .RepoDigests 0}}' | tee /tmp/source-digest.txt
 
       - name: "[SOURCE] Start"
+        env:
+          # Exposed to Langflow so the OPENAI_API_KEY Credential is auto-imported
+          # at startup (see docs.langflow.org/configuration-global-variables).
+          # Target intentionally does NOT receive this env var — that way the
+          # post-migration flow execution depends on the migrated/encrypted
+          # Variable row, not on a re-import by the target process.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          if [[ -n "$OPENAI_API_KEY" ]]; then
+            touch /tmp/has-openai-key
+          fi
           docker run -d --name lf-source \
             --network host \
             $MOUNT_FLAGS \
             --env-file /tmp/lf.env \
+            -e OPENAI_API_KEY \
             "${{ inputs.source_image }}"
 
       - name: "[SOURCE] Wait healthy"
@@ -165,10 +176,9 @@ jobs:
             fi
           done
 
-      - name: "[SOURCE] Create N users + witness flow + encrypted variable"
+      - name: "[SOURCE] Create N users + witness flow"
         env:
           N: ${{ inputs.concurrent_users }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           set -e
 
@@ -203,11 +213,15 @@ jobs:
 
           echo "Created and activated $(wc -l < /tmp/users.txt) users"
 
-          # ---- Witness flow (real Simple Agent starter if API key available) ----
-          if [[ -n "$OPENAI_API_KEY" ]]; then
-            echo "OPENAI_API_KEY secret available: using Simple Agent starter as witness"
+          # ---- Witness flow ----
+          # If OPENAI_API_KEY env was exposed to the source container, Langflow
+          # auto-imported it as a Credential Variable on startup. The Simple Agent
+          # starter is then a meaningful witness — it exercises the
+          # encrypted-Variable path through migration. Otherwise fall back to an
+          # empty stub (still exercises schema migration + state preservation).
+          if [[ -f /tmp/has-openai-key ]]; then
+            echo "OPENAI_API_KEY available: using Simple Agent starter as witness"
 
-            # Find Simple Agent starter (matches helpers.find_agent_template)
             STARTERS=$(curl -s -H "Authorization: Bearer ${ADMIN_TOKEN}" \
               "${LF_URL}/api/v1/starter-projects/")
             TEMPLATE=$(echo "$STARTERS" | jq -c '
@@ -231,18 +245,17 @@ jobs:
               | jq -r '.id // empty')
             [[ -z "$WITNESS_ID" ]] && { echo "::error::Failed to create witness flow from starter"; exit 1; }
 
-            # Create encrypted Variable — this is the Fernet-encrypted credential
-            # that will be tested for survival across the migration
-            VAR_ID=$(curl -s -X POST "${LF_URL}/api/v1/variables/" \
-              -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "{\"name\":\"OPENAI_API_KEY\",\"value\":\"${OPENAI_API_KEY}\",\"type\":\"Credential\",\"default_fields\":[]}" \
-              | jq -r '.id // empty')
-            [[ -z "$VAR_ID" ]] && { echo "::error::Failed to create OPENAI_API_KEY variable"; exit 1; }
-            echo "$VAR_ID" > /tmp/variable-id.txt
+            # Confirm the auto-imported Variable is present (env-based auto-import
+            # already happened at Langflow startup; no need to POST /api/v1/variables/)
+            VAR_COUNT=$(curl -s -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+              "${LF_URL}/api/v1/variables/" \
+              | jq '[.[] | select(.name == "OPENAI_API_KEY")] | length')
+            if [[ "$VAR_COUNT" -ne "1" ]]; then
+              echo "::error::Expected 1 OPENAI_API_KEY auto-imported Variable on source, found ${VAR_COUNT}"
+              exit 1
+            fi
 
-            touch /tmp/has-openai-key
-            echo "Witness: Simple Agent flow ${WITNESS_ID} + encrypted variable ${VAR_ID}"
+            echo "Witness: Simple Agent flow ${WITNESS_ID}; auto-imported Credential confirmed"
           else
             echo "::warning::OPENAI_API_KEY secret not configured. Using empty stub witness; skipping Fernet/flow-execution coverage."
             WITNESS_ID=$(curl -s -X POST "${LF_URL}/api/v1/flows/" \
@@ -499,7 +512,6 @@ jobs:
             /tmp/source-digest.txt
             /tmp/target-digest.txt
             /tmp/witness-id.txt
-            /tmp/variable-id.txt
             /tmp/users.txt
             /tmp/run-resp.json
             /tmp/run-paced-*.json
