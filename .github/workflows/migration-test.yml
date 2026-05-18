@@ -82,6 +82,12 @@ jobs:
           echo "Installed Langflow $LATEST_VERSION (latest stable)"
 
       - name: Start Langflow latest
+        env:
+          # Langflow auto-imports OPENAI_API_KEY from the environment as a
+          # Credential-typed Global Variable at startup (see
+          # docs.langflow.org/configuration-global-variables). This is how
+          # starter-project flows get their credentials wired correctly.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           uv run langflow run --host 0.0.0.0 --port "$LANGFLOW_PORT" \
             > /tmp/langflow-latest.log 2>&1 &
@@ -129,6 +135,8 @@ jobs:
           echo "Installed Langflow $NIGHTLY_VERSION (nightly)"
 
       - name: Start Langflow nightly (same database)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           uv run langflow run --host 0.0.0.0 --port "$LANGFLOW_PORT" \
             > /tmp/langflow-nightly.log 2>&1 &
