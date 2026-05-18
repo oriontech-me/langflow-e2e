@@ -535,7 +535,7 @@ jobs:
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-compose',
+              labels: 'migration-test',
               state: 'open',
             });
             if (existing.length > 0) {
@@ -568,7 +568,7 @@ jobs:
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-compose',
+              labels: 'migration-test',
               state: 'open',
             });
             const body = [
@@ -593,8 +593,8 @@ jobs:
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: 'Langflow Migration via docker-compose Failed (latest → nightly)',
+                title: 'Langflow Migration Test Failed (latest → nightly)',
                 body,
-                labels: ['migration-compose', 'automated'],
+                labels: ['migration-test', 'automated'],
               });
             }
