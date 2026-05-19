@@ -16,6 +16,11 @@ async function setupMockDataFlow(
   await page.getByTestId("blank-flow").click();
 
   // Add Chat Output
+  // Sidebar mounts after blank-flow.click() navigates — wait before filling
+  // to avoid the same race as #278 (in setup-playground.ts).
+  await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+    timeout: 30000,
+  });
   await page.getByTestId("sidebar-search-input").fill("chat output");
   await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
     timeout: 30000,
@@ -81,9 +86,12 @@ async function setupMockDataFlow(
 
 async function runNoInputFlow(page: Page): Promise<void> {
   await page.getByTestId("button-send").click();
-  await expect(page.getByTestId("button-stop")).toBeVisible({
-    timeout: 30000,
-  });
+  // Mock Data → Chat Output has no LLM call, so the Send→Stop→Hidden
+  // transition can complete in under 100ms — faster than Playwright's
+  // auto-wait poll. Asserting `button-stop` appears was racy (#279).
+  // `toBeHidden` works in both cases: if it appeared, wait for hide; if it
+  // never appeared, this passes immediately — either way it confirms the
+  // build is no longer running before we check for the output.
   await expect(page.getByTestId("button-stop")).toBeHidden({
     timeout: 60000,
   });
