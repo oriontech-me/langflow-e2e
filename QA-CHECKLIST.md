@@ -721,7 +721,7 @@
 | `api/flows/` — REST API | 21 | 16 | 5 | 0 | 0 |
 | `core-components/` — Component Config | 23 | 3 | 18 | 0 | 2 |
 | `core-components/` — Core Components | 77 | 61 | 11 | 1 | 4 |
-| `core-functionality/auth/` | 20 | 4 | 15 | 0 | 1 |
+| `core-functionality/auth/` | 20 | 6 | 13 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
@@ -734,7 +734,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **420** | **153 (36%)** | **206 (49%)** | **7 (2%)** | **54 (13%)** |
+| **TOTAL** | **420** | **155 (37%)** | **204 (49%)** | **7 (2%)** | **54 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -750,7 +750,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 155 `test()` calls carrying the `@stable` tag, distributed across 51 spec
+> 158 `test()` calls carrying the `@stable` tag, distributed across 52 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -848,6 +848,11 @@
 - [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
+#### core-functionality/auth/
+- [x] logout must redirect user to login page → `logout-flow.spec.ts`
+- [x] after logout, navigating to root must redirect to login → `logout-flow.spec.ts`
+- [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
+
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
@@ -936,7 +941,7 @@
 | `api/flows/` — REST API | 5 | 0 |
 | `core-components/` — Component Config | 18 | 2 |
 | `core-components/` — Core Components | 11 | 4 |
-| `core-functionality/auth/` | 15 | 1 |
+| `core-functionality/auth/` | 13 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
 | `core-functionality/model-provider/` | 18 | 9 |
 | `core-functionality/playground/` | 3 | 1 |
