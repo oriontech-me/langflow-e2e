@@ -14,7 +14,7 @@ This file covers the REST surface only; deeper UI flows (Flow Activity columns, 
 
 ## Tags *(required)*
 
-`@stable` `@release` `@regression` `@workspace` `@api` `@observability`
+`@stable` `@release` `@api` `@regression` `@observability`
 
 ---
 
@@ -23,7 +23,7 @@ This file covers the REST surface only; deeper UI flows (Flow Activity columns, 
 **Test 1 — `GET /api/v1/monitor/transactions returns 200 with paginated result`**
 1. Get a bearer token via `getAuthToken(request)`
 2. `GET /api/v1/monitor/transactions?flow_id=00000000-0000-0000-0000-000000000001` with `Authorization: <token>`
-3. Assert HTTP 200; the body is a non-null object; `body.items` is an array; `body.total` is a number
+3. Assert HTTP 200; the body is a non-null object; `body.items` is an array; `body.total` is a number; and `body` contains the pagination keys `page`, `size`, `pages`
 
 **Test 2 — `GET /api/v1/monitor/transactions filters by flow_id (UUID)`**
 1. Get a bearer token
@@ -40,7 +40,7 @@ This file covers the REST surface only; deeper UI flows (Flow Activity columns, 
 
 ## Validation criterion *(required)*
 
-- **Test 1** — The endpoint returns the paginated envelope shape `{ items: [], total, page, size, pages }`. A regression where `total` is missing or `items` is not an array would break the Traces UI (`FlowInsightsContent.tsx` expects this shape) and surface here first.
+- **Test 1** — The endpoint returns the full fastapi-pagination envelope `{ items, total, page, size, pages }`. Every key is asserted to be present so a regression that drops any of them — even silently — would surface here before the Traces UI (`FlowInsightsContent.tsx`) breaks at render time.
 - **Test 2** — A well-formed `flow_id` that maps to no rows returns `200` with an empty `items` array, not `400` or `404`. This pins the contract that "unknown flow_id" is a normal empty result and not an error condition.
 - **Test 3** — When transactions exist, each record exposes a recognizable timestamp field (`timestamp`, `created_at`, or `updated_at`). The Traces UI orders rows by time; removing every recognizable timestamp would break the grid silently.
 

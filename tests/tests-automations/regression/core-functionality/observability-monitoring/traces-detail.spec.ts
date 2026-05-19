@@ -3,7 +3,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
   "GET /api/v1/monitor/transactions returns 200 with paginated result",
-  { tag: ["@stable", "@release", "@workspace", "@regression", "@api", "@observability"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -18,17 +18,23 @@ test(
     expect(res.status()).toBe(200);
     const body = await res.json();
 
-    // The endpoint returns a paginated response: { items: [], total, page, size, pages }
+    // The endpoint returns the fastapi-pagination envelope:
+    // { items: [], total, page, size, pages }. Each key must be present so the
+    // Traces UI (FlowInsightsContent.tsx) can render a paginated grid without
+    // probing for optional fields.
     expect(typeof body).toBe("object");
     expect(body).not.toBeNull();
     expect(Array.isArray(body.items)).toBe(true);
     expect(typeof body.total).toBe("number");
+    expect(body).toHaveProperty("page");
+    expect(body).toHaveProperty("size");
+    expect(body).toHaveProperty("pages");
   },
 );
 
 test(
   "GET /api/v1/monitor/transactions filters by flow_id (UUID)",
-  { tag: ["@stable", "@release", "@workspace", "@regression", "@api", "@observability"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -52,7 +58,7 @@ test(
 
 test(
   "transaction records contain required fields when not empty",
-  { tag: ["@stable", "@release", "@workspace", "@regression", "@api", "@observability"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
