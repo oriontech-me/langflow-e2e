@@ -410,9 +410,9 @@
 
 #### 8.1 Traces
 - [x] View execution traces
-- [-] Trace API returns paginated transactions
-- [-] Trace displays latency of each component
-- [-] Trace displays tokens consumed
+- [x] Trace API returns paginated transactions
+- [x] Trace displays latency of each component
+- [x] Trace displays tokens consumed
 
 #### 8.2 Notifications
 - [-] System notifications
@@ -727,7 +727,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
-| `core-functionality/observability-monitoring/` | 13 | 1 | 11 | 0 | 1 |
+| `core-functionality/observability-monitoring/` | 13 | 4 | 8 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -736,7 +736,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **422** | **161 (38%)** | **200 (47%)** | **7 (2%)** | **54 (13%)** |
+| **TOTAL** | **422** | **164 (39%)** | **197 (47%)** | **7 (2%)** | **54 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -752,7 +752,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 161 `test()` calls carrying the `@stable` tag, distributed across 55 spec
+> 167 `test()` calls carrying the `@stable` tag, distributed across 57 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -865,6 +865,12 @@
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
 
 #### core-functionality/observability-monitoring/
+- [x] GET /api/v1/monitor/transactions returns 200 with paginated result → `traces-detail.spec.ts`
+- [x] GET /api/v1/monitor/transactions filters by flow_id (UUID) → `traces-detail.spec.ts`
+- [x] transaction records contain required fields when not empty → `traces-detail.spec.ts`
+- [x] GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run → `traces-latency-tokens.spec.ts`
+- [x] Flow Activity page shows latency and token columns for the run → `traces-latency-tokens.spec.ts`
+- [x] Trace Details modal shows span tree and per-span latency → `traces-latency-tokens.spec.ts`
 - [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
@@ -966,7 +972,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 11 | 1 |
+| `core-functionality/observability-monitoring/` | 8 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
 | `flow-functionality/` | 15 | 0 |
 | `core-functionality/project-management/` | 10 | 0 |

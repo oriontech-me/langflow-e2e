@@ -40,7 +40,8 @@ The Traces panel reaches its `noDataTitle` empty state (`table.noDataTitle` → 
 References in the **main Langflow repository** (compatible with Langflow 1.10.x):
 
 - `src/frontend/src/pages/FlowPage/components/TraceComponent/FlowInsightsContent.tsx` — renders the Traces panel and the `table.noDataTitle` / `table.noDataMessage` empty state
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanTree.tsx` and `TraceDetailView.tsx` — Trace Details modal (not exercised by this spec; covered by `traces-latency-tokens.spec.ts`)
+
+The Trace Details modal (`SpanTree.tsx`, `TraceDetailView.tsx`, `SpanDetail.tsx`) is not exercised by this spec — it is covered by `traces-latency-tokens.spec.ts`, whose spec doc maps those files for adaptive runs.
 
 References in this repository:
 

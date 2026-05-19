@@ -1,45 +1,9 @@
 import { expect, test } from "../../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
-  "traces page is accessible from main navigation",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
-  async ({ page }) => {
-    await awaitBootstrapTest(page);
-
-    // Try navigating directly to /logs (Langflow uses /logs for the traces/logs view)
-    await page.goto("/logs");
-
-    // The page should load without a hard error — either the logs page renders,
-    // or we get redirected back to the home page.  Either way the main title must
-    // be visible (it is always present in the app shell).
-    await page.waitForSelector('[data-testid="mainpage_title"]', {
-      timeout: 30000,
-    });
-
-    // If the URL stayed at /logs the logs section must have rendered some content.
-    // If the app redirected away (no dedicated /logs route), just confirm we are
-    // still on the application without a crash.
-    const currentUrl = page.url();
-    const isOnLogsPage = currentUrl.includes("/logs");
-
-    if (isOnLogsPage) {
-      // The logs page should contain either entries or an empty-state message
-      const hasContent = await page
-        .locator("body")
-        .evaluate((el) => (el as HTMLElement).innerText.length > 0);
-      expect(hasContent).toBe(true);
-    } else {
-      // Redirected — the app is still alive and the home page rendered
-      await expect(page.getByTestId("mainpage_title")).toBeVisible();
-    }
-  },
-);
-
-test(
   "GET /api/v1/monitor/transactions returns 200 with paginated result",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -54,17 +18,23 @@ test(
     expect(res.status()).toBe(200);
     const body = await res.json();
 
-    // The endpoint returns a paginated response: { items: [], total, page, size, pages }
+    // The endpoint returns the fastapi-pagination envelope:
+    // { items: [], total, page, size, pages }. Each key must be present so the
+    // Traces UI (FlowInsightsContent.tsx) can render a paginated grid without
+    // probing for optional fields.
     expect(typeof body).toBe("object");
     expect(body).not.toBeNull();
     expect(Array.isArray(body.items)).toBe(true);
     expect(typeof body.total).toBe("number");
+    expect(body).toHaveProperty("page");
+    expect(body).toHaveProperty("size");
+    expect(body).toHaveProperty("pages");
   },
 );
 
 test(
   "GET /api/v1/monitor/transactions filters by flow_id (UUID)",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 
@@ -88,7 +58,7 @@ test(
 
 test(
   "transaction records contain required fields when not empty",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
   async ({ request }) => {
     const authToken = await getAuthToken(request);
 

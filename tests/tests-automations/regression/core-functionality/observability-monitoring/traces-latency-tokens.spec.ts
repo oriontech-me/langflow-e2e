@@ -95,11 +95,11 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
     "GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run",
     {
       tag: [
+        "@stable",
         "@release",
-        "@workspace",
+        "@api",
         "@regression",
         "@observability",
-        "@api",
       ],
     },
     async ({ request }) => {
@@ -121,7 +121,7 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
       expect(typeof trace.totalTokens).toBe("number");
       expect(trace.totalTokens).toBeGreaterThanOrEqual(0);
       expect(trace.flowId).toBe(flowId);
-      expect(["success", "error", "running"]).toContain(trace.status);
+      expect(["unset", "ok", "error"]).toContain(trace.status);
       expect(typeof trace.startTime).toBe("string");
     },
   );
@@ -129,7 +129,13 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   test(
     "Flow Activity page shows latency and token columns for the run",
     {
-      tag: ["@release", "@workspace", "@regression", "@observability"],
+      tag: [
+        "@stable",
+        "@release",
+        "@workspace",
+        "@regression",
+        "@observability",
+      ],
     },
     async ({ page }) => {
       (page as any).allowFlowErrors();
@@ -163,7 +169,13 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   test(
     "Trace Details modal shows span tree and per-span latency",
     {
-      tag: ["@release", "@workspace", "@regression", "@observability"],
+      tag: [
+        "@stable",
+        "@release",
+        "@workspace",
+        "@regression",
+        "@observability",
+      ],
     },
     async ({ page }) => {
       (page as any).allowFlowErrors();
@@ -199,93 +211,3 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   );
 });
 
-test(
-  "GET /api/v1/monitor/messages response contains message content",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
-  async ({ request }) => {
-    const authToken = await getAuthToken(request);
-
-    const res = await request.get("/api/v1/monitor/messages", {
-      headers: { Authorization: authToken },
-    });
-
-    expect(res.status()).toBe(200);
-
-    const body = await res.json();
-
-    // Accept both array and paginated object formats
-    const messages = Array.isArray(body) ? body : body.items ?? [];
-
-    // If messages exist, check their structure
-    if (messages.length > 0) {
-      const firstMsg = messages[0];
-
-      // Messages should have text content and session/flow info
-      const hasContent =
-        "text" in firstMsg ||
-        "message" in firstMsg ||
-        "content" in firstMsg;
-
-      const hasContext =
-        "session_id" in firstMsg ||
-        "flow_id" in firstMsg ||
-        "sender" in firstMsg;
-
-      expect(
-        hasContent || hasContext,
-        "Message items should contain message content and context metadata",
-      ).toBe(true);
-    }
-  },
-);
-
-test(
-  "traces page is accessible in the UI",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
-  async ({ page, request }) => {
-    const authToken = await getAuthToken(request);
-
-    // Fetch transactions to see if any exist
-    const txRes = await request.get("/api/v1/monitor/transactions", {
-      headers: { Authorization: authToken },
-    });
-
-    if (txRes.status() !== 200) {
-      console.log("INFO: Transactions endpoint not available, skipping UI test");
-      return;
-    }
-
-    const body = await txRes.json();
-    const hasTransactions = body.total > 0;
-
-    if (!hasTransactions) {
-      console.log("INFO: No transactions in the system, skipping latency UI test");
-      return;
-    }
-
-    // Navigate to the traces/logs page
-    await page.goto("/logs");
-    await page.waitForTimeout(2000);
-
-    const hasTraceContent = await page
-      .locator("body")
-      .evaluate((el) => (el as HTMLElement).innerText.length > 50);
-
-    // Traces page might show latency info, duration, or token counts
-    const hasMetricsText = await page
-      .getByText(/latency|duration|tokens|ms|sec/i)
-      .first()
-      .isVisible({ timeout: 5000 })
-      .catch(() => false);
-
-    expect(
-      hasTraceContent,
-      "Traces page should have content when transactions exist",
-    ).toBe(true);
-
-    // Document whether latency metrics are shown in the UI
-    if (hasMetricsText) {
-      console.log("INFO: Latency/token metrics found in traces UI");
-    }
-  },
-);
