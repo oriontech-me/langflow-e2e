@@ -602,7 +602,7 @@
 - [-] Save flow components as template
 
 #### 12.6 Flow Execution
-- [-] Execute flow via Run button → `core/features/run-flow.spec.ts`
+- [x] Run Flow component executes another flow → `flow-functionality/run-flow.spec.ts`
 - [-] Stop building flow → `core/features/stop-building.spec.ts`
 - [!] Playground button disabled with empty flow — needs review → `regression/flow-functionality/generalBugs-shard-3.spec.ts` (**test skipped: assertion was a no-op, current Langflow behavior to confirm**)
 
