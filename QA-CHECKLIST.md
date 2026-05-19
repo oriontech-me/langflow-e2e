@@ -413,6 +413,8 @@
 - [x] Trace API returns paginated transactions
 - [x] Trace displays latency of each component
 - [x] Trace displays tokens consumed
+- [x] Single-trace API returns 404 for an unknown trace_id → `traces-detail-single.spec.ts`
+- [x] Single-trace API returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
 
 #### 8.2 Notifications
 - [-] System notifications
