@@ -865,7 +865,7 @@
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
 
 #### core-functionality/observability-monitoring/
-- [x] should able to see and interact with Traces → `traces.spec.ts`
+- [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
 - [x] copy button copies Text Input output and toggles Check icon → `output-modal-copy-button.spec.ts`

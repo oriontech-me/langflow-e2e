@@ -1,22 +1,11 @@
-import * as dotenv from "dotenv";
-import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 
 test(
-  "should able to see and interact with Traces",
-  { tag: ["@stable", "@release", "@workspace", "@api", "@observability"] },
+  "should be able to see and interact with Traces",
+  { tag: ["@stable", "@release", "@workspace", "@observability"] },
 
   async ({ page }) => {
-    if (!process.env.CI) {
-      dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-    }
-
-    test.skip(
-      !process?.env?.OPENAI_API_KEY,
-      "OPENAI_API_KEY required to run this test",
-    );
-
     await awaitBootstrapTest(page);
 
     await page.getByTestId("side_nav_options_all-templates").click();
