@@ -255,11 +255,11 @@
 #### 4.1 Login / Logout
 - [-] Login with valid credentials
 - [-] Login with invalid credentials — should display error message
-- [-] Logout — should redirect to login screen
+- [x] Logout — should redirect to login screen
 - [-] Auto-login enabled — should skip login screen
 - [-] Auto-login disabled — should display login screen
 - [-] Expired session — should redirect to login
-- [-] Session cleanup after logout
+- [x] Session cleanup after logout
 
 #### 4.2 User Management (Admin)
 - [-] Admin creates new user
