@@ -1,7 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { removeOldApiKeys } from "../../../../helpers/mcp/remove-old-api-keys";
+import { clearApiKeyBadges } from "../../../../helpers/ui/clear-api-key-badges";
 
 test(
   "user should be able to interact with composio component",
@@ -33,7 +33,7 @@ test(
         await page.getByTestId("add-component-button-gmail").click();
       });
 
-    await removeOldApiKeys(page);
+    await clearApiKeyBadges(page);
 
     await page
       .getByTestId("popover-anchor-input-api_key")

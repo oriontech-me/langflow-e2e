@@ -3,6 +3,7 @@ import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { clearApiKeyBadges } from "../../../helpers/ui/clear-api-key-badges";
 import { initialGPTsetup } from "../../../helpers/other/initialGPTsetup";
 
 test(
@@ -65,13 +66,7 @@ test(
       page.getByTestId("handle-chatinput-noshownode-chat message-source"),
     ).toBeVisible();
 
-    if (await page.getByTestId("remove-icon-badge").isVisible()) {
-      await page.getByTestId("remove-icon-badge").click();
-    }
-
-    if (await page.getByTestId("remove-icon-badge").isVisible()) {
-      await page.getByTestId("remove-icon-badge").click();
-    }
+    await clearApiKeyBadges(page);
 
     await page
       .getByTestId("popover-anchor-input-api_key")
