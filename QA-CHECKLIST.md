@@ -583,8 +583,10 @@
 
 #### 12.3 Delete Flow
 - [-] Delete individual flow
-- [-] Delete multiple flows (bulk actions)
-- [-] Confirm deleted flow does not appear in listing
+- [x] Delete multiple flows (bulk actions) → `core-functionality/project-management/bulk-actions.spec.ts`
+- [x] Shift-click range select + Ctrl/Cmd-click multi-select on main page → `core-functionality/project-management/bulk-actions.spec.ts`
+- [x] Bulk download selected flows → `core-functionality/project-management/bulk-actions.spec.ts`
+- [x] Confirm deleted flow does not appear in listing (after bulk delete) → `core-functionality/project-management/bulk-actions.spec.ts`
 
 #### 12.4 Export / Import Flow
 - [-] Export flow as JSON
