@@ -121,7 +121,7 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
       expect(typeof trace.totalTokens).toBe("number");
       expect(trace.totalTokens).toBeGreaterThanOrEqual(0);
       expect(trace.flowId).toBe(flowId);
-      expect(["success", "error", "running"]).toContain(trace.status);
+      expect(["unset", "ok", "error"]).toContain(trace.status);
       expect(typeof trace.startTime).toBe("string");
     },
   );

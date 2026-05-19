@@ -41,7 +41,7 @@ The 3 tests share a single `beforeAll` setup and run in `serial` mode so the see
    - `typeof totalLatencyMs === "number"` and `>= 0`
    - `typeof totalTokens === "number"` and `>= 0`
    - `flowId === <seeded flowId>`
-   - `status` is one of `"success" | "error" | "running"`
+   - `status` is one of `"unset" | "ok" | "error"` (the OpenTelemetry-aligned `SpanStatus` enum defined at `services/database/models/traces/model.py:96-106`)
    - `typeof startTime === "string"`
 
 **Test 2 — `Flow Activity page shows latency and token columns for the run`**
