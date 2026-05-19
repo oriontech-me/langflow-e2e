@@ -75,6 +75,9 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
           headers: { Authorization: `Bearer ${token}` },
         });
 
+        await expect(page.getByTestId("sidebar-nav-mcp")).toBeVisible({
+          timeout: 15000,
+        });
         await page.getByTestId("sidebar-nav-mcp").click();
         await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
           timeout: 15000,
@@ -185,6 +188,9 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       });
 
       await test.step("Register unreachable HTTP server via HTTP tab", async () => {
+        await expect(page.getByTestId("sidebar-nav-mcp")).toBeVisible({
+          timeout: 15000,
+        });
         await page.getByTestId("sidebar-nav-mcp").click();
         await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
           timeout: 15000,
@@ -276,6 +282,9 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       });
 
       await test.step("Register server via HTTP form tab", async () => {
+        await expect(page.getByTestId("sidebar-nav-mcp")).toBeVisible({
+          timeout: 15000,
+        });
         await page.getByTestId("sidebar-nav-mcp").click();
         await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
           timeout: 15000,
@@ -346,6 +355,9 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
           headers: { Authorization: `Bearer ${token}` },
         });
 
+        await expect(page.getByTestId("sidebar-nav-mcp")).toBeVisible({
+          timeout: 15000,
+        });
         await page.getByTestId("sidebar-nav-mcp").click();
         await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
           timeout: 15000,
