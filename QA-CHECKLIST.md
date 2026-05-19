@@ -706,7 +706,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 16 | 5 | 0 | 0 |
-| `core-components/` — Component Config | 22 | 2 | 18 | 0 | 2 |
+| `core-components/` — Component Config | 23 | 3 | 18 | 0 | 2 |
 | `core-components/` — Core Components | 67 | 61 | 3 | 1 | 2 |
 | `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
@@ -721,7 +721,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **408** | **148 (36%)** | **201 (49%)** | **7 (2%)** | **52 (13%)** |
+| **TOTAL** | **409** | **149 (36%)** | **201 (49%)** | **7 (2%)** | **52 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -737,7 +737,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 151 `test()` calls carrying the `@stable` tag, distributed across 49 spec
+> 152 `test()` calls carrying the `@stable` tag, distributed across 50 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -799,6 +799,7 @@
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
+- [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
 - [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
