@@ -96,6 +96,7 @@ References in this repository:
 - The empty-state UI smoke (template loaded, no run, Traces panel shows "No Data Available") — covered by `traces.spec.ts`.
 - The `/api/v1/monitor/transactions` envelope contract — covered by `traces-detail.spec.ts`.
 - Successful (non-error) trace shape: this spec exercises the failure path because no provider is configured in the fixture. A successful trace might surface extra fields (e.g., token counts > 0, span outputs). Not pinned here.
+- **Implicit contract:** the entire suite assumes Langflow emits a trace for a flow that fails at component-execution time (the seeded run intentionally errors at `LanguageModelComponent`). If a future Langflow release ever decided not to emit traces for component failures, the `beforeAll` polling at `/api/v1/monitor/traces` would time out at 30 s and surface as a flake on every nightly. The contract is not pinned by any test in the repo and is not documented as guaranteed in Langflow's docs — at most "observability captures runs regardless of success/failure" is the design intent. If this fragility ever materializes, the fix is to switch the fixture to a provider-configured flow that succeeds.
 - Span detail tabs other than latency (inputs/outputs, attributes, events). Test 3 only asserts the latency text appears in `span-detail`.
 - Trace filtering (status, query, start/end time, session_id). The handler supports those query params but no test pins them.
 - Negative auth path on `/api/v1/monitor/traces` — no test pins the 401/403 response on missing or bad token.

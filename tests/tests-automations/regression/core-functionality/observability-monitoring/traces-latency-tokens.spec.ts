@@ -129,7 +129,13 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   test(
     "Flow Activity page shows latency and token columns for the run",
     {
-      tag: ["@stable", "@release", "@workspace", "@regression", "@observability"],
+      tag: [
+        "@stable",
+        "@release",
+        "@workspace",
+        "@regression",
+        "@observability",
+      ],
     },
     async ({ page }) => {
       (page as any).allowFlowErrors();
@@ -163,7 +169,13 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   test(
     "Trace Details modal shows span tree and per-span latency",
     {
-      tag: ["@stable", "@release", "@workspace", "@regression", "@observability"],
+      tag: [
+        "@stable",
+        "@release",
+        "@workspace",
+        "@regression",
+        "@observability",
+      ],
     },
     async ({ page }) => {
       (page as any).allowFlowErrors();
