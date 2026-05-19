@@ -63,3 +63,4 @@ Both tests run without user input and without an API key or LLM — the Mock Dat
 ## Notes *(optional)*
 
 - Re-validated after PR #120: `runNoInputFlow` now waits for the first message instead of an exact count of 2; `cleanAllFlows` was replaced with REST API-based flow deletion.
+- Re-validated after #279: `runNoInputFlow` no longer asserts `button-stop` becomes visible — on instant Mock Data flows the Send→Stop→Hidden transition completed in <100 ms, faster than Playwright's auto-wait could observe. `toBeHidden` alone is the build-finished signal; `setupMockDataFlow` also gained an explicit `toBeVisible` wait on `sidebar-search-input` (same race pattern as #278).
