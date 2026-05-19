@@ -157,7 +157,12 @@ test.describe("Single trace shape — seeded flow", () => {
       expect(typeof body.totalTokens).toBe("number");
       expect(body.totalTokens).toBeGreaterThanOrEqual(0);
       expect(body.flowId).toBe(flowId);
-      expect(typeof body.sessionId).toBe("string");
+      // sessionId column is nullable on TraceTable; the Pydantic alias coerces
+      // it, so both shapes are valid wire responses today.
+      expect(["string", "object"]).toContain(typeof body.sessionId);
+      if (body.sessionId !== null) {
+        expect(typeof body.sessionId).toBe("string");
+      }
       // input/output/endTime are optional in the schema — assert presence of
       // the keys so a future rename surfaces here.
       expect(body).toHaveProperty("input");
@@ -177,6 +182,7 @@ test.describe("Single trace shape — seeded flow", () => {
         expect(SPAN_TYPES).toContain(span.type);
         expect(SPAN_STATUSES).toContain(span.status);
         expect(typeof span.latencyMs).toBe("number");
+        expect(span.latencyMs).toBeGreaterThanOrEqual(0);
         // Schema marks these as nullable but the key itself must be present so
         // the SpanDetail panel can render without probing for optional fields.
         expect(span).toHaveProperty("startTime");
@@ -187,16 +193,6 @@ test.describe("Single trace shape — seeded flow", () => {
         expect(span).toHaveProperty("modelName");
         expect(span).toHaveProperty("tokenUsage");
         expect(Array.isArray(span.children)).toBe(true);
-
-        // When tokenUsage is populated it must expose the three OTel-derived
-        // counters the UI reads. The fixture errors before any LLM call, so
-        // tokenUsage is typically null — when it isn't, the shape is pinned.
-        if (span.tokenUsage !== null && span.tokenUsage !== undefined) {
-          const usage = span.tokenUsage as Record<string, unknown>;
-          expect(typeof usage.promptTokens).toBe("number");
-          expect(typeof usage.completionTokens).toBe("number");
-          expect(typeof usage.totalTokens).toBe("number");
-        }
       }
     },
   );

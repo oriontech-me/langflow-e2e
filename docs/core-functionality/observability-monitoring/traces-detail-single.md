@@ -54,17 +54,20 @@ Both tests (negative and happy path) carry the same tag set.
 4. Assert `body.spans` is a non-empty array; flatten the tree (root + recursive `children`) and walk every node:
    - `typeof id === "string"`; `typeof name === "string"`
    - `type` ∈ `SpanType` enum; `status` ∈ `SpanStatus` enum (asserted on every node)
-   - `typeof latencyMs === "number"`
+   - `typeof latencyMs === "number"` and `>= 0`
    - Keys present (nullable): `startTime`, `endTime`, `inputs`, `outputs`, `error`, `modelName`, `tokenUsage`
    - `children` is an array
-   - When `tokenUsage` is non-null, assert `promptTokens`, `completionTokens`, `totalTokens` are all numbers (matches the OTel-derived shape produced by `formatting.py:105-109`)
+
+Note on `sessionId` and `tokenUsage`:
+- `sessionId` is typed `str` on `TraceRead` but the underlying column is nullable. The spec accepts `"string" | null` to match the wire reality.
+- `tokenUsage` shape (`promptTokens` / `completionTokens` / `totalTokens` numeric assertions) is **not** asserted here. The fixture errors before any LLM call, so the field always lands as `null` and a conditional shape check would be dead code under this fixture. The populated-LLM-span contract is tracked in issue #306 and will land as a dedicated spec with a provider-configured fixture.
 
 ---
 
 ## Validation criterion *(required)*
 
 - **Test 1** — Pins the only documented failure path for the single-trace endpoint: a 404 when the trace is not visible to the caller. A regression that returned 500, 403, or 200-with-empty-payload would surface here. Because the handler enforces ownership via the SQL join, this test also implicitly covers the "trace owned by a different user" case without needing a second user fixture.
-- **Test 2** — Pins the wire contract that `TraceDetailView` + `SpanTree` + `SpanDetail` consume. A rename or drop of any top-level `TraceRead` field, or any `SpanReadResponse` field, would surface here before the Trace Details modal breaks at render time. The enum checks on every span (not just the root) protect against drift in either `SpanType` or `SpanStatus`. The conditional `tokenUsage` shape check pins the OTel-derived `promptTokens`/`completionTokens`/`totalTokens` keys when populated.
+- **Test 2** — Pins the wire contract that `TraceDetailView` + `SpanTree` + `SpanDetail` consume. A rename or drop of any top-level `TraceRead` field, or any `SpanReadResponse` field, would surface here before the Trace Details modal breaks at render time. The enum checks on every span (not just the root) protect against drift in either `SpanType` or `SpanStatus`. Numeric guards (`totalLatencyMs`, `totalTokens`, per-span `latencyMs` all `>= 0`) catch regressions to sentinel values like `-1` or `NaN`. **Out of scope:** the populated `tokenUsage` / `modelName` contract on the LLM span — tracked in #306.
 
 ---
 
@@ -90,7 +93,7 @@ References in this repository:
 ## What this test does not cover *(optional)*
 
 - **`DELETE /api/v1/monitor/traces/{trace_id}`** — defined on the same router (`traces.py:138`) but exercised by no spec.
-- **Successful (non-error) trace shape** — the fixture errors at the LanguageModelComponent by design, so `tokenUsage` and `modelName` on the LLM span land as `null`. The keys are asserted to exist; when populated, the `tokenUsage` shape is pinned. A spec that asserts non-null token counters would need a provider-configured fixture (separate cost/flake tradeoff).
+- **Populated LLM-span contract** — the fixture errors at the LanguageModelComponent by design, so `tokenUsage` and `modelName` always land as `null` on the LLM span. The keys are asserted to exist (shape contract), but value-level assertions (`promptTokens > 0`, `totalTokens === promptTokens + completionTokens`, `modelName` matches the provider response) are tracked in #306, which will land as a dedicated spec using a provider-configured fixture. Deliberate scope reduction to keep this spec free of provider keys / cost / flake.
 - **Explicit ownership test with a second user** — the upstream `test_monitor_ownership.py` covers `builds`/`transactions`/`messages` but not single-trace, and the handler's SQL join means the 404 path is identical to the foreign-owned case. The 404 test in this spec covers both cases. A dedicated cross-user spec would require seeding a second user (not currently supported by the helpers).
 - **Span tree structural assertions** (parent/child wiring, exact span count) — covered by Test 3 in `traces-latency-tokens.spec.ts` against the UI, where `span-node` data-testids are asserted to be exactly 4.
 - **Negative auth path** (401/403 on missing/bad token) — no test pins this for the single-trace endpoint.
