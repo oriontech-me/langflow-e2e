@@ -57,7 +57,7 @@ The test exercises the **If-Else** component because it has a togglable `true_ca
 - `src/frontend/src/CustomNodes/GenericNode/components/parameterRenderComponent/index.tsx` — emits the `Receiving input` placeholder for unconnected handles.
 - `src/frontend/src/modals/codeAreaModal/index.tsx` — Check & Save flow. The post-save handle cleanup happens here (or in the store that handles the resulting reducer call).
 - `src/frontend/src/components/genericIconComponent/index.tsx` — emits the `icon-lock` test ID consumed by the spec.
-- `helpers/ui/open-advanced-options.ts` — `openAdvancedOptions`, `closeAdvancedOptions`, `enableInspectPanel`, `disableInspectPanel`. Renaming these helpers breaks the spec.
+- `tests/helpers/ui/open-advanced-options.ts` — `openAdvancedOptions`, `closeAdvancedOptions`, `enableInspectPanel`, `disableInspectPanel`. Renaming these helpers breaks the spec.
 
 ---
 
@@ -78,7 +78,7 @@ The test exercises the **If-Else** component because it has a togglable `true_ca
 
 ## Notes
 
-- Refactored from `waitForSelector` (with one 100 s timeout) to `expect().toBeVisible({ timeout: 10000 })` and `toHaveCount`.
+- Refactored from `waitForSelector` (with one 100 s timeout) to `expect().toBeVisible(...)` and `toHaveCount`. The first appearance check after canvas bootstrap uses a 30 s timeout (`canvas_controls_dropdown` settles slower on cold workers); subsequent sidebar visibility checks use 10 s.
 - Replaced `.hover().then(...)` chain with sequential awaits.
 - Stability: 3 / 3 PASS across consecutive runs (~10–12 s each).
 - Force-fail probe on the post-save `toHaveCount(0)` assertion confirms the test catches real regressions.
