@@ -50,7 +50,7 @@ Both tests (negative and happy path) carry the same tag set.
    - `status` is one of `"unset" | "ok" | "error"`
    - `typeof startTime === "string"`; `endTime`, `input`, `output` keys are present (nullable)
    - `typeof totalLatencyMs === "number"` and `>= 0`; same for `totalTokens`
-   - `flowId === <seeded flowId>`; `typeof sessionId === "string"`
+   - `flowId === <seeded flowId>`; `sessionId` is `"string" | null` (column is nullable — see note below)
 4. Assert `body.spans` is a non-empty array; flatten the tree (root + recursive `children`) and walk every node:
    - `typeof id === "string"`; `typeof name === "string"`
    - `type` ∈ `SpanType` enum; `status` ∈ `SpanStatus` enum (asserted on every node)
@@ -75,11 +75,11 @@ Note on `sessionId` and `tokenUsage`:
 
 References in the **main Langflow repository** (compatible with Langflow 1.10.x):
 
-- `src/backend/base/langflow/api/v1/traces.py:102` — `GET /monitor/traces/{trace_id}` handler returning `TraceRead`
-- `src/backend/base/langflow/services/tracing/repository.py:218` — `fetch_single_trace` joins `trace → flow → user`, so unknown trace and foreign-owned trace both collapse to `None` → 404
-- `src/backend/base/langflow/services/database/models/traces/model.py:84-106` — `SpanType` and `SpanStatus` enum definitions asserted by both tests
-- `src/backend/base/langflow/services/database/models/traces/model.py:166-216` — `SpanReadResponse` and `TraceRead` Pydantic models (camelCase via `alias_generator=to_camel`)
-- `src/backend/base/langflow/services/tracing/formatting.py:105-109` — emits `tokenUsage` with `promptTokens`, `completionTokens`, `totalTokens`
+- `src/backend/base/langflow/api/v1/traces.py` (line 102) — `GET /monitor/traces/{trace_id}` handler returning `TraceRead`
+- `src/backend/base/langflow/services/tracing/repository.py` (line 218) — `fetch_single_trace` joins `trace → flow → user`, so unknown trace and foreign-owned trace both collapse to `None` → 404
+- `src/backend/base/langflow/services/database/models/traces/model.py` (lines 84-106) — `SpanType` and `SpanStatus` enum definitions asserted by both tests
+- `src/backend/base/langflow/services/database/models/traces/model.py` (lines 166-216) — `SpanReadResponse` and `TraceRead` Pydantic models (camelCase via `alias_generator=to_camel`)
+- `src/backend/base/langflow/services/tracing/formatting.py` (lines 97-109) — emits `tokenUsage` with `promptTokens`, `completionTokens`, `totalTokens`
 - `src/backend/tests/unit/api/v1/test_monitor_ownership.py` — upstream ownership coverage for `builds`, `transactions`, and `messages`; the single-trace endpoint is **not** covered there, which is the gap this spec fills
 
 References in this repository:

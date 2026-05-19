@@ -100,7 +100,9 @@ test.describe("Single trace shape — seeded flow", () => {
     expect([200, 500]).toContain(runRes.status());
 
     // Trace writes are asynchronous: poll the list endpoint until at least one
-    // trace exists for this flow, then capture its id for the detail lookup.
+    // trace exists for this flow. Capture the id inside the poll closure to
+    // avoid a redundant re-fetch (and the row-shift race that comes with it).
+    let polledTraceId: string | null = null;
     await expect
       .poll(
         async () => {
@@ -110,17 +112,15 @@ test.describe("Single trace shape — seeded flow", () => {
           );
           if (res.status() !== 200) return null;
           const body = await res.json();
-          return body.traces?.[0]?.id ?? null;
+          polledTraceId = body.traces?.[0]?.id ?? null;
+          return polledTraceId;
         },
         { timeout: 30000, intervals: [500, 1000, 2000] },
       )
       .not.toBeNull();
 
-    const listRes = await request.get(
-      `/api/v1/monitor/traces?flow_id=${flowId}`,
-      { headers: { Authorization: bearerToken } },
-    );
-    traceId = (await listRes.json()).traces[0].id;
+    expect(polledTraceId).not.toBeNull();
+    traceId = polledTraceId as unknown as string;
   });
 
   test.afterAll(async ({ request }) => {
@@ -157,12 +157,11 @@ test.describe("Single trace shape — seeded flow", () => {
       expect(typeof body.totalTokens).toBe("number");
       expect(body.totalTokens).toBeGreaterThanOrEqual(0);
       expect(body.flowId).toBe(flowId);
-      // sessionId column is nullable on TraceTable; the Pydantic alias coerces
-      // it, so both shapes are valid wire responses today.
-      expect(["string", "object"]).toContain(typeof body.sessionId);
-      if (body.sessionId !== null) {
-        expect(typeof body.sessionId).toBe("string");
-      }
+      // TraceTable.session_id is nullable on the column, so the wire response
+      // is `string | null` even though TraceRead types it as str.
+      expect(
+        body.sessionId === null || typeof body.sessionId === "string",
+      ).toBe(true);
       // input/output/endTime are optional in the schema — assert presence of
       // the keys so a future rename surfaces here.
       expect(body).toHaveProperty("input");
