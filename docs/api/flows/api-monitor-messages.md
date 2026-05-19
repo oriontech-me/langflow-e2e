@@ -86,4 +86,5 @@ The spec runs **6 independent tests** against `GET /api/v1/monitor/messages` via
 
 - `src/backend/base/langflow/api/v1/monitor.py` — router exposing `GET /api/v1/monitor/messages`; any signature, status code, or filter-param change breaks the spec.
 - `src/backend/base/langflow/services/database/models/message/model.py` — message schema (`id`, `session_id`, `flow_id`, `timestamp`, `sender`, `text`); renaming/removing a field breaks the required-fields assertion.
-- `src/backend/base/langflow/api/utils.py` — shared API helpers (auth resolution, query-param parsing).
+- `src/backend/base/langflow/services/auth/utils.py` — provides `get_current_active_user` used by the monitor router; changes here can shift the unauthenticated 401/403 boundary.
+- `src/backend/base/langflow/api/utils/__init__.py` — exposes `DbSession` and `custom_params` consumed by the monitor router; query-param parsing changes can affect filter behavior.
