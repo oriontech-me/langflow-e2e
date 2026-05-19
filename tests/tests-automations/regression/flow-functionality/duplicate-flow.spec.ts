@@ -27,37 +27,48 @@ test(
       timeout: 30000,
     });
 
-    // Snapshot the flow count from the API so we can assert exactly +1 after duplicate
     const authToken = await getAuthToken(request);
-    const listBefore = await request.get("/api/v1/flows/", {
-      headers: { Authorization: authToken },
-    });
-    const countBefore = ((await listBefore.json()) as unknown[]).length;
 
     await page.getByTestId("home-dropdown-menu").first().click();
     // Use the testid (not localized text) so the test does not break under i18n
     await expect(page.getByTestId("btn-duplicate-flow")).toBeVisible({
       timeout: 5000,
     });
+
+    // Intercept the duplicate POST so we know the new flow's id directly.
+    // Asserting by id (instead of a count delta on GET /flows) makes the
+    // test resilient to parallel workers creating unrelated flows.
+    const duplicateResponsePromise = page.waitForResponse(
+      (resp) =>
+        resp.url().includes("/api/v1/flows") &&
+        resp.request().method() === "POST" &&
+        resp.status() === 201,
+      { timeout: 10000 },
+    );
     await page.getByTestId("btn-duplicate-flow").click();
+    const duplicateResponse = await duplicateResponsePromise;
+    const duplicateId = ((await duplicateResponse.json()) as { id: string })
+      .id;
+    expect(duplicateId).toBeTruthy();
 
     // Toast appears as soon as the duplicate POST resolves — confirms the action committed
     await expect(page.getByText(/duplicated successfully/i).last()).toBeVisible(
       { timeout: 10000 },
     );
 
-    // Confirm exactly one new flow exists in the database (not a no-op or a double-create)
+    // Confirm the duplicated flow exists in the database
     await expect
       .poll(
         async () => {
           const res = await request.get("/api/v1/flows/", {
             headers: { Authorization: authToken },
           });
-          return ((await res.json()) as unknown[]).length;
+          const flows = (await res.json()) as Array<{ id: string }>;
+          return flows.some((f) => f.id === duplicateId);
         },
         { timeout: 10000, intervals: [500, 1000, 2000] },
       )
-      .toBe(countBefore + 1);
+      .toBe(true);
   },
 );
 
