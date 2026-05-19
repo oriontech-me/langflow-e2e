@@ -120,7 +120,7 @@ test.describe("Single trace shape — seeded flow", () => {
       .not.toBeNull();
 
     expect(polledTraceId).not.toBeNull();
-    traceId = polledTraceId as unknown as string;
+    traceId = polledTraceId!;
   });
 
   test.afterAll(async ({ request }) => {

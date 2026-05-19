@@ -92,10 +92,10 @@ References in this repository:
 
 ## What this test does not cover *(optional)*
 
-- **`DELETE /api/v1/monitor/traces/{trace_id}`** — defined on the same router (`traces.py:138`) but exercised by no spec.
+- **`DELETE /api/v1/monitor/traces/{trace_id}`** — defined on the same router as the single-trace GET handler, but exercised by no spec.
 - **Populated LLM-span contract** — the fixture errors at the LanguageModelComponent by design, so `tokenUsage` and `modelName` always land as `null` on the LLM span. The keys are asserted to exist (shape contract), but value-level assertions (`promptTokens > 0`, `totalTokens === promptTokens + completionTokens`, `modelName` matches the provider response) are tracked in #306, which will land as a dedicated spec using a provider-configured fixture. Deliberate scope reduction to keep this spec free of provider keys / cost / flake.
 - **Explicit ownership test with a second user** — the upstream `test_monitor_ownership.py` covers `builds`/`transactions`/`messages` but not single-trace, and the handler's SQL join means the 404 path is identical to the foreign-owned case. The 404 test in this spec covers both cases. A dedicated cross-user spec would require seeding a second user (not currently supported by the helpers).
-- **Span tree structural assertions** (parent/child wiring, exact span count) — covered by Test 3 in `traces-latency-tokens.spec.ts` against the UI, where `span-node` data-testids are asserted to be exactly 4.
+- **Span tree structural assertions** (parent/child wiring, exact span count) — covered by `traces-latency-tokens.spec.ts`'s "Trace Details modal shows span tree and per-span latency" test against the UI, where `span-node` data-testids are asserted to be exactly 4.
 - **Negative auth path** (401/403 on missing/bad token) — no test pins this for the single-trace endpoint.
 
 ---
