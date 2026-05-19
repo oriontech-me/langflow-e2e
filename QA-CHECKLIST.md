@@ -410,7 +410,7 @@
 
 #### 8.1 Traces
 - [-] View execution traces
-- [-] Trace API returns paginated transactions
+- [x] Trace API returns paginated transactions
 - [-] Trace displays latency of each component
 - [-] Trace displays tokens consumed
 
@@ -727,7 +727,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
-| `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
+| `core-functionality/observability-monitoring/` | 13 | 1 | 11 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -736,7 +736,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **422** | **160 (38%)** | **201 (48%)** | **7 (2%)** | **54 (13%)** |
+| **TOTAL** | **422** | **161 (38%)** | **200 (47%)** | **7 (2%)** | **54 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -752,7 +752,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 160 `test()` calls carrying the `@stable` tag, distributed across 54 spec
+> 163 `test()` calls carrying the `@stable` tag, distributed across 55 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -864,6 +864,11 @@
 - [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
 
+#### core-functionality/observability-monitoring/
+- [x] GET /api/v1/monitor/transactions returns 200 with paginated result → `traces-detail.spec.ts`
+- [x] GET /api/v1/monitor/transactions filters by flow_id (UUID) → `traces-detail.spec.ts`
+- [x] transaction records contain required fields when not empty → `traces-detail.spec.ts`
+
 #### core-functionality/playground/
 - [x] copy button copies Text Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
 - [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
@@ -963,7 +968,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 12 | 1 |
+| `core-functionality/observability-monitoring/` | 11 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
 | `flow-functionality/` | 15 | 0 |
 | `core-functionality/project-management/` | 10 | 0 |
