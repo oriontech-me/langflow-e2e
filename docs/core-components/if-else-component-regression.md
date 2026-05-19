@@ -28,8 +28,8 @@ The one exception is the regex side-effect test: when `operator=regex`, the comp
 
 | # | Scenario | operator | input_text | match_text | case_sensitive | Active branch | Inactive branch |
 |---|---|---|---|---|---|---|---|
-| 1 | `equals` match (existing) | equals | hello | hello | default | True | False |
-| 2 | `equals` no-match (existing) | equals | world | hello | default | False | True |
+| 1 | `equals` match | equals | hello | hello | default | True | False |
+| 2 | `equals` no-match | equals | world | hello | default | False | True |
 | 3 | `contains` substring match | contains | langflow | lang | default | True | False |
 | 4 | `regex` valid pattern match | regex | abc123 | `^abc` | (N/A — regex ignores) | True | False |
 | 5 | `regex` hides `case_sensitive` field | regex | — | — | — | — (DOM check) | — |
@@ -37,7 +37,7 @@ The one exception is the regex side-effect test: when `operator=regex`, the comp
 | 7 | `case_sensitive` OFF → match on mixed case | equals | HELLO | hello | OFF (toggled) | True | False |
 | 8 | `greater than` (numeric) match | greater than | 10 | 5 | default | True | False |
 
-Tests 1 & 2 are already implemented; this update adds tests 3–8.
+All eight scenarios are introduced in this spec; there is no pre-existing implementation elsewhere.
 
 ---
 
@@ -59,11 +59,12 @@ Each test calls this helper and then applies the scenario-specific configuration
 
 ## New local helpers
 
-| Helper | Purpose | Selectors |
+| Helper | Signature | Behaviour |
 |---|---|---|
-| `selectOperator(page, optionTestid)` | Click the operator dropdown trigger, then click the option | `dropdown_str_operator` button → `<operator>-<idx>-option` (e.g. `contains-2-option`, `regex-5-option`, `greater than-8-option`) |
-| `exposeCaseSensitive(page)` | Toggle the case_sensitive advanced field to be visible on the node | open `edit-fields-button` → click `showcase_sensitive` → close edit-fields |
-| `toggleCaseSensitiveOff(page)` | Switch the BoolInput on the node from ON to OFF after exposure | click `toggle_bool_case_sensitive` (BUTTON role=switch); precondition: `exposeCaseSensitive` already ran |
+| `selectOperator` | `(page: Page, operatorName: string)` | Clicks the `value-dropdown-dropdown_str_operator` trigger, picks the option by `getByRole("option", { name: operatorName, exact: true })`, and asserts the trigger text reflects the new value. The option click uses `dispatchEvent("click")` because numeric options at the bottom of the list overlap `main_canvas_controls`, which intercepts ordinary pointer events. |
+| `exposeCaseSensitive` | `(page: Page)` | Opens advanced options, clicks `showcase_sensitive` to surface the BoolInput on the node body, then closes advanced options. |
+
+Test #7 (case_sensitive OFF) does not use a dedicated helper to flip the switch — it clicks `getByTestId("toggle_bool_case_sensitive")` (BUTTON `role="switch"`) inline after calling `exposeCaseSensitive`.
 
 ---
 
@@ -86,9 +87,9 @@ Each test calls this helper and then applies the scenario-specific configuration
 
 - `src/lfx/src/lfx/components/flow_controls/conditional_router.py` — owns the routing logic; `evaluate_condition`, `update_build_config`, and `iterate_and_stop_once` together implement the active/inactive branch behavior, case-sensitivity, and the regex hides-`case_sensitive` side-effect the spec asserts.
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeStatus/index.tsx` (or equivalent) — emits the `node_duration_*` and `node_status_icon_*_inactive` test IDs consumed by the assertions.
-- `src/frontend/src/components/core/parameterRenderComponent/components/dropdownComponent/index.tsx` — owns `dropdown_str_*` and the `<value>-<idx>-option` testids used by `selectOperator`.
-- `helpers/ui/open-advanced-options.ts` — `openAdvancedOptions`/`closeAdvancedOptions` (clicks `edit-fields-button`). Used by `exposeCaseSensitive` and by the regex side-effect assertion.
-- `helpers/ui/zoom-out.ts` and `helpers/ui/adjust-screen-view.ts` — used to fit all three nodes in the visible canvas before wiring.
+- `src/frontend/src/components/core/parameterRenderComponent/components/dropdownComponent/index.tsx` — owns the `value-dropdown-dropdown_str_*` trigger and the Radix Select `role="option"` options used by `selectOperator`.
+- `tests/helpers/ui/open-advanced-options.ts` — `openAdvancedOptions`/`closeAdvancedOptions` (clicks `edit-fields-button`). Used by `exposeCaseSensitive` and by the regex side-effect assertion.
+- `tests/helpers/ui/zoom-out.ts` and `tests/helpers/ui/adjust-screen-view.ts` — used to fit all three nodes in the visible canvas before wiring.
 
 ---
 
@@ -114,5 +115,5 @@ Each test calls this helper and then applies the scenario-specific configuration
 - Stability: 3 / 3 PASS for the original 2 tests (~16–23 s). New scenarios will be re-validated with the same pipeline (typecheck + lint + stability + force-fail + trace + backend audit) before commit.
 - Force-fail probe pattern: temporarily change the active-branch `node_duration_*` `toHaveCount(1)` to `toHaveCount(99)` for one representative scenario per setup variant (default, exposed case_sensitive, switched operator). Confirm failure at the expected line, revert, re-pass.
 - The two Text Output components are dragged via `dragTo` to avoid the default-stack issue noted in the project memory (two sidebar `+` clicks land in the same position).
-- Operator dropdown options are selected by testid `<operator>-<idx>-option` where the operator name is verbatim (with spaces — `greater than-8-option`, not `greater_than-8-option`). The dropdown is Radix Select; `role="option"` is also available as a fallback.
+- Operator dropdown options are selected via `getByRole("option", { name: operatorName, exact: true })` — the dropdown is Radix Select, which exposes stable accessible names. Selecting by `role` instead of testid avoids depending on the option's index suffix in the DOM, which historically drifts as new operators are added.
 - The `case_sensitive` BoolInput uses testid `toggle_bool_case_sensitive` with `role="switch"`; toggling once flips from ON to OFF.
