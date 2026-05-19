@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { clearOutdatedComponents } from "../../../../helpers/ui/clear-outdated-components";
 
 test.skip(
   "user should be able to use youtube transcripts component",
@@ -16,12 +17,7 @@ test.skip(
     await page.getByTestId("add-component-button-youtube-transcripts").click();
     await adjustScreenView(page);
 
-    let outdatedComponents = await page.getByTestId("update-button").count();
-
-    while (outdatedComponents > 0) {
-      await page.getByTestId("update-button").first().click();
-      outdatedComponents = await page.getByTestId("update-button").count();
-    }
+    await clearOutdatedComponents(page);
 
     await page
       .getByTestId("textarea_str_url")

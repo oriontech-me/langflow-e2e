@@ -1,5 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { clearApiKeyBadges } from "../../../../helpers/ui/clear-api-key-badges";
+import { clearOutdatedComponents } from "../../../../helpers/ui/clear-outdated-components";
 
 test(
   "should be able to see and interact with Traces",
@@ -13,31 +15,8 @@ test(
     await expect(page.getByTestId(/.*rf__node.*/).first()).toBeVisible({
       timeout: 3000,
     });
-    let outdatedComponents = await page.getByTestId("update-button").count();
-    const maxUpdateIterations = 20;
-    let updateIterations = 0;
-    while (outdatedComponents > 0) {
-      if (++updateIterations > maxUpdateIterations) {
-        throw new Error(
-          `update-button count did not reach 0 after ${maxUpdateIterations} iterations (last count: ${outdatedComponents})`,
-        );
-      }
-      await page.getByTestId("update-button").first().click();
-      outdatedComponents = await page.getByTestId("update-button").count();
-    }
-
-    let filledApiKey = await page.getByTestId("remove-icon-badge").count();
-    const maxBadgeIterations = 20;
-    let badgeIterations = 0;
-    while (filledApiKey > 0) {
-      if (++badgeIterations > maxBadgeIterations) {
-        throw new Error(
-          `remove-icon-badge count did not reach 0 after ${maxBadgeIterations} iterations (last count: ${filledApiKey})`,
-        );
-      }
-      await page.getByTestId("remove-icon-badge").first().click();
-      filledApiKey = await page.getByTestId("remove-icon-badge").count();
-    }
+    await clearOutdatedComponents(page);
+    await clearApiKeyBadges(page);
 
     await page.getByRole("button", { name: "Traces" }).first().click();
     await expect(
