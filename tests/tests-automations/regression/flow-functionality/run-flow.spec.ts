@@ -16,12 +16,25 @@ test(
 
     await awaitBootstrapTest(page);
 
+    // Track the IDs of the 2 flows we create so cleanup can target ONLY
+    // those via the API, not example/starter flows or flows belonging to
+    // sibling specs running in parallel.
+    const createdFlowIds: string[] = [];
+    const captureFlowIdFromUrl = async () => {
+      // `waitForURL` enforces the URL matches, so the subsequent match() is
+      // guaranteed — no need for a runtime null check.
+      await page.waitForURL(/\/flow\/[0-9a-f-]+/i, { timeout: 15000 });
+      const id = page.url().match(/\/flow\/([0-9a-f-]+)/i)![1];
+      createdFlowIds.push(id);
+    };
+
     try {
       await page.waitForSelector('[data-testid="blank-flow"]', {
         timeout: 30000,
       });
 
       await page.getByTestId("blank-flow").click();
+      await captureFlowIdFromUrl();
 
       await page.getByTestId("sidebar-search-input").click();
       await page.getByTestId("sidebar-search-input").fill("chat output");
@@ -83,6 +96,7 @@ test(
       await page.getByTestId("new-project-btn").click();
 
       await page.getByTestId("blank-flow").click();
+      await captureFlowIdFromUrl();
 
       await page.getByTestId("sidebar-search-input").click();
       await page.getByTestId("sidebar-search-input").fill("run flow");
@@ -133,23 +147,27 @@ test(
 
       await expect(value).toHaveValue("THIS IS A TEST FOR RUN FLOW COMPONENT");
     } finally {
-      // Best-effort cleanup of the 2 flows created by the test.
-      // Uses the API for speed and to avoid cascading UI failures.
+      // API-based cleanup scoped to the IDs we captured during creation.
+      // Parallelism-safe: the previous implementation listed all flows and
+      // sliced the top 2 positionally, which could (a) delete example or
+      // starter flows that the listing returns before user flows, or
+      // (b) under `fullyParallel`, delete flows another worker just
+      // created. Iterating the captured IDs eliminates both classes of
+      // collateral damage. It also sidesteps the brittle object-form
+      // fallback (`body?.items` vs the actual `body.flows` shape used in
+      // `helpers/flows/clean-all-flows.ts`) since we no longer need to
+      // list at all.
       try {
         const headers = { Authorization: await getAuthToken(request) };
-        const listRes = await request.get("/api/v1/flows/", { headers });
-        if (listRes.ok()) {
-          const body = await listRes.json();
-          const items = (Array.isArray(body) ? body : body?.items ?? []).slice(
-            0,
-            2,
-          );
-          for (const f of items) {
-            await request.delete(`/api/v1/flows/${f.id}`, { headers });
+        for (const id of createdFlowIds) {
+          try {
+            await request.delete(`/api/v1/flows/${id}`, { headers });
+          } catch {
+            // Best-effort per-flow — do not mask the original test failure.
           }
         }
       } catch {
-        // Cleanup is best-effort — do not mask original test failure.
+        // Cleanup is best-effort — do not mask the original test failure.
       }
     }
   },
