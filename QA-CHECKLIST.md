@@ -104,8 +104,8 @@
 - [x] POST `/api/v1/custom_component` → creates custom component → `api/flows/api-custom-component-creation.spec.ts`
 
 #### 1.5 Messages and Monitoring via API
-- [-] GET `/api/v1/monitor/messages` → returns 200 with array
-- [-] GET with session_id filter returns only messages from that session
+- [x] GET `/api/v1/monitor/messages` → returns 200 with array → `api/flows/api-monitor-messages.spec.ts`
+- [x] GET with session_id filter returns only messages from that session → `api/flows/api-monitor-messages.spec.ts`
 
 #### 1.6 Integration Code Generation
 - [x] Generate curl for API execution → `flow-functionality/curlApiGeneration.spec.ts`
