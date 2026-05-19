@@ -573,8 +573,9 @@
 - [-] Confirm deleted flow does not appear in listing
 
 #### 12.4 Export / Import Flow
-- [-] Export flow as JSON
-- [-] Import flow via JSON file upload
+- [x] Export flow as JSON → `flow-functionality/export-import-flow.spec.ts`
+- [x] Exported JSON contains valid data.nodes structure → `flow-functionality/export-import-flow.spec.ts`
+- [x] Import flow via JSON file upload (drag-drop + upload button) → `flow-functionality/export-import-flow.spec.ts`
 - [~] Import flow with outdated components
 - [-] Import invalid JSON — should display error message
 
