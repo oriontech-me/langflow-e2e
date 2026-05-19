@@ -200,10 +200,13 @@ test(
       });
       await page.waitForTimeout(500);
 
-      // Credential is the default type in the modal — no need to switch tabs
+      // The modal opens on the Generic tab by default — switch to Credential
+      // BEFORE saving, otherwise this test would be creating (and asserting
+      // against) a Generic variable, not a Credential one.
       await page
         .getByPlaceholder("Enter a name for the variable...")
         .fill(varName);
+      await page.getByTestId("credential-tab").click();
       await page
         .getByPlaceholder("Enter a value for the variable...")
         .fill(sentinelValue);
@@ -218,12 +221,16 @@ test(
       varCreated = true;
 
       // Critical: the Credential value must NOT appear as visible text anywhere
-      // on the page. getByText scans rendered text, not input value attributes,
-      // so a masked <input type="password" value="…"> is fine — what we forbid
-      // is the value being echoed back into the list, a toast, or any preview.
-      await expect(
-        page.getByText(sentinelValue, { exact: true }),
-      ).toHaveCount(0, { timeout: 5000 });
+      // on the page — not as a standalone match, and not embedded inside a
+      // toast, label, preview, or any other longer message. getByText without
+      // `exact: true` does substring matching, so a leak like
+      // `"Saved: SECRET-SENTINEL-..."` also fails the assertion. Input value
+      // attributes (`<input type="password" value="…">`) don't count as
+      // visible text — only rendered text does, which is the guarantee under
+      // test.
+      await expect(page.getByText(sentinelValue)).toHaveCount(0, {
+        timeout: 5000,
+      });
     } finally {
       if (varCreated) {
         const varRow = page.getByText(varName, { exact: true });

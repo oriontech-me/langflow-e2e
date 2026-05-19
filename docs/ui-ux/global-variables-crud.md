@@ -24,7 +24,7 @@ If these break, users cannot manage global variables (API keys, shared values) t
 
 ## Step by step *(required)*
 
-**Both tests share the same setup:**
+**All three tests share the same setup:**
 1. Set viewport to 1920×1080 (modal can overflow on smaller screens)
 2. Bootstrap app, create blank flow, add OpenAI component
 3. Click the OpenAI component header, then click the Globe icon
@@ -55,12 +55,13 @@ If these break, users cannot manage global variables (API keys, shared values) t
 
 1. Run setup
 2. Click "Add New Variable" via JS evaluate
-3. Credential is the default type — no need to switch tabs
-4. Fill name `credential-{timestamp}`, fill value with a distinctive sentinel `SECRET-SENTINEL-{timestamp}`
-5. Click "Save Variable"
-6. Sanity: assert variable name is visible in the list
-7. Critical: assert `getByText(sentinelValue, { exact: true })` has `count() === 0` — value must not surface as visible text anywhere on the page
-8. Cleanup: delete in `finally` if `varCreated` flag is still true
+3. Fill name `credential-{timestamp}`
+4. Click `credential-tab` — the modal opens on the Generic tab by default; this switches it to Credential before save
+5. Fill value with a distinctive sentinel `SECRET-SENTINEL-{timestamp}`
+6. Click "Save Variable"
+7. Sanity: assert variable name is visible in the list
+8. Critical: assert `getByText(sentinelValue)` (substring match, no `exact`) has `count() === 0` — the value must not surface anywhere as rendered text, including embedded inside a toast, label, or preview
+9. Cleanup: delete in `finally` if `varCreated` flag is still true
 
 ---
 
@@ -68,7 +69,7 @@ If these break, users cannot manage global variables (API keys, shared values) t
 
 - Variable name appears in list after creation (Test 1)
 - Variable name has count 0 after deletion (Test 2)
-- Credential value (sentinel) has visible-text count 0 anywhere on the page after save (Test 3)
+- Credential value (sentinel) has substring-text count 0 anywhere on the page after save (Test 3) — `getByText(sentinelValue)` without `exact: true`, so embedded occurrences inside longer messages also fail the test
 
 ---
 
