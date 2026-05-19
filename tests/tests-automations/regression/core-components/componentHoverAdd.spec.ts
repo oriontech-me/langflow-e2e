@@ -3,58 +3,55 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 
 test(
   "user can add components by hovering and clicking the plus icon",
-  { tag: ["@release", "@components", "@workspace"] },
+  { tag: ["@release", "@components", "@workspace", "@stable"] },
 
   async ({ page }) => {
-    // Navigate to homepage and handle initial modal
     await awaitBootstrapTest(page);
 
-    // Start with blank flow
     await page.getByTestId("blank-flow").click();
-    await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-      timeout: 3000,
+    await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+      timeout: 10000,
     });
 
-    // Search for a component
     await page.getByTestId("sidebar-search-input").click();
     await page.getByTestId("sidebar-search-input").fill("chat input");
 
-    await page.waitForSelector('[data-testid="input_outputChat Input"]', {
-      timeout: 2000,
-    });
-    // Hover over the component and verify plus icon
     const componentLocator = page.getByTestId("input_outputChat Input");
-    // Find the plus icon within the specific component container
+    await expect(componentLocator).toBeVisible({ timeout: 10000 });
+
     const plusIcon = componentLocator.getByTestId("icon-Plus");
+    await expect(plusIcon).toBeAttached();
 
-    // Get the opacity
-    const opacity = await plusIcon.evaluate((el) =>
-      window.getComputedStyle(el).getPropertyValue("opacity"),
+    // Plus icon starts hidden (opacity 0 on sm+ viewports) — confirms the
+    // hover-to-reveal affordance is wired up correctly.
+    const initialOpacity = await plusIcon.evaluate(
+      (el) => window.getComputedStyle(el).opacity,
     );
+    expect(initialOpacity).toBe("0");
 
-    await expect(plusIcon).toBeVisible();
+    // Hover via explicit mouse coordinates over the row's center, then re-issue
+    // the move so the cursor stays put while Playwright polls opacity. Calling
+    // `componentLocator.hover()` alone proved flaky here: between polls the
+    // cursor effectively left the `group/draggable` parent (opacity reverted
+    // from 0.88 back to 0), so the assertion saw the transition unwind.
+    const box = await componentLocator.boundingBox();
+    expect(box).not.toBeNull();
+    const cx = box!.x + box!.width / 2;
+    const cy = box!.y + box!.height / 2;
+    await page.mouse.move(cx, cy);
+    await page.mouse.move(cx, cy);
 
-    await expect(opacity).toBe("0");
-
-    await componentLocator.hover();
-    // Hover over the component
-    await expect(plusIcon).toBeVisible();
-    // Wait for the animation to change the opacity
-    await page.waitForTimeout(500);
-
-    const opacityAfterHover = await plusIcon.evaluate((el) =>
-      window.getComputedStyle(el).getPropertyValue("opacity"),
-    );
-
-    expect(Number(opacityAfterHover)).toBeGreaterThanOrEqual(0);
-
-    // Click the plus icon associated with this component
+    // After hover, opacity must reach 1 — proves the
+    // `group-hover/draggable:opacity-100` class actually wires the reveal.
+    // Without this, a regression that removes the hover class would still pass
+    // because Playwright can click an `opacity: 0` element that receives
+    // pointer events. `toHaveCSS` auto-waits to the settled value, so the
+    // Tailwind transition has time to land without false negatives.
+    await expect(plusIcon).toHaveCSS("opacity", "1", { timeout: 3000 });
     await plusIcon.click();
-    // Wait for the component to be added to the flow
-    await page.waitForSelector(".react-flow__node", { timeout: 1000 });
 
-    // Verify component was added to the flow
-    const addedComponent = page.locator(".react-flow__node").first();
-    await expect(addedComponent).toBeVisible();
+    await expect(page.locator(".react-flow__node").first()).toBeVisible({
+      timeout: 10000,
+    });
   },
 );
