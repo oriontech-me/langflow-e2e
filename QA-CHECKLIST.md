@@ -145,7 +145,7 @@
 - [ ] Legacy component visible via configuration
 
 #### 2.4 Code Editing
-- [-] Edit Python code of custom component
+- [x] Edit Python code of custom component — Check & Save clears the pulse-pink indicator → `core-components/customComponentAdd.spec.ts`
 - [-] Full custom component
 
 ---
