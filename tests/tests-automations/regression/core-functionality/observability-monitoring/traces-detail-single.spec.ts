@@ -124,16 +124,26 @@ test.describe("Single trace shape — seeded flow", () => {
   });
 
   test.afterAll(async ({ request }) => {
-    if (flowId) {
-      await request.delete(`/api/v1/flows/${flowId}`, {
-        headers: { "x-api-key": apiKey },
-      });
+    // Use allSettled so a failed flow delete does not skip the key delete (and
+    // vice versa). The guards already block calls when an entity was never
+    // created — allSettled covers the remaining case: a half-completed server
+    // operation that hands us a stale id we cannot delete cleanly.
+    const cleanups: Promise<unknown>[] = [];
+    if (flowId && apiKey) {
+      cleanups.push(
+        request.delete(`/api/v1/flows/${flowId}`, {
+          headers: { "x-api-key": apiKey },
+        }),
+      );
     }
     if (apiKeyId) {
-      await request.delete(`/api/v1/api_key/${apiKeyId}`, {
-        headers: { Authorization: bearerToken },
-      });
+      cleanups.push(
+        request.delete(`/api/v1/api_key/${apiKeyId}`, {
+          headers: { Authorization: bearerToken },
+        }),
+      );
     }
+    await Promise.allSettled(cleanups);
   });
 
   test(
