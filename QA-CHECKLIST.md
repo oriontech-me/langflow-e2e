@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-05-18
+> **Last updated:** 2026-05-19
 
 ---
 
@@ -718,9 +718,9 @@
 | `flow-functionality/` | 23 | 3 | 18 | 2 | 0 |
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
-| `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
+| `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **408** | **146 (36%)** | **203 (50%)** | **7 (2%)** | **52 (13%)** |
+| **TOTAL** | **408** | **147 (36%)** | **202 (50%)** | **7 (2%)** | **52 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -736,7 +736,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 149 `test()` calls carrying the `@stable` tag, distributed across 47 spec
+> 150 `test()` calls carrying the `@stable` tag, distributed across 48 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -796,6 +796,7 @@
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
+- [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
 - [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
@@ -922,7 +923,7 @@
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
-| `ui-ux/` — Canvas | 39 | 1 |
+| `ui-ux/` — Canvas | 38 | 1 |
 
 ---
 
