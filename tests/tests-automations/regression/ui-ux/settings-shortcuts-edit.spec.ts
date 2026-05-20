@@ -65,6 +65,44 @@ test.describe("Settings — Edit Shortcut", () => {
         await expect(duplicateRowAfter).toContainText(/Alt/i, { timeout: 5000 });
         await expect(duplicateRowAfter).toContainText("U", { timeout: 5000 });
       });
+
+      await test.step("open a blank flow", async () => {
+        await page.goto("/");
+        await page.waitForSelector('[id="new-project-btn"]', { timeout: 30000 });
+        await page.getByTestId("new-project-btn").click();
+        await page.waitForSelector('[data-testid="blank-flow"]', {
+          timeout: 10000,
+        });
+        await page.getByTestId("blank-flow").click();
+      });
+
+      await test.step("add one Ollama node to the canvas", async () => {
+        await page.getByTestId("sidebar-search-input").click();
+        await page.getByTestId("sidebar-search-input").fill("ollama");
+
+        await page.waitForSelector('[data-testid="ollamaOllama"]', {
+          timeout: 5000,
+        });
+
+        await page
+          .getByTestId("ollamaOllama")
+          .dragTo(page.locator('//*[@id="react-flow-id"]'));
+        await page.mouse.up();
+        await page.mouse.down();
+
+        await expect(page.getByTestId("title-Ollama")).toHaveCount(1, {
+          timeout: 10000,
+        });
+      });
+
+      await test.step("press the new combination and confirm duplication", async () => {
+        await page.getByTestId("title-Ollama").click();
+        await page.keyboard.press("ControlOrMeta+Alt+U");
+
+        await expect(page.getByTestId("title-Ollama")).toHaveCount(2, {
+          timeout: 5000,
+        });
+      });
     },
   );
 });
