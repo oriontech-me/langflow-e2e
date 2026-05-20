@@ -417,6 +417,11 @@
 - [x] Single-trace API returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
 - [x] Bulk delete traces API returns 404 for an unknown flow_id → `traces-delete.spec.ts`
 - [x] Bulk delete traces API clears all traces for the flow (204 + empty list) → `traces-delete.spec.ts`
+- [x] Trace list filter `?status=error` returns only the failing trace; `?status=<unknown>` returns 422 → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?status=ok` returns only the successful trace → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?start_time` pins the >= lower bound (past hits, future misses) → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?query=<substring>` filters by trace name, incl. 50-char sanitize cap → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?session_id` filters by the session passed at run time → `traces-list-filters.spec.ts`
 
 #### 8.2 Notifications
 - [-] System notifications
@@ -731,7 +736,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
-| `core-functionality/observability-monitoring/` | 17 | 8 | 8 | 0 | 1 |
+| `core-functionality/observability-monitoring/` | 22 | 13 | 8 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -740,7 +745,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **426** | **168 (39%)** | **197 (46%)** | **7 (2%)** | **54 (13%)** |
+| **TOTAL** | **431** | **173 (40%)** | **197 (46%)** | **7 (2%)** | **54 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -756,7 +761,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 171 `test()` calls carrying the `@stable` tag, distributed across 59 spec
+> 176 `test()` calls carrying the `@stable` tag, distributed across 60 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -879,6 +884,11 @@
 - [x] GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run → `traces-latency-tokens.spec.ts`
 - [x] Flow Activity page shows latency and token columns for the run → `traces-latency-tokens.spec.ts`
 - [x] Trace Details modal shows span tree and per-span latency → `traces-latency-tokens.spec.ts`
+- [x] GET /api/v1/monitor/traces?status=error returns only the failing trace; rejects unknown values → `traces-list-filters.spec.ts`
+- [x] GET /api/v1/monitor/traces?status=ok returns only the successful trace → `traces-list-filters.spec.ts`
+- [x] GET /api/v1/monitor/traces?start_time pins the >= lower bound → `traces-list-filters.spec.ts`
+- [x] GET /api/v1/monitor/traces?query=<substring> filters by trace name (incl. 50-char sanitize cap) → `traces-list-filters.spec.ts`
+- [x] GET /api/v1/monitor/traces?session_id filters by the session passed at run time → `traces-list-filters.spec.ts`
 - [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
