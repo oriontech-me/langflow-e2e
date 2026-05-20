@@ -22,7 +22,11 @@ const OK_FIXTURE = JSON.parse(
   ),
 );
 
-test.describe("Trace list filters — status / start_time / query", () => {
+// REQUIRES serial mode. The five tests below share a single beforeAll that
+// seeds two flows, runs each once, and polls for trace emission. Removing
+// `describe.configure({ mode: "serial" })` would let Playwright shard the
+// tests across workers, all of which would race against the same setup.
+test.describe("Trace list filters — status / start_time / query / session_id", () => {
   test.describe.configure({ mode: "serial" });
 
   let bearerToken: string;
@@ -30,9 +34,14 @@ test.describe("Trace list filters — status / start_time / query", () => {
   let apiKeyId: string;
   let errorFlowId: string;
   let okFlowId: string;
-  // Unique substring captured from the trace name during setup — drives the
-  // `?query=` filter assertions without depending on the trace-name format.
-  let errorTraceNameProbe: string;
+  // Full trace.name of the error run — drives both the `?query=` substring
+  // probe and the 50-char sanitizer-cap probe. Captured (and asserted) in
+  // beforeAll so a future change to the trace-name format surfaces there
+  // instead of silently failing the query test.
+  let errorTraceName: string;
+  // Unique session_id threaded through the ok run's payload — drives the
+  // `?session_id=` filter assertions.
+  let okSessionId: string;
 
   test.beforeAll(async ({ request }) => {
     bearerToken = await getAuthToken(request);
@@ -72,6 +81,10 @@ test.describe("Trace list filters — status / start_time / query", () => {
     expect(okFlowRes.status()).toBe(201);
     okFlowId = (await okFlowRes.json()).id;
 
+    // Langflow returns 200 (with error payload) or 500 for component-level
+    // failures. Anything outside that range (401, 422, etc.) means the run
+    // never reached the graph executor and no trace will be emitted — fail
+    // fast instead of timing out on the poll below.
     const errorRunRes = await request.post(`/api/v1/run/${errorFlowId}`, {
       headers: { "x-api-key": apiKey },
       data: {
@@ -82,12 +95,17 @@ test.describe("Trace list filters — status / start_time / query", () => {
     });
     expect([200, 500]).toContain(errorRunRes.status());
 
+    // Thread a unique session_id through the ok run so the ?session_id=
+    // filter has a deterministic target. The session_id is persisted on
+    // TraceTable.session_id by the native tracer.
+    okSessionId = `filters-ok-session-${Date.now()}`;
     const okRunRes = await request.post(`/api/v1/run/${okFlowId}`, {
       headers: { "x-api-key": apiKey },
       data: {
         input_value: "filters-ok-probe",
         input_type: "chat",
         output_type: "chat",
+        session_id: okSessionId,
       },
     });
     expect(okRunRes.status()).toBe(200);
@@ -112,17 +130,21 @@ test.describe("Trace list filters — status / start_time / query", () => {
         .toBeGreaterThan(0);
     }
 
-    // Capture the unique trailing UUID of the error trace name for ?query=.
-    // The handler ILIKEs on TraceTable.{name,id,session_id}, and the trace
-    // name is `<flow.name> - <flowId>`, so the flow UUID is a substring of
-    // the name and unique across concurrent test runs.
+    // Capture and validate the error-trace name shape. The handler ILIKEs on
+    // TraceTable.{name, id, session_id} (repository.py:169-177), but trace.id
+    // is its own UUID (not flow_id), and we did not set a session_id on the
+    // error run — so the only column the flow-UUID probe can hit through is
+    // `name`. Asserting the substring here means a future change to the
+    // trace-name format surfaces at setup time, not as a confusing 0-hit on
+    // the ?query= test.
     const errorListRes = await request.get(
       `/api/v1/monitor/traces?flow_id=${errorFlowId}`,
       { headers: { Authorization: bearerToken } },
     );
     const errorBody = await errorListRes.json();
     expect(typeof errorBody.traces?.[0]?.name).toBe("string");
-    errorTraceNameProbe = errorFlowId;
+    errorTraceName = errorBody.traces[0].name as string;
+    expect(errorTraceName).toContain(errorFlowId);
   });
 
   test.afterAll(async ({ request }) => {
@@ -152,7 +174,7 @@ test.describe("Trace list filters — status / start_time / query", () => {
   });
 
   test(
-    "GET /api/v1/monitor/traces?status=error returns only the failing trace",
+    "GET /api/v1/monitor/traces?status=error returns only the failing trace; rejects unknown values",
     { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       const matchRes = await request.get(
@@ -174,6 +196,15 @@ test.describe("Trace list filters — status / start_time / query", () => {
       const missBody = await missRes.json();
       expect(missBody.total).toBe(0);
       expect(missBody.traces.length).toBe(0);
+
+      // Unknown SpanStatus value must be rejected by FastAPI's enum parser
+      // (Pydantic 422), not silently coerced to a string LIKE. A handler
+      // that loosened the enum to plain str would leak through here.
+      const invalidRes = await request.get(
+        `/api/v1/monitor/traces?flow_id=${errorFlowId}&status=failed`,
+        { headers: { Authorization: bearerToken } },
+      );
+      expect(invalidRes.status()).toBe(422);
     },
   );
 
@@ -204,33 +235,15 @@ test.describe("Trace list filters — status / start_time / query", () => {
   );
 
   test(
-    "GET /api/v1/monitor/traces?start_time=<future> returns empty",
+    "GET /api/v1/monitor/traces?start_time pins the >= lower bound",
     { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
-      // ISO timestamp 1 hour in the future — every seeded trace must precede it.
-      const future = new Date(Date.now() + 3600 * 1000).toISOString();
-
-      const res = await request.get(
-        `/api/v1/monitor/traces?flow_id=${errorFlowId}&start_time=${encodeURIComponent(future)}`,
-        { headers: { Authorization: bearerToken } },
-      );
-      expect(res.status()).toBe(200);
-      const body = await res.json();
-      expect(body.total).toBe(0);
-      expect(body.traces.length).toBe(0);
-    },
-  );
-
-  test(
-    "GET /api/v1/monitor/traces?query=<substring> filters by trace name/id/session",
-    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
-    async ({ request }) => {
-      // The handler ILIKEs on TraceTable.{name,id,session_id} (capped at 50
-      // chars by sanitize_query_string). The flow UUID is part of the trace
-      // name and unique across concurrent runs — a hit must return >= 1, and
-      // when narrowed by flow_id it must be exactly 1.
+      // Past cutoff: every seeded trace satisfies start_time >= past, so a
+      // handler that flipped the comparator to <= would return 0 here. This
+      // is the half that actually pins the direction.
+      const past = new Date(Date.now() - 3600 * 1000).toISOString();
       const hitRes = await request.get(
-        `/api/v1/monitor/traces?flow_id=${errorFlowId}&query=${encodeURIComponent(errorTraceNameProbe)}`,
+        `/api/v1/monitor/traces?flow_id=${errorFlowId}&start_time=${encodeURIComponent(past)}`,
         { headers: { Authorization: bearerToken } },
       );
       expect(hitRes.status()).toBe(200);
@@ -239,11 +252,83 @@ test.describe("Trace list filters — status / start_time / query", () => {
       expect(hitBody.traces.length).toBe(1);
       expect(hitBody.traces[0].flowId).toBe(errorFlowId);
 
+      // Future cutoff: every seeded trace precedes it, so the filter must
+      // exclude all rows. Confirms the filter is actually wired (not a no-op).
+      const future = new Date(Date.now() + 3600 * 1000).toISOString();
+      const missRes = await request.get(
+        `/api/v1/monitor/traces?flow_id=${errorFlowId}&start_time=${encodeURIComponent(future)}`,
+        { headers: { Authorization: bearerToken } },
+      );
+      expect(missRes.status()).toBe(200);
+      const missBody = await missRes.json();
+      expect(missBody.total).toBe(0);
+      expect(missBody.traces.length).toBe(0);
+    },
+  );
+
+  test(
+    "GET /api/v1/monitor/traces?query=<substring> filters by trace name (incl. 50-char sanitize cap)",
+    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
+    async ({ request }) => {
+      // The handler ILIKEs on TraceTable.{name, id, session_id} (capped at
+      // 50 chars by sanitize_query_string). In this setup the flow UUID is
+      // only inside `name`, so the hit here pins the `name` branch.
+      const hitRes = await request.get(
+        `/api/v1/monitor/traces?flow_id=${errorFlowId}&query=${encodeURIComponent(errorFlowId)}`,
+        { headers: { Authorization: bearerToken } },
+      );
+      expect(hitRes.status()).toBe(200);
+      const hitBody = await hitRes.json();
+      expect(hitBody.total).toBe(1);
+      expect(hitBody.traces.length).toBe(1);
+      expect(hitBody.traces[0].flowId).toBe(errorFlowId);
+
+      // 50-char sanitizer cap: send a probe longer than 50 chars whose first
+      // 50 chars are still inside trace.name. The cap truncates to 50, and
+      // those 50 must still hit. A regression dropping the cap would still
+      // hit (the full string is also inside the name) — but a regression
+      // that hardened the cap into a reject (e.g. raised 422 on len > 50)
+      // would surface here.
+      const longProbe = errorTraceName.slice(0, 60);
+      expect(longProbe.length).toBeGreaterThan(50);
+      const longRes = await request.get(
+        `/api/v1/monitor/traces?flow_id=${errorFlowId}&query=${encodeURIComponent(longProbe)}`,
+        { headers: { Authorization: bearerToken } },
+      );
+      expect(longRes.status()).toBe(200);
+      const longBody = await longRes.json();
+      expect(longBody.total).toBe(1);
+      expect(longBody.traces[0].flowId).toBe(errorFlowId);
+
       // Same query string with a guaranteed-unmatched fixed prefix returns 0.
-      // Using a hyphen-prefixed nonce keeps the probe within the 50-char
-      // sanitizer cap and within the printable-ASCII allowlist.
       const missRes = await request.get(
         `/api/v1/monitor/traces?flow_id=${errorFlowId}&query=zzz-no-trace-name-matches-this-${Date.now()}`,
+        { headers: { Authorization: bearerToken } },
+      );
+      expect(missRes.status()).toBe(200);
+      const missBody = await missRes.json();
+      expect(missBody.total).toBe(0);
+      expect(missBody.traces.length).toBe(0);
+    },
+  );
+
+  test(
+    "GET /api/v1/monitor/traces?session_id filters by the session passed at run time",
+    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
+    async ({ request }) => {
+      const hitRes = await request.get(
+        `/api/v1/monitor/traces?flow_id=${okFlowId}&session_id=${encodeURIComponent(okSessionId)}`,
+        { headers: { Authorization: bearerToken } },
+      );
+      expect(hitRes.status()).toBe(200);
+      const hitBody = await hitRes.json();
+      expect(hitBody.total).toBe(1);
+      expect(hitBody.traces.length).toBe(1);
+      expect(hitBody.traces[0].flowId).toBe(okFlowId);
+      expect(hitBody.traces[0].sessionId).toBe(okSessionId);
+
+      const missRes = await request.get(
+        `/api/v1/monitor/traces?flow_id=${okFlowId}&session_id=missing-session-${Date.now()}`,
         { headers: { Authorization: bearerToken } },
       );
       expect(missRes.status()).toBe(200);
