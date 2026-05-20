@@ -741,12 +741,12 @@
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 25 | 8 | 15 | 2 | 0 |
+| `flow-functionality/` | 26 | 11 | 13 | 2 | 0 |
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **431** | **175 (41%)** | **195 (45%)** | **7 (2%)** | **54 (13%)** |
+| **TOTAL** | **432** | **178 (41%)** | **193 (45%)** | **7 (2%)** | **54 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -762,7 +762,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 182 `test()` calls carrying the `@stable` tag, distributed across 61 spec
+> 185 `test()` calls carrying the `@stable` tag, distributed across 62 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -951,6 +951,9 @@
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
+- [x] export flow to JSON triggers success toast and produces a valid file → `export-import-flow.spec.ts`
+- [x] imported JSON flow must load all components on canvas → `export-import-flow.spec.ts`
+- [x] import flow from JSON via upload button must load flow on canvas → `export-import-flow.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
@@ -999,7 +1002,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 8 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 15 | 0 |
+| `flow-functionality/` | 13 | 0 |
 | `core-functionality/project-management/` | 10 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
