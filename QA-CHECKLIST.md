@@ -415,6 +415,10 @@
 - [x] Trace displays tokens consumed
 - [x] Single-trace API returns 404 for an unknown trace_id → `traces-detail-single.spec.ts`
 - [x] Single-trace API returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
+- [x] Trace list filter `?status=error` returns only the failing trace → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?status=ok` returns only the successful trace → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?start_time=<future>` returns empty → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?query=<substring>` filters by trace name/id/session → `traces-list-filters.spec.ts`
 
 #### 8.2 Notifications
 - [-] System notifications
