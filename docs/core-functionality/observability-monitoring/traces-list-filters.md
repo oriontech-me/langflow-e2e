@@ -13,7 +13,7 @@ This spec pins five discriminative scenarios on the wire:
 1. **`status=error`** returns only the failing trace; `?status=ok` on the same flow returns 0; `?status=<unknown>` returns **422** (Pydantic enum rejection).
 2. **`status=ok`** returns only the successful trace; `?status=error` on the same flow returns 0.
 3. **`start_time`** is asserted on both halves of the `>=` comparator: a past cutoff returns 1 (pinning the direction), a future cutoff returns 0 (pinning that the filter is wired).
-4. **`query=<substring>`** is asserted three ways: a 36-char UUID probe inside the trace name returns 1; a 60-char probe (longer than the 50-char `sanitize_query_string` cap) whose first 50 chars are still inside the name returns 1 (pinning the cap behavior); a garbage probe returns 0.
+4. **`query=<substring>`** is asserted three ways: a 36-char UUID probe inside the trace name returns 1; a probe whose first 50 chars are inside the trace name but whose tail is a guaranteed-unmatched suffix returns 1 (genuinely pinning truncation — only the truncated 50 chars match the name, the full string does not); a garbage probe returns 0.
 5. **`session_id`** is asserted against a session id threaded through the ok run's payload: the exact match returns 1, an unknown session returns 0.
 
 All assertions are scoped by `flow_id` so a concurrent run of another `@observability` test in the same user account cannot contaminate the totals.
@@ -57,7 +57,7 @@ All five tests carry the same tag set.
 
 **Test 4 — `?query=<substring> filters by trace name (incl. 50-char sanitize cap)`**
 1. `GET ?flow_id=<errorFlowId>&query=<errorFlowId>` → 200, `total === 1`
-2. `longProbe = errorTraceName.slice(0, 60)` (asserted `>50` so the sanitizer cap engages) → `GET ?flow_id=<errorFlowId>&query=<longProbe>` → 200, `total === 1`. The sanitizer caps to 50 chars; the truncated string is still inside `errorTraceName`, so the ILIKE must still hit
+2. `longProbe = errorTraceName.slice(0, 50) + "-zzz-not-in-name-<timestamp>"` (length asserted `>50` so the sanitizer cap engages) → `GET ?flow_id=<errorFlowId>&query=<longProbe>` → 200, `total === 1`. The first 50 chars are inside `errorTraceName`, the tail is not. Only a backend that truncates to 50 chars before the ILIKE hits; a backend that uses the full string misses on the garbage suffix
 3. `GET ?flow_id=<errorFlowId>&query=zzz-no-trace-name-matches-this-<timestamp>` → 200, `total === 0`
 
 **Test 5 — `?session_id filters by the session passed at run time`**

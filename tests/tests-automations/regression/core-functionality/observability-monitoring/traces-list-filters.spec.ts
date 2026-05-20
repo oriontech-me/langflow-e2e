@@ -141,6 +141,7 @@ test.describe("Trace list filters — status / start_time / query / session_id",
       `/api/v1/monitor/traces?flow_id=${errorFlowId}`,
       { headers: { Authorization: bearerToken } },
     );
+    expect(errorListRes.status()).toBe(200);
     const errorBody = await errorListRes.json();
     expect(typeof errorBody.traces?.[0]?.name).toBe("string");
     errorTraceName = errorBody.traces[0].name as string;
@@ -283,13 +284,17 @@ test.describe("Trace list filters — status / start_time / query / session_id",
       expect(hitBody.traces.length).toBe(1);
       expect(hitBody.traces[0].flowId).toBe(errorFlowId);
 
-      // 50-char sanitizer cap: send a probe longer than 50 chars whose first
-      // 50 chars are still inside trace.name. The cap truncates to 50, and
-      // those 50 must still hit. A regression dropping the cap would still
-      // hit (the full string is also inside the name) — but a regression
-      // that hardened the cap into a reject (e.g. raised 422 on len > 50)
-      // would surface here.
-      const longProbe = errorTraceName.slice(0, 60);
+      // 50-char sanitizer cap: send a probe whose first 50 chars are inside
+      // trace.name but whose tail is a guaranteed-unmatched suffix. This is
+      // the only shape that discriminates the cap from the no-cap case:
+      // - cap engaged → sanitizer truncates to first 50 chars (in-name) → HIT
+      // - cap dropped → backend ILIKEs the full string (50 in-name + garbage
+      //   suffix) which is *not* inside trace.name → MISS
+      // - cap hardened into a reject (e.g. 422 on len > 50) → status != 200
+      // A prefix-only probe (slice(0, 60)) would HIT in both the cap and
+      // no-cap cases and could not tell them apart.
+      const longProbe =
+        errorTraceName.slice(0, 50) + `-zzz-not-in-name-${Date.now()}`;
       expect(longProbe.length).toBeGreaterThan(50);
       const longRes = await request.get(
         `/api/v1/monitor/traces?flow_id=${errorFlowId}&query=${encodeURIComponent(longProbe)}`,
