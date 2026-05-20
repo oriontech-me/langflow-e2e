@@ -11,7 +11,7 @@ Validates that flows can be exported to JSON and imported from JSON, across four
 1. **Export triggers success message** — exporting via the three-dot menu shows "exported successfully" toast.
 2. **Import via drag and drop loads components** — dropping a collection JSON onto the main page shows "uploaded successfully".
 3. **Exported JSON is valid** — downloaded file contains a `data.nodes` array with at least one entry.
-4. **Import via upload button loads flow** — upload button or drag-and-drop fallback correctly imports a collection JSON.
+4. **Import via upload button loads flow** — clicking the upload button opens the native file chooser; selecting a collection JSON shows "uploaded successfully".
 
 If these break, users cannot share flows, back them up, or restore previously exported flows.
 
@@ -37,7 +37,7 @@ If these break, users cannot share flows, back them up, or restore previously ex
 **Test 2 — imported JSON loads on canvas**
 
 1. Navigate to main page (skipModal: true)
-2. `simulateDragAndDrop` with `tests/assets/collection.json` onto `cards-wrapper`
+2. `simulateDragAndDrop` with `tests/assets/flows/collection.json` onto `cards-wrapper`
 3. Assert "uploaded successfully" text visible (up to 2-minute timeout)
 
 **Test 3 — exported JSON contains flow data**
@@ -52,8 +52,8 @@ If these break, users cannot share flows, back them up, or restore previously ex
 
 1. Navigate to main page (skipModal: true)
 2. Hard-assert `upload-project-button` is visible (fails explicitly if Langflow removes the button)
-3. Build a `DataTransfer` with `collection.json` content
-4. `dispatchEvent("drop")` on `cards-wrapper`
+3. Set up `page.waitForEvent("filechooser")` BEFORE clicking the upload button
+4. Click `upload-project-button` and feed `tests/assets/flows/flow.json` into the file chooser via `setFiles` — a single-flow fixture so the button takes its `uploadFlow` branch (the project-bundle branch needs a `folder_name` form field that the button doesn't supply)
 5. Assert "uploaded successfully" text visible
 
 ---
@@ -97,6 +97,6 @@ If these break, users cannot share flows, back them up, or restore previously ex
 ## Notes *(optional)*
 
 - Test 3 sets up the download event listener via `page.waitForEvent("download")` BEFORE clicking the export button — a race-condition-avoidance pattern. The test hard-fails if the download event doesn't fire (no toast-fallback).
-- Test 4 hard-asserts `upload-project-button` is visible before importing (no `simulateDragAndDrop` fallback). If Langflow removes the button, the test fails explicitly — which is the point of `@stable`.
+- Test 4 hard-asserts `upload-project-button` is visible before importing and then actually exercises it via `filechooser` + `setFiles` — distinct from Test 2's drag-and-drop path.
 - The 2-minute timeout on "uploaded successfully" in Test 2 is intentional: large collections can take time to process on slow machines.
-- `beforeEach` captures pre-test flow IDs into a `Set`; `afterEach` deletes only flows created during that test (parallelism-safe under `fullyParallel: true`).
+- The describe is configured `mode: "serial"` so the diff-based cleanup (`beforeEach` snapshot of existing flow IDs, `afterEach` delete-the-diff) runs without cross-worker races within this file. The list calls use `get_all=true&remove_example_flows=true` to match the existing `cleanAllFlows` helper. A null sentinel on snapshot failure skips cleanup entirely so a hiccup on the list endpoint can never delete the whole workspace.
