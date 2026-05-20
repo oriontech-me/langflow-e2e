@@ -128,11 +128,16 @@ test.describe("Single trace shape — seeded flow", () => {
     // vice versa). The guards already block calls when an entity was never
     // created — allSettled covers the remaining case: a half-completed server
     // operation that hands us a stale id we cannot delete cleanly.
+    //
+    // Flow delete uses the bearer token (not the api_key) so the two deletes
+    // can run concurrently without racing: if the api_key delete won the
+    // race, an x-api-key flow delete would 401 and the seeded flow would
+    // leak into subsequent runs.
     const cleanups: Promise<unknown>[] = [];
-    if (flowId && apiKey) {
+    if (flowId) {
       cleanups.push(
         request.delete(`/api/v1/flows/${flowId}`, {
-          headers: { "x-api-key": apiKey },
+          headers: { Authorization: bearerToken },
         }),
       );
     }
