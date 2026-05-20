@@ -729,7 +729,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 16 | 5 | 0 | 0 |
+| `api/flows/` — REST API | 21 | 18 | 3 | 0 | 0 |
 | `core-components/` — Component Config | 23 | 3 | 18 | 0 | 2 |
 | `core-components/` — Core Components | 77 | 61 | 11 | 1 | 4 |
 | `core-functionality/auth/` | 20 | 6 | 13 | 0 | 1 |
@@ -745,7 +745,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **431** | **173 (40%)** | **197 (46%)** | **7 (2%)** | **54 (13%)** |
+| **TOTAL** | **431** | **175 (41%)** | **195 (45%)** | **7 (2%)** | **54 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -761,7 +761,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 176 `test()` calls carrying the `@stable` tag, distributed across 60 spec
+> 182 `test()` calls carrying the `@stable` tag, distributed across 61 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -791,6 +791,12 @@
 - [x] POST /api/v1/run/{id} with invalid x-api-key returns 401 or 403 → `api-invalid-key.spec.ts`
 - [x] DELETE /api/v1/flows/{id} without Authorization header returns 401 or 403 → `api-invalid-key.spec.ts`
 - [x] PATCH /api/v1/flows/{id} with wrong token does not update the flow → `api-invalid-key.spec.ts`
+- [x] returns 200 with array → `api-monitor-messages.spec.ts`
+- [x] without auth returns 401 or 403 → `api-monitor-messages.spec.ts`
+- [x] filtered by session_id returns only matching messages → `api-monitor-messages.spec.ts`
+- [x] filtered by flow_id returns only matching messages → `api-monitor-messages.spec.ts`
+- [x] combined session_id and flow_id filters return 200 → `api-monitor-messages.spec.ts`
+- [x] messages contain required fields when not empty → `api-monitor-messages.spec.ts`
 - [x] executes flow with input_value and returns outputs → `api-run-flow.spec.ts`
 - [x] executes flow with custom session_id and returns it in response → `api-run-flow.spec.ts`
 - [x] returns 404 for non-existent flow ID → `api-run-flow.spec.ts`
@@ -971,7 +977,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 5 | 0 |
+| `api/flows/` — REST API | 3 | 0 |
 | `core-components/` — Component Config | 18 | 2 |
 | `core-components/` — Core Components | 11 | 4 |
 | `core-functionality/auth/` | 13 | 1 |
