@@ -2,11 +2,12 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 // Endpoint: GET /api/v1/monitor/messages
-// Returns paginated list of chat messages from all sessions
+// Backs the Playground chat history and the Logs page. Any regression here
+// breaks message visibility in the UI for every flow's chat session.
 test.describe("GET /api/v1/monitor/messages", () => {
   test(
-    "returns 200 with valid structure",
-    { tag: ["@release", "@api", "@regression"] },
+    "returns 200 with array",
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
@@ -17,14 +18,13 @@ test.describe("GET /api/v1/monitor/messages", () => {
       expect(res.status()).toBe(200);
 
       const body = await res.json();
-      // Response must be an array (may be empty if no messages exist)
       expect(Array.isArray(body)).toBe(true);
     },
   );
 
   test(
-    "requires authentication — unauthenticated request returns 401 or 403",
-    { tag: ["@release", "@api", "@regression"] },
+    "without auth returns 401 or 403",
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const res = await request.get("/api/v1/monitor/messages");
 
@@ -33,13 +33,12 @@ test.describe("GET /api/v1/monitor/messages", () => {
   );
 
   test(
-    "filter by session_id returns only matching messages",
-    { tag: ["@release", "@api", "@regression"] },
+    "filtered by session_id returns only matching messages",
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
-      const uniqueSession = `test-session-${Date.now()}`;
+      const uniqueSession = `monitor-test-session-${Date.now()}`;
 
-      // Fetch messages filtered by a unique session_id that likely has no messages
       const res = await request.get(
         `/api/v1/monitor/messages?session_id=${uniqueSession}`,
         { headers: { Authorization: authToken } },
@@ -50,7 +49,6 @@ test.describe("GET /api/v1/monitor/messages", () => {
       const body = await res.json();
       expect(Array.isArray(body)).toBe(true);
 
-      // All returned messages must belong to the requested session
       for (const msg of body) {
         expect(msg.session_id).toBe(uniqueSession);
       }
@@ -58,8 +56,56 @@ test.describe("GET /api/v1/monitor/messages", () => {
   );
 
   test(
+    "filtered by flow_id returns only matching messages",
+    { tag: ["@stable", "@release", "@api", "@regression"] },
+    async ({ request }) => {
+      const authToken = await getAuthToken(request);
+      const fakeFlowId = "00000000-0000-0000-0000-000000000001";
+
+      const res = await request.get(
+        `/api/v1/monitor/messages?flow_id=${fakeFlowId}`,
+        { headers: { Authorization: authToken } },
+      );
+
+      expect(res.status()).toBe(200);
+
+      const body = await res.json();
+      expect(Array.isArray(body)).toBe(true);
+
+      for (const msg of body) {
+        expect(msg.flow_id).toBe(fakeFlowId);
+      }
+    },
+  );
+
+  test(
+    "combined session_id and flow_id filters return 200",
+    { tag: ["@stable", "@release", "@api", "@regression"] },
+    async ({ request }) => {
+      const authToken = await getAuthToken(request);
+      const uniqueSession = `monitor-combined-${Date.now()}`;
+      const fakeFlowId = "00000000-0000-0000-0000-000000000002";
+
+      const res = await request.get(
+        `/api/v1/monitor/messages?flow_id=${fakeFlowId}&session_id=${uniqueSession}`,
+        { headers: { Authorization: authToken } },
+      );
+
+      expect(res.status()).toBe(200);
+
+      const body = await res.json();
+      expect(Array.isArray(body)).toBe(true);
+
+      for (const msg of body) {
+        expect(msg.flow_id).toBe(fakeFlowId);
+        expect(msg.session_id).toBe(uniqueSession);
+      }
+    },
+  );
+
+  test(
     "messages contain required fields when not empty",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
@@ -72,10 +118,8 @@ test.describe("GET /api/v1/monitor/messages", () => {
       const body = await res.json();
       expect(Array.isArray(body)).toBe(true);
 
-      // Validate structure only if there are existing messages
       if (body.length > 0) {
         const msg = body[0];
-        // Each message must have these required fields
         expect(msg).toHaveProperty("id");
         expect(msg).toHaveProperty("session_id");
         expect(msg).toHaveProperty("timestamp");
