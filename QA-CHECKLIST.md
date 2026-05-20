@@ -415,6 +415,8 @@
 - [x] Trace displays tokens consumed
 - [x] Single-trace API returns 404 for an unknown trace_id → `traces-detail-single.spec.ts`
 - [x] Single-trace API returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
+- [x] Bulk delete traces API returns 404 for an unknown flow_id → `traces-delete.spec.ts`
+- [x] Bulk delete traces API clears all traces for the flow (204 + empty list) → `traces-delete.spec.ts`
 
 #### 8.2 Notifications
 - [-] System notifications
