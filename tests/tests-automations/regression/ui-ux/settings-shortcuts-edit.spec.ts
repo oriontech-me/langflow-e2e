@@ -3,8 +3,23 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 
 test.describe("Settings — Edit Shortcut", () => {
   test.afterEach(async ({ page }) => {
-    // Cleanup: restore default shortcuts so subsequent tests start clean.
-    // Implemented in Task 5.
+    try {
+      await page.goto("/settings/shortcuts");
+      await page.waitForSelector('[data-testid="settings_menu_header"]', {
+        timeout: 10000,
+      });
+      await page.getByRole("button", { name: /Restore/i }).click();
+    } catch {
+      // If the UI restore path is unreachable (e.g. test failed mid-navigation),
+      // fall through to the localStorage safeguard below.
+    }
+    await page.evaluate(() => {
+      try {
+        window.localStorage.removeItem("langflow-shortcuts");
+      } catch {
+        /* no-op: cleanup must not fail the test result */
+      }
+    });
   });
 
   test(
