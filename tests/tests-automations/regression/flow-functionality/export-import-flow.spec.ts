@@ -63,7 +63,7 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
   });
 
   test(
-    "export flow to JSON must trigger success message",
+    "export flow to JSON triggers success toast and produces a valid file",
     { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
@@ -94,6 +94,10 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
         timeout: 30000,
       });
 
+      // Arm the download capture BEFORE clicking the export button to avoid a
+      // race between the download event and modal interaction.
+      const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
+
       await page.getByTestId("home-dropdown-menu").nth(0).click();
       await page.getByTestId("btn-download-json").last().click();
 
@@ -105,9 +109,21 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
       });
       await page.getByTestId("modal-export-button").click();
 
+      // Both the user-visible toast and the actual downloadable file content.
       await expect(page.getByText(/.*exported successfully/)).toBeVisible({
         timeout: 10000,
       });
+
+      const download = await downloadPromise;
+      const filePath = await download.path();
+      expect(filePath).toBeTruthy();
+
+      const content = readFileSync(filePath!, "utf-8");
+      const parsed = JSON.parse(content);
+      expect(parsed).toHaveProperty("data");
+      expect(parsed.data).toHaveProperty("nodes");
+      expect(Array.isArray(parsed.data.nodes)).toBeTruthy();
+      expect(parsed.data.nodes.length).toBeGreaterThan(0);
     },
   );
 
@@ -132,60 +148,6 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
       });
 
       await expect(page.getByText("uploaded successfully")).toBeVisible();
-    },
-  );
-
-  test(
-    "exported JSON must be valid and contain flow data",
-    { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
-    async ({ page }) => {
-      await awaitBootstrapTest(page);
-
-      await page.waitForSelector('[data-testid="blank-flow"]', {
-        timeout: 30000,
-      });
-      await page.getByTestId("blank-flow").click();
-
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 30000,
-      });
-
-      await page.getByTestId("sidebar-search-input").fill("chat output");
-      await page.waitForSelector('[data-testid="input_outputChat Output"]', {
-        timeout: 30000,
-      });
-      await page
-        .getByTestId("input_outputChat Output")
-        .hover()
-        .then(async () => {
-          await page.getByTestId("add-component-button-chat-output").click();
-        });
-
-      await page.getByTestId("icon-ChevronLeft").click();
-
-      await page.waitForSelector('[data-testid="home-dropdown-menu"]', {
-        timeout: 30000,
-      });
-
-      const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
-
-      await page.getByTestId("home-dropdown-menu").nth(0).click();
-      await page.getByTestId("btn-download-json").last().click();
-      await page.waitForSelector('[data-testid="modal-export-button"]', {
-        timeout: 10000,
-      });
-      await page.getByTestId("modal-export-button").click();
-
-      const download = await downloadPromise;
-      const filePath = await download.path();
-      expect(filePath).toBeTruthy();
-
-      const content = readFileSync(filePath!, "utf-8");
-      const parsed = JSON.parse(content);
-      expect(parsed).toHaveProperty("data");
-      expect(parsed.data).toHaveProperty("nodes");
-      expect(Array.isArray(parsed.data.nodes)).toBeTruthy();
-      expect(parsed.data.nodes.length).toBeGreaterThan(0);
     },
   );
 
