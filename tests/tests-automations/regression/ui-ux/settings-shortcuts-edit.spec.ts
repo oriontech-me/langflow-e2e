@@ -15,7 +15,21 @@ test.describe("Settings — Edit Shortcut", () => {
         await awaitBootstrapTest(page, { skipModal: true });
       });
 
-      // Remaining steps implemented in Tasks 2–4.
+      await test.step("navigate to Settings → Shortcuts", async () => {
+        await page.getByTestId("user-profile-settings").click();
+        await page.getByTestId("menu_settings_button").click();
+
+        await page.waitForSelector('[data-testid="settings_menu_header"]', {
+          timeout: 10000,
+        });
+
+        await page.getByRole("link", { name: "Shortcuts", exact: true }).click();
+
+        await expect(page.getByTestId("settings_menu_header")).toContainText(
+          "Shortcuts",
+          { timeout: 5000 },
+        );
+      });
     },
   );
 });
