@@ -30,6 +30,41 @@ test.describe("Settings — Edit Shortcut", () => {
           { timeout: 5000 },
         );
       });
+
+      await test.step("open Duplicate row edit modal", async () => {
+        const duplicateRow = page
+          .locator("[role='row']")
+          .filter({ hasText: "Duplicate" })
+          .first();
+        await expect(duplicateRow).toBeVisible({ timeout: 5000 });
+        await duplicateRow.dblclick();
+
+        await expect(
+          page.getByText("Key Combination", { exact: true }),
+        ).toBeVisible({ timeout: 5000 });
+        await expect(
+          page.getByText("Recording your keyboard"),
+        ).toBeVisible({ timeout: 5000 });
+      });
+
+      await test.step("record Ctrl/Cmd+Alt+U and apply", async () => {
+        await page.keyboard.press("ControlOrMeta+Alt+U");
+
+        await page
+          .getByRole("button", { name: "Apply", exact: true })
+          .click();
+
+        await expect(
+          page.getByText("Duplicate shortcut successfully changed"),
+        ).toBeVisible({ timeout: 5000 });
+
+        const duplicateRowAfter = page
+          .locator("[role='row']")
+          .filter({ hasText: "Duplicate" })
+          .first();
+        await expect(duplicateRowAfter).toContainText(/Alt/i, { timeout: 5000 });
+        await expect(duplicateRowAfter).toContainText("U", { timeout: 5000 });
+      });
     },
   );
 });
