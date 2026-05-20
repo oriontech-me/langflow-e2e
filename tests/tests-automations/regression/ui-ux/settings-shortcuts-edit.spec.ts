@@ -5,10 +5,12 @@ test.describe("Settings — Edit Shortcut", () => {
   test.afterEach(async ({ page }) => {
     try {
       await page.goto("/settings/shortcuts");
-      await page.waitForSelector('[data-testid="settings_menu_header"]', {
+      await expect(page.getByTestId("settings_menu_header")).toBeVisible({
         timeout: 10000,
       });
-      await page.getByRole("button", { name: /Restore/i }).click();
+      const restoreButton = page.getByRole("button", { name: /Restore/i });
+      await expect(restoreButton).toBeVisible({ timeout: 5000 });
+      await restoreButton.click();
     } catch {
       // If the UI restore path is unreachable (e.g. test failed mid-navigation),
       // fall through to the localStorage safeguard below.
@@ -34,7 +36,7 @@ test.describe("Settings — Edit Shortcut", () => {
         await page.getByTestId("user-profile-settings").click();
         await page.getByTestId("menu_settings_button").click();
 
-        await page.waitForSelector('[data-testid="settings_menu_header"]', {
+        await expect(page.getByTestId("settings_menu_header")).toBeVisible({
           timeout: 10000,
         });
 
@@ -83,9 +85,11 @@ test.describe("Settings — Edit Shortcut", () => {
 
       await test.step("open a blank flow", async () => {
         await page.goto("/");
-        await page.waitForSelector('[id="new-project-btn"]', { timeout: 30000 });
+        await expect(page.locator('#new-project-btn')).toBeVisible({
+          timeout: 30000,
+        });
         await page.getByTestId("new-project-btn").click();
-        await page.waitForSelector('[data-testid="blank-flow"]', {
+        await expect(page.getByTestId("blank-flow")).toBeVisible({
           timeout: 10000,
         });
         await page.getByTestId("blank-flow").click();
@@ -95,7 +99,7 @@ test.describe("Settings — Edit Shortcut", () => {
         await page.getByTestId("sidebar-search-input").click();
         await page.getByTestId("sidebar-search-input").fill("ollama");
 
-        await page.waitForSelector('[data-testid="ollamaOllama"]', {
+        await expect(page.getByTestId("ollamaOllama")).toBeVisible({
           timeout: 5000,
         });
 
