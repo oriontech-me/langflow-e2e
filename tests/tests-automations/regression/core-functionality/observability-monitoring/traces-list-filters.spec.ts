@@ -146,6 +146,13 @@ test.describe("Trace list filters — status / start_time / query / session_id",
     expect(typeof errorBody.traces?.[0]?.name).toBe("string");
     errorTraceName = errorBody.traces[0].name as string;
     expect(errorTraceName).toContain(errorFlowId);
+    // Guards the 50-char sanitizer-cap probe in test 4: the probe is built
+    // as `errorTraceName.slice(0, 50) + "<garbage>"`. If `errorTraceName`
+    // is shorter than 50 chars, `slice(0, 50)` returns the whole name and
+    // the truncated probe ends up containing garbage that is NOT in the
+    // name — the test would fail with a confusing 0-hit instead of the
+    // real surface (trace name format shortened upstream). Fail fast here.
+    expect(errorTraceName.length).toBeGreaterThanOrEqual(50);
   });
 
   test.afterAll(async ({ request }) => {
