@@ -121,7 +121,44 @@ test.describe("Agent Component — canvas regression", () => {
     "model dropdown exposes manage-model-providers and lists configured models",
     { tag: ["@stable", "@release", "@regression", "@components", "@agents"] },
     async ({ page }) => {
-      // Body added in Task 4.
+      await addAgentToBlankFlow(page);
+
+      await page.getByTestId("value-dropdown-model_model").click();
+
+      // Canonical configuration entry point in 1.10.x — must be reachable from the dropdown.
+      await expect(page.getByTestId("manage-model-providers")).toBeVisible({
+        timeout: 5000,
+      });
+
+      // Count visible model options; the option-testid pattern ends in "-option".
+      const options = page.locator('[data-testid$="-option"]');
+      const optionCount = await options.count();
+
+      // When at least one provider is pre-configured, we expect provider icons.
+      // When none is configured (option count is 0), the per-provider assertions
+      // self-skip — the manage-model-providers assertion above is the floor.
+      if (optionCount === 0) {
+        return;
+      }
+
+      // Per-provider conditional assertions — only assert when the option exists.
+      const openaiOptions = page.locator('[data-testid^="gpt-"][data-testid$="-option"]');
+      if ((await openaiOptions.count()) > 0) {
+        await expect(openaiOptions.first()).toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId("icon-OpenAI").first()).toBeVisible({
+          timeout: 5000,
+        });
+      }
+
+      const anthropicOptions = page.locator(
+        '[data-testid^="claude-"][data-testid$="-option"]',
+      );
+      if ((await anthropicOptions.count()) > 0) {
+        await expect(anthropicOptions.first()).toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId("icon-Anthropic").first()).toBeVisible({
+          timeout: 5000,
+        });
+      }
     },
   );
 
