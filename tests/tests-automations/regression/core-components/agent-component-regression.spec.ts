@@ -3,6 +3,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { cleanAllFlows } from "../../../helpers/flows/clean-all-flows";
+import { renameFlow } from "../../../helpers/flows/rename-flow";
 
 // Each test creates a flow that autosaves to the backend. Serial mode prevents
 // parallel autosave races and keeps cleanAllFlows deterministic between tests.
@@ -76,22 +77,13 @@ test.describe("Agent Component — canvas regression", () => {
     async ({ page }) => {
       await addAgentToBlankFlow(page);
 
-      const flowName = `agent-prompt-${Date.now()}`;
-      const systemPrompt = `system-prompt-test-${Date.now()}`;
+      const uniq = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const flowName = `agent-prompt-${uniq}`;
+      const systemPrompt = `system-prompt-test-${uniq}`;
 
       // Rename the flow via the settings dialog so we can re-open it by name
       // (avoids the page.goto(/flow/{id}) cache-stale race documented in memory).
-      await page.getByTestId("flow_name").click();
-      const nameInput = page.getByTestId("input-flow-name");
-      await expect(nameInput).toBeVisible({ timeout: 5000 });
-      await nameInput.fill(flowName);
-      const saveSettings = page.getByTestId("save-flow-settings");
-      await expect(saveSettings).toBeEnabled({ timeout: 3000 });
-      await saveSettings.click();
-      await page.waitForSelector('[role="dialog"]', {
-        state: "detached",
-        timeout: 10000,
-      });
+      await renameFlow(page, { flowName });
 
       // Type the prompt and wait for autosave (Langflow PATCHes the flow on blur).
       const patchPromise = page.waitForResponse(
@@ -105,9 +97,7 @@ test.describe("Agent Component — canvas regression", () => {
       const promptField = page.getByTestId("textarea_str_system_prompt");
       await promptField.click();
       await promptField.fill(systemPrompt);
-      await page
-        .locator('//*[@id="react-flow-id"]')
-        .click({ position: { x: 50, y: 50 } });
+      await promptField.blur();
       await patchPromise;
 
       // Navigate away and re-open the flow by name.
@@ -115,7 +105,7 @@ test.describe("Agent Component — canvas regression", () => {
       await page.waitForSelector('[data-testid="mainpage_title"]', {
         timeout: 15000,
       });
-      await page.getByText(flowName, { exact: true }).first().click();
+      await page.getByText(flowName, { exact: true }).click();
 
       await expect(page.getByTestId("title-Agent")).toBeVisible({
         timeout: 15000,
