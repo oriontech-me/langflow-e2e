@@ -30,13 +30,13 @@ If any of these tests fails, the Agent component is broken at the canvas level: 
 2. Open the "models & agents" disclosure in the sidebar via `disclosure-models & agents`
 3. Drag `models_and_agentsAgent` to the canvas via `dragTo` with explicit `targetPosition`
 4. Call `adjustScreenView` with at least 2 zoom-outs so the full node body is in viewport
-5. Assert the node header shows the title "Agent" (via `title-Agent` if available, fallback to `.react-flow__node` `getByText('Agent', { exact: true })`)
+5. Assert exactly one `.react-flow__node` is on the canvas and the title `title-Agent` is visible
 6. Assert the three core handles are visible:
    - `handle-agent-shownode-tools-left`
    - `handle-agent-shownode-language model-left`
    - `handle-agent-shownode-response-right`
-7. Assert the in-component provider dropdown `value-dropdown-dropdown_str_agent_llm` is visible
-8. Assert the system prompt field is visible (testid confirmed via DOM-inspection snippet during implementation — fallback: `getByLabel(/system\s*prompt/i)`)
+7. Assert the system prompt field `textarea_str_system_prompt` is visible
+8. Assert the model dropdown `value-dropdown-model_model` is visible (the only model-selection surface in 1.10.x — the in-component provider dropdown was removed)
 
 **Test 2 — System prompt persists across flow reload**
 1. `awaitBootstrapTest(page)` and click `blank-flow`
