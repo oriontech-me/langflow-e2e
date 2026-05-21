@@ -172,7 +172,61 @@ test.describe("Agent Component — canvas regression", () => {
     "selecting a different-provider model swaps the canvas provider icon",
     { tag: ["@stable", "@release", "@regression", "@components", "@agents"] },
     async ({ page }) => {
-      // Body added in Task 5.
+      await addAgentToBlankFlow(page);
+
+      // Probe the dropdown once to determine whether both providers are pre-configured.
+      await page.getByTestId("value-dropdown-model_model").click();
+      const openaiOption = page
+        .locator('[data-testid^="gpt-"][data-testid$="-option"]')
+        .first();
+      const anthropicOption = page
+        .locator('[data-testid^="claude-"][data-testid$="-option"]')
+        .first();
+      const hasOpenAI = (await openaiOption.count()) > 0;
+      const hasAnthropic = (await anthropicOption.count()) > 0;
+
+      test.skip(
+        !hasOpenAI || !hasAnthropic,
+        "Test 4 requires both OpenAI and Anthropic to be pre-configured in the local Langflow instance",
+      );
+
+      // Capture the option testids so we can re-open the dropdown and re-select deterministically.
+      const openaiTestId = await openaiOption.getAttribute("data-testid");
+      const anthropicTestId = await anthropicOption.getAttribute("data-testid");
+      if (!openaiTestId || !anthropicTestId) {
+        throw new Error("Failed to capture provider option testids from dropdown");
+      }
+
+      // Scope provider-icon assertions to the model dropdown trigger button
+      // itself (`data-testid="model_model"`). `genericIconComponent` renders
+      // `icon-{Provider}` in three places — the trigger (`ModelTrigger.tsx`),
+      // the option rows (`ModelList.tsx`), and the popover footer — so a
+      // broader scope (the ReactFlow node or `-main-node`) would yield false
+      // positives whenever the popover is mounted. The popover uses
+      // `PopoverContentWithoutPortal`, so it sits inside the same node DOM
+      // subtree as the trigger and cannot be scoped out by ancestor alone.
+      // Note: `-main-node` covers only the title bar; in the expanded node
+      // (`GenericNode/index.tsx`) `RenderInputParameters` is a SIBLING of
+      // `-main-node`, so the trigger isn't inside it either.
+      const modelTrigger = page.getByTestId("model_model");
+
+      // Select OpenAI model first.
+      await openaiOption.click();
+      await expect(modelTrigger.getByTestId("icon-OpenAI")).toBeVisible({
+        timeout: 5000,
+      });
+
+      // Switch to Anthropic model.
+      await page.getByTestId("value-dropdown-model_model").click();
+      await page.getByTestId(anthropicTestId).click();
+      await expect(modelTrigger.getByTestId("icon-Anthropic")).toBeVisible({
+        timeout: 5000,
+      });
+
+      // The OpenAI icon must no longer appear inside the trigger.
+      await expect(modelTrigger.getByTestId("icon-OpenAI")).toHaveCount(0, {
+        timeout: 5000,
+      });
     },
   );
 });
