@@ -43,7 +43,30 @@ test.describe("Agent Component — canvas regression", () => {
     { tag: ["@stable", "@release", "@regression", "@components", "@agents"] },
     async ({ page }) => {
       await addAgentToBlankFlow(page);
-      // Assertions added in Task 2.
+
+      await expect(page.locator(".react-flow__node")).toHaveCount(1, {
+        timeout: 10000,
+      });
+
+      await expect(page.getByTestId("title-Agent")).toBeVisible({ timeout: 5000 });
+
+      await expect(
+        page.getByTestId("handle-agent-shownode-tools-left"),
+      ).toBeVisible({ timeout: 5000 });
+      await expect(
+        page.getByTestId("handle-agent-shownode-language model-left"),
+      ).toBeVisible({ timeout: 5000 });
+      await expect(
+        page.getByTestId("handle-agent-shownode-response-right"),
+      ).toBeVisible({ timeout: 5000 });
+
+      await expect(page.getByTestId("textarea_str_system_prompt")).toBeVisible({
+        timeout: 5000,
+      });
+
+      await expect(page.getByTestId("value-dropdown-model_model")).toBeVisible({
+        timeout: 5000,
+      });
     },
   );
 
