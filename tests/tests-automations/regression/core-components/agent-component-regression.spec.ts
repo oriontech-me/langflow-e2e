@@ -137,15 +137,20 @@ test.describe("Agent Component — canvas regression", () => {
       // When at least one provider is pre-configured, we expect provider icons.
       // When none is configured (option count is 0), the per-provider assertions
       // self-skip — the manage-model-providers assertion above is the floor.
-      if (optionCount === 0) {
-        return;
-      }
+      test.skip(
+        optionCount === 0,
+        "No providers configured in local Langflow — per-provider assertions cannot run",
+      );
 
       // Per-provider conditional assertions — only assert when the option exists.
+      // Scope the icon lookup to the option row so we never match the canvas
+      // trigger icon (genericIconComponent renders `icon-{Provider}` in both
+      // ModelTrigger.tsx and ModelList.tsx).
       const openaiOptions = page.locator('[data-testid^="gpt-"][data-testid$="-option"]');
       if ((await openaiOptions.count()) > 0) {
-        await expect(openaiOptions.first()).toBeVisible({ timeout: 5000 });
-        await expect(page.getByTestId("icon-OpenAI").first()).toBeVisible({
+        const firstOpenaiOption = openaiOptions.first();
+        await expect(firstOpenaiOption).toBeVisible({ timeout: 5000 });
+        await expect(firstOpenaiOption.getByTestId("icon-OpenAI")).toBeVisible({
           timeout: 5000,
         });
       }
@@ -154,8 +159,9 @@ test.describe("Agent Component — canvas regression", () => {
         '[data-testid^="claude-"][data-testid$="-option"]',
       );
       if ((await anthropicOptions.count()) > 0) {
-        await expect(anthropicOptions.first()).toBeVisible({ timeout: 5000 });
-        await expect(page.getByTestId("icon-Anthropic").first()).toBeVisible({
+        const firstAnthropicOption = anthropicOptions.first();
+        await expect(firstAnthropicOption).toBeVisible({ timeout: 5000 });
+        await expect(firstAnthropicOption.getByTestId("icon-Anthropic")).toBeVisible({
           timeout: 5000,
         });
       }
