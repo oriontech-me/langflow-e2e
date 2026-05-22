@@ -377,6 +377,16 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          # Workaround: langflow:latest images built before langflow-ai/langflow#13212
+          # did not pre-create /app/langflow in the Dockerfile, so Docker seeded the
+          # named volume as root:root and uid 1000 (the container user) could not
+          # write secret_key — crashing the container on startup.
+          # Fix: replace the named volume with a world-writable bind mount so the
+          # container can always write to LANGFLOW_CONFIG_DIR regardless of image age.
+          # Remove the volumes override once langflow:latest ships with #13212.
+          mkdir -p /tmp/langflow-data
+          chmod 777 /tmp/langflow-data
+
           # Override file: pin the langflow image via env var substitution and
           # inject our auth + credential env vars. Default LANGFLOW_IMAGE is
           # the upstream `langflow:latest`; we'll flip it to nightly between
@@ -392,6 +402,8 @@ jobs:
                 - LANGFLOW_SUPERUSER=langflow
                 - LANGFLOW_SUPERUSER_PASSWORD=langflow123
                 - LANGFLOW_STORE=false
+              volumes:
+                - /tmp/langflow-data:/app/langflow
           YAML
 
           # .env consumed by docker compose for variable substitution
