@@ -47,16 +47,24 @@ export async function setupAnthropic(
 
   // Step 5: Enable all available Anthropic models.
   // Toggles only render after the provider is authenticated — waitFor retries until visible.
-  const toggles = page.locator('[data-testid^="llm-toggle"]');
-  await toggles.first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-  const toggleCount = await toggles.count();
+  // Re-query unchecked toggles each iteration: clicking a toggle can re-render the
+  // list (Langflow re-fetches model availability), invalidating index-based access.
+  await page
+    .locator('[data-testid^="llm-toggle"]')
+    .first()
+    .waitFor({ state: "visible", timeout: 15000 })
+    .catch(() => {});
 
-  for (let i = 0; i < toggleCount; i++) {
-    const toggle = toggles.nth(i);
-    const isChecked = (await toggle.getAttribute("aria-checked")) === "true";
-    if (!isChecked) {
-      await toggle.click();
-    }
+  const maxIterations = 50;
+  for (let i = 0; i < maxIterations; i++) {
+    const unchecked = page.locator(
+      '[data-testid^="llm-toggle"][aria-checked="false"]',
+    );
+    if ((await unchecked.count()) === 0) break;
+    const next = unchecked.first();
+    await next.scrollIntoViewIfNeeded();
+    await next.click({ force: true });
+    await page.waitForTimeout(150);
   }
 
   // Step 6: Close the provider management panel

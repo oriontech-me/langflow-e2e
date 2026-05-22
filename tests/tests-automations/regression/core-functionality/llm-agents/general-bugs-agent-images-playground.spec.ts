@@ -1,8 +1,8 @@
 import dotenv from "dotenv";
-import { readFileSync } from "fs";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { setupAnthropic } from "../../../../helpers/provider-setup/setup-anthropic";
 
 test(
   "user must be able to send images in the playground with the agent component",
@@ -21,48 +21,28 @@ test(
     await page.getByTestId("side_nav_options_all-templates").click();
     await page.getByRole("heading", { name: "Simple Agent" }).first().click();
 
-    await page.getByTestId("value-dropdown-dropdown_str_agent_llm").click();
+    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
+      timeout: 30000,
+    });
 
-    await page.waitForTimeout(200);
-
-    await page.getByText("Anthropic").last().click();
-
-    await page
-      .getByTestId("popover-anchor-input-api_key")
-      .fill(process.env.ANTHROPIC_API_KEY || "");
+    await setupAnthropic(page);
 
     await page.getByTestId("playground-btn-flow-io").click();
-
-    // Read the image file as a binary string
-    const filePath = "tests/assets/chain.png";
-    const fileContent = readFileSync(filePath, "base64");
-
-    // Create the DataTransfer and File objects within the browser context
-    const dataTransfer = await page.evaluateHandle(
-      ({ fileContent }) => {
-        const dt = new DataTransfer();
-        const byteCharacters = atob(fileContent);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const file = new File([byteArray], "chain.png", { type: "image/png" });
-        dt.items.add(file);
-        return dt;
-      },
-      { fileContent },
-    );
 
     await page.waitForSelector('[data-testid="input-chat-playground"]', {
       timeout: 100000,
     });
 
-    // Locate the target element
-    const element = await page.getByTestId("input-chat-playground");
+    // Langflow 1.10.x: chat file upload uses a hidden <input type="file"> wired
+    // to a React onChange handler. dispatchEvent("drop") is no longer processed.
+    await page
+      .locator('div[class*="chat-panel"] input[type="file"]')
+      .setInputFiles(path.resolve(__dirname, "../../../../assets/media/chain.png"));
 
-    // Dispatch the drop event on the target element
-    await element.dispatchEvent("drop", { dataTransfer });
+    // Filename renders inside <img alt={file.name}>, not as visible text.
+    await expect(page.getByAltText("chain.png").first()).toBeVisible({
+      timeout: 30000,
+    });
 
     await page.getByTestId("input-chat-playground").fill("what is this image?");
 
@@ -71,10 +51,6 @@ test(
     });
 
     await page.getByTestId("button-send").click();
-
-    await page.waitForSelector("text=chain.png", { timeout: 30000 });
-
-    await page.getByText("chain.png").isVisible();
 
     await page.waitForTimeout(5000);
 
