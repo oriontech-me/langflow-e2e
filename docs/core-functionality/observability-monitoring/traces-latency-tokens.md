@@ -78,14 +78,14 @@ The 3 tests share a single `beforeAll` setup and run in `serial` mode so the see
 
 References in the **main Langflow repository** (compatible with Langflow 1.10.x):
 
-- `src/backend/base/langflow/api/v1/traces.py:45` — `GET /monitor/traces` handler returning `TraceListResponse`; line 42 mounts the router with prefix `/monitor/traces`
-- `src/backend/base/langflow/services/tracing/formatting.py:108` — defines `totalTokens` key on the trace payload (the formatter also emits `totalLatencyMs` and the other fields the test asserts)
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/FlowInsightsContent.tsx:263` — defines `data-testid="flow-activity-header"`
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/TraceDetailView.tsx:108` — defines `data-testid="trace-detail-view"`
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanTree.tsx:71` — defines `data-testid="span-tree"`
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanNode.tsx:56` — defines `data-testid="span-node-${span.id}"` (consumed by the `toHaveCount(4)` assertion and by the `Language Model` span click in test 3)
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanDetail.tsx:44` — defines `data-testid="span-detail"`; the `(hasTokenUsage || isLlmSpan)` branch around line 100 keeps the Tokens / Prompt / Completion metric cards on screen for the unconfigured fixture's null `tokenUsage`, and the `getSpanTypeLabel(span.type)` render at line 68 produces the `LLM` header label asserted by test 3
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/traceViewHelpers.ts:52` — `getSpanTypeLabel` (`llm` → `"LLM"`, drives the test 3 type-label assertion) and `formatTotalLatency` at line 81 (drives the dual-branch `<n> ms` / `<n.nn> s` regex used by tests 2 and 3)
+- `src/backend/base/langflow/api/v1/traces.py` (line 45) — `GET /monitor/traces` handler returning `TraceListResponse`; line 42 mounts the router with prefix `/monitor/traces`
+- `src/backend/base/langflow/services/tracing/formatting.py` (line 108) — defines `totalTokens` key on the trace payload (the formatter also emits `totalLatencyMs` and the other fields the test asserts)
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/FlowInsightsContent.tsx` (line 263) — defines `data-testid="flow-activity-header"`
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/TraceDetailView.tsx` (line 108) — defines `data-testid="trace-detail-view"`
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanTree.tsx` (line 71) — defines `data-testid="span-tree"`
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanNode.tsx` (line 56) — defines `data-testid="span-node-${span.id}"` (consumed by the `toHaveCount(4)` assertion and by the `Language Model` span click in test 3)
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanDetail.tsx` (line 44) — defines `data-testid="span-detail"`; the `(hasTokenUsage || isLlmSpan)` branch around line 100 keeps the Tokens / Prompt / Completion metric cards on screen for the unconfigured fixture's null `tokenUsage`, and the `getSpanTypeLabel(span.type)` render at line 68 produces the `LLM` header label asserted by test 3
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/traceViewHelpers.ts` (lines 52, 81) — `getSpanTypeLabel` (`llm` → `"LLM"`, drives the test 3 type-label assertion) and `formatTotalLatency` (drives the dual-branch `<n> ms` / `<n.nn> s` regex used by tests 2 and 3)
 - `data-testid="sidebar-nav-traces"` is asserted in Langflow's own unit tests under `flowSidebarComponent/components/__tests__/sidebarSegmentedNav.test.tsx`
 
 References in this repository:
