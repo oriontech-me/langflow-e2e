@@ -176,6 +176,78 @@ test.describe("Transaction record shape — seeded flow", () => {
         hasTimestamp,
         "Transaction record should contain a timestamp field",
       ).toBe(true);
+
+      // TransactionLogsResponse pins these keys (see backend
+      // services/database/models/transactions/model.py:169). Every record
+      // must carry them so the Traces grid can render rows without probing
+      // for optional fields.
+      for (const key of [
+        "id",
+        "vertex_id",
+        "target_id",
+        "inputs",
+        "outputs",
+        "status",
+      ]) {
+        expect(
+          record,
+          `Transaction record should contain '${key}'`,
+        ).toHaveProperty(key);
+      }
+
+      // vertex_id is required (nullable=False in the schema) and must match
+      // one of the imported node IDs — IDs are preserved on import, so a
+      // mismatch would indicate the seeded flow did not actually run.
+      const seededNodeIds = new Set<string>(
+        TRACE_FIXTURE.data.nodes.map((n: { id: string }) => n.id),
+      );
+      expect(typeof record.vertex_id).toBe("string");
+      expect(record.vertex_id.length).toBeGreaterThan(0);
+      expect(
+        seededNodeIds.has(record.vertex_id),
+        `vertex_id '${record.vertex_id}' should be one of the seeded node IDs`,
+      ).toBe(true);
+
+      // target_id is optional (string | null in the schema). The key must
+      // still exist so callers can read it without a guard.
+      if (record.target_id !== null) {
+        expect(typeof record.target_id).toBe("string");
+      }
+
+      // inputs / outputs are nullable JSON objects. When present they must
+      // be plain objects (not arrays) — the inputs panel in the Trace
+      // Details modal renders them as key/value rows.
+      for (const key of ["inputs", "outputs"] as const) {
+        const value = record[key];
+        if (value !== null) {
+          expect(typeof value).toBe("object");
+          expect(Array.isArray(value)).toBe(false);
+        }
+      }
+
+      // status is required and the only two values written by the runtime
+      // are "success" (lfx/graph/vertex/base.py:862) and "error"
+      // (line 730). Pin the allowed set so a new value would force an
+      // explicit decision here before it silently propagates to the UI.
+      expect(typeof record.status).toBe("string");
+      expect(["success", "error"]).toContain(record.status);
+
+      // The endpoint orders by timestamp DESC (monitor.py:574), so items[0]
+      // is the last vertex to emit a transaction. In this fixture that is
+      // the LanguageModelComponent failing with "A model selection is
+      // required". Pinning both the vertex and status keeps the seed path
+      // honest: a refactor that stops emitting the LLM error row would
+      // surface here.
+      expect(record.vertex_id).toBe("LanguageModelComponent-FLeYF");
+      expect(record.status).toBe("error");
+
+      // TransactionLogsResponse deliberately excludes `error` and `flow_id`
+      // ("Transaction response model for logs view - excludes error and
+      // flow_id fields"). Pin the absence so that if the schema regresses
+      // and starts leaking the raw error message or the flow_id back into
+      // the logs view we catch it here.
+      expect(record).not.toHaveProperty("error");
+      expect(record).not.toHaveProperty("flow_id");
     },
   );
 });
