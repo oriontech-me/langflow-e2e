@@ -68,6 +68,13 @@ test(
   },
 );
 
+// items[0] is deterministically the last vertex to write a transaction
+// (endpoint orders timestamp DESC, monitor.py:574). For this fixture's
+// error path, that is always the LanguageModelComponent failing with
+// "A model selection is required" — if the fixture is regenerated with
+// different node IDs, this constant fails loudly rather than silently.
+const FAILING_LLM_VERTEX_ID = "LanguageModelComponent-FLeYF";
+
 test.describe("Transaction record shape — seeded flow", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -165,24 +172,13 @@ test.describe("Transaction record shape — seeded flow", () => {
       expect(record).not.toBeNull();
       expect(Array.isArray(record)).toBe(false);
 
-      // One of the common timestamp fields must be present — the Traces UI
-      // orders rows by time, so losing every recognizable timestamp would
-      // break the grid silently.
-      const hasTimestamp =
-        "timestamp" in record ||
-        "created_at" in record ||
-        "updated_at" in record;
-      expect(
-        hasTimestamp,
-        "Transaction record should contain a timestamp field",
-      ).toBe(true);
-
       // TransactionLogsResponse pins these keys (see backend
       // services/database/models/transactions/model.py:169). Every record
       // must carry them so the Traces grid can render rows without probing
       // for optional fields.
       for (const key of [
         "id",
+        "timestamp",
         "vertex_id",
         "target_id",
         "inputs",
@@ -232,13 +228,10 @@ test.describe("Transaction record shape — seeded flow", () => {
       expect(typeof record.status).toBe("string");
       expect(["success", "error"]).toContain(record.status);
 
-      // The endpoint orders by timestamp DESC (monitor.py:574), so items[0]
-      // is the last vertex to emit a transaction. In this fixture that is
-      // the LanguageModelComponent failing with "A model selection is
-      // required". Pinning both the vertex and status keeps the seed path
-      // honest: a refactor that stops emitting the LLM error row would
-      // surface here.
-      expect(record.vertex_id).toBe("LanguageModelComponent-FLeYF");
+      // Pin both the vertex and status on items[0] (the last vertex to
+      // emit, per the DESC ordering) — a refactor that stops emitting the
+      // LLM error row would surface here.
+      expect(record.vertex_id).toBe(FAILING_LLM_VERTEX_ID);
       expect(record.status).toBe("error");
 
       // TransactionLogsResponse deliberately excludes `error` and `flow_id`
