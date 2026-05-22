@@ -41,14 +41,15 @@ _Seeding (`beforeAll`)_
 _Test body_
 1. `GET /api/v1/monitor/transactions?flow_id=<flowId>` (the real seeded flow id, not the placeholder UUID)
 2. Assert HTTP 200, `body.items` is an array, `body.items.length > 0`
-3. Assert the first record is a plain object (not null, not an array)
-4. Assert every key of `TransactionLogsResponse` exists on the record: `id`, `timestamp`, `vertex_id`, `target_id`, `inputs`, `outputs`, `status`
-5. Assert `vertex_id` is a non-empty string and matches one of the imported node IDs (`TRACE_FIXTURE.data.nodes[*].id`)
-6. Assert `target_id` is either `null` or a string (key always present)
-7. Assert `inputs` / `outputs` are either `null` or plain objects (not arrays)
-8. Assert `status` is a string in the allowed set `{"success", "error"}` (the only two values the runtime writes — see `lfx/graph/vertex/base.py:730,862`)
-9. Pin the deterministic seed path: with the endpoint ordering `timestamp DESC` (`monitor.py:574`), `items[0]` is the last vertex to emit a transaction — in this fixture, the `LanguageModelComponent-FLeYF` failing with "A model selection is required". Assert `record.vertex_id === "LanguageModelComponent-FLeYF"` (extracted as `FAILING_LLM_VERTEX_ID`) and `record.status === "error"`
-10. Assert `error` and `flow_id` keys are **absent** — `TransactionLogsResponse` deliberately excludes them ("Transaction response model for logs view - excludes error and flow_id fields"). Pinning the absence guards against the raw error message or flow_id leaking back into the logs view in a future refactor
+3. For **every** record in `body.items` (not just the first — the same `TransactionLogsResponse` contract applies to every row, so a regression on any vertex's emit path surfaces here):
+   - record is a plain object (not null, not an array)
+   - every key of `TransactionLogsResponse` is present: `id`, `timestamp`, `vertex_id`, `target_id`, `inputs`, `outputs`, `status`
+   - `vertex_id` is a non-empty string and matches one of the imported node IDs (`TRACE_FIXTURE.data.nodes[*].id`)
+   - `target_id` is either `null` or a string
+   - `inputs` / `outputs` are either `null` or plain objects (not arrays)
+   - `status` is a string in the allowed set `{"success", "error"}` (the only two values the runtime writes — see `lfx/graph/vertex/base.py:730,862`)
+   - `error` and `flow_id` keys are **absent** — `TransactionLogsResponse` deliberately excludes them ("Transaction response model for logs view - excludes error and flow_id fields"). Pinning the absence guards against the raw error message or flow_id leaking back into the logs view in a future refactor
+4. Pin the deterministic seed path on `items[0]`: with the endpoint ordering `timestamp DESC` (`monitor.py:574`), `items[0]` is the last vertex to emit a transaction — in this fixture, the `LanguageModelComponent` failing with "A model selection is required". Assert `body.items[0].vertex_id === "LanguageModelComponent-FLeYF"` and `body.items[0].status === "error"`
 
 _Cleanup (`afterAll`)_
 1. Delete the seeded flow via `DELETE /api/v1/flows/<flowId>`
