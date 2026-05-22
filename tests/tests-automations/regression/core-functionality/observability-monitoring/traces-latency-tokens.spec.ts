@@ -221,20 +221,38 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
       // is null, so only the isLlmSpan branch keeps the cards on screen — em-
       // dash ("—") is the documented fallback value. Pin both the labels and
       // the fallback to catch a regression that drops the isLlmSpan branch.
+      // `.first()` guards against a future flow rename or sub-span emission
+      // that would make `hasText` match more than one node (strict-mode click
+      // would throw before any assertion ran).
       await spanTree
         .locator('[data-testid^="span-node-"]')
         .filter({ hasText: "Language Model" })
+        .first()
         .click();
+
+      // Lock down the swap before the downstream toContainText assertions —
+      // otherwise an auto-retry on Tokens/Prompt/Completion could accidentally
+      // pass against the previously-selected span if a future SpanDetail
+      // re-render path surfaces those strings outside the LLM-only branch.
+      await expect(spanDetail.locator("h3")).toHaveText("Language Model");
 
       await expect(spanDetail).toContainText(/Tokens/);
       await expect(spanDetail).toContainText(/Prompt/);
       await expect(spanDetail).toContainText(/Completion/);
-      await expect(spanDetail).toContainText("—");
+      // Exactly three em-dashes — one per Tokens/Prompt/Completion card.
+      // Counting (instead of substring) prevents a future em-dash anywhere
+      // else in span-detail from masking a regression that drops the cards.
+      await expect(spanDetail.getByText("—")).toHaveCount(3);
 
       // Header renders the type label ("LLM") next to modelName when populated;
       // modelName is null in the error path (see spec doc for why it is not
-      // pinned), so we assert only the type label here.
-      await expect(spanDetail).toContainText("LLM");
+      // pinned), so we assert only the type label here. `exact: true` targets
+      // the `<span>` whose textContent is precisely "LLM" — substrings like
+      // "LLMRouter" in a future inputs JSON live inside a larger text node
+      // and cannot satisfy the exact match.
+      await expect(
+        spanDetail.getByText("LLM", { exact: true }),
+      ).toBeVisible();
     },
   );
 });
