@@ -156,7 +156,12 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
       await expect(latencyCell).toBeVisible({ timeout: 15000 });
       // Cell renders before metrics populate; use an explicit timeout instead of the
       // default 5s expect timeout, which is shorter than the visibility wait above.
-      await expect(latencyCell).toHaveText(/^\d+\s*ms$/, { timeout: 15000 });
+      // formatTotalLatency switches to seconds at >= 1000ms ("1.54 s"); the
+      // regex must allow both branches or the seeded run flakes when it lands
+      // on the slow side of 1s.
+      await expect(latencyCell).toHaveText(/^\d+(\.\d+)?\s*(ms|s)$/, {
+        timeout: 15000,
+      });
 
       const tokensCell = page
         .locator('.ag-cell[col-id="totalTokens"]')
@@ -201,12 +206,35 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
 
       const spanDetail = page.getByTestId("span-detail");
       await expect(spanDetail).toContainText(/Latency/);
-      await expect(spanDetail).toContainText(/\d+\s*ms/);
+      // formatTotalLatency renders "<n> ms" below 1000ms and "<n.nn> s" at or
+      // above 1000ms; the regex must allow both, otherwise the initially-
+      // selected root-span panel flakes on slow runs (>= 1s).
+      await expect(spanDetail).toContainText(/\d+(\.\d+)?\s*(ms|s)/);
 
       const spanTree = page.getByTestId("span-tree");
       await expect(spanTree).toContainText("Prompt Template");
       await expect(spanTree).toContainText("Chat Input");
       await expect(spanTree).toContainText("Language Model");
+
+      // The Tokens/Prompt/Completion trio is gated by `(hasTokenUsage ||
+      // isLlmSpan)` in SpanDetail; with the unconfigured fixture, tokenUsage
+      // is null, so only the isLlmSpan branch keeps the cards on screen — em-
+      // dash ("—") is the documented fallback value. Pin both the labels and
+      // the fallback to catch a regression that drops the isLlmSpan branch.
+      await spanTree
+        .locator('[data-testid^="span-node-"]')
+        .filter({ hasText: "Language Model" })
+        .click();
+
+      await expect(spanDetail).toContainText(/Tokens/);
+      await expect(spanDetail).toContainText(/Prompt/);
+      await expect(spanDetail).toContainText(/Completion/);
+      await expect(spanDetail).toContainText("—");
+
+      // Header renders the type label ("LLM") next to modelName when populated;
+      // modelName is null in the error path (see spec doc for why it is not
+      // pinned), so we assert only the type label here.
+      await expect(spanDetail).toContainText("LLM");
     },
   );
 });
