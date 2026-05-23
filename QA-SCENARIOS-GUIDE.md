@@ -668,7 +668,7 @@
 
 ## 12. Core Components — Webhook
 
-**Files:** `core/unit/webhookComponent.spec.ts`, `core/features/webhook-component-regression.spec.ts`
+**Files:** `core-components/webhook-component-regression.spec.ts`
 
 ---
 
@@ -691,6 +691,29 @@
 3. Confirm that the URL contains the flow ID (format `/api/v1/webhook/{flow_id}`).
 
 **Validation:** Webhook URL automatically generated with correct flow ID.
+
+---
+
+### 12.3 POST endpoint accepts JSON and plain-text bodies returning 202 `[x]`
+
+**Objective:** Confirm that `POST /api/v1/webhook/{flowId}` accepts both `application/json` and `text/plain` bodies and returns `202` with `{status: "in progress", message: "Task started in the background"}`.
+
+**Preconditions:**
+- A blank flow with the Webhook component on the canvas (created via UI; autosave persists the flow).
+- A temporary `x-api-key` is required because Langflow's `WEBHOOK_AUTH_ENABLE` defaults to `True` since 1.9.2+ (PR langflow-ai/langflow#12845).
+
+**Step by step:**
+1. Add the Webhook component to a blank flow via the sidebar.
+2. Wait for autosave (4 s debounce) before any webhook POST.
+3. Create a temporary API key via `POST /api/v1/api_key/`.
+4. POST a JSON object with the `x-api-key` header to `/api/v1/webhook/{flowId}`.
+5. POST a plain-text body with `x-api-key` and `Content-Type: text/plain` to the same endpoint.
+6. Delete the temporary API key in `finally`.
+
+**Validation:**
+- JSON POST returns 202 with `status === "in progress"` and `message === "Task started in the background"`.
+- Plain-text POST returns 202 with `status === "in progress"`.
+- The temporary API key is deleted regardless of test outcome.
 
 ---
 
