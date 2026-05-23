@@ -273,10 +273,11 @@
 #### 4.3 Global Variables (API Keys)
 - [x] Create global variable
 - [ ] Use global variable in component (API key)
-- [-] Edit existing global variable
+- [x] Edit existing global variable → `ui-ux/global-variable-edit.spec.ts`
 - [x] Delete global variable
 - [x] Create global variable of type "Generic"
 - [x] Credential variable value is hidden from the variable list
+- [x] Create global variable from Settings page → `ui-ux/global-variable-edit.spec.ts`
 
 ---
 

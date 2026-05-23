@@ -1131,58 +1131,77 @@
 
 ## 16. Global Variables (API Keys)
 
-**File:** `core/features/globalVariables.spec.ts`, `global-variables-crud.spec.ts`
+**Files:** `ui-ux/global-variable-edit.spec.ts`, `ui-ux/global-variables-crud.spec.ts`
 
 ---
 
-### 16.1 Create global variable `[-]`
+### 16.1 Create global variable from Settings page `[x]`
+
+**Objective:** Confirm that a Generic global variable can be created from the Settings page (`/settings/global-variables`) and appears in the ag-grid table.
 
 **Step by step:**
-1. Navigate to Settings → Global Variables.
-2. Click "Add Variable".
-3. Fill in name (e.g.: `OPENAI_API_KEY`), type and value.
+1. Navigate to Settings → Global Variables (`/settings/global-variables`).
+2. Click the "Add New" button (`api-key-button-store`).
+3. Switch to the Generic tab (`generic-tab`).
+4. Fill in name and value.
+5. Click Save (`save-variable-btn`).
+
+**Validation:** The variable name appears as an exact match in `.ag-cell-value` within 10s.
+
+---
+
+### 16.2 Edit existing global variable `[x]`
+
+**Objective:** Confirm that clicking an existing variable row opens the Update modal and saving a new value emits the "updated successfully" toast.
+
+**Step by step:**
+1. Create a variable as in 16.1.
+2. Click the variable row in the ag-grid table.
+3. Verify the "Update Variable" heading is visible.
+4. Replace the value field with a new value.
+5. Click Save (`save-variable-btn`).
+
+**Validation:** Text matching `/updated successfully/` is visible within 5s — the toast only fires when `PATCH /api/v1/variables/{id}` returns 200.
+
+---
+
+### 16.3 Delete global variable `[x]`
+
+**Objective:** Confirm that deleting a variable removes it from the listing.
+
+**Step by step:**
+1. Locate a global variable in the listing.
+2. Click the delete icon (`icon-Trash2`).
+3. Confirm the deletion in the dialog.
+
+**Validation:** The variable no longer appears in the listing (count drops to 0 for that name).
+
+---
+
+### 16.4 Create global variable of type "Generic" `[x]`
+
+**Objective:** Confirm that the Generic tab is selectable and produces a Generic-type variable.
+
+**Step by step:**
+1. Open the Add New modal (either via the Globe icon in a component or via the Settings page).
+2. Switch to the Generic tab.
+3. Fill in name and value, save.
+
+**Validation:** Generic type variable created with correct type, listed in the table.
+
+---
+
+### 16.5 Credential variable value is hidden from the variable list `[x]`
+
+**Objective:** Confirm that after saving a Credential-type variable, its value is never rendered as visible text anywhere on the page (toast, label, preview, etc.).
+
+**Step by step:**
+1. Open the Add New modal.
+2. Switch to the Credential tab.
+3. Fill in name and a distinctive sentinel value (e.g. `SECRET-SENTINEL-{Date.now()}`).
 4. Save.
-5. Verify that the variable appears in the listing.
 
-**Validation:** Global variable created and listed.
-
----
-
-### 16.2 Edit existing global variable `[-]`
-
-**Step by step:**
-1. Locate existing global variable.
-2. Click edit.
-3. Change the value.
-4. Save.
-5. Verify that the new value is reflected.
-
-**Validation:** Global variable updated with new value.
-
----
-
-### 16.3 Delete global variable `[-]`
-
-**Step by step:**
-1. Locate global variable.
-2. Click delete.
-3. Confirm deletion.
-4. Verify that the variable no longer appears in the listing.
-
-**Validation:** Variable removed from the listing.
-
----
-
-### 16.4 Create global variable of type "Generic" `[-]`
-
-**Step by step:**
-1. Create new global variable.
-2. Select type "Generic".
-3. Fill in name and value.
-4. Save.
-5. Verify that the "Generic" type is displayed correctly.
-
-**Validation:** Generic type variable created with correct type.
+**Validation:** `getByText(sentinelValue)` has count 0 — the sentinel must not surface as visible text anywhere in the DOM. Input value attributes (`<input type="password" value="…">`) don't count as visible text; only rendered text does, which is the guarantee under test.
 
 ---
 
@@ -1547,7 +1566,7 @@
 
 ## 19. Model Providers
 
-**Files:** `core/features/globalVariables.spec.ts`, `claude-model-switch.spec.ts`, `modelProviderModal.spec.ts`, `provider-invalid-auth-error.spec.ts`
+**Files:** `claude-model-switch.spec.ts`, `modelProviderModal.spec.ts`, `provider-invalid-auth-error.spec.ts`
 
 ---
 
