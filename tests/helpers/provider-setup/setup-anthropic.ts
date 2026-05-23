@@ -55,16 +55,20 @@ export async function setupAnthropic(
     .waitFor({ state: "visible", timeout: 15000 })
     .catch(() => {});
 
+  const unchecked = page.locator(
+    '[data-testid^="llm-toggle"][aria-checked="false"]',
+  );
   const maxIterations = 50;
   for (let i = 0; i < maxIterations; i++) {
-    const unchecked = page.locator(
-      '[data-testid^="llm-toggle"][aria-checked="false"]',
-    );
     if ((await unchecked.count()) === 0) break;
     const next = unchecked.first();
     await next.scrollIntoViewIfNeeded();
     await next.click({ force: true });
-    await page.waitForTimeout(150);
+    // Brief settle for the React re-render: querying `unchecked` again
+    // immediately after click can race with state update. If a click silently
+    // fails to flip, the next iteration retries the same toggle naturally
+    // (re-query + first()), bounded by maxIterations.
+    await page.waitForTimeout(200);
   }
 
   // Step 6: Close the provider management panel
@@ -73,7 +77,8 @@ export async function setupAnthropic(
   // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
   await page.getByTestId("model_model").click();
   if (modelTestId) {
-    const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${modelTestId}$`) });
+    const escapedId = modelTestId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${escapedId}$`) });
     const isAvailable = await modelOption.isVisible({ timeout: 10000 }).catch(() => false);
     if (!isAvailable) {
       await page.keyboard.press("Escape");
