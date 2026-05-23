@@ -40,6 +40,7 @@
 25. [MCP — Client and Server](#25-mcp--client-and-server)
 26. [UI/UX — Sidebar and Canvas](#26-uiux--sidebar-and-canvas)
 27. [Core Components — Loop](#27-core-components--loop)
+28. [Core Components — Nested / Grouping](#28-core-components--nested--grouping)
 
 ---
 
@@ -2475,6 +2476,60 @@
 **Validation:** Non-empty bot response; "title" count ≥ 2 (confirms 2 loop iterations).
 
 **Note:** Validation via "Title" is intentional and slightly fragile — it depends on the Parser's output format. If the template changes the prompt template, the counter may not match. The test's focus is to confirm the Loop iterated, not the exact content.
+
+---
+
+## 28. Core Components — Nested / Grouping
+
+**File:** `tests/tests-automations/regression/core-components/nested-grouping-regression.spec.ts`
+
+---
+
+### 28.1 Group two connected non-IO components collapses them into a single Group node `[x]`
+
+**Objective:** Verify that box-selecting two connected non-IO components and clicking Group replaces them with a single `title-Group` node on the outer canvas — proving the components were nested inside a reusable subflow rather than renamed or duplicated.
+
+**Preconditions:**
+- Langflow running.
+- No API key required (no LLM execution).
+- The test creates a custom 2-node flow via `POST /api/v1/flows/` (Prompt Template → Language Model, no IO, no sticky notes) because the Group button gates on `validateSelection` from `reactflowUtils.ts`, which rejects IO nodes and sticky-note overlaps — both present in starter templates.
+
+**Step by step:**
+1. Create the flow via REST API using `tests/assets/flows/two-non-io-connected.json` and navigate to it via the home dashboard (avoids the `/flow/{id}` cache race after API creation).
+2. Wait for `canvas_controls_dropdown`, `title-Prompt Template` and `title-Language Model` to be visible; call `adjustScreenView`.
+3. Click the empty React Flow pane and wait for `.react-flow__node.selected` count to drop to 0.
+4. Shift+drag a box covering both nodes' bounding boxes (with 40px padding).
+5. Wait for `.react-flow__node.selected` count to reach 2 and `getByTestId("group-node")` to be visible.
+6. Click the Group button (forced click — lives inside `@xyflow/react`'s `NodeToolbar` portal).
+7. Wait for the Group button to disappear (confirms the mutation committed).
+
+**Validation:**
+- `.react-flow__node` count is exactly 1.
+- `title-Group` is visible.
+- `title-Prompt Template` and `title-Language Model` have count 0 on the outer canvas.
+
+---
+
+### 28.2 Ungrouping a Group node restores the original components and the edge `[x]`
+
+**Objective:** Verify that right-clicking a Group node and triggering Ungroup re-emits the encapsulated subflow back to the outer canvas — restoring both original components and the edge that connected them, with no data loss.
+
+**Preconditions:**
+- Same setup as 28.1.
+- The Group node must already exist on the canvas (created via 28.1's flow).
+
+**Step by step:**
+1. Repeat steps 1–7 of scenario 28.1 to produce a `title-Group` node on the canvas.
+2. Right-click the `title-Group` element to open the node toolbar dropdown.
+3. Click `group-button-modal` (the Ungroup entry — only rendered for Group-typed nodes per `isGroup && <SelectItem value="ungroup">` in `nodeToolbarComponent/index.tsx`).
+
+**Validation:**
+- `.react-flow__node` count is back to 2.
+- `.react-flow__edge` count is 1 (the original connection was preserved).
+- `title-Group` has count 0.
+- `title-Prompt Template` and `title-Language Model` are both visible again.
+
+**Note:** Modern Langflow does not expose a separate nested-canvas view — "enter/exit grouped component" is the Group/Ungroup round-trip. This scenario validates the data fidelity of the round-trip.
 
 ---
 

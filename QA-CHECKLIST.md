@@ -230,8 +230,8 @@
 - [x] Loop stops when exit condition is met → `core-components/loop-component-regression.spec.ts`
 
 #### 3.7 Nested / Grouping
-- [-] Nested component
-- [-] Enter and exit grouped component
+- [x] Nested component → `core-components/nested-grouping-regression.spec.ts`
+- [x] Enter and exit grouped component → `core-components/nested-grouping-regression.spec.ts`
 
 ---
 

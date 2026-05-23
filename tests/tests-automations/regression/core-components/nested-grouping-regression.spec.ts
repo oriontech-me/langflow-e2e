@@ -73,7 +73,9 @@ async function selectAllNodesBoxDrag(page: Page): Promise<void> {
   // selection state makes the drag-to-select trigger React Flow's
   // onSelectionStart/onSelectionEnd cleanly.
   await page.locator(".react-flow__pane").click({ position: { x: 5, y: 5 } });
-  await page.waitForTimeout(200);
+  await expect(page.locator(".react-flow__node.selected")).toHaveCount(0, {
+    timeout: 2000,
+  });
 
   const a = await nodes.nth(0).boundingBox();
   const b = await nodes.nth(1).boundingBox();
@@ -104,32 +106,18 @@ async function selectAllNodesBoxDrag(page: Page): Promise<void> {
   await expect(page.getByTestId("group-node")).toBeVisible({ timeout: 5000 });
 }
 
-// Triggers the grouping mutation. The Group button lives inside
-// @xyflow/react's `<NodeToolbar>` portal; its onClick handler is a
-// useCallback whose closure captures PageComponent's `lastSelection`. The
-// closure can be re-bound between renders, so we use a small retry loop
-// and treat the disappearance of the button (or the canvas falling to a
-// single node) as the success signal — never the click event itself.
+// Triggers the grouping mutation. Earlier (pre-1.10) versions of Langflow
+// had a closure-rebind race in SelectionMenu's onClick that required a
+// retry loop. As of 1.10.x the click consistently registers once
+// `.react-flow__node.selected` count reaches 2 — verified empirically with
+// 15/15 first-click passes — so the retry was removed. If flakiness
+// returns, see PR #229 for the original retry approach.
 async function triggerGroupMutation(page: Page): Promise<void> {
   const groupBtn = page.getByTestId("group-node");
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await expect(groupBtn).toBeVisible({ timeout: 5000 });
-    await expect(groupBtn).toBeEnabled();
-    await groupBtn.click({ force: true });
-
-    try {
-      await expect(groupBtn).toBeHidden({ timeout: 1500 });
-      return;
-    } catch {
-      // Group button still up — either the click missed, or the click
-      // landed on a stale-closure handler that no-op'd. Re-establish a
-      // fresh 2-node selection to force a fresh onClick binding.
-      if ((await page.locator(".react-flow__node").count()) === 1) return;
-      await selectAllNodesBoxDrag(page);
-    }
-  }
-  throw new Error("Group button never closed after 5 attempts");
+  await expect(groupBtn).toBeVisible({ timeout: 5000 });
+  await expect(groupBtn).toBeEnabled();
+  await groupBtn.click({ force: true });
+  await expect(groupBtn).toBeHidden({ timeout: 5000 });
 }
 
 test.describe("Nested / Grouping", () => {
@@ -148,21 +136,29 @@ test.describe("Nested / Grouping", () => {
       tag: ["@stable", "@release", "@regression", "@components", "@workspace"],
     },
     async ({ page }) => {
-      createdFlowId = await createTwoNodeFlow(page);
-
-      await selectAllNodesBoxDrag(page);
-
-      await triggerGroupMutation(page);
-
-      // The two source components are replaced by a single Group-typed node.
-      await expect(page.locator(".react-flow__node")).toHaveCount(1, {
-        timeout: 5000,
+      await test.step("Create a 2-node non-IO flow and open it on the canvas", async () => {
+        createdFlowId = await createTwoNodeFlow(page);
       });
-      await expect(page.getByTestId("title-Group")).toBeVisible();
-      // The original titles disappear from the outer canvas — proving the
-      // components are nested inside the Group, not just renamed.
-      await expect(page.getByTestId("title-Prompt Template")).toHaveCount(0);
-      await expect(page.getByTestId("title-Language Model")).toHaveCount(0);
+
+      await test.step("Box-select both nodes via Shift+drag and confirm the Group button appears", async () => {
+        await selectAllNodesBoxDrag(page);
+      });
+
+      await test.step("Click Group and wait for the SelectionMenu to close", async () => {
+        await triggerGroupMutation(page);
+      });
+
+      await test.step("Assert the canvas collapsed to a single Group node and the original titles are gone", async () => {
+        // The two source components are replaced by a single Group-typed node.
+        await expect(page.locator(".react-flow__node")).toHaveCount(1, {
+          timeout: 5000,
+        });
+        await expect(page.getByTestId("title-Group")).toBeVisible();
+        // The original titles disappear from the outer canvas — proving the
+        // components are nested inside the Group, not just renamed.
+        await expect(page.getByTestId("title-Prompt Template")).toHaveCount(0);
+        await expect(page.getByTestId("title-Language Model")).toHaveCount(0);
+      });
     },
   );
 
@@ -172,36 +168,39 @@ test.describe("Nested / Grouping", () => {
       tag: ["@stable", "@release", "@regression", "@components", "@workspace"],
     },
     async ({ page }) => {
-      createdFlowId = await createTwoNodeFlow(page);
-
-      await selectAllNodesBoxDrag(page);
-      await triggerGroupMutation(page);
-
-      const groupTitle = page.getByTestId("title-Group");
-      await expect(groupTitle).toBeVisible({ timeout: 8000 });
-      await expect(page.locator(".react-flow__node")).toHaveCount(1);
-
-      // Open the node toolbar dropdown via right-click and trigger Ungroup.
-      // The Ungroup entry only renders for Group-typed nodes
-      // (`isGroup && <SelectItem value="ungroup">` in
-      // src/frontend/src/pages/FlowPage/components/nodeToolbarComponent/index.tsx).
-      await groupTitle.click({ button: "right" });
-      const ungroupOption = page.getByTestId("group-button-modal");
-      await expect(ungroupOption).toBeVisible({ timeout: 5000 });
-      await ungroupOption.click();
-
-      // expandGroupNode re-emits the saved sub-flow into the parent canvas:
-      // the two original component nodes are back, the edge between them is
-      // restored, and the Group node is gone.
-      await expect(page.locator(".react-flow__node")).toHaveCount(2, {
-        timeout: 8000,
+      await test.step("Create a 2-node non-IO flow and group both nodes into a single Group", async () => {
+        createdFlowId = await createTwoNodeFlow(page);
+        await selectAllNodesBoxDrag(page);
+        await triggerGroupMutation(page);
+        const groupTitle = page.getByTestId("title-Group");
+        await expect(groupTitle).toBeVisible({ timeout: 8000 });
+        await expect(page.locator(".react-flow__node")).toHaveCount(1);
       });
-      await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
-        timeout: 8000,
+
+      await test.step("Right-click the Group node and trigger Ungroup", async () => {
+        // The Ungroup entry only renders for Group-typed nodes
+        // (`isGroup && <SelectItem value="ungroup">` in
+        // src/frontend/src/pages/FlowPage/components/nodeToolbarComponent/index.tsx).
+        await page.getByTestId("title-Group").click({ button: "right" });
+        const ungroupOption = page.getByTestId("group-button-modal");
+        await expect(ungroupOption).toBeVisible({ timeout: 5000 });
+        await ungroupOption.click();
       });
-      await expect(page.getByTestId("title-Group")).toHaveCount(0);
-      await expect(page.getByTestId("title-Prompt Template")).toBeVisible();
-      await expect(page.getByTestId("title-Language Model")).toBeVisible();
+
+      await test.step("Assert the original components and edge are restored on the outer canvas", async () => {
+        // expandGroupNode re-emits the saved sub-flow into the parent canvas:
+        // the two original component nodes are back, the edge between them is
+        // restored, and the Group node is gone.
+        await expect(page.locator(".react-flow__node")).toHaveCount(2, {
+          timeout: 8000,
+        });
+        await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
+          timeout: 8000,
+        });
+        await expect(page.getByTestId("title-Group")).toHaveCount(0);
+        await expect(page.getByTestId("title-Prompt Template")).toBeVisible();
+        await expect(page.getByTestId("title-Language Model")).toBeVisible();
+      });
     },
   );
 });
