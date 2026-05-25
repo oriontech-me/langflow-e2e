@@ -461,40 +461,33 @@ jobs:
           fi
           echo "Auto-imported Credential confirmed on source"
 
-          # /api/v1/starter-projects/ returns only 5 hardcoded entries (Basic Prompting,
-          # Blog Writer, Document Q&A, Memory Chatbot, Vector Store RAG) in both
-          # latest and nightly — Simple Agent is NOT in that list. However, Langflow
-          # loads Simple Agent as a regular flow on startup, visible in /api/v1/flows/.
-          # NOTE: Langflow's API server gzip-encodes large responses; --compressed tells
-          # curl to decompress automatically. Without it /api/v1/flows/ returns binary garbage.
-          # Strategy:
-          #   1. Try /api/v1/flows/ (--compressed) for "simple agent" / "basic agent"
-          #   2. Fall back to /api/v1/starter-projects/ and use the FIRST available starter
-          #      (all starters have LLM components and are equally valid for migration testing)
-          FLOWS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/flows/")
-          # Print available flow names for diagnostics
-          echo "DEBUG /api/v1/flows/ names:"
-          echo "$FLOWS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${FLOWS_JSON:0:200})"
-          # jq exit 5 = parse error; || prevents set -e from killing the step
-          TEMPLATE=$(echo "$FLOWS_JSON" | \
-            jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent"))][0]' \
+          # Template selection strategy:
+          # Starter-projects come pre-configured with a model (e.g. Basic Prompting has
+          # ChatOpenAI wired in and ready to run). Flows from /api/v1/flows/ (e.g. Simple
+          # Agent) may require manual model selection and fail with HTTP 500
+          # "No model selected". So: use starter-projects FIRST, /api/v1/flows/ as fallback.
+          # NOTE: Langflow gzip-encodes large responses → always use --compressed.
+          STARTERS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/")
+          echo "DEBUG /api/v1/starter-projects/ names:"
+          echo "$STARTERS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${STARTERS_JSON:0:200})"
+          # Prefer Basic Prompting (simplest flow that uses OPENAI_API_KEY and runs without config)
+          TEMPLATE=$(echo "$STARTERS_JSON" | \
+            jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("prompting"))][0]' \
             2>/dev/null || echo "")
-
+          # If not found, take the first available starter (any pre-configured LLM flow works)
           if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
-            echo "Simple Agent not found in /api/v1/flows/ — falling back to first available starter"
-            STARTERS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/")
-            # Print available starter names for diagnostics
-            echo "DEBUG /api/v1/starter-projects/ names:"
-            echo "$STARTERS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${STARTERS_JSON:0:200})"
-            # Prefer a known agent/prompting starter; last resort: take the first available one
-            TEMPLATE=$(echo "$STARTERS_JSON" | \
-              jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent") or contains("basic prompting") or contains("prompting"))][0]' \
+            TEMPLATE=$(echo "$STARTERS_JSON" | jq -c '.[0]' 2>/dev/null || echo "")
+            echo "Basic Prompting not found — using first available starter"
+          fi
+          # Last resort: fall back to /api/v1/flows/ for any prompting-style flow
+          if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
+            echo "No starters available — falling back to /api/v1/flows/"
+            FLOWS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/flows/")
+            echo "DEBUG /api/v1/flows/ names:"
+            echo "$FLOWS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${FLOWS_JSON:0:200})"
+            TEMPLATE=$(echo "$FLOWS_JSON" | \
+              jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("memory chatbot"))][0]' \
               2>/dev/null || echo "")
-            # If still null, take literally the first starter (any LLM flow works for migration test)
-            if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
-              TEMPLATE=$(echo "$STARTERS_JSON" | jq -c '.[0]' 2>/dev/null || echo "")
-              echo "Using first available starter as witness template"
-            fi
           fi
 
           [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]] && {
