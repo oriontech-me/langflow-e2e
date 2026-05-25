@@ -461,30 +461,40 @@ jobs:
           # Blog Writer, Document Q&A, Memory Chatbot, Vector Store RAG) in both
           # latest and nightly — Simple Agent is NOT in that list. However, Langflow
           # loads Simple Agent as a regular flow on startup, visible in /api/v1/flows/.
+          # NOTE: Langflow's API server gzip-encodes large responses; --compressed tells
+          # curl to decompress automatically. Without it /api/v1/flows/ returns binary garbage.
           # Strategy:
-          #   1. Try /api/v1/flows/ for "simple agent" / "basic agent" (with debug output
-          #      and jq-error guard so a non-JSON response doesn't kill the step under set -e)
-          #   2. Fall back to "Basic Prompting" from /api/v1/starter-projects/ (always present)
-          FLOWS_JSON=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/flows/")
-          echo "DEBUG /api/v1/flows/ first 500 chars:"
-          echo "${FLOWS_JSON:0:500}"
-          # jq exit 5 = parse error; || prevents set -e from aborting the step
+          #   1. Try /api/v1/flows/ (--compressed) for "simple agent" / "basic agent"
+          #   2. Fall back to /api/v1/starter-projects/ and use the FIRST available starter
+          #      (all starters have LLM components and are equally valid for migration testing)
+          FLOWS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/flows/")
+          # Print available flow names for diagnostics
+          echo "DEBUG /api/v1/flows/ names:"
+          echo "$FLOWS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${FLOWS_JSON:0:200})"
+          # jq exit 5 = parse error; || prevents set -e from killing the step
           TEMPLATE=$(echo "$FLOWS_JSON" | \
             jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent"))][0]' \
             2>/dev/null || echo "")
 
           if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
-            echo "Simple Agent not found in /api/v1/flows/ — falling back to Basic Prompting starter"
-            STARTERS_JSON=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/")
-            echo "DEBUG /api/v1/starter-projects/ first 500 chars:"
-            echo "${STARTERS_JSON:0:500}"
+            echo "Simple Agent not found in /api/v1/flows/ — falling back to first available starter"
+            STARTERS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/")
+            # Print available starter names for diagnostics
+            echo "DEBUG /api/v1/starter-projects/ names:"
+            echo "$STARTERS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${STARTERS_JSON:0:200})"
+            # Prefer a known agent/prompting starter; last resort: take the first available one
             TEMPLATE=$(echo "$STARTERS_JSON" | \
-              jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("simple agent") or contains("basic agent"))][0]' \
+              jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent") or contains("basic prompting") or contains("prompting"))][0]' \
               2>/dev/null || echo "")
+            # If still null, take literally the first starter (any LLM flow works for migration test)
+            if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
+              TEMPLATE=$(echo "$STARTERS_JSON" | jq -c '.[0]' 2>/dev/null || echo "")
+              echo "Using first available starter as witness template"
+            fi
           fi
 
           [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]] && {
-            echo "::error::No witness template found (tried Simple Agent in /flows/ and Basic Prompting in /starter-projects/)"; exit 1; }
+            echo "::error::No witness template found — /api/v1/flows/ and /api/v1/starter-projects/ both returned nothing usable"; exit 1; }
           FLOW_PAYLOAD=$(echo "$TEMPLATE" | jq '{
             name: ((.name // "Simple Agent") + " — migration witness"),
             description: "compose migration witness",
