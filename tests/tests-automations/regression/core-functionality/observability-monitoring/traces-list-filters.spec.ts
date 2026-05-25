@@ -183,7 +183,7 @@ test.describe("Trace list filters — status / start_time / query / session_id",
 
   test(
     "GET /api/v1/monitor/traces?status=error returns only the failing trace; rejects unknown values",
-    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
+    { tag: ["@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       const matchRes = await request.get(
         `/api/v1/monitor/traces?flow_id=${errorFlowId}&status=error`,
