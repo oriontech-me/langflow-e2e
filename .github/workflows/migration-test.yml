@@ -399,6 +399,10 @@ jobs:
                 - LANGFLOW_SECRET_KEY=${LANGFLOW_SECRET_KEY}
                 - OPENAI_API_KEY=${OPENAI_API_KEY}
                 - LANGFLOW_AUTO_LOGIN=true
+                # Since v1.5 the auto_login token is rejected by /run endpoints unless
+                # LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true is set in the SERVER environment.
+                # The GHA top-level env: block only reaches the runner, not the container.
+                - LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true
                 - LANGFLOW_SUPERUSER=langflow
                 - LANGFLOW_SUPERUSER_PASSWORD=langflow123
                 - LANGFLOW_STORE=false
