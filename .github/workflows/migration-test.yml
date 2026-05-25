@@ -457,12 +457,23 @@ jobs:
           fi
           echo "Auto-imported Credential confirmed on source"
 
-          STARTERS=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/")
-          TEMPLATE=$(echo "$STARTERS" | jq -c '
-            [.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent"))][0]
-          ')
+          # /api/v1/starter-projects/ returns only 5 hardcoded entries (Basic Prompting,
+          # Blog Writer, Document Q&A, Memory Chatbot, Vector Store RAG) in both
+          # latest and nightly — Simple Agent is NOT in that list. However, Langflow
+          # loads Simple Agent as a regular flow on startup, so it IS in /api/v1/flows/.
+          # Strategy: look for "simple agent" in /api/v1/flows/ first; if absent, fall
+          # back to "Basic Prompting" from /api/v1/starter-projects/ (always present).
+          TEMPLATE=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/flows/" | \
+            jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent"))][0]')
+
+          if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
+            echo "Simple Agent not found in /api/v1/flows/ — falling back to Basic Prompting starter"
+            TEMPLATE=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/" | \
+              jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("simple agent") or contains("basic agent"))][0]')
+          fi
+
           [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]] && {
-            echo "::error::Simple Agent starter not found"; exit 1; }
+            echo "::error::No witness template found (tried Simple Agent in /flows/ and Basic Prompting in /starter-projects/)"; exit 1; }
           FLOW_PAYLOAD=$(echo "$TEMPLATE" | jq '{
             name: ((.name // "Simple Agent") + " — migration witness"),
             description: "compose migration witness",
