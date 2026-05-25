@@ -460,16 +460,27 @@ jobs:
           # /api/v1/starter-projects/ returns only 5 hardcoded entries (Basic Prompting,
           # Blog Writer, Document Q&A, Memory Chatbot, Vector Store RAG) in both
           # latest and nightly — Simple Agent is NOT in that list. However, Langflow
-          # loads Simple Agent as a regular flow on startup, so it IS in /api/v1/flows/.
-          # Strategy: look for "simple agent" in /api/v1/flows/ first; if absent, fall
-          # back to "Basic Prompting" from /api/v1/starter-projects/ (always present).
-          TEMPLATE=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/flows/" | \
-            jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent"))][0]')
+          # loads Simple Agent as a regular flow on startup, visible in /api/v1/flows/.
+          # Strategy:
+          #   1. Try /api/v1/flows/ for "simple agent" / "basic agent" (with debug output
+          #      and jq-error guard so a non-JSON response doesn't kill the step under set -e)
+          #   2. Fall back to "Basic Prompting" from /api/v1/starter-projects/ (always present)
+          FLOWS_JSON=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/flows/")
+          echo "DEBUG /api/v1/flows/ first 500 chars:"
+          echo "${FLOWS_JSON:0:500}"
+          # jq exit 5 = parse error; || prevents set -e from aborting the step
+          TEMPLATE=$(echo "$FLOWS_JSON" | \
+            jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent"))][0]' \
+            2>/dev/null || echo "")
 
           if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
             echo "Simple Agent not found in /api/v1/flows/ — falling back to Basic Prompting starter"
-            TEMPLATE=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/" | \
-              jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("simple agent") or contains("basic agent"))][0]')
+            STARTERS_JSON=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/")
+            echo "DEBUG /api/v1/starter-projects/ first 500 chars:"
+            echo "${STARTERS_JSON:0:500}"
+            TEMPLATE=$(echo "$STARTERS_JSON" | \
+              jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("simple agent") or contains("basic agent"))][0]' \
+              2>/dev/null || echo "")
           fi
 
           [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]] && {
