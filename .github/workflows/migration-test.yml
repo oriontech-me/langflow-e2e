@@ -6,8 +6,6 @@ on:
   workflow_dispatch: {}
   push:
     branches: [main]
-    paths:
-      - .github/workflows/migration-test.yml
 
 env:
   LANGFLOW_PORT: 7860
