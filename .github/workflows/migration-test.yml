@@ -3,7 +3,7 @@ name: "Langflow Migration Test: Latest → Nightly"
 on:
   schedule:
     - cron: "0 7 * * *" # 04:00 BRT (UTC-3)
-  workflow_dispatch:
+  workflow_dispatch: {} # explicit empty object — identical semantics, forces GitHub to re-parse
 
 env:
   LANGFLOW_PORT: 7860
