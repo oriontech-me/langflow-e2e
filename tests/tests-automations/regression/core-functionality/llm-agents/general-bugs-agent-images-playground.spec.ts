@@ -3,10 +3,11 @@ import { readFileSync } from "fs";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { setupAnthropic } from "../../../../helpers/provider-setup/setup-anthropic";
 
 test(
   "user must be able to send images in the playground with the agent component",
-  { tag: ["@release", "@components", "@agents"] },
+  { tag: ["@stable", "@release", "@components", "@agents"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.ANTHROPIC_API_KEY,
@@ -21,15 +22,7 @@ test(
     await page.getByTestId("side_nav_options_all-templates").click();
     await page.getByRole("heading", { name: "Simple Agent" }).first().click();
 
-    await page.getByTestId("value-dropdown-dropdown_str_agent_llm").click();
-
-    await page.waitForTimeout(200);
-
-    await page.getByText("Anthropic").last().click();
-
-    await page
-      .getByTestId("popover-anchor-input-api_key")
-      .fill(process.env.ANTHROPIC_API_KEY || "");
+    await setupAnthropic(page);
 
     await page.getByTestId("playground-btn-flow-io").click();
 
