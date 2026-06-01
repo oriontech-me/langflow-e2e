@@ -53,7 +53,14 @@ export const awaitBootstrapTest = async (
             `Failed to open modal after ${maxAttempts} attempts: ${error}`,
           );
         }
-        // Wait a bit before retrying
+        // openNewFlowTemplatesModal clicks "New Flow", which on 1.10.0
+        // navigates to a freshly-created flow. Return home before retrying so
+        // new-project-btn is present again — otherwise the retry clicks into
+        // the canvas and times out.
+        await page.goto("/");
+        await page.waitForSelector('[id="new-project-btn"]', {
+          timeout: 30000,
+        });
         await page.waitForTimeout(1000);
       }
     }

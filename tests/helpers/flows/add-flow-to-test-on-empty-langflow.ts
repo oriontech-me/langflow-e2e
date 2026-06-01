@@ -1,22 +1,13 @@
 import type { Page } from "@playwright/test";
+import { dismissWelcomeOverlayAndWaitForModal } from "./open-new-flow-templates-modal";
 
 export const addFlowToTestOnEmptyLangflow = async (page: Page) => {
   await page.getByTestId("new_project_btn_empty_page").click();
 
-  // Langflow 1.10.0: the empty-page CTA usually opens the templates modal
-  // directly, but a fresh instance can race the FlowBuilderWelcome overlay
-  // instead. Wait for whichever mounts; if the overlay surfaces, dismiss it
-  // via "Browse more templates" to reach the templates modal.
-  const modalSelector = '[data-testid="modal-title"]';
-  const welcomeSelector = '[data-testid="flow-builder-welcome-panel"]';
-  await Promise.race([
-    page.waitForSelector(modalSelector, { timeout: 30000 }),
-    page.waitForSelector(welcomeSelector, { timeout: 30000 }),
-  ]);
-  if ((await page.locator(welcomeSelector).count()) > 0) {
-    await page.getByTestId("flow-builder-welcome-browse-more").click();
-    await page.waitForSelector(modalSelector, { timeout: 30000 });
-  }
+  // The empty-page CTA usually opens the templates modal directly, but on a
+  // fresh Langflow 1.10.0 instance it can surface the FlowBuilderWelcome
+  // overlay first — reconcile both via the shared helper.
+  await dismissWelcomeOverlayAndWaitForModal(page);
 
   await page.getByTestId("side_nav_options_all-templates").click();
   await page.getByRole("heading", { name: "Basic Prompting" }).click();
