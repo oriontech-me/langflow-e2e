@@ -16,6 +16,8 @@ async function selectOperator(
   // Match by exact role+name — robust across option-index churn. Click via
   // `dispatchEvent` because the bottom of the options list (numeric operators)
   // overlaps `main_canvas_controls`, which intercepts ordinary pointer events.
+  // The `toHaveText` guard below catches a no-op dispatch (e.g. a detached
+  // option), so the event-level click is safe here.
   await page
     .getByRole("option", { name: operatorName, exact: true })
     .dispatchEvent("click");
@@ -44,6 +46,13 @@ async function buildIfElseRoutingFlow(page: Page): Promise<void> {
   await awaitBootstrapTest(page);
   await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
   await page.getByTestId("blank-flow").click();
+
+  // Wait for the canvas/sidebar to settle before interacting — clicking the
+  // search input immediately after the blank-flow transition can resolve a
+  // node that is then detached mid-render (observed flake under parallelism).
+  await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+    timeout: 15000,
+  });
 
   // If-Else
   await page.getByTestId("sidebar-search-input").click();
@@ -119,199 +128,264 @@ async function buildIfElseRoutingFlow(page: Page): Promise<void> {
 
 test(
   "If-Else routes matching input through the True branch and skips the False branch",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await buildIfElseRoutingFlow(page);
-
-    // Match: input_text === match_text → True branch should build.
-    await page.getByTestId("popover-anchor-input-input_text").fill("hello");
-    await page.getByTestId("popover-anchor-input-match_text").fill("hello");
-
-    await page.getByTestId("button_run_text output").click();
-    await expect(page.locator("text=built successfully")).toBeVisible({
-      timeout: 30000,
+    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
     });
 
-    await expect(page.getByTestId("node_duration_text output")).toHaveCount(1);
-    await expect(
-      page.getByTestId("node_status_icon_textoutputfalse_inactive"),
-    ).toHaveCount(1);
+    await test.step("Set matching input (input_text === match_text) and run", async () => {
+      // Match: input_text === match_text → True branch should build.
+      await page.getByTestId("popover-anchor-input-input_text").fill("hello");
+      await page.getByTestId("popover-anchor-input-match_text").fill("hello");
+
+      await page.getByTestId("button_run_text output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_text output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
   },
 );
 
 test(
   "If-Else routes non-matching input through the False branch and skips the True branch",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await buildIfElseRoutingFlow(page);
-
-    // No match: input_text !== match_text → False branch should build.
-    await page.getByTestId("popover-anchor-input-input_text").fill("world");
-    await page.getByTestId("popover-anchor-input-match_text").fill("hello");
-
-    await page.getByTestId("button_run_textoutputfalse").click();
-    await expect(page.locator("text=built successfully")).toBeVisible({
-      timeout: 30000,
+    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
     });
 
-    await expect(
-      page.getByTestId("node_duration_textoutputfalse"),
-    ).toHaveCount(1);
-    await expect(
-      page.getByTestId("node_status_icon_text output_inactive"),
-    ).toHaveCount(1);
+    await test.step("Set non-matching input (input_text !== match_text) and run", async () => {
+      // No match: input_text !== match_text → False branch should build.
+      await page.getByTestId("popover-anchor-input-input_text").fill("world");
+      await page.getByTestId("popover-anchor-input-match_text").fill("hello");
+
+      await page.getByTestId("button_run_textoutputfalse").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert False branch built and True branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_textoutputfalse"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_text output_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
   },
 );
 
 test(
   "If-Else operator=contains routes a substring match through the True branch",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await buildIfElseRoutingFlow(page);
-
-    await selectOperator(page, "contains");
-
-    // `lang` is a substring of `langflow` → contains evaluates True.
-    await page.getByTestId("popover-anchor-input-input_text").fill("langflow");
-    await page.getByTestId("popover-anchor-input-match_text").fill("lang");
-
-    await page.getByTestId("button_run_text output").click();
-    await expect(page.locator("text=built successfully")).toBeVisible({
-      timeout: 30000,
+    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
     });
 
-    await expect(page.getByTestId("node_duration_text output")).toHaveCount(1);
-    await expect(
-      page.getByTestId("node_status_icon_textoutputfalse_inactive"),
-    ).toHaveCount(1);
+    await test.step("Switch to 'contains', set substring input, and run", async () => {
+      await selectOperator(page, "contains");
+
+      // `lang` is a substring of `langflow` → contains evaluates True.
+      await page
+        .getByTestId("popover-anchor-input-input_text")
+        .fill("langflow");
+      await page.getByTestId("popover-anchor-input-match_text").fill("lang");
+
+      await page.getByTestId("button_run_text output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_text output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
   },
 );
 
 test(
   "If-Else operator=regex routes a valid pattern match through the True branch",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await buildIfElseRoutingFlow(page);
-
-    await selectOperator(page, "regex");
-
-    // `^abc` matches the start of `abc123` → regex evaluates True.
-    await page.getByTestId("popover-anchor-input-input_text").fill("abc123");
-    await page.getByTestId("popover-anchor-input-match_text").fill("^abc");
-
-    await page.getByTestId("button_run_text output").click();
-    await expect(page.locator("text=built successfully")).toBeVisible({
-      timeout: 30000,
+    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
     });
 
-    await expect(page.getByTestId("node_duration_text output")).toHaveCount(1);
-    await expect(
-      page.getByTestId("node_status_icon_textoutputfalse_inactive"),
-    ).toHaveCount(1);
+    await test.step("Switch to 'regex', set a regex-only pattern, and run", async () => {
+      await selectOperator(page, "regex");
+
+      // `^abc\d+$` fully matches `abc123` and is satisfiable only by a real
+      // regex engine — `contains`/`starts with` cannot express the trailing
+      // `\d+$`, so this exercises the regex path distinctly (not just
+      // re.match's implicit start-anchor).
+      await page.getByTestId("popover-anchor-input-input_text").fill("abc123");
+      await page
+        .getByTestId("popover-anchor-input-match_text")
+        .fill("^abc\\d+$");
+
+      await page.getByTestId("button_run_text output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_text output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
   },
 );
 
 test(
   "If-Else operator=regex hides the case_sensitive advanced field",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await buildIfElseRoutingFlow(page);
+    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
+    });
 
-    // Focus the If-Else node — `openAdvancedOptions` operates on the
-    // currently-focused node, and the build helper leaves focus on the last
-    // Text Output it renamed.
-    await page.getByTestId("title-If-Else").click();
+    await test.step("Baseline: case_sensitive toggle is exposed with the default operator", async () => {
+      // Focus the If-Else node — `openAdvancedOptions` operates on the
+      // currently-focused node, and the build helper leaves focus on the last
+      // Text Output it renamed.
+      await page.getByTestId("title-If-Else").click();
 
-    // Baseline: with the default operator (equals), the edit-fields modal
-    // exposes the case_sensitive toggle.
-    await openAdvancedOptions(page);
-    await expect(page.getByTestId("showcase_sensitive")).toHaveCount(1);
-    await closeAdvancedOptions(page);
+      await openAdvancedOptions(page);
+      await expect(page.getByTestId("showcase_sensitive")).toHaveCount(1);
+      await closeAdvancedOptions(page);
+    });
 
-    // After switching to regex, `update_build_config` removes case_sensitive
-    // from the build config — the toggle should disappear.
-    await selectOperator(page, "regex");
+    await test.step("Switch to regex and assert case_sensitive toggle disappears", async () => {
+      // After switching to regex, `update_build_config` removes case_sensitive
+      // from the build config — the toggle should disappear.
+      await selectOperator(page, "regex");
 
-    await page.getByTestId("title-If-Else").click();
-    await openAdvancedOptions(page);
-    await expect(page.getByTestId("showcase_sensitive")).toHaveCount(0);
-    await closeAdvancedOptions(page);
+      await page.getByTestId("title-If-Else").click();
+      await openAdvancedOptions(page);
+      await expect(page.getByTestId("showcase_sensitive")).toHaveCount(0);
+      await closeAdvancedOptions(page);
+    });
   },
 );
 
 test(
   "If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await buildIfElseRoutingFlow(page);
-
-    // case_sensitive is True by default in the Python source. With operator
-    // equals, `HELLO` and `hello` differ — False branch should build.
-    await page.getByTestId("popover-anchor-input-input_text").fill("HELLO");
-    await page.getByTestId("popover-anchor-input-match_text").fill("hello");
-
-    await page.getByTestId("button_run_textoutputfalse").click();
-    await expect(page.locator("text=built successfully")).toBeVisible({
-      timeout: 30000,
+    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
     });
 
-    await expect(
-      page.getByTestId("node_duration_textoutputfalse"),
-    ).toHaveCount(1);
-    await expect(
-      page.getByTestId("node_status_icon_text output_inactive"),
-    ).toHaveCount(1);
+    await test.step("Set mixed-case input (case_sensitive ON by default) and run", async () => {
+      // case_sensitive is True by default in the Python source. With operator
+      // equals, `HELLO` and `hello` differ — False branch should build.
+      await page.getByTestId("popover-anchor-input-input_text").fill("HELLO");
+      await page.getByTestId("popover-anchor-input-match_text").fill("hello");
+
+      await page.getByTestId("button_run_textoutputfalse").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert False branch built and True branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_textoutputfalse"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_text output_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
   },
 );
 
 test(
   "If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch)",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await buildIfElseRoutingFlow(page);
-
-    // Focus If-Else and expose the case_sensitive field on the node body,
-    // then toggle the switch from ON (default) to OFF.
-    await page.getByTestId("title-If-Else").click();
-    await exposeCaseSensitive(page);
-    await page.getByTestId("toggle_bool_case_sensitive").click();
-
-    // With case-insensitive comparison, `HELLO` and `hello` are equal.
-    await page.getByTestId("popover-anchor-input-input_text").fill("HELLO");
-    await page.getByTestId("popover-anchor-input-match_text").fill("hello");
-
-    await page.getByTestId("button_run_text output").click();
-    await expect(page.locator("text=built successfully")).toBeVisible({
-      timeout: 30000,
+    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
     });
 
-    await expect(page.getByTestId("node_duration_text output")).toHaveCount(1);
-    await expect(
-      page.getByTestId("node_status_icon_textoutputfalse_inactive"),
-    ).toHaveCount(1);
+    await test.step("Expose case_sensitive and toggle it OFF", async () => {
+      // Focus If-Else and expose the case_sensitive field on the node body,
+      // then toggle the switch from ON (default) to OFF.
+      await page.getByTestId("title-If-Else").click();
+      await exposeCaseSensitive(page);
+      await page.getByTestId("toggle_bool_case_sensitive").click();
+    });
+
+    await test.step("Set mixed-case input and run", async () => {
+      // With case-insensitive comparison, `HELLO` and `hello` are equal.
+      await page.getByTestId("popover-anchor-input-input_text").fill("HELLO");
+      await page.getByTestId("popover-anchor-input-match_text").fill("hello");
+
+      await page.getByTestId("button_run_text output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_text output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
   },
 );
 
 test(
   "If-Else operator=greater than routes a numeric match (10 > 5) through the True branch",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await buildIfElseRoutingFlow(page);
-
-    await selectOperator(page, "greater than");
-
-    // Numeric: 10 > 5 → True.
-    await page.getByTestId("popover-anchor-input-input_text").fill("10");
-    await page.getByTestId("popover-anchor-input-match_text").fill("5");
-
-    await page.getByTestId("button_run_text output").click();
-    await expect(page.locator("text=built successfully")).toBeVisible({
-      timeout: 30000,
+    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
     });
 
-    await expect(page.getByTestId("node_duration_text output")).toHaveCount(1);
-    await expect(
-      page.getByTestId("node_status_icon_textoutputfalse_inactive"),
-    ).toHaveCount(1);
+    await test.step("Switch to 'greater than', set numeric input, and run", async () => {
+      await selectOperator(page, "greater than");
+
+      // Numeric: 10 > 5 → True.
+      await page.getByTestId("popover-anchor-input-input_text").fill("10");
+      await page.getByTestId("popover-anchor-input-match_text").fill("5");
+
+      await page.getByTestId("button_run_text output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_text output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
   },
 );

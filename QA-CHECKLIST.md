@@ -235,14 +235,14 @@
 - [-] Enter and exit grouped component
 
 #### 3.8 If-Else Component
-- [-] `operator=equals`: matching input routes through True branch (False branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=equals`: non-matching input routes through False branch (True branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=contains` substring routing → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=regex` valid pattern routing → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=regex` hides `case_sensitive` field via `update_build_config` → `core-components/if-else-component-regression.spec.ts`
-- [-] `case_sensitive` ON (default) treats mixed case as no-match → `core-components/if-else-component-regression.spec.ts`
-- [-] `case_sensitive` OFF treats mixed case as a match → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=greater than` numeric routing → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=equals`: matching input routes through True branch (False branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=equals`: non-matching input routes through False branch (True branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=contains` substring routing → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=regex` valid pattern routing → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=regex` hides `case_sensitive` field via `update_build_config` → `core-components/if-else-component-regression.spec.ts`
+- [x] `case_sensitive` ON (default) treats mixed case as no-match → `core-components/if-else-component-regression.spec.ts`
+- [x] `case_sensitive` OFF treats mixed case as a match → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=greater than` numeric routing → `core-components/if-else-component-regression.spec.ts`
 - [ ] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than`, not separately covered
 - [ ] `max_iterations` + `default_route` cycle break
 
