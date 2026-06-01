@@ -31,7 +31,7 @@ The one exception is the regex side-effect test: when `operator=regex`, the comp
 | 1 | `equals` match | equals | hello | hello | default | True | False |
 | 2 | `equals` no-match | equals | world | hello | default | False | True |
 | 3 | `contains` substring match | contains | langflow | lang | default | True | False |
-| 4 | `regex` valid pattern match | regex | abc123 | `^abc` | (N/A — regex ignores) | True | False |
+| 4 | `regex` valid pattern match | regex | abc123 | `^abc\d+$` | (N/A — regex ignores) | True | False |
 | 5 | `regex` hides `case_sensitive` field | regex | — | — | — | — (DOM check) | — |
 | 6 | `case_sensitive` ON (default) → no-match on mixed case | equals | HELLO | hello | ON (default) | False | True |
 | 7 | `case_sensitive` OFF → match on mixed case | equals | HELLO | hello | OFF (toggled) | True | False |
@@ -117,3 +117,10 @@ Test #7 (case_sensitive OFF) does not use a dedicated helper to flip the switch 
 - The two Text Output components are dragged via `dragTo` to avoid the default-stack issue noted in the project memory (two sidebar `+` clicks land in the same position).
 - Operator dropdown options are selected via `getByRole("option", { name: operatorName, exact: true })` — the dropdown is Radix Select, which exposes stable accessible names. Selecting by `role` instead of testid avoids depending on the option's index suffix in the DOM, which historically drifts as new operators are added.
 - The `case_sensitive` BoolInput uses testid `toggle_bool_case_sensitive` with `role="switch"`; toggling once flips from ON to OFF.
+
+### Reliability decisions (independent review, @stable promotion)
+
+- **Routing is proven by a dual assertion, not a single-sided one.** Every routing scenario asserts both that the *expected-active* branch built (`node_duration_<name>`) **and** that the *expected-inactive* branch was skipped (`node_status_icon_<name>_inactive`). An inverted or mis-wired connection therefore fails the named assertion — it cannot pass green. This is why the `.first()`/`.last()` handle selection in the build helper, while DOM-order-dependent, cannot silently route to the wrong branch undetected.
+- **Result assertions carry an explicit `timeout: 30000`** instead of relying on the 5 s default `expect` timeout or fixed `waitForTimeout` sleeps. The `node_duration_*` testid renders only after the per-node `validationStatus.duration` lands, which can trail the "built successfully" toast; the generous web-first timeout absorbs that gap without sleeping.
+- **The build helper waits for `sidebar-search-input` to be visible** after the blank-flow transition before interacting — clicking immediately could resolve a node that is then detached mid-render (observed once under 5-worker parallelism).
+- **`/api/v1/flows/` 500s under parallelism are logged but non-fatal** by the fixture (only flow-execution errors fail a test). They reflect SQLite contention on concurrent flow creation, not an If-Else regression; the routing assertions still run against the created flow.
