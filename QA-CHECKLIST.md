@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-05-22
+> **Last updated:** 2026-06-01
 
 ---
 
@@ -735,7 +735,7 @@
 | `api/flows/` — REST API | 21 | 18 | 3 | 0 | 0 |
 | `core-components/` — Component Config | 23 | 3 | 18 | 0 | 2 |
 | `core-components/` — Core Components | 77 | 61 | 11 | 1 | 4 |
-| `core-functionality/auth/` | 20 | 6 | 13 | 0 | 1 |
+| `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
@@ -748,7 +748,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **433** | **179 (41%)** | **193 (45%)** | **7 (2%)** | **54 (12%)** |
+| **TOTAL** | **434** | **181 (42%)** | **192 (44%)** | **7 (2%)** | **54 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 186 `test()` calls carrying the `@stable` tag, distributed across 63 spec
+> 175 `test()` calls carrying the `@stable` tag, distributed across 60 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -874,7 +874,6 @@
 - [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
 
 #### core-functionality/llm-agents/
-- [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
@@ -884,16 +883,12 @@
 
 #### core-functionality/observability-monitoring/
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
-- [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
 - [x] GET /api/v1/monitor/traces/{trace_id} returns 404 for an unknown but well-formed UUID → `traces-detail-single.spec.ts`
-- [x] GET /api/v1/monitor/traces/{trace_id} returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
 - [x] GET /api/v1/monitor/transactions returns 200 with paginated result → `traces-detail.spec.ts`
 - [x] GET /api/v1/monitor/transactions filters by flow_id (UUID) → `traces-detail.spec.ts`
 - [x] transaction records contain required fields when not empty → `traces-detail.spec.ts`
-- [x] GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run → `traces-latency-tokens.spec.ts`
 - [x] Flow Activity page shows latency and token columns for the run → `traces-latency-tokens.spec.ts`
 - [x] Trace Details modal shows span tree and per-span latency → `traces-latency-tokens.spec.ts`
-- [x] GET /api/v1/monitor/traces?status=error returns only the failing trace; rejects unknown values → `traces-list-filters.spec.ts`
 - [x] GET /api/v1/monitor/traces?status=ok returns only the successful trace → `traces-list-filters.spec.ts`
 - [x] GET /api/v1/monitor/traces?start_time pins the >= lower bound → `traces-list-filters.spec.ts`
 - [x] GET /api/v1/monitor/traces?query=<substring> filters by trace name (incl. 50-char sanitize cap) → `traces-list-filters.spec.ts`
@@ -928,14 +923,8 @@
 - [x] playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file → `playground-non-image-attachment.spec.ts`
 - [x] playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt → `playground-non-image-attachment.spec.ts`
 - [x] playground must render JSON Data output as a code block → `playground-output-data.spec.ts`
-- [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
-- [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
-- [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
-- [x] session ID input accepts a custom value → `playground-session-id.spec.ts`
-- [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
 - [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
-- [x] rename option must not be available for the Default Session → `playground-session-rename.spec.ts`
 - [x] rename option must not be available for a session with no messages → `playground-session-rename.spec.ts`
 - [x] rename option must be available and functional for a session with messages → `playground-session-rename.spec.ts`
 - [x] Shareable playground URL is generated when publishing is enabled → `playground-shareable-url.spec.ts`
@@ -962,15 +951,15 @@
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
-- [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 
 #### mcp/client/
-- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
 
 #### ui-ux/
+- [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
+- [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
@@ -987,7 +976,7 @@
 | `api/flows/` — REST API | 3 | 0 |
 | `core-components/` — Component Config | 18 | 2 |
 | `core-components/` — Core Components | 11 | 4 |
-| `core-functionality/auth/` | 13 | 1 |
+| `core-functionality/auth/` | 12 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
 | `core-functionality/model-provider/` | 18 | 9 |
 | `core-functionality/playground/` | 3 | 1 |
