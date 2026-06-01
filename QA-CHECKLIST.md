@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 175 `test()` calls carrying the `@stable` tag, distributed across 60 spec
+> 179 `test()` calls carrying the `@stable` tag, distributed across 60 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -883,12 +883,16 @@
 
 #### core-functionality/observability-monitoring/
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
+- [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
 - [x] GET /api/v1/monitor/traces/{trace_id} returns 404 for an unknown but well-formed UUID → `traces-detail-single.spec.ts`
+- [x] GET /api/v1/monitor/traces/{trace_id} returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
 - [x] GET /api/v1/monitor/transactions returns 200 with paginated result → `traces-detail.spec.ts`
 - [x] GET /api/v1/monitor/transactions filters by flow_id (UUID) → `traces-detail.spec.ts`
 - [x] transaction records contain required fields when not empty → `traces-detail.spec.ts`
+- [x] GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run → `traces-latency-tokens.spec.ts`
 - [x] Flow Activity page shows latency and token columns for the run → `traces-latency-tokens.spec.ts`
 - [x] Trace Details modal shows span tree and per-span latency → `traces-latency-tokens.spec.ts`
+- [x] GET /api/v1/monitor/traces?status=error returns only the failing trace; rejects unknown values → `traces-list-filters.spec.ts`
 - [x] GET /api/v1/monitor/traces?status=ok returns only the successful trace → `traces-list-filters.spec.ts`
 - [x] GET /api/v1/monitor/traces?start_time pins the >= lower bound → `traces-list-filters.spec.ts`
 - [x] GET /api/v1/monitor/traces?query=<substring> filters by trace name (incl. 50-char sanitize cap) → `traces-list-filters.spec.ts`
