@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 179 `test()` calls carrying the `@stable` tag, distributed across 60 spec
+> 181 `test()` calls carrying the `@stable` tag, distributed across 60 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -927,7 +927,9 @@
 - [x] playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file → `playground-non-image-attachment.spec.ts`
 - [x] playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt → `playground-non-image-attachment.spec.ts`
 - [x] playground must render JSON Data output as a code block → `playground-output-data.spec.ts`
+- [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
+- [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
 - [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
 - [x] rename option must not be available for a session with no messages → `playground-session-rename.spec.ts`
 - [x] rename option must be available and functional for a session with messages → `playground-session-rename.spec.ts`
