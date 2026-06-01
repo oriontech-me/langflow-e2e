@@ -19,7 +19,7 @@ test.describe("Playground — Session ID input", () => {
 
   test(
     "session ID input accepts a custom value",
-    { tag: ["@stable", "@release", "@regression", "@playground"] },
+    { tag: ["@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow", async () => {
         createdFlowId = await setupPlayground(page);
