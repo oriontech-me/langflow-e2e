@@ -1,0 +1,60 @@
+name: "Setup Playwright"
+description: >-
+  Install Playwright Chromium with browser caching, a per-attempt timeout, and
+  retries so a stalled CDN download cannot burn the whole job budget.
+
+# Composite-action steps do not support `timeout-minutes`, so each attempt is
+# bounded with the `timeout` shell command instead. A stalled `playwright
+# install` is killed after 5 minutes and retried, recovering from transient
+# `cdn.playwright.dev` download stalls. See issue #344 for the failure this fixes.
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve Playwright version
+      id: pw
+      shell: bash
+      run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Playwright browsers
+      id: pw-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+
+    # Cache miss: download the browser binary AND install the OS-level
+    # dependencies (the apt packages from `--with-deps` are not part of the
+    # cached `~/.cache/ms-playwright` directory).
+    - name: Install Playwright browser and system deps
+      if: steps.pw-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          echo "::group::Playwright install (attempt $attempt/3)"
+          if timeout 5m npx playwright install chromium --with-deps; then
+            echo "::endgroup::"
+            exit 0
+          fi
+          echo "::endgroup::"
+          echo "::warning::Playwright install attempt $attempt failed or stalled; retrying in 5s..."
+          sleep 5
+        done
+        echo "::error::Playwright install failed after 3 attempts (see issue #344)"
+        exit 1
+
+    # Cache hit: the browser binary is restored, but the OS-level apt
+    # dependencies still need to be installed on the fresh runner.
+    - name: Install Playwright system deps (cache hit)
+      if: steps.pw-cache.outputs.cache-hit == 'true'
+      shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          if timeout 5m npx playwright install-deps chromium; then
+            exit 0
+          fi
+          echo "::warning::Playwright install-deps attempt $attempt failed or stalled; retrying in 5s..."
+          sleep 5
+        done
+        echo "::error::Playwright install-deps failed after 3 attempts (see issue #344)"
+        exit 1

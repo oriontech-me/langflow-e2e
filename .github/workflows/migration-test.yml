@@ -58,7 +58,19 @@ jobs:
       - name: Install test dependencies
         run: |
           pip install requests playwright pytest pytest-playwright
-          playwright install chromium --with-deps
+          # Per-attempt timeout + retry so a stalled cdn.playwright.dev download
+          # cannot burn the whole job budget. This workflow uses the Python
+          # toolchain, so it cannot reuse the Node composite action at
+          # .github/actions/setup-playwright. See issue #344.
+          for attempt in 1 2 3; do
+            if timeout 5m playwright install chromium --with-deps; then
+              exit 0
+            fi
+            echo "::warning::playwright install attempt $attempt failed or stalled; retrying in 5s..."
+            sleep 5
+          done
+          echo "::error::playwright install failed after 3 attempts (see issue #344)"
+          exit 1
 
       - name: Create virtual environment
         run: uv venv .venv
