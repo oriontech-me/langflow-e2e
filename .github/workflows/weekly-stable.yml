@@ -49,17 +49,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-
+      # No actions/setup-node: the Playwright image already ships the Node
+      # toolchain it was built against, so we use it directly instead of
+      # layering a second Node on top.
       - name: Install dependencies
         run: npm ci
 
+      # Guard: the @playwright/test version (from npm) MUST equal the container
+      # image tag, or the runner looks for a browser revision the image doesn't
+      # ship and every test fails at launch with a cryptic error. Fail fast with
+      # a clear message instead. Keep PLAYWRIGHT_VERSION in sync with the
+      # container: image tag above.
+      - name: Verify Playwright version matches the container image
+        env:
+          PLAYWRIGHT_VERSION: "1.58.2"
+        run: |
+          NPM_VERSION="$(node -p "require('@playwright/test/package.json').version")"
+          if [ "$NPM_VERSION" != "$PLAYWRIGHT_VERSION" ]; then
+            echo "::error::@playwright/test is $NPM_VERSION but the job runs in mcr.microsoft.com/playwright:v$PLAYWRIGHT_VERSION. Bump the container image tag and package.json together."
+            exit 1
+          fi
+          echo "Playwright $NPM_VERSION matches the container image v$PLAYWRIGHT_VERSION."
+
       # No "Install Playwright browsers" step: Chromium ships in the container
-      # image. npm ci still installs the @playwright/test runner, whose version
-      # is pinned to match the image tag so the browser revision lines up.
+      # image. npm ci installs the @playwright/test runner, whose version is
+      # pinned to EXACTLY 1.58.2 in package.json to match the image tag above,
+      # so the browser revision lines up. Bump both together when upgrading.
 
       - name: Collect models
         run: npx playwright test tests/collect-models.spec.ts --reporter=line
