@@ -147,7 +147,7 @@ test.describe("Playground Output – Structured Data", () => {
 
   test(
     "playground must render DataFrame output as a markdown table",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step(
         "Set up Mock Data (dataframe_output) → Chat Output flow and open playground",

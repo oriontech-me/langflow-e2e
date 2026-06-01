@@ -54,7 +54,7 @@ test.describe("Playground Output – Image Upload (ID B0c)", () => {
 
   test(
     "playground must display uploaded image in user message after sending",
-    { tag: ["@regression", "@playground"] },
+    { tag: ["@stable", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step(
         "Set up ChatInput → ChatOutput echo flow and open playground",
