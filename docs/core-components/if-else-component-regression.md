@@ -18,9 +18,9 @@ The one exception is the regex side-effect test: when `operator=regex`, the comp
 
 ## Tags
 
-`@regression` `@components`
+`@stable` `@regression` `@components`
 
-> Not `@stable` initially — the spec is new; promote to `@stable` after a few weekly runs prove it stable.
+> Promoted to `@stable` after validation against Langflow 1.10.0: 8/8 pass across three runs (2× clean at `--workers=2`; one run at default 5 workers showed a single setup-race flake that recovered on retry). The 500s observed on `/api/v1/flows/` are concurrent-flow-creation SQLite contention under parallelism — logged but non-fatal by the fixture (HTTP errors do not fail tests; only flow-execution errors do) and not specific to this spec.
 
 ---
 
