@@ -83,6 +83,9 @@ jobs:
       # so forward localhost:7860 -> langflow:7860 and keep PLAYWRIGHT_BASE_URL
       # on http://localhost:7860 — exactly as on ubuntu-latest. See issue #346.
       - name: Forward localhost:7860 to the Langflow service
+        # Force bash: inside the container the default shell is `sh` (dash),
+        # which lacks the `disown` builtin used below.
+        shell: bash
         run: |
           apt-get update -qq && apt-get install -y -qq socat
           nohup socat TCP-LISTEN:7860,fork,reuseaddr TCP:langflow:7860 >/tmp/socat.log 2>&1 &
