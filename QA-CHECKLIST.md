@@ -733,7 +733,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 18 | 3 | 0 | 0 |
-| `core-components/` — Component Config | 23 | 3 | 18 | 0 | 2 |
+| `core-components/` — Component Config | 23 | 4 | 18 | 0 | 1 |
 | `core-components/` — Core Components | 77 | 69 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
@@ -748,7 +748,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **434** | **189 (44%)** | **184 (42%)** | **7 (2%)** | **54 (12%)** |
+| **TOTAL** | **434** | **190 (44%)** | **184 (42%)** | **7 (2%)** | **53 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 191 `test()` calls carrying the `@stable` tag, distributed across 62 spec
+> 192 `test()` calls carrying the `@stable` tag, distributed across 63 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -841,6 +841,7 @@
 - [x] If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch) → `if-else-component-regression.spec.ts`
 - [x] If-Else operator=greater than routes a numeric match (10 > 5) through the True branch → `if-else-component-regression.spec.ts`
+- [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
 - [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
@@ -990,7 +991,7 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 3 | 0 |
-| `core-components/` — Component Config | 18 | 2 |
+| `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 12 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
