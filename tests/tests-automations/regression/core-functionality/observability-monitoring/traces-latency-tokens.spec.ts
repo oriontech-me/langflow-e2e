@@ -94,13 +94,7 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   test(
     "GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run",
     {
-      tag: [
-        "@stable",
-        "@release",
-        "@api",
-        "@regression",
-        "@observability",
-      ],
+      tag: ["@stable", "@release", "@api", "@regression", "@observability"],
     },
     async ({ request }) => {
       const res = await request.get(

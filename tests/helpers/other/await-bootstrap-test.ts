@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { addFlowToTestOnEmptyLangflow } from "../flows/add-flow-to-test-on-empty-langflow";
+import { openNewFlowTemplatesModal } from "../flows/open-new-flow-templates-modal";
 
 export const awaitBootstrapTest = async (
   page: Page,
@@ -44,10 +45,7 @@ export const awaitBootstrapTest = async (
     while (modalCount === 0 && attempts < maxAttempts) {
       attempts++;
       try {
-        await page.getByTestId("new-project-btn").click();
-        await page.waitForSelector('[data-testid="modal-title"]', {
-          timeout: 5000,
-        });
+        await openNewFlowTemplatesModal(page);
         modalCount = await page.getByTestId("modal-title")?.count();
       } catch (error) {
         if (attempts >= maxAttempts) {
@@ -55,7 +53,14 @@ export const awaitBootstrapTest = async (
             `Failed to open modal after ${maxAttempts} attempts: ${error}`,
           );
         }
-        // Wait a bit before retrying
+        // openNewFlowTemplatesModal clicks "New Flow", which on 1.10.0
+        // navigates to a freshly-created flow. Return home before retrying so
+        // new-project-btn is present again — otherwise the retry clicks into
+        // the canvas and times out.
+        await page.goto("/");
+        await page.waitForSelector('[id="new-project-btn"]', {
+          timeout: 30000,
+        });
         await page.waitForTimeout(1000);
       }
     }

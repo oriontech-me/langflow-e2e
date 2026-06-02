@@ -152,3 +152,4 @@ If a recurring need for one of these answers emerges, **do not patch the schema 
 - **Not a substitute for issues.** Recurring failures are still tracked in GitHub issues (`weekly-failure` label). The history makes recurrence visible; the issue carries the investigation and the fix.
 - **Not a flake-mitigation tool.** Adding a row does not auto-remove `@stable`. See `CONTRIBUTING.md` for the triage rules driven by this history.
 - **Not a dashboard.** No charts, no alerting. If you want trend lines or thresholds, build them on top of the JSONL — the file is the contract, not the presentation.
+

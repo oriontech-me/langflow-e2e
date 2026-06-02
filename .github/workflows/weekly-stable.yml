@@ -50,7 +50,7 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install chromium --with-deps
+        uses: ./.github/actions/setup-playwright
 
       - name: Collect models
         run: npx playwright test tests/collect-models.spec.ts --reporter=line

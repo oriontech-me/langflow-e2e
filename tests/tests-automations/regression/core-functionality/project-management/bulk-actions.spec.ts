@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { openNewFlowTemplatesModal } from "../../../../helpers/flows/open-new-flow-templates-modal";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
@@ -38,7 +39,7 @@ test(
       await page.getByTestId("icon-ChevronLeft").first().click();
 
       await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 10000 });
-      await page.getByTestId("new-project-btn").click();
+      await openNewFlowTemplatesModal(page);
       await page.getByTestId("side_nav_options_all-templates").click();
       await page.getByRole("heading", { name: "Document Q&A" }).click();
       await captureFlowIdFromUrl();
@@ -48,7 +49,7 @@ test(
       await page.getByTestId("icon-ChevronLeft").first().click();
 
       await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 10000 });
-      await page.getByTestId("new-project-btn").click();
+      await openNewFlowTemplatesModal(page);
       await page.getByTestId("side_nav_options_all-templates").click();
       await page.getByRole("heading", { name: "Basic Prompting" }).click();
       await captureFlowIdFromUrl();
