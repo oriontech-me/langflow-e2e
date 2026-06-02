@@ -144,7 +144,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent interaction suite",
-      { tag: ["@release", "@components", "@agents", "@playground"] },
+      { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
