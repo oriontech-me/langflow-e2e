@@ -250,7 +250,9 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent stop button must halt execution mid-run",
-      { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
+      // @stable removed: hard-fails every weekly run (deterministic). Tracked in #355;
+      // tag to be restored in the correction PR. See @stable lifecycle in CONTRIBUTING.md.
+      { tag: ["@release", "@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
