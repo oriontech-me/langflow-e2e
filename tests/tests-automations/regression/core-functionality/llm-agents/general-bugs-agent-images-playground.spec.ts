@@ -75,19 +75,18 @@ test(
 
     await page.getByTestId("button-send").click();
 
-    await page.waitForTimeout(5000);
+    // Wait for the streamed response to actually describe the image instead of
+    // sleeping a fixed interval: toContainText retries until the markdown
+    // renders, adapting to however long the model takes. This regex is the real
+    // signal that the model saw and described the image.
+    const llmResponse = page.locator(".markdown.prose").last();
+    await expect(llmResponse).toContainText(/chain|inkscape|logo/i, {
+      timeout: 60000,
+    });
 
-    const textFromLlm = await page
-      .locator(".markdown.prose")
-      .last()
-      .textContent();
-
-    // The regex above is the real signal that the model saw and described the
-    // image. The length check is a secondary guard against a one-word answer;
-    // keep it modest since gpt-4o-mini replies are terser than the Anthropic
-    // model this test was originally calibrated for.
-    expect(textFromLlm?.toLowerCase()).toMatch(/(chain|inkscape|logo)/);
-    const lengthOfTextFromLlm = textFromLlm?.length;
-    expect(lengthOfTextFromLlm).toBeGreaterThan(50);
+    // Secondary guard against a one-word answer; kept modest since gpt-4o-mini
+    // replies are terser than the Anthropic model this test was first calibrated for.
+    const textFromLlm = await llmResponse.textContent();
+    expect(textFromLlm?.length).toBeGreaterThan(50);
   },
 );
