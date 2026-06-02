@@ -1,0 +1,63 @@
+name: "Setup Playwright"
+description: >-
+  Install Playwright Chromium with browser caching, a per-attempt timeout, and
+  retries so a stalled CDN download cannot burn the whole job budget.
+
+# Composite-action steps do not support `timeout-minutes`, so each download
+# attempt is bounded with the `timeout` shell command instead. See issue #344
+# for the failure this fixes (a stalled `cdn.playwright.dev` download consuming
+# the entire 90-minute job budget).
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve Playwright version
+      id: pw
+      shell: bash
+      run: |
+        set -euo pipefail
+        version="$(node -p "require('@playwright/test/package.json').version")"
+        if [ -z "$version" ]; then
+          echo "::error::Could not resolve @playwright/test version — did 'npm ci' run before this action?"
+          exit 1
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Playwright browsers
+      id: pw-cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
+
+    # System (apt) dependencies are never part of the cached browser directory,
+    # so install them on every run. Run WITHOUT a timeout on purpose: apt is
+    # local and interrupting it mid-transaction can leave dpkg half-configured,
+    # which would break every subsequent attempt. The observed stall is the
+    # browser download (below), not apt.
+    - name: Install Playwright system dependencies
+      shell: bash
+      run: npx playwright install-deps chromium
+
+    # Download the browser binary with a per-attempt timeout + retries so a
+    # stalled download is killed and retried instead of hanging. Run on BOTH
+    # cache hit and miss: on a valid cache this is a fast no-op (Playwright sees
+    # the binary is already present and skips the download); on a missing or
+    # partial cache — e.g. a prior run's download was killed mid-way and a
+    # partial directory was saved — it re-downloads, so a corrupt cache
+    # self-heals instead of failing tests with a cryptic launch error.
+    - name: Install Playwright browser
+      shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          echo "::group::Playwright browser install (attempt $attempt/3)"
+          if timeout --kill-after=30s 5m npx playwright install chromium; then
+            echo "::endgroup::"
+            exit 0
+          fi
+          echo "::endgroup::"
+          echo "::warning::Playwright browser install attempt $attempt failed or stalled; retrying in 5s..."
+          sleep 5
+        done
+        echo "::error::Playwright browser install failed after 3 attempts (see issue #344)"
+        exit 1

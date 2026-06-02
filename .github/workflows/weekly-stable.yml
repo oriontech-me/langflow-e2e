@@ -21,6 +21,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
+    # Run inside the official Playwright image: Chromium + all OS deps are
+    # pre-installed and pulled from mcr.microsoft.com (reachable from the
+    # runners), so we no longer download the browser from Google Cloud Storage
+    # — the leg that the runners cannot complete (see issue #346). The tag MUST
+    # match the pinned @playwright/test version in package.json.
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble
+
     services:
       langflow:
         image: langflowai/langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }}
@@ -41,16 +49,57 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: "npm"
-
+      # No actions/setup-node: the Playwright image already ships the Node
+      # toolchain it was built against, so we use it directly instead of
+      # layering a second Node on top.
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
-        run: npx playwright install chromium --with-deps
+      # Guard: the @playwright/test version (from npm) MUST equal the container
+      # image tag, or the runner looks for a browser revision the image doesn't
+      # ship and every test fails at launch with a cryptic error. Fail fast with
+      # a clear message instead. Keep PLAYWRIGHT_VERSION in sync with the
+      # container: image tag above.
+      - name: Verify Playwright version matches the container image
+        env:
+          PLAYWRIGHT_VERSION: "1.58.2"
+        run: |
+          NPM_VERSION="$(node -p "require('@playwright/test/package.json').version")"
+          if [ "$NPM_VERSION" != "$PLAYWRIGHT_VERSION" ]; then
+            echo "::error::@playwright/test is $NPM_VERSION but the job runs in mcr.microsoft.com/playwright:v$PLAYWRIGHT_VERSION. Bump the container image tag and package.json together."
+            exit 1
+          fi
+          echo "Playwright $NPM_VERSION matches the container image v$PLAYWRIGHT_VERSION."
+
+      # No "Install Playwright browsers" step: Chromium ships in the container
+      # image. npm ci installs the @playwright/test runner, whose version is
+      # pinned to EXACTLY 1.58.2 in package.json to match the image tag above,
+      # so the browser revision lines up. Bump both together when upgrading.
+
+      # The async Clipboard API (and other secure-context-gated browser APIs)
+      # only exist on a secure context. Chromium treats http://localhost as
+      # secure but NOT the service hostname http://langflow. Inside a job
+      # container the Langflow service is only reachable as http://langflow:7860,
+      # so forward localhost:7860 -> langflow:7860 and keep PLAYWRIGHT_BASE_URL
+      # on http://localhost:7860 — exactly as on ubuntu-latest. See issue #346.
+      - name: Forward localhost:7860 to the Langflow service
+        # Force bash: inside the container the default shell is `sh` (dash),
+        # which lacks the `disown` builtin used below.
+        shell: bash
+        run: |
+          apt-get update -qq && apt-get install -y -qq socat
+          nohup socat TCP-LISTEN:7860,fork,reuseaddr TCP:langflow:7860 >/tmp/socat.log 2>&1 &
+          disown
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:7860/health_check >/dev/null 2>&1; then
+              echo "Forward localhost:7860 -> langflow:7860 is up."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Port forward to langflow:7860 did not come up"
+          cat /tmp/socat.log || true
+          exit 1
 
       - name: Collect models
         run: npx playwright test tests/collect-models.spec.ts --reporter=line

@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-01
+> **Last updated:** 2026-06-02
 
 ---
 
@@ -142,7 +142,7 @@
 - [-] Outdated component notification
 - [-] Update component action
 - [ ] Update with breaking change — should alert user
-- [ ] Legacy component visible via configuration
+- [x] Legacy component visible via configuration → `core-components/legacy-components-toggle-regression.spec.ts`
 - [x] Re-saving code removes handles from previously-toggled advanced fields → `core-components/general-bugs-delete-handle-advanced-input.spec.ts`
 
 #### 2.4 Code Editing
@@ -235,14 +235,14 @@
 - [-] Enter and exit grouped component
 
 #### 3.8 If-Else Component
-- [-] `operator=equals`: matching input routes through True branch (False branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=equals`: non-matching input routes through False branch (True branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=contains` substring routing → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=regex` valid pattern routing → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=regex` hides `case_sensitive` field via `update_build_config` → `core-components/if-else-component-regression.spec.ts`
-- [-] `case_sensitive` ON (default) treats mixed case as no-match → `core-components/if-else-component-regression.spec.ts`
-- [-] `case_sensitive` OFF treats mixed case as a match → `core-components/if-else-component-regression.spec.ts`
-- [-] `operator=greater than` numeric routing → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=equals`: matching input routes through True branch (False branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=equals`: non-matching input routes through False branch (True branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=contains` substring routing → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=regex` valid pattern routing → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=regex` hides `case_sensitive` field via `update_build_config` → `core-components/if-else-component-regression.spec.ts`
+- [x] `case_sensitive` ON (default) treats mixed case as no-match → `core-components/if-else-component-regression.spec.ts`
+- [x] `case_sensitive` OFF treats mixed case as a match → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=greater than` numeric routing → `core-components/if-else-component-regression.spec.ts`
 - [ ] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than`, not separately covered
 - [ ] `max_iterations` + `default_route` cycle break
 
@@ -733,8 +733,8 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 21 | 18 | 3 | 0 | 0 |
-| `core-components/` — Component Config | 23 | 3 | 18 | 0 | 2 |
-| `core-components/` — Core Components | 77 | 61 | 11 | 1 | 4 |
+| `core-components/` — Component Config | 23 | 4 | 18 | 0 | 1 |
+| `core-components/` — Core Components | 77 | 69 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
@@ -748,7 +748,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **434** | **181 (42%)** | **192 (44%)** | **7 (2%)** | **54 (12%)** |
+| **TOTAL** | **434** | **190 (44%)** | **184 (42%)** | **7 (2%)** | **53 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 181 `test()` calls carrying the `@stable` tag, distributed across 60 spec
+> 192 `test()` calls carrying the `@stable` tag, distributed across 63 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -833,6 +833,15 @@
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
+- [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
+- [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=contains routes a substring match through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=regex routes a valid pattern match through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=regex hides the case_sensitive advanced field → `if-else-component-regression.spec.ts`
+- [x] If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch → `if-else-component-regression.spec.ts`
+- [x] If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch) → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=greater than routes a numeric match (10 > 5) through the True branch → `if-else-component-regression.spec.ts`
+- [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
 - [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
@@ -874,6 +883,7 @@
 - [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
 
 #### core-functionality/llm-agents/
+- [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
@@ -959,6 +969,7 @@
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 
 #### mcp/client/
+- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
@@ -980,8 +991,8 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 3 | 0 |
-| `core-components/` — Component Config | 18 | 2 |
-| `core-components/` — Core Components | 11 | 4 |
+| `core-components/` — Component Config | 18 | 1 |
+| `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 12 | 1 |
 | `core-functionality/llm-agents/` | 2 | 25 |
 | `core-functionality/model-provider/` | 18 | 9 |
