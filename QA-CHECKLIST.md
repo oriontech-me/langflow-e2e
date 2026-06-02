@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 192 `test()` calls carrying the `@stable` tag, distributed across 63 spec
+> 193 `test()` calls carrying the `@stable` tag, distributed across 64 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -885,6 +885,7 @@
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
+- [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
 - [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
