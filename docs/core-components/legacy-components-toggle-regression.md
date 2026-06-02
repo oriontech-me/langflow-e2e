@@ -24,9 +24,15 @@ The behaviour is proven by a **count transition**, in a single `test()` with fou
 
 1. **Open a blank flow** (Arrange).
 2. **Baseline (toggle OFF):** searching `"Python REPL"` yields `toHaveCount(0)` —
-   the legacy component is not rendered. The search narrows the list so the `0`
-   is a strong statement ("asked for it by name, absent"), not a side effect of
-   list virtualization.
+   the legacy component is not rendered. A **positive control** runs first: the
+   non-legacy substitute **Python Interpreter** (`utilitiesPython Interpreter`)
+   always matches this search — its internal name is `PythonREPLComponent`, so
+   the sidebar surfaces it even when searching `"Python REPL"` — and asserting it
+   `toBeVisible()` proves the list actually rendered before the `0` is asserted.
+   Without it, `toHaveCount(0)` could resolve against a momentarily empty list
+   (filter not yet applied) and pass for the wrong reason. The search narrows the
+   list so the `0` is a strong statement ("asked for it by name, absent"), not a
+   side effect of list virtualization.
 3. **Act:** enable the toggle via the `addLegacyComponents(page)` helper (the
    search is cleared first, because an active search renders a second
    `sidebar-options-trigger` that would trip Playwright strict mode).
@@ -48,6 +54,7 @@ the assertion changes result if and only if the behaviour changes.
 
 | State | Locator | Expected |
 |---|---|---|
+| Toggle OFF (positive control) | `getByTestId("utilitiesPython Interpreter")` after searching `"Python REPL"` | `toBeVisible()` (proves the search rendered) |
 | Toggle OFF (baseline) | `getByTestId("toolsPython REPL")` after searching `"Python REPL"` | `toHaveCount(0)` |
 | Toggle acted on | `getByTestId("sidebar-legacy-switch")` | `toBeChecked()` (asserted inside `addLegacyComponents`) |
 | Toggle ON | `getByTestId("toolsPython REPL")` after searching `"Python REPL"` | `toHaveCount(1)` |
@@ -62,6 +69,7 @@ The test passes only if the count moves from `0` to `1` across the toggle action
 - `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/featureTogglesComponent.tsx` — owns the `sidebar-legacy-switch` toggle (Radix `Switch`, `role="switch"`/`aria-checked`).
 - `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/sidebarHeader.tsx` — owns the `sidebar-options-trigger` button that opens the options panel.
 - Python REPL component (`display_name = "Python REPL"`, `legacy = True`, category `tools`) — the target legacy component; its `legacy` flag is what the toggle filters on.
+- Python Interpreter component (`display_name = "Python Interpreter"`, internal name `PythonREPLComponent`, `legacy = False`, category `utilities`) — the positive-control anchor; it matches a `"Python REPL"` search (via its internal name) regardless of toggle state, so its visibility proves the search rendered.
 - `tests/helpers/flows/add-legacy-components.ts` — `addLegacyComponents(page)`, the shared helper that opens the options panel, flips the legacy switch, asserts `toBeChecked()`, and closes the panel.
 
 ---
@@ -83,10 +91,12 @@ The test passes only if the count moves from `0` to `1` across the toggle action
 
 ## Notes
 
-- **Force-fail probe (validation step, pending):** temporarily flip the baseline
-  `toHaveCount(0)` to `toHaveCount(1)`, or comment out the `addLegacyComponents(page)`
-  call, to confirm the test fails at the expected step (no false positive), then
-  revert. The strongest probe is removing the Act: if the final `toHaveCount(1)`
-  still passes without toggling, the test would be meaningless.
+- **Force-fail probe (validation step, done):** commenting out the
+  `addLegacyComponents(page)` Act made the test fail exactly at the final step
+  ("Python REPL is visible while the toggle is ON", `toHaveCount(1)`) with
+  `Expected: 1 / Received: 0` — the legacy component stays hidden when the toggle
+  is never flipped. The first three steps still passed, so the failure isolates
+  to the behaviour under test: no false positive. Restoring the Act returns the
+  test to green.
 - The helper asserts the switch state via `expect(...).toBeChecked()` (semantic,
   web-first) rather than the Radix `data-state` attribute.

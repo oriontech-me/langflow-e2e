@@ -16,6 +16,14 @@ test(
 
     await test.step("Python REPL is hidden while the toggle is OFF (baseline)", async () => {
       await page.getByTestId("sidebar-search-input").fill("Python REPL");
+      // Positive control: the non-legacy substitute (Python Interpreter, whose
+      // internal name is PythonREPLComponent) always matches this search, so its
+      // presence proves the sidebar actually rendered results. Asserting it
+      // first kills the "empty list resolves toHaveCount(0) before the filter
+      // applied" race — the 0 below now means "filtered out", not "not rendered".
+      await expect(
+        page.getByTestId("utilitiesPython Interpreter"),
+      ).toBeVisible();
       await expect(page.getByTestId("toolsPython REPL")).toHaveCount(0);
     });
 
