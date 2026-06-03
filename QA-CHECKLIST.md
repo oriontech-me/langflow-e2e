@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-02
+> **Last updated:** 2026-06-03
 
 ---
 
@@ -111,6 +111,11 @@
 - [x] Generate curl for API execution → `flow-functionality/curlApiGeneration.spec.ts`
 - [x] Generate Python code for integration → `flow-functionality/pythonApiGeneration.spec.ts`
 - [-] API access modal
+
+#### 1.7 API Key Serialization & Expiry (PR #13471)
+- [x] GET `/api/v1/api_key/` serializes `created_at`/`expires_at` as UTC ISO with `+00:00` offset and no microseconds; null `expires_at`/`last_used_at` stay null → `ui-ux/api-keys-timezone-display.spec.ts`
+- [x] Expired API key is rejected on `POST /api/v1/run/{id}` with 403; valid key accepted with 200 → `api/flows/api-key-expiry-enforcement.spec.ts`
+- [x] Expiry boundary is evaluated in UTC, not shifted by viewer offset (±30 min UTC keys resolve correctly) → `api/flows/api-key-expiry-enforcement.spec.ts`
 
 ---
 
@@ -722,6 +727,7 @@
 - [x] Change appearance/theme settings — dark/light toggle updates #body.dark class → `ui-ux/settings-theme-toggle.spec.ts`
 - [-] Keyboard shortcuts work in editor
 - [~] All documented shortcuts work
+- [x] API Keys table renders `created_at`/`expires_at` in the viewer's local timezone (UTC→local), shows "Never" for unused keys and ∞ for no-expiry keys (PR #13471) → `ui-ux/api-keys-timezone-display.spec.ts`
 
 ---
 
@@ -732,7 +738,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 18 | 3 | 0 | 0 |
+| `api/flows/` — REST API | 24 | 21 | 3 | 0 | 0 |
 | `core-components/` — Component Config | 23 | 3 | 18 | 0 | 2 |
 | `core-components/` — Core Components | 77 | 69 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
@@ -747,8 +753,8 @@
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
-| `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **434** | **189 (44%)** | **184 (42%)** | **7 (2%)** | **54 (12%)** |
+| `ui-ux/` — Settings | 6 | 2 | 3 | 1 | 0 |
+| **TOTAL** | **438** | **193 (44%)** | **184 (42%)** | **7 (2%)** | **54 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -764,7 +770,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 191 `test()` calls carrying the `@stable` tag, distributed across 62 spec
+> 195 `test()` calls carrying the `@stable` tag, distributed across 64 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -794,6 +800,8 @@
 - [x] POST /api/v1/run/{id} with invalid x-api-key returns 401 or 403 → `api-invalid-key.spec.ts`
 - [x] DELETE /api/v1/flows/{id} without Authorization header returns 401 or 403 → `api-invalid-key.spec.ts`
 - [x] PATCH /api/v1/flows/{id} with wrong token does not update the flow → `api-invalid-key.spec.ts`
+- [x] rejects an expired API key with 403 and accepts a valid one with 200 → `api-key-expiry-enforcement.spec.ts`
+- [x] evaluates the expiry boundary in UTC, not shifted by the viewer offset → `api-key-expiry-enforcement.spec.ts`
 - [x] returns 200 with array → `api-monitor-messages.spec.ts`
 - [x] without auth returns 401 or 403 → `api-monitor-messages.spec.ts`
 - [x] filtered by session_id returns only matching messages → `api-monitor-messages.spec.ts`
@@ -974,6 +982,8 @@
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
 
 #### ui-ux/
+- [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
+- [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
