@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { BasePage } from "./BasePage";
 import { adjustScreenView } from "../helpers/ui/adjust-screen-view";
+import { dismissWelcomeOverlayAndWaitForModal } from "../helpers/flows/open-new-flow-templates-modal";
 import {
   providerSetupMap,
   hasProviderEnvKeys,
@@ -54,20 +55,20 @@ export class SimpleAgentTemplatePage extends BasePage {
       console.warn(`[SimpleAgentTemplatePage] ${deletedFlowsCount} flow(s) deletado(s) antes de carregar o template.`);
     }
 
-    // Step 3: Open new project modal (empty page has a different button)
+    // Step 3: Open a new flow via whichever entry point the home page exposes:
+    // the header "New Flow" button (when flows exist) or the empty-page CTA
+    // (after the deletion loop above). `.or()` + the auto-waiting click absorbs
+    // the brief window where the just-closed delete-confirmation modal's
+    // backdrop is still fading and would intercept a premature click.
     const newProjectBtn = this.page.getByTestId("new-project-btn");
     const emptyBtn = this.page.getByTestId("new_project_btn_empty_page");
+    await newProjectBtn.or(emptyBtn).first().click({ timeout: 15000 });
 
-    if (await newProjectBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await newProjectBtn.click();
-    } else {
-      await emptyBtn.click();
-    }
-
-    // Step 4: Select the Simple Agent template
-    await this.page.waitForSelector('[data-testid="modal-title"]', {
-      timeout: 10000,
-    });
+    // Step 4: Select the Simple Agent template.
+    // Clicking "New Flow" on 1.10.0 may navigate to a freshly-created flow and
+    // surface the FlowBuilderWelcome overlay instead of the templates modal —
+    // reconcile both via the shared helper before reading the modal.
+    await dismissWelcomeOverlayAndWaitForModal(this.page);
     await this.page.getByTestId("side_nav_options_all-templates").click();
     await this.page.getByRole("heading", { name: "Simple Agent" }).first().click();
 

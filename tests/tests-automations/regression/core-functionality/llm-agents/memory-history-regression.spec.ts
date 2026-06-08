@@ -4,6 +4,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { updateOldComponents } from "../../../../helpers/flows/update-old-components";
+import { dismissWelcomeOverlayAndWaitForModal } from "../../../../helpers/flows/open-new-flow-templates-modal";
 import { PlaygroundPage } from "../../../../pages";
 import { setupLanguageModelOpenAI } from "../../../../helpers/provider-setup/setup-language-model-openai";
 
@@ -26,15 +27,19 @@ async function loadMemoryChatbot(page: Page): Promise<void> {
     await page.waitForTimeout(500);
   }
 
+  // Open a new flow via whichever entry point the home page exposes: the header
+  // "New Flow" button (when flows exist) or the empty-page CTA (after the
+  // deletion loop above). `.or()` + the auto-waiting click absorbs the brief
+  // window where the just-closed delete-confirmation modal's backdrop is still
+  // fading and would intercept a premature click.
   const newProjectBtn = page.getByTestId("new-project-btn");
   const emptyBtn = page.getByTestId("new_project_btn_empty_page");
-  if (await newProjectBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await newProjectBtn.click();
-  } else {
-    await emptyBtn.click();
-  }
+  await newProjectBtn.or(emptyBtn).first().click({ timeout: 15000 });
 
-  await page.waitForSelector('[data-testid="modal-title"]', { timeout: 10000 });
+  // Clicking "New Flow" on 1.10.0 may navigate to a freshly-created flow and
+  // surface the FlowBuilderWelcome overlay instead of the templates modal —
+  // reconcile both via the shared helper before reading the modal.
+  await dismissWelcomeOverlayAndWaitForModal(page);
   await page.getByTestId("side_nav_options_all-templates").click();
   await page.getByRole("heading", { name: "Memory Chatbot" }).first().click();
   await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', { timeout: 30000 });
@@ -55,9 +60,7 @@ async function waitForChatResponse(page: Page): Promise<void> {
 test.describe("Memory Chatbot Regression", () => {
   test(
     "memory chatbot template loads with correct node structure",
-    // @stable removed: flow editor/template fails to load on the weekly nightly run. Tracked in #363;
-    // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
-    { tag: ["@release", "@agents", "@playground"] },
+    { tag: ["@stable", "@release", "@agents", "@playground"] },
     async ({ page }) => {
       await loadMemoryChatbot(page);
 
@@ -79,9 +82,7 @@ test.describe("Memory Chatbot Regression", () => {
 
   test(
     "message history context retention suite",
-    // @stable removed: flow editor/template fails to load on the weekly nightly run. Tracked in #363;
-    // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
-    { tag: ["@release", "@agents", "@playground"] },
+    { tag: ["@stable", "@release", "@agents", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process.env.OPENAI_API_KEY,
@@ -131,9 +132,7 @@ test.describe("Memory Chatbot Regression", () => {
 
   test(
     "session isolation: new session has no context from previous session",
-    // @stable removed: flow editor/template fails to load on the weekly nightly run. Tracked in #363;
-    // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
-    { tag: ["@release", "@agents", "@playground"] },
+    { tag: ["@stable", "@release", "@agents", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process.env.OPENAI_API_KEY,
