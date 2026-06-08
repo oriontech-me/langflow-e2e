@@ -425,7 +425,7 @@
 - [x] Trace list filter `?session_id` filters by the session passed at run time → `traces-list-filters.spec.ts`
 
 #### 8.2 Notifications
-- [-] System notifications
+- [x] System notifications — build-success entry shows in the notifications tab → `notifications.spec.ts`
 - [-] Execution error notification
 - [-] Outdated component notification
 
@@ -739,7 +739,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
-| `core-functionality/observability-monitoring/` | 22 | 13 | 8 | 0 | 1 |
+| `core-functionality/observability-monitoring/` | 22 | 14 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -748,7 +748,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **434** | **190 (44%)** | **184 (42%)** | **7 (2%)** | **53 (12%)** |
+| **TOTAL** | **434** | **191 (44%)** | **183 (42%)** | **7 (2%)** | **53 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 191 `test()` calls carrying the `@stable` tag, distributed across 64 spec
+> 192 `test()` calls carrying the `@stable` tag, distributed across 65 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -979,6 +979,7 @@
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
+- [x] User should be able to interact notifications tab → `notifications.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 
 ---
@@ -1008,7 +1009,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 8 | 1 |
+| `core-functionality/observability-monitoring/` | 7 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
 | `flow-functionality/` | 13 | 0 |
 | `core-functionality/project-management/` | 10 | 0 |
