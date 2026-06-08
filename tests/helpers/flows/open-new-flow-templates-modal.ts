@@ -29,14 +29,24 @@ export const dismissWelcomeOverlayAndWaitForModal = async (page: Page) => {
 };
 
 /**
- * Clicks the header "New Flow" button (`new-project-btn`) and lands on the
- * templates modal, handling the 1.10.0 welcome overlay (see
+ * Clicks whichever "New Flow" entry point the home page exposes and lands on
+ * the templates modal, handling the 1.10.0 welcome overlay (see
  * `dismissWelcomeOverlayAndWaitForModal`).
  *
+ * Both the header button (`new-project-btn`, present when flows exist) and the
+ * empty-page CTA (`new_project_btn_empty_page`, shown on a flowless home) open
+ * the same modal — `.or().first()` picks whichever is in the DOM (the header is
+ * DOM-first when both render, which is harmless since both trigger the same
+ * action). The auto-waiting click also absorbs the brief window where a
+ * just-closed confirmation modal's backdrop is still fading.
+ *
  * Single source of truth for the "New Flow → templates modal" flow, used by
- * `awaitBootstrapTest` and any spec that opens the modal mid-test.
+ * `awaitBootstrapTest`, `loadTemplateByName`, and any spec that opens the modal
+ * mid-test.
  */
 export const openNewFlowTemplatesModal = async (page: Page) => {
-  await page.getByTestId("new-project-btn").click();
+  const newProjectBtn = page.getByTestId("new-project-btn");
+  const emptyBtn = page.getByTestId("new_project_btn_empty_page");
+  await newProjectBtn.or(emptyBtn).first().click({ timeout: 15000 });
   await dismissWelcomeOverlayAndWaitForModal(page);
 };
