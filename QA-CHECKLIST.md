@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 192 `test()` calls carrying the `@stable` tag, distributed across 65 spec
+> 193 `test()` calls carrying the `@stable` tag, distributed across 65 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -964,6 +964,7 @@
 - [x] import flow from JSON via upload button must load flow on canvas → `export-import-flow.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
+- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 
