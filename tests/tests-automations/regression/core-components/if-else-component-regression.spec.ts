@@ -20,6 +20,12 @@ async function expandFocusedNode(page: Page): Promise<void> {
     timeout: 10000,
   });
   await page.getByTestId("expand-button-modal").click();
+  // Settle: confirm the node finished expanding before callers interact with the
+  // freshly-mounted body (rename inspector, `shownode` handles) — guards against
+  // a mid-transition return flaking under CI parallelism.
+  await expect(page.getByTestId("hide-node-content")).toHaveCount(0, {
+    timeout: 5000,
+  });
 }
 
 async function selectOperator(
