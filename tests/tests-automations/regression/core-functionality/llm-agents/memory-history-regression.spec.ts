@@ -4,7 +4,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { updateOldComponents } from "../../../../helpers/flows/update-old-components";
-import { dismissWelcomeOverlayAndWaitForModal } from "../../../../helpers/flows/open-new-flow-templates-modal";
+import { loadTemplateByName } from "../../../../helpers/flows/load-template-by-name";
 import { PlaygroundPage } from "../../../../pages";
 import { setupLanguageModelOpenAI } from "../../../../helpers/provider-setup/setup-language-model-openai";
 
@@ -13,36 +13,7 @@ if (!process.env.CI) {
 }
 
 async function loadMemoryChatbot(page: Page): Promise<void> {
-  await page.goto("/");
-  await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
-
-  const emptyPageDescription = page.getByTestId("empty_page_description");
-  while ((await emptyPageDescription.count()) === 0) {
-    const dropdown = page.getByTestId("home-dropdown-menu").first();
-    if (!(await dropdown.isVisible({ timeout: 2000 }).catch(() => false))) break;
-    await dropdown.click();
-    await page.getByTestId("btn_delete_dropdown_menu").first().waitFor({ state: "visible", timeout: 5000 });
-    await page.getByTestId("btn_delete_dropdown_menu").first().click();
-    await page.getByTestId("btn_delete_delete_confirmation_modal").first().click();
-    await page.waitForTimeout(500);
-  }
-
-  // Open a new flow via whichever entry point the home page exposes: the header
-  // "New Flow" button (when flows exist) or the empty-page CTA (after the
-  // deletion loop above). `.or()` + the auto-waiting click absorbs the brief
-  // window where the just-closed delete-confirmation modal's backdrop is still
-  // fading and would intercept a premature click.
-  const newProjectBtn = page.getByTestId("new-project-btn");
-  const emptyBtn = page.getByTestId("new_project_btn_empty_page");
-  await newProjectBtn.or(emptyBtn).first().click({ timeout: 15000 });
-
-  // Clicking "New Flow" on 1.10.0 may navigate to a freshly-created flow and
-  // surface the FlowBuilderWelcome overlay instead of the templates modal —
-  // reconcile both via the shared helper before reading the modal.
-  await dismissWelcomeOverlayAndWaitForModal(page);
-  await page.getByTestId("side_nav_options_all-templates").click();
-  await page.getByRole("heading", { name: "Memory Chatbot" }).first().click();
-  await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', { timeout: 30000 });
+  await loadTemplateByName(page, "Memory Chatbot");
 
   await adjustScreenView(page);
   await updateOldComponents(page);
