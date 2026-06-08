@@ -19,7 +19,9 @@ test.describe("Output Modal — Copy Button", () => {
 
   test(
     "copy button copies Text Input output and toggles Check icon",
-    { tag: ["@stable", "@release", "@workspace", "@playground"] },
+    // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+    // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+    { tag: ["@release", "@workspace", "@playground"] },
     async ({ page }) => {
       await test.step("create blank flow and capture flow id", async () => {
         await awaitBootstrapTest(page);

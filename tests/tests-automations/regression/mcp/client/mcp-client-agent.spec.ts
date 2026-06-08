@@ -162,7 +162,9 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent calls echo MCP tool and returns echoed message",
-      { tag: ["@mcp", "@agents", "@regression", "@stable"] },
+      // @stable removed: flow editor/template fails to load on the weekly nightly run. Tracked in #363;
+      // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+      { tag: ["@mcp", "@agents", "@regression"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

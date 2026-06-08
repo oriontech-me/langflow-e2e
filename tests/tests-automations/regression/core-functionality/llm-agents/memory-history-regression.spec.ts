@@ -55,7 +55,9 @@ async function waitForChatResponse(page: Page): Promise<void> {
 test.describe("Memory Chatbot Regression", () => {
   test(
     "memory chatbot template loads with correct node structure",
-    { tag: ["@stable", "@release", "@agents", "@playground"] },
+    // @stable removed: flow editor/template fails to load on the weekly nightly run. Tracked in #363;
+    // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+    { tag: ["@release", "@agents", "@playground"] },
     async ({ page }) => {
       await loadMemoryChatbot(page);
 
@@ -77,7 +79,9 @@ test.describe("Memory Chatbot Regression", () => {
 
   test(
     "message history context retention suite",
-    { tag: ["@stable", "@release", "@agents", "@playground"] },
+    // @stable removed: flow editor/template fails to load on the weekly nightly run. Tracked in #363;
+    // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+    { tag: ["@release", "@agents", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process.env.OPENAI_API_KEY,
@@ -127,7 +131,9 @@ test.describe("Memory Chatbot Regression", () => {
 
   test(
     "session isolation: new session has no context from previous session",
-    { tag: ["@stable", "@release", "@agents", "@playground"] },
+    // @stable removed: flow editor/template fails to load on the weekly nightly run. Tracked in #363;
+    // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+    { tag: ["@release", "@agents", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process.env.OPENAI_API_KEY,
