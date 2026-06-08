@@ -128,7 +128,9 @@ async function buildIfElseRoutingFlow(page: Page): Promise<void> {
 
 test(
   "If-Else routes matching input through the True branch and skips the False branch",
-  { tag: ["@stable", "@regression", "@components"] },
+  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await test.step("Build If-Else flow with True/False Text Output branches", async () => {
       await buildIfElseRoutingFlow(page);
@@ -158,7 +160,9 @@ test(
 
 test(
   "If-Else routes non-matching input through the False branch and skips the True branch",
-  { tag: ["@stable", "@regression", "@components"] },
+  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await test.step("Build If-Else flow with True/False Text Output branches", async () => {
       await buildIfElseRoutingFlow(page);
@@ -188,7 +192,9 @@ test(
 
 test(
   "If-Else operator=contains routes a substring match through the True branch",
-  { tag: ["@stable", "@regression", "@components"] },
+  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await test.step("Build If-Else flow with True/False Text Output branches", async () => {
       await buildIfElseRoutingFlow(page);
@@ -222,7 +228,9 @@ test(
 
 test(
   "If-Else operator=regex routes a valid pattern match through the True branch",
-  { tag: ["@stable", "@regression", "@components"] },
+  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await test.step("Build If-Else flow with True/False Text Output branches", async () => {
       await buildIfElseRoutingFlow(page);
@@ -259,7 +267,9 @@ test(
 
 test(
   "If-Else operator=regex hides the case_sensitive advanced field",
-  { tag: ["@stable", "@regression", "@components"] },
+  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await test.step("Build If-Else flow with True/False Text Output branches", async () => {
       await buildIfElseRoutingFlow(page);
@@ -291,7 +301,9 @@ test(
 
 test(
   "If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch",
-  { tag: ["@stable", "@regression", "@components"] },
+  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await test.step("Build If-Else flow with True/False Text Output branches", async () => {
       await buildIfElseRoutingFlow(page);
@@ -322,7 +334,9 @@ test(
 
 test(
   "If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch)",
-  { tag: ["@stable", "@regression", "@components"] },
+  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await test.step("Build If-Else flow with True/False Text Output branches", async () => {
       await buildIfElseRoutingFlow(page);
@@ -360,7 +374,9 @@ test(
 
 test(
   "If-Else operator=greater than routes a numeric match (10 > 5) through the True branch",
-  { tag: ["@stable", "@regression", "@components"] },
+  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await test.step("Build If-Else flow with True/False Text Output branches", async () => {
       await buildIfElseRoutingFlow(page);

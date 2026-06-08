@@ -144,7 +144,9 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent interaction suite",
-      { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
+      // @stable removed: flow editor/template fails to load on the weekly nightly run. Tracked in #363;
+      // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+      { tag: ["@release", "@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

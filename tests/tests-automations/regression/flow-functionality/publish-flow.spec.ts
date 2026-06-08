@@ -11,7 +11,9 @@ const FLOW_BASE = {
 
 test(
   "user can publish a flow and access it via shareable URL, then unpublish to revoke access",
-  { tag: ["@release", "@workspace", "@playground", "@stable"] },
+  // @stable removed: publish/share UI not reachable on the weekly nightly run. Tracked in #364;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@release", "@workspace", "@playground"] },
   async ({ page, browser, request }) => {
     await awaitBootstrapTest(page);
 

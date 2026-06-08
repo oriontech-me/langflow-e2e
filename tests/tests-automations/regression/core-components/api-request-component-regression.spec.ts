@@ -368,7 +368,9 @@ test(
 
 test(
   "API Request component — non-2xx HTTP response propagates status_code without crashing",
-  { tag: ["@stable", "@regression", "@components"] },
+  // @stable removed: flow editor/template fails to load on the weekly nightly run. Tracked in #363;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 

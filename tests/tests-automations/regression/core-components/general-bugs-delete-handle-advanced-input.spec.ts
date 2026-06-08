@@ -10,7 +10,9 @@ import {
 
 test(
   "the system must delete the handles from advanced fields when the code is updated",
-  { tag: ["@release", "@components", "@stable"] },
+  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
+  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
+  { tag: ["@release", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

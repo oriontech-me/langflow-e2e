@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-02
+> **Last updated:** 2026-06-08
 
 ---
 
@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 192 `test()` calls carrying the `@stable` tag, distributed across 64 spec
+> 175 `test()` calls carrying the `@stable` tag, distributed across 58 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -813,7 +813,6 @@
 - [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PATCH method executes PATCH verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
-- [x] API Request component — non-2xx HTTP response propagates status_code without crashing → `api-request-component-regression.spec.ts`
 - [x] API Request component — query parameters embedded in URL are sent and echoed → `api-request-component-regression.spec.ts`
 - [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
@@ -832,15 +831,6 @@
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
-- [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
-- [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
-- [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
-- [x] If-Else operator=contains routes a substring match through the True branch → `if-else-component-regression.spec.ts`
-- [x] If-Else operator=regex routes a valid pattern match through the True branch → `if-else-component-regression.spec.ts`
-- [x] If-Else operator=regex hides the case_sensitive advanced field → `if-else-component-regression.spec.ts`
-- [x] If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch → `if-else-component-regression.spec.ts`
-- [x] If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch) → `if-else-component-regression.spec.ts`
-- [x] If-Else operator=greater than routes a numeric match (10 > 5) through the True branch → `if-else-component-regression.spec.ts`
 - [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
@@ -883,13 +873,9 @@
 - [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
 
 #### core-functionality/llm-agents/
-- [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
-- [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
-- [x] message history context retention suite → `memory-history-regression.spec.ts`
-- [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
 
 #### core-functionality/observability-monitoring/
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
@@ -910,7 +896,6 @@
 - [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
-- [x] copy button copies Text Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
 - [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
 - [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
 - [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
@@ -964,12 +949,10 @@
 - [x] import flow from JSON via upload button must load flow on canvas → `export-import-flow.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
-- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 
 #### mcp/client/
-- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
