@@ -10,9 +10,7 @@ import {
 
 test(
   "the system must delete the handles from advanced fields when the code is updated",
-  // @stable removed: Text Input/Output are now legacy and hidden from the sidebar (deterministic). Tracked in #362;
-  // tag to be restored on resolution. See @stable lifecycle in CONTRIBUTING.md.
-  { tag: ["@release", "@components"] },
+  { tag: ["@stable", "@release", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -41,20 +39,23 @@ test(
     await closeAdvancedOptions(page);
 
     await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("text input");
-    await expect(page.getByTestId("input_outputText Input")).toBeVisible({
+    await page.getByTestId("sidebar-search-input").fill("chat input");
+    await expect(page.getByTestId("input_outputChat Input")).toBeVisible({
       timeout: 10000,
     });
     await page
-      .getByTestId("input_outputText Input")
+      .getByTestId("input_outputChat Input")
       .dragTo(page.locator('//*[@id="react-flow-id"]'), {
         targetPosition: { x: 200, y: 100 },
       });
 
     await adjustScreenView(page);
 
+    // Chat Input is added minimized; connect from its collapsed "Chat Message"
+    // output handle (noshownode) — no need to expand the node, this test only
+    // uses it as a connection source for the If-Else `case true` input.
     await page
-      .getByTestId("handle-textinput-shownode-output text-right")
+      .getByTestId("handle-chatinput-noshownode-chat message-source")
       .click();
 
     await page

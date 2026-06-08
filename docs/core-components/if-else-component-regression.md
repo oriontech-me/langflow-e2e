@@ -12,6 +12,8 @@ Covers the routing contract of the **If-Else** (ConditionalRouter) component acr
 
 For every scenario except the regex side-effect test, the assertion surface is the canvas node status: `node_duration_<name>` testid for the branch that built (active) and `node_status_icon_<name>_inactive` testid for the branch that was skipped. This is the same surface used by `flow-functionality/general-bugs-reset-flow-run.spec.ts` and is more reliable than message-content assertions because the component returns an empty Message on the inactive branch (so message presence alone cannot distinguish the routes).
 
+> **Branch sinks use Chat Output (not the legacy Text Output).** Langflow marked Text Input/Output `legacy: true` and the sidebar hides legacy components by default, so the two terminal sinks were migrated to **Chat Output**. Chat Output is added minimized — the build helper expands each one (`expandFocusedNode`) so the run button and the `shownode` input handle are present in the DOM. See #362.
+
 The one exception is the regex side-effect test: when `operator=regex`, the component's `update_build_config` removes the `case_sensitive` field from the build config. The assertion there is that opening the edit-fields modal shows `toHaveCount(0)` for the `showcase_sensitive` testid (it is normally `1`).
 
 ---
@@ -48,10 +50,10 @@ All eight scenarios are introduced in this spec; there is no pre-existing implem
 1. Bootstrap and open a blank flow.
 2. Add the **If-Else** component from the sidebar.
 3. Zoom out so two more components fit.
-4. Drop two **Text Output** components onto the canvas (positions: `{100, 100}` and `{200, 400}`).
-5. Rename the second Text Output to `textoutputfalse` so its testid suffix is stable.
-6. Wire `handle-conditionalrouter-shownode-true-right` → first Text Output's `inputs-left` handle.
-7. Wire `handle-conditionalrouter-shownode-false-right` → `textoutputfalse`'s `inputs-left` handle.
+4. Drop two **Chat Output** components onto the canvas (positions: `{100, 100}` and `{200, 400}`), expanding each one after it is added (Chat Output is added minimized).
+5. Rename the second Chat Output to `chatoutputfalse` so its testid suffix is stable.
+6. Wire `handle-conditionalrouter-shownode-true-right` → first Chat Output's `inputs-left` handle.
+7. Wire `handle-conditionalrouter-shownode-false-right` → `chatoutputfalse`'s `inputs-left` handle.
 
 Each test calls this helper and then applies the scenario-specific configuration before running.
 
@@ -72,14 +74,14 @@ Test #7 (case_sensitive OFF) does not use a dedicated helper to flip the switch 
 
 | # | Active branch (`toHaveCount(1)`) | Inactive branch (`toHaveCount(1)`) | Additional |
 |---|---|---|---|
-| 1 | `node_duration_text output` | `node_status_icon_textoutputfalse_inactive` | — |
-| 2 | `node_duration_textoutputfalse` | `node_status_icon_text output_inactive` | — |
-| 3 | `node_duration_text output` | `node_status_icon_textoutputfalse_inactive` | — |
-| 4 | `node_duration_text output` | `node_status_icon_textoutputfalse_inactive` | — |
+| 1 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | — |
+| 2 | `node_duration_chatoutputfalse` | `node_status_icon_chat output_inactive` | — |
+| 3 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | — |
+| 4 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | — |
 | 5 | — | — | After switching to `regex`, opening edit-fields shows `toHaveCount(0)` for `showcase_sensitive`. With `equals`, count is `1`. |
-| 6 | `node_duration_textoutputfalse` | `node_status_icon_text output_inactive` | — |
-| 7 | `node_duration_text output` | `node_status_icon_textoutputfalse_inactive` | — |
-| 8 | `node_duration_text output` | `node_status_icon_textoutputfalse_inactive` | — |
+| 6 | `node_duration_chatoutputfalse` | `node_status_icon_chat output_inactive` | — |
+| 7 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | — |
+| 8 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | — |
 
 ---
 
@@ -114,7 +116,7 @@ Test #7 (case_sensitive OFF) does not use a dedicated helper to flip the switch 
 
 - Stability: 3 / 3 PASS for the original 2 tests (~16–23 s). New scenarios will be re-validated with the same pipeline (typecheck + lint + stability + force-fail + trace + backend audit) before commit.
 - Force-fail probe pattern: temporarily change the active-branch `node_duration_*` `toHaveCount(1)` to `toHaveCount(99)` for one representative scenario per setup variant (default, exposed case_sensitive, switched operator). Confirm failure at the expected line, revert, re-pass.
-- The two Text Output components are dragged via `dragTo` to avoid the default-stack issue noted in the project memory (two sidebar `+` clicks land in the same position).
+- The two Chat Output components are dragged via `dragTo` to avoid the default-stack issue noted in the project memory (two sidebar `+` clicks land in the same position).
 - Operator dropdown options are selected via `getByRole("option", { name: operatorName, exact: true })` — the dropdown is Radix Select, which exposes stable accessible names. Selecting by `role` instead of testid avoids depending on the option's index suffix in the DOM, which historically drifts as new operators are added.
 - The `case_sensitive` BoolInput uses testid `toggle_bool_case_sensitive` with `role="switch"`; toggling once flips from ON to OFF.
 
