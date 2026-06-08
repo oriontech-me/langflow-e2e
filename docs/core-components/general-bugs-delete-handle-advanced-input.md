@@ -13,7 +13,7 @@ Regression test for a bug where dynamic handles tied to **advanced fields** ling
 The test exercises the **If-Else** component because it has a togglable `true_case_message` advanced field that historically left a dangling handle after the user re-saved the code. The contract under test:
 
 1. Toggling `showtrue_case_message` exposes a "Receiving input" placeholder.
-2. Connecting Text Input → If-Else's `case true` produces a locked handle (visible in Advanced view as another "Receiving input" placeholder + a lock icon).
+2. Connecting Chat Input → If-Else's `case true` produces a locked handle (visible in Advanced view as another "Receiving input" placeholder + a lock icon).
 3. After clicking **Check & Save** in the code modal with the default code, the advanced field config is re-evaluated and both the "Receiving input" placeholders and the lock icon are removed (`count === 0`).
 
 ---
@@ -30,8 +30,8 @@ The test exercises the **If-Else** component because it has a togglable `true_ca
 2. Add the **If-Else** component from the sidebar.
 3. Disable the inspect panel, open Advanced Options.
 4. Toggle `showtrue_case_message`, then close Advanced Options.
-5. Add a **Text Input** component (drag onto canvas).
-6. Connect Text Input's output handle to If-Else's `case true` input handle.
+5. Add a **Chat Input** component (drag onto canvas).
+6. Connect Chat Input's collapsed `noshownode` "Chat Message" output handle to If-Else's `case true` input handle (the node stays minimized — it is used only as a connection source).
 7. Click the If-Else title and open Advanced Options again — assert exactly 2 "Receiving input" placeholders are visible.
 8. Close Advanced Options.
 9. Click the If-Else title, open the code modal, click **Check & Save** (resaves the default code).
@@ -45,7 +45,7 @@ The test exercises the **If-Else** component because it has a togglable `true_ca
 
 | Step | Criterion |
 |---|---|
-| After connecting Text Input → If-Else | Advanced view shows `toHaveCount(2)` `Receiving input` placeholders |
+| After connecting Chat Input → If-Else | Advanced view shows `toHaveCount(2)` `Receiving input` placeholders |
 | After Check & Save on code modal | Advanced view shows `toHaveCount(0)` `Receiving input` placeholders |
 | After Check & Save on code modal | Advanced view shows `toHaveCount(0)` `icon-lock` icons |
 

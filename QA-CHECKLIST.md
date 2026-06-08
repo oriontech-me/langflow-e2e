@@ -764,7 +764,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 175 `test()` calls carrying the `@stable` tag, distributed across 58 spec
+> 185 `test()` calls carrying the `@stable` tag, distributed across 61 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -831,6 +831,15 @@
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
+- [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
+- [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
+- [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=contains routes a substring match through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=regex routes a valid pattern match through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=regex hides the case_sensitive advanced field → `if-else-component-regression.spec.ts`
+- [x] If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch → `if-else-component-regression.spec.ts`
+- [x] If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch) → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=greater than routes a numeric match (10 > 5) through the True branch → `if-else-component-regression.spec.ts`
 - [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
@@ -896,6 +905,7 @@
 - [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
+- [x] copy button copies Chat Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
 - [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
 - [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
 - [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
