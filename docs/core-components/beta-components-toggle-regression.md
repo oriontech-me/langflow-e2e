@@ -74,6 +74,15 @@ The test passes only if the count moves from visible (`1`) to absent (`0`) acros
 - Amazon Bedrock Converse component (`display_name = "Amazon Bedrock Converse"`, `beta = True`, category `amazon`) — the target beta component; its `beta` flag is what the toggle filters on.
 - Amazon Bedrock Embeddings component (`display_name = "Amazon Bedrock Embeddings"`, `beta = False`, `legacy = False`, category `amazon`) — the positive-control anchor; it matches an `"Amazon Bedrock"` search regardless of toggle state, so its visibility proves the search rendered.
 
+A third component also matches an `"Amazon Bedrock"` search: **Amazon Bedrock**
+(`display_name = "Amazon Bedrock"`, `legacy = True`, category `amazon`). It is
+*not* used here and does not interfere: the legacy toggle defaults OFF, so this
+item is hidden in both the ON and OFF states of the beta toggle, and the
+assertions target exact testids rather than relying on the search returning a
+fixed set. It is the reason the bare "Amazon Bedrock" item is **not** a usable
+positive control (it would be hidden by default), so the non-legacy
+**Embeddings** is used instead.
+
 Flag values (`beta`/`legacy`) and the `amazon` category prefix were confirmed against the running instance's `/api/v1/all` endpoint.
 
 ---
