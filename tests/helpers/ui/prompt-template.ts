@@ -1,4 +1,9 @@
-import { type Locator, type Page, expect } from "@playwright/test";
+import {
+  type Locator,
+  type Page,
+  type Response,
+  expect,
+} from "@playwright/test";
 import { awaitBootstrapTest } from "../other/await-bootstrap-test";
 import { adjustScreenView } from "./adjust-screen-view";
 
@@ -24,9 +29,64 @@ const MUSTACHE_OPEN_BUTTON = "button_open_mustache_prompt_modal";
 const MUSTACHE_TEXTAREA = "modal-mustachepromptarea_mustache_template";
 
 /**
+ * Block until the flow's debounced autosave has settled.
+ *
+ * Adding a node and fitting/zooming the canvas viewport each mutate the flow
+ * and schedule a debounced (300 ms) `PATCH /api/v1/flows/{id}` autosave
+ * (upstream `use-autosave-flow.ts` / `SAVE_DEBOUNCE_TIME`). If such an autosave
+ * is still in flight when the next flow-mutating action fires its own PATCH —
+ * e.g. saving the prompt modal — the two requests race, and with no retry or
+ * version check on that endpoint the backend can return a transient failure
+ * that the frontend renders as a "Failed to save flow" toast. That toast uses
+ * the same `.error-build-message` class the rejection assertions key on, so the
+ * race surfaces as cross-case flake (see issue #358).
+ *
+ * Resolves once no flow-save PATCH has been observed for `quietMs` (chosen
+ * comfortably above the 300 ms autosave debounce), or after `timeout` as a
+ * safety cap so a quiet flow never hangs the caller.
+ */
+export async function waitForFlowSaveSettled(
+  page: Page,
+  { quietMs = 700, timeout = 10000 }: { quietMs?: number; timeout?: number } = {},
+): Promise<void> {
+  const isFlowSave = (resp: Response) =>
+    resp.url().includes("/api/v1/flows/") &&
+    resp.request().method() === "PATCH";
+
+  await new Promise<void>((resolve) => {
+    let quietTimer: ReturnType<typeof setTimeout>;
+
+    const finish = () => {
+      clearTimeout(quietTimer);
+      clearTimeout(cap);
+      page.off("response", onResponse);
+      resolve();
+    };
+
+    const arm = () => {
+      clearTimeout(quietTimer);
+      quietTimer = setTimeout(finish, quietMs);
+    };
+
+    const onResponse = (resp: Response) => {
+      if (isFlowSave(resp)) arm();
+    };
+
+    const cap = setTimeout(finish, timeout);
+    page.on("response", onResponse);
+    arm();
+  });
+}
+
+/**
  * Bootstraps a fresh blank flow, drops a Prompt Template node onto it via the
  * sidebar search/add path, and waits for exactly one node to render on the
  * canvas.
+ *
+ * Before returning, it waits for the node-add / viewport autosaves to settle
+ * (`waitForFlowSaveSettled`) so the next flow-save the caller triggers — e.g.
+ * saving the prompt modal — runs on its own and cannot race a still-in-flight
+ * autosave into a spurious "Failed to save flow" toast (issue #358).
  */
 export async function addPromptComponent(page: Page): Promise<void> {
   await awaitBootstrapTest(page);
@@ -44,6 +104,8 @@ export async function addPromptComponent(page: Page): Promise<void> {
   await expect(page.locator(".react-flow__node")).toHaveCount(1, {
     timeout: 10000,
   });
+
+  await waitForFlowSaveSettled(page);
 }
 
 /**
