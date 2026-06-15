@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-10
+> **Last updated:** 2026-06-15
 
 ---
 
@@ -765,7 +765,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 194 `test()` calls carrying the `@stable` tag, distributed across 66 spec
+> 192 `test()` calls carrying the `@stable` tag, distributed across 65 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -810,7 +810,6 @@
 - [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
 - [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
 - [x] API Request component — GET request returns 200 and output Data contains all required fields → `api-request-component-regression.spec.ts`
-- [x] API Request component — POST method executes POST verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PATCH method executes PATCH verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
@@ -953,7 +952,6 @@
 
 #### core-functionality/project-management/
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
-- [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
 
 #### flow-functionality/
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
