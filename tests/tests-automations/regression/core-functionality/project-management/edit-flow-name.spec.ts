@@ -4,7 +4,7 @@ import { renameFlow } from "../../../../helpers/flows/rename-flow";
 
 test(
   "user should be able to edit flow name and see it reflected in the main page listing",
-  { tag: ["@release", "@workspace", "@regression"] },
+  { tag: ["@release", "@workspace", "@regression", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
