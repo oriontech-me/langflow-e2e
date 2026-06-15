@@ -55,6 +55,9 @@ export const renameFlow = async (
   }
 
   const descriptionInput = page.getByTestId("input-flow-description");
+  // Guard the read symmetrically with the name input above: `inputValue()` does
+  // not auto-wait, so reading mid-render would throw or return a stale value.
+  await expect(descriptionInput).toBeVisible({ timeout: MODAL_TIMEOUT });
   const flowDescriptionInput = await descriptionInput.inputValue();
   if (flowDescription) {
     await descriptionInput.fill(flowDescription);
@@ -65,13 +68,16 @@ export const renameFlow = async (
     await expect(saveButton).toBeEnabled({ timeout: MODAL_TIMEOUT });
     await saveButton.click();
 
-    // Confirm the save landed. The toast auto-dismisses, so we assert it
-    // appeared but do not depend on clicking it (which raced the dismissal).
-    await expect(
-      page.getByText("Changes saved successfully").last(),
-    ).toBeVisible({ timeout: MODAL_TIMEOUT });
+    // Confirm the save succeeded by asserting the modal closed. Upstream
+    // `flowSettingsComponent.handleSubmit` only calls `close()` after the save
+    // resolves (the error path leaves the dialog open), so the name input
+    // disappearing is the deterministic success signal. Unlike the "Changes
+    // saved successfully" toast it does not auto-dismiss (asserting a fading
+    // toast races its own timeout), and unlike a bare sidebar check it cannot
+    // pass while the modal still overlays the editor.
+    await expect(nameInput).toBeHidden({ timeout: MODAL_TIMEOUT });
 
-    // Modal closed → back in the editor.
+    // Editor is interactive again.
     await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
       timeout: 30000,
     });
