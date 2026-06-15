@@ -246,7 +246,7 @@ test(
 
 test(
   "API Request component — POST method executes POST verb and returns 200",
-  { tag: ["@stable", "@release", "@regression", "@components"] },
+  { tag: ["@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
