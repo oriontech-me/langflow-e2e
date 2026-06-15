@@ -765,7 +765,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 192 `test()` calls carrying the `@stable` tag, distributed across 65 spec
+> 193 `test()` calls carrying the `@stable` tag, distributed across 65 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -810,6 +810,7 @@
 - [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
 - [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
 - [x] API Request component — GET request returns 200 and output Data contains all required fields → `api-request-component-regression.spec.ts`
+- [x] API Request component — POST method executes POST verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PATCH method executes PATCH verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
