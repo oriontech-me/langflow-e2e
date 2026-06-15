@@ -1,6 +1,6 @@
 # API Request Component — Rendering, Inspector, HTTP Methods, cURL Mode and Error Paths
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -9,7 +9,7 @@
 Validates the **API Request** component end-to-end via 15 scenarios grouped into five categories:
 
 1. **Canvas rendering and inspector fields** — the node renders with the correct URL/API Response handles, and the inspector accepts URL + HTTP method input.
-2. **Execution per HTTP verb** — GET, POST, PUT, PATCH, DELETE each round-trip to a `httpbin.org` endpoint that **only** accepts that verb (any other verb returns 405). The output Data is asserted to contain `200`, the echoed URL, and the expected structural keys (`source`, `status_code`, `response_headers`, `result`).
+2. **Execution per HTTP verb** — GET, POST, PUT, PATCH, DELETE each round-trip to an echo endpoint that **only** accepts that verb (any other verb returns 405). The output Data is asserted to contain `200`, the echoed URL host, and the expected structural keys (`source`, `status_code`, `response_headers`, `result`). The endpoint defaults to public `httpbin.org` (overridable via `HTTPBIN_BASE_URL`); a transient upstream 5xx is absorbed by a retry in `runAndOpenOutput` so it does not fail the suite — see "Validation criterion" and issue #383.
 3. **Error and edge paths** — invalid URL shows the build-error notification, non-2xx responses (404) propagate as `status_code` without raising, query parameters embedded in the URL are sent and echoed back.
 4. **Inspector tables and cURL mode** — the headers key-value table accepts both key and value cell entries via the View Text editor; the body key-value table is accessed through the Controls modal (the body field is `advanced=True`) and accepts both key and value cell entries via the same editor; the cURL tab switches mode and the cURL parser auto-populates the URL field with the URL extracted from the cURL command, after which the run executes the GET successfully.
 5. **Persistence to flow JSON** — configuring URL, method and a headers row triggers an autosave that persists into the flow's saved state (verified by polling `GET /api/v1/flows/{id}`), and a full page reload rehydrates the inspector with the same values.
@@ -91,7 +91,9 @@ For each of GET, POST, PUT, PATCH, DELETE:
 
 The suite must:
 
-- Use `getByTestId("popover-anchor-input-url_input")`, `getByTestId("dropdown_str_method")`, `getByTestId("button_run_api request")` and the `output-inspection-api response-apirequest` testid — i18n-proof.
+- Use `getByTestId("popover-anchor-input-url_input")`, `getByTestId("dropdown_str_method")`, `getByTestId("button_run_api request")`, the `output-inspection-api response-apirequest` testid and (for reading the full output) `copy-output-button` — i18n-proof.
+- Read execution output via the dialog's copy button + clipboard, not the Monaco editor's `textContent`: the editor is virtualized, so `textContent` only returns lines in the viewport and silently truncates fields below the fold for a verbose response. The helper clears the clipboard first (it persists across the serial tests) and polls until the fresh output lands rather than waiting on the transient "Copied to clipboard" toast.
+- Retry past transient upstream outages: `runAndOpenOutput` re-runs the component (up to 3 attempts) when its own top-level `status_code` is `5xx` or when a run produces no readable output (build error / timeout). Each attempt anchors on its build event stream closing (not on the inspect button, which stays enabled across re-runs and would re-read stale output). No test here expects a 5xx, so retrying on one never masks a real assertion; once retries are exhausted on a still-5xx output it **throws loudly** rather than returning the 5xx, so a sustained outage or a regression surfacing as a 5xx fails clearly instead of slipping past a weak substring assertion (issue #383).
 - Run **serially** (`test.describe.configure({ mode: "serial" })`) — parallel autosaves on flow create cause `400 "flow must be unique"` errors that flag as backend errors in the fixture.
 - For each verb test, hit a `httpbin.org` endpoint that returns 405 for any other verb — this guarantees the test fails if the wrong verb is sent (e.g. POST sent as GET).
 - For the cURL execution test, switch to the cURL tab *before* configuring the URL — and assert the parser auto-populates `url_input`. Asserting only the run output would let the test pass even if cURL parsing was broken.
@@ -114,7 +116,7 @@ The suite must:
 - `src/frontend/src/CustomNodes/GenericNode/index.tsx` — owns the inspector layout that exposes `popover-anchor-input-url_input`, `dropdown_str_method`, `div-table_headers`, `tab_0_url`, `tab_1_curl`, etc.
 - `src/frontend/src/pages/FlowPage/components/InspectionPanel/components/InspectionPanelFields.tsx` — owns the `APIRequest` + `body` + GET filter that test 14 navigates around by switching method to POST
 - `src/frontend/src/components/core/parameterRenderComponent/components/TableNodeComponent/index.tsx` — owns the `[value]` useEffect that drives the `real_time_refresh` race in the body table (test 14's force+retry)
-- `httpbin.org` — external test target; if it is unreachable from CI, the 5 verb tests, the 404 test, and the query-parameter test all fail by external reason rather than by Langflow regression (see "Notes")
+- **Echo endpoint** (`HTTPBIN_BASE_URL`, default `https://httpbin.org`) — external test target for the 5 verb tests, the 404 test, the query-parameter test and the cURL-execute test. The request is made **by the Langflow backend**, so the URL must be reachable by Langflow, not by the Playwright runner. A transient upstream 5xx (httpbin.org sits behind an AWS ELB that intermittently returns 502/503/504) no longer hard-fails the suite: `runAndOpenOutput` retries on any 5xx output (issue #383). The spec derives `HTTPBIN_HOST` from the same base URL, so the echoed-host assertions hold for any configured endpoint. Self-hosting an echo endpoint in CI was evaluated and rejected: Langflow's SSRF protection blocks the service's private IP, and — decisively — the component's `validators.url()` check rejects the single-label service hostname (`http://httpbin:8080`) that a GitHub Actions service container is reachable by. To self-host **locally**, point `HTTPBIN_BASE_URL` at a dotted host or IP and add it to `LANGFLOW_SSRF_ALLOWED_HOSTS` on the Langflow process.
 
 ---
 
@@ -131,7 +133,7 @@ The suite must:
 ## Preconditions *(optional)*
 
 - Langflow running at `PLAYWRIGHT_BASE_URL`
-- Outbound HTTPS to `httpbin.org` reachable from the runner
+- An echo endpoint reachable **by Langflow** at `HTTPBIN_BASE_URL` (defaults to outbound HTTPS to `httpbin.org`); transient 5xx outages are absorbed by the retry in `runAndOpenOutput`
 - No LLM required
 
 ---
@@ -141,7 +143,7 @@ The suite must:
 - The API Request field schema changes in `api_request.py` (URL, method, headers, body, curl_input field names)
 - The inspector layout changes such that `popover-anchor-input-url_input`, `dropdown_str_method`, or `tab_0_url`/`tab_1_curl` testids are renamed or restructured
 - The cURL parser changes its auto-fill behavior (e.g., it stops auto-populating `url_input` from the cURL command, or moves to a different field)
-- `httpbin.org` becomes unavailable — switch the verb tests to a stable equivalent (e.g., a self-hosted echo server or `postman-echo.com`)
+- The default echo endpoint needs to change — set `HTTPBIN_BASE_URL` (no code change). Any httpbin-compatible echo server works (the spec relies only on the `/get`, `/post`, `/put`, `/patch`, `/delete`, `/status/{code}` paths, 405-on-wrong-verb, and the Host-echoing behavior). A self-hosted host on a private IP must be added to `LANGFLOW_SSRF_ALLOWED_HOSTS`, and the component's URL validator rejects single-label hostnames (use a dotted host or an IP)
 - `InspectionPanelFields.tsx` drops the `APIRequest` + `body` + GET filter (or makes it conditional on a different field) — at that point test 14 can drop the method-switch step and mirror the headers test directly
 - The `POST /api/v1/custom_component/update` endpoint is renamed or restructured — tests 14 and 15 both use `page.waitForResponse(...)` keyed on that URL substring
 - The autosave debounce interval is increased substantially — bump the persistence test's polling timeout (currently 20s) to match
@@ -153,6 +155,11 @@ The suite must:
 
 - **Duplicate coverage with legacy specs.** `tests/tests-automations/regression/api/flows/api-request-component-ui.spec.ts` (4 tests: canvas render, URL field, method dropdown, headers field) is fully superseded by tests 1, 2, and 11 of this spec — its 4th test uses anti-patterns (`.catch(() => false)`, conditional advanced-button click) that this consolidated spec replaces with deterministic locators. `tests/tests-automations/regression/api/flows/api-component-regression.spec.ts` (5 tests: GET, cURL POST + JSON body with auto-fill URL, `include_httpx_metadata`, timeout 500, URL-mode POST via dropdown) is partially duplicated by tests 4, 5, and 13 here, but contains 3 unique tests (`include_httpx_metadata`, timeout, cURL POST + body). A follow-up PR should migrate those 3 unique tests here and retire both legacy specs.
 - **`(page as any).allowFlowErrors()` cast.** The fixture injects `allowFlowErrors` onto the page object via `(page as any).allowFlowErrors = () => {...}`, without extending the `Page` type. Removing the cast at the call site requires extending the type signature in `fixtures.ts`. The pattern is project-wide (`loop-component-regression.spec.ts` uses the same cast).
-- **Why one verb per `httpbin.org` endpoint.** `httpbin.org/get`, `/post`, `/put`, `/patch`, `/delete` each return 405 if hit with any other verb. This means the test fails if the component sends the wrong method — there's no way to silently pass with a misconfigured verb.
+- **Why one verb per endpoint.** `/get`, `/post`, `/put`, `/patch`, `/delete` each return 405 if hit with any other verb (true for both httpbin.org and go-httpbin). This means the test fails if the component sends the wrong method — there's no way to silently pass with a misconfigured verb.
+- **Echo endpoint resilience (issue #383).** The verb/404/query/cURL tests originally hard-coded `https://httpbin.org/...`. A transient httpbin.org `503` (AWS ELB) hard-failed the POST test and flaked GET in the weekly run, opening #383. The fix makes the suite tolerate transient outages without masking a real regression:
+  - **Retry**, not self-hosting. `runAndOpenOutput` re-runs the component (up to 3 attempts) when the output carries any `5xx` `status_code` or a run produces no readable output. Self-hosting a `mccutchen/go-httpbin` service container in the weekly workflow was implemented and tested first, but rejected after a CI run surfaced a hard blocker: the component's `validators.url()` rejects the single-label service hostname (`http://httpbin:8080`) that a GitHub Actions service container is reachable by (it also requires an SSRF allowlist for the service's private IP). `validators.url` accepts dotted hosts and IPs but not bare labels — which is why local testing via `host.containers.internal` passed and CI did not.
+  - **Endpoint override kept.** URLs are built from `HTTPBIN_BASE_URL` (default `https://httpbin.org`) and the echoed-host assertions derive `HTTPBIN_HOST` from the same base, so a different endpoint can be configured without code changes.
+  - **Full-output read.** `runAndOpenOutput` reads the COMPLETE output via the dialog's copy button + clipboard (`copy-output-button`) instead of the truncation-prone virtualized Monaco `textContent` — a robustness fix kept from the self-hosting attempt (a verbose response can push asserted fields like `url` below the editor's viewport).
+  - Validated against nightly `1.11.0.dev8`, 15/15 green against public httpbin.org — no product regression behind the original failure, confirming it was purely the external outage. `@stable` was restored on the POST test in the same change.
 - **cURL pre-fill anti-pattern (fixed).** The previous version of test 13 pre-populated `url_input` before switching to the cURL tab. The run would then succeed via the URL-tab path even if the cURL parser was broken. The current test switches to the cURL tab first and waits for the parser to auto-populate `url_input` — the run is genuinely driven by the cURL command.
 - **Headers table value-cell gap (fixed).** The previous version of test 11 only filled the key cell and closed the dialog with Cancel. It would have passed even if the value column was non-functional. The current version fills both key and value cells via `fillViewTextCell`, which asserts each cell renders as a button after Save inside the table dialog — closing the gap.
