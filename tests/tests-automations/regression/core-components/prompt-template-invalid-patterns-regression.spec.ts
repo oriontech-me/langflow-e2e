@@ -60,7 +60,14 @@ async function runRejectionContract(
       // The toast auto-dismisses after 5s — assert it before any other wait.
       // `errors.prompt` title is constant; the detail list carries the upstream
       // message that names the variable in question.
-      const toast = errorToastLocator(page);
+      //
+      // Scope to the prompt-validation toast by title: a transient flow-save
+      // race can briefly render a second `.error-build-message` ("Failed to
+      // save flow") with the same class, and an unfiltered locator would then
+      // resolve to two elements and fail strict mode. `addPromptComponent`
+      // already waits for autosave to settle to prevent that race; this filter
+      // is the belt-and-suspenders guard (issue #358).
+      const toast = errorToastLocator(page).filter({ hasText: ERROR_TOAST_TITLE });
       await expect(toast).toBeVisible({ timeout: 5000 });
       await expect(toast).toContainText(ERROR_TOAST_TITLE);
       await expect(toast).toContainText(ERROR_DETAIL_FRAGMENT);
