@@ -677,14 +677,15 @@
 - [-] Reconnect existing edge
 
 #### 15.4 Node Manipulation
-- [-] Delete component from canvas
+- [x] Delete component from canvas via Backspace key → `core-components/componentDelete.spec.ts`
+- [x] Delete component from canvas via node options (...) menu → `core-components/componentDelete.spec.ts`
 - [x] Copy and paste ChatOutput component (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [x] Copy and paste Prompt Template (component with dynamic ports) (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [-] Canvas keyboard shortcuts
 - [-] Minimize component on canvas
 - [-] Move component within canvas
 - [-] Select multiple components via box selection
-- [-] Delete multiple selected components
+- [x] Delete multiple selected components (marquee box selection) → `core-components/componentDelete.spec.ts`
 - [-] Deselect node by clicking on empty canvas area
 - [-] Deselect node via Escape
 
