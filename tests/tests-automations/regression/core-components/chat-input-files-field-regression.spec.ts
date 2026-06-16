@@ -4,6 +4,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
+import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
 import {
   closeAdvancedOptions,
   openAdvancedOptions,
@@ -39,7 +40,13 @@ async function expandFocusedNode(page: Page) {
 // in expanded (non-minimized) state.
 async function addChatInputComponent(page: Page) {
   await awaitBootstrapTest(page);
+  await expect(page.getByTestId("blank-flow")).toBeAttached({ timeout: 30000 });
   await page.getByTestId("blank-flow").click();
+
+  // Gate the sidebar search before filling it. Filling without first waiting
+  // for the input to be actionable raced under nightly backend load into a
+  // `locator.fill: Timeout` — the flake observed in the weekly run (issue #384).
+  await page.getByTestId("sidebar-search-input").click();
   await page.getByTestId("sidebar-search-input").fill("chat input");
   await expect(page.getByTestId("input_outputChat Input")).toBeVisible({
     timeout: 30000,
@@ -52,6 +59,11 @@ async function addChatInputComponent(page: Page) {
   });
   await page.getByTestId("title-Chat Input").click();
   await expandFocusedNode(page);
+
+  // Let the node-add / viewport autosaves settle before the caller fires its
+  // next flow-mutating action (exposing Files, uploading via the inspector),
+  // so that mutation cannot race a still-in-flight autosave PATCH.
+  await waitForFlowSaveSettled(page);
 }
 
 // Helper: drag the Chat Output component onto the canvas and expand it.
