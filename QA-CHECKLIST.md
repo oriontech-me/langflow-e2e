@@ -748,9 +748,9 @@
 | `flow-functionality/` | 27 | 12 | 13 | 2 | 0 |
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
-| `ui-ux/` — Canvas | 43 | 3 | 38 | 1 | 1 |
+| `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **435** | **192 (44%)** | **183 (42%)** | **7 (2%)** | **53 (12%)** |
+| **TOTAL** | **436** | **195 (45%)** | **181 (42%)** | **7 (2%)** | **53 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -766,7 +766,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 194 `test()` calls carrying the `@stable` tag, distributed across 66 spec
+> 197 `test()` calls carrying the `@stable` tag, distributed across 67 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -833,6 +833,9 @@
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
+- [x] Should delete a single component with the Backspace key → `componentDelete.spec.ts`
+- [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
+- [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
@@ -1003,7 +1006,7 @@
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
-| `ui-ux/` — Canvas | 38 | 1 |
+| `ui-ux/` — Canvas | 36 | 1 |
 
 ---
 
