@@ -149,6 +149,14 @@ jobs:
       - name: Commit weekly history
         if: always() && github.event_name == 'schedule'
         run: |
+          # The job runs inside the Playwright container as root, while the
+          # workspace is owned by the host runner uid. git 2.43 then refuses to
+          # operate on the repo ("dubious ownership"). actions/checkout works
+          # around this by writing safe.directory to a git global config under a
+          # temporary HOME, which is gone by the time this step runs — so we
+          # re-declare it here, or git reports "fatal: not in a git directory"
+          # and the commit/push back to main never happens (see issue #385).
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           if git diff --quiet reports/weekly-history.jsonl 2>/dev/null; then
             echo "No history change to commit."
             exit 0
