@@ -4,6 +4,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { simulateDragAndDrop } from "../../../helpers/ui/simulate-drag-and-drop";
+import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
 
 // Force serial execution within this file so the diff-based cleanup remains
 // safe — the snapshot/diff pattern is racy across workers when multiple tests
@@ -87,6 +88,13 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
         .then(async () => {
           await page.getByTestId("add-component-button-chat-input").click();
         });
+
+      // Wait for the node-add autosave (debounced `PATCH /api/v1/flows/{id}`)
+      // to persist before leaving the editor. The export reads the *persisted*
+      // flow, so navigating back/exporting while the PATCH is still in flight
+      // produces an empty file (`parsed.data.nodes.length === 0`) — the flake
+      // observed in the weekly run (issue #384).
+      await waitForFlowSaveSettled(page);
 
       await page.getByTestId("icon-ChevronLeft").click();
 
