@@ -6,7 +6,7 @@
 
 ## What this test validates *(required)*
 
-`traces-detail-single.spec.ts` (PR #305 / closes #299) pins the wire **shape** of `GET /api/v1/monitor/traces/{trace_id}` — every `TraceRead` / `SpanReadResponse` key is asserted to exist and the `SpanType` / `SpanStatus` enums are pinned on every node. But it runs the shared no-provider fixture, which errors at the `LanguageModelComponent` before any LLM call, so `tokenUsage` and `modelName` always land as `null` and the issue-#299 acceptance text — *"On the LLM span: `tokenUsage.{promptTokens,completionTokens,totalTokens}`, `latencyMs`, `modelName`"* — was never **value**-asserted. A regression that dropped `promptTokens` would have passed there.
+`traces-detail-single.spec.ts` (PR #305 / #299) pins the wire **shape** of `GET /api/v1/monitor/traces/{trace_id}` — every `TraceRead` / `SpanReadResponse` key is asserted to exist and the `SpanType` / `SpanStatus` enums are pinned on every node. But it runs the shared no-provider fixture, which errors at the `LanguageModelComponent` before any LLM call, so `tokenUsage` and `modelName` always land as `null` and the issue-#299 acceptance text — *"On the LLM span: `tokenUsage.{promptTokens,completionTokens,totalTokens}`, `latencyMs`, `modelName`"* — was never **value**-asserted. A regression that dropped `promptTokens` would have passed there.
 
 This spec closes that gap. It seeds the same flow but injects a real **OpenAI** provider via run tweaks, runs it to a **successful** completion, then value-asserts the populated LLM span:
 
