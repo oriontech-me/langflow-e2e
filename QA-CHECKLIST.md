@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-16
+> **Last updated:** 2026-06-17
 
 ---
 
@@ -417,6 +417,7 @@
 - [x] Trace displays tokens consumed
 - [x] Single-trace API returns 404 for an unknown trace_id → `traces-detail-single.spec.ts`
 - [x] Single-trace API returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
+- [x] Single-trace API returns populated tokenUsage + modelName on the LLM span (OpenAI) → `traces-detail-llm-span-populated.spec.ts`
 - [x] Bulk delete traces API returns 404 for an unknown flow_id → `traces-delete.spec.ts`
 - [x] Bulk delete traces API clears all traces for the flow (204 + empty list) → `traces-delete.spec.ts`
 - [x] Trace list filter `?status=error` returns only the failing trace; `?status=<unknown>` returns 422 → `traces-list-filters.spec.ts`
@@ -741,7 +742,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
 | `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
-| `core-functionality/observability-monitoring/` | 22 | 14 | 7 | 0 | 1 |
+| `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -750,7 +751,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **436** | **195 (45%)** | **181 (42%)** | **7 (2%)** | **53 (12%)** |
+| **TOTAL** | **437** | **196 (45%)** | **181 (41%)** | **7 (2%)** | **53 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -766,7 +767,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 197 `test()` calls carrying the `@stable` tag, distributed across 67 spec
+> 198 `test()` calls carrying the `@stable` tag, distributed across 68 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -900,6 +901,7 @@
 #### core-functionality/observability-monitoring/
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
 - [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
+- [x] GET /api/v1/monitor/traces/{trace_id} returns a populated tokenUsage + modelName on the LLM span → `traces-detail-llm-span-populated.spec.ts`
 - [x] GET /api/v1/monitor/traces/{trace_id} returns 404 for an unknown but well-formed UUID → `traces-detail-single.spec.ts`
 - [x] GET /api/v1/monitor/traces/{trace_id} returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
 - [x] GET /api/v1/monitor/transactions returns 200 with paginated result → `traces-detail.spec.ts`
