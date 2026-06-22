@@ -3,8 +3,9 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 // The /api/v1/run endpoint requires x-api-key authentication (not Bearer).
 // This test creates a temporary API key in beforeAll and deletes it in afterAll.
-// The flow is intentionally empty — matching the convention in api-run-with-tweaks.spec.ts.
-// A runnable-flow fixture for semantic output assertions belongs in a separate spec.
+// The flow is intentionally empty: these tests assert the structural contract
+// (status codes, response shape), not semantic output. Semantic output
+// assertions on a runnable flow are tracked in issue #263.
 
 test.describe("POST /api/v1/run", () => {
   let flowId: string;
