@@ -110,7 +110,7 @@
 #### 1.6 Integration Code Generation
 - [x] Generate curl for API execution → `flow-functionality/curlApiGeneration.spec.ts`
 - [x] Generate Python code for integration → `flow-functionality/pythonApiGeneration.spec.ts`
-- [-] API access modal
+- [x] API access modal → `flow-functionality/api-access-modal-regression.spec.ts`
 
 ---
 
