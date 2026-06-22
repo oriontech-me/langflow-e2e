@@ -39,7 +39,7 @@ Both deletions are wrapped in `.catch(() => {})` so teardown never masks a test 
 
 **Test 1 — `tweaks` override a component field at runtime** *(`@stable @release @api @regression`)*
 1. Build a unique value `TWEAKED-<timestamp>` (so a passing assertion cannot accidentally match the default).
-2. `POST /api/v1/run/{flowId}` with `x-api-key` and payload `{ input_type: "chat", output_type: "chat", tweaks: { "Chat Input": { input_value: "<unique>" } } }`. Top-level `input_value` is intentionally omitted — the backend gives top-level input precedence over a tweak on the same field, so omitting it lets the tweak take effect.
+2. `POST /api/v1/run/{flowId}` with `x-api-key` and payload `{ input_type: "chat", output_type: "chat", tweaks: { "Chat Input": { input_value: "<unique>" } } }`. Top-level `input_value` is intentionally omitted — the backend **rejects with `400`** any request that passes both a top-level `input_value` and a Chat Input tweak on the same `input_value` field, so the value is driven purely through the tweak.
 3. Assert status `200` and `body.outputs` exists.
 4. Assert the echoed output text equals the tweaked value — the override is proven.
 
@@ -67,7 +67,7 @@ Both deletions are wrapped in `.catch(() => {})` so teardown never masks a test 
 ## What this test does not cover *(optional)*
 - Nested-field tweaks (`NestedDict`/`dict` template fields) and array/list-field tweaks — these need a component with such fields and are tracked as a follow-up issue.
 - Tweaking by node **id** (this spec tweaks by display name; the backend accepts both).
-- Top-level `input_value` precedence over a same-field tweak (asserted indirectly by omitting it, not tested head-to-head).
+- The `400` rejection when a top-level `input_value` and a same-field Chat Input tweak are sent together (the spec avoids this combination rather than asserting it; a dedicated negative test could cover it).
 - Code-field injection protection (the backend blocks tweaks on `code`-type fields).
 - Streaming responses, batch runs, multi-turn `session_id` threading → other specs / issues.
 

@@ -13,8 +13,10 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 //
 // Backend reference (Langflow): tweaks reference a component by node id OR by
 // display name, and tweaks targeting a non-existent component/field are
-// silently ignored (returns 200). Top-level `input_value` overrides a tweak on
-// the same field, so the tests below omit it to keep the override observable.
+// silently ignored (returns 200). Passing a top-level `input_value` together
+// with a Chat Input tweak on the same `input_value` field is rejected with 400
+// ("you cannot pass a tweak with the same name"), so the tests below omit the
+// top-level input and drive the value purely through the tweak.
 
 // The imported fixture is a Chat Input -> Chat Output flow whose Chat Input has
 // a stored `input_value` default of "Hello".
@@ -94,8 +96,9 @@ test.describe("POST /api/v1/run with tweaks", () => {
       // A unique value so the assertion cannot accidentally match the default.
       const tweakedValue = `TWEAKED-${Date.now()}`;
 
-      // No top-level input_value: top-level input would override the tweak,
-      // so omitting it lets the tweak on Chat Input.input_value take effect.
+      // No top-level input_value: passing both a top-level input_value and a
+      // tweak on Chat Input.input_value is rejected with 400, so we omit the
+      // top-level input and drive the value purely through the tweak.
       const res = await request.post(`/api/v1/run/${flowId}`, {
         headers: { "x-api-key": apiKey },
         data: {
