@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-17
+> **Last updated:** 2026-06-22
 
 ---
 
@@ -735,7 +735,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 18 | 3 | 0 | 0 |
+| `api/flows/` — REST API | 21 | 19 | 2 | 0 | 0 |
 | `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
 | `core-components/` — Core Components | 77 | 69 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
@@ -751,7 +751,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **437** | **196 (45%)** | **181 (41%)** | **7 (2%)** | **53 (12%)** |
+| **TOTAL** | **437** | **197 (45%)** | **180 (41%)** | **7 (2%)** | **53 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -767,7 +767,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 198 `test()` calls carrying the `@stable` tag, distributed across 68 spec
+> 202 `test()` calls carrying the `@stable` tag, distributed across 69 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -962,6 +962,10 @@
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
 
 #### flow-functionality/
+- [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
+- [x] API access modal switches the displayed snippet when changing language tabs → `api-access-modal-regression.spec.ts`
+- [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
+- [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
@@ -999,7 +1003,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 3 | 0 |
+| `api/flows/` — REST API | 2 | 0 |
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 12 | 1 |
