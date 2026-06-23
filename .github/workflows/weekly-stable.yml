@@ -6,8 +6,12 @@ on:
     - cron: "0 6 * * 1" # 03:00 BRT (UTC-3), every Monday
   workflow_dispatch:
     inputs:
+      langflow_image:
+        description: "Langflow image repository (e.g. langflowai/langflow-nightly or langflowai/langflow)"
+        required: false
+        default: "langflowai/langflow-nightly"
       langflow_image_tag:
-        description: "Langflow nightly image tag (e.g. latest, 1.5.1.dev36)"
+        description: "Image tag (e.g. latest, 1.5.1.dev36, 1.10.1rc3). Use a multi-arch tag — runners are amd64, so do NOT pick an -arm64 variant."
         required: false
         default: "latest"
 
@@ -17,7 +21,7 @@ permissions:
 
 jobs:
   e2e-weekly-stable:
-    name: Weekly Stable E2E (langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }})
+    name: Weekly Stable E2E (${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }})
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
@@ -31,7 +35,7 @@ jobs:
 
     services:
       langflow:
-        image: langflowai/langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }}
+        image: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
         ports:
           - 7860:7860
         env:
@@ -144,7 +148,7 @@ jobs:
         env:
           PLAYWRIGHT_JSON: results.json
           WORKFLOW: weekly-stable
-          LANGFLOW_IMAGE: langflowai/langflow-nightly:${{ inputs.langflow_image_tag || 'latest' }}
+          LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
 
       - name: Commit weekly history
         if: always() && github.event_name == 'schedule'
