@@ -71,7 +71,7 @@ The test creates its 3 flows from starter templates and captures each flow ID fr
 Under `fullyParallel` CI load this is a heavy test (it creates 3 flows and navigates editor↔home repeatedly). Two load-induced flake modes have been observed on the weekly run:
 
 - The home listing taking >10s to render after returning from the editor (the `Projects` visibility wait). **Mitigated** by raising that wait to 30s.
-- Clicking the "New Flow" entry point not opening the templates modal within 30s, inside the shared `openNewFlowTemplatesModal` helper — **tracked separately** (not yet mitigated).
+- Clicking the "New Flow" entry point not opening the templates modal within 30s, inside the shared `openNewFlowTemplatesModal` helper — **tracked in #420** (not yet mitigated).
 
 Both reproduce only under contention; a single isolated run against a fresh instance passes consistently.
 
