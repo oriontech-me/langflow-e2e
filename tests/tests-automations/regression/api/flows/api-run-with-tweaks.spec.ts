@@ -1,8 +1,42 @@
+import { readFileSync } from "fs";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
-// Tests the POST /api/v1/run/{flow_id} endpoint with tweaks parameter,
-// which allows callers to override flow component configuration at runtime.
+// Tests the POST /api/v1/run/{flow_id} endpoint with the `tweaks` parameter,
+// which lets callers override flow component configuration at runtime.
+//
+// Unlike a structural smoke test, this spec runs against a real
+// Chat Input -> Chat Output passthrough flow so the override is observable:
+// Chat Output echoes whatever value Chat Input emits, so a tweak on
+// Chat Input.input_value changes the response text in a deterministic way —
+// no LLM or external provider key required.
+//
+// Backend reference (Langflow): tweaks reference a component by node id OR by
+// display name, and tweaks targeting a non-existent component/field are
+// silently ignored (returns 200). Passing a top-level `input_value` together
+// with a Chat Input tweak on the same `input_value` field is rejected with 400
+// ("you cannot pass a tweak with the same name"), so the tests below omit the
+// top-level input and drive the value purely through the tweak.
+
+// The imported fixture is a Chat Input -> Chat Output flow whose Chat Input has
+// a stored `input_value` default of "Hello".
+const FIXTURE_PATH = "tests/assets/flows/chat-io-ok-trace-fixture.json";
+const CHAT_INPUT_DISPLAY_NAME = "Chat Input";
+const FIXTURE_DEFAULT_INPUT = "Hello";
+
+// Minimal shape of the run endpoint response needed to read the output text.
+interface RunResponseBody {
+  outputs?: Array<{
+    outputs?: Array<{
+      results?: { message?: { text?: string } };
+    }>;
+  }>;
+}
+
+// Extracts the Chat Output text from the run endpoint response.
+function getOutputText(body: RunResponseBody): string | undefined {
+  return body?.outputs?.[0]?.outputs?.[0]?.results?.message?.text;
+}
 
 test.describe("POST /api/v1/run with tweaks", () => {
   let bearerToken: string;
@@ -13,7 +47,7 @@ test.describe("POST /api/v1/run with tweaks", () => {
   test.beforeAll(async ({ request }) => {
     bearerToken = await getAuthToken(request);
 
-    // Create an API key for run endpoint (requires x-api-key, not Bearer)
+    // Create an API key for the run endpoint (requires x-api-key, not Bearer)
     const keyRes = await request.post("/api/v1/api_key/", {
       headers: { Authorization: bearerToken },
       data: { name: `tweaks-test-key-${Date.now()}` },
@@ -23,12 +57,14 @@ test.describe("POST /api/v1/run with tweaks", () => {
     apiKey = keyBody.api_key;
     apiKeyId = keyBody.id;
 
-    // Create an empty flow — run endpoint accepts empty flows and returns valid structure
+    // Import the Chat Input -> Chat Output fixture as a runnable flow
+    const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf-8"));
     const flowRes = await request.post("/api/v1/flows/", {
       headers: { Authorization: bearerToken },
       data: {
         name: `Tweaks Test Flow ${Date.now()}`,
-        data: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
+        description: "Chat Input -> Chat Output passthrough for tweaks override tests",
+        data: fixture.data,
         is_component: false,
       },
     });
@@ -54,62 +90,22 @@ test.describe("POST /api/v1/run with tweaks", () => {
   });
 
   test(
-    "POST /api/v1/run/{id} accepts tweaks parameter without error",
-    { tag: ["@release", "@api", "@regression"] },
+    "tweaks override a component field at runtime",
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
-      // tweaks with empty object should be accepted and ignored (no components to tweak)
+      // A unique value so the assertion cannot accidentally match the default.
+      const tweakedValue = `TWEAKED-${Date.now()}`;
+
+      // No top-level input_value: passing both a top-level input_value and a
+      // tweak on Chat Input.input_value is rejected with 400, so we omit the
+      // top-level input and drive the value purely through the tweak.
       const res = await request.post(`/api/v1/run/${flowId}`, {
         headers: { "x-api-key": apiKey },
         data: {
-          input_value: "hello from test",
-          input_type: "chat",
-          output_type: "chat",
-          tweaks: {},
-        },
-      });
-
-      // The run endpoint must accept the request — 200 regardless of flow output
-      expect(res.status()).toBe(200);
-      const body = await res.json();
-      expect(body).toHaveProperty("outputs");
-    },
-  );
-
-  test(
-    "POST /api/v1/run/{id} without tweaks also returns 200",
-    { tag: ["@release", "@api", "@regression"] },
-    async ({ request }) => {
-      const res = await request.post(`/api/v1/run/${flowId}`, {
-        headers: { "x-api-key": apiKey },
-        data: {
-          input_value: "hello",
-          input_type: "chat",
-          output_type: "chat",
-        },
-      });
-
-      expect(res.status()).toBe(200);
-      const body = await res.json();
-      expect(body).toHaveProperty("outputs");
-      expect(body).toHaveProperty("session_id");
-    },
-  );
-
-  test(
-    "POST /api/v1/run/{id} with tweaks referencing non-existent component is silently ignored",
-    { tag: ["@release", "@api", "@regression"] },
-    async ({ request }) => {
-      // Tweaks referencing non-existent component IDs are silently ignored — returns 200.
-      const res = await request.post(`/api/v1/run/${flowId}`, {
-        headers: { "x-api-key": apiKey },
-        data: {
-          input_value: "test",
           input_type: "chat",
           output_type: "chat",
           tweaks: {
-            "NonExistentComponent-999": {
-              some_field: "value",
-            },
+            [CHAT_INPUT_DISPLAY_NAME]: { input_value: tweakedValue },
           },
         },
       });
@@ -117,30 +113,57 @@ test.describe("POST /api/v1/run with tweaks", () => {
       expect(res.status()).toBe(200);
       const body = await res.json();
       expect(body).toHaveProperty("outputs");
+      // The override is proven: the echoed output is the tweaked value,
+      // not the fixture default ("Hello").
+      expect(getOutputText(body)).toBe(tweakedValue);
     },
   );
 
   test(
-    "POST /api/v1/run with input_type chat and output_type chat returns valid structure",
-    { tag: ["@release", "@api", "@regression"] },
+    "empty tweaks object is a no-op and leaves the flow default in effect",
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
+      // Same request as the override test minus the tweak: the response must
+      // fall back to the flow's stored default, establishing the baseline that
+      // makes the override test meaningful.
       const res = await request.post(`/api/v1/run/${flowId}`, {
         headers: { "x-api-key": apiKey },
         data: {
-          input_value: "ping",
           input_type: "chat",
           output_type: "chat",
+          tweaks: {},
         },
       });
 
       expect(res.status()).toBe(200);
       const body = await res.json();
-
-      // Response must always include outputs and session_id
       expect(body).toHaveProperty("outputs");
-      expect(Array.isArray(body.outputs)).toBe(true);
-      expect(body).toHaveProperty("session_id");
-      expect(typeof body.session_id).toBe("string");
+      expect(getOutputText(body)).toBe(FIXTURE_DEFAULT_INPUT);
+    },
+  );
+
+  test(
+    "tweaks referencing a non-existent component are silently ignored",
+    { tag: ["@stable", "@api", "@regression"] },
+    async ({ request }) => {
+      // A tweak that targets a component not present in the flow must not error
+      // and must not change the output — it is silently ignored (200).
+      const res = await request.post(`/api/v1/run/${flowId}`, {
+        headers: { "x-api-key": apiKey },
+        data: {
+          input_type: "chat",
+          output_type: "chat",
+          tweaks: {
+            "NonExistentComponent-999": { input_value: "should be ignored" },
+          },
+        },
+      });
+
+      expect(res.status()).toBe(200);
+      const body = await res.json();
+      expect(body).toHaveProperty("outputs");
+      // Output is unchanged from the flow default — the bogus tweak had no effect.
+      expect(getOutputText(body)).toBe(FIXTURE_DEFAULT_INPUT);
     },
   );
 });

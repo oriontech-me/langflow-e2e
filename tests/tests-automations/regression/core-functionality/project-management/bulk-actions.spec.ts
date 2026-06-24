@@ -38,7 +38,10 @@ test(
       });
       await page.getByTestId("icon-ChevronLeft").first().click();
 
-      await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 10000 });
+      // 30s (not 10s): returning from the editor to home under `fullyParallel`
+      // CI load can take longer than 10s to render the home listing. The 10s
+      // wait was the outlier that flaked here (see weekly run on 1.10.1rc3).
+      await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 30000 });
       await openNewFlowTemplatesModal(page);
       await page.getByTestId("side_nav_options_all-templates").click();
       await page.getByRole("heading", { name: "Document Q&A" }).click();
@@ -48,7 +51,10 @@ test(
       });
       await page.getByTestId("icon-ChevronLeft").first().click();
 
-      await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 10000 });
+      // 30s (not 10s): returning from the editor to home under `fullyParallel`
+      // CI load can take longer than 10s to render the home listing. The 10s
+      // wait was the outlier that flaked here (see weekly run on 1.10.1rc3).
+      await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 30000 });
       await openNewFlowTemplatesModal(page);
       await page.getByTestId("side_nav_options_all-templates").click();
       await page.getByRole("heading", { name: "Basic Prompting" }).click();
@@ -58,7 +64,10 @@ test(
       });
       await page.getByTestId("icon-ChevronLeft").first().click();
 
-      await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 10000 });
+      // 30s (not 10s): returning from the editor to home under `fullyParallel`
+      // CI load can take longer than 10s to render the home listing. The 10s
+      // wait was the outlier that flaked here (see weekly run on 1.10.1rc3).
+      await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 30000 });
       await page.waitForSelector('[data-testid="home-dropdown-menu"]', {
         timeout: 30000,
       });

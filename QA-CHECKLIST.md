@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-17
+> **Last updated:** 2026-06-24
 
 ---
 
@@ -93,7 +93,7 @@
 
 #### 1.3 Flow Execution via API
 - [x] POST `/api/v1/run/{flow_id}` with `input_value` → returns response → `api/flows/api-run-flow.spec.ts`
-- [-] POST with `tweaks` → parameters override flow configuration
+- [x] POST with `tweaks` → parameters override flow configuration → `api/flows/api-run-with-tweaks.spec.ts`
 - [x] POST with custom `session_id` → `api/flows/api-run-flow.spec.ts`
 - [x] POST with `input_type: "chat"` and `output_type: "chat"` → `api/flows/api-run-flow.spec.ts`
 - [x] POST with invalid API key → returns 401/403 → `api-invalid-key.spec.ts`
@@ -110,7 +110,7 @@
 #### 1.6 Integration Code Generation
 - [x] Generate curl for API execution → `flow-functionality/curlApiGeneration.spec.ts`
 - [x] Generate Python code for integration → `flow-functionality/pythonApiGeneration.spec.ts`
-- [-] API access modal
+- [x] API access modal → `flow-functionality/api-access-modal-regression.spec.ts`
 
 ---
 
@@ -735,7 +735,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 18 | 3 | 0 | 0 |
+| `api/flows/` — REST API | 21 | 20 | 1 | 0 | 0 |
 | `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
 | `core-components/` — Core Components | 77 | 69 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
@@ -751,7 +751,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **437** | **196 (45%)** | **181 (41%)** | **7 (2%)** | **53 (12%)** |
+| **TOTAL** | **437** | **198 (45%)** | **179 (41%)** | **7 (2%)** | **53 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -767,7 +767,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 198 `test()` calls carrying the `@stable` tag, distributed across 68 spec
+> 205 `test()` calls carrying the `@stable` tag, distributed across 70 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -806,6 +806,9 @@
 - [x] executes flow with input_value and returns outputs → `api-run-flow.spec.ts`
 - [x] executes flow with custom session_id and returns it in response → `api-run-flow.spec.ts`
 - [x] returns 404 for non-existent flow ID → `api-run-flow.spec.ts`
+- [x] tweaks override a component field at runtime → `api-run-with-tweaks.spec.ts`
+- [x] empty tweaks object is a no-op and leaves the flow default in effect → `api-run-with-tweaks.spec.ts`
+- [x] tweaks referencing a non-existent component are silently ignored → `api-run-with-tweaks.spec.ts`
 
 #### core-components/
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
@@ -962,6 +965,10 @@
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
 
 #### flow-functionality/
+- [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
+- [x] API access modal switches the displayed snippet when changing language tabs → `api-access-modal-regression.spec.ts`
+- [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
+- [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
@@ -999,7 +1006,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 3 | 0 |
+| `api/flows/` — REST API | 1 | 0 |
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 12 | 1 |

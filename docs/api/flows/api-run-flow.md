@@ -23,7 +23,7 @@ The spec runs **3 independent tests** via Playwright's `request` fixture, sharin
 **Setup (`beforeAll`)**
 1. Obtain a valid Bearer token via `getAuthToken(request)`.
 2. `POST /api/v1/api_key/` with the Bearer token to mint a temporary API key (asserts `200` and that the response body contains `api_key` and `id` — gives an explicit failure if the API key response shape changes).
-3. `POST /api/v1/flows/` with the new `x-api-key` to create a minimal empty flow (`nodes: []`, `edges: []`), asserts `201`, and stores `flowId`. The empty-flow + structural-assertion convention is shared with `api-run-with-tweaks.spec.ts`; semantic assertions (non-empty `outputs`, message persistence) are tracked in issue #263.
+3. `POST /api/v1/flows/` with the new `x-api-key` to create a minimal empty flow (`nodes: []`, `edges: []`), asserts `201`, and stores `flowId`. These tests assert the structural contract only; semantic assertions (non-empty `outputs`, message persistence) are tracked in issue #263. (For an example of semantic output assertions on a runnable flow, see `api-run-with-tweaks.spec.ts`.)
 
 **Teardown (`afterAll`)**
 1. `DELETE /api/v1/flows/{flowId}` with the `x-api-key`.
