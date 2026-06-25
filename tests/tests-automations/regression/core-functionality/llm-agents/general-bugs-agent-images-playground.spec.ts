@@ -1,8 +1,7 @@
 import dotenv from "dotenv";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { setupOpenAI } from "../../../../helpers/provider-setup/setup-openai";
+import { SimpleAgentTemplatePage } from "../../../../pages";
 
 test(
   "user must be able to send images in the playground with the agent component",
@@ -16,25 +15,17 @@ test(
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
     }
-    await awaitBootstrapTest(page);
-
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Simple Agent" }).first().click();
-
-    // Wait for the agent node's provider entry point to render before
-    // configuring the provider — otherwise setupOpenAI runs against a
-    // still-loading canvas, finds neither entry point, and silently no-ops.
-    // Unconfigured instance → "Setup Provider" button; configured → model_model.
-    await expect(
-      page
-        .getByTestId("model_model")
-        .or(page.getByRole("button", { name: "Setup Provider" })),
-    ).toBeVisible({ timeout: 30000 });
-
-    // OpenAI gpt-4o-mini (setupOpenAI's default) is vision-capable, so the
-    // multimodal assertion below holds. OpenAI is used (not Anthropic) so the
-    // test actually runs in the weekly workflow, which provides OPENAI_API_KEY.
-    await setupOpenAI(page);
+    // Load the Simple Agent template via the canonical helper, which clears
+    // existing flows, opens the templates modal through the correct entry point,
+    // and waits for the canvas to actually load. The previous manual
+    // side-nav + heading click landed on the projects list (no canvas) on
+    // Langflow 1.11.0, so the provider entry point never appeared.
+    //
+    // load() also runs setupOpenAI; with no explicit model it selects a resilient
+    // default (gpt-4o-mini, vision-capable on the Agent component), so the
+    // multimodal assertion below holds. OpenAI is used (not Anthropic) so the test
+    // runs in the weekly workflow, which provides OPENAI_API_KEY.
+    await new SimpleAgentTemplatePage(page).load({ provider: "openai" });
 
     await page.getByTestId("playground-btn-flow-io").click();
 
