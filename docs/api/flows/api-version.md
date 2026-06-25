@@ -32,7 +32,7 @@ The spec runs **5 independent tests**, each issuing a single request to `/api/v1
 1. `GET /api/v1/version`
 2. Assert HTTP status is `200`
 3. Assert `main_version` is a non-empty string
-4. Assert `package === "Langflow"`
+4. Assert `package` is a string containing `langflow` (case-insensitive — accepts both `Langflow` and `Langflow Base`)
 
 **Test 3 — `GET /api/v1/version` response has `content-type: application/json`**
 1. `GET /api/v1/version`
@@ -55,7 +55,7 @@ The spec runs **5 independent tests**, each issuing a single request to `/api/v1
 ## Validation criterion *(required)*
 - All assertions must succeed against a freshly started Langflow instance.
 - The endpoint path is `/api/v1/version` — **not** `/api/v1/health` (which does not exist) and **not** `/health_check` (the uptime probe, covered by `api-health-check.spec.ts`).
-- The exact version value is not asserted (it changes per release); only its shape and the stable `package` identifier are checked.
+- The exact version value is not asserted (it changes per release); only its shape and the `package` identifier (which must contain `langflow`) are checked.
 
 ---
 

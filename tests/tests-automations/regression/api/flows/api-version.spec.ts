@@ -37,7 +37,9 @@ test.describe("API Version", () => {
       expect(body.main_version.length).toBeGreaterThan(0);
 
       expect(body).toHaveProperty("package");
-      expect(body.package).toBe("Langflow");
+      // Accept both distributions: "Langflow" (full) and "Langflow Base"
+      expect(typeof body.package).toBe("string");
+      expect(body.package.toLowerCase()).toContain("langflow");
     },
   );
 
