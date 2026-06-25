@@ -66,16 +66,16 @@
 
 ---
 
-### 1.1.b GET `/api/v1/health` → returns uptime and version `[-]`
+### 1.1.b GET `/api/v1/version` → returns version, main_version, package `[x]`
 
-**Objective:** Verify that the extended health endpoint returns instance metadata.
+**Objective:** Verify that the version endpoint returns instance metadata.
 
 **Step by step:**
-1. Make a `GET /api/v1/health` request without authentication.
+1. Make a `GET /api/v1/version` request without authentication.
 2. Verify that the status is `200`.
-3. Verify that the body contains `uptime` and `version` fields.
+3. Verify that the body contains `version`, `main_version` and `package` fields.
 
-**Validation:** Version and uptime information are present in the response.
+**Validation:** Version information is present; `package` is `Langflow`. `POST` is rejected with `405`.
 
 ---
 
