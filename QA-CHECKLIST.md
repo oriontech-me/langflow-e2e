@@ -736,7 +736,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 22 | 21 | 1 | 0 | 0 |
+| `api/flows/` — REST API | 22 | 22 | 0 | 0 | 0 |
 | `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
 | `core-components/` — Core Components | 77 | 69 | 3 | 1 | 4 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
@@ -752,7 +752,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **438** | **199 (45%)** | **179 (41%)** | **7 (2%)** | **53 (12%)** |
+| **TOTAL** | **438** | **200 (46%)** | **178 (41%)** | **7 (2%)** | **53 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -768,7 +768,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 205 `test()` calls carrying the `@stable` tag, distributed across 70 spec
+> 210 `test()` calls carrying the `@stable` tag, distributed across 71 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -810,6 +810,11 @@
 - [x] tweaks override a component field at runtime → `api-run-with-tweaks.spec.ts`
 - [x] empty tweaks object is a no-op and leaves the flow default in effect → `api-run-with-tweaks.spec.ts`
 - [x] tweaks referencing a non-existent component are silently ignored → `api-run-with-tweaks.spec.ts`
+- [x] GET /api/v1/version returns 200 with a non-empty version string → `api-version.spec.ts`
+- [x] GET /api/v1/version reports the Langflow package and main_version → `api-version.spec.ts`
+- [x] GET /api/v1/version response has correct content-type → `api-version.spec.ts`
+- [x] GET /api/v1/version responds within 5 seconds → `api-version.spec.ts`
+- [x] POST /api/v1/version returns 405 Method Not Allowed → `api-version.spec.ts`
 
 #### core-components/
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
@@ -1007,7 +1012,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 1 | 0 |
+| `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 12 | 1 |
