@@ -74,6 +74,7 @@
 1. Make a `GET /api/v1/version` request without authentication.
 2. Verify that the status is `200`.
 3. Verify that the body contains `version`, `main_version` and `package` fields.
+4. Make a `POST /api/v1/version` request; verify that the status is `405`.
 
 **Validation:** Version information is present; `package` is `Langflow`. `POST` is rejected with `405`.
 
