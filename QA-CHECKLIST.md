@@ -81,7 +81,7 @@
 
 #### 1.1 Health Check
 - [x] GET `/health_check` → status 200, db ok → `api-health-check.spec.ts`
-- [-] GET `/api/v1/health` → returns uptime and version
+- [x] GET `/api/v1/version` → returns version, main_version, package → `api-version.spec.ts`
 
 #### 1.2 Flow CRUD via API
 - [x] POST `/api/v1/flows/` → creates flow, returns ID → `api/flows/api-flows-crud.spec.ts`

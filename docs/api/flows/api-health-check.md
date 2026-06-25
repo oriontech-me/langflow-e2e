@@ -57,7 +57,7 @@ The spec runs **4 independent tests**, each issuing a single `GET /health_check`
 
 ## What this test does not cover *(optional)*
 - The `chat` field of the body (returned but not asserted on)
-- The unauthenticated `/api/v1/health` endpoint (uptime/version) — covered by a separate spec when added
+- The version endpoint `/api/v1/version` — covered by `api-version.spec.ts`
 - Behavior under degraded states (e.g., DB down) — would require a fixture that intentionally breaks the database
 
 ---
