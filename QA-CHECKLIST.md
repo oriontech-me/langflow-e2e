@@ -95,6 +95,7 @@
 - [x] POST `/api/v1/run/{flow_id}` with `input_value` → returns response → `api/flows/api-run-flow.spec.ts`
 - [x] POST with `tweaks` → parameters override flow configuration → `api/flows/api-run-with-tweaks.spec.ts`
 - [x] POST with custom `session_id` → `api/flows/api-run-flow.spec.ts`
+- [x] POST with custom `session_id` persists messages retrievable via `GET /api/v1/monitor/messages?session_id` → `api/flows/api-run-flow.spec.ts`
 - [x] POST with `input_type: "chat"` and `output_type: "chat"` → `api/flows/api-run-flow.spec.ts`
 - [x] POST with invalid API key → returns 401/403 → `api-invalid-key.spec.ts`
 - [x] POST to non-existent flow → returns 404 → `api/flows/api-run-flow.spec.ts`
