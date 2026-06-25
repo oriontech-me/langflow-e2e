@@ -1,6 +1,10 @@
-import { readFileSync } from "fs";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import {
+  createRunnableChatFlowViaApi,
+  RUNNABLE_CHAT_FLOW_CHAT_INPUT_DISPLAY_NAME,
+  RUNNABLE_CHAT_FLOW_DEFAULT_INPUT,
+} from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 
 // Tests the POST /api/v1/run/{flow_id} endpoint with the `tweaks` parameter,
 // which lets callers override flow component configuration at runtime.
@@ -18,11 +22,10 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 // ("you cannot pass a tweak with the same name"), so the tests below omit the
 // top-level input and drive the value purely through the tweak.
 
-// The imported fixture is a Chat Input -> Chat Output flow whose Chat Input has
-// a stored `input_value` default of "Hello".
-const FIXTURE_PATH = "tests/assets/flows/chat-io-ok-trace-fixture.json";
-const CHAT_INPUT_DISPLAY_NAME = "Chat Input";
-const FIXTURE_DEFAULT_INPUT = "Hello";
+// The shared runnable flow is a Chat Input -> Chat Output passthrough whose
+// Chat Input has a stored `input_value` default of "Hello".
+const CHAT_INPUT_DISPLAY_NAME = RUNNABLE_CHAT_FLOW_CHAT_INPUT_DISPLAY_NAME;
+const FIXTURE_DEFAULT_INPUT = RUNNABLE_CHAT_FLOW_DEFAULT_INPUT;
 
 // Minimal shape of the run endpoint response needed to read the output text.
 interface RunResponseBody {
@@ -43,6 +46,7 @@ test.describe("POST /api/v1/run with tweaks", () => {
   let apiKey: string;
   let apiKeyId: string;
   let flowId: string;
+  let deleteFlow: () => Promise<void>;
 
   test.beforeAll(async ({ request }) => {
     bearerToken = await getAuthToken(request);
@@ -57,28 +61,17 @@ test.describe("POST /api/v1/run with tweaks", () => {
     apiKey = keyBody.api_key;
     apiKeyId = keyBody.id;
 
-    // Import the Chat Input -> Chat Output fixture as a runnable flow
-    const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf-8"));
-    const flowRes = await request.post("/api/v1/flows/", {
-      headers: { Authorization: bearerToken },
-      data: {
-        name: `Tweaks Test Flow ${Date.now()}`,
-        description: "Chat Input -> Chat Output passthrough for tweaks override tests",
-        data: fixture.data,
-        is_component: false,
-      },
+    // Create the shared Chat Input -> Chat Output passthrough as a runnable flow
+    const flow = await createRunnableChatFlowViaApi(request, {
+      Authorization: bearerToken,
     });
-    expect(flowRes.status()).toBe(201);
-    flowId = (await flowRes.json()).id;
+    flowId = flow.flowId;
+    deleteFlow = flow.deleteFlow;
   });
 
   test.afterAll(async ({ request }) => {
-    if (flowId) {
-      await request
-        .delete(`/api/v1/flows/${flowId}`, {
-          headers: { Authorization: bearerToken },
-        })
-        .catch(() => {});
+    if (deleteFlow) {
+      await deleteFlow();
     }
     if (apiKeyId) {
       await request
