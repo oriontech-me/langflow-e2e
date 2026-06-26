@@ -748,7 +748,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
 | `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
-| `core-components/` — Core Components | 78 | 73 | 2 | 1 | 2 |
+| `core-components/` — Core Components | 78 | 75 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 14 | 2 | 0 | 24 |
@@ -762,7 +762,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **446** | **212 (48%)** | **177 (40%)** | **7 (2%)** | **50 (11%)** |
+| **TOTAL** | **446** | **214 (48%)** | **175 (39%)** | **7 (2%)** | **50 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -778,7 +778,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 222 `test()` calls carrying the `@stable` tag, distributed across 76 spec
+> 224 `test()` calls carrying the `@stable` tag, distributed across 77 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -878,6 +878,8 @@
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
 - [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
 - [x] Loop component — stops after exhausting input DataFrame and emits aggregated done → `loop-component-regression.spec.ts`
+- [x] box-selecting two connected non-IO components and clicking Group collapses them into a single Group node → `nested-grouping-regression.spec.ts`
+- [x] ungrouping a Group node restores the original components and the edge between them → `nested-grouping-regression.spec.ts`
 - [x] Prompt Template component — renders on canvas with output handle → `prompt-template-component-regression.spec.ts`
 - [x] Prompt Template component — variables in curly braces generate dynamic input handles → `prompt-template-component-regression.spec.ts`
 - [x] Prompt Template component — removing a variable removes its input handle → `prompt-template-component-regression.spec.ts`
@@ -1036,7 +1038,7 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 18 | 1 |
-| `core-components/` — Core Components | 2 | 2 |
+| `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 12 | 1 |
 | `core-functionality/llm-agents/` | 2 | 24 |
 | `core-functionality/model-provider/` | 18 | 9 |
