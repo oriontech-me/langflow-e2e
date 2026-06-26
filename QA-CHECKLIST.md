@@ -222,7 +222,7 @@
 #### 3.5 Agent (Component)
 - [-] Agent component displayed on canvas with default settings
 - [ ] Configure system prompt in Agent component → `agent-system-prompt.spec.ts`
-- [ ] Configure model provider directly in Agent component → `agent-provider-field-isolation.spec.ts`
+- [ ] Configure model provider directly in Agent component
 
 #### 3.6 Loop Component
 - [x] Loop component renders on canvas with title and run button → `core-components/loop-component-regression.spec.ts`
@@ -323,7 +323,7 @@
 - [ ] Agent stops when maximum number of iterations is reached → `agent-max-iterations.spec.ts`
 - [ ] Agent with multiple configured tools executes correctly → `agent-multi-tool-selection.spec.ts`
 - [ ] Agent with configured timeout respects the limit
-- [ ] Switch provider in Agent → previous provider fields do not persist → `agent-provider-field-isolation.spec.ts`
+- [x] Connecting an external model in Agent drops the prior model selection (connection-mode isolation, prevents stale provider config) → `llm-agents/agent-model-connection-isolation.spec.ts`
 - [ ] Flow with Agent saved and reopened → settings preserved → `agent-config-persistence.spec.ts`
 - [ ] max_tokens truncates response as configured → `agent-max-tokens.spec.ts`
 - [ ] reasoning_effort field appears/disappears based on selected model → `agent-reasoning-effort.spec.ts`
