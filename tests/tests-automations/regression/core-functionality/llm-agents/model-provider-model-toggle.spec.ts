@@ -183,9 +183,18 @@ test.describe("Model Provider Model Toggle", () => {
         await modelTrigger.click();
         const options = page.locator(optionLocator);
         await options.first().waitFor({ state: "visible", timeout: 10000 });
-        const names = (await options.allInnerTexts())
-          .map((t) => t.trim())
-          .filter((t) => t.length > 0);
+        // Derive model names from the `${name}-option` testid rather than the
+        // option's innerText — deprecated options also render a "Deprecated"
+        // badge, so innerText would yield a malformed name. This mirrors how
+        // Test 1 reads the model name from the toggle's testid.
+        const names = (
+          await options.evaluateAll((els) =>
+            els.map(
+              (el) =>
+                el.getAttribute("data-testid")?.replace(/-option$/, "") ?? "",
+            ),
+          )
+        ).filter((n) => n.length > 0);
         // Pick a model that is NOT the currently selected one — disabling the
         // active selection would entangle the test with selection-reset logic.
         targetModel = names.find((n) => n !== selectedModel) ?? "";
