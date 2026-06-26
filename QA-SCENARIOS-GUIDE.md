@@ -40,6 +40,7 @@
 25. [MCP — Client and Server](#25-mcp--client-and-server)
 26. [UI/UX — Sidebar and Canvas](#26-uiux--sidebar-and-canvas)
 27. [Core Components — Loop](#27-core-components--loop)
+28. [API Keys — Timestamps & Expiry](#28-api-keys--timestamps--expiry)
 
 ---
 
@@ -2493,6 +2494,76 @@
 **Validation:** Non-empty bot response; "title" count ≥ 2 (confirms 2 loop iterations).
 
 **Note:** Validation via "Title" is intentional and slightly fragile — it depends on the Parser's output format. If the template changes the prompt template, the counter may not match. The test's focus is to confirm the Loop iterated, not the exact content.
+
+---
+
+## 28. API Keys — Timestamps & Expiry
+
+**Files:** `ui-ux/api-keys-timezone-display.spec.ts`, `api/flows/api-key-expiry-enforcement.spec.ts`
+**Reference:** PR #13471 — Fix timestamp rendering for `expires_at` in API Key model.
+
+---
+
+### 28.1 Serializer emits UTC offset, no microseconds `[x]`
+
+**Objective:** Confirm `GET /api/v1/api_key/` serializes datetime fields as offset-aware UTC ISO (`+00:00`) at second precision, the root-cause fix for the UTC display bug.
+
+**Precondition:** Langflow running; authenticated (auto_login or form login).
+
+**Step by step:**
+1. Create two keys via `POST /api/v1/api_key/`: one with `expires_at = 2026-06-10T23:59:59+00:00`, one with no expiry.
+2. `GET /api/v1/api_key/` and locate both keys.
+3. Verify `created_at` (both) and `expires_at` (expiring key) match `^…T…\+00:00$` with no microseconds.
+4. Verify `expires_at` round-trips to `2026-06-10T23:59:59+00:00`.
+5. Verify no-expiry `expires_at` and both `last_used_at` are `null`.
+
+**Validation:** All datetime fields offset-aware and second-precision; nulls preserved.
+
+---
+
+### 28.2 Settings table renders timestamps in local timezone `[x]`
+
+**Objective:** Confirm the Settings → API Keys table converts UTC instants to the viewer's local time, with correct empty-state glyphs.
+
+**Precondition:** Browser timezone pinned to `America/Sao_Paulo` (UTC−03:00); the two keys from 28.1 present.
+
+**Step by step:**
+1. Log in and open `/settings/api-keys`.
+2. Verify the expiring key's **expires** cell reads `2026-06-10 20:59:59` (23:59:59 UTC − 03:00).
+3. Verify the **created** cell is well-formatted and differs from the raw UTC wall clock.
+4. Verify the unused key's **last used** cell reads `Never` and the no-expiry key's **expires** cell reads `∞`.
+
+**Validation:** `expires_at` shows `20:59:59` (not the pre-fix `23:59:59`); `Never` and `∞` render correctly.
+
+---
+
+### 28.3 Expired key rejected, valid key accepted `[x]`
+
+**Objective:** Confirm API key expiry is enforced on `POST /api/v1/run/{id}` (`x-api-key`).
+
+**Precondition:** Langflow running; an empty flow created to run against.
+
+**Step by step:**
+1. Create an expired key (`expires_at = 2020-01-01T00:00:00+00:00`) and a valid key (`2099-12-31T23:59:59+00:00`).
+2. Run the flow with the expired key → expect `403`.
+3. Run the flow with the valid key → expect `200`.
+
+**Validation:** Expired → `403 "Invalid or missing API key"`; valid → `200`.
+
+---
+
+### 28.4 Expiry boundary evaluated in UTC `[x]`
+
+**Objective:** Confirm the expiry comparison is UTC-based and not shifted by the viewer's timezone offset.
+
+**Precondition:** Langflow running; empty flow available.
+
+**Step by step:**
+1. Create a key expiring `now + 30 min` (UTC) and a key expiring `now − 30 min` (UTC).
+2. Run with the near-future key → expect `200`.
+3. Run with the recently-expired key → expect `403`.
+
+**Validation:** Both verdicts correct — the 30-min margins sit inside the ±3h offset window, so a timezone-shifted comparison would flip one of them.
 
 ---
 

@@ -113,6 +113,11 @@
 - [x] Generate Python code for integration → `flow-functionality/pythonApiGeneration.spec.ts`
 - [x] API access modal → `flow-functionality/api-access-modal-regression.spec.ts`
 
+#### 1.7 API Key Serialization & Expiry (PR #13471)
+- [x] GET `/api/v1/api_key/` serializes `created_at`/`expires_at` as UTC ISO with `+00:00` offset and no microseconds; null `expires_at`/`last_used_at` stay null → `ui-ux/api-keys-timezone-display.spec.ts`
+- [x] Expired API key is rejected on `POST /api/v1/run/{id}` with 403; valid key accepted with 200 → `api/flows/api-key-expiry-enforcement.spec.ts`
+- [x] Expiry boundary is evaluated in UTC, not shifted by viewer offset (±30 min UTC keys resolve correctly) → `api/flows/api-key-expiry-enforcement.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components
@@ -728,6 +733,7 @@
 - [x] Change appearance/theme settings — dark/light toggle updates #body.dark class → `ui-ux/settings-theme-toggle.spec.ts`
 - [-] Keyboard shortcuts work in editor
 - [~] All documented shortcuts work
+- [x] API Keys table renders `created_at`/`expires_at` in the viewer's local timezone (UTC→local), shows "Never" for unused keys and ∞ for no-expiry keys (PR #13471) → `ui-ux/api-keys-timezone-display.spec.ts`
 
 ---
 
