@@ -1,6 +1,12 @@
 import { type Locator, type Page, expect } from "@playwright/test";
 import { awaitBootstrapTest } from "../other/await-bootstrap-test";
+import { waitForFlowSaveSettled } from "../flows/wait-for-flow-save-settled";
 import { adjustScreenView } from "./adjust-screen-view";
+
+// `waitForFlowSaveSettled` now lives in the flows domain (autosave is a flow
+// concern) and is shared with the rename helper (issues #358, #357). Re-export
+// it here so existing importers of this module keep working unchanged.
+export { waitForFlowSaveSettled };
 
 // Shared testids and selectors for the Prompt Template component, sourced
 // from live UI inspection and the upstream Langflow frontend source:
@@ -27,6 +33,11 @@ const MUSTACHE_TEXTAREA = "modal-mustachepromptarea_mustache_template";
  * Bootstraps a fresh blank flow, drops a Prompt Template node onto it via the
  * sidebar search/add path, and waits for exactly one node to render on the
  * canvas.
+ *
+ * Before returning, it waits for the node-add / viewport autosaves to settle
+ * (`waitForFlowSaveSettled`) so the next flow-save the caller triggers — e.g.
+ * saving the prompt modal — runs on its own and cannot race a still-in-flight
+ * autosave into a spurious "Failed to save flow" toast (issue #358).
  */
 export async function addPromptComponent(page: Page): Promise<void> {
   await awaitBootstrapTest(page);
@@ -44,6 +55,8 @@ export async function addPromptComponent(page: Page): Promise<void> {
   await expect(page.locator(".react-flow__node")).toHaveCount(1, {
     timeout: 10000,
   });
+
+  await waitForFlowSaveSettled(page);
 }
 
 /**

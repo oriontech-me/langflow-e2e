@@ -67,16 +67,17 @@
 
 ---
 
-### 1.1.b GET `/api/v1/health` → returns uptime and version `[-]`
+### 1.1.b GET `/api/v1/version` → returns version, main_version, package `[x]`
 
-**Objective:** Verify that the extended health endpoint returns instance metadata.
+**Objective:** Verify that the version endpoint returns instance metadata.
 
 **Step by step:**
-1. Make a `GET /api/v1/health` request without authentication.
+1. Make a `GET /api/v1/version` request without authentication.
 2. Verify that the status is `200`.
-3. Verify that the body contains `uptime` and `version` fields.
+3. Verify that the body contains `version`, `main_version` and `package` fields.
+4. Make a `POST /api/v1/version` request; verify that the status is `405`.
 
-**Validation:** Version and uptime information are present in the response.
+**Validation:** Version information is present; `package` is `Langflow`. `POST` is rejected with `405`.
 
 ---
 
@@ -699,7 +700,7 @@
 
 ## 13. Core Components — Agent
 
-**Files:** `agent-reasoning-steps.spec.ts`, `agent-system-prompt.spec.ts`, `agent-provider-field-isolation.spec.ts`, `agent-config-persistence.spec.ts`, `agent-max-iterations.spec.ts`, `agent-max-tokens.spec.ts`, `agent-reasoning-effort.spec.ts`, `agent-input-sources.spec.ts`, `agent-structured-output.spec.ts`, `agent-empty-refusal-response.spec.ts`, `agent-current-date-tool.spec.ts`, `agent-parse-error-behavior.spec.ts`, `agent-multimodal-image-input.spec.ts`
+**Files:** `agent-reasoning-steps.spec.ts`, `agent-system-prompt.spec.ts`, `agent-model-connection-isolation.spec.ts`, `agent-config-persistence.spec.ts`, `agent-max-iterations.spec.ts`, `agent-max-tokens.spec.ts`, `agent-reasoning-effort.spec.ts`, `agent-input-sources.spec.ts`, `agent-structured-output.spec.ts`, `agent-empty-refusal-response.spec.ts`, `agent-current-date-tool.spec.ts`, `agent-parse-error-behavior.spec.ts`, `agent-multimodal-image-input.spec.ts`
 
 ---
 
@@ -718,21 +719,19 @@
 
 ---
 
-### 13.2 Switch provider in Agent — previous provider fields do not persist `[ ]`
+### 13.2 Connecting an external model in Agent drops the prior model selection `[x]`
 
-**File:** `agent-provider-field-isolation.spec.ts`
+**File:** `agent-model-connection-isolation.spec.ts`
 
-**Objective:** Ensure that when switching providers, fields exclusive to the previous provider (e.g.: `project_id` from WatsonX) disappear and the API key is not pre-filled with the previous value.
+**Objective:** Ensure connection-mode isolation in the Langflow 1.11 unified model picker: choosing "Connect other models" clears the previously selected model (and the node's secret fields), so a stale provider configuration cannot reach a backend run. The 1.11 Agent has no inline per-provider credential fields (credentials are global, under Settings → Model Providers), so the older "switch provider → provider-specific fields disappear" scenario no longer applies.
 
 **Step by step:**
-1. Load "Simple Agent" template.
-2. Select WatsonX provider in the Agent — verify that `base_url_ibm_watsonx` and `project_id` are visible.
-3. Switch to OpenAI provider.
-4. Verify that `base_url_ibm_watsonx` and `project_id` are **not visible**.
-5. Verify that the `api_key` field is empty (not pre-filled).
-6. Switch back to WatsonX — verify that the previous `project_id` value **does not persist**.
+1. Load "Simple Agent" template with a configured provider/model (resolved from `models.json` / `MODEL_TEST_ID`).
+2. Confirm the model picker (`model_model`) shows a concrete model name in `value-dropdown-model_model` (not the "Select a model" placeholder).
+3. Open the picker and click the `connect-other-models` footer button.
+4. Verify `value-dropdown-model_model` now reads "Connect other models" — the connection-mode label that replaces the prior model selection.
 
-**Validation:** Provider-specific fields appear and disappear correctly; no value leakage between providers.
+**Validation:** The previously selected model is dropped and the trigger reflects connection mode; the prior provider selection cannot leak into execution.
 
 ---
 

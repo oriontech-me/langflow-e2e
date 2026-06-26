@@ -8,6 +8,26 @@ import {
 } from "../../../helpers/ui/open-advanced-options";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
 
+// Expand the currently focused node from minimized to full view. Chat Output
+// defaults to `minimized = True` (see lfx/components/input_output/chat_output.py);
+// without expanding, the run button and the `shownode` input handle rendered on
+// the node body are not present in the DOM. Idempotent: if the node is already
+// expanded (no `hide-node-content` in the DOM) the helper is a no-op.
+async function expandFocusedNode(page: Page): Promise<void> {
+  if ((await page.getByTestId("hide-node-content").count()) === 0) return;
+  await page.getByTestId("more-options-modal").click();
+  await expect(page.getByTestId("expand-button-modal")).toBeVisible({
+    timeout: 10000,
+  });
+  await page.getByTestId("expand-button-modal").click();
+  // Settle: confirm the node finished expanding before callers interact with the
+  // freshly-mounted body (rename inspector, `shownode` handles) — guards against
+  // a mid-transition return flaking under CI parallelism.
+  await expect(page.getByTestId("hide-node-content")).toHaveCount(0, {
+    timeout: 5000,
+  });
+}
+
 async function selectOperator(
   page: Page,
   operatorName: string,
@@ -34,8 +54,8 @@ async function exposeCaseSensitive(page: Page): Promise<void> {
   await closeAdvancedOptions(page);
 }
 
-// Builds: If-Else (operator=equals) + two Text Output components, one renamed
-// to `textoutputfalse` so the True/False branches can be inspected
+// Builds: If-Else (operator=equals) + two Chat Output components, one renamed
+// to `chatoutputfalse` so the True/False branches can be inspected
 // independently by testid. Direct-value path: `input_text` and `match_text`
 // are typed into the If-Else inspector popovers — no ChatInput/Playground
 // involved, mirroring `general-bugs-reset-flow-run.spec.ts` which validated
@@ -65,63 +85,72 @@ async function buildIfElseRoutingFlow(page: Page): Promise<void> {
 
   await zoomOut(page, 3);
 
-  // Text Output (will be wired to True branch — default name `text output`)
+  // Chat Output (will be wired to True branch — default name `chat output`).
+  // Chat Output is added minimized; expand it so the run button and the
+  // `shownode` input handle are present in the DOM.
   await page.getByTestId("sidebar-search-input").click();
-  await page.getByTestId("sidebar-search-input").fill("text output");
-  await expect(page.getByTestId("input_outputText Output")).toBeVisible({
+  await page.getByTestId("sidebar-search-input").fill("chat output");
+  await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
     timeout: 10000,
   });
   await page
-    .getByTestId("input_outputText Output")
+    .getByTestId("input_outputChat Output")
     .dragTo(page.locator('//*[@id="react-flow-id"]'), {
       targetPosition: { x: 100, y: 100 },
     });
 
   await adjustScreenView(page);
 
-  // Second Text Output — will be wired to False branch and renamed to
-  // `textoutputfalse` so the False-branch status icon has a stable testid.
+  await page.getByTestId("title-Chat Output").click();
+  await expandFocusedNode(page);
+
+  // Second Chat Output — will be wired to False branch and renamed to
+  // `chatoutputfalse` so the False-branch status icon has a stable testid.
   await page.getByTestId("sidebar-search-input").click();
-  await page.getByTestId("sidebar-search-input").fill("text output");
-  await expect(page.getByTestId("input_outputText Output")).toBeVisible({
+  await page.getByTestId("sidebar-search-input").fill("chat output");
+  await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
     timeout: 10000,
   });
   await page
-    .getByTestId("input_outputText Output")
+    .getByTestId("input_outputChat Output")
     .dragTo(page.locator('//*[@id="react-flow-id"]'), {
       targetPosition: { x: 200, y: 400 },
     });
 
   await adjustScreenView(page);
 
-  // Rename the second Text Output to `textoutputfalse`
+  // Focus and expand the newly added (second) Chat Output before renaming/wiring.
+  await page.getByTestId("title-Chat Output").last().click();
+  await expandFocusedNode(page);
+
+  // Rename the second Chat Output to `chatoutputfalse`
   await page.getByTestId("generic-node-title-arrangement").last().click();
   await page.getByTestId("panel-description").hover();
   await page
     .getByTestId("panel-description")
     .getByTestId("edit-name-description-button")
     .click();
-  await page.getByTestId("inspection-panel-name").fill("textoutputfalse");
+  await page.getByTestId("inspection-panel-name").fill("chatoutputfalse");
   await page
     .getByTestId("panel-description")
     .getByTestId("save-name-description-button")
     .click();
 
-  // Connect True → first Text Output
+  // Connect True → first Chat Output
   await page
     .getByTestId("handle-conditionalrouter-shownode-true-right")
     .click();
   await page
-    .getByTestId("handle-textoutput-shownode-inputs-left")
+    .getByTestId("handle-chatoutput-shownode-inputs-left")
     .first()
     .click();
 
-  // Connect False → second Text Output (textoutputfalse)
+  // Connect False → second Chat Output (chatoutputfalse)
   await page
     .getByTestId("handle-conditionalrouter-shownode-false-right")
     .click();
   await page
-    .getByTestId("handle-textoutput-shownode-inputs-left")
+    .getByTestId("handle-chatoutput-shownode-inputs-left")
     .last()
     .click();
 }
@@ -130,7 +159,7 @@ test(
   "If-Else routes matching input through the True branch and skips the False branch",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
       await buildIfElseRoutingFlow(page);
     });
 
@@ -139,7 +168,7 @@ test(
       await page.getByTestId("popover-anchor-input-input_text").fill("hello");
       await page.getByTestId("popover-anchor-input-match_text").fill("hello");
 
-      await page.getByTestId("button_run_text output").click();
+      await page.getByTestId("button_run_chat output").click();
       await expect(page.locator("text=built successfully")).toBeVisible({
         timeout: 30000,
       });
@@ -147,10 +176,10 @@ test(
 
     await test.step("Assert True branch built and False branch stayed inactive", async () => {
       await expect(
-        page.getByTestId("node_duration_text output"),
+        page.getByTestId("node_duration_chat output"),
       ).toHaveCount(1, { timeout: 30000 });
       await expect(
-        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
       ).toHaveCount(1, { timeout: 30000 });
     });
   },
@@ -160,7 +189,7 @@ test(
   "If-Else routes non-matching input through the False branch and skips the True branch",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
       await buildIfElseRoutingFlow(page);
     });
 
@@ -169,7 +198,7 @@ test(
       await page.getByTestId("popover-anchor-input-input_text").fill("world");
       await page.getByTestId("popover-anchor-input-match_text").fill("hello");
 
-      await page.getByTestId("button_run_textoutputfalse").click();
+      await page.getByTestId("button_run_chatoutputfalse").click();
       await expect(page.locator("text=built successfully")).toBeVisible({
         timeout: 30000,
       });
@@ -177,10 +206,10 @@ test(
 
     await test.step("Assert False branch built and True branch stayed inactive", async () => {
       await expect(
-        page.getByTestId("node_duration_textoutputfalse"),
+        page.getByTestId("node_duration_chatoutputfalse"),
       ).toHaveCount(1, { timeout: 30000 });
       await expect(
-        page.getByTestId("node_status_icon_text output_inactive"),
+        page.getByTestId("node_status_icon_chat output_inactive"),
       ).toHaveCount(1, { timeout: 30000 });
     });
   },
@@ -190,7 +219,7 @@ test(
   "If-Else operator=contains routes a substring match through the True branch",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
       await buildIfElseRoutingFlow(page);
     });
 
@@ -203,7 +232,7 @@ test(
         .fill("langflow");
       await page.getByTestId("popover-anchor-input-match_text").fill("lang");
 
-      await page.getByTestId("button_run_text output").click();
+      await page.getByTestId("button_run_chat output").click();
       await expect(page.locator("text=built successfully")).toBeVisible({
         timeout: 30000,
       });
@@ -211,10 +240,10 @@ test(
 
     await test.step("Assert True branch built and False branch stayed inactive", async () => {
       await expect(
-        page.getByTestId("node_duration_text output"),
+        page.getByTestId("node_duration_chat output"),
       ).toHaveCount(1, { timeout: 30000 });
       await expect(
-        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
       ).toHaveCount(1, { timeout: 30000 });
     });
   },
@@ -224,7 +253,7 @@ test(
   "If-Else operator=regex routes a valid pattern match through the True branch",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
       await buildIfElseRoutingFlow(page);
     });
 
@@ -240,7 +269,7 @@ test(
         .getByTestId("popover-anchor-input-match_text")
         .fill("^abc\\d+$");
 
-      await page.getByTestId("button_run_text output").click();
+      await page.getByTestId("button_run_chat output").click();
       await expect(page.locator("text=built successfully")).toBeVisible({
         timeout: 30000,
       });
@@ -248,10 +277,10 @@ test(
 
     await test.step("Assert True branch built and False branch stayed inactive", async () => {
       await expect(
-        page.getByTestId("node_duration_text output"),
+        page.getByTestId("node_duration_chat output"),
       ).toHaveCount(1, { timeout: 30000 });
       await expect(
-        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
       ).toHaveCount(1, { timeout: 30000 });
     });
   },
@@ -261,14 +290,14 @@ test(
   "If-Else operator=regex hides the case_sensitive advanced field",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
       await buildIfElseRoutingFlow(page);
     });
 
     await test.step("Baseline: case_sensitive toggle is exposed with the default operator", async () => {
       // Focus the If-Else node — `openAdvancedOptions` operates on the
       // currently-focused node, and the build helper leaves focus on the last
-      // Text Output it renamed.
+      // Chat Output it renamed.
       await page.getByTestId("title-If-Else").click();
 
       await openAdvancedOptions(page);
@@ -293,7 +322,7 @@ test(
   "If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
       await buildIfElseRoutingFlow(page);
     });
 
@@ -303,7 +332,7 @@ test(
       await page.getByTestId("popover-anchor-input-input_text").fill("HELLO");
       await page.getByTestId("popover-anchor-input-match_text").fill("hello");
 
-      await page.getByTestId("button_run_textoutputfalse").click();
+      await page.getByTestId("button_run_chatoutputfalse").click();
       await expect(page.locator("text=built successfully")).toBeVisible({
         timeout: 30000,
       });
@@ -311,10 +340,10 @@ test(
 
     await test.step("Assert False branch built and True branch stayed inactive", async () => {
       await expect(
-        page.getByTestId("node_duration_textoutputfalse"),
+        page.getByTestId("node_duration_chatoutputfalse"),
       ).toHaveCount(1, { timeout: 30000 });
       await expect(
-        page.getByTestId("node_status_icon_text output_inactive"),
+        page.getByTestId("node_status_icon_chat output_inactive"),
       ).toHaveCount(1, { timeout: 30000 });
     });
   },
@@ -324,7 +353,7 @@ test(
   "If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch)",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
       await buildIfElseRoutingFlow(page);
     });
 
@@ -341,7 +370,7 @@ test(
       await page.getByTestId("popover-anchor-input-input_text").fill("HELLO");
       await page.getByTestId("popover-anchor-input-match_text").fill("hello");
 
-      await page.getByTestId("button_run_text output").click();
+      await page.getByTestId("button_run_chat output").click();
       await expect(page.locator("text=built successfully")).toBeVisible({
         timeout: 30000,
       });
@@ -349,10 +378,10 @@ test(
 
     await test.step("Assert True branch built and False branch stayed inactive", async () => {
       await expect(
-        page.getByTestId("node_duration_text output"),
+        page.getByTestId("node_duration_chat output"),
       ).toHaveCount(1, { timeout: 30000 });
       await expect(
-        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
       ).toHaveCount(1, { timeout: 30000 });
     });
   },
@@ -362,7 +391,7 @@ test(
   "If-Else operator=greater than routes a numeric match (10 > 5) through the True branch",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Build If-Else flow with True/False Text Output branches", async () => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
       await buildIfElseRoutingFlow(page);
     });
 
@@ -373,7 +402,7 @@ test(
       await page.getByTestId("popover-anchor-input-input_text").fill("10");
       await page.getByTestId("popover-anchor-input-match_text").fill("5");
 
-      await page.getByTestId("button_run_text output").click();
+      await page.getByTestId("button_run_chat output").click();
       await expect(page.locator("text=built successfully")).toBeVisible({
         timeout: 30000,
       });
@@ -381,10 +410,10 @@ test(
 
     await test.step("Assert True branch built and False branch stayed inactive", async () => {
       await expect(
-        page.getByTestId("node_duration_text output"),
+        page.getByTestId("node_duration_chat output"),
       ).toHaveCount(1, { timeout: 30000 });
       await expect(
-        page.getByTestId("node_status_icon_textoutputfalse_inactive"),
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
       ).toHaveCount(1, { timeout: 30000 });
     });
   },

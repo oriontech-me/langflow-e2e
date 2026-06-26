@@ -1,70 +1,64 @@
 import dotenv from "dotenv";
-import { readFileSync } from "fs";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { SimpleAgentTemplatePage } from "../../../../pages";
 
 test(
   "user must be able to send images in the playground with the agent component",
-  { tag: ["@release", "@components", "@agents"] },
+  { tag: ["@stable", "@release", "@components", "@agents"] },
   async ({ page }) => {
     test.skip(
-      !process?.env?.ANTHROPIC_API_KEY,
-      "ANTHROPIC_API_KEY required to run this test",
+      !process?.env?.OPENAI_API_KEY,
+      "OPENAI_API_KEY required to run this test",
     );
 
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
     }
-    await awaitBootstrapTest(page);
-
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Simple Agent" }).first().click();
-
-    await page.getByTestId("value-dropdown-dropdown_str_agent_llm").click();
-
-    await page.waitForTimeout(200);
-
-    await page.getByText("Anthropic").last().click();
-
-    await page
-      .getByTestId("popover-anchor-input-api_key")
-      .fill(process.env.ANTHROPIC_API_KEY || "");
+    // Load the Simple Agent template via the canonical helper, which clears
+    // existing flows, opens the templates modal through the correct entry point,
+    // and waits for the canvas to actually load. The previous manual
+    // side-nav + heading click landed on the projects list (no canvas) on
+    // Langflow 1.11.0, so the provider entry point never appeared.
+    //
+    // load() also runs setupOpenAI; with no explicit model it selects a resilient
+    // default (gpt-4o-mini, vision-capable on the Agent component), so the
+    // multimodal assertion below holds. OpenAI is used (not Anthropic) so the test
+    // runs in the weekly workflow, which provides OPENAI_API_KEY.
+    await new SimpleAgentTemplatePage(page).load({ provider: "openai" });
 
     await page.getByTestId("playground-btn-flow-io").click();
-
-    // Read the image file as a binary string
-    const filePath = "tests/assets/chain.png";
-    const fileContent = readFileSync(filePath, "base64");
-
-    // Create the DataTransfer and File objects within the browser context
-    const dataTransfer = await page.evaluateHandle(
-      ({ fileContent }) => {
-        const dt = new DataTransfer();
-        const byteCharacters = atob(fileContent);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const file = new File([byteArray], "chain.png", { type: "image/png" });
-        dt.items.add(file);
-        return dt;
-      },
-      { fileContent },
-    );
 
     await page.waitForSelector('[data-testid="input-chat-playground"]', {
       timeout: 100000,
     });
 
-    // Locate the target element
-    const element = await page.getByTestId("input-chat-playground");
+    // Attach the image via the Playground file input. The manual DataTransfer
+    // drop the test used before no longer renders the attachment on Langflow
+    // 1.10.0; setInputFiles matches the working playground attachment specs.
+    await page
+      .locator('[data-testid="input-wrapper"] input[type="file"]')
+      .setInputFiles("tests/assets/media/chain.png");
 
-    // Dispatch the drop event on the target element
-    await element.dispatchEvent("drop", { dataTransfer });
+    // Confirm the image attached before sending. The attachment renders as an
+    // <img alt="chain.png"> preview, not as literal "chain.png" text.
+    await expect(page.locator('img[alt="chain.png"]').first()).toBeVisible({
+      timeout: 30000,
+    });
 
-    await page.getByTestId("input-chat-playground").fill("what is this image?");
+    // Langflow 1.10.0 pre-fills a sample prompt ("Hello, how are you?") into
+    // the chat input shortly after the playground mounts, and the send action
+    // reads the component's internal state — not the raw textarea value — so a
+    // programmatic .fill() is ignored and the default prompt is sent instead
+    // (the model then never sees our question). Wait for the default to settle,
+    // then clear and type with real keystrokes so the component's onChange runs.
+    const chatInput = page.getByTestId("input-chat-playground");
+    await chatInput.click();
+    await expect(chatInput).not.toHaveValue("", { timeout: 10000 }).catch(() => {});
+    await chatInput.press("ControlOrMeta+a");
+    await chatInput.press("Delete");
+    await chatInput.pressSequentially("what is this image?");
+    await expect(chatInput).toHaveValue("what is this image?");
 
     await page.waitForSelector('[data-testid="button-send"]', {
       timeout: 100000,
@@ -72,19 +66,18 @@ test(
 
     await page.getByTestId("button-send").click();
 
-    await page.waitForSelector("text=chain.png", { timeout: 30000 });
+    // Wait for the streamed response to actually describe the image instead of
+    // sleeping a fixed interval: toContainText retries until the markdown
+    // renders, adapting to however long the model takes. This regex is the real
+    // signal that the model saw and described the image.
+    const llmResponse = page.locator(".markdown.prose").last();
+    await expect(llmResponse).toContainText(/chain|inkscape|logo/i, {
+      timeout: 60000,
+    });
 
-    await page.getByText("chain.png").isVisible();
-
-    await page.waitForTimeout(5000);
-
-    const textFromLlm = await page
-      .locator(".markdown.prose")
-      .last()
-      .textContent();
-
-    expect(textFromLlm?.toLowerCase()).toMatch(/(chain|inkscape|logo)/);
-    const lengthOfTextFromLlm = textFromLlm?.length;
-    expect(lengthOfTextFromLlm).toBeGreaterThan(100);
+    // Secondary guard against a one-word answer; kept modest since gpt-4o-mini
+    // replies are terser than the Anthropic model this test was first calibrated for.
+    const textFromLlm = await llmResponse.textContent();
+    expect(textFromLlm?.length).toBeGreaterThan(50);
   },
 );

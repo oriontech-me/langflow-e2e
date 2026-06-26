@@ -185,24 +185,26 @@ test(
     await page.getByTestId("input-chat-playground").fill("transformer neural networks");
     await page.getByTestId("button-send").click();
 
-    // The AI response element appears as soon as the flow starts streaming.
-    // Testid pattern: "chat-message-AI-{content}"
-    await page.waitForSelector('[data-testid^="chat-message-AI-"]', {
-      timeout: 240000,
-    });
-
-    // Verify the loop ran and produced LLM output.
-    // The Parser feeds "Title: {title}\nSummary: {summary}" as input to the LLM;
-    // the LLM returns a free-form response. Checking >= 1 occurrence of "title"
-    // confirms at least one full iteration completed (Parser → LLM → Loop done).
-    // Checking >= 2 would depend on the LLM echoing "title" in every response,
-    // which is non-deterministic.
+    // The AI response streams into a "chat-message-AI-{content}" element. Wait for
+    // it to appear (the ArXiv fetch + first LLM call can take a while), then poll
+    // its text until the aggregated output mentions "title".
+    //
+    // `toContainText` RE-EVALUATES as tokens stream in, so it never samples a
+    // partially-streamed response — the root cause of the flake tracked in #356.
+    // Previously the test read `textContent()` once, right after the message first
+    // became non-empty (i.e. on the first streamed token), and intermittently saw
+    // 0 occurrences of "title" before the rest of the response had arrived. The
+    // 240s budget covers 2 sequential LLM calls plus live ArXiv fetches; `.last()`
+    // re-resolves on each poll, so it tracks the final aggregated message.
+    //
+    // The Parser feeds "Title: {title}\nSummary: {summary}" into the LLM; finding
+    // "title" at least once confirms a full iteration completed (Parser → LLM →
+    // Loop done). We match >= 1 occurrence (not >= 2) because the LLM response is
+    // free-form and may echo "title" in only one of the N responses — the
+    // deterministic per-iteration count is covered by the exit-condition test below.
     const botMessage = page.locator('[data-testid^="chat-message-AI-"]').last();
-    await expect(botMessage).toBeVisible();
-    await expect(botMessage).not.toBeEmpty({ timeout: 240000 });
-    const responseText = await botMessage.textContent() ?? "";
-    const titleCount = (responseText.match(/title/gi) ?? []).length;
-    expect(titleCount).toBeGreaterThanOrEqual(1);
+    await expect(botMessage).toBeVisible({ timeout: 240000 });
+    await expect(botMessage).toContainText(/title/i, { timeout: 240000 });
   },
 );
 
