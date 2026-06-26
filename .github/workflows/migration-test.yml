@@ -13,9 +13,12 @@ env:
   PG_DB: langflow
   STATE_FILE: /tmp/migration-test-state.json
   REPORT_FILE: /tmp/migration-report.md
-  # Fixed key shared by both containers so credentials encrypted by latest
-  # can be decrypted by nightly after DB migration.
-  LANGFLOW_SECRET_KEY: "migration-test-fixed-secret-32chars!!"
+  LANGFLOW_DATABASE_URL: "postgresql://langflow:langflow_test_pw@localhost:5432/langflow"
+  LANGFLOW_AUTO_LOGIN: "true"
+  LANGFLOW_SKIP_AUTH_AUTO_LOGIN: "true"
+  LANGFLOW_SUPERUSER: "langflow"
+  LANGFLOW_SUPERUSER_PASSWORD: "langflow123"
+  LANGFLOW_STORE: "false"
 
 permissions:
   contents: read
@@ -49,41 +52,77 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install test dependencies
         run: |
           pip install requests playwright pytest pytest-playwright
-          playwright install chromium --with-deps
+          # System (apt) deps: run WITHOUT a timeout — interrupting apt
+          # mid-transaction can leave dpkg half-configured and break the retries.
+          playwright install-deps chromium
+          # Browser binary: per-attempt timeout + retry so a stalled
+          # cdn.playwright.dev download cannot burn the whole job budget. This
+          # workflow uses the Python toolchain and cannot reuse the Node
+          # composite action at .github/actions/setup-playwright. See issue #344.
+          for attempt in 1 2 3; do
+            if timeout --kill-after=30s 5m playwright install chromium; then
+              exit 0
+            fi
+            echo "::warning::playwright install attempt $attempt failed or stalled; retrying in 5s..."
+            sleep 5
+          done
+          echo "::error::playwright install failed after 3 attempts (see issue #344)"
+          exit 1
 
-      - name: Generate ephemeral Fernet key for this run
+      - name: Create virtual environment
+        run: uv venv .venv
+
+      - name: Verify OPENAI_API_KEY secret is configured
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # Fail fast: this workflow's flow-execution and migration-verification
+          # steps require a real OpenAI key. Without it `${{ secrets.X }}` resolves
+          # to an empty string, Langflow silently skips the credential auto-import,
+          # and the run only fails 5+ minutes later with a misleading
+          # "Missing credentials" error.
+          if [[ -z "$OPENAI_API_KEY" ]]; then
+            echo "::error::OPENAI_API_KEY repository secret is not configured. Set it in Settings → Secrets and variables → Actions before running this workflow."
+            exit 1
+          fi
+          echo "OPENAI_API_KEY secret is configured."
+
+      - name: Generate ephemeral secret key for this run
         run: |
           python - <<'PY'
-          import base64
-          import os
-
+          import base64, os
           key = base64.urlsafe_b64encode(os.urandom(32)).decode()
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as github_env:
-              github_env.write(f"LANGFLOW_SECRET_KEY={key}\n")
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"LANGFLOW_SECRET_KEY={key}\n")
           PY
 
       # ── Phase 1: Langflow Latest ──────────────────────────────
-      - name: Pull Langflow latest
+      - name: Install Langflow latest
         run: |
-          docker pull langflowai/langflow:latest
-          docker inspect langflowai/langflow:latest --format='{{index .RepoDigests 0}}' > /tmp/latest-digest.txt
-          echo "Latest digest: $(cat /tmp/latest-digest.txt)"
+          uv pip install "langflow[postgresql]"
+          LATEST_VERSION=$(uv pip show langflow | grep ^Version | awk '{print $2}')
+          echo "LATEST_VERSION=$LATEST_VERSION" >> "$GITHUB_ENV"
+          echo "langflow==$LATEST_VERSION" > /tmp/latest-digest.txt
+          echo "Installed Langflow $LATEST_VERSION (latest stable)"
 
       - name: Start Langflow latest
+        env:
+          # Langflow auto-imports OPENAI_API_KEY from the environment as a
+          # Credential-typed Global Variable at startup (see
+          # docs.langflow.org/configuration-global-variables). This is how
+          # starter-project flows get their credentials wired correctly.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          docker run -d --name langflow \
-            --network host \
-            -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
-            -e LANGFLOW_AUTO_LOGIN=true \
-            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
-            -e LANGFLOW_SUPERUSER=langflow \
-            -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
-            -e LANGFLOW_STORE=false \
-            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
-            langflowai/langflow:latest
+          uv run langflow run --host 0.0.0.0 --port "$LANGFLOW_PORT" \
+            > /tmp/langflow-latest.log 2>&1 &
+          echo $! > /tmp/langflow.pid
+          echo "Langflow PID: $(cat /tmp/langflow.pid)"
 
       - name: Wait for Langflow latest
         run: python tests/github-workflows/migration/wait_for_langflow.py
@@ -93,40 +132,50 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-      - name: Save latest container logs
-        if: always()
-        run: docker logs langflow > /tmp/langflow-latest.log 2>&1 || true
+      - name: Stop Langflow latest
+        run: |
+          kill "$(cat /tmp/langflow.pid)" 2>/dev/null || true
+          sleep 3
 
       # ── Phase 2: Upgrade to Nightly ───────────────────────────
-      - name: Stop Langflow latest
-        run: docker stop langflow && docker rm langflow
-
-      - name: Pull Langflow nightly
+      - name: Resolve nightly version from PyPI
         run: |
-          docker pull langflowai/langflow-nightly:latest
-          docker inspect langflowai/langflow-nightly:latest --format='{{index .RepoDigests 0}}' > /tmp/nightly-digest.txt
-          echo "Nightly digest: $(cat /tmp/nightly-digest.txt)"
+          NIGHTLY_VERSION=$(python - <<'PY'
+          import urllib.request, json
+          data = json.loads(urllib.request.urlopen("https://pypi.org/pypi/langflow/json").read())
+          pre = [
+              v for v in data["releases"]
+              if data["releases"][v] and any(c in v for c in ("dev", "a", "b", "rc"))
+          ]
+          pre.sort(key=lambda v: data["releases"][v][0]["upload_time"])
+          print(pre[-1] if pre else "")
+          PY
+          )
+          if [ -z "$NIGHTLY_VERSION" ]; then
+            echo "ERROR: Could not determine nightly version from PyPI"
+            exit 1
+          fi
+          echo "NIGHTLY_VERSION=$NIGHTLY_VERSION" >> "$GITHUB_ENV"
+          echo "langflow==$NIGHTLY_VERSION" > /tmp/nightly-digest.txt
+          echo "Nightly version: $NIGHTLY_VERSION"
+
+      - name: Install Langflow nightly
+        run: |
+          uv pip install "langflow[postgresql]==$NIGHTLY_VERSION"
+          echo "Installed Langflow $NIGHTLY_VERSION (nightly)"
 
       - name: Start Langflow nightly (same database)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          docker run -d --name langflow \
-            --network host \
-            -e LANGFLOW_DATABASE_URL="postgresql://$PG_USER:$PG_PASSWORD@localhost:5432/$PG_DB" \
-            -e LANGFLOW_AUTO_LOGIN=true \
-            -e LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true \
-            -e LANGFLOW_SUPERUSER=langflow \
-            -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 \
-            -e LANGFLOW_STORE=false \
-            -e LANGFLOW_SECRET_KEY="$LANGFLOW_SECRET_KEY" \
-            langflowai/langflow-nightly:latest
+          uv run langflow run --host 0.0.0.0 --port "$LANGFLOW_PORT" \
+            > /tmp/langflow-nightly.log 2>&1 &
+          echo $! > /tmp/langflow.pid
+          echo "Langflow PID: $(cat /tmp/langflow.pid)"
 
       - name: Wait for Langflow nightly (includes migration)
         id: nightly_start
         run: python tests/github-workflows/migration/wait_for_langflow.py --timeout 180
-
-      - name: Save nightly container logs
-        if: always()
-        run: docker logs langflow > /tmp/langflow-nightly.log 2>&1 || true
 
       # ── Phase 3: Verify Migration ─────────────────────────────
       - name: Verify migration via API
@@ -140,6 +189,10 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
       # ── Phase 4: Report ───────────────────────────────────────
+      - name: Stop Langflow nightly
+        if: always()
+        run: kill "$(cat /tmp/langflow.pid)" 2>/dev/null || true
+
       - name: Generate report
         if: always()
         run: python tests/github-workflows/migration/generate_report.py
@@ -148,6 +201,52 @@ jobs:
         if: always()
         run: cat /tmp/migration-report.md
 
+      - name: Generate migration summary
+        if: always()
+        run: |
+          LATEST_DIGEST=$(cat /tmp/latest-digest.txt 2>/dev/null || echo "(unavailable)")
+          NIGHTLY_DIGEST=$(cat /tmp/nightly-digest.txt 2>/dev/null || echo "(unavailable)")
+          OUTCOME="${{ job.status }}"
+          DATE=$(date -u +%Y-%m-%d)
+          {
+            echo "# Langflow Migration — Run Summary"
+            echo ""
+            echo "**Outcome:** \`${OUTCOME}\`   ·   Run #${{ github.run_number }} (${DATE}, ${{ github.event_name }})"
+            echo ""
+            echo "## Scenario"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Workflow | \`${{ github.workflow }}\` |"
+            echo "| Job | \`${{ github.job }}\` (pip-based) |"
+            echo "| Source | \`langflow==${LATEST_VERSION:-?}\` via \`uv pip install \"langflow[postgresql]\"\` |"
+            echo "| Target | \`langflow==${NIGHTLY_VERSION:-?}\` via \`uv pip install \"langflow[postgresql]==<version>\"\` |"
+            echo "| Database | PostgreSQL 16 (GHA service) |"
+            echo "| OPENAI_API_KEY | auto-imported as Credential on each Langflow startup |"
+            echo ""
+            echo "## What this run verified"
+            echo ""
+            echo "- Langflow latest installs via \`uv pip install \"langflow[postgresql]\"\` (psycopg2 driver present)."
+            echo "- Langflow latest boots against the GHA Postgres service."
+            echo "- Simple Agent witness flow created on latest with OPENAI_API_KEY auto-imported."
+            echo "- Witness flow executes successfully on latest."
+            echo "- Langflow nightly resolved from PyPI and installed against the same DB."
+            echo "- Nightly boot completes (alembic migration runs)."
+            echo "- Migration verified via API (\`verify_migration_api.py\`)."
+            echo "- Migration verified via UI (Playwright \`test_ui_migration.py\`)."
+            echo ""
+            echo "## Related artifacts in this run"
+            echo ""
+            echo "- \`migration-report.md\` — detailed phase-by-phase report from \`generate_report.py\`"
+            echo "- \`migration-test-state.json\` — machine-readable state file"
+            echo "- \`langflow-latest.log\` / \`langflow-nightly.log\` — Langflow process logs"
+            echo "- \`test-results/\` — Playwright traces (on failure)"
+            echo "- \`latest-digest.txt\` / \`nightly-digest.txt\` — exact PyPI versions tested"
+          } > /tmp/migration-summary.md
+          echo "::group::Generated summary"
+          cat /tmp/migration-summary.md
+          echo "::endgroup::"
+
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -155,16 +254,13 @@ jobs:
           name: migration-test-${{ github.run_number }}
           path: |
             test-results/
+            /tmp/migration-summary.md
             /tmp/migration-report.md
             /tmp/langflow-latest.log
             /tmp/langflow-nightly.log
             /tmp/migration-test-state.json
             /tmp/latest-digest.txt
             /tmp/nightly-digest.txt
-
-      - name: Cleanup containers
-        if: always()
-        run: docker stop langflow 2>/dev/null; docker rm langflow 2>/dev/null; true
 
       - name: Close issue on success
         if: success()
@@ -241,6 +337,415 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: `Langflow Migration Test Failed (latest → nightly)`,
+                body,
+                labels: ['migration-test', 'automated'],
+              });
+            }
+
+  # ─────────────────────────────────────────────────────────────────
+  # Companion job: same source → target migration via docker-compose,
+  # using the OFFICIAL compose file from langflow-ai/langflow's
+  # docker_example/docker-compose.yml (fetched at runtime). Catches
+  # bugs that only manifest in the user-facing deployment path:
+  # named volumes for Postgres, service-name DNS resolution,
+  # depends_on ordering, restart-on-recreate semantics.
+  # ─────────────────────────────────────────────────────────────────
+  migration-test-compose:
+    name: Migration via docker-compose (Postgres + named volumes)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LF_URL: http://localhost:7860
+      COMPOSE_DIR: /tmp/migration-compose
+      OFFICIAL_COMPOSE_URL: https://raw.githubusercontent.com/langflow-ai/langflow/main/docker_example/docker-compose.yml
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify OPENAI_API_KEY secret is configured
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [[ -z "$OPENAI_API_KEY" ]]; then
+            echo "::error::OPENAI_API_KEY repository secret is required."
+            exit 1
+          fi
+          echo "OPENAI_API_KEY is configured."
+
+      - name: Generate ephemeral SECRET_KEY
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import base64, os
+          print(f"LANGFLOW_SECRET_KEY={base64.urlsafe_b64encode(os.urandom(32)).decode()}")
+          PY
+
+      - name: Fetch official docker-compose.yml from langflow-ai/langflow
+        run: |
+          mkdir -p "$COMPOSE_DIR" /tmp/logs
+          curl -fsSL "$OFFICIAL_COMPOSE_URL" -o "$COMPOSE_DIR/docker-compose.yml"
+          echo "=== Fetched official compose ($(wc -l < "$COMPOSE_DIR/docker-compose.yml") lines) ==="
+          cat "$COMPOSE_DIR/docker-compose.yml"
+          # Save raw copy as artifact for traceability
+          cp "$COMPOSE_DIR/docker-compose.yml" /tmp/logs/official-compose-snapshot.yml
+
+      - name: Write override + .env
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          # Workaround: langflow:latest images built before langflow-ai/langflow#13212
+          # did not pre-create /app/langflow in the Dockerfile, so Docker seeded the
+          # named volume as root:root and uid 1000 (the container user) could not
+          # write secret_key — crashing the container on startup.
+          # Fix: replace the named volume with a world-writable bind mount so the
+          # container can always write to LANGFLOW_CONFIG_DIR regardless of image age.
+          # Remove the volumes override once langflow:latest ships with #13212.
+          mkdir -p /tmp/langflow-data
+          chmod 777 /tmp/langflow-data
+
+          # Override file: pin the langflow image via env var substitution and
+          # inject our auth + credential env vars. Default LANGFLOW_IMAGE is
+          # the upstream `langflow:latest`; we'll flip it to nightly between
+          # phases.
+          cat > "$COMPOSE_DIR/docker-compose.override.yml" <<'YAML'
+          services:
+            langflow:
+              image: ${LANGFLOW_IMAGE:-langflowai/langflow:latest}
+              environment:
+                - LANGFLOW_SECRET_KEY=${LANGFLOW_SECRET_KEY}
+                - OPENAI_API_KEY=${OPENAI_API_KEY}
+                - LANGFLOW_AUTO_LOGIN=true
+                # Since v1.5 the auto_login token is rejected by /run endpoints unless
+                # LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true is set in the SERVER environment.
+                # The GHA top-level env: block only reaches the runner, not the container.
+                - LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true
+                - LANGFLOW_SUPERUSER=langflow
+                - LANGFLOW_SUPERUSER_PASSWORD=langflow123
+                - LANGFLOW_STORE=false
+              volumes:
+                - /tmp/langflow-data:/app/langflow
+          YAML
+
+          # .env consumed by docker compose for variable substitution
+          cat > "$COMPOSE_DIR/.env" <<EOF
+          LANGFLOW_IMAGE=langflowai/langflow:latest
+          LANGFLOW_SECRET_KEY=${LANGFLOW_SECRET_KEY}
+          OPENAI_API_KEY=${OPENAI_API_KEY}
+          EOF
+          chmod 600 "$COMPOSE_DIR/.env"
+
+          echo "=== docker-compose.override.yml ==="
+          cat "$COMPOSE_DIR/docker-compose.override.yml"
+          echo "=== docker compose config (merged, secrets redacted) ==="
+          (cd "$COMPOSE_DIR" && OPENAI_API_KEY=REDACTED LANGFLOW_SECRET_KEY=REDACTED docker compose config) || true
+
+      # ── Phase 1: Source (latest) via docker compose ──────────────
+      - name: "[SOURCE] docker compose up -d (langflowai/langflow:latest)"
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: docker compose up -d
+
+      - name: "[SOURCE] Wait for /health_check"
+        run: |
+          for i in $(seq 1 72); do
+            sleep 5
+            if curl -fsS "${LF_URL}/health_check" >/dev/null 2>&1; then
+              echo "Source up after $((i*5))s"
+              break
+            fi
+            if [[ $i -eq 72 ]]; then
+              echo "::error::Source did not become healthy in 360s"
+              (cd "$COMPOSE_DIR" && docker compose logs --tail=120)
+              exit 1
+            fi
+          done
+
+      - name: "[SOURCE] Create witness flow + execute (Simple Agent)"
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          set -e
+          TOKEN=$(curl -s "${LF_URL}/api/v1/auto_login" | jq -r '.access_token // empty')
+          [[ -z "$TOKEN" ]] && { echo "::error::auto_login failed on source"; exit 1; }
+
+          # Confirm Langflow auto-imported OPENAI_API_KEY as a Credential
+          VAR_COUNT=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            "${LF_URL}/api/v1/variables/" \
+            | jq '[.[] | select(.name == "OPENAI_API_KEY")] | length')
+          if [[ "$VAR_COUNT" -ne "1" ]]; then
+            echo "::error::Expected 1 auto-imported OPENAI_API_KEY Variable on source, got ${VAR_COUNT}"
+            exit 1
+          fi
+          echo "Auto-imported Credential confirmed on source"
+
+          # Template selection strategy:
+          # Starter-projects come pre-configured with a model (e.g. Basic Prompting has
+          # ChatOpenAI wired in and ready to run). Flows from /api/v1/flows/ (e.g. Simple
+          # Agent) may require manual model selection and fail with HTTP 500
+          # "No model selected". So: use starter-projects FIRST, /api/v1/flows/ as fallback.
+          # NOTE: Langflow gzip-encodes large responses → always use --compressed.
+          STARTERS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/")
+          echo "DEBUG /api/v1/starter-projects/ names:"
+          echo "$STARTERS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${STARTERS_JSON:0:200})"
+          # Prefer Basic Prompting (simplest flow that uses OPENAI_API_KEY and runs without config)
+          TEMPLATE=$(echo "$STARTERS_JSON" | \
+            jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("prompting"))][0]' \
+            2>/dev/null || echo "")
+          # If not found, take the first available starter (any pre-configured LLM flow works)
+          if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
+            TEMPLATE=$(echo "$STARTERS_JSON" | jq -c '.[0]' 2>/dev/null || echo "")
+            echo "Basic Prompting not found — using first available starter"
+          fi
+          # Last resort: fall back to /api/v1/flows/ for any prompting-style flow
+          if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
+            echo "No starters available — falling back to /api/v1/flows/"
+            FLOWS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/flows/")
+            echo "DEBUG /api/v1/flows/ names:"
+            echo "$FLOWS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${FLOWS_JSON:0:200})"
+            TEMPLATE=$(echo "$FLOWS_JSON" | \
+              jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("memory chatbot"))][0]' \
+              2>/dev/null || echo "")
+          fi
+
+          [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]] && {
+            echo "::error::No witness template found — /api/v1/flows/ and /api/v1/starter-projects/ both returned nothing usable"; exit 1; }
+          FLOW_PAYLOAD=$(echo "$TEMPLATE" | jq '{
+            name: ((.name // "Simple Agent") + " — migration witness"),
+            description: "compose migration witness",
+            data: .data,
+            endpoint_name: .endpoint_name
+          }')
+          WITNESS_ID=$(curl -s -X POST "${LF_URL}/api/v1/flows/" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$FLOW_PAYLOAD" | jq -r '.id // empty')
+          [[ -z "$WITNESS_ID" ]] && { echo "::error::Failed to create witness flow"; exit 1; }
+          echo "$WITNESS_ID" > /tmp/witness-id.txt
+          echo "Witness flow: $WITNESS_ID"
+
+          # Smoke: execute it on source so we know it works before migration
+          HTTP=$(curl -s -o /tmp/run-source.json -w "%{http_code}" \
+            -X POST "${LF_URL}/api/v1/run/${WITNESS_ID}" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            --max-time 120 \
+            -d '{"input_value":"What is 2+2? Answer with just the number.","output_type":"chat","input_type":"chat"}')
+          if [[ "$HTTP" != "200" ]]; then
+            echo "::error::Source flow execution returned HTTP $HTTP"
+            head -c 2000 /tmp/run-source.json
+            exit 1
+          fi
+          echo "Source flow execution OK"
+
+      - name: "[SOURCE] Stop langflow (preserve volumes)"
+        if: always()
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          docker compose logs langflow > /tmp/logs/compose-source-langflow.log 2>&1 || true
+          docker compose stop langflow
+
+      # ── Phase 2: Target (nightly) via docker compose ─────────────
+      - name: "[TARGET] Switch image to nightly + compose up"
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          # Flip LANGFLOW_IMAGE; postgres volume stays intact
+          sed -i 's|^LANGFLOW_IMAGE=.*|LANGFLOW_IMAGE=langflowai/langflow-nightly:latest|' .env
+          grep LANGFLOW_IMAGE .env
+          docker compose up -d langflow
+
+      - name: "[TARGET] Wait for /health_check (migration runs)"
+        run: |
+          for i in $(seq 1 72); do
+            sleep 5
+            if curl -fsS "${LF_URL}/health_check" >/dev/null 2>&1; then
+              echo "Target up after $((i*5))s"
+              break
+            fi
+            if [[ $i -eq 72 ]]; then
+              echo "::error::Target did not become healthy — likely migration failure"
+              (cd "$COMPOSE_DIR" && docker compose logs langflow --tail=200)
+              exit 1
+            fi
+          done
+
+      - name: "[TARGET] Verify witness flow + execute"
+        run: |
+          set -e
+          TOKEN=$(curl -s "${LF_URL}/api/v1/auto_login" | jq -r '.access_token // empty')
+          [[ -z "$TOKEN" ]] && { echo "::error::auto_login failed on target"; exit 1; }
+
+          WITNESS_ID=$(cat /tmp/witness-id.txt)
+          STATUS=$(curl -s -o /tmp/witness-resp.json -w "%{http_code}" \
+            -H "Authorization: Bearer $TOKEN" \
+            "${LF_URL}/api/v1/flows/${WITNESS_ID}")
+          if [[ "$STATUS" != "200" ]]; then
+            echo "::error::Witness flow lost after compose migration: HTTP $STATUS"
+            cat /tmp/witness-resp.json
+            exit 1
+          fi
+          echo "Witness flow preserved"
+
+          VAR_COUNT=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            "${LF_URL}/api/v1/variables/" \
+            | jq '[.[] | select(.name == "OPENAI_API_KEY")] | length')
+          if [[ "$VAR_COUNT" -ne "1" ]]; then
+            echo "::error::OPENAI_API_KEY Variable count on target: $VAR_COUNT (expected 1)"
+            exit 1
+          fi
+          echo "OPENAI_API_KEY Variable preserved"
+
+          HTTP=$(curl -s -o /tmp/run-target.json -w "%{http_code}" \
+            -X POST "${LF_URL}/api/v1/run/${WITNESS_ID}" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            --max-time 120 \
+            -d '{"input_value":"What is 2+2? Answer with just the number.","output_type":"chat","input_type":"chat"}')
+          if [[ "$HTTP" != "200" ]]; then
+            echo "::error::Target flow execution returned HTTP $HTTP (Fernet/migration regression)"
+            head -c 2000 /tmp/run-target.json
+            exit 1
+          fi
+          if grep -iE 'api[ _-]?key.{0,30}(required|missing|not[ _]?found)|fernet|cannot[ _]decrypt' /tmp/run-target.json; then
+            echo "::error::Target run body indicates credential / Fernet issue"
+            head -c 2000 /tmp/run-target.json
+            exit 1
+          fi
+          echo "Target flow execution OK"
+
+      - name: Save logs + cleanup
+        if: always()
+        working-directory: ${{ env.COMPOSE_DIR }}
+        run: |
+          docker compose logs langflow > /tmp/logs/compose-target-langflow.log 2>&1 || true
+          docker compose logs postgres > /tmp/logs/compose-postgres.log 2>&1 || true
+          docker compose down -v
+
+      - name: Generate migration summary
+        if: always()
+        run: |
+          SOURCE_DIGEST=$(cat /tmp/source-digest.txt 2>/dev/null || echo "(unavailable)")
+          TARGET_DIGEST=$(cat /tmp/target-digest.txt 2>/dev/null || echo "(unavailable)")
+          WITNESS_ID=$(cat /tmp/witness-id.txt 2>/dev/null || echo "(unavailable)")
+          OUTCOME="${{ job.status }}"
+          DATE=$(date -u +%Y-%m-%d)
+          {
+            echo "# Langflow Migration — Run Summary"
+            echo ""
+            echo "**Outcome:** \`${OUTCOME}\`   ·   Run #${{ github.run_number }} (${DATE}, ${{ github.event_name }})"
+            echo ""
+            echo "## Scenario"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Workflow | \`${{ github.workflow }}\` |"
+            echo "| Job | \`${{ github.job }}\` (docker-compose) |"
+            echo "| Source image | \`langflowai/langflow:latest\` (\`${SOURCE_DIGEST}\`) |"
+            echo "| Target image | \`langflowai/langflow-nightly:latest\` (\`${TARGET_DIGEST}\`) |"
+            echo "| Database | PostgreSQL 16-trixie (named volume \`langflow-data\`) |"
+            echo "| Compose file | upstream \`langflow-ai/langflow/docker_example/docker-compose.yml\` (snapshot in artifact) |"
+            echo "| Witness flow id | \`${WITNESS_ID}\` |"
+            echo ""
+            echo "## What this run verified"
+            echo ""
+            echo "- Source image pulled and started via \`docker compose up -d\`."
+            echo "- OPENAI_API_KEY auto-imported as Credential Variable on source."
+            echo "- Simple Agent witness flow created on source."
+            echo "- Witness flow executes successfully on source (Fernet end-to-end smoke)."
+            echo "- Source stopped; postgres named volume preserved."
+            echo "- Target image started on the same volume; alembic migration runs."
+            echo "- Witness flow + OPENAI_API_KEY Variable preserved on target."
+            echo "- Witness flow re-executes successfully on target (Fernet decrypt preserved across migration)."
+            echo ""
+            echo "## Related artifacts in this run"
+            echo ""
+            echo "- \`logs/compose-source-langflow.log\` / \`compose-target-langflow.log\` — langflow service logs"
+            echo "- \`logs/compose-postgres.log\` — postgres service log"
+            echo "- \`logs/official-compose-snapshot.yml\` — exact upstream compose file fetched"
+            echo "- \`run-source.json\` / \`run-target.json\` — full flow-execution responses"
+            echo "- \`witness-id.txt\` — witness flow UUID (same source and target)"
+          } > /tmp/migration-summary.md
+          echo "::group::Generated summary"
+          cat /tmp/migration-summary.md
+          echo "::endgroup::"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: migration-compose-${{ github.run_number }}
+          path: |
+            /tmp/logs/
+            /tmp/migration-summary.md
+            /tmp/witness-id.txt
+            /tmp/run-source.json
+            /tmp/run-target.json
+          retention-days: 30
+
+      - name: Close issue on success
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'migration-test',
+              state: 'open',
+            });
+            if (existing.length > 0) {
+              const issue = existing[0];
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: [
+                  `## ✅ Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
+                  '',
+                  'docker-compose migration test passed. Closing.',
+                  '',
+                  `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+                ].join('\n'),
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+            }
+
+      - name: Create or update issue on failure
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'migration-test',
+              state: 'open',
+            });
+            const body = [
+              `## Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
+              '',
+              `docker-compose migration test failed. Source: \`langflowai/langflow:latest\` → Target: \`langflowai/langflow-nightly:latest\`.`,
+              `Compose file: pinned to upstream main of \`langflow-ai/langflow/docker_example/docker-compose.yml\`.`,
+              '',
+              `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+              '',
+              '/cc @lice-reis',
+            ].join('\n');
+
+            if (existing.length > 0) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing[0].number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Langflow Migration Test Failed (latest → nightly)',
                 body,
                 labels: ['migration-test', 'automated'],
               });

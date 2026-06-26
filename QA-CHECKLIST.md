@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-05-14
+> **Last updated:** 2026-06-26
 
 ---
 
@@ -81,36 +81,42 @@
 
 #### 1.1 Health Check
 - [x] GET `/health_check` → status 200, db ok → `api-health-check.spec.ts`
-- [-] GET `/api/v1/health` → returns uptime and version
+- [x] GET `/api/v1/version` → returns version, main_version, package → `api-version.spec.ts`
 
 #### 1.2 Flow CRUD via API
-- [-] POST `/api/v1/flows/` → creates flow, returns ID
-- [-] GET `/api/v1/flows/` → lists user flows
-- [-] GET `/api/v1/flows/{id}` → returns flow by ID
-- [-] PATCH `/api/v1/flows/{id}` → updates name/description
-- [-] DELETE `/api/v1/flows/{id}` → removes flow, returns 200
-- [-] GET `/api/v1/flows/{id}` after DELETE → should return 404
+- [x] POST `/api/v1/flows/` → creates flow, returns ID → `api/flows/api-flows-crud.spec.ts`
+- [x] GET `/api/v1/flows/` → lists user flows → `api/flows/api-flows-crud.spec.ts`
+- [x] GET `/api/v1/flows/{id}` → returns flow by ID → `api/flows/api-flows-crud.spec.ts`
+- [x] PATCH `/api/v1/flows/{id}` → updates name/description → `api/flows/api-flows-crud.spec.ts`
+- [x] DELETE `/api/v1/flows/{id}` → removes flow, returns 200 → `api/flows/api-flows-crud.spec.ts`
+- [x] GET `/api/v1/flows/{id}` after DELETE → should return 404 → `api/flows/api-flows-crud.spec.ts`
 
 #### 1.3 Flow Execution via API
-- [-] POST `/api/v1/run/{flow_id}` with `input_value` → returns response
-- [-] POST with `tweaks` → parameters override flow configuration
-- [-] POST with custom `session_id`
-- [-] POST with `input_type: "chat"` and `output_type: "chat"`
+- [x] POST `/api/v1/run/{flow_id}` with `input_value` → returns response → `api/flows/api-run-flow.spec.ts`
+- [x] POST with `tweaks` → parameters override flow configuration → `api/flows/api-run-with-tweaks.spec.ts`
+- [x] POST with custom `session_id` → `api/flows/api-run-flow.spec.ts`
+- [x] POST with custom `session_id` persists messages retrievable via `GET /api/v1/monitor/messages?session_id` → `api/flows/api-run-flow.spec.ts`
+- [x] POST with `input_type: "chat"` and `output_type: "chat"` → `api/flows/api-run-flow.spec.ts`
 - [x] POST with invalid API key → returns 401/403 → `api-invalid-key.spec.ts`
-- [-] POST to non-existent flow → returns 404
+- [x] POST to non-existent flow → returns 404 → `api/flows/api-run-flow.spec.ts`
 
 #### 1.4 Components via API
-- [-] GET `/api/v1/all` → lists all available components
-- [-] POST `/api/v1/custom_component` → creates custom component
+- [x] GET `/api/v1/all` → lists all available components → `api/flows/api-custom-component-creation.spec.ts`
+- [x] POST `/api/v1/custom_component` → creates custom component → `api/flows/api-custom-component-creation.spec.ts`
 
 #### 1.5 Messages and Monitoring via API
-- [-] GET `/api/v1/monitor/messages` → returns 200 with array
-- [-] GET with session_id filter returns only messages from that session
+- [x] GET `/api/v1/monitor/messages` → returns 200 with array → `api/flows/api-monitor-messages.spec.ts`
+- [x] GET with session_id filter returns only messages from that session → `api/flows/api-monitor-messages.spec.ts`
 
 #### 1.6 Integration Code Generation
 - [x] Generate curl for API execution → `flow-functionality/curlApiGeneration.spec.ts`
 - [x] Generate Python code for integration → `flow-functionality/pythonApiGeneration.spec.ts`
-- [-] API access modal
+- [x] API access modal → `flow-functionality/api-access-modal-regression.spec.ts`
+
+#### 1.7 API Key Serialization & Expiry (PR #13471)
+- [x] GET `/api/v1/api_key/` serializes `created_at`/`expires_at` as UTC ISO with `+00:00` offset and no microseconds; null `expires_at`/`last_used_at` stay null → `ui-ux/api-keys-timezone-display.spec.ts`
+- [x] Expired API key is rejected on `POST /api/v1/run/{id}` with 403; valid key accepted with 200 → `api/flows/api-key-expiry-enforcement.spec.ts`
+- [x] Expiry boundary is evaluated in UTC, not shifted by viewer offset (±30 min UTC keys resolve correctly) → `api/flows/api-key-expiry-enforcement.spec.ts`
 
 ---
 
@@ -142,10 +148,12 @@
 - [-] Outdated component notification
 - [-] Update component action
 - [ ] Update with breaking change — should alert user
-- [ ] Legacy component visible via configuration
+- [x] Legacy component visible via configuration → `core-components/legacy-components-toggle-regression.spec.ts`
+- [x] Beta component visible via configuration → `core-components/beta-components-toggle-regression.spec.ts`
+- [x] Re-saving code removes handles from previously-toggled advanced fields → `core-components/general-bugs-delete-handle-advanced-input.spec.ts`
 
 #### 2.4 Code Editing
-- [-] Edit Python code of custom component
+- [x] Edit Python code of custom component — Check & Save clears the pulse-pink indicator → `core-components/customComponentAdd.spec.ts`
 - [-] Full custom component
 
 ---
@@ -201,8 +209,8 @@
 - [x] Headers table accepts key + value cell entries via inspector → `core-components/api-request-component-regression.spec.ts`
 - [x] cURL tab switches mode and exposes the cURL input field → `core-components/api-request-component-regression.spec.ts`
 - [x] cURL parser auto-fills URL field and executes the GET, returning 200 → `core-components/api-request-component-regression.spec.ts`
-- [ ] Body table key + value entries (body field is `advanced=True`)
-- [ ] Flow state persisted in database after autosave
+- [x] Body table accepts key + value cell entries when method is POST (body field is `advanced=True` and hidden by inspector while method is GET) → `core-components/api-request-component-regression.spec.ts`
+- [x] Flow state (URL, method, headers row) persists in database after autosave and rehydrates on reload → `core-components/api-request-component-regression.spec.ts`
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
@@ -217,9 +225,10 @@
 - [x] Payload inválido (não-JSON) é encapsulado em `{"payload": "..."}` na saída → `core-components/webhook-component-regression.spec.ts`
 
 #### 3.5 Agent (Component)
-- [-] Agent component displayed on canvas with default settings
-- [ ] Configure system prompt in Agent component → `agent-system-prompt.spec.ts`
-- [ ] Configure model provider directly in Agent component → `agent-provider-field-isolation.spec.ts`
+- [x] Agent component renders on canvas with title, handles and default fields → `core-components/agent-component-regression.spec.ts`
+- [x] System prompt accepts input and persists across flow reload → `core-components/agent-component-regression.spec.ts`
+- [x] Model dropdown exposes manage-model-providers and lists configured models → `core-components/agent-component-regression.spec.ts`
+- [x] Selecting a different-provider model swaps the canvas provider icon → `core-components/agent-component-regression.spec.ts`
 
 #### 3.6 Loop Component
 - [x] Loop component renders on canvas with title and run button → `core-components/loop-component-regression.spec.ts`
@@ -233,6 +242,18 @@
 - [x] Nested component → `core-components/nested-grouping-regression.spec.ts`
 - [x] Enter and exit grouped component → `core-components/nested-grouping-regression.spec.ts`
 
+#### 3.8 If-Else Component
+- [x] `operator=equals`: matching input routes through True branch (False branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=equals`: non-matching input routes through False branch (True branch stays inactive) → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=contains` substring routing → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=regex` valid pattern routing → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=regex` hides `case_sensitive` field via `update_build_config` → `core-components/if-else-component-regression.spec.ts`
+- [x] `case_sensitive` ON (default) treats mixed case as no-match → `core-components/if-else-component-regression.spec.ts`
+- [x] `case_sensitive` OFF treats mixed case as a match → `core-components/if-else-component-regression.spec.ts`
+- [x] `operator=greater than` numeric routing → `core-components/if-else-component-regression.spec.ts`
+- [ ] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than`, not separately covered
+- [ ] `max_iterations` + `default_route` cycle break
+
 ---
 
 ## core-functionality/ — Core and Operational Logic
@@ -242,11 +263,11 @@
 #### 4.1 Login / Logout
 - [-] Login with valid credentials
 - [-] Login with invalid credentials — should display error message
-- [-] Logout — should redirect to login screen
+- [x] Logout — should redirect to login screen
 - [-] Auto-login enabled — should skip login screen
 - [-] Auto-login disabled — should display login screen
 - [-] Expired session — should redirect to login
-- [-] Session cleanup after logout
+- [x] Session cleanup after logout
 
 #### 4.2 User Management (Admin)
 - [-] Admin creates new user
@@ -258,11 +279,13 @@
 - [-] Isolation flow: user A cannot see user B's flows
 
 #### 4.3 Global Variables (API Keys)
-- [-] Create global variable
+- [x] Create global variable
 - [ ] Use global variable in component (API key)
-- [-] Edit existing global variable
-- [-] Delete global variable
-- [-] Create global variable of type "Generic"
+- [x] Edit existing global variable → `ui-ux/global-variable-edit.spec.ts`
+- [x] Delete global variable
+- [x] Create global variable of type "Generic"
+- [x] Credential variable value is hidden from the variable list
+- [x] Create global variable from Settings page → `ui-ux/global-variable-edit.spec.ts`
 
 ---
 
@@ -306,7 +329,7 @@
 - [ ] Agent stops when maximum number of iterations is reached → `agent-max-iterations.spec.ts`
 - [ ] Agent with multiple configured tools executes correctly → `agent-multi-tool-selection.spec.ts`
 - [ ] Agent with configured timeout respects the limit
-- [ ] Switch provider in Agent → previous provider fields do not persist → `agent-provider-field-isolation.spec.ts`
+- [x] Connecting an external model in Agent drops the prior model selection (connection-mode isolation, prevents stale provider config) → `llm-agents/agent-model-connection-isolation.spec.ts`
 - [ ] Flow with Agent saved and reopened → settings preserved → `agent-config-persistence.spec.ts`
 - [ ] max_tokens truncates response as configured → `agent-max-tokens.spec.ts`
 - [ ] reasoning_effort field appears/disappears based on selected model → `agent-reasoning-effort.spec.ts`
@@ -376,6 +399,8 @@
 - [-] Model Input component
 - [-] Add new provider via modal
 - [-] Remove API key from existing provider
+- [x] Per-model enable/disable toggle changes immediately and persists across reopen → `llm-agents/model-provider-model-toggle.spec.ts`
+- [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
 #### 7.6 Open-Source Providers
 - [ ] Configure and execute flow with Ollama (local model)
@@ -395,13 +420,23 @@
 ### core-functionality/observability-monitoring/ — Tracing, Logs and Metrics
 
 #### 8.1 Traces
-- [-] View execution traces
-- [-] Trace API returns paginated transactions
-- [-] Trace displays latency of each component
-- [-] Trace displays tokens consumed
+- [x] View execution traces
+- [x] Trace API returns paginated transactions
+- [x] Trace displays latency of each component
+- [x] Trace displays tokens consumed
+- [x] Single-trace API returns 404 for an unknown trace_id → `traces-detail-single.spec.ts`
+- [x] Single-trace API returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
+- [x] Single-trace API returns populated tokenUsage + modelName on the LLM span (OpenAI) → `traces-detail-llm-span-populated.spec.ts`
+- [x] Bulk delete traces API returns 404 for an unknown flow_id → `traces-delete.spec.ts`
+- [x] Bulk delete traces API clears all traces for the flow (204 + empty list) → `traces-delete.spec.ts`
+- [x] Trace list filter `?status=error` returns only the failing trace; `?status=<unknown>` returns 422 → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?status=ok` returns only the successful trace → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?start_time` pins the >= lower bound (past hits, future misses) → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?query=<substring>` filters by trace name, incl. 50-char sanitize cap → `traces-list-filters.spec.ts`
+- [x] Trace list filter `?session_id` filters by the session passed at run time → `traces-list-filters.spec.ts`
 
 #### 8.2 Notifications
-- [-] System notifications
+- [x] System notifications — build-success entry shows in the notifications tab → `notifications.spec.ts`
 - [-] Execution error notification
 - [-] Outdated component notification
 
@@ -563,18 +598,22 @@
 
 #### 12.2 View and Edit Flow
 - [x] Rename flow via editor header → `flow-functionality/flow-rename-header.spec.ts`
+- [x] Rename flow and verify on main page listing → `core-functionality/project-management/edit-flow-name.spec.ts`
 - [-] Edit flow name and description
 - [-] Flow auto-save on changes
 - [-] Flow settings
 
 #### 12.3 Delete Flow
 - [-] Delete individual flow
-- [-] Delete multiple flows (bulk actions)
-- [-] Confirm deleted flow does not appear in listing
+- [x] Delete multiple flows (bulk actions) → `core-functionality/project-management/bulk-actions.spec.ts`
+- [x] Shift-click range select + Ctrl/Cmd-click multi-select on main page → `core-functionality/project-management/bulk-actions.spec.ts`
+- [x] Bulk download selected flows → `core-functionality/project-management/bulk-actions.spec.ts`
+- [x] Confirm deleted flow does not appear in listing (after bulk delete) → `core-functionality/project-management/bulk-actions.spec.ts`
 
 #### 12.4 Export / Import Flow
-- [-] Export flow as JSON
-- [-] Import flow via JSON file upload
+- [x] Export flow as JSON → `flow-functionality/export-import-flow.spec.ts`
+- [x] Exported JSON contains valid data.nodes structure → `flow-functionality/export-import-flow.spec.ts`
+- [x] Import flow via JSON file upload (drag-drop + upload button) → `flow-functionality/export-import-flow.spec.ts`
 - [~] Import flow with outdated components
 - [-] Import invalid JSON — should display error message
 
@@ -586,7 +625,7 @@
 - [-] Save flow components as template
 
 #### 12.6 Flow Execution
-- [-] Execute flow via Run button → `core/features/run-flow.spec.ts`
+- [x] Run Flow component executes another flow → `flow-functionality/run-flow.spec.ts`
 - [-] Stop building flow → `core/features/stop-building.spec.ts`
 - [!] Playground button disabled with empty flow — needs review → `regression/flow-functionality/generalBugs-shard-3.spec.ts` (**test skipped: assertion was a no-op, current Langflow behavior to confirm**)
 
@@ -637,7 +676,7 @@
 #### 15.2 Add Components to Canvas
 - [-] Drag component from sidebar to canvas
 - [-] Double-click in sidebar adds component to canvas
-- [-] Hover + click "+" button adds component to canvas
+- [x] Hover + click "+" button adds component to canvas → `core-components/componentHoverAdd.spec.ts`
 - [-] Added component appears with default settings
 
 #### 15.3 Component Connections
@@ -648,14 +687,15 @@
 - [-] Reconnect existing edge
 
 #### 15.4 Node Manipulation
-- [-] Delete component from canvas
+- [x] Delete component from canvas via Backspace key → `core-components/componentDelete.spec.ts`
+- [x] Delete component from canvas via node options (...) menu → `core-components/componentDelete.spec.ts`
 - [x] Copy and paste ChatOutput component (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [x] Copy and paste Prompt Template (component with dynamic ports) (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [-] Canvas keyboard shortcuts
 - [-] Minimize component on canvas
 - [-] Move component within canvas
 - [-] Select multiple components via box selection
-- [-] Delete multiple selected components
+- [x] Delete multiple selected components (marquee box selection) → `core-components/componentDelete.spec.ts`
 - [-] Deselect node by clicking on empty canvas area
 - [-] Deselect node via Escape
 
@@ -694,6 +734,8 @@
 - [x] Change appearance/theme settings — dark/light toggle updates #body.dark class → `ui-ux/settings-theme-toggle.spec.ts`
 - [-] Keyboard shortcuts work in editor
 - [~] All documented shortcuts work
+- [x] Edit a keyboard shortcut (Duplicate → `Ctrl/Cmd+Alt+U`) persists to the table and the new combination triggers the action on canvas → `ui-ux/settings-shortcuts-edit.spec.ts`
+- [x] API Keys table renders `created_at`/`expires_at` in the viewer's local timezone (UTC→local), shows "Never" for unused keys and ∞ for no-expiry keys (PR #13471) → `ui-ux/api-keys-timezone-display.spec.ts`
 
 ---
 
@@ -704,23 +746,23 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 21 | 4 | 17 | 0 | 0 |
-| `core-components/` — Component Config | 22 | 1 | 19 | 0 | 2 |
-| `core-components/` — Core Components | 67 | 59 | 3 | 1 | 4 |
-| `core-functionality/auth/` | 19 | 0 | 18 | 0 | 1 |
+| `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
+| `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
+| `core-components/` — Core Components | 78 | 73 | 2 | 1 | 2 |
+| `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
-| `core-functionality/llm-agents/` | 40 | 13 | 2 | 0 | 25 |
-| `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
-| `core-functionality/observability-monitoring/` | 13 | 0 | 12 | 0 | 1 |
+| `core-functionality/llm-agents/` | 40 | 14 | 2 | 0 | 24 |
+| `core-functionality/model-provider/` | 33 | 6 | 18 | 0 | 9 |
+| `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 23 | 3 | 18 | 2 | 0 |
+| `flow-functionality/` | 27 | 12 | 13 | 2 | 0 |
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
-| `ui-ux/` — Canvas | 43 | 2 | 39 | 1 | 1 |
-| `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **408** | **132 (32%)** | **215 (53%)** | **7 (2%)** | **54 (13%)** |
+| `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
+| `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
+| **TOTAL** | **446** | **212 (48%)** | **177 (40%)** | **7 (2%)** | **50 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -736,13 +778,26 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 132 `test()` calls carrying the `@stable` tag, distributed across 45 spec
+> 222 `test()` calls carrying the `@stable` tag, distributed across 76 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
 
 #### api/flows/
+- [x] POST /api/v1/custom_component returns valid component structure → `api-custom-component-creation.spec.ts`
+- [x] POST /api/v1/custom_component with invalid code returns error → `api-custom-component-creation.spec.ts`
+- [x] GET /api/v1/all includes component types → `api-custom-component-creation.spec.ts`
+- [x] POST /api/v1/custom_component without auth returns 401 or 403 → `api-custom-component-creation.spec.ts`
+- [x] POST creates flow and returns ID → `api-flows-crud.spec.ts`
+- [x] GET lists flows and includes the created one → `api-flows-crud.spec.ts`
+- [x] GET by ID returns correct flow → `api-flows-crud.spec.ts`
+- [x] PATCH updates flow name and description → `api-flows-crud.spec.ts`
+- [x] DELETE removes flow and returns 200 → `api-flows-crud.spec.ts`
+- [x] GET after DELETE returns 404 → `api-flows-crud.spec.ts`
+- [x] GET non-existent flow returns 404 → `api-flows-crud.spec.ts`
+- [x] POST with missing name returns 422 → `api-flows-crud.spec.ts`
+- [x] deleted flow does not appear in flows listing → `api-flows-crud.spec.ts`
 - [x] GET /health_check returns 200 with status ok → `api-health-check.spec.ts`
 - [x] GET /health_check returns db ok → `api-health-check.spec.ts`
 - [x] GET /health_check responds within 5 seconds → `api-health-check.spec.ts`
@@ -753,8 +808,31 @@
 - [x] POST /api/v1/run/{id} with invalid x-api-key returns 401 or 403 → `api-invalid-key.spec.ts`
 - [x] DELETE /api/v1/flows/{id} without Authorization header returns 401 or 403 → `api-invalid-key.spec.ts`
 - [x] PATCH /api/v1/flows/{id} with wrong token does not update the flow → `api-invalid-key.spec.ts`
+- [x] rejects an expired API key with 403 and accepts a valid one with 200 → `api-key-expiry-enforcement.spec.ts`
+- [x] evaluates the expiry boundary in UTC, not shifted by the viewer offset → `api-key-expiry-enforcement.spec.ts`
+- [x] returns 200 with array → `api-monitor-messages.spec.ts`
+- [x] without auth returns 401 or 403 → `api-monitor-messages.spec.ts`
+- [x] filtered by session_id returns only matching messages → `api-monitor-messages.spec.ts`
+- [x] filtered by flow_id returns only matching messages → `api-monitor-messages.spec.ts`
+- [x] combined session_id and flow_id filters return 200 → `api-monitor-messages.spec.ts`
+- [x] messages contain required fields when not empty → `api-monitor-messages.spec.ts`
+- [x] executes flow with input_value and returns outputs → `api-run-flow.spec.ts`
+- [x] executes flow with custom session_id and persists messages under it → `api-run-flow.spec.ts`
+- [x] returns 404 for non-existent flow ID → `api-run-flow.spec.ts`
+- [x] tweaks override a component field at runtime → `api-run-with-tweaks.spec.ts`
+- [x] empty tweaks object is a no-op and leaves the flow default in effect → `api-run-with-tweaks.spec.ts`
+- [x] tweaks referencing a non-existent component are silently ignored → `api-run-with-tweaks.spec.ts`
+- [x] GET /api/v1/version returns 200 with a non-empty version string → `api-version.spec.ts`
+- [x] GET /api/v1/version reports the Langflow package and main_version → `api-version.spec.ts`
+- [x] GET /api/v1/version response has correct content-type → `api-version.spec.ts`
+- [x] GET /api/v1/version responds within 5 seconds → `api-version.spec.ts`
+- [x] POST /api/v1/version returns 405 Method Not Allowed → `api-version.spec.ts`
 
 #### core-components/
+- [x] renders on canvas with default fields and handles → `agent-component-regression.spec.ts`
+- [x] system prompt accepts input and persists across flow reload → `agent-component-regression.spec.ts`
+- [x] model dropdown exposes manage-model-providers and lists configured models → `agent-component-regression.spec.ts`
+- [x] selecting a different-provider model swaps the canvas provider icon → `agent-component-regression.spec.ts`
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
 - [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
 - [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
@@ -768,6 +846,9 @@
 - [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — body table accepts key + value cell entries when method is POST → `api-request-component-regression.spec.ts`
+- [x] API Request component — flow state persists in database after autosave (URL, method, headers) → `api-request-component-regression.spec.ts`
+- [x] Show Beta Components toggle controls visibility of beta components in the sidebar → `beta-components-toggle-regression.spec.ts`
 - [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input → Chat Output — inspector-attached file is rendered in the Playground message → `chat-input-files-field-regression.spec.ts`
@@ -778,6 +859,21 @@
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
+- [x] Should delete a single component with the Backspace key → `componentDelete.spec.ts`
+- [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
+- [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
+- [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
+- [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
+- [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
+- [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
+- [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=contains routes a substring match through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=regex routes a valid pattern match through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=regex hides the case_sensitive advanced field → `if-else-component-regression.spec.ts`
+- [x] If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch → `if-else-component-regression.spec.ts`
+- [x] If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch) → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=greater than routes a numeric match (10 > 5) through the True branch → `if-else-component-regression.spec.ts`
+- [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
 - [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
@@ -804,6 +900,7 @@
 - [x] Prompt Template — `{}` (empty braces) is accepted by the parser and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] Prompt Template — repeating the same variable produces exactly one handle (deduplication contract) → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] User should be able to use components as tool → `tool-mode.spec.ts`
+- [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
 - [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
@@ -813,18 +910,44 @@
 - [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
+#### core-functionality/auth/
+- [x] logout must redirect user to login page → `logout-flow.spec.ts`
+- [x] after logout, navigating to root must redirect to login → `logout-flow.spec.ts`
+- [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
+
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
-- [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
+- [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
+- [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
 - [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
 - [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
-- [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
+- [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
+- [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
+
+#### core-functionality/observability-monitoring/
+- [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
+- [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
+- [x] GET /api/v1/monitor/traces/{trace_id} returns a populated tokenUsage + modelName on the LLM span → `traces-detail-llm-span-populated.spec.ts`
+- [x] GET /api/v1/monitor/traces/{trace_id} returns 404 for an unknown but well-formed UUID → `traces-detail-single.spec.ts`
+- [x] GET /api/v1/monitor/traces/{trace_id} returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
+- [x] GET /api/v1/monitor/transactions returns 200 with paginated result → `traces-detail.spec.ts`
+- [x] GET /api/v1/monitor/transactions filters by flow_id (UUID) → `traces-detail.spec.ts`
+- [x] transaction records contain required fields when not empty → `traces-detail.spec.ts`
+- [x] GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run → `traces-latency-tokens.spec.ts`
+- [x] Flow Activity page shows latency and token columns for the run → `traces-latency-tokens.spec.ts`
+- [x] Trace Details modal shows span tree and per-span latency → `traces-latency-tokens.spec.ts`
+- [x] GET /api/v1/monitor/traces?status=error returns only the failing trace; rejects unknown values → `traces-list-filters.spec.ts`
+- [x] GET /api/v1/monitor/traces?status=ok returns only the successful trace → `traces-list-filters.spec.ts`
+- [x] GET /api/v1/monitor/traces?start_time pins the >= lower bound → `traces-list-filters.spec.ts`
+- [x] GET /api/v1/monitor/traces?query=<substring> filters by trace name (incl. 50-char sanitize cap) → `traces-list-filters.spec.ts`
+- [x] GET /api/v1/monitor/traces?session_id filters by the session passed at run time → `traces-list-filters.spec.ts`
+- [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
-- [x] copy button copies Text Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
+- [x] copy button copies Chat Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
 - [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
 - [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
 - [x] playground must render both attached images in the user message after sending → `playground-attachments-management.spec.ts`
@@ -854,11 +977,7 @@
 - [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
 - [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
-- [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
-- [x] session ID input accepts a custom value → `playground-session-id.spec.ts`
-- [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
 - [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
-- [x] rename option must not be available for the Default Session → `playground-session-rename.spec.ts`
 - [x] rename option must not be available for a session with no messages → `playground-session-rename.spec.ts`
 - [x] rename option must be available and functional for a session with messages → `playground-session-rename.spec.ts`
 - [x] Shareable playground URL is generated when publishing is enabled → `playground-shareable-url.spec.ts`
@@ -867,12 +986,23 @@
 - [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
+#### core-functionality/project-management/
+- [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
+- [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
+
 #### flow-functionality/
+- [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
+- [x] API access modal switches the displayed snippet when changing language tabs → `api-access-modal-regression.spec.ts`
+- [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
+- [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
+- [x] export flow to JSON triggers success toast and produces a valid file → `export-import-flow.spec.ts`
+- [x] imported JSON flow must load all components on canvas → `export-import-flow.spec.ts`
+- [x] import flow from JSON via upload button must load flow on canvas → `export-import-flow.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
@@ -886,6 +1016,14 @@
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
 
 #### ui-ux/
+- [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
+- [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
+- [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
+- [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
+- [x] create a Generic type global variable → `global-variables-crud.spec.ts`
+- [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
+- [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
+- [x] User should be able to interact notifications tab → `notifications.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 
 ---
@@ -896,16 +1034,16 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `api/flows/` — REST API | 17 | 0 |
-| `core-components/` — Component Config | 19 | 2 |
-| `core-components/` — Core Components | 3 | 4 |
-| `core-functionality/auth/` | 18 | 1 |
-| `core-functionality/llm-agents/` | 2 | 25 |
+| `api/flows/` — REST API | 0 | 0 |
+| `core-components/` — Component Config | 18 | 1 |
+| `core-components/` — Core Components | 2 | 2 |
+| `core-functionality/auth/` | 12 | 1 |
+| `core-functionality/llm-agents/` | 2 | 24 |
 | `core-functionality/model-provider/` | 18 | 9 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
-| `ui-ux/` — Canvas | 39 | 1 |
+| `ui-ux/` — Canvas | 36 | 1 |
 
 ---
 
@@ -915,9 +1053,9 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 12 | 1 |
+| `core-functionality/observability-monitoring/` | 7 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 18 | 0 |
+| `flow-functionality/` | 13 | 0 |
 | `core-functionality/project-management/` | 10 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |

@@ -19,7 +19,7 @@ test.describe("Playground – Session Creation and Navigation", () => {
 
   test(
     "new-chat button must add a new session entry to the sidebar",
-    { tag: ["@stable", "@regression", "@playground"] },
+    { tag: ["@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);

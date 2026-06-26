@@ -3,7 +3,7 @@ import { addLegacyComponents } from "../../../helpers/flows/add-legacy-component
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
-import { removeOldApiKeys } from "../../../helpers/mcp/remove-old-api-keys";
+import { clearApiKeyBadges } from "../../../helpers/ui/clear-api-key-badges";
 import { updateOldComponents } from "../../../helpers/flows/update-old-components";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
 
@@ -74,7 +74,7 @@ test(
       });
 
     await updateOldComponents(page);
-    await removeOldApiKeys(page);
+    await clearApiKeyBadges(page);
 
     await adjustScreenView(page, { numberOfZoomOut: 3 });
 

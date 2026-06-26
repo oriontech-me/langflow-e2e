@@ -1,7 +1,19 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
+
+// MCP-server pre-clean/verification calls authenticate via the shared
+// `getAuthToken` helper (which uses `GET /api/v1/auto_login`). The suite starts
+// Langflow with `LANGFLOW_AUTO_LOGIN=true`, under which `POST /api/v1/login`
+// with username/password can be rejected — the previous inline login calls
+// silently yielded an undefined token, so the follow-up DELETE ran
+// unauthenticated and the pre-clean never removed a leftover server. A stale
+// server then makes the next registration hit a pre-existing name, which the
+// backend rejects with HTTP 500 ("Server already exists.", `api/v2/mcp.py`) —
+// see the investigation in #396. `getAuthToken` returns a ready-to-use
+// `Authorization` header value (or "" when the instance has no auth).
 
 // Worker- and timestamp-suffixed name prevents cross-file races: this spec and
 // mcp-client-agent.spec.ts both register an MCP "everything" server, and
@@ -29,15 +41,10 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
   test.afterEach(async ({ page }) => {
     const serversToClean = [MCP_SERVER_NAME, BAD_SERVER_NAME, HTTP_FORM_SERVER_NAME];
     try {
-      const token = await page.request
-        .post("/api/v1/login", {
-          form: { username: "langflow", password: "langflow" },
-        })
-        .then((r) => r.json())
-        .then((d) => d.access_token as string);
+      const authHeader = await getAuthToken(page.request);
       for (const name of serversToClean) {
         await page.request.delete(`/api/v2/mcp/servers/${name}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: authHeader },
         });
       }
     } catch {
@@ -65,16 +72,14 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       });
 
       await test.step("Delete existing MCP server and re-add via JSON", async () => {
-        const token = await page.request
-          .post("/api/v1/login", {
-            form: { username: "langflow", password: "langflow" },
-          })
-          .then((r) => r.json())
-          .then((d) => d.access_token as string);
+        const authHeader = await getAuthToken(page.request);
         await page.request.delete(`/api/v2/mcp/servers/${MCP_SERVER_NAME}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: authHeader },
         });
 
+        await expect(page.getByTestId("sidebar-nav-mcp")).toBeVisible({
+          timeout: 15000,
+        });
         await page.getByTestId("sidebar-nav-mcp").click();
         await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
           timeout: 15000,
@@ -173,18 +178,16 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       });
 
       await test.step("Pre-clean: delete bad-server if it exists", async () => {
-        const token = await page.request
-          .post("/api/v1/login", {
-            form: { username: "langflow", password: "langflow" },
-          })
-          .then((r) => r.json())
-          .then((d) => d.access_token as string);
+        const authHeader = await getAuthToken(page.request);
         await page.request.delete(`/api/v2/mcp/servers/${BAD_SERVER}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: authHeader },
         });
       });
 
       await test.step("Register unreachable HTTP server via HTTP tab", async () => {
+        await expect(page.getByTestId("sidebar-nav-mcp")).toBeVisible({
+          timeout: 15000,
+        });
         await page.getByTestId("sidebar-nav-mcp").click();
         await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
           timeout: 15000,
@@ -264,18 +267,16 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       });
 
       await test.step("Pre-clean: delete http-form-server if it exists", async () => {
-        const token = await page.request
-          .post("/api/v1/login", {
-            form: { username: "langflow", password: "langflow" },
-          })
-          .then((r) => r.json())
-          .then((d) => d.access_token as string);
+        const authHeader = await getAuthToken(page.request);
         await page.request.delete(`/api/v2/mcp/servers/${HTTP_SERVER}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: authHeader },
         });
       });
 
       await test.step("Register server via HTTP form tab", async () => {
+        await expect(page.getByTestId("sidebar-nav-mcp")).toBeVisible({
+          timeout: 15000,
+        });
         await page.getByTestId("sidebar-nav-mcp").click();
         await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
           timeout: 15000,
@@ -303,15 +304,10 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       });
 
       await test.step("Verify server is persisted in the database", async () => {
-        const token = await page.request
-          .post("/api/v1/login", {
-            form: { username: "langflow", password: "langflow" },
-          })
-          .then((r) => r.json())
-          .then((d) => d.access_token as string);
+        const authHeader = await getAuthToken(page.request);
 
         const resp = await page.request.get("/api/v2/mcp/servers", {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: authHeader },
         });
         expect(resp.status()).toBe(200);
 
@@ -336,16 +332,14 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       });
 
       await test.step("Register everything server via JSON and wait for tools", async () => {
-        const token = await page.request
-          .post("/api/v1/login", {
-            form: { username: "langflow", password: "langflow" },
-          })
-          .then((r) => r.json())
-          .then((d) => d.access_token as string);
+        const authHeader = await getAuthToken(page.request);
         await page.request.delete(`/api/v2/mcp/servers/${MCP_SERVER_NAME}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: authHeader },
         });
 
+        await expect(page.getByTestId("sidebar-nav-mcp")).toBeVisible({
+          timeout: 15000,
+        });
         await page.getByTestId("sidebar-nav-mcp").click();
         await expect(page.getByTestId("sidebar-add-mcp-server-button")).toBeVisible({
           timeout: 15000,

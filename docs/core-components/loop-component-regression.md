@@ -50,8 +50,8 @@ If any of these tests fails, the Loop component is broken in the product: either
 7. Change `int_int_max_results` to `2` (limit ArXiv to 2 results)
 8. Open the Playground via `playground-btn-flow-io`
 9. Type "transformer neural networks" in `input-chat-playground` and send
-10. Wait for `chat-message-AI-*` to appear (timeout 240 s)
-11. Extract the text of the last AI message and count occurrences of "title" (case-insensitive); must be ≥ 1
+10. Wait for the last `chat-message-AI-*` message to be visible (timeout 240 s — the ArXiv fetch and first LLM call can take a while)
+11. Assert the message **contains** "title" (case-insensitive) via `toContainText(/title/i, { timeout: 240000 })`. `toContainText` re-evaluates as tokens stream in, so it never samples a partially-streamed response — this is what makes the assertion robust against the streaming race tracked in #356 (the earlier code read the text once, on the first streamed token, and intermittently saw no "title" yet). Matching ≥ 1 occurrence confirms at least one complete loop iteration (Parser → LLM → done)
 
 **Test 4 — stops after exhausting input DataFrame and emits aggregated done**
 1. `awaitBootstrapTest` and `cleanAllFlows`
@@ -119,7 +119,7 @@ If any of these tests fails, the Loop component is broken in the product: either
 ## Notes *(optional)*
 
 - Test 3 configures the Language Model component before running the Playground — the template ships without a provider selected, causing "A model selection is required" if the setup step is skipped
-- The timeout in Test 3 is 240 s for the LLM response and the test-level timeout is set to 8 minutes via `test.setTimeout` — the template makes 2 sequential model calls (one per ArXiv article) which can take 3-4 minutes on CI infrastructure; the global 5-minute cap is insufficient for this flow
+- Test 3 reads the streamed response with `toContainText(/title/i, { timeout: 240000 })` rather than a one-shot `textContent()` read — `toContainText` re-evaluates as tokens stream in, so it never samples a partially-streamed message. The earlier one-shot read fired on the first streamed token and made the "title" assertion intermittently fail (flake tracked in #356). The test-level timeout is set to 8 minutes via `test.setTimeout` — the template makes 2 sequential model calls (one per ArXiv article) which can take 3-4 minutes on CI infrastructure; the global 5-minute cap is insufficient for this flow
 - The test is skipped automatically (not failed) when `OPENAI_API_KEY` is absent, so it does not block local runs without API keys
 - The validation criterion counts occurrences of "title" (case-insensitive) in the aggregated LLM response; the threshold is ≥ 1 because the LLM produces a free-form output and may echo "title" in only one of the N responses — checking ≥ N would couple the assertion to non-deterministic LLM formatting
 - `allowFlowErrors()` is required in Test 2 to disable the automatic flow error monitor injected by the fixture

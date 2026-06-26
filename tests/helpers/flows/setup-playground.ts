@@ -27,6 +27,11 @@ export async function setupPlayground(page: Page): Promise<string> {
   }
 
   try {
+    // The flow editor sidebar mounts after the POST /api/v1/flows response
+    // resolves; wait for sidebar-search-input before interacting (see #278).
+    await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+      timeout: 30000,
+    });
     await page.getByTestId("sidebar-search-input").fill("chat output");
     await page.waitForSelector('[data-testid="input_outputChat Output"]', {
       timeout: 30000,

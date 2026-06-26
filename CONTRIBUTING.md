@@ -100,6 +100,23 @@ In the **Last validated** field, record the Langflow release cycle in which the 
 
 ---
 
+## Do not build on legacy components
+
+Langflow marks deprecated components with `legacy: true` and **hides them from the sidebar by default** — they only appear when the `showLegacy` preference is enabled. Do **not** build test flows on legacy components: they carry no maintenance commitment from upstream, can be removed or change behavior without notice, and are an unstable base for regression.
+
+Use the maintained core equivalents instead. The canonical case:
+
+| Legacy (avoid) | Use instead |
+|---|---|
+| **Text Input** | **Chat Input** |
+| **Text Output** | **Chat Output** |
+
+> Selector mapping when migrating: `input_outputText Input/Output` → `input_outputChat Input/Output`; `button_run_text *` → `button_run_chat *`; the Chat Input output handle is `chat message` (not `output text`); the Chat Output input handle stays `inputs`. Chat Input/Output are added **minimized** (`minimized = True`) — expand the node (`more-options-modal` → `expand-button-modal`, wait for `hide-node-content` to disappear) before reaching run buttons / inspector fields / `shownode` handles, or connect via the collapsed `noshownode` handles when the node is only a connection source/sink.
+
+**The only exception** is a test whose *purpose* is to validate legacy behavior itself — e.g. the legacy-visibility toggle (`core-components/legacy-components-toggle-regression.spec.ts`). In that case enabling `showLegacy` and using the legacy component is expected; state this explicitly in the spec doc's **What this test validates** section so a reviewer does not flag it.
+
+---
+
 ## Creating tests with LLM (agents, providers, MCP)
 
 Tests that execute an agent with an LLM require a specific setup. **Do not hardcode provider, API key or model** — use the project infrastructure.

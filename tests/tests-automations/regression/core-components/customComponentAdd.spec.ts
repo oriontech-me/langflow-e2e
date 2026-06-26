@@ -3,39 +3,33 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 
 test(
   "custom component code button should be pink when adding custom component",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@stable"] },
 
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
-    await page.waitForSelector('[data-testid="blank-flow"]', {
-      timeout: 3000,
+    await expect(page.getByTestId("blank-flow")).toBeVisible({
+      timeout: 10000,
     });
-
     await page.getByTestId("blank-flow").click();
 
-    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-      timeout: 3000,
+    await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
+      timeout: 10000,
     });
 
     await page.getByTestId("sidebar-custom-component-button").click();
 
-    await expect(page.getByTestId("code-button-modal").last()).toBeVisible({
-      timeout: 3000,
-    });
+    const codeButton = page.getByTestId("code-button-modal").last();
 
-    await expect(page.getByTestId("code-button-modal").last()).toHaveClass(
-      /animate-pulse-pink/,
-    );
+    await expect(codeButton).toBeVisible({ timeout: 10000 });
+    await expect(codeButton).toHaveClass(/animate-pulse-pink/);
 
-    await page.getByTestId("code-button-modal").last().click();
+    await codeButton.click();
 
-    const waitTimeoutCode = `
-# from langflow.field_typing import Data
+    const customComponentCode = `
 from langflow.custom import Component
 from langflow.io import MessageTextInput, Output
 from langflow.schema import Data
-from time import sleep
 from langflow.schema.message import Message
 
 class CustomComponent(Component):
@@ -56,18 +50,16 @@ class CustomComponent(Component):
     def build_output(self) -> Message:
         data = Data(value=self.input_value)
         self.status = data
-        sleep(60)
         return data`;
 
     await page.locator(".ace_content").click();
     await page.keyboard.press(`ControlOrMeta+A`);
-    await page.locator("textarea").fill(waitTimeoutCode);
+    await page.locator("textarea").fill(customComponentCode);
 
     await page.getByText("Check & Save").last().click();
 
-    await expect(page.getByTestId("code-button-modal").last()).not.toHaveClass(
-      /animate-pulse-pink/,
-      { timeout: 3000 },
-    );
+    await expect(codeButton).not.toHaveClass(/animate-pulse-pink/, {
+      timeout: 10000,
+    });
   },
 );

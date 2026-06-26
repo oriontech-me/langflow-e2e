@@ -133,6 +133,12 @@ test(
         await sharedContext.close();
       }
     } finally {
+      // Navigate the editor off the flow before deleting it. The open flow editor keeps an
+      // events subscription (GET /api/v1/flows/{id}/events) polling for build state; deleting
+      // the flow while that poll is in flight produces a benign-but-noisy 404 during teardown.
+      // Unmounting the editor first stops the subscription, so the delete is race-free.
+      await page.goto("/").catch(() => {});
+
       // Clean up the flow so repeated runs do not accumulate workspace artifacts
       await request.delete(`/api/v1/flows/${flowId}`, {
         headers: { Authorization: authToken },

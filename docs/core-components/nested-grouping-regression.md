@@ -1,6 +1,6 @@
 # Nested / Grouping — Group and Ungroup Round-Trip
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 

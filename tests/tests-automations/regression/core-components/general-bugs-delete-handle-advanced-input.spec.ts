@@ -10,25 +10,24 @@ import {
 
 test(
   "the system must delete the handles from advanced fields when the code is updated",
-  { tag: ["@release", "@components"] },
+  { tag: ["@stable", "@release", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
     await page.getByTestId("blank-flow").click();
 
-    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-      timeout: 100000,
+    await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
+      timeout: 30000,
     });
 
     await page.getByTestId("sidebar-search-input").click();
     await page.getByTestId("sidebar-search-input").fill("if else");
 
-    await page
-      .getByTestId("flow_controlsIf-Else")
-      .hover()
-      .then(async () => {
-        await page.getByTestId("add-component-button-if-else").click();
-      });
+    await expect(page.getByTestId("flow_controlsIf-Else")).toBeVisible({
+      timeout: 10000,
+    });
+    await page.getByTestId("flow_controlsIf-Else").hover();
+    await page.getByTestId("add-component-button-if-else").click();
 
     await adjustScreenView(page, { numberOfZoomOut: 3 });
 
@@ -40,20 +39,23 @@ test(
     await closeAdvancedOptions(page);
 
     await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("text input");
-    await page.waitForSelector('[data-testid="input_outputText Input"]', {
-      timeout: 2000,
+    await page.getByTestId("sidebar-search-input").fill("chat input");
+    await expect(page.getByTestId("input_outputChat Input")).toBeVisible({
+      timeout: 10000,
     });
     await page
-      .getByTestId("input_outputText Input")
+      .getByTestId("input_outputChat Input")
       .dragTo(page.locator('//*[@id="react-flow-id"]'), {
         targetPosition: { x: 200, y: 100 },
       });
 
     await adjustScreenView(page);
 
+    // Chat Input is added minimized; connect from its collapsed "Chat Message"
+    // output handle (noshownode) — no need to expand the node, this test only
+    // uses it as a connection source for the If-Else `case true` input.
     await page
-      .getByTestId("handle-textinput-shownode-output text-right")
+      .getByTestId("handle-chatinput-noshownode-chat message-source")
       .click();
 
     await page
@@ -64,11 +66,7 @@ test(
 
     await openAdvancedOptions(page);
 
-    const numberOfDisabledInputs = await page
-      .getByPlaceholder("Receiving input")
-      .count();
-
-    expect(numberOfDisabledInputs).toBe(2);
+    await expect(page.getByPlaceholder("Receiving input")).toHaveCount(2);
 
     await closeAdvancedOptions(page);
 
@@ -80,15 +78,8 @@ test(
 
     await openAdvancedOptions(page);
 
-    const numberOfDisabledInputsAfter = await page
-      .getByPlaceholder("Receiving input")
-      .count();
-
-    expect(numberOfDisabledInputsAfter).toBe(0);
-
-    const numberOfLockIconsAfter = await page.getByTestId("icon-lock").count();
-
-    expect(numberOfLockIconsAfter).toBe(0);
+    await expect(page.getByPlaceholder("Receiving input")).toHaveCount(0);
+    await expect(page.getByTestId("icon-lock")).toHaveCount(0);
 
     await closeAdvancedOptions(page);
 

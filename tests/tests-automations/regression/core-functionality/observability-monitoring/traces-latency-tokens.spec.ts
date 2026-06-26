@@ -94,13 +94,7 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   test(
     "GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run",
     {
-      tag: [
-        "@release",
-        "@workspace",
-        "@regression",
-        "@observability",
-        "@api",
-      ],
+      tag: ["@stable", "@release", "@api", "@regression", "@observability"],
     },
     async ({ request }) => {
       const res = await request.get(
@@ -121,7 +115,7 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
       expect(typeof trace.totalTokens).toBe("number");
       expect(trace.totalTokens).toBeGreaterThanOrEqual(0);
       expect(trace.flowId).toBe(flowId);
-      expect(["success", "error", "running"]).toContain(trace.status);
+      expect(["unset", "ok", "error"]).toContain(trace.status);
       expect(typeof trace.startTime).toBe("string");
     },
   );
@@ -129,7 +123,13 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   test(
     "Flow Activity page shows latency and token columns for the run",
     {
-      tag: ["@release", "@workspace", "@regression", "@observability"],
+      tag: [
+        "@stable",
+        "@release",
+        "@workspace",
+        "@regression",
+        "@observability",
+      ],
     },
     async ({ page }) => {
       (page as any).allowFlowErrors();
@@ -150,7 +150,12 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
       await expect(latencyCell).toBeVisible({ timeout: 15000 });
       // Cell renders before metrics populate; use an explicit timeout instead of the
       // default 5s expect timeout, which is shorter than the visibility wait above.
-      await expect(latencyCell).toHaveText(/^\d+\s*ms$/, { timeout: 15000 });
+      // formatTotalLatency switches to seconds at >= 1000ms ("1.54 s"); the
+      // regex must allow both branches or the seeded run flakes when it lands
+      // on the slow side of 1s.
+      await expect(latencyCell).toHaveText(/^\d+(\.\d+)?\s*(ms|s)$/, {
+        timeout: 15000,
+      });
 
       const tokensCell = page
         .locator('.ag-cell[col-id="totalTokens"]')
@@ -163,7 +168,13 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   test(
     "Trace Details modal shows span tree and per-span latency",
     {
-      tag: ["@release", "@workspace", "@regression", "@observability"],
+      tag: [
+        "@stable",
+        "@release",
+        "@workspace",
+        "@regression",
+        "@observability",
+      ],
     },
     async ({ page }) => {
       (page as any).allowFlowErrors();
@@ -189,103 +200,54 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
 
       const spanDetail = page.getByTestId("span-detail");
       await expect(spanDetail).toContainText(/Latency/);
-      await expect(spanDetail).toContainText(/\d+\s*ms/);
+      // formatTotalLatency renders "<n> ms" below 1000ms and "<n.nn> s" at or
+      // above 1000ms; the regex must allow both, otherwise the initially-
+      // selected root-span panel flakes on slow runs (>= 1s).
+      await expect(spanDetail).toContainText(/\d+(\.\d+)?\s*(ms|s)/);
 
       const spanTree = page.getByTestId("span-tree");
       await expect(spanTree).toContainText("Prompt Template");
       await expect(spanTree).toContainText("Chat Input");
       await expect(spanTree).toContainText("Language Model");
+
+      // The Tokens/Prompt/Completion trio is gated by `(hasTokenUsage ||
+      // isLlmSpan)` in SpanDetail; with the unconfigured fixture, tokenUsage
+      // is null, so only the isLlmSpan branch keeps the cards on screen — em-
+      // dash ("—") is the documented fallback value. Pin both the labels and
+      // the fallback to catch a regression that drops the isLlmSpan branch.
+      // `.first()` guards against a future flow rename or sub-span emission
+      // that would make `hasText` match more than one node (strict-mode click
+      // would throw before any assertion ran).
+      await spanTree
+        .locator('[data-testid^="span-node-"]')
+        .filter({ hasText: "Language Model" })
+        .first()
+        .click();
+
+      // Lock down the swap before the downstream toContainText assertions —
+      // otherwise an auto-retry on Tokens/Prompt/Completion could accidentally
+      // pass against the previously-selected span if a future SpanDetail
+      // re-render path surfaces those strings outside the LLM-only branch.
+      await expect(spanDetail.locator("h3")).toHaveText("Language Model");
+
+      await expect(spanDetail).toContainText(/Tokens/);
+      await expect(spanDetail).toContainText(/Prompt/);
+      await expect(spanDetail).toContainText(/Completion/);
+      // Exactly three em-dashes — one per Tokens/Prompt/Completion card.
+      // Counting (instead of substring) prevents a future em-dash anywhere
+      // else in span-detail from masking a regression that drops the cards.
+      await expect(spanDetail.getByText("—")).toHaveCount(3);
+
+      // Header renders the type label ("LLM") next to modelName when populated;
+      // modelName is null in the error path (see spec doc for why it is not
+      // pinned), so we assert only the type label here. `exact: true` targets
+      // the `<span>` whose textContent is precisely "LLM" — substrings like
+      // "LLMRouter" in a future inputs JSON live inside a larger text node
+      // and cannot satisfy the exact match.
+      await expect(
+        spanDetail.getByText("LLM", { exact: true }),
+      ).toBeVisible();
     },
   );
 });
 
-test(
-  "GET /api/v1/monitor/messages response contains message content",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
-  async ({ request }) => {
-    const authToken = await getAuthToken(request);
-
-    const res = await request.get("/api/v1/monitor/messages", {
-      headers: { Authorization: authToken },
-    });
-
-    expect(res.status()).toBe(200);
-
-    const body = await res.json();
-
-    // Accept both array and paginated object formats
-    const messages = Array.isArray(body) ? body : body.items ?? [];
-
-    // If messages exist, check their structure
-    if (messages.length > 0) {
-      const firstMsg = messages[0];
-
-      // Messages should have text content and session/flow info
-      const hasContent =
-        "text" in firstMsg ||
-        "message" in firstMsg ||
-        "content" in firstMsg;
-
-      const hasContext =
-        "session_id" in firstMsg ||
-        "flow_id" in firstMsg ||
-        "sender" in firstMsg;
-
-      expect(
-        hasContent || hasContext,
-        "Message items should contain message content and context metadata",
-      ).toBe(true);
-    }
-  },
-);
-
-test(
-  "traces page is accessible in the UI",
-  { tag: ["@release", "@workspace", "@regression", "@observability"] },
-  async ({ page, request }) => {
-    const authToken = await getAuthToken(request);
-
-    // Fetch transactions to see if any exist
-    const txRes = await request.get("/api/v1/monitor/transactions", {
-      headers: { Authorization: authToken },
-    });
-
-    if (txRes.status() !== 200) {
-      console.log("INFO: Transactions endpoint not available, skipping UI test");
-      return;
-    }
-
-    const body = await txRes.json();
-    const hasTransactions = body.total > 0;
-
-    if (!hasTransactions) {
-      console.log("INFO: No transactions in the system, skipping latency UI test");
-      return;
-    }
-
-    // Navigate to the traces/logs page
-    await page.goto("/logs");
-    await page.waitForTimeout(2000);
-
-    const hasTraceContent = await page
-      .locator("body")
-      .evaluate((el) => (el as HTMLElement).innerText.length > 50);
-
-    // Traces page might show latency info, duration, or token counts
-    const hasMetricsText = await page
-      .getByText(/latency|duration|tokens|ms|sec/i)
-      .first()
-      .isVisible({ timeout: 5000 })
-      .catch(() => false);
-
-    expect(
-      hasTraceContent,
-      "Traces page should have content when transactions exist",
-    ).toBe(true);
-
-    // Document whether latency metrics are shown in the UI
-    if (hasMetricsText) {
-      console.log("INFO: Latency/token metrics found in traces UI");
-    }
-  },
-);

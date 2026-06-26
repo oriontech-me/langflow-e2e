@@ -26,7 +26,7 @@ function setupAutoLoginMock(page: any) {
 
 test(
   "logout must redirect user to login page",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
@@ -69,17 +69,15 @@ test(
     });
 
     // Main page must not be accessible
-    const isMainPageVisible = await page
-      .getByTestId("mainpage_title")
-      .isVisible()
-      .catch(() => false);
-    expect(isMainPageVisible).toBeFalsy();
+    await expect(page.getByTestId("mainpage_title")).toBeHidden({
+      timeout: 5000,
+    });
   },
 );
 
 test(
   "after logout, navigating to root must redirect to login",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
@@ -115,17 +113,15 @@ test(
     // Should still show login — not bypass authentication
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    const isMainPageVisible = await page
-      .getByTestId("mainpage_title")
-      .isVisible()
-      .catch(() => false);
-    expect(isMainPageVisible).toBeFalsy();
+    await expect(page.getByTestId("mainpage_title")).toBeHidden({
+      timeout: 5000,
+    });
   },
 );
 
 test(
   "after logout, reload must stay on login page",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
@@ -158,10 +154,8 @@ test(
 
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    const isLoggedIn = await page
-      .getByTestId("mainpage_title")
-      .isVisible()
-      .catch(() => false);
-    expect(isLoggedIn).toBeFalsy();
+    await expect(page.getByTestId("mainpage_title")).toBeHidden({
+      timeout: 5000,
+    });
   },
 );
