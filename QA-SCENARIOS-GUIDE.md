@@ -717,8 +717,6 @@
 
 ---
 
----
-
 ## 13. Core Components — Agent
 
 **Files:** `agent-reasoning-steps.spec.ts`, `agent-system-prompt.spec.ts`, `agent-provider-field-isolation.spec.ts`, `agent-config-persistence.spec.ts`, `agent-max-iterations.spec.ts`, `agent-max-tokens.spec.ts`, `agent-reasoning-effort.spec.ts`, `agent-input-sources.spec.ts`, `agent-structured-output.spec.ts`, `agent-empty-refusal-response.spec.ts`, `agent-current-date-tool.spec.ts`, `agent-parse-error-behavior.spec.ts`, `agent-multimodal-image-input.spec.ts`
