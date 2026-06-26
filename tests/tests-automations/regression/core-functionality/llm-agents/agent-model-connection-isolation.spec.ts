@@ -59,10 +59,20 @@ function resolveTarget(): LoadSimpleAgentOptions | undefined {
 const options = resolveTarget();
 const provider = options?.provider;
 
-// Build an accurate skip reason: a MODEL_TEST_ID that maps to no provider is a
-// different (and more confusing) failure than simply having no env keys set.
+// Build an accurate skip reason. Each case gets its own message so a skip is
+// never mistaken for a different failure:
+//   1. provider resolved but its env keys are missing — without this it would
+//      hard-fail in SimpleAgentTemplatePage.load() ("Missing env vars for
+//      provider"); this happens when MODEL_TEST_ID maps to a provider that has
+//      no key configured, since resolveTarget() does not gate that branch on
+//      hasProviderEnvKeys.
+//   2. a MODEL_TEST_ID that maps to no provider (absent from models.json and
+//      MODEL_TEST_PROVIDER unset) — more confusing than simply having no keys.
+//   3. no provider has its env keys configured at all.
 const skipReason = provider
-  ? undefined
+  ? hasProviderEnvKeys(provider)
+    ? undefined
+    : `Provider "${provider}" is missing env vars: ${missingProviderEnvKeys(provider).join(", ")}`
   : process.env.MODEL_TEST_ID
     ? `MODEL_TEST_ID="${process.env.MODEL_TEST_ID}" could not be mapped to a provider — ` +
       `it is absent from models.json and MODEL_TEST_PROVIDER is unset.`
@@ -81,8 +91,10 @@ async function loadAgent(page: Page): Promise<void> {
   }
 }
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template,
-// so file-level serial mode keeps this from racing with sibling specs.
+// SimpleAgentTemplatePage.load() deletes all flows before loading the template.
+// Serial mode only serializes the blocks within this file; isolation from
+// sibling agent specs that also wipe flows relies on running with --workers=1
+// (required by this folder's CLAUDE.md).
 test.describe.configure({ mode: "serial" });
 
 test.describe("Agent Model Connection Isolation", () => {
