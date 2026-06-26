@@ -34,4 +34,4 @@ Key implementation detail: the shortcut store (`useShortcutsStore`) writes to `l
 
 ## Last validated
 
-1.10.x
+1.11.x

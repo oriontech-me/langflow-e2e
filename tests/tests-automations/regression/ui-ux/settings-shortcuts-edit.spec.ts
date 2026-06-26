@@ -1,5 +1,6 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
 
 test.describe("Settings — Edit Shortcut", () => {
   test.afterEach(async ({ page }) => {
@@ -85,10 +86,10 @@ test.describe("Settings — Edit Shortcut", () => {
 
       await test.step("open a blank flow", async () => {
         await page.goto("/");
-        await expect(page.locator('#new-project-btn')).toBeVisible({
-          timeout: 30000,
-        });
-        await page.getByTestId("new-project-btn").click();
+        // Use the canonical "New Flow → templates modal" entry point: in
+        // Langflow 1.11 clicking new-project-btn surfaces the FlowBuilderWelcome
+        // overlay before the modal, which openNewFlowTemplatesModal reconciles.
+        await openNewFlowTemplatesModal(page);
         await expect(page.getByTestId("blank-flow")).toBeVisible({
           timeout: 10000,
         });

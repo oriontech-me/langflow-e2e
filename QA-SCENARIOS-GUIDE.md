@@ -2594,4 +2594,28 @@
 
 ---
 
+## 29. UI/UX — Settings Shortcuts
+
+**File:** `ui-ux/settings-shortcuts-edit.spec.ts`
+
+---
+
+### 29.1 Editing a keyboard shortcut persists and triggers the action on canvas `[x]`
+
+**Objective:** Confirm that editing a keyboard shortcut from Settings → Shortcuts both persists to the table and rebinds the action on the flow canvas — the store (`useShortcutsStore` → `localStorage["langflow-shortcuts"]`) and the canvas keybind handler must stay in sync.
+
+**Precondition:** Langflow running and accessible.
+
+**Step by step:**
+1. Open Settings → Shortcuts.
+2. Double-click the **Duplicate** row to open the edit modal.
+3. Record `Ctrl/Cmd+Alt+U` and click **Apply**.
+4. Confirm the toast `"Duplicate shortcut successfully changed"` and that the Duplicate row now shows the new combination.
+5. Open a blank flow, add an Ollama node, select it, and press `Ctrl/Cmd+Alt+U`.
+6. Confirm the node is duplicated (count 1 → 2).
+
+**Validation:** The edited combination persists in the table and triggers Duplicate on the canvas (`title-Ollama` count goes from 1 to 2). `afterEach` restores defaults via the Restore button plus a `localStorage` safeguard.
+
+---
+
 *Generated on 2026-03-18 | Source: QA-CHECKLIST.md*
