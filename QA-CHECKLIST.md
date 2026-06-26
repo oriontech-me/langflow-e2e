@@ -225,9 +225,10 @@
 - [x] Payload inválido (não-JSON) é encapsulado em `{"payload": "..."}` na saída → `core-components/webhook-component-regression.spec.ts`
 
 #### 3.5 Agent (Component)
-- [-] Agent component displayed on canvas with default settings
-- [ ] Configure system prompt in Agent component → `agent-system-prompt.spec.ts`
-- [ ] Configure model provider directly in Agent component
+- [x] Agent component renders on canvas with title, handles and default fields → `core-components/agent-component-regression.spec.ts`
+- [x] System prompt accepts input and persists across flow reload → `core-components/agent-component-regression.spec.ts`
+- [x] Model dropdown exposes manage-model-providers and lists configured models → `core-components/agent-component-regression.spec.ts`
+- [x] Selecting a different-provider model swaps the canvas provider icon → `core-components/agent-component-regression.spec.ts`
 
 #### 3.6 Loop Component
 - [x] Loop component renders on canvas with title and run button → `core-components/loop-component-regression.spec.ts`

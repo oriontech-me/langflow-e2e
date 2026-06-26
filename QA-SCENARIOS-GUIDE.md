@@ -721,22 +721,28 @@
 
 ## 13. Core Components — Agent
 
-**Files:** `agent-reasoning-steps.spec.ts`, `agent-system-prompt.spec.ts`, `agent-model-connection-isolation.spec.ts`, `agent-config-persistence.spec.ts`, `agent-max-iterations.spec.ts`, `agent-max-tokens.spec.ts`, `agent-reasoning-effort.spec.ts`, `agent-input-sources.spec.ts`, `agent-structured-output.spec.ts`, `agent-empty-refusal-response.spec.ts`, `agent-current-date-tool.spec.ts`, `agent-parse-error-behavior.spec.ts`, `agent-multimodal-image-input.spec.ts`
+**Files:** `core-components/agent-component-regression.spec.ts` (canvas rendering and provider field plumbing), `agent-reasoning-steps.spec.ts`, `agent-system-prompt.spec.ts`, `agent-model-connection-isolation.spec.ts`, `agent-config-persistence.spec.ts`, `agent-max-iterations.spec.ts`, `agent-max-tokens.spec.ts`, `agent-reasoning-effort.spec.ts`, `agent-input-sources.spec.ts`, `agent-structured-output.spec.ts`, `agent-empty-refusal-response.spec.ts`, `agent-current-date-tool.spec.ts`, `agent-parse-error-behavior.spec.ts`, `agent-multimodal-image-input.spec.ts`
 
 ---
 
-### 13.1 Agent component displayed on canvas with default settings `[-]`
+### 13.1 Agent component displayed on canvas with default settings `[x]`
+
+**File:** `core-components/agent-component-regression.spec.ts`
 
 **Step by step:**
-1. Search "Agent" in the sidebar.
-2. Add to canvas.
-3. Verify that the component displays:
+1. Open a blank flow and drag the Agent component from the "models & agents" disclosure to the canvas.
+2. Verify that the node shows the title (`title-Agent`) and the three core handles:
    - Input handle for "Language Model" (`handle-agent-shownode-language model-left`)
    - Input handle for "Tools" (`handle-agent-shownode-tools-left`)
    - Output handle "Response" (`handle-agent-shownode-response-right`)
-4. Verify that default fields (Max Iterations, System Prompt) are visible.
+3. Verify that the System Prompt field (`textarea_str_system_prompt`) and the model dropdown (`value-dropdown-model_model`) are visible in the default rendered state.
 
-**Validation:** Agent component with all handles and default fields visible.
+**Validation:** Agent component renders with title, all three core handles, and the default fields visible.
+
+> **Same spec — `core-components/agent-component-regression.spec.ts` — also covers** (canvas-level, distinct from the execution scenarios below):
+> - **System prompt persistence:** typing a system prompt autosaves; after navigating away and reopening the flow by name, the value is restored.
+> - **Model dropdown entry point:** opening `value-dropdown-model_model` surfaces the `manage-model-providers` button (the centralized provider-config path in 1.11) and lists the configured providers' models, each tagged with its `icon-{Provider}`.
+> - **Provider-icon swap:** selecting a model from a different provider (OpenAI → Anthropic) replaces the `icon-{Provider}` mark on the Agent node trigger. Self-skips when both providers are not pre-configured in the local instance.
 
 ---
 
