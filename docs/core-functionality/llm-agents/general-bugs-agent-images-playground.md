@@ -1,6 +1,6 @@
 # Agent Component — Image Input in Playground
 
-**Last validated:** Langflow 1.11.0
+**Last validated:** Langflow 1.11.x
 
 ---
 
