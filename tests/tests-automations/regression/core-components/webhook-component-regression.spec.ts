@@ -32,49 +32,62 @@ async function addWebhookComponent(page: any) {
 
 test(
   "Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression"] },
   async ({ page, request }) => {
-    await addWebhookComponent(page);
-
-    const flowId = page.url().split("/").slice(-1)[0];
-    expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
-
-    // Wait for autosave to persist the flow before posting
-    await page.waitForTimeout(4000);
-
-    // The webhook endpoint requires `x-api-key` whenever Langflow's
-    // WEBHOOK_AUTH_ENABLE setting is true (secure-by-default since 1.9.2+
-    // via PR langflow-ai/langflow#12845).
-    // Create a temporary key, use it for the POSTs, and delete it after.
+    let flowId!: string;
+    let apiKey!: string;
+    let apiKeyId!: string;
     const bearerToken = await getAuthToken(request);
-    const keyRes = await request.post("/api/v1/api_key/", {
-      headers: { Authorization: bearerToken },
-      data: { name: `webhook-regression-${Date.now()}` },
+
+    await test.step("Add Webhook component to a blank flow", async () => {
+      await addWebhookComponent(page);
+      flowId = page.url().split("/").slice(-1)[0];
+      expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
     });
-    expect(keyRes.status()).toBe(200);
-    const keyBody = await keyRes.json();
-    const apiKey: string = keyBody.api_key;
-    const apiKeyId: string = keyBody.id;
+
+    await test.step("Wait for autosave to persist the flow", async () => {
+      // The flow is created via UI; autosave debounce flushes it to the
+      // database before any webhook POST can resolve flowId.
+      await page.waitForTimeout(4000);
+    });
+
+    await test.step("Create temporary x-api-key for webhook auth", async () => {
+      // The webhook endpoint requires `x-api-key` whenever Langflow's
+      // WEBHOOK_AUTH_ENABLE setting is true (secure-by-default since 1.9.2+
+      // via PR langflow-ai/langflow#12845). Create a temporary key, use it
+      // for the POSTs, and delete it in the `finally` block.
+      const keyRes = await request.post("/api/v1/api_key/", {
+        headers: { Authorization: bearerToken },
+        data: { name: `webhook-regression-${Date.now()}` },
+      });
+      expect(keyRes.status()).toBe(200);
+      const keyBody = await keyRes.json();
+      apiKey = keyBody.api_key;
+      apiKeyId = keyBody.id;
+    });
 
     try {
-      // JSON body — the primary use case
-      const jsonRes = await request.post(`/api/v1/webhook/${flowId}`, {
-        headers: { "x-api-key": apiKey },
-        data: { event: "regression-test", value: 42 },
+      await test.step("POST JSON body returns 202 with status 'in progress'", async () => {
+        const jsonRes = await request.post(`/api/v1/webhook/${flowId}`, {
+          headers: { "x-api-key": apiKey },
+          data: { event: "regression-test", value: 42 },
+        });
+        expect(jsonRes.status()).toBe(202);
+        const jsonBody = await jsonRes.json();
+        expect(jsonBody.status).toBe("in progress");
+        expect(jsonBody.message).toBe("Task started in the background");
       });
-      expect(jsonRes.status()).toBe(202);
-      const jsonBody = await jsonRes.json();
-      expect(jsonBody.status).toBe("in progress");
-      expect(jsonBody.message).toBe("Task started in the background");
 
-      // Plain-text body — the endpoint must accept any Content-Type
-      const textRes = await request.post(`/api/v1/webhook/${flowId}`, {
-        headers: { "x-api-key": apiKey, "Content-Type": "text/plain" },
-        data: "regression-plain-text",
+      await test.step("POST plain-text body returns 202 with status 'in progress'", async () => {
+        // The endpoint must accept any Content-Type, not only application/json.
+        const textRes = await request.post(`/api/v1/webhook/${flowId}`, {
+          headers: { "x-api-key": apiKey, "Content-Type": "text/plain" },
+          data: "regression-plain-text",
+        });
+        expect(textRes.status()).toBe(202);
+        const textBody = await textRes.json();
+        expect(textBody.status).toBe("in progress");
       });
-      expect(textRes.status()).toBe(202);
-      const textBody = await textRes.json();
-      expect(textBody.status).toBe("in progress");
     } finally {
       await request.delete(`/api/v1/api_key/${apiKeyId}`, {
         headers: { Authorization: bearerToken },
