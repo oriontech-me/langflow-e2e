@@ -59,6 +59,17 @@ function resolveTarget(): LoadSimpleAgentOptions | undefined {
 const options = resolveTarget();
 const provider = options?.provider;
 
+// Build an accurate skip reason: a MODEL_TEST_ID that maps to no provider is a
+// different (and more confusing) failure than simply having no env keys set.
+const skipReason = provider
+  ? undefined
+  : process.env.MODEL_TEST_ID
+    ? `MODEL_TEST_ID="${process.env.MODEL_TEST_ID}" could not be mapped to a provider — ` +
+      `it is absent from models.json and MODEL_TEST_PROVIDER is unset.`
+    : `No provider has its env keys configured (need one of: ${Object.keys(providerConfigMap)
+        .map((p) => missingProviderEnvKeys(p as Provider).join("/"))
+        .join(" | ")})`;
+
 async function loadAgent(page: Page): Promise<void> {
   try {
     // `options` is guaranteed defined here — the test skips earlier when no
@@ -79,12 +90,7 @@ test.describe("Agent Model Connection Isolation", () => {
     "selecting 'Connect other models' clears the previously selected model",
     { tag: ["@stable", "@regression", "@components", "@agents", "@model-provider"] },
     async ({ page }) => {
-      test.skip(
-        !provider,
-        `No provider has its env keys configured (need one of: ${Object.keys(providerConfigMap)
-          .map((p) => missingProviderEnvKeys(p as Provider).join("/"))
-          .join(" | ")})`,
-      );
+      test.skip(!!skipReason, skipReason ?? "");
 
       const modelTrigger = page.getByTestId("model_model");
       const modelValue = page.getByTestId("value-dropdown-model_model");
@@ -125,12 +131,11 @@ test.describe("Agent Model Connection Isolation", () => {
         // useModelConnectionLogic resets the model field value to [] and wipes
         // any provider-specific credential fields. The trigger then reflects
         // connection mode by displaying the "Connect other models" label
-        // instead of the previously selected concrete model — so the prior
-        // provider selection cannot leak into a backend run.
+        // instead of the previously selected concrete model (`initialModel`) —
+        // so the prior provider selection cannot leak into a backend run.
         await expect(modelValue).toHaveText("Connect other models", {
           timeout: 10000,
         });
-        expect(await modelValue.innerText()).not.toContain(initialModel);
       });
     },
   );
