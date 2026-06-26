@@ -761,8 +761,8 @@
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
-| `ui-ux/` — Settings | 6 | 2 | 3 | 1 | 0 |
-| **TOTAL** | **445** | **211 (47%)** | **177 (40%)** | **7 (2%)** | **50 (11%)** |
+| `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
+| **TOTAL** | **446** | **212 (48%)** | **177 (40%)** | **7 (2%)** | **50 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
