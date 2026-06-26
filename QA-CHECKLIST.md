@@ -776,7 +776,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 217 `test()` calls carrying the `@stable` tag, distributed across 75 spec
+> 218 `test()` calls carrying the `@stable` tag, distributed across 75 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -894,6 +894,7 @@
 - [x] Prompt Template — `{}` (empty braces) is accepted by the parser and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] Prompt Template — repeating the same variable produces exactly one handle (deduplication contract) → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] User should be able to use components as tool → `tool-mode.spec.ts`
+- [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
 - [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
