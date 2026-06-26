@@ -747,7 +747,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
 | `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
-| `core-components/` — Core Components | 77 | 69 | 3 | 1 | 4 |
+| `core-components/` — Core Components | 78 | 73 | 2 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 14 | 2 | 0 | 24 |
@@ -761,7 +761,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 6 | 2 | 3 | 1 | 0 |
-| **TOTAL** | **444** | **207 (47%)** | **178 (40%)** | **7 (2%)** | **52 (12%)** |
+| **TOTAL** | **445** | **211 (47%)** | **177 (40%)** | **7 (2%)** | **50 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -777,7 +777,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 218 `test()` calls carrying the `@stable` tag, distributed across 75 spec
+> 222 `test()` calls carrying the `@stable` tag, distributed across 76 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -828,6 +828,10 @@
 - [x] POST /api/v1/version returns 405 Method Not Allowed → `api-version.spec.ts`
 
 #### core-components/
+- [x] renders on canvas with default fields and handles → `agent-component-regression.spec.ts`
+- [x] system prompt accepts input and persists across flow reload → `agent-component-regression.spec.ts`
+- [x] model dropdown exposes manage-model-providers and lists configured models → `agent-component-regression.spec.ts`
+- [x] selecting a different-provider model swaps the canvas provider icon → `agent-component-regression.spec.ts`
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
 - [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
 - [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
@@ -1031,7 +1035,7 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 18 | 1 |
-| `core-components/` — Core Components | 3 | 4 |
+| `core-components/` — Core Components | 2 | 2 |
 | `core-functionality/auth/` | 12 | 1 |
 | `core-functionality/llm-agents/` | 2 | 24 |
 | `core-functionality/model-provider/` | 18 | 9 |
