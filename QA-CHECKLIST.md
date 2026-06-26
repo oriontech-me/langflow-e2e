@@ -744,7 +744,7 @@
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 14 | 2 | 0 | 24 |
-| `core-functionality/model-provider/` | 31 | 4 | 18 | 0 | 9 |
+| `core-functionality/model-provider/` | 33 | 6 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
@@ -754,7 +754,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 5 | 1 | 3 | 1 | 0 |
-| **TOTAL** | **438** | **201 (46%)** | **178 (41%)** | **7 (2%)** | **52 (12%)** |
+| **TOTAL** | **440** | **203 (46%)** | **178 (40%)** | **7 (2%)** | **52 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -770,7 +770,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 211 `test()` calls carrying the `@stable` tag, distributed across 72 spec
+> 213 `test()` calls carrying the `@stable` tag, distributed across 73 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -909,6 +909,8 @@
 - [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
 - [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
+- [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
+- [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
 
 #### core-functionality/observability-monitoring/
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
