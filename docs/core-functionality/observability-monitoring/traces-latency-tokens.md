@@ -10,7 +10,7 @@ This is the deepest trace coverage in the suite. It seeds a real flow run via AP
 
 1. **REST API:** `GET /api/v1/monitor/traces?flow_id=<id>` returns a trace list where each trace exposes the metrics consumed by the Flow Activity UI — `totalLatencyMs`, `totalTokens`, `flowId`, `status`, `startTime`.
 2. **Flow Activity UI:** opening the flow editor and clicking `sidebar-nav-traces` renders a grid with `totalLatencyMs` and `totalTokens` columns populated with real numeric values for the seeded run.
-3. **Trace Details UI:** clicking the `run` cell of a trace row opens the Trace Details modal showing the span tree (root + Prompt Template + Chat Input + Language Model), per-span latency, and the span detail panel.
+3. **Trace Details UI:** clicking the `run` cell of a trace row opens the Trace Details modal showing the span tree (root + Prompt Template + Chat Input + Language Model), per-span latency on the initially-selected span, and — after clicking the Language Model node — the LLM span detail panel surfacing the `Tokens` / `Prompt` / `Completion` metric cards (with em-dash fallback values, since the unconfigured fixture errors out before token usage is captured) and the `LLM` type label.
 
 The 3 tests share a single `beforeAll` setup and run in `serial` mode so the seeded flow + emitted trace are reused.
 
@@ -49,7 +49,7 @@ The 3 tests share a single `beforeAll` setup and run in `serial` mode so the see
 2. `page.goto("/flow/<flowId>")`
 3. Wait for `sidebar-nav-traces` to be visible (30 s timeout), then click it
 4. Assert `flow-activity-header` is visible (10 s)
-5. Locate the first `.ag-cell[col-id="totalLatencyMs"]`; assert it is visible (15 s) and its text matches `/^\d+\s*ms$/` (15 s) — the cell renders before metrics populate, so the text-match timeout is larger than the visibility one on purpose
+5. Locate the first `.ag-cell[col-id="totalLatencyMs"]`; assert it is visible (15 s) and its text matches `/^\d+(\.\d+)?\s*(ms|s)$/` (15 s) — the cell renders before metrics populate, so the text-match timeout is larger than the visibility one on purpose. The regex accepts both `formatTotalLatency` branches (`<n> ms` below 1000ms and `<n.nn> s` at or above)
 6. Locate the first `.ag-cell[col-id="totalTokens"]`; assert it is visible and its text matches `/^\d+$/` (15 s)
 
 **Test 3 — `Trace Details modal shows span tree and per-span latency`**
@@ -58,16 +58,19 @@ The 3 tests share a single `beforeAll` setup and run in `serial` mode so the see
 3. Click the first `.ag-cell[col-id="run"]` — whole-row click does not trigger the panel because `onCellClicked` is the wired event
 4. Assert `trace-detail-view` is visible (10 s); `span-tree` is visible; `span-detail` is visible
 5. Assert there are exactly **4 span nodes** (`[data-testid^="span-node-"]`): 1 root + Prompt Template + Chat Input + Language Model
-6. In the `span-detail` panel, assert the text contains `Latency` and a `\d+\s*ms` pattern (per-span latency render)
+6. In the `span-detail` panel (showing the initially-selected span), assert the text contains `Latency` and a `\d+(\.\d+)?\s*(ms|s)` pattern (per-span latency render — same dual-branch regex as Test 2)
 7. In the `span-tree`, assert the labels `Prompt Template`, `Chat Input`, `Language Model` are present
+8. Click the `Language Model` span node inside `span-tree` (matched by `[data-testid^="span-node-"]` + text filter) to swap the detail panel onto the LLM span
+9. In the now-LLM `span-detail` panel, assert the text contains the metric-card labels `Tokens`, `Prompt`, `Completion` and the em-dash fallback character `—`. The Tokens/Prompt/Completion cards are gated by `(hasTokenUsage || isLlmSpan)` in `SpanDetail.tsx`: with the unconfigured fixture, `tokenUsage` is `null` on the API payload (the LLM step errors before any token capture), so only the `isLlmSpan` branch keeps the cards visible. Pinning the labels + em-dash protects against a regression that drops the `isLlmSpan` branch and hides the token UI surface for failed LLM runs.
+10. Assert the panel also contains the type label `LLM` (rendered by `getSpanTypeLabel("llm")` in the header). `modelName` would appear next to it when populated; the error-path fixture leaves it `null` — see "What this test does not cover" for why the modelName text is not asserted.
 
 ---
 
 ## Validation criterion *(required)*
 
 - **Test 1** — Pins the wire contract that downstream UI consumes: each trace exposes `totalLatencyMs`, `totalTokens`, `flowId`, `status`, `startTime`. A regression that renames any of these or drops a key would surface here before the Flow Activity grid breaks at render time. The bounds checks (`>= 0`, allowed status set) protect against type-shape regressions.
-- **Test 2** — The Flow Activity grid renders `totalLatencyMs` and `totalTokens` columns populated with actual numeric values for the seeded run. Regex anchors (`^\d+\s*ms$`, `^\d+$`) prevent silent regressions where the cell renders a placeholder like `—` or `null`.
-- **Test 3** — The Trace Details modal shows the full per-span breakdown for the seeded flow: 4 spans (root + 3 components), per-span latency in the detail panel, span labels in the tree. Pins the wiring between `onCellClicked` on the Run cell and `TraceDetailView` + `SpanTree` + `SpanDetail`.
+- **Test 2** — The Flow Activity grid renders `totalLatencyMs` and `totalTokens` columns populated with actual numeric values for the seeded run. Regex anchors (`^\d+(\.\d+)?\s*(ms|s)$`, `^\d+$`) prevent silent regressions where the cell renders a placeholder like `—` or `null`; the latency regex covers both `formatTotalLatency` branches.
+- **Test 3** — The Trace Details modal shows the full per-span breakdown for the seeded flow: 4 spans (root + 3 components), per-span latency in the detail panel, span labels in the tree, and — after the LLM span is selected — the `Tokens` / `Prompt` / `Completion` metric-card labels, the em-dash fallback for null `tokenUsage`, and the `LLM` type label in the header. Pins the wiring between `onCellClicked` on the Run cell and `TraceDetailView` + `SpanTree` + `SpanDetail`, the `(hasTokenUsage || isLlmSpan)` branch in `SpanDetail`, and the type-label render path.
 
 ---
 
@@ -75,12 +78,14 @@ The 3 tests share a single `beforeAll` setup and run in `serial` mode so the see
 
 References in the **main Langflow repository** (compatible with Langflow 1.10.x):
 
-- `src/backend/base/langflow/api/v1/traces.py:45` — `GET /monitor/traces` handler returning `TraceListResponse`; line 42 mounts the router with prefix `/monitor/traces`
-- `src/backend/base/langflow/services/tracing/formatting.py:108` — defines `totalTokens` key on the trace payload (the formatter also emits `totalLatencyMs` and the other fields the test asserts)
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/FlowInsightsContent.tsx:263` — defines `data-testid="flow-activity-header"`
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/TraceDetailView.tsx:108` — defines `data-testid="trace-detail-view"`
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanTree.tsx:71` — defines `data-testid="span-tree"`
-- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanDetail.tsx:44` — defines `data-testid="span-detail"`
+- `src/backend/base/langflow/api/v1/traces.py` (line 45) — `GET /monitor/traces` handler returning `TraceListResponse`; line 42 mounts the router with prefix `/monitor/traces`
+- `src/backend/base/langflow/services/tracing/formatting.py` (line 108) — defines `totalTokens` key on the trace payload (the formatter also emits `totalLatencyMs` and the other fields the test asserts)
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/FlowInsightsContent.tsx` (line 263) — defines `data-testid="flow-activity-header"`
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/TraceDetailView.tsx` (line 108) — defines `data-testid="trace-detail-view"`
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanTree.tsx` (line 71) — defines `data-testid="span-tree"`
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanNode.tsx` (line 56) — defines `data-testid="span-node-${span.id}"` (consumed by the `toHaveCount(4)` assertion and by the `Language Model` span click in test 3)
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/SpanDetail.tsx` (line 44) — defines `data-testid="span-detail"`; the `(hasTokenUsage || isLlmSpan)` branch around line 100 keeps the Tokens / Prompt / Completion metric cards on screen for the unconfigured fixture's null `tokenUsage`, and the `getSpanTypeLabel(span.type)` render at line 68 produces the `LLM` header label asserted by test 3
+- `src/frontend/src/pages/FlowPage/components/TraceComponent/traceViewHelpers.ts` (lines 52, 81) — `getSpanTypeLabel` (`llm` → `"LLM"`, drives the test 3 type-label assertion) and `formatTotalLatency` (drives the dual-branch `<n> ms` / `<n.nn> s` regex used by tests 2 and 3)
 - `data-testid="sidebar-nav-traces"` is asserted in Langflow's own unit tests under `flowSidebarComponent/components/__tests__/sidebarSegmentedNav.test.tsx`
 
 References in this repository:
@@ -96,8 +101,10 @@ References in this repository:
 - The empty-state UI smoke (template loaded, no run, Traces panel shows "No Data Available") — covered by `traces.spec.ts`.
 - The `/api/v1/monitor/transactions` envelope contract — covered by `traces-detail.spec.ts`.
 - Successful (non-error) trace shape: this spec exercises the failure path because no provider is configured in the fixture. A successful trace might surface extra fields (e.g., token counts > 0, span outputs). Not pinned here.
+- **Numeric values inside the LLM span's `Tokens` / `Prompt` / `Completion` metric cards.** The fixture leaves `LanguageModelComponent` unconfigured, so the run errors at the LLM step and `tokenUsage` lands as `null` on the API payload. The cards still render via the `isLlmSpan` branch in `SpanDetail`, but their values fall back to em-dash (`—`) — test 3 pins the labels + the fallback, not numeric counts. Pinning numeric values would require a fixture that runs to completion (real provider key or mock LLM); that would force `test.skip` on a missing API key, which conflicts with the `@stable` contract (every provider-gated test in the repo today is non-`@stable`). If a mock LLM provider lands in Langflow, a follow-up can switch this test to a successful-path fixture and assert numeric counts.
+- **The `modelName` text in the LLM span detail header.** `model_name` is sourced from `gen_ai.response.model` (see `services/tracing/formatting.py:124`), which is only populated when the LLM call returns a response. The fixture's error path never reaches that point, so `modelName` is `null` and the `{span.modelName && ...}` block in `SpanDetail` renders nothing. Same upstream blocker as the numeric counts: a follow-up needs a successful run to pin this surface.
 - **Implicit contract:** the entire suite assumes Langflow emits a trace for a flow that fails at component-execution time (the seeded run intentionally errors at `LanguageModelComponent`). If a future Langflow release ever decided not to emit traces for component failures, the `beforeAll` polling at `/api/v1/monitor/traces` would time out at 30 s and surface as a flake on every nightly. The contract is not pinned by any test in the repo and is not documented as guaranteed in Langflow's docs — at most "observability captures runs regardless of success/failure" is the design intent. If this fragility ever materializes, the fix is to switch the fixture to a provider-configured flow that succeeds.
-- Span detail tabs other than latency (inputs/outputs, attributes, events). Test 3 only asserts the latency text appears in `span-detail`.
+- Span detail panel sections other than latency, the LLM token-usage metric cards (label + em-dash fallback), and the type label — inputs/outputs JSON, the cost row, the error message section, and the empty-state placeholder are not asserted.
 - Trace filtering (status, query, start/end time, session_id). The handler supports those query params but no test pins them.
 - Negative auth path on `/api/v1/monitor/traces` — no test pins the 401/403 response on missing or bad token.
 

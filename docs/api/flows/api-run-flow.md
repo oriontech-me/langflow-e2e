@@ -1,6 +1,6 @@
 # API Run Flow
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -23,10 +23,10 @@ The spec runs **3 independent tests** via Playwright's `request` fixture, sharin
 **Setup (`beforeAll`)**
 1. Obtain a valid Bearer token via `getAuthToken(request)`.
 2. `POST /api/v1/api_key/` with the Bearer token to mint a temporary API key (asserts `200` and that the response body contains `api_key` and `id` — gives an explicit failure if the API key response shape changes).
-3. `POST /api/v1/flows/` with the new `x-api-key` to create a minimal empty flow (`nodes: []`, `edges: []`), asserts `201`, and stores `flowId`. The empty-flow + structural-assertion convention is shared with `api-run-with-tweaks.spec.ts`; semantic assertions (non-empty `outputs`, message persistence) are tracked in issue #263.
+3. Create a runnable Chat Input → Chat Output passthrough flow via the shared helper `createRunnableChatFlowViaApi(request, { "x-api-key": apiKey })` (asserts `201`) and store `flowId` plus its `deleteFlow` teardown. The flow runs without an LLM, so the tests assert both the structural contract **and** semantic output (non-empty `outputs`, message persistence under a custom `session_id`).
 
 **Teardown (`afterAll`)**
-1. `DELETE /api/v1/flows/{flowId}` with the `x-api-key`.
+1. `deleteFlow()` (helper) — `DELETE /api/v1/flows/{flowId}` with the `x-api-key`.
 2. `DELETE /api/v1/api_key/{apiKeyId}` with the Bearer token.
 
 ---
@@ -35,14 +35,16 @@ The spec runs **3 independent tests** via Playwright's `request` fixture, sharin
 1. POST to `/api/v1/run/{flowId}` with `x-api-key` and payload `{ input_value, input_type: "chat", output_type: "chat" }`.
 2. Assert response status is `200`.
 3. Assert `body.outputs` exists and is an array.
+4. Assert `body.outputs.length > 0` — the runnable flow actually executed and produced output, not just a structurally valid empty shell.
 
 This test covers the QA-CHECKLIST 1.3 bullets for `input_value` and for `input_type: "chat"` / `output_type: "chat"` in a single call — both parameters are sent explicitly in the request payload.
 
-**Test 2 — `POST /api/v1/run/{flow_id}` with custom `session_id`**
-1. Generate a deterministic `session_id` (e.g. `test-session-<timestamp>`).
+**Test 2 — `POST /api/v1/run/{flow_id}` with custom `session_id`, asserting message persistence**
+1. Generate a deterministic `session_id` (e.g. `test-session-<timestamp>`) and a unique `input_value`.
 2. POST with payload including `session_id`.
 3. Assert response status is `200`.
 4. Assert `body.session_id` equals the value sent in the request.
+5. Poll `GET /api/v1/monitor/messages?session_id=<id>` (Bearer auth) until it returns at least one message, then assert every returned message carries that `session_id` and that one message's `text` equals the `input_value` sent — proving the run executed and persisted through the custom session.
 
 **Test 3 — `POST /api/v1/run/{non_existent_flow_id}` returns 404**
 1. POST to `/api/v1/run/00000000-0000-0000-0000-000000000000` with the valid `x-api-key`.
@@ -52,8 +54,8 @@ This test covers the QA-CHECKLIST 1.3 bullets for `input_value` and for `input_t
 
 ## Validation criterion *(required)*
 - Setup creates one flow and one API key; teardown removes both. No orphans on the backend after the suite.
-- Test 1 receives `200` and a body with an `outputs` array (content may be empty for an empty flow — the contract is structural, not semantic).
-- Test 2 receives `200` and the returned `session_id` is byte-identical to the value sent in the request.
+- Test 1 receives `200` and a body with a non-empty `outputs` array — the runnable flow executed and produced output.
+- Test 2 receives `200`, the returned `session_id` is byte-identical to the value sent, and `GET /api/v1/monitor/messages?session_id=<id>` surfaces the run's persisted messages (all scoped to that session, including the input text sent).
 - Test 3 receives `404` — confirming the router differentiates missing-flow from auth failure and from input-validation failure.
 
 ---
@@ -63,8 +65,7 @@ This test covers the QA-CHECKLIST 1.3 bullets for `input_value` and for `input_t
 - Invalid `x-api-key` → `api-invalid-key.spec.ts` (already `@stable`)
 - `GET /api/v1/all` (component listing) → `api-custom-component-creation.spec.ts` (issue #250)
 - Streaming responses, batch runs, file uploads, multi-turn conversations beyond a single `session_id` echo
-- Semantic correctness of `outputs` content (an empty flow produces a structurally valid but functionally empty response) → tracked in issue #263
-- Message persistence under the custom `session_id` (would require a runnable flow that actually emits chat messages) → tracked in issue #263
+- Correctness of `outputs` *content* beyond non-emptiness and the echoed input — semantic LLM output, tool calls, and multi-component graphs are out of scope here
 
 ---
 
@@ -77,6 +78,8 @@ This test covers the QA-CHECKLIST 1.3 bullets for `input_value` and for `input_t
 
 ## External dependencies *(required)*
 - `tests/helpers/auth/get-auth-token.ts` — issues a valid `Bearer` via `/api/v1/auto_login`; if its contract changes, `beforeAll` breaks
+- `tests/helpers/flows/create-runnable-chat-flow-via-api.ts` — builds the runnable Chat Input → Chat Output flow from `tests/assets/flows/chat-io-ok-trace-fixture.json`; if the fixture goes stale against the current Langflow schema, `beforeAll` breaks (shared with `api-run-with-tweaks.spec.ts`)
+- `src/backend/base/langflow/api/v1/monitor.py` — `GET /api/v1/monitor/messages`; Test 2's persistence assertion breaks if message storage or the `session_id` filter regresses
 - `src/backend/base/langflow/api/v1/endpoints.py` — implementation of `POST /api/v1/run/{flow_id}`; changing the response shape (e.g. dropping `outputs` or `session_id` from the body) breaks Tests 1 and 2
 - `src/backend/base/langflow/api/v1/flows.py` — `POST /api/v1/flows/` used in setup and `DELETE /api/v1/flows/{id}` used in teardown
 - `src/backend/base/langflow/api/v1/api_key.py` — `POST /api/v1/api_key/` and `DELETE /api/v1/api_key/{id}` for temporary key lifecycle

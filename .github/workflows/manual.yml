@@ -88,7 +88,8 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci
-      - run: npx playwright install chromium --with-deps
+      - name: Install Playwright browsers
+        uses: ./.github/actions/setup-playwright
       - name: Run tests
         run: |
           SUITE="${{ github.event.inputs.test_suite }}"
@@ -129,7 +130,8 @@ jobs:
           node-version: "20"
           cache: "npm"
       - run: npm ci
-      - run: npx playwright install chromium --with-deps
+      - name: Install Playwright browsers
+        uses: ./.github/actions/setup-playwright
       - name: Run tests
         run: |
           SUITE="${{ github.event.inputs.test_suite }}"

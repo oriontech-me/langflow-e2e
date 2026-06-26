@@ -40,6 +40,7 @@
 25. [MCP — Client and Server](#25-mcp--client-and-server)
 26. [UI/UX — Sidebar and Canvas](#26-uiux--sidebar-and-canvas)
 27. [Core Components — Loop](#27-core-components--loop)
+28. [API Keys — Timestamps & Expiry](#28-api-keys--timestamps--expiry)
 
 ---
 
@@ -66,16 +67,17 @@
 
 ---
 
-### 1.1.b GET `/api/v1/health` → returns uptime and version `[-]`
+### 1.1.b GET `/api/v1/version` → returns version, main_version, package `[x]`
 
-**Objective:** Verify that the extended health endpoint returns instance metadata.
+**Objective:** Verify that the version endpoint returns instance metadata.
 
 **Step by step:**
-1. Make a `GET /api/v1/health` request without authentication.
+1. Make a `GET /api/v1/version` request without authentication.
 2. Verify that the status is `200`.
-3. Verify that the body contains `uptime` and `version` fields.
+3. Verify that the body contains `version`, `main_version` and `package` fields.
+4. Make a `POST /api/v1/version` request; verify that the status is `405`.
 
-**Validation:** Version and uptime information are present in the response.
+**Validation:** Version information is present; `package` is `Langflow`. `POST` is rejected with `405`.
 
 ---
 
@@ -668,7 +670,7 @@
 
 ## 12. Core Components — Webhook
 
-**Files:** `core/unit/webhookComponent.spec.ts`, `core/features/webhook-component-regression.spec.ts`
+**Files:** `core-components/webhook-component-regression.spec.ts`
 
 ---
 
@@ -694,44 +696,69 @@
 
 ---
 
+### 12.3 POST endpoint accepts JSON and plain-text bodies returning 202 `[x]`
+
+**Objective:** Confirm that `POST /api/v1/webhook/{flowId}` accepts both `application/json` and `text/plain` bodies and returns `202` with `{status: "in progress", message: "Task started in the background"}`.
+
+**Preconditions:**
+- A blank flow with the Webhook component on the canvas (created via UI; autosave persists the flow).
+- A temporary `x-api-key` is required because Langflow's `WEBHOOK_AUTH_ENABLE` defaults to `True` since 1.9.2+ (PR langflow-ai/langflow#12845).
+
+**Step by step:**
+1. Add the Webhook component to a blank flow via the sidebar.
+2. Wait for autosave (4 s debounce) before any webhook POST.
+3. Create a temporary API key via `POST /api/v1/api_key/`.
+4. POST a JSON object with the `x-api-key` header to `/api/v1/webhook/{flowId}`.
+5. POST a plain-text body with `x-api-key` and `Content-Type: text/plain` to the same endpoint.
+6. Delete the temporary API key in `finally`.
+
+**Validation:**
+- JSON POST returns 202 with `status === "in progress"` and `message === "Task started in the background"`.
+- Plain-text POST returns 202 with `status === "in progress"`.
+- The temporary API key is deleted regardless of test outcome.
+
 ---
 
 ## 13. Core Components — Agent
 
-**Files:** `agent-reasoning-steps.spec.ts`, `agent-system-prompt.spec.ts`, `agent-provider-field-isolation.spec.ts`, `agent-config-persistence.spec.ts`, `agent-max-iterations.spec.ts`, `agent-max-tokens.spec.ts`, `agent-reasoning-effort.spec.ts`, `agent-input-sources.spec.ts`, `agent-structured-output.spec.ts`, `agent-empty-refusal-response.spec.ts`, `agent-current-date-tool.spec.ts`, `agent-parse-error-behavior.spec.ts`, `agent-multimodal-image-input.spec.ts`
+**Files:** `core-components/agent-component-regression.spec.ts` (canvas rendering and provider field plumbing), `agent-reasoning-steps.spec.ts`, `agent-system-prompt.spec.ts`, `agent-model-connection-isolation.spec.ts`, `agent-config-persistence.spec.ts`, `agent-max-iterations.spec.ts`, `agent-max-tokens.spec.ts`, `agent-reasoning-effort.spec.ts`, `agent-input-sources.spec.ts`, `agent-structured-output.spec.ts`, `agent-empty-refusal-response.spec.ts`, `agent-current-date-tool.spec.ts`, `agent-parse-error-behavior.spec.ts`, `agent-multimodal-image-input.spec.ts`
 
 ---
 
-### 13.1 Agent component displayed on canvas with default settings `[-]`
+### 13.1 Agent component displayed on canvas with default settings `[x]`
+
+**File:** `core-components/agent-component-regression.spec.ts`
 
 **Step by step:**
-1. Search "Agent" in the sidebar.
-2. Add to canvas.
-3. Verify that the component displays:
+1. Open a blank flow and drag the Agent component from the "models & agents" disclosure to the canvas.
+2. Verify that the node shows the title (`title-Agent`) and the three core handles:
    - Input handle for "Language Model" (`handle-agent-shownode-language model-left`)
    - Input handle for "Tools" (`handle-agent-shownode-tools-left`)
    - Output handle "Response" (`handle-agent-shownode-response-right`)
-4. Verify that default fields (Max Iterations, System Prompt) are visible.
+3. Verify that the System Prompt field (`textarea_str_system_prompt`) and the model dropdown (`value-dropdown-model_model`) are visible in the default rendered state.
 
-**Validation:** Agent component with all handles and default fields visible.
+**Validation:** Agent component renders with title, all three core handles, and the default fields visible.
+
+> **Same spec — `core-components/agent-component-regression.spec.ts` — also covers** (canvas-level, distinct from the execution scenarios below):
+> - **System prompt persistence:** typing a system prompt autosaves; after navigating away and reopening the flow by name, the value is restored.
+> - **Model dropdown entry point:** opening `value-dropdown-model_model` surfaces the `manage-model-providers` button (the centralized provider-config path in 1.11) and lists the configured providers' models, each tagged with its `icon-{Provider}`.
+> - **Provider-icon swap:** selecting a model from a different provider (OpenAI → Anthropic) replaces the `icon-{Provider}` mark on the Agent node trigger. Self-skips when both providers are not pre-configured in the local instance.
 
 ---
 
-### 13.2 Switch provider in Agent — previous provider fields do not persist `[ ]`
+### 13.2 Connecting an external model in Agent drops the prior model selection `[x]`
 
-**File:** `agent-provider-field-isolation.spec.ts`
+**File:** `agent-model-connection-isolation.spec.ts`
 
-**Objective:** Ensure that when switching providers, fields exclusive to the previous provider (e.g.: `project_id` from WatsonX) disappear and the API key is not pre-filled with the previous value.
+**Objective:** Ensure connection-mode isolation in the Langflow 1.11 unified model picker: choosing "Connect other models" clears the previously selected model (and the node's secret fields), so a stale provider configuration cannot reach a backend run. The 1.11 Agent has no inline per-provider credential fields (credentials are global, under Settings → Model Providers), so the older "switch provider → provider-specific fields disappear" scenario no longer applies.
 
 **Step by step:**
-1. Load "Simple Agent" template.
-2. Select WatsonX provider in the Agent — verify that `base_url_ibm_watsonx` and `project_id` are visible.
-3. Switch to OpenAI provider.
-4. Verify that `base_url_ibm_watsonx` and `project_id` are **not visible**.
-5. Verify that the `api_key` field is empty (not pre-filled).
-6. Switch back to WatsonX — verify that the previous `project_id` value **does not persist**.
+1. Load "Simple Agent" template with a configured provider/model (resolved from `models.json` / `MODEL_TEST_ID`).
+2. Confirm the model picker (`model_model`) shows a concrete model name in `value-dropdown-model_model` (not the "Select a model" placeholder).
+3. Open the picker and click the `connect-other-models` footer button.
+4. Verify `value-dropdown-model_model` now reads "Connect other models" — the connection-mode label that replaces the prior model selection.
 
-**Validation:** Provider-specific fields appear and disappear correctly; no value leakage between providers.
+**Validation:** The previously selected model is dropped and the trigger reflects connection mode; the prior provider selection cannot leak into execution.
 
 ---
 
@@ -1131,58 +1158,77 @@
 
 ## 16. Global Variables (API Keys)
 
-**File:** `core/features/globalVariables.spec.ts`, `global-variables-crud.spec.ts`
+**Files:** `ui-ux/global-variable-edit.spec.ts`, `ui-ux/global-variables-crud.spec.ts`
 
 ---
 
-### 16.1 Create global variable `[-]`
+### 16.1 Create global variable from Settings page `[x]`
+
+**Objective:** Confirm that a Generic global variable can be created from the Settings page (`/settings/global-variables`) and appears in the ag-grid table.
 
 **Step by step:**
-1. Navigate to Settings → Global Variables.
-2. Click "Add Variable".
-3. Fill in name (e.g.: `OPENAI_API_KEY`), type and value.
+1. Navigate to Settings → Global Variables (`/settings/global-variables`).
+2. Click the "Add New" button (`api-key-button-store`).
+3. Switch to the Generic tab (`generic-tab`).
+4. Fill in name and value.
+5. Click Save (`save-variable-btn`).
+
+**Validation:** The variable name appears as an exact match in `.ag-cell-value` within 10s.
+
+---
+
+### 16.2 Edit existing global variable `[x]`
+
+**Objective:** Confirm that clicking an existing variable row opens the Update modal and saving a new value emits the "updated successfully" toast.
+
+**Step by step:**
+1. Create a variable as in 16.1.
+2. Click the variable row in the ag-grid table.
+3. Verify the "Update Variable" heading is visible.
+4. Replace the value field with a new value.
+5. Click Save (`save-variable-btn`).
+
+**Validation:** Text matching `/updated successfully/` is visible within 5s — the toast only fires when `PATCH /api/v1/variables/{id}` returns 200.
+
+---
+
+### 16.3 Delete global variable `[x]`
+
+**Objective:** Confirm that deleting a variable removes it from the listing.
+
+**Step by step:**
+1. Locate a global variable in the listing.
+2. Click the delete icon (`icon-Trash2`).
+3. Confirm the deletion in the dialog.
+
+**Validation:** The variable no longer appears in the listing (count drops to 0 for that name).
+
+---
+
+### 16.4 Create global variable of type "Generic" `[x]`
+
+**Objective:** Confirm that the Generic tab is selectable and produces a Generic-type variable.
+
+**Step by step:**
+1. Open the Add New modal (either via the Globe icon in a component or via the Settings page).
+2. Switch to the Generic tab.
+3. Fill in name and value, save.
+
+**Validation:** Generic type variable created with correct type, listed in the table.
+
+---
+
+### 16.5 Credential variable value is hidden from the variable list `[x]`
+
+**Objective:** Confirm that after saving a Credential-type variable, its value is never rendered as visible text anywhere on the page (toast, label, preview, etc.).
+
+**Step by step:**
+1. Open the Add New modal.
+2. Switch to the Credential tab.
+3. Fill in name and a distinctive sentinel value (e.g. `SECRET-SENTINEL-{Date.now()}`).
 4. Save.
-5. Verify that the variable appears in the listing.
 
-**Validation:** Global variable created and listed.
-
----
-
-### 16.2 Edit existing global variable `[-]`
-
-**Step by step:**
-1. Locate existing global variable.
-2. Click edit.
-3. Change the value.
-4. Save.
-5. Verify that the new value is reflected.
-
-**Validation:** Global variable updated with new value.
-
----
-
-### 16.3 Delete global variable `[-]`
-
-**Step by step:**
-1. Locate global variable.
-2. Click delete.
-3. Confirm deletion.
-4. Verify that the variable no longer appears in the listing.
-
-**Validation:** Variable removed from the listing.
-
----
-
-### 16.4 Create global variable of type "Generic" `[-]`
-
-**Step by step:**
-1. Create new global variable.
-2. Select type "Generic".
-3. Fill in name and value.
-4. Save.
-5. Verify that the "Generic" type is displayed correctly.
-
-**Validation:** Generic type variable created with correct type.
+**Validation:** `getByText(sentinelValue)` has count 0 — the sentinel must not surface as visible text anywhere in the DOM. Input value attributes (`<input type="password" value="…">`) don't count as visible text; only rendered text does, which is the guarantee under test.
 
 ---
 
@@ -1547,7 +1593,7 @@
 
 ## 19. Model Providers
 
-**Files:** `core/features/globalVariables.spec.ts`, `claude-model-switch.spec.ts`, `modelProviderModal.spec.ts`, `provider-invalid-auth-error.spec.ts`
+**Files:** `claude-model-switch.spec.ts`, `modelProviderModal.spec.ts`, `provider-invalid-auth-error.spec.ts`
 
 ---
 
@@ -2475,6 +2521,76 @@
 **Validation:** Non-empty bot response; "title" count ≥ 2 (confirms 2 loop iterations).
 
 **Note:** Validation via "Title" is intentional and slightly fragile — it depends on the Parser's output format. If the template changes the prompt template, the counter may not match. The test's focus is to confirm the Loop iterated, not the exact content.
+
+---
+
+## 28. API Keys — Timestamps & Expiry
+
+**Files:** `ui-ux/api-keys-timezone-display.spec.ts`, `api/flows/api-key-expiry-enforcement.spec.ts`
+**Reference:** PR #13471 — Fix timestamp rendering for `expires_at` in API Key model.
+
+---
+
+### 28.1 Serializer emits UTC offset, no microseconds `[x]`
+
+**Objective:** Confirm `GET /api/v1/api_key/` serializes datetime fields as offset-aware UTC ISO (`+00:00`) at second precision, the root-cause fix for the UTC display bug.
+
+**Precondition:** Langflow running; authenticated (auto_login or form login).
+
+**Step by step:**
+1. Create two keys via `POST /api/v1/api_key/`: one with `expires_at = 2026-06-10T23:59:59+00:00`, one with no expiry.
+2. `GET /api/v1/api_key/` and locate both keys.
+3. Verify `created_at` (both) and `expires_at` (expiring key) match `^…T…\+00:00$` with no microseconds.
+4. Verify `expires_at` round-trips to `2026-06-10T23:59:59+00:00`.
+5. Verify no-expiry `expires_at` and both `last_used_at` are `null`.
+
+**Validation:** All datetime fields offset-aware and second-precision; nulls preserved.
+
+---
+
+### 28.2 Settings table renders timestamps in local timezone `[x]`
+
+**Objective:** Confirm the Settings → API Keys table converts UTC instants to the viewer's local time, with correct empty-state glyphs.
+
+**Precondition:** Browser timezone pinned to `America/Sao_Paulo` (UTC−03:00); the two keys from 28.1 present.
+
+**Step by step:**
+1. Log in and open `/settings/api-keys`.
+2. Verify the expiring key's **expires** cell reads `2026-06-10 20:59:59` (23:59:59 UTC − 03:00).
+3. Verify the **created** cell is well-formatted and differs from the raw UTC wall clock.
+4. Verify the unused key's **last used** cell reads `Never` and the no-expiry key's **expires** cell reads `∞`.
+
+**Validation:** `expires_at` shows `20:59:59` (not the pre-fix `23:59:59`); `Never` and `∞` render correctly.
+
+---
+
+### 28.3 Expired key rejected, valid key accepted `[x]`
+
+**Objective:** Confirm API key expiry is enforced on `POST /api/v1/run/{id}` (`x-api-key`).
+
+**Precondition:** Langflow running; an empty flow created to run against.
+
+**Step by step:**
+1. Create an expired key (`expires_at = 2020-01-01T00:00:00+00:00`) and a valid key (`2099-12-31T23:59:59+00:00`).
+2. Run the flow with the expired key → expect `403`.
+3. Run the flow with the valid key → expect `200`.
+
+**Validation:** Expired → `403 "Invalid or missing API key"`; valid → `200`.
+
+---
+
+### 28.4 Expiry boundary evaluated in UTC `[x]`
+
+**Objective:** Confirm the expiry comparison is UTC-based and not shifted by the viewer's timezone offset.
+
+**Precondition:** Langflow running; empty flow available.
+
+**Step by step:**
+1. Create a key expiring `now + 30 min` (UTC) and a key expiring `now − 30 min` (UTC).
+2. Run with the near-future key → expect `200`.
+3. Run with the recently-expired key → expect `403`.
+
+**Validation:** Both verdicts correct — the 30-min margins sit inside the ±3h offset window, so a timezone-shifted comparison would flip one of them.
 
 ---
 

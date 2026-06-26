@@ -76,7 +76,7 @@ test.describe("Playground – Clear Session History", () => {
 
   test(
     "clear-chat removes all messages from Default Session",
-    { tag: ["@stable", "@regression", "@playground"] },
+    { tag: ["@regression", "@playground"] },
     async ({ page }) => {
       await test.step(
         "Set up ChatInput → ChatOutput echo flow and open playground",

@@ -38,7 +38,9 @@ None carry `@release` — these are defensive contract assertions, not happy-pat
 
 ## Step by step *(required)*
 
-Every test starts with the same `addPromptComponent(page)` helper used in `prompt-template-component-regression.spec.ts` (blank flow → sidebar search → add → adjust view → assert 1 node).
+Every test starts with the same `addPromptComponent(page)` helper used in `prompt-template-component-regression.spec.ts` (blank flow → sidebar search → add → adjust view → assert 1 node → **wait for the flow autosave to settle**).
+
+The final autosave-settle wait (`waitForFlowSaveSettled`) is the fix for the recurring flake tracked in issue #358: adding the node and fitting the viewport each schedule a debounced (300 ms) `PATCH /api/v1/flows/{id}` autosave. If one is still in flight when the prompt-modal save fires its own PATCH, the two requests race and the backend can return a transient failure rendered as a "Failed to save flow" toast — which shares the `.error-build-message` class with the prompt-validation toast and so corrupted the rejection (strict-mode, two elements) and positive-path (`toHaveCount(0)`) assertions alike. Waiting until no flow-save PATCH has fired for a quiet window guarantees the next save runs on its own.
 
 ### Rejection tests (tests 1–4)
 
@@ -46,7 +48,7 @@ The four rejection cases all run the same step sequence via the `runRejectionCon
 
 1. `addPromptComponent(page)`.
 2. Open the prompt modal, fill the textarea with the invalid template, click `genericModalBtnSave` (helper `fillAndSavePromptTemplate`). The helper does **not** wait for modal close — the modal stays open on error.
-3. Assert the error toast (`.error-build-message`) is visible within 5 s (the toast auto-dismisses after 5 s — see `src/frontend/src/alerts/error/index.tsx:22`).
+3. Assert the error toast (`.error-build-message`, filtered to the prompt-validation title) is visible within 5 s (the toast auto-dismisses after 5 s — see `src/frontend/src/alerts/error/index.tsx:22`). The title filter is a belt-and-suspenders guard against a stray flow-save toast sharing the same class (see the autosave note above; issue #358).
 4. Assert the toast text contains:
    - The constant title `"There is something wrong with this prompt"` (from i18n `errors.prompt`).
    - The upstream-error fragment `"Input variables contain invalid characters or formats"`.

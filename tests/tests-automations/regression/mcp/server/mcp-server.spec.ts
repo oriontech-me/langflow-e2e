@@ -3,6 +3,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-server-modal";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 test(
   "user must be able to change mode of MCP tools without any issues",
@@ -1032,12 +1033,9 @@ test(
     expect(await toolOptions.count()).toBeGreaterThan(0);
 
     // Cleanup
-    const loginResp = await page.request.post("/api/v1/login", {
-      form: { username: "langflow", password: "langflow" },
-    });
-    const { access_token: token } = await loginResp.json();
+    const authHeader = await getAuthToken(page.request);
     await page.request.delete(`/api/v2/mcp/servers/${testName}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: { Authorization: authHeader },
     });
   },
 );

@@ -1,6 +1,6 @@
 # Webhook Component — Regression
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -31,7 +31,6 @@ If any of these tests fails, the Webhook component is broken in one of its core 
 
 **`@stable` exceptions:**
 
-- **Test 1** (`HTTP POST accepts JSON and plain-text bodies returning 202`) does **not** carry `@stable` — removed in the triage of weekly run [25441253323](https://github.com/oriontech-me/langflow-e2e/actions/runs/25441253323) (issue #165) after the endpoint returned 403 instead of 202 on three consecutive attempts. The test fixture `request` is unauthenticated and the webhook endpoint appears to require session credentials in the current Langflow version. Tag is restored once the test is updated to authenticate (see follow-up issue).
 - **Test 2** (`flow is saved to database and contains the Webhook node`) does **not** carry `@stable` — removed in the triage of weekly run [25663131100](https://github.com/oriontech-me/langflow-e2e/actions/runs/25663131100) (issue #206) after the same upstream regression first observed in [25441253323](https://github.com/oriontech-me/langflow-e2e/actions/runs/25441253323) recurred on three consecutive attempts. The Langflow frontend bundle wraps `window.fetch` and the wrapper throws `Cannot set properties of undefined (setting 'Accept-Language')` when `fetch()` is called from `page.evaluate` without a `headers` init. Tracked in #180; tag is restored once upstream is fixed and one weekly cycle passes clean.
 
 ---
