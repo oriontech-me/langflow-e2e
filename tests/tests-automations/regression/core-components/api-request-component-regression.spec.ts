@@ -7,6 +7,39 @@ import { enableInspectPanel } from "../../../helpers/ui/open-advanced-options";
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
 
+// Echo endpoint base for the HTTP-execution tests. Defaults to postman-echo.com.
+//
+// History: the suite originally targeted httpbin.org, which proved chronically
+// unreliable — it returned HTTP 503 (AWS ELB) during the weekly runs of
+// 2026-06-08, 2026-06-15 (#383) and 2026-06-22 (#407). The retry-on-5xx in
+// `runAndOpenOutput` (added in #383) only survives a transient blip within a
+// single test window; a sustained outage exhausts all attempts and fails the
+// run. After the third recurrence the default was moved to postman-echo.com,
+// a more reliable public echo service that is a near drop-in for the paths this
+// suite uses: `/get`, `/post`, `/put`, `/patch`, `/delete` (each 200 only for
+// its matching verb), `/status/{code}` (deliberate status endpoint), query-param
+// echo, and Host/url echo in the response body.
+//
+// One behavioral difference from httpbin: postman-echo returns **404** for a
+// wrong verb where httpbin returned **405**. The per-verb guarantee is
+// unaffected — the verb tests assert the output contains `200`, and 404 is just
+// as much "not 200" as 405, so sending the wrong verb still fails the test.
+//
+// The override knob remains for anyone who wants to point the tests at a
+// different echo endpoint (e.g. a locally self-hosted go-httpbin). The value
+// must be reachable BY LANGFLOW — the component's backend makes the request, not
+// the Playwright runner — and a self-hosted host on a private IP must be added
+// to LANGFLOW_SSRF_ALLOWED_HOSTS. Note the component's URL validator rejects
+// single-label hostnames, so a CI service-container reachable only by its bare
+// service label will not work. ECHO_HOST is derived from the same base URL so
+// the echoed-host assertions match whatever endpoint is configured.
+const ECHO_BASE = (
+  process.env.ECHO_BASE_URL ??
+  process.env.HTTPBIN_BASE_URL ??
+  "https://postman-echo.com"
+).replace(/\/$/, "");
+const ECHO_HOST = new URL(ECHO_BASE).host;
+
 // Helper: create a blank flow and add the API Request component to the canvas.
 // After this call the component node is visible and its inspector is open.
 async function addApiRequestComponent(page: Page) {
@@ -30,28 +63,145 @@ async function addApiRequestComponent(page: Page) {
   });
 }
 
-// Helper: run the component and return the raw text content from the output inspection dialog.
-// The output Data object is displayed in a Monaco editor — textContent gives the JSON string.
+// The output Data object the component returns is JSON. A transient upstream
+// failure surfaces as the component's OWN top-level `status_code` being 5xx
+// (a degraded echo service can return 502/503/504; an httpx transport blip
+// surfaces as status_code 500 with an `error` field).
+// The component faithfully propagates the upstream status — this is not a
+// Langflow bug — so `runAndOpenOutput` re-runs rather than failing the
+// assertion (issue #383). Parse and check the TOP-LEVEL status_code only: a
+// 5xx echoed inside the response body (`result`) or a `redirection_history`
+// entry must NOT trigger a retry. No test under this spec expects a 5xx, so
+// retrying on the component's own 5xx is always safe.
+function isTransientOutput(output: string): boolean {
+  try {
+    const code = Number(
+      (JSON.parse(output) as { status_code?: unknown }).status_code,
+    );
+    return Number.isInteger(code) && code >= 500 && code <= 599;
+  } catch {
+    // Output was not parseable JSON (the component always emits a JSON Data
+    // object here, so this is not expected). We cannot confirm a TOP-LEVEL 5xx
+    // without parsing, and a regex would also match a 5xx nested in the body —
+    // violating the top-level-only contract — so do not retry.
+    return false;
+  }
+}
+
+// The output dialog and a Radix popover both render `role="dialog"` into
+// body-level portals (see tableDialog), so scope to the dialog that actually
+// holds the output copy button — an unscoped locator is non-deterministic.
+function outputDialog(page: Page): Locator {
+  return page
+    .locator('[role="dialog"]')
+    .filter({ has: page.getByTestId("copy-output-button") });
+}
+
+// Close the output dialog between runs and assert it actually closed, so a
+// stuck-open dialog surfaces here instead of as an obscured-click timeout on
+// the next run.
+async function closeOutputDialog(page: Page): Promise<void> {
+  const dialog = outputDialog(page);
+  if (!(await dialog.isVisible().catch(() => false))) return;
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden({ timeout: 5000 });
+}
+
+// Helper: run the component once and return the COMPLETE output Data as a string.
 //
-// Anchors the build-finished signal on the inspect-output button becoming enabled —
-// this is the actual precondition for the next click. The previous version waited on
-// a "built successfully" toast, which matched any visible toast with that text and
-// could resolve against a stale node from a prior step before fading.
-async function runAndOpenOutput(page: Page): Promise<string> {
+// Anchors the build-finished signal on this run's build event stream closing
+// (NDJSON stream end = build complete), NOT on the inspect-output button being
+// enabled. The button stays enabled across re-runs because the prior output
+// persists in the flowPool, so on a retry `toBeEnabled` would resolve instantly
+// and we'd re-read the stale output instead of the fresh run (issue #383).
+//
+// Reads the output via the dialog's copy button + clipboard rather than the
+// Monaco editor's textContent: the editor is virtualized, so textContent only
+// returns the lines in the viewport and silently truncates fields below the
+// fold for long responses.
+async function runOnce(page: Page): Promise<string> {
   const inspectButton = page.getByTestId(
     "output-inspection-api response-apirequest",
   );
+  // Register the waiter before the click so we capture THIS run's build stream.
+  // Assumes streaming event delivery (the default for the nightly image under
+  // test — the build events come back as a single application/x-ndjson stream).
+  // If the instance is ever configured for POLLING event delivery, the events
+  // endpoint is fetched in a loop of short requests and `finished()` would
+  // resolve on the first poll rather than at build completion — the anchor
+  // below would then need to key off build completion differently.
+  const buildComplete = page.waitForResponse(
+    (r) => r.url().includes("/api/v1/build/") && r.url().includes("/events"),
+    { timeout: 45000 },
+  );
   await page.getByTestId("button_run_api request").click();
+  // `finished()` resolves when the NDJSON event stream closes — i.e. the build
+  // (with its fresh output) is complete and the flowPool has been updated.
+  await (await buildComplete).finished();
   await expect(inspectButton).toBeEnabled({ timeout: 45000 });
 
   await inspectButton.click();
-  const dialog = page.locator('[role="dialog"]');
+  const dialog = outputDialog(page);
   await expect(dialog).toBeVisible({ timeout: 10000 });
 
-  return await dialog
-    .locator("[role='textbox']")
-    .first()
-    .evaluate((el: HTMLElement) => el.textContent ?? "");
+  const copyButton = dialog.getByTestId("copy-output-button");
+  await expect(copyButton).toBeVisible({ timeout: 10000 });
+
+  // Clear the clipboard first: it persists across the serial tests, so without
+  // this the poll below could return a previous test's output immediately
+  // (length > 0) before the fresh copy lands. Then click copy and poll rather
+  // than waiting on the transient "Copied to clipboard" toast, which can fade
+  // before the assertion runs — re-click and re-read until the output lands.
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  let clipboard = "";
+  await expect(async () => {
+    await copyButton.click();
+    clipboard = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clipboard.length).toBeGreaterThan(0);
+  }).toPass({ timeout: 15000 });
+  return clipboard;
+}
+
+// Helper: run the component and return its output, retrying past transient
+// upstream 5xx outages and runs that produce no readable output (build error /
+// timeout). This decouples the suite from the echo service's intermittent
+// availability without masking a real Langflow regression — a persistent
+// failure exhausts the retries and the caller's assertion reports the actual
+// content (issue #383).
+async function runAndOpenOutput(page: Page): Promise<string> {
+  const maxAttempts = 3;
+  let output = "";
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      output = await runOnce(page);
+    } catch (error) {
+      // No readable output (build error / timeout). Re-run unless this was the
+      // last attempt, in which case surface the original failure. Best-effort
+      // close here — we are already in a degraded state.
+      if (attempt === maxAttempts) throw error;
+      await closeOutputDialog(page).catch(() => {});
+      continue;
+    }
+    if (!isTransientOutput(output)) {
+      return output;
+    }
+    // Still a transient upstream 5xx. Fail LOUDLY once retries are exhausted
+    // rather than returning the 5xx body: the caller's substring assertions
+    // (e.g. toContain("200")) are too weak to reliably distinguish a 5xx Data
+    // blob from a 200 one, so returning it could let a sustained outage — or a
+    // real regression that surfaces as a 5xx — pass silently (issue #383).
+    if (attempt === maxAttempts) {
+      throw new Error(
+        `API Request returned a transient upstream 5xx on all ${maxAttempts} ` +
+          `attempts (sustained outage or a regression surfacing as 5xx). ` +
+          `Last output: ${output.slice(0, 500)}`,
+      );
+    }
+    // Close the dialog and re-run the component.
+    await closeOutputDialog(page);
+  }
+  // Unreachable: the final attempt always returns or throws above.
+  return output;
 }
 
 // Helper: click an AG Grid cell, fill the resulting textarea editor, and save.
@@ -164,8 +314,8 @@ test(
     // URL field — testid: popover-anchor-input-url_input
     const urlInput = page.getByTestId("popover-anchor-input-url_input");
     await expect(urlInput).toBeVisible({ timeout: 10000 });
-    await urlInput.fill("https://httpbin.org/get");
-    await expect(urlInput).toHaveValue("https://httpbin.org/get");
+    await urlInput.fill(`${ECHO_BASE}/get`);
+    await expect(urlInput).toHaveValue(`${ECHO_BASE}/get`);
 
     // Method dropdown — default is GET; confirm it can be changed to POST
     const methodDropdown = page.getByTestId("dropdown_str_method");
@@ -222,13 +372,13 @@ test(
 
     const urlInput = page.getByTestId("popover-anchor-input-url_input");
     await expect(urlInput).toBeVisible({ timeout: 10000 });
-    await urlInput.fill("https://httpbin.org/get");
+    await urlInput.fill(`${ECHO_BASE}/get`);
 
     const output = await runAndOpenOutput(page);
 
     // HTTP response fields
     expect(output).toContain("200");
-    expect(output).toContain("httpbin.org");
+    expect(output).toContain(ECHO_HOST);
 
     // Structural fields always present in Data output regardless of response content —
     // verifying all at once protects against regressions in make_request() output structure
@@ -237,7 +387,7 @@ test(
     expect(output).toContain("response_headers");
     expect(output).toContain("result");
 
-    // httpbin.org/get echoes the request URL inside `result`
+    // /get echoes the request URL inside `result`
     expect(output).toContain('"url"');
 
     await page.keyboard.press("Escape");
@@ -252,8 +402,8 @@ test(
 
     const urlInput = page.getByTestId("popover-anchor-input-url_input");
     await expect(urlInput).toBeVisible({ timeout: 10000 });
-    // httpbin.org/post only accepts POST — returns 405 for any other method
-    await urlInput.fill("https://httpbin.org/post");
+    // /post only accepts POST — returns 405 for any other method
+    await urlInput.fill(`${ECHO_BASE}/post`);
 
     const methodDropdown = page.getByTestId("dropdown_str_method");
     await expect(methodDropdown).toBeVisible({ timeout: 10000 });
@@ -265,9 +415,9 @@ test(
 
     const output = await runAndOpenOutput(page);
 
-    // A successful POST to httpbin.org/post returns 200 and echoes the request URL
+    // A successful POST to /post returns 200 and echoes the request URL
     expect(output).toContain("200");
-    expect(output).toContain("httpbin.org/post");
+    expect(output).toContain(`${ECHO_HOST}/post`);
 
     await page.keyboard.press("Escape");
   },
@@ -281,8 +431,8 @@ test(
 
     const urlInput = page.getByTestId("popover-anchor-input-url_input");
     await expect(urlInput).toBeVisible({ timeout: 10000 });
-    // httpbin.org/put only accepts PUT — returns 405 for any other method
-    await urlInput.fill("https://httpbin.org/put");
+    // /put only accepts PUT — returns 405 for any other method
+    await urlInput.fill(`${ECHO_BASE}/put`);
 
     const methodDropdown = page.getByTestId("dropdown_str_method");
     await expect(methodDropdown).toBeVisible({ timeout: 10000 });
@@ -295,7 +445,7 @@ test(
     const output = await runAndOpenOutput(page);
 
     expect(output).toContain("200");
-    expect(output).toContain("httpbin.org/put");
+    expect(output).toContain(`${ECHO_HOST}/put`);
     expect(output).toContain("status_code");
     expect(output).toContain("response_headers");
     expect(output).toContain("result");
@@ -312,8 +462,8 @@ test(
 
     const urlInput = page.getByTestId("popover-anchor-input-url_input");
     await expect(urlInput).toBeVisible({ timeout: 10000 });
-    // httpbin.org/patch only accepts PATCH — returns 405 for any other method
-    await urlInput.fill("https://httpbin.org/patch");
+    // /patch only accepts PATCH — returns 405 for any other method
+    await urlInput.fill(`${ECHO_BASE}/patch`);
 
     const methodDropdown = page.getByTestId("dropdown_str_method");
     await expect(methodDropdown).toBeVisible({ timeout: 10000 });
@@ -326,7 +476,7 @@ test(
     const output = await runAndOpenOutput(page);
 
     expect(output).toContain("200");
-    expect(output).toContain("httpbin.org/patch");
+    expect(output).toContain(`${ECHO_HOST}/patch`);
     expect(output).toContain("status_code");
     expect(output).toContain("response_headers");
     expect(output).toContain("result");
@@ -343,8 +493,8 @@ test(
 
     const urlInput = page.getByTestId("popover-anchor-input-url_input");
     await expect(urlInput).toBeVisible({ timeout: 10000 });
-    // httpbin.org/delete only accepts DELETE — returns 405 for any other method
-    await urlInput.fill("https://httpbin.org/delete");
+    // /delete only accepts DELETE — returns 405 for any other method
+    await urlInput.fill(`${ECHO_BASE}/delete`);
 
     const methodDropdown = page.getByTestId("dropdown_str_method");
     await expect(methodDropdown).toBeVisible({ timeout: 10000 });
@@ -357,7 +507,7 @@ test(
     const output = await runAndOpenOutput(page);
 
     expect(output).toContain("200");
-    expect(output).toContain("httpbin.org/delete");
+    expect(output).toContain(`${ECHO_HOST}/delete`);
     expect(output).toContain("status_code");
     expect(output).toContain("response_headers");
     expect(output).toContain("result");
@@ -374,9 +524,9 @@ test(
 
     const urlInput = page.getByTestId("popover-anchor-input-url_input");
     await expect(urlInput).toBeVisible({ timeout: 10000 });
-    // httpbin.org/status/404 responds with HTTP 404.
+    // /status/404 responds with HTTP 404.
     // The component must NOT raise an exception — it returns Data(data={"status_code": 404, ...}).
-    await urlInput.fill("https://httpbin.org/status/404");
+    await urlInput.fill(`${ECHO_BASE}/status/404`);
 
     const output = await runAndOpenOutput(page);
 
@@ -398,10 +548,8 @@ test(
 
     const urlInput = page.getByTestId("popover-anchor-input-url_input");
     await expect(urlInput).toBeVisible({ timeout: 10000 });
-    // httpbin.org/get echoes all query parameters in the `args` key of the response body
-    await urlInput.fill(
-      "https://httpbin.org/get?e2e_param=functional_test_value",
-    );
+    // /get echoes all query parameters in the `args` key of the response body
+    await urlInput.fill(`${ECHO_BASE}/get?e2e_param=functional_test_value`);
 
     const output = await runAndOpenOutput(page);
 
@@ -479,8 +627,7 @@ test(
     await expect(curlTextarea).toBeVisible({ timeout: 10000 });
 
     // Fill with a valid cURL command
-    const curlCommand =
-      "curl -X GET https://httpbin.org/get -H 'Accept: application/json'";
+    const curlCommand = `curl -X GET ${ECHO_BASE}/get -H 'Accept: application/json'`;
     await curlTextarea.fill(curlCommand);
     await expect(curlTextarea).toHaveValue(curlCommand);
 
@@ -510,26 +657,27 @@ test(
     await expect(curlTextarea).toBeVisible({ timeout: 10000 });
 
     await curlTextarea.fill(
-      "curl -X GET https://httpbin.org/get -H 'Accept: application/json'",
+      `curl -X GET ${ECHO_BASE}/get -H 'Accept: application/json'`,
     );
 
     // The cURL parser must auto-populate url_input with the URL extracted from the command.
     // Asserting this directly proves the parser ran and is the precondition the run relies on
     // (without it the backend would receive an empty URL and validation would fail).
     await page.waitForFunction(
-      () => {
+      (expectedUrl) => {
         const el = document.getElementById(
           "popover-anchor-input-url_input",
         ) as HTMLInputElement | null;
-        return el !== null && el.value === "https://httpbin.org/get";
+        return el !== null && el.value === expectedUrl;
       },
+      `${ECHO_BASE}/get`,
       { timeout: 10000 },
     );
 
     const output = await runAndOpenOutput(page);
 
     expect(output).toContain("200");
-    expect(output).toContain("httpbin.org");
+    expect(output).toContain(ECHO_HOST);
     expect(output).toContain("status_code");
     expect(output).toContain("result");
 
@@ -612,7 +760,7 @@ test(
   "API Request component — flow state persists in database after autosave (URL, method, headers)",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    const expectedUrl = "https://httpbin.org/get?persist=true";
+    const expectedUrl = `${ECHO_BASE}/get?persist=true`;
     const headerKey = "X-Persist-Header";
     const headerValue = "persisted-value";
     let flowId = "";

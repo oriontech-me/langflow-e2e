@@ -13,6 +13,7 @@ import {
 import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
 import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -140,14 +141,9 @@ for (const { label, options, skipReason } of targets) {
   test.describe(`MCP Client – Agent using MCPTools [${label}]`, () => {
     test.afterEach(async ({ page }) => {
       try {
-        const token = await page.request
-          .post("/api/v1/login", {
-            form: { username: "langflow", password: "langflow" },
-          })
-          .then((r) => r.json())
-          .then((d) => d.access_token as string);
+        const authHeader = await getAuthToken(page.request);
         await page.request.delete(`/api/v2/mcp/servers/${MCP_SERVER_NAME}`, {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: authHeader },
         });
       } catch {
         // best-effort
@@ -162,7 +158,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent calls echo MCP tool and returns echoed message",
-      { tag: ["@mcp", "@agents", "@regression", "@stable"] },
+      { tag: ["@stable", "@mcp", "@agents", "@regression"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -178,14 +174,9 @@ for (const { label, options, skipReason } of targets) {
         });
 
         await test.step("Register everything MCP server and wait for tools", async () => {
-          const token = await page.request
-            .post("/api/v1/login", {
-              form: { username: "langflow", password: "langflow" },
-            })
-            .then((r) => r.json())
-            .then((d) => d.access_token as string);
+          const authHeader = await getAuthToken(page.request);
           await page.request.delete(`/api/v2/mcp/servers/${MCP_SERVER_NAME}`, {
-            headers: { Authorization: `Bearer ${token}` },
+            headers: { Authorization: authHeader },
           });
 
           await page.getByTestId("sidebar-nav-mcp").click();

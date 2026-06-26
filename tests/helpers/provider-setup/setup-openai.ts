@@ -46,8 +46,11 @@ export async function setupOpenAI(
   }
 
   // Step 5: Enable all available OpenAI models.
-  // Toggles only render after the provider is authenticated — waitFor retries until visible.
-  const toggles = page.locator('[data-testid^="llm-toggle"]');
+  // The `:visible` filter excludes toggles inside the collapsed "deprecated
+  // models" section, which are mounted in the DOM but not displayed until the
+  // section's "Show N deprecated models" button is clicked. Without the
+  // filter, `.click()` on a hidden toggle retry-loops to a timeout.
+  const toggles = page.locator('[data-testid^="llm-toggle"]:visible');
   await toggles.first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
   const toggleCount = await toggles.count();
 

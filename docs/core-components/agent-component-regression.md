@@ -1,6 +1,6 @@
 # Agent Component — Canvas Rendering and Provider Field Plumbing
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 

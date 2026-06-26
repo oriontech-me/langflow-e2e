@@ -25,8 +25,8 @@ If this breaks, users have no reliable way to grab the output of a component int
 ## Step by step *(required)*
 
 1. Open Langflow and create a blank flow; capture the flow id from the `POST /api/v1/flows` 201 response
-2. Add a **Text Input** component and fill its `textarea_str_input_value` with `"Test content to copy"`
-3. Run the component (`button_run_text input`) and wait for the "built successfully" toast
+2. Add a **Chat Input** component, expand it (it is added minimized), and fill its `textarea_str_input_value` with `"Test content to copy"`
+3. Run the component (`button_run_chat input`) and wait for the "built successfully" toast
 4. Click the first `output-inspection-*` button to open the Component Output modal
 5. Click `copy-output-button`
 6. Assert "Copied to clipboard" toast is visible
@@ -50,7 +50,7 @@ If this breaks, users have no reliable way to grab the output of a component int
 - `data-testid="copy-output-button"` — copy button rendered inside the Output Modal
 - `data-testid="icon-Check"` and `data-testid="icon-Copy"` — icon components inside the button
 - `data-testid="output-inspection-*"` — the inspector entry point that opens the Output Modal
-- `data-testid="textarea_str_input_value"` and `button_run_text input` — Text Input component fields
+- `data-testid="textarea_str_input_value"` and `button_run_chat input` — Chat Input component fields
 - Backend endpoints: `POST /api/v1/flows` (flow creation), `DELETE /api/v1/flows/{id}` (cleanup)
 
 ---
@@ -65,7 +65,7 @@ If this breaks, users have no reliable way to grab the output of a component int
 ## Preconditions *(optional)*
 
 - Langflow running at `PLAYWRIGHT_BASE_URL`
-- No LLM, no external HTTP calls — Text Input runs are local
+- No LLM, no external HTTP calls — Chat Input runs are local
 
 ---
 

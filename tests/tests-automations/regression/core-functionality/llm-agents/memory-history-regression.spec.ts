@@ -4,6 +4,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { updateOldComponents } from "../../../../helpers/flows/update-old-components";
+import { loadTemplateByName } from "../../../../helpers/flows/load-template-by-name";
 import { PlaygroundPage } from "../../../../pages";
 import { setupLanguageModelOpenAI } from "../../../../helpers/provider-setup/setup-language-model-openai";
 
@@ -12,44 +13,25 @@ if (!process.env.CI) {
 }
 
 async function loadMemoryChatbot(page: Page): Promise<void> {
-  await page.goto("/");
-  await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
-
-  const emptyPageDescription = page.getByTestId("empty_page_description");
-  while ((await emptyPageDescription.count()) === 0) {
-    const dropdown = page.getByTestId("home-dropdown-menu").first();
-    if (!(await dropdown.isVisible({ timeout: 2000 }).catch(() => false))) break;
-    await dropdown.click();
-    await page.getByTestId("btn_delete_dropdown_menu").first().waitFor({ state: "visible", timeout: 5000 });
-    await page.getByTestId("btn_delete_dropdown_menu").first().click();
-    await page.getByTestId("btn_delete_delete_confirmation_modal").first().click();
-    await page.waitForTimeout(500);
-  }
-
-  const newProjectBtn = page.getByTestId("new-project-btn");
-  const emptyBtn = page.getByTestId("new_project_btn_empty_page");
-  if (await newProjectBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await newProjectBtn.click();
-  } else {
-    await emptyBtn.click();
-  }
-
-  await page.waitForSelector('[data-testid="modal-title"]', { timeout: 10000 });
-  await page.getByTestId("side_nav_options_all-templates").click();
-  await page.getByRole("heading", { name: "Memory Chatbot" }).first().click();
-  await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', { timeout: 30000 });
+  await loadTemplateByName(page, "Memory Chatbot");
 
   await adjustScreenView(page);
   await updateOldComponents(page);
   await adjustScreenView(page);
 }
 
-async function waitForChatResponse(page: Page): Promise<void> {
-  await page.waitForSelector('[data-testid="div-chat-message"]', { timeout: 120000 });
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  if (await stopButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-    await expect(stopButton).toBeHidden({ timeout: 120000 });
-  }
+// Waits until `expectedResponses` bot responses have *fully completed*.
+//
+// A response's `chat-message-token-usage` badge is rendered only once that response
+// finishes, so its count is a stable completion signal. The `div-chat-message` element
+// is NOT usable for this: its count flickers while a response streams in (the bubble
+// mounts, unmounts on a re-render, then settles), so waiting on it can return on a
+// transient peak before the new response actually arrives — the root cause of the flaky
+// history/isolation assertions in issue #354. The 120s budget covers live LLM latency.
+async function waitForChatResponse(page: Page, expectedResponses: number): Promise<void> {
+  await expect(page.getByTestId("chat-message-token-usage")).toHaveCount(expectedResponses, {
+    timeout: 120000,
+  });
 }
 
 test.describe("Memory Chatbot Regression", () => {
@@ -94,33 +76,35 @@ test.describe("Memory Chatbot Regression", () => {
 
       await test.step("message history retains context within same session", async () => {
         await playground.sendMessage("My name is Alice. Please confirm you received my name.");
-        await waitForChatResponse(page);
+        await waitForChatResponse(page, 1);
         await expect.soft(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
 
         await playground.sendMessage("What is my name?");
-        await waitForChatResponse(page);
+        await waitForChatResponse(page, 2);
 
         const response = await page.getByTestId("div-chat-message").last().innerText();
         expect.soft(response).toMatch(/Alice/i);
       });
 
       await test.step("multiple consecutive messages accumulate in history", async () => {
-        // div-chat-message marks bot responses only; 2 exchanges → 2 bot responses
-        const count = await page.getByTestId("div-chat-message").count();
-        expect.soft(count).toBeGreaterThanOrEqual(2);
+        // div-chat-message marks bot responses only; 2 exchanges → 2 bot responses.
+        // Web-first count so a still-settling message list cannot false-fail.
+        await expect.soft(page.getByTestId("div-chat-message")).toHaveCount(2, { timeout: 10000 });
       });
 
       await test.step("messages persist after closing and reopening playground", async () => {
         const messagesBefore = await page.getByTestId("div-chat-message").count();
 
         await page.getByTestId("playground-close-button").click();
-        await page.waitForTimeout(500);
+        await expect(page.getByTestId("input-chat-playground")).toBeHidden({ timeout: 10000 });
 
         await page.getByTestId("playground-btn-flow-io").click();
-        await page.waitForSelector('[data-testid="input-chat-playground"]', { timeout: 30000 });
+        await expect(page.getByTestId("input-chat-playground")).toBeVisible({ timeout: 30000 });
 
-        const messagesAfter = await page.getByTestId("div-chat-message").count();
-        expect.soft(messagesAfter).toBeGreaterThanOrEqual(messagesBefore);
+        // History reloads asynchronously on reopen; web-first wait for it to restore.
+        await expect.soft(page.getByTestId("div-chat-message")).toHaveCount(messagesBefore, {
+          timeout: 30000,
+        });
       });
     },
   );
@@ -143,16 +127,19 @@ test.describe("Memory Chatbot Regression", () => {
       await page.waitForSelector('[data-testid="input-chat-playground"]', { timeout: 30000 });
 
       await playground.sendMessage("My name is Bob. Please confirm you received my name.");
-      await waitForChatResponse(page);
+      await waitForChatResponse(page, 1);
       await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
 
       // "new-chat" button is in the sessions sidebar (data-testid="new-chat")
       await page.getByTestId("new-chat").click();
-      // Brief wait for session state to reset
-      await page.waitForTimeout(500);
 
-      const messagesInNewSession = await page.getByTestId("div-chat-message").count();
-      expect(messagesInNewSession).toBe(0);
+      // Web-first: a fresh session must contain zero bot messages. toHaveCount(0)
+      // auto-retries until the session reset settles, so a reset slower than a
+      // fixed wait no longer false-fails (replaces waitForTimeout(500) + a hard
+      // count assertion — issue #354 secondary latent risk).
+      await expect(page.getByTestId("div-chat-message")).toHaveCount(0, {
+        timeout: 10000,
+      });
     },
   );
 });

@@ -41,7 +41,15 @@ _Seeding (`beforeAll`)_
 _Test body_
 1. `GET /api/v1/monitor/transactions?flow_id=<flowId>` (the real seeded flow id, not the placeholder UUID)
 2. Assert HTTP 200, `body.items` is an array, `body.items.length > 0`
-3. Assert the first record is a plain object (not null, not an array) and carries at least one of `timestamp` / `created_at` / `updated_at`
+3. For **every** record in `body.items` (not just the first — the same `TransactionLogsResponse` contract applies to every row, so a regression on any vertex's emit path surfaces here):
+   - record is a plain object (not null, not an array)
+   - every key of `TransactionLogsResponse` is present: `id`, `timestamp`, `vertex_id`, `target_id`, `inputs`, `outputs`, `status`
+   - `vertex_id` is a non-empty string and matches one of the imported node IDs (`TRACE_FIXTURE.data.nodes[*].id`)
+   - `target_id` is either `null` or a string
+   - `inputs` / `outputs` are either `null` or plain objects (not arrays)
+   - `status` is a string in the allowed set `{"success", "error"}` (the only two values the runtime writes — see `lfx/graph/vertex/base.py:730,862`)
+   - `error` and `flow_id` keys are **absent** — `TransactionLogsResponse` deliberately excludes them ("Transaction response model for logs view - excludes error and flow_id fields"). Pinning the absence guards against the raw error message or flow_id leaking back into the logs view in a future refactor
+4. Pin the deterministic seed path on `items[0]`: with the endpoint ordering `timestamp DESC` (`monitor.py:574`), `items[0]` is the last vertex to emit a transaction — in this fixture, the `LanguageModelComponent` failing with "A model selection is required". Assert `body.items[0].vertex_id === "LanguageModelComponent-FLeYF"` and `body.items[0].status === "error"`
 
 _Cleanup (`afterAll`)_
 1. Delete the seeded flow via `DELETE /api/v1/flows/<flowId>`
@@ -53,7 +61,7 @@ _Cleanup (`afterAll`)_
 
 - **Test 1** — The endpoint returns the full fastapi-pagination envelope `{ items, total, page, size, pages }`. Every key is asserted to be present so a regression that drops any of them — even silently — would surface here before the Traces UI (`FlowInsightsContent.tsx`) breaks at render time.
 - **Test 2** — A well-formed `flow_id` that maps to no rows returns `200` with an empty `items` array, not `400` or `404`. This pins the contract that "unknown flow_id" is a normal empty result and not an error condition.
-- **Test 3** — After seeding one transaction by running a real flow, the emitted record exposes a recognizable timestamp field (`timestamp`, `created_at`, or `updated_at`). The Traces UI orders rows by time; removing every recognizable timestamp would break the grid silently. The seed step is mandatory: on a clean Langflow instance no transactions exist for the fixture's flow id, so without it the assertion would never execute.
+- **Test 3** — After seeding one transaction by running a real flow, the emitted record exposes the full `TransactionLogsResponse` contract: the required keys (`id`, `timestamp`, `vertex_id`, `target_id`, `inputs`, `outputs`, `status`), `vertex_id` resolving to a seeded node, `status` from the runtime's `{"success", "error"}` set, and `items[0]` deterministically pinned to the last vertex to run (the failing `LanguageModelComponent-FLeYF`). The test also pins the **absence** of `error` and `flow_id`: `TransactionLogsResponse` excludes them on purpose, and a regression that re-exposed the raw error message or the flow_id would leak data into the logs view without any other observable signal. The seed step is mandatory: on a clean Langflow instance no transactions exist for the fixture's flow id, so without it the assertion would never execute.
 
 ---
 
@@ -61,8 +69,9 @@ _Cleanup (`afterAll`)_
 
 References in the **main Langflow repository** (compatible with Langflow 1.10.x):
 
-- `src/backend/base/langflow/api/v1/monitor.py` — `GET /transactions` handler (line 558); `transform_transaction_table_for_logs`; auth dependency via `get_current_active_user`
-- `src/backend/base/langflow/services/database/models/transactions/model.py` — `TransactionLogsResponse`, `TransactionTable`
+- `src/backend/base/langflow/api/v1/monitor.py` — `GET /transactions` handler (line 558); ordering `.order_by(col(TransactionTable.timestamp).desc())` at line 574 (this is what makes `items[0]` deterministic); `transform_transaction_table_for_logs`; auth dependency via `get_current_active_user`
+- `src/backend/base/langflow/services/database/models/transactions/model.py` — `TransactionLogsResponse` (line 169, the response model documented as "excludes error and flow_id fields") and `TransactionTable`
+- `src/lfx/src/lfx/graph/vertex/base.py` — emits transactions with `status="error"` on build failure (line 730) and `status="success"` on completion (line 862); pins the allowed status set used by test 3
 - `src/frontend/src/pages/FlowPage/components/TraceComponent/FlowInsightsContent.tsx` — consumer of the paginated transactions/traces shape
 
 References in this repository:

@@ -8,7 +8,7 @@ import { zoomOut } from "../../../helpers/ui/zoom-out";
 
 test(
   "user should be able to use Run Flow without any issues",
-  { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
+  { tag: ["@release", "@workspace", "@api", "@regression"] },
   async ({ page, request }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });

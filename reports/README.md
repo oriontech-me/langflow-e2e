@@ -14,6 +14,14 @@ Files in this directory are **machine-written and human-read only**. Do not hand
 
 Each line is one [JSON object](#schema-version-1) terminated by `\n`. The file is JSONL (newline-delimited JSON), not a JSON array — append-only, diff-friendly.
 
+### Known gaps
+
+The series is **not continuous**. Document any missing weeks here rather than back-filling entries by hand (which would violate the machine-written invariant above, and is unrecoverable anyway — `results.json` is not retained as an artifact).
+
+| Missing weeks | Cause | Resolution |
+|---|---|---|
+| 2026-06-01, 2026-06-08, 2026-06-15 | The "Commit weekly history" step failed with `fatal: not in a git directory` — git refused the root-owned-vs-host-uid workspace inside the container, and the `safe.directory` that `actions/checkout` set under a temporary HOME was gone by commit time. The "Append weekly history" step succeeded, so the file was written in-job but never committed back to `main`. | Fixed forward in #385 (re-declare `safe.directory` in the commit step). The runs themselves are recoverable from GitHub Actions run history, but their per-test `results.json` is not, so these weeks stay absent from the JSONL. |
+
 ---
 
 ## Schema (version 1)
@@ -152,3 +160,4 @@ If a recurring need for one of these answers emerges, **do not patch the schema 
 - **Not a substitute for issues.** Recurring failures are still tracked in GitHub issues (`weekly-failure` label). The history makes recurrence visible; the issue carries the investigation and the fix.
 - **Not a flake-mitigation tool.** Adding a row does not auto-remove `@stable`. See `CONTRIBUTING.md` for the triage rules driven by this history.
 - **Not a dashboard.** No charts, no alerting. If you want trend lines or thresholds, build them on top of the JSONL — the file is the contract, not the presentation.
+

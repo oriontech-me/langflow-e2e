@@ -58,7 +58,22 @@ jobs:
       - name: Install test dependencies
         run: |
           pip install requests playwright pytest pytest-playwright
-          playwright install chromium --with-deps
+          # System (apt) deps: run WITHOUT a timeout — interrupting apt
+          # mid-transaction can leave dpkg half-configured and break the retries.
+          playwright install-deps chromium
+          # Browser binary: per-attempt timeout + retry so a stalled
+          # cdn.playwright.dev download cannot burn the whole job budget. This
+          # workflow uses the Python toolchain and cannot reuse the Node
+          # composite action at .github/actions/setup-playwright. See issue #344.
+          for attempt in 1 2 3; do
+            if timeout --kill-after=30s 5m playwright install chromium; then
+              exit 0
+            fi
+            echo "::warning::playwright install attempt $attempt failed or stalled; retrying in 5s..."
+            sleep 5
+          done
+          echo "::error::playwright install failed after 3 attempts (see issue #344)"
+          exit 1
 
       - name: Create virtual environment
         run: uv venv .venv
@@ -377,6 +392,16 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
+          # Workaround: langflow:latest images built before langflow-ai/langflow#13212
+          # did not pre-create /app/langflow in the Dockerfile, so Docker seeded the
+          # named volume as root:root and uid 1000 (the container user) could not
+          # write secret_key — crashing the container on startup.
+          # Fix: replace the named volume with a world-writable bind mount so the
+          # container can always write to LANGFLOW_CONFIG_DIR regardless of image age.
+          # Remove the volumes override once langflow:latest ships with #13212.
+          mkdir -p /tmp/langflow-data
+          chmod 777 /tmp/langflow-data
+
           # Override file: pin the langflow image via env var substitution and
           # inject our auth + credential env vars. Default LANGFLOW_IMAGE is
           # the upstream `langflow:latest`; we'll flip it to nightly between
@@ -389,9 +414,15 @@ jobs:
                 - LANGFLOW_SECRET_KEY=${LANGFLOW_SECRET_KEY}
                 - OPENAI_API_KEY=${OPENAI_API_KEY}
                 - LANGFLOW_AUTO_LOGIN=true
+                # Since v1.5 the auto_login token is rejected by /run endpoints unless
+                # LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true is set in the SERVER environment.
+                # The GHA top-level env: block only reaches the runner, not the container.
+                - LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true
                 - LANGFLOW_SUPERUSER=langflow
                 - LANGFLOW_SUPERUSER_PASSWORD=langflow123
                 - LANGFLOW_STORE=false
+              volumes:
+                - /tmp/langflow-data:/app/langflow
           YAML
 
           # .env consumed by docker compose for variable substitution
@@ -445,12 +476,37 @@ jobs:
           fi
           echo "Auto-imported Credential confirmed on source"
 
-          STARTERS=$(curl -s -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/")
-          TEMPLATE=$(echo "$STARTERS" | jq -c '
-            [.[] | select((.name // "" | ascii_downcase) | contains("simple agent") or contains("basic agent"))][0]
-          ')
+          # Template selection strategy:
+          # Starter-projects come pre-configured with a model (e.g. Basic Prompting has
+          # ChatOpenAI wired in and ready to run). Flows from /api/v1/flows/ (e.g. Simple
+          # Agent) may require manual model selection and fail with HTTP 500
+          # "No model selected". So: use starter-projects FIRST, /api/v1/flows/ as fallback.
+          # NOTE: Langflow gzip-encodes large responses → always use --compressed.
+          STARTERS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/starter-projects/")
+          echo "DEBUG /api/v1/starter-projects/ names:"
+          echo "$STARTERS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${STARTERS_JSON:0:200})"
+          # Prefer Basic Prompting (simplest flow that uses OPENAI_API_KEY and runs without config)
+          TEMPLATE=$(echo "$STARTERS_JSON" | \
+            jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("prompting"))][0]' \
+            2>/dev/null || echo "")
+          # If not found, take the first available starter (any pre-configured LLM flow works)
+          if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
+            TEMPLATE=$(echo "$STARTERS_JSON" | jq -c '.[0]' 2>/dev/null || echo "")
+            echo "Basic Prompting not found — using first available starter"
+          fi
+          # Last resort: fall back to /api/v1/flows/ for any prompting-style flow
+          if [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]]; then
+            echo "No starters available — falling back to /api/v1/flows/"
+            FLOWS_JSON=$(curl -s --compressed -H "Authorization: Bearer $TOKEN" "${LF_URL}/api/v1/flows/")
+            echo "DEBUG /api/v1/flows/ names:"
+            echo "$FLOWS_JSON" | jq -r '[.[] | .name] | join(", ")' 2>/dev/null || echo "(parse failed — raw first 200: ${FLOWS_JSON:0:200})"
+            TEMPLATE=$(echo "$FLOWS_JSON" | \
+              jq -c '[.[] | select((.name // "" | ascii_downcase) | contains("basic prompting") or contains("memory chatbot"))][0]' \
+              2>/dev/null || echo "")
+          fi
+
           [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]] && {
-            echo "::error::Simple Agent starter not found"; exit 1; }
+            echo "::error::No witness template found — /api/v1/flows/ and /api/v1/starter-projects/ both returned nothing usable"; exit 1; }
           FLOW_PAYLOAD=$(echo "$TEMPLATE" | jq '{
             name: ((.name // "Simple Agent") + " — migration witness"),
             description: "compose migration witness",
