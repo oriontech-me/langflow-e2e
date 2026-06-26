@@ -393,6 +393,8 @@
 - [-] Model Input component
 - [-] Add new provider via modal
 - [-] Remove API key from existing provider
+- [x] Per-model enable/disable toggle changes immediately and persists across reopen → `llm-agents/model-provider-model-toggle.spec.ts`
+- [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
 #### 7.6 Open-Source Providers
 - [ ] Configure and execute flow with Ollama (local model)
