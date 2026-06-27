@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-26
+> **Last updated:** 2026-06-27
 
 ---
 
@@ -752,7 +752,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
 | `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
-| `core-components/` — Core Components | 78 | 75 | 0 | 1 | 2 |
+| `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 14 | 2 | 0 | 24 |
@@ -766,7 +766,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **446** | **214 (48%)** | **175 (39%)** | **7 (2%)** | **50 (11%)** |
+| **TOTAL** | **450** | **218 (48%)** | **175 (39%)** | **7 (2%)** | **50 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -782,7 +782,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 224 `test()` calls carrying the `@stable` tag, distributed across 77 spec
+> 232 `test()` calls carrying the `@stable` tag, distributed across 78 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -905,6 +905,14 @@
 - [x] Prompt Template — `{1var}` (leading digit) is rejected with an error toast and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] Prompt Template — `{}` (empty braces) is accepted by the parser and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] Prompt Template — repeating the same variable produces exactly one handle (deduplication contract) → `prompt-template-invalid-patterns-regression.spec.ts`
+- [x] should allow only one Chat Input on the canvas → `singleton-components.spec.ts`
+- [x] should not allow adding a Webhook while a Chat Input is on the canvas → `singleton-components.spec.ts`
+- [x] should not allow duplicating a Chat Input → `singleton-components.spec.ts`
+- [x] should not allow copying and pasting a Chat Input → `singleton-components.spec.ts`
+- [x] should allow only one Webhook on the canvas → `singleton-components.spec.ts`
+- [x] should not allow adding a Chat Input while a Webhook is on the canvas → `singleton-components.spec.ts`
+- [x] should not allow duplicating a Webhook → `singleton-components.spec.ts`
+- [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
 - [x] User should be able to use components as tool → `tool-mode.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
