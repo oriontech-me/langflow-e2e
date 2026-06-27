@@ -166,6 +166,8 @@
 - [x] Uploading a file via the Chat Input inspector populates the Files field → `core-components/chat-input-files-field-regression.spec.ts`
 - [x] Inspector-attached file is rendered in the Playground after running ChatInput → ChatOutput → `core-components/chat-input-files-field-regression.spec.ts`
 - [x] Dismiss button on the Files field clears the value → `core-components/chat-input-files-field-regression.spec.ts`
+- [x] Chat Input is a singleton — adding one removes both the Chat Input and Webhook `+` buttons from the sidebar (mutual exclusion) → `core-components/singleton-components.spec.ts`
+- [x] Chat Input cannot be duplicated (`Cmd/Ctrl+D`) or copy/pasted (`Cmd/Ctrl+C`+`V`) — blocked with the "components were not pasted" toast → `core-components/singleton-components.spec.ts`
 
 #### 3.2 Prompt Template
 - [x] Prompt Template renders on canvas with output handle → `core-components/prompt-template-component-regression.spec.ts`
@@ -218,6 +220,8 @@
 - [x] GET `/api/v1/monitor/messages` retorna 200 com array → `core-components/webhook-component-regression.spec.ts`
 - [x] Payload JSON recebido é propagado corretamente como saída Data do componente → `core-components/webhook-component-regression.spec.ts`
 - [x] Payload inválido (não-JSON) é encapsulado em `{"payload": "..."}` na saída → `core-components/webhook-component-regression.spec.ts`
+- [x] Webhook is a singleton — adding one removes both the Webhook and Chat Input `+` buttons from the sidebar (mutual exclusion) → `core-components/singleton-components.spec.ts`
+- [x] Webhook cannot be duplicated (`Cmd/Ctrl+D`) or copy/pasted (`Cmd/Ctrl+C`+`V`) — blocked with the "components were not pasted" toast → `core-components/singleton-components.spec.ts`
 
 #### 3.5 Agent (Component)
 - [-] Agent component displayed on canvas with default settings
