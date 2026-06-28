@@ -159,29 +159,40 @@ async function collectModelsForProvider(
   await apiKeyInput.waitFor({ state: "visible", timeout: 5000 }).catch(() => {});
 
   const apiKey = process.env[apiKeyEnvVar] ?? "";
-  if ((await apiKeyInput.count()) > 0 && apiKey) {
+  // Skip configuration when the provider is already set up: a configured provider
+  // shows a "Disconnect" button, and re-saving it would append to the masked key
+  // field or hit a "Variable name already exists" conflict.
+  const alreadyConfigured = await page
+    .getByRole("button", { name: "Disconnect", exact: true })
+    .isVisible({ timeout: 1000 })
+    .catch(() => false);
+
+  if (!alreadyConfigured && (await apiKeyInput.count()) > 0 && apiKey) {
     await apiKeyInput.click();
     await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
 
     const saveBtn = page.getByRole("button", { name: "Save", exact: true });
-    const replaceBtn = page.getByRole("button", { name: "Replace", exact: true });
-
     if ((await saveBtn.count()) > 0) {
       await saveBtn.click();
-    } else if ((await replaceBtn.count()) > 0) {
-      await replaceBtn.click();
     }
 
-    // Wait for save to complete — button becomes "Replace" when provider is configured
-    await replaceBtn.waitFor({ state: "visible", timeout: 30000 });
-
-    // Wait for model toggles to load after provider is configured
-    await page.locator('[data-testid^="llm-toggle"]').first()
-      .waitFor({ state: "visible", timeout: 15000 })
+    // Provider validation can take ~35s (Google) — wait for the configured state
+    // (Disconnect button) rather than a fixed shorter timeout that would expire mid-validation.
+    await page
+      .getByRole("button", { name: "Disconnect", exact: true })
+      .waitFor({ state: "visible", timeout: 60000 })
       .catch(() => {});
   }
 
-  const toggles = page.locator('[data-testid^="llm-toggle"]');
+  // Wait for model toggles to load after provider is configured
+  await page.locator('[data-testid^="llm-toggle"]:visible').first()
+    .waitFor({ state: "visible", timeout: 15000 })
+    .catch(() => {});
+
+  // Scope to visible toggles only — the providers panel renders deprecated models
+  // in DOM but collapses them under a "Show N deprecated models" button. Iterating
+  // the hidden toggles makes `.click()` retry-loop until timeout (see PR #330).
+  const toggles = page.locator('[data-testid^="llm-toggle"]:visible');
   const toggleCount = await toggles.count();
   const models: ModelRecord[] = [];
 
