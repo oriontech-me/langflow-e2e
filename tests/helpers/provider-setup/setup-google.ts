@@ -30,24 +30,39 @@ export async function setupGoogle(
   // Step 3: Select the Google Generative AI provider
   await page.getByTestId("provider-item-Google Generative AI").click();
 
-  // Step 4: Save the API key if the config panel is visible.
-  // The config panel animates in (300ms) and requires a backend fetch after the provider
-  // is selected — use waitFor (retries) instead of isVisible (immediate snapshot).
-  // The save button was renamed from "Save Configuration" to "Save" / "Replace" / "Retry".
+  // Step 4: Configure the API key — but only if the provider is not already set up.
+  // A configured provider shows a "Disconnect" button with the key field masked;
+  // re-saving it would append to the masked value or hit a "Variable name already
+  // exists" conflict, so in that case skip straight to model selection.
+  // The config panel animates in (300ms) and requires a backend fetch after the
+  // provider is selected — use waitFor (retries) instead of isVisible.
   const apiKeyInput = page.getByPlaceholder("AIza...");
-  const apiKeyInputVisible = await apiKeyInput
-    .waitFor({ state: "visible", timeout: 10000 })
-    .then(() => true)
+  await apiKeyInput.waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
+
+  const alreadyConfigured = await page
+    .getByRole("button", { name: "Disconnect", exact: true })
+    .isVisible({ timeout: 1000 })
     .catch(() => false);
 
-  if (apiKeyInputVisible) {
+  if (!alreadyConfigured && (await apiKeyInput.count()) > 0) {
     await apiKeyInput.fill(process.env.GOOGLE_API_KEY ?? "");
     await page.getByRole("button", { name: /Save|Replace|Retry/i }).click();
+    // Google provider validation can take ~35s — wait for the configured state
+    // (Disconnect button) so the model toggles have rendered before Step 5.
+    await page
+      .getByRole("button", { name: "Disconnect", exact: true })
+      .waitFor({ state: "visible", timeout: 60000 })
+      .catch(() => {});
   }
 
   // Step 5: Enable all available Google Generative AI models.
   // Toggles only render after the provider is authenticated — waitFor retries until visible.
-  const toggles = page.locator('[data-testid^="llm-toggle"]');
+  // The `:visible` filter excludes toggles inside the collapsed "deprecated
+  // models" section, which are mounted in the DOM but not displayed until the
+  // section's "Show N deprecated models" button is clicked. Without the
+  // filter, `.click()` on a hidden toggle (e.g. gemini-2.0-flash on 1.11.x)
+  // retry-loops to a timeout.
+  const toggles = page.locator('[data-testid^="llm-toggle"]:visible');
   await toggles.first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
   const toggleCount = await toggles.count();
 
