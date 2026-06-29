@@ -69,9 +69,16 @@ export async function setupOpenAI(
   // Step 6: Close the provider management panel
   await page.getByRole("button", { name: "Close" }).click();
 
-  // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
+  // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available.
+  // Closing the management panel (Step 6) puts the model dropdown into a
+  // post-close refresh state where the `model_model` trigger is briefly
+  // replaced by a (testid-less) "Loading models…" button while providers and
+  // enabled models refetch. Wait for the trigger to be VISIBLE — not merely
+  // attached — so the click does not race that loading swap.
   await hideInspectorPanel(page);
-  await page.getByTestId("model_model").click();
+  const modelTrigger = page.getByTestId("model_model");
+  await modelTrigger.waitFor({ state: "visible", timeout: 15000 });
+  await modelTrigger.click();
   if (modelTestId) {
     const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${modelTestId}$`) });
     const isAvailable = await modelOption.isVisible({ timeout: 10000 }).catch(() => false);
