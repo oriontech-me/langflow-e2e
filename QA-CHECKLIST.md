@@ -782,7 +782,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 229 `test()` calls carrying the `@stable` tag, distributed across 78 spec
+> 230 `test()` calls carrying the `@stable` tag, distributed across 78 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -839,6 +839,7 @@
 - [x] selecting a different-provider model swaps the canvas provider icon → `agent-component-regression.spec.ts`
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
 - [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
+- [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
 - [x] API Request component — GET request returns 200 and output Data contains all required fields → `api-request-component-regression.spec.ts`
 - [x] API Request component — POST method executes POST verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
