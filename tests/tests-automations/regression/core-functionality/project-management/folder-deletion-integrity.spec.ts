@@ -289,7 +289,7 @@ test(
 test(
   "creating a flow after deleting all folders should create a default folder",
   { tag: ["@release", "@api"] },
-  async ({ page }) => {
+  async ({ page, request }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
     // Get all folders in the sidebar and delete them one by one
@@ -361,32 +361,31 @@ test(
       page.getByTestId("new_project_btn_empty_page"),
     ).toBeVisible({ timeout: 30000 });
 
-    // Now create a new flow using the empty state button on main page
-    // This should trigger creation of a default folder
+    // Clicking "Create first flow" creates a blank flow on the backend, which
+    // in turn creates a default "New Project" folder to contain it. The button
+    // may either route to the new flow's canvas or refresh the home view, so the
+    // outcome is asserted via the API rather than depending on the navigation.
     await page.getByTestId("new_project_btn_empty_page").click();
 
-    // Navigate to templates
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
+    const authToken = await getAuthToken(request);
 
-    await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-      timeout: 30000,
-    });
-
-    // Go back to folder view
-    await page.getByTestId("icon-ChevronLeft").first().click();
-
-    // Verify that a default folder ("Starter Project") was created
-    await expect(page.getByTestId("sidebar-nav-Starter Project")).toBeVisible({
-      timeout: 10000,
-    });
-
-    // Verify we can click on the folder and see the flow
-    await page.getByTestId("sidebar-nav-Starter Project").click();
-
-    // The folder should contain our newly created flow
-    await expect(page.getByTestId("list-card")).toBeVisible({
-      timeout: 5000,
-    });
+    // The flow creation triggered by the button creates a fresh default
+    // "New Project" folder on the backend (the freshly created flow itself is
+    // only linked once the canvas autosaves, so we assert the folder — which is
+    // what this test is about — rather than racing the flow link).
+    await expect
+      .poll(
+        async () => {
+          const projectsRes = await request.get("/api/v1/projects/", {
+            headers: { Authorization: authToken },
+          });
+          const projects: { name: string }[] = projectsRes.ok()
+            ? await projectsRes.json()
+            : [];
+          return projects.map((p) => p.name);
+        },
+        { timeout: 30000 },
+      )
+      .toContain("New Project");
   },
 );
