@@ -16,6 +16,9 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
     "playground shows error when LLM run endpoint returns 500 (mocked invalid API key)",
     { tag: ["@stable", "@release", "@workspace", "@regression", "@agents", "@playground"] },
     async ({ page }) => {
+      // This test intentionally injects an HTTP 500 on the run endpoint, so the
+      // fixture's backend-error monitor will see it — allow it explicitly.
+      (page as any).allowFlowErrors();
       createdFlowId = await setupPlayground(page);
 
       // Open Playground first so initialization build calls are not intercepted
@@ -24,10 +27,11 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
         timeout: 15000,
       });
 
-      // Langflow's playground uses /api/v1/build/{flowId}/flow for execution (not /run).
-      // Mock only the /flow call; let other build calls (e.g. vertices order) pass through.
-      await page.route("**/api/v1/build/**", async (route) => {
-        if (route.request().url().includes("/flow")) {
+      // Langflow's playground executes the flow via POST /api/v2/workflows
+      // (replaced the older /api/v1/build/{flowId}/flow path in 1.11.x). Mock the
+      // POST with a 500 to simulate an invalid-API-key run failure.
+      await page.route("**/api/v2/workflows**", async (route) => {
+        if (route.request().method() === "POST") {
           await route.fulfill({
             status: 500,
             contentType: "application/json",
@@ -72,8 +76,11 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
 
   test(
     "playground input remains usable after API error (mocked)",
-    { tag: ["@release", "@workspace", "@regression", "@agents", "@playground"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@agents", "@playground"] },
     async ({ page }) => {
+      // This test intentionally injects an HTTP 500 on the run endpoint, so the
+      // fixture's backend-error monitor will see it — allow it explicitly.
+      (page as any).allowFlowErrors();
       createdFlowId = await setupPlayground(page);
 
       // Open Playground first so initialization build calls are not intercepted
@@ -82,9 +89,9 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
         timeout: 15000,
       });
 
-      // Mock only the /flow execution call; let other build calls pass through
-      await page.route("**/api/v1/build/**", async (route) => {
-        if (route.request().url().includes("/flow")) {
+      // Mock the playground execution call (POST /api/v2/workflows) with a 500
+      await page.route("**/api/v2/workflows**", async (route) => {
+        if (route.request().method() === "POST") {
           await route.fulfill({
             status: 500,
             contentType: "application/json",
@@ -101,7 +108,8 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
       // confirm the full mocked 500 cycle completed before asserting recovery
       const runResponsePromise = page.waitForResponse(
         (resp) =>
-          resp.url().includes("/api/v1/build/") && resp.url().includes("/flow"),
+          resp.url().includes("/api/v2/workflows") &&
+          resp.request().method() === "POST",
         { timeout: 10000 },
       );
 
