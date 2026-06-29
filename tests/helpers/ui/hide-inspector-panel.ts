@@ -16,17 +16,31 @@ import { type Page, expect } from "@playwright/test";
 // overlay leaving the DOM) instead of the toggle's accessible name, so the wait
 // is deterministic and tied to the element that actually intercepts the click.
 //
-// Robustness: we wait for the canvas controls to mount rather than probing with
-// a short timeout that silently skips the close under CPU contention (the
-// parallel-run failure mode where the overlay stayed up and raced the
-// `model_model` click — a 20s click timeout in CI). The toggle is absent on
-// Langflow builds without the panel (ENABLE_INSPECTION_PANEL off), so the
-// helper is a safe no-op there.
+// Robustness: we wait for the always-present canvas controls bar
+// (`main_canvas_controls`) to mount rather than probing the toggle with a short
+// timeout that silently skips the close under CPU contention (the parallel-run
+// failure mode where the overlay stayed up and raced the `model_model` click —
+// a 20s click timeout in CI). The long wait is spent on the bar — which renders
+// on every build — so it absorbs that slowness without charging the timeout to
+// builds that merely lack the feature. The toggle itself is gated by
+// `ENABLE_INSPECTION_PANEL` and renders in the same component as the bar, so
+// once the bar is mounted the toggle is either already present or absent for
+// this build — a short probe tells them apart and the helper is a fast no-op
+// when the panel feature is off.
 export async function hideInspectorPanel(page: Page): Promise<void> {
-  const toggle = page.getByTestId("canvas_controls_toggle_inspector");
-
-  const toggleAttached = await toggle
+  // Wait for the canvas controls bar to mount (absorbs CPU-contention slowness).
+  const controlsReady = await page
+    .getByTestId("main_canvas_controls")
     .waitFor({ state: "attached", timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!controlsReady) return; // no canvas controls at all — nothing to do
+
+  // The toggle renders in the same commit as the bar, so a short probe is enough
+  // to distinguish "feature off" from "still mounting" without a long no-op wait.
+  const toggle = page.getByTestId("canvas_controls_toggle_inspector");
+  const toggleAttached = await toggle
+    .waitFor({ state: "attached", timeout: 1000 })
     .then(() => true)
     .catch(() => false);
   if (!toggleAttached) return; // build without the Inspector Panel — no-op
