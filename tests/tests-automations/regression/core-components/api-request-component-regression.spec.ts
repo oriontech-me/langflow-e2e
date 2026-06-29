@@ -348,12 +348,19 @@ test(
     await expect(page.locator(".react-flow__node")).toHaveCount(1);
 
     await page.getByTestId("button_run_api request").click();
+
+    // An error notification must surface on run. The header wording is volatile
+    // across Langflow versions — "Error building Component API Request:" (≤1.10)
+    // became "Flow build failed" (1.11+) — so match either rather than a single
+    // literal. The URL-specific detail below is the meaningful assertion.
     await expect(
-      page.getByText("Error building Component API Request:"),
+      page.getByText(/error building component|flow build failed/i).first(),
     ).toBeVisible({ timeout: 30000 });
 
-    // The detail message must confirm it is specifically a URL validation error
-    await expect(page.getByText("Invalid URL provided:")).toBeVisible();
+    // Must be specifically a URL validation error — this proves the invalid URL
+    // was rejected on run rather than silently accepted (the actual regression
+    // this test guards). Regex tolerates surrounding header/format changes.
+    await expect(page.getByText(/invalid url/i).first()).toBeVisible();
 
     // Run button must still be visible after the error
     await expect(page.getByTestId("button_run_api request")).toBeVisible();
