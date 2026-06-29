@@ -287,9 +287,30 @@ test(
 );
 
 test(
-  "creating a flow after deleting all folders should create a default folder",
+  "deleting every folder lands on the empty project screen",
   { tag: ["@release", "@api"] },
   async ({ page, request }) => {
+    // Guarantee there is at least one folder holding a flow, so the
+    // "delete everything" path is exercised against real content.
+    const authToken = await getAuthToken(request);
+    const folderRes = await request.post("/api/v1/folders/", {
+      headers: { Authorization: authToken },
+      data: { name: `del-all-folder-${Date.now()}`, description: "Delete-all" },
+    });
+    expect(folderRes.status()).toBe(201);
+    const { id: folderId } = await folderRes.json();
+
+    const flowRes = await request.post("/api/v1/flows/", {
+      headers: { Authorization: authToken },
+      data: {
+        name: `del-all-flow-${Date.now()}`,
+        folder_id: folderId,
+        data: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
+        is_component: false,
+      },
+    });
+    expect(flowRes.status()).toBe(201);
+
     await awaitBootstrapTest(page, { skipModal: true });
 
     // Get all folders in the sidebar and delete them one by one
@@ -353,39 +374,15 @@ test(
         .count();
     }
 
-    // Deleting every folder (including the initial "Starter Project", which is
-    // now deletable) must land on the empty-state screen: no folder entries
-    // remain and the empty-page call-to-action is shown.
+    // Deleting every folder (including the initial folder, which is now
+    // deletable) lands on the empty project screen: no folder entries remain,
+    // the sidebar shows its empty message and the empty-page CTA is shown.
     expect(folderCount).toBe(0);
     await expect(
+      projectSidebar.getByText("Start creating a project or flow"),
+    ).toBeVisible({ timeout: 15000 });
+    await expect(
       page.getByTestId("new_project_btn_empty_page"),
-    ).toBeVisible({ timeout: 30000 });
-
-    // Clicking "Create first flow" creates a blank flow on the backend, which
-    // in turn creates a default "New Project" folder to contain it. The button
-    // may either route to the new flow's canvas or refresh the home view, so the
-    // outcome is asserted via the API rather than depending on the navigation.
-    await page.getByTestId("new_project_btn_empty_page").click();
-
-    const authToken = await getAuthToken(request);
-
-    // The flow creation triggered by the button creates a fresh default
-    // "New Project" folder on the backend (the freshly created flow itself is
-    // only linked once the canvas autosaves, so we assert the folder — which is
-    // what this test is about — rather than racing the flow link).
-    await expect
-      .poll(
-        async () => {
-          const projectsRes = await request.get("/api/v1/projects/", {
-            headers: { Authorization: authToken },
-          });
-          const projects: { name: string }[] = projectsRes.ok()
-            ? await projectsRes.json()
-            : [];
-          return projects.map((p) => p.name);
-        },
-        { timeout: 30000 },
-      )
-      .toContain("New Project");
+    ).toBeVisible({ timeout: 15000 });
   },
 );
