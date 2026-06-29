@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { hideInspectorPanel } from "../ui/hide-inspector-panel";
 
 export async function setupGoogle(
   page: Page,
@@ -21,6 +22,9 @@ export async function setupGoogle(
 
   // Step 2: Open the model provider management panel
   if (hasModelDropdown) {
+    // A selected node opens a right-side Inspector Panel that overlaps the
+    // model dropdown on 1.11.x+ — close it so the click is not intercepted.
+    await hideInspectorPanel(page);
     await modelDropdown.click();
     await page.getByTestId("manage-model-providers").click();
   } else {
@@ -78,6 +82,7 @@ export async function setupGoogle(
   await page.getByRole("button", { name: "Close" }).click();
 
   // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
+  await hideInspectorPanel(page);
   await page.getByTestId("model_model").click();
   if (modelTestId) {
     const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${modelTestId}$`) });
