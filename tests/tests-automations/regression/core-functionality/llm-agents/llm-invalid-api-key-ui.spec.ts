@@ -72,7 +72,7 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
 
   test(
     "playground input remains usable after API error (mocked)",
-    { tag: ["@stable", "@release", "@workspace", "@regression", "@agents", "@playground"] },
+    { tag: ["@release", "@workspace", "@regression", "@agents", "@playground"] },
     async ({ page }) => {
       createdFlowId = await setupPlayground(page);
 
