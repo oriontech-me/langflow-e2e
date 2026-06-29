@@ -44,7 +44,7 @@ Every test starts with `addApiRequestComponent(page)` which:
 
 ### 3. `invalid URL is accepted by field and run shows error notification`
 - Calls `(page as any).allowFlowErrors()` (the run is expected to fail).
-- Fills `not-a-url`, asserts canvas integrity, runs, then asserts both `Error building Component API Request:` and `Invalid URL provided:` toasts are visible.
+- Fills `not-a-url`, asserts canvas integrity, runs, then asserts an error notification surfaces and is specifically a URL-validation error. The header wording is matched with a tolerant regex (`/error building component|flow build failed/i`) because it changed across versions — `Error building Component API Request:` (≤1.10) became `Flow build failed` (1.11+) — while the URL-specific detail is matched via `/invalid url/i`. The exact header is volatile; the URL-validation detail is the meaningful assertion that proves the invalid URL was rejected rather than silently accepted.
 
 ### 4–8. `<METHOD> method executes <METHOD> verb and returns 200`
 For each of GET, POST, PUT, PATCH, DELETE:
