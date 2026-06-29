@@ -1,20 +1,6 @@
-import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
-
-// Local helper, specific to this spec. Adds a component to the canvas by
-// searching the sidebar and clicking its "+" button.
-// Kept local (not promoted to tests/helpers/) on purpose: here the component is
-// incidental — we just need "something to delete". Other specs that add a
-// component do it for a different reason and should not couple to this one.
-async function addComponent(
-  page: Page,
-  searchTerm: string,
-  addButtonTestId: string,
-) {
-  await page.getByTestId("sidebar-search-input").fill(searchTerm);
-  await page.getByTestId(addButtonTestId).click();
-}
+import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 
 test.describe("Delete a component from the canvas", () => {
   let createdFlowId: string | null = null;
@@ -43,11 +29,9 @@ test.describe("Delete a component from the canvas", () => {
     { tag: ["@release", "@stable", "@workspace", "@components"] },
     async ({ page }) => {
       await test.step("Add a Chat Input component to the canvas", async () => {
-        await addComponent(
-          page,
+        await addComponentFromSidebar(page,
           "Chat Input",
-          "add-component-button-chat-input",
-        );
+          "add-component-button-chat-input");
         await expect(page.locator(".react-flow__node")).toHaveCount(1);
       });
 
@@ -65,11 +49,9 @@ test.describe("Delete a component from the canvas", () => {
     { tag: ["@release", "@stable", "@workspace", "@components"] },
     async ({ page }) => {
       await test.step("Add a Chat Input component to the canvas", async () => {
-        await addComponent(
-          page,
+        await addComponentFromSidebar(page,
           "Chat Input",
-          "add-component-button-chat-input",
-        );
+          "add-component-button-chat-input");
         await expect(page.locator(".react-flow__node")).toHaveCount(1);
       });
 
@@ -91,17 +73,13 @@ test.describe("Delete a component from the canvas", () => {
     { tag: ["@release", "@stable", "@workspace", "@components"] },
     async ({ page }) => {
       await test.step("Add two components to the canvas", async () => {
-        await addComponent(
-          page,
+        await addComponentFromSidebar(page,
           "Chat Input",
-          "add-component-button-chat-input",
-        );
+          "add-component-button-chat-input");
         await expect(page.locator(".react-flow__node")).toHaveCount(1);
-        await addComponent(
-          page,
+        await addComponentFromSidebar(page,
           "Chat Output",
-          "add-component-button-chat-output",
-        );
+          "add-component-button-chat-output");
         await expect(page.locator(".react-flow__node")).toHaveCount(2);
       });
 

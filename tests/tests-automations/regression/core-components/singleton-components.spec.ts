@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
+import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 
 // Single source of truth for each component under test. Keeping the search
 // term and the testids together here is what prevents the copy/paste class of
@@ -27,19 +28,9 @@ const WEBHOOK: ComponentDescriptor = {
 // component cannot be duplicated or pasted (en.json: duplicateComponentsNotPasted).
 const NOT_PASTED_TOAST = "components were not pasted";
 
-// Low-level: search the sidebar and click a component's "+" button.
-async function addComponent(
-  page: Page,
-  searchTerm: string,
-  addButtonTestId: string,
-) {
-  await page.getByTestId("sidebar-search-input").fill(searchTerm);
-  await page.getByTestId(addButtonTestId).click();
-}
-
 // Add a component via the sidebar and confirm it landed on the canvas.
 async function addToCanvas(page: Page, component: ComponentDescriptor) {
-  await addComponent(page, component.name, component.addButton);
+  await addComponentFromSidebar(page, component.name, component.addButton);
   await expect(page.getByTestId(component.title)).toBeVisible();
   await expect(page.locator(".react-flow__node")).toHaveCount(1);
 }
