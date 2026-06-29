@@ -330,7 +330,7 @@ test(
 
 test(
   "API Request component — invalid URL is accepted by field and run shows error notification",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     // Invalid URLs are accepted by the input field but rejected by the Pydantic HttpUrl
     // validator on run — the component must not crash on either action.
