@@ -19,4 +19,4 @@ export const addComponentFromSidebar = async (
 ) => {
   await page.getByTestId("sidebar-search-input").fill(searchTerm);
   await page.getByTestId(addButtonTestId).click();
-}; 
+};
