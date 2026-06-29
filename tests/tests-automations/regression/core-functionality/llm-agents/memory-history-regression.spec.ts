@@ -37,7 +37,7 @@ async function waitForChatResponse(page: Page, expectedResponses: number): Promi
 test.describe("Memory Chatbot Regression", () => {
   test(
     "memory chatbot template loads with correct node structure",
-    { tag: ["@stable", "@release", "@agents", "@playground"] },
+    { tag: ["@release", "@agents", "@playground"] },
     async ({ page }) => {
       await loadMemoryChatbot(page);
 
