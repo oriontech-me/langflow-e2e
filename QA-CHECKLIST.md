@@ -764,9 +764,9 @@
 | `flow-functionality/` | 27 | 12 | 13 | 2 | 0 |
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
-| `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
+| `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **450** | **222 (49%)** | **171 (38%)** | **7 (2%)** | **50 (11%)** |
+| **TOTAL** | **450** | **223 (50%)** | **171 (38%)** | **7 (2%)** | **49 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -782,7 +782,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 233 `test()` calls carrying the `@stable` tag, distributed across 79 spec
+> 234 `test()` calls carrying the `@stable` tag, distributed across 80 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1033,6 +1033,7 @@
 #### ui-ux/
 - [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
 - [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
+- [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
@@ -1058,7 +1059,7 @@
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
-| `ui-ux/` — Canvas | 36 | 1 |
+| `ui-ux/` — Canvas | 36 | 0 |
 
 ---
 
