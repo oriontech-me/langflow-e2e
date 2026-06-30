@@ -104,6 +104,14 @@ exactly the declining capacity the band anticipates.
 
 > Sized to the 18–21 capacity band; items are pointers to decided backlog.
 
+| Wave | Axis (focus) | New specs (planned) | Coverage target | Delivery date |
+|---|---|---|---|---|
+| **1** | Agent backlog (params · behavior · tools · memory) | ~20 | ~54% | 2026-07-14 |
+| **2** | RAG, ingestion & providers | ~18 | ~58% | 2026-07-28 |
+| **3** | Component configuration | ~19 | ~62% | 2026-08-11 |
+
+> Spec counts and `%` are planned targets (`~`), not contracts — see **Cadence & review**.
+
 ### Wave 1 — Agent backlog (full)  ·  2026-06-30 → 2026-07-14
 
 The deepest decided bucket — fills a band-wave on its own, all items already named
