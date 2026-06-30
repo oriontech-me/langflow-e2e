@@ -161,7 +161,16 @@ jobs:
 
       - name: Install Langflow nightly
         run: |
-          uv pip install "langflow[postgresql]==$NIGHTLY_VERSION"
+          # The nightly is the latest pre-release of the `langflow` PyPI package
+          # (e.g. 1.11.0.dev26). That release pins its transitive dependency
+          # `langflow-base[complete]==<same dev version>`. uv does NOT consider
+          # pre-release versions for transitive dependencies by default, so the
+          # exact-pinned dev `langflow-base` is reported as "no version found"
+          # and resolution fails ("No solution found … requirements are
+          # unsatisfiable"). `--prerelease=allow` lets uv consider pre-releases
+          # for the whole resolution; stable deps are still preferred where a
+          # stable version satisfies the constraint.
+          uv pip install --prerelease=allow "langflow[postgresql]==$NIGHTLY_VERSION"
           echo "Installed Langflow $NIGHTLY_VERSION (nightly)"
 
       - name: Start Langflow nightly (same database)
@@ -220,7 +229,7 @@ jobs:
             echo "| Workflow | \`${{ github.workflow }}\` |"
             echo "| Job | \`${{ github.job }}\` (pip-based) |"
             echo "| Source | \`langflow==${LATEST_VERSION:-?}\` via \`uv pip install \"langflow[postgresql]\"\` |"
-            echo "| Target | \`langflow==${NIGHTLY_VERSION:-?}\` via \`uv pip install \"langflow[postgresql]==<version>\"\` |"
+            echo "| Target | \`langflow==${NIGHTLY_VERSION:-?}\` via \`uv pip install --prerelease=allow \"langflow[postgresql]==<version>\"\` |"
             echo "| Database | PostgreSQL 16 (GHA service) |"
             echo "| OPENAI_API_KEY | auto-imported as Credential on each Langflow startup |"
             echo ""
