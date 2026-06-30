@@ -722,7 +722,7 @@
 
 #### 15.8 Sticky Notes
 - [-] Add sticky note
-- [ ] Edit sticky note text
+- [x] Edit sticky note text → `ui-ux/edit-sticky-note-text.spec.ts`
 - [-] Change sticky note color
 - [-] Resize sticky note
 - [-] Delete sticky note
