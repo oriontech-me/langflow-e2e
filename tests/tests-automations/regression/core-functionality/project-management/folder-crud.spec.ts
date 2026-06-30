@@ -1,0 +1,139 @@
+import { expect, test } from "../../../../fixtures/fixtures";
+import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { MainPage } from "../../../../pages/MainPage";
+
+/**
+ * Folder (Project) CRUD lifecycle via the home sidebar.
+ *
+ * Exercises the MainPage folder helpers (addProject / renameProject /
+ * deleteProject / clickProject) end to end:
+ *   1. Create → rename → delete an empty folder entirely through the UI.
+ *   2. Delete a folder that contains a flow and confirm the contained flow
+ *      is removed with it (set up deterministically via the REST API).
+ *
+ * Empty-folder deletion integrity, create-after-delete-all and API-level
+ * move/placement are covered by sibling specs (folder-deletion-integrity,
+ * folder-drag-drop-flow) and are intentionally not repeated here.
+ */
+
+test(
+  "creates, renames and deletes an empty project folder via the UI",
+  { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
+  async ({ page }) => {
+    await awaitBootstrapTest(page, { skipModal: true });
+
+    const mainPage = new MainPage(page);
+    const renamedFolder = `crud-folder-${Date.now()}`;
+
+    await test.step("Create a new folder from the sidebar", async () => {
+      await mainPage.addProject();
+      await expect(page.getByTestId("sidebar-nav-New Project")).toBeVisible({
+        timeout: 15000,
+      });
+    });
+
+    await test.step("Rename the folder to a unique name", async () => {
+      await mainPage.renameProject("New Project", renamedFolder);
+      // Asserting on the unique renamed entry is enough to prove the rename
+      // committed. We deliberately do NOT assert that "New Project" is gone:
+      // several specs create folders via the UI in parallel against the same
+      // backend, so a generic "New Project" entry from another worker may
+      // legitimately exist at the same time.
+      await expect(
+        page.getByTestId(`sidebar-nav-${renamedFolder}`),
+      ).toBeVisible({ timeout: 15000 });
+    });
+
+    await test.step("Delete the folder", async () => {
+      await mainPage.deleteProject(renamedFolder);
+      await expect(page.getByText("Project deleted successfully")).toBeVisible({
+        timeout: 15000,
+      });
+      await expect(
+        page.getByTestId(`sidebar-nav-${renamedFolder}`),
+      ).not.toBeVisible({ timeout: 10000 });
+    });
+  },
+);
+
+test(
+  "deleting a folder that contains a flow removes the flow with it",
+  { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
+  async ({ page, request }) => {
+    const authToken = await getAuthToken(request);
+    const folderName = `crud-del-folder-${Date.now()}`;
+    const flowName = `crud-del-flow-${Date.now()}`;
+
+    // Create the folder via API so the UI deletion target is deterministic.
+    const folderRes = await request.post("/api/v1/projects/", {
+      headers: { Authorization: authToken },
+      data: { name: folderName, description: "Folder CRUD deletion test" },
+    });
+    expect(folderRes.status()).toBe(201);
+    const { id: folderId } = await folderRes.json();
+
+    let flowId: string | undefined;
+    let folderDeleted = false;
+
+    try {
+      const flowRes = await request.post("/api/v1/flows/", {
+        headers: { Authorization: authToken },
+        data: {
+          name: flowName,
+          folder_id: folderId,
+          data: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
+          is_component: false,
+        },
+      });
+      expect(flowRes.status()).toBe(201);
+      const flow = await flowRes.json();
+      flowId = flow.id;
+      expect(flow.folder_id).toBe(folderId);
+
+      await awaitBootstrapTest(page, { skipModal: true });
+      const mainPage = new MainPage(page);
+
+      await test.step("The folder and its flow are listed", async () => {
+        await expect(
+          page.getByTestId(`sidebar-nav-${folderName}`),
+        ).toBeVisible({ timeout: 15000 });
+        await mainPage.clickProject(folderName);
+        await expect(page.getByText(flowName)).toBeVisible({ timeout: 15000 });
+      });
+
+      await test.step("Delete the folder", async () => {
+        await mainPage.deleteProject(folderName);
+        await expect(
+          page.getByText("Project deleted successfully"),
+        ).toBeVisible({ timeout: 15000 });
+        await expect(
+          page.getByTestId(`sidebar-nav-${folderName}`),
+        ).not.toBeVisible({ timeout: 10000 });
+        folderDeleted = true;
+      });
+
+      await test.step("The contained flow is deleted as well", async () => {
+        const check = await request.get(`/api/v1/flows/${flowId}`, {
+          headers: { Authorization: authToken },
+        });
+        expect(check.status()).toBe(404);
+      });
+    } finally {
+      if (flowId) {
+        await request
+          .delete(`/api/v1/flows/${flowId}`, {
+            headers: { Authorization: authToken },
+          })
+          .catch(() => {});
+      }
+      if (!folderDeleted) {
+        await request
+          .delete(`/api/v1/projects/${folderId}`, {
+            headers: { Authorization: authToken },
+          })
+          .catch(() => {});
+      }
+    }
+  },
+);

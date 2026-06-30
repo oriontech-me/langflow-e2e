@@ -521,10 +521,10 @@
 ### core-functionality/project-management/ — Project and Folder Management
 
 #### 10.1 Folder CRUD
-- [-] Create new folder
-- [-] Rename folder
-- [-] Delete empty folder
-- [-] Delete folder with flows inside
+- [x] Create new folder → `core-functionality/project-management/folder-crud.spec.ts`
+- [x] Rename folder → `core-functionality/project-management/folder-crud.spec.ts`
+- [x] Delete empty folder → `core-functionality/project-management/folder-crud.spec.ts`
+- [x] Delete folder with flows inside → `core-functionality/project-management/folder-crud.spec.ts`
 - [-] Integrity after deletion
 - [-] Create folder after deleting all folders
 - [-] Upload flow by drag-and-drop to folder
