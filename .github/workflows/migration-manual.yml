@@ -453,9 +453,13 @@ jobs:
           fi
 
       - name: "[TARGET] Execute witness flow — Fernet decrypt + smoke test (1/10 OpenAI calls)"
-        if: hashFiles('/tmp/has-openai-key') != ''
         run: |
           set -e
+          if [[ ! -f /tmp/has-openai-key ]]; then
+            echo "Skipping witness flow smoke test because OPENAI_API_KEY is not configured"
+            exit 0
+          fi
+
           ADMIN_TOKEN=$(curl -s -X POST "${LF_URL}/api/v1/login" \
             -H "Content-Type: application/x-www-form-urlencoded" \
             -d "username=${SUPERUSER}&password=${SUPERUSER_PASSWORD}" \
