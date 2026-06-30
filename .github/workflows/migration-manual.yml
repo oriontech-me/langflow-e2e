@@ -556,6 +556,7 @@ jobs:
                   "${LF_URL}/api/v1/users/whoami"
                 curl -s -o /dev/null -H "Authorization: Bearer ${TOKEN}" \
                   "${LF_URL}/api/v1/flows/?skip=0&limit=50"
+                sleep 0.1
               done
             ) &
           done < /tmp/tokens.txt
