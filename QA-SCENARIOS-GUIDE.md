@@ -2402,6 +2402,27 @@
 
 ---
 
+### 26.18 Edit sticky note text `[x]`
+
+**File:** `tests/tests-automations/regression/ui-ux/edit-sticky-note-text.spec.ts`
+
+**Objective:** Verify that editing an existing sticky note replaces its text — the canvas renders only the new content, not a mix of old and new. This is a distinct journey from adding a note (26.13), which only fills an empty note.
+
+**Preconditions:** Langflow running.
+
+**Step by step:**
+1. Create a blank flow (via API) and zoom out so the note fits the viewport.
+2. Click `canvas-add-note-button` to add a sticky note.
+3. Double-click `generic-node-desc` to open the editor, fill "Original note content", and commit (click `rf__wrapper` + Escape).
+4. Confirm the rendered note shows "Original note content".
+5. Double-click the note again — confirm the editor pre-loads the existing text.
+6. Clear and replace the text with "Edited note content", then commit again.
+7. Read the rendered note text.
+
+**Validation:** Rendered note contains "Edited note content" and does NOT contain "Original note content" — proving the edit replaced the content rather than appending to it.
+
+---
+
 ---
 
 ## Current Coverage Summary
@@ -2420,8 +2441,8 @@
 | MCP | 13 | 3 | 10 |
 | Project Management | 11 | 9 | 2 |
 | Templates | 35 | 33 | 2 |
-| UI/UX Canvas | 34 | 32 | 2 |
-| **TOTAL** | **249** | **202 (81%)** | **47 (19%)** |
+| UI/UX Canvas | 35 | 33 | 2 |
+| **TOTAL** | **250** | **203 (81%)** | **47 (19%)** |
 
 ---
 
@@ -2444,7 +2465,7 @@
 10. [x] Loop component — correct iterations (covered in section 27)
 11. Ollama, Groq, Mistral providers
 12. Model parameters (temperature, max tokens)
-13. Edit sticky note text
+13. [-] Edit sticky note text (covered in section 26.18; pending PR approval)
 14. Use global variable directly in component
 
 ---
