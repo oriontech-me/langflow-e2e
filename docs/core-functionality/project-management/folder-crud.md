@@ -87,7 +87,7 @@ which is required for safety under `fullyParallel`.
 - Empty-folder deletion integrity, deletion not affecting other folders, and
   create-after-delete-all — covered by `folder-deletion-integrity.spec.ts`.
 - API-level folder placement and moving a flow between folders — covered by
-  `folder-drag-drop-flow.spec.ts` and `general-bugs-move-flow-from-folder.spec.ts`.
+  `folder-drag-drop-flow.spec.ts`.
 - Whether a deleted folder's flow is recoverable / moved to a default folder
   (the observed and asserted behavior is hard deletion).
 

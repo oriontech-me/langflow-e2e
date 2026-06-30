@@ -454,7 +454,7 @@
 
 ## 8. Component Updates
 
-**Files:** `extended/features/outdated-message.spec.ts`, `outdated-actions.spec.ts`
+**Files:** _(not yet implemented)_
 
 ---
 
