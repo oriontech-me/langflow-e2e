@@ -314,6 +314,15 @@ function replacePhase0Block(
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 function main(): void {
+  // `--count` mode: print only the number of @stable test() calls and exit,
+  // without reading or rewriting QA-CHECKLIST.md. Used by the CI coverage step
+  // (STABLE_COUNT) in weekly-stable.yml. Reuses collectStableTests() so the
+  // count always matches the Phase 0 regeneration.
+  if (process.argv.includes("--count")) {
+    console.log(collectStableTests().length);
+    process.exit(0);
+  }
+
   const tests = collectStableTests();
   const phase0Lines = buildPhase0Block(tests);
 
