@@ -27,7 +27,7 @@ test(
 
     // Set up the folder via API so the deletion target is deterministic and we
     // don't re-test the UI create/rename flow (owned by folder-crud.spec.ts).
-    const folderRes = await request.post("/api/v1/folders/", {
+    const folderRes = await request.post("/api/v1/projects/", {
       headers: { Authorization: authToken },
       data: { name: folderName, description: "Deletion integrity test" },
     });
@@ -62,7 +62,7 @@ test(
     } finally {
       if (!folderDeleted) {
         await request
-          .delete(`/api/v1/folders/${folderId}`, {
+          .delete(`/api/v1/projects/${folderId}`, {
             headers: { Authorization: authToken },
           })
           .catch(() => {});
@@ -286,6 +286,10 @@ test(
   },
 );
 
+// NOTE: destructive — this test deletes EVERY folder of the shared superuser.
+// Under fullyParallel it can race with sibling folder tests (delete their
+// folders / be prevented from reaching zero). Proper isolation (a per-test user)
+// is tracked separately; CI retries currently absorb the rare collision.
 test(
   "deleting every folder lands on the empty project screen",
   { tag: ["@release", "@api"] },
@@ -293,7 +297,7 @@ test(
     // Guarantee there is at least one folder holding a flow, so the
     // "delete everything" path is exercised against real content.
     const authToken = await getAuthToken(request);
-    const folderRes = await request.post("/api/v1/folders/", {
+    const folderRes = await request.post("/api/v1/projects/", {
       headers: { Authorization: authToken },
       data: { name: `del-all-folder-${Date.now()}`, description: "Delete-all" },
     });

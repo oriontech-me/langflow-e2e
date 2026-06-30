@@ -66,7 +66,7 @@ test(
     const flowName = `crud-del-flow-${Date.now()}`;
 
     // Create the folder via API so the UI deletion target is deterministic.
-    const folderRes = await request.post("/api/v1/folders/", {
+    const folderRes = await request.post("/api/v1/projects/", {
       headers: { Authorization: authToken },
       data: { name: folderName, description: "Folder CRUD deletion test" },
     });
@@ -129,7 +129,7 @@ test(
       }
       if (!folderDeleted) {
         await request
-          .delete(`/api/v1/folders/${folderId}`, {
+          .delete(`/api/v1/projects/${folderId}`, {
             headers: { Authorization: authToken },
           })
           .catch(() => {});

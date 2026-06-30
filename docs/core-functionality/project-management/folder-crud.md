@@ -76,8 +76,8 @@ which is required for safety under `fullyParallel`.
 - Home sidebar testids: `add-project-button`, `project-sidebar`, `input-project`,
   `sidebar-nav-<name>`, `more-options-button_<slug>`, `btn-delete-project`, and
   the "Delete" confirmation control.
-- REST API `POST`/`GET`/`DELETE /api/v1/folders/` and `/api/v1/flows/`
-  (auth via `getAuthToken`).
+- REST API `POST`/`GET`/`DELETE /api/v1/projects/` (folders) and `/api/v1/flows/`
+  (auth via `getAuthToken`). `/api/v1/folders/` is a legacy alias of `/projects/`.
 - No LLM or provider API key required.
 
 ---
