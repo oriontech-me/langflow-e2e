@@ -1,0 +1,256 @@
+# Daily Stable E2E — daily successor to weekly-stable.yml.
+# Same machinery (@stable suite, QA Platform POST, failure issue) but runs every
+# day at 05:00 BRT and writes its own history to reports/daily-history.jsonl
+# (via the HISTORY_FILE override on the shared scripts/append-weekly-history.mjs).
+# weekly-stable.yml is kept in the repo but disabled as a fallback.
+name: Daily Stable E2E
+run-name: "Daily Stable E2E — ${{ github.event_name == 'schedule' && 'scheduled' || github.actor }}"
+
+on:
+  schedule:
+    - cron: "0 8 * * *" # 05:00 BRT (UTC-3), every day
+  workflow_dispatch:
+    inputs:
+      langflow_image:
+        description: "Langflow image repository (e.g. langflowai/langflow-nightly or langflowai/langflow)"
+        required: false
+        default: "langflowai/langflow-nightly"
+      langflow_image_tag:
+        description: "Image tag (e.g. latest, 1.5.1.dev36, 1.10.1rc3). Use a multi-arch tag — runners are amd64, so do NOT pick an -arm64 variant."
+        required: false
+        default: "latest"
+
+permissions:
+  issues: write
+  contents: write
+
+jobs:
+  e2e-daily-stable:
+    name: Daily Stable E2E (${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    # Run inside the official Playwright image: Chromium + all OS deps are
+    # pre-installed and pulled from mcr.microsoft.com (reachable from the
+    # runners), so we no longer download the browser from Google Cloud Storage
+    # — the leg that the runners cannot complete (see issue #346). The tag MUST
+    # match the pinned @playwright/test version in package.json.
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble
+
+    services:
+      langflow:
+        image: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+        ports:
+          - 7860:7860
+        env:
+          LANGFLOW_AUTO_LOGIN: "true"
+          LANGFLOW_SUPERUSER: langflow
+          LANGFLOW_SUPERUSER_PASSWORD: langflow
+          # Keep tracing ON: the @stable observability/traces specs probe
+          # /api/v1/monitor/traces, which is populated by the internal native
+          # tracer. That tracer's worker never starts when tracing is
+          # deactivated, so disabling it makes those specs fail deterministically
+          # (see #352). External tracers (LangSmith/Langfuse/etc.) stay dormant
+          # here because their API keys are absent.
+          LANGFLOW_DEACTIVATE_TRACING: "false"
+        options: >-
+          --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 10
+          --health-start-period 90s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No actions/setup-node: the Playwright image already ships the Node
+      # toolchain it was built against, so we use it directly instead of
+      # layering a second Node on top.
+      - name: Install dependencies
+        run: npm ci
+
+      # Guard: the @playwright/test version (from npm) MUST equal the container
+      # image tag, or the runner looks for a browser revision the image doesn't
+      # ship and every test fails at launch with a cryptic error. Fail fast with
+      # a clear message instead. Keep PLAYWRIGHT_VERSION in sync with the
+      # container: image tag above.
+      - name: Verify Playwright version matches the container image
+        env:
+          PLAYWRIGHT_VERSION: "1.58.2"
+        run: |
+          NPM_VERSION="$(node -p "require('@playwright/test/package.json').version")"
+          if [ "$NPM_VERSION" != "$PLAYWRIGHT_VERSION" ]; then
+            echo "::error::@playwright/test is $NPM_VERSION but the job runs in mcr.microsoft.com/playwright:v$PLAYWRIGHT_VERSION. Bump the container image tag and package.json together."
+            exit 1
+          fi
+          echo "Playwright $NPM_VERSION matches the container image v$PLAYWRIGHT_VERSION."
+
+      # No "Install Playwright browsers" step: Chromium ships in the container
+      # image. npm ci installs the @playwright/test runner, whose version is
+      # pinned to EXACTLY 1.58.2 in package.json to match the image tag above,
+      # so the browser revision lines up. Bump both together when upgrading.
+
+      # The async Clipboard API (and other secure-context-gated browser APIs)
+      # only exist on a secure context. Chromium treats http://localhost as
+      # secure but NOT the service hostname http://langflow. Inside a job
+      # container the Langflow service is only reachable as http://langflow:7860,
+      # so forward localhost:7860 -> langflow:7860 and keep PLAYWRIGHT_BASE_URL
+      # on http://localhost:7860 — exactly as on ubuntu-latest. See issue #346.
+      - name: Forward localhost:7860 to the Langflow service
+        # Force bash: inside the container the default shell is `sh` (dash),
+        # which lacks the `disown` builtin used below.
+        shell: bash
+        run: |
+          apt-get update -qq && apt-get install -y -qq socat
+          nohup socat TCP-LISTEN:7860,fork,reuseaddr TCP:langflow:7860 >/tmp/socat.log 2>&1 &
+          disown
+          for i in $(seq 1 15); do
+            if curl -sf http://localhost:7860/health_check >/dev/null 2>&1; then
+              echo "Forward localhost:7860 -> langflow:7860 is up."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Port forward to langflow:7860 did not come up"
+          cat /tmp/socat.log || true
+          exit 1
+
+      - name: Collect models
+        run: npx playwright test tests/collect-models.spec.ts --reporter=line
+        continue-on-error: true
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Run @stable tests
+        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=html,github,json
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Upload Playwright report
+        id: upload_report                     # ← id to expose artifact-url to the payload step
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-daily-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 14
+
+      # ── Record in the QA Platform DB: EVERY run (scheduled + manual dispatch).
+      # Not gated on `schedule`, so manual runs are recorded too. Coverage is
+      # best-effort; the POST is warning-only so a platform outage never fails
+      # the suite / artifact / issue. ──
+      - name: Compute coverage counts
+        if: always()
+        id: cov
+        continue-on-error: true
+        run: |
+          echo "stable=$(npx ts-node scripts/stable-tests.ts --count)" >> "$GITHUB_OUTPUT"
+          echo "total=$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Build run payload
+        if: always()
+        env:
+          PLAYWRIGHT_JSON: results.json
+          WORKFLOW: ${{ github.event_name == 'schedule' && 'daily-stable' || 'daily-stable-manual' }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+          STABLE_COUNT: ${{ steps.cov.outputs.stable }}
+          TOTAL_COUNT:  ${{ steps.cov.outputs.total }}
+          EVIDENCE_URL: ${{ steps.upload_report.outputs.artifact-url }}
+        run: |
+          export EVIDENCE_EXPIRES_AT="$(date -u -d '+14 days' +%Y-%m-%dT%H:%M:%SZ)"
+          node scripts/build-run-payload.mjs > payload.json
+          echo "Payload:"; cat payload.json
+
+      - name: POST run to QA Platform
+        if: always()
+        continue-on-error: true            # a platform failure must NOT bring down the suite / artifact / issue
+        env:
+          QA_PLATFORM_ENDPOINT: ${{ vars.QA_PLATFORM_ENDPOINT }}
+          QA_E2E_AUTOMATION_TOKEN: ${{ secrets.QA_E2E_AUTOMATION_TOKEN }}
+        run: |
+          if [ -z "$QA_PLATFORM_ENDPOINT" ] || [ -z "$QA_E2E_AUTOMATION_TOKEN" ]; then
+            echo "::warning::QA platform endpoint/token not configured — skipping POST."; exit 0; fi
+          code=$(curl -s -o /tmp/resp.json -w '%{http_code}' -X POST "$QA_PLATFORM_ENDPOINT" \
+            -H "Authorization: Bearer $QA_E2E_AUTOMATION_TOKEN" -H "Content-Type: application/json" \
+            --data @payload.json)
+          echo "HTTP $code"; cat /tmp/resp.json || true
+          case "$code" in 200|201) echo "Recorded.";; *) echo "::warning::QA platform POST failed ($code)";; esac
+
+      # Long-lived run history: append one JSON line per scheduled run to
+      # reports/daily-history.jsonl and commit it back to main. See
+      # reports/README.md for schema and queries. Runs even on failure so
+      # recurring breakage is recorded, not just clean runs.
+      # Gated on `schedule` only — manual dispatches (workflow_dispatch) do not
+      # write to the history file, to keep the series predictable for
+      # longitudinal analysis (one entry per day, same trigger, same cadence).
+      - name: Append daily history
+        if: always() && github.event_name == 'schedule'
+        # Reuses the shared appender unchanged; the HISTORY_FILE / WORKFLOW env
+        # overrides point it at the daily series, so weekly-stable.yml's script
+        # and history file stay untouched.
+        run: node scripts/append-weekly-history.mjs
+        env:
+          PLAYWRIGHT_JSON: results.json
+          HISTORY_FILE: reports/daily-history.jsonl
+          WORKFLOW: daily-stable
+          LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+
+      - name: Commit daily history
+        if: always() && github.event_name == 'schedule'
+        run: |
+          # The job runs inside the Playwright container as root, while the
+          # workspace is owned by the host runner uid. git 2.43 then refuses to
+          # operate on the repo ("dubious ownership"). actions/checkout works
+          # around this by writing safe.directory to a git global config under a
+          # temporary HOME, which is gone by the time this step runs — so we
+          # re-declare it here, or git reports "fatal: not in a git directory"
+          # and the commit/push back to main never happens (see issue #385).
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if git diff --quiet reports/daily-history.jsonl 2>/dev/null; then
+            echo "No history change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/daily-history.jsonl
+          git commit -m "chore(history): record daily run ${{ github.run_id }} [skip ci]"
+          git push
+
+      - name: Create issue on failure
+        if: failure() && github.event_name == 'schedule'
+        uses: actions/github-script@v7
+        env:
+          IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+        with:
+          script: |
+            const today = new Date().toISOString().split('T')[0];
+            const image = process.env.IMAGE;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Daily Failure] @stable tests failed on ${today} (${image})`,
+              body: [
+                '## Daily @stable E2E Failure',
+                '',
+                `- **Date:** ${today}`,
+                `- **Langflow version:** \`${image}\``,
+                `- **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+                '',
+                '### Next steps',
+                '1. Open the Playwright report in the artifact from the run above',
+                '2. Determine if the failure is a test bug or a Langflow regression',
+                '3. If the test is incorrect or outdated: remove the `@stable` tag from the test and open a fix PR',
+                '4. If it is a Langflow regression: flag it to the team and monitor upstream',
+                '',
+                '/cc @Victor-w-Madeira @daniellicnerski1',
+              ].join('\n'),
+              labels: ['daily-failure', 'needs-triage'],
+            });
