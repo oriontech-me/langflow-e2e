@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-29
+> **Last updated:** 2026-06-30
 
 ---
 
@@ -759,14 +759,14 @@
 | `core-functionality/model-provider/` | 33 | 6 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
-| `core-functionality/project-management/` | 11 | 0 | 10 | 1 | 0 |
+| `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 27 | 12 | 13 | 2 | 0 |
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 6 | 36 | 1 | 1 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **450** | **218 (48%)** | **175 (39%)** | **7 (2%)** | **50 (11%)** |
+| **TOTAL** | **450** | **222 (49%)** | **171 (38%)** | **7 (2%)** | **50 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -782,7 +782,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 231 `test()` calls carrying the `@stable` tag, distributed across 78 spec
+> 233 `test()` calls carrying the `@stable` tag, distributed across 79 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1002,6 +1002,8 @@
 #### core-functionality/project-management/
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
+- [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
+- [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
 
 #### flow-functionality/
 - [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
@@ -1069,6 +1071,6 @@
 | `core-functionality/observability-monitoring/` | 7 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
 | `flow-functionality/` | 13 | 0 |
-| `core-functionality/project-management/` | 10 | 0 |
+| `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
