@@ -153,6 +153,26 @@ jobs:
           echo "stable=$(npx ts-node scripts/stable-tests.ts --count)" >> "$GITHUB_OUTPUT"
           echo "total=$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
 
+      # Resolve the ACTUAL Langflow version running in the service container.
+      # The image tag is just `:latest` (or an RC/stable tag), so it never
+      # carries the concrete nightly build (e.g. 1.11.0.dev25). Ask the running
+      # service via its public /api/v1/version endpoint (AUTO_LOGIN is on, so it
+      # needs no auth) and feed it into the payload so the QA Platform's Run
+      # Summary can show the exact version tested. Best-effort: never fail the run.
+      - name: Resolve Langflow version
+        if: always()
+        id: lfver
+        continue-on-error: true
+        run: |
+          # --connect-timeout/--max-time so a slow/hung service can't stall the
+          # job; tr strips any CR/LF so the value stays a single line and never
+          # corrupts the key=value $GITHUB_OUTPUT format.
+          V="$(curl -sf --connect-timeout 5 --max-time 15 http://localhost:7860/api/v1/version \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write((JSON.parse(d).version||"").toString())}catch{process.stdout.write("")}})' \
+            | tr -d '\r\n')"
+          echo "Resolved Langflow version: '${V:-<none>}'"
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
       - name: Build run payload
         if: always()
         env:
@@ -161,6 +181,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+          LANGFLOW_VERSION: ${{ steps.lfver.outputs.version }}
           STABLE_COUNT: ${{ steps.cov.outputs.stable }}
           TOTAL_COUNT:  ${{ steps.cov.outputs.total }}
           EVIDENCE_URL: ${{ steps.upload_report.outputs.artifact-url }}
