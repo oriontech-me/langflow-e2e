@@ -204,7 +204,7 @@ tests/
 |---|---|---|
 | `pr-validation.yml` | Every PR to `main` | TypeScript check (`tsc --noEmit`) + ESLint in parallel — both must pass before merge |
 | `nightly.yml` | Daily 03:00 BRT + manual | Runs everything against `langflow-nightly:latest`, opens an issue on failure |
-| `daily-stable.yml` | Daily 05:00 BRT + manual | Runs `@stable` tests against `langflow-nightly:latest`; opens a triage issue on failure and uploads a navigable HTML report. **Active stable workflow.** |
+| `daily-stable.yml` | Mon–Fri 05:00 BRT + manual | Runs `@stable` tests against `langflow-nightly:latest`; opens a triage issue on failure and uploads a navigable HTML report. **Active stable workflow.** |
 | `weekly-stable.yml` | Disabled (fallback) | Superseded by `daily-stable.yml`; kept in the repo, disabled. Same `@stable` machinery on a weekly cron when enabled |
 | `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag |
 | `file-watcher.yml` | Daily 05:00 BRT | Monitors changes in Langflow source and opens a review issue |
