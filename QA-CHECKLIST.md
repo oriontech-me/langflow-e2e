@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-06-30
+> **Last updated:** 2026-07-01
 
 ---
 
@@ -782,7 +782,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 234 `test()` calls carrying the `@stable` tag, distributed across 80 spec
+> 232 `test()` calls carrying the `@stable` tag, distributed across 80 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -840,7 +840,6 @@
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
 - [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
 - [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
-- [x] API Request component — GET request returns 200 and output Data contains all required fields → `api-request-component-regression.spec.ts`
 - [x] API Request component — POST method executes POST verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PATCH method executes PATCH verb and returns 200 → `api-request-component-regression.spec.ts`
@@ -1028,7 +1027,6 @@
 - [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
-- [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
 
 #### ui-ux/
 - [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
