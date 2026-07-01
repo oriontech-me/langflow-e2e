@@ -24,7 +24,7 @@ let screenshotCount = 0;
 const totals = { passed: 0, failed: 0, flaky: 0, skipped: 0 };
 const failures = [], flaky = [], tests = [];
 
-const stripAnsi = (s) => (s || "").replace(/\[[0-9;]*m/g, "");
+const stripAnsi = (s) => (s || "").replace(/\u001b\[[0-9;]*m/g, "");
 const firstErr = (r) => {
   const e = r?.error || r?.errors?.[0];
   return e ? stripAnsi(e.message || e.value || "").split("\n")[0].slice(0, 240) : null;
