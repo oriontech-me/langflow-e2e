@@ -18,12 +18,15 @@ on:
           - nightly
           - stable
         default: "nightly"
-      test_suite:
-        description: "Test suite: all | core | extended | features | integrations | unit | regression"
+      test_tag:
+        description: |
+          Playwright tag to run. Empty = every test. Common tags:
+            @stable @release @regression @api @components @workspace
+            @agents @mcp @playground @auth @model-provider @files @ui-ux
         required: false
-        default: "all"
+        default: ""
       test_grep:
-        description: "Additional filter (regex, e.g. 'login|logout')"
+        description: "Additional name/regex filter, ANDed with the tag above (e.g. 'login|logout')"
         required: false
         default: ""
 
@@ -73,7 +76,11 @@ jobs:
           LANGFLOW_AUTO_LOGIN: "true"
           LANGFLOW_SUPERUSER: langflow
           LANGFLOW_SUPERUSER_PASSWORD: langflow
-          LANGFLOW_DEACTIVATE_TRACING: "true"
+          # Keep tracing ON: the observability/traces specs probe
+          # /api/v1/monitor/traces, populated by the internal native tracer whose
+          # worker never starts when tracing is deactivated — disabling it makes
+          # those specs fail deterministically (see #352). Matches daily/weekly.
+          LANGFLOW_DEACTIVATE_TRACING: "false"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s
@@ -90,31 +97,13 @@ jobs:
       - run: npm ci
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
-      - name: Run tests
-        run: |
-          SUITE="${{ github.event.inputs.test_suite }}"
-          GREP="${{ github.event.inputs.test_grep }}"
-          case "$SUITE" in
-            core)       DIR="tests/core/" ;;
-            extended)   DIR="tests/extended/" ;;
-            features)   DIR="tests/core/features/ tests/extended/features/" ;;
-            integrations) DIR="tests/core/integrations/" ;;
-            unit)       DIR="tests/core/unit/" ;;
-            regression) DIR="tests/core/regression/ tests/extended/regression/" ;;
-            *)          DIR="" ;;
-          esac
-          CMD="npx playwright test $DIR --reporter=github"
-          [ -n "$GREP" ] && CMD="$CMD --grep '$GREP'"
-          eval $CMD
-        env:
-          CI: "true"
-          PLAYWRIGHT_BASE_URL: ${{ needs.detect-target.outputs.base_url }}
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - name: Run tests and upload report
+        uses: ./.github/actions/run-e2e
         with:
-          name: playwright-report-manual-${{ github.run_id }}
-          path: playwright-report/
-          retention-days: 14
+          base_url: ${{ needs.detect-target.outputs.base_url }}
+          test_tag: ${{ github.event.inputs.test_tag }}
+          test_grep: ${{ github.event.inputs.test_grep }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
 
   e2e-url:
     name: E2E via URL (${{ github.event.inputs.langflow_target }})
@@ -132,28 +121,10 @@ jobs:
       - run: npm ci
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
-      - name: Run tests
-        run: |
-          SUITE="${{ github.event.inputs.test_suite }}"
-          GREP="${{ github.event.inputs.test_grep }}"
-          case "$SUITE" in
-            core)       DIR="tests/core/" ;;
-            extended)   DIR="tests/extended/" ;;
-            features)   DIR="tests/core/features/ tests/extended/features/" ;;
-            integrations) DIR="tests/core/integrations/" ;;
-            unit)       DIR="tests/core/unit/" ;;
-            regression) DIR="tests/core/regression/ tests/extended/regression/" ;;
-            *)          DIR="" ;;
-          esac
-          CMD="npx playwright test $DIR --reporter=github"
-          [ -n "$GREP" ] && CMD="$CMD --grep '$GREP'"
-          eval $CMD
-        env:
-          CI: "true"
-          PLAYWRIGHT_BASE_URL: ${{ needs.detect-target.outputs.base_url }}
-      - uses: actions/upload-artifact@v4
-        if: always()
+      - name: Run tests and upload report
+        uses: ./.github/actions/run-e2e
         with:
-          name: playwright-report-manual-${{ github.run_id }}
-          path: playwright-report/
-          retention-days: 14
+          base_url: ${{ needs.detect-target.outputs.base_url }}
+          test_tag: ${{ github.event.inputs.test_tag }}
+          test_grep: ${{ github.event.inputs.test_grep }}
+          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
