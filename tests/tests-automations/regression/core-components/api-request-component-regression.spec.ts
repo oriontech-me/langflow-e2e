@@ -372,8 +372,12 @@ test(
 // =============================================================================
 
 test(
+  // @stable removed pending #462 — this test depends on the public postman-echo
+  // endpoint, which hard-fails the daily suite during external outages (daily
+  // 2026-07-01, weekly 2026-06-22). Re-add once a reliable echo endpoint is
+  // provided in CI.
   "API Request component — GET request returns 200 and output Data contains all required fields",
-  { tag: ["@stable", "@release", "@regression", "@components"] },
+  { tag: ["@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
