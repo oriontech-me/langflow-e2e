@@ -245,8 +245,11 @@ jobs:
           git commit -m "chore(history): record daily run ${{ github.run_id }} [skip ci]"
           git push
 
+      # Open a triage issue on failure for BOTH scheduled and manual runs — a
+      # manual re-run of a red build should also surface a tracked issue. (The
+      # history steps above stay schedule-only; only issue-opening is broadened.)
       - name: Create issue on failure
-        if: failure() && github.event_name == 'schedule'
+        if: failure()
         uses: actions/github-script@v7
         env:
           IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
