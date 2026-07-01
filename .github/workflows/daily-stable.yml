@@ -8,7 +8,7 @@ run-name: "Daily Stable E2E — ${{ github.event_name == 'schedule' && 'schedule
 
 on:
   schedule:
-    - cron: "0 8 * * *" # 05:00 BRT (UTC-3), every day
+    - cron: "0 8 * * 1-5" # 05:00 BRT (UTC-3), Monday–Friday
   workflow_dispatch:
     inputs:
       langflow_image:
@@ -211,7 +211,7 @@ jobs:
       # recurring breakage is recorded, not just clean runs.
       # Gated on `schedule` only — manual dispatches (workflow_dispatch) do not
       # write to the history file, to keep the series predictable for
-      # longitudinal analysis (one entry per day, same trigger, same cadence).
+      # longitudinal analysis (one entry per scheduled run, same trigger, same cadence).
       - name: Append daily history
         if: always() && github.event_name == 'schedule'
         # Reuses the shared appender unchanged; the HISTORY_FILE / WORKFLOW env
