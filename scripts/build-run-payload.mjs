@@ -39,14 +39,24 @@ const now = new Date();
 // UTC rolled a run started after 21:00 BRT (00:00 UTC) onto the next calendar
 // day, so it fell outside the Trend's default "last N days" window while Run
 // Summary (no date filter) still showed it. See qa-platform spec 001.
-const brtParts = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "America/Sao_Paulo",
-  year: "numeric", month: "2-digit", day: "2-digit",
-  hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-}).formatToParts(now);
-const brt = t => brtParts.find(p => p.type === t)?.value ?? "";
-const runDate = `${brt("year")}-${brt("month")}-${brt("day")}`;
-const runTime = `${brt("hour")}:${brt("minute")}`;
+let runDate, runTime;
+try {
+  const brtParts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(now);
+  const brt = t => brtParts.find(p => p.type === t)?.value ?? "";
+  runDate = `${brt("year")}-${brt("month")}-${brt("day")}`;
+  runTime = `${brt("hour")}:${brt("minute")}`;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(runDate) || !/^\d{2}:\d{2}$/.test(runTime)) throw new Error("unexpected BRT parts");
+} catch (e) {
+  // ICU/TZ data missing or malformed — fall back to UTC so the payload step
+  // never hard-fails on date formatting (it has no continue-on-error).
+  console.error(`[payload] BRT stamp failed (${e?.message || e}); falling back to UTC`);
+  runDate = now.toISOString().slice(0, 10);
+  runTime = now.toISOString().slice(11, 16);
+}
 const payload = {
   version: 1,
   date: runDate,
