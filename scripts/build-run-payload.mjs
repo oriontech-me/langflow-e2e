@@ -34,14 +34,28 @@ const coverage = (process.env.STABLE_COUNT || process.env.TOTAL_COUNT)
   ? { stable_count: num(process.env.STABLE_COUNT), total_count: num(process.env.TOTAL_COUNT) } : undefined;
 
 const now = new Date();
+// Stamp date/time in BRT (America/Sao_Paulo), NOT UTC. run_date is what the QA
+// Platform's Trend view filters on and the Run Summary labels "BRT"; stamping in
+// UTC rolled a run started after 21:00 BRT (00:00 UTC) onto the next calendar
+// day, so it fell outside the Trend's default "last N days" window while Run
+// Summary (no date filter) still showed it. See qa-platform spec 001.
+const brtParts = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Sao_Paulo",
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+}).formatToParts(now);
+const brt = t => brtParts.find(p => p.type === t)?.value ?? "";
+const runDate = `${brt("year")}-${brt("month")}-${brt("day")}`;
+const runTime = `${brt("hour")}:${brt("minute")}`;
 const payload = {
   version: 1,
-  date: now.toISOString().slice(0,10),
-  time: now.toISOString().slice(11,16),                 // HH:MM UTC — real run time, disambiguates same-day runs
+  date: runDate,
+  time: runTime,                                        // HH:MM BRT — real run time, disambiguates same-day runs
   workflow: process.env.WORKFLOW || "weekly-stable",
   run_id: process.env.GITHUB_RUN_ID || "local",
   run_url: process.env.RUN_URL || null,
   langflow_image: process.env.LANGFLOW_IMAGE || null,   // the nightly build (or RC/stable on a manual run)
+  langflow_version: process.env.LANGFLOW_VERSION || null, // resolved version from GET /api/v1/version (e.g. 1.11.0.dev25)
   langflow_commit_sha: process.env.LANGFLOW_COMMIT_SHA || null,
   duration_ms: Math.round(report?.stats?.duration ?? 0),
   ...(coverage ? { coverage } : {}),
