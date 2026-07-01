@@ -61,7 +61,7 @@ function extractSteps(steps) {
 }
 
 // Read the failure screenshot for a result: prefer an inline body, else the file
-// on disk. Returns { contentType, base64 } or null. Bounded by MAX_SCREENSHOT_BYTES.
+// on disk. Returns { content_type, base64 } or null. Bounded by MAX_SCREENSHOT_BYTES.
 function readScreenshot(result) {
   if (!result) return null;
   const att = (result.attachments || []).find(
