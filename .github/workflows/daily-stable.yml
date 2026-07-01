@@ -139,7 +139,7 @@ jobs:
         with:
           name: playwright-report-daily-${{ github.run_id }}
           path: playwright-report/
-          retention-days: 14
+          retention-days: 7
 
       # Lightweight, self-contained report: index.html embeds the whole test tree,
       # statuses, errors and steps inline (playwrightReportBase64), so it opens
