@@ -12,7 +12,9 @@ Validates the full MCP client configuration and tool execution path — without 
 
 ## Tags *(required)*
 
-`@mcp` `@regression`
+All tests: `@mcp` `@regression`. Tests 2 (echo tool execution) and 3 (HTTP form registration) additionally carry `@stable`.
+
+Test 4 (numeric `get-sum`) does **not** carry `@stable` — it was removed in the #461 daily-triage PR because the test depends on the `npx server-everything` MCP server registering its tools in time, which hard-fails the daily suite on cold startup (see #463). Re-add once server startup is reliable in CI.
 
 ---
 

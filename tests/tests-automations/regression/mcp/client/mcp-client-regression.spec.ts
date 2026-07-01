@@ -319,8 +319,11 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
   );
 
   test(
+    // @stable removed pending #463 — depends on the `npx server-everything` MCP
+    // server registering its tools in time, which hard-failed the daily suite
+    // (2026-07-01) on cold startup. Re-add once server startup is reliable in CI.
     "selects get-sum tool, provides numeric inputs, and verifies sum in output",
-    { tag: ["@mcp", "@regression", "@stable"] },
+    { tag: ["@mcp", "@regression"] },
     async ({ page }) => {
       // Allow backend errors — npx server may return transient errors while starting
       (page as any).allowFlowErrors();

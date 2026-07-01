@@ -20,8 +20,10 @@ If any of these tests fails, the API Request component is broken in the product 
 
 ## Tags *(required)*
 
-All 15 tests: `@stable` `@regression` `@components`
+14 of the 15 tests: `@stable` `@regression` `@components`
 8 of them additionally carry `@release` (the canvas/inspector/GET/POST/PUT/PATCH/DELETE happy paths).
+
+The **GET request returns 200** test (#4 below) does **not** carry `@stable` — it was removed in the #461 daily-triage PR because the test depends on the public `postman-echo` endpoint and hard-fails the daily suite during external outages (see #462). Re-add once a reliable echo endpoint is available in CI.
 
 ---
 
