@@ -132,14 +132,28 @@ jobs:
           PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
-      - name: Upload Playwright report
-        id: upload_report                     # ← id to expose artifact-url to the payload step
+      - name: Upload Playwright report (full, heavy)
+        id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: playwright-report-daily-${{ github.run_id }}
           path: playwright-report/
           retention-days: 14
+
+      # Lightweight, self-contained report: index.html embeds the whole test tree,
+      # statuses, errors and steps inline (playwrightReportBase64), so it opens
+      # standalone without the heavy data/ + trace/ attachments (~1.5 MB vs ~380 MB).
+      # This is the artifact linked from the QA Platform (one-click, small download),
+      # and it gets the longest retention GitHub allows (90 days) since it's small.
+      - name: Upload report index (lightweight, long-lived)
+        id: upload_index                      # ← artifact-url fed to the QA Platform payload below
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-index-daily-${{ github.run_id }}
+          path: playwright-report/index.html
+          retention-days: 90
 
       # ── Record in the QA Platform DB: EVERY run (scheduled + manual dispatch).
       # Not gated on `schedule`, so manual runs are recorded too. Coverage is
@@ -184,9 +198,11 @@ jobs:
           LANGFLOW_VERSION: ${{ steps.lfver.outputs.version }}
           STABLE_COUNT: ${{ steps.cov.outputs.stable }}
           TOTAL_COUNT:  ${{ steps.cov.outputs.total }}
-          EVIDENCE_URL: ${{ steps.upload_report.outputs.artifact-url }}
+          # Point the QA Platform at the lightweight index (one-click, small
+          # download), not the heavy full report — and match its 90-day retention.
+          EVIDENCE_URL: ${{ steps.upload_index.outputs.artifact-url }}
         run: |
-          export EVIDENCE_EXPIRES_AT="$(date -u -d '+14 days' +%Y-%m-%dT%H:%M:%SZ)"
+          export EVIDENCE_EXPIRES_AT="$(date -u -d '+90 days' +%Y-%m-%dT%H:%M:%SZ)"
           node scripts/build-run-payload.mjs > payload.json
           echo "Payload:"; cat payload.json
 
