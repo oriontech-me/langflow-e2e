@@ -22,9 +22,11 @@ test(
     // Langflow 1.11.0, so the provider entry point never appeared.
     //
     // load() also runs setupOpenAI; with no explicit model it selects a resilient
-    // default (gpt-4o-mini, vision-capable on the Agent component), so the
-    // multimodal assertion below holds. OpenAI is used (not Anthropic) so the test
-    // runs in the weekly workflow, which provides OPENAI_API_KEY.
+    // default — a fast, vision-capable chat model (preferring gpt-4o-mini and
+    // similar "-mini" variants over slow "pro"/reasoning models), so the
+    // multimodal assertion below holds even as model families change on
+    // nightlies. OpenAI is used (not Anthropic) so the test runs in the weekly
+    // workflow, which provides OPENAI_API_KEY.
     await new SimpleAgentTemplatePage(page).load({ provider: "openai" });
 
     await page.getByTestId("playground-btn-flow-io").click();

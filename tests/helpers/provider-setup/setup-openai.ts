@@ -88,7 +88,51 @@ export async function setupOpenAI(
     }
     await modelOption.click();
   } else {
-    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().waitFor({ state: "visible", timeout: 10000 });
-    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().click();
+    // No explicit model requested — pick a fast, general-purpose model from the
+    // enabled dropdown. Hardcoding a single name (previously "gpt-4o-mini")
+    // breaks whenever that model leaves the lineup on gpt-5.x nightlies. Instead
+    // we rank the available options by a preference list and only fall back to
+    // the first available if none match. This keeps the default cheap and
+    // vision-capable — callers like the agent image test rely on that — while
+    // surviving model-family churn and skipping the slow/expensive
+    // "pro"/reasoning models that tend to top the dropdown.
+    const options = page.locator('[data-testid$="-option"]');
+    await options.first().waitFor({ state: "visible", timeout: 10000 });
+    const count = await options.count();
+    // Lower-case each label so matching is case-insensitive: textContent may
+    // carry display casing (e.g. "GPT-4o Mini") that plain includes() would miss.
+    const labels: string[] = [];
+    for (let i = 0; i < count; i++) {
+      labels.push(((await options.nth(i).textContent()) ?? "").trim().toLowerCase());
+    }
+
+    // Reject families that are NOT general-purpose vision chat models: reasoning
+    // (o1/o3/o4…), audio/realtime/tts/transcribe, search-preview and nano
+    // variants. Substring "gpt-4o-mini" alone would otherwise match e.g.
+    // "gpt-4o-mini-tts" or rank a text-only "o3-mini" as a fallback, breaking
+    // callers like the agent image test that need real vision output.
+    const nonChat = /\bo\d|audio|realtime|tts|transcribe|search|nano/;
+
+    // Ordered most- to least-preferred. All target small multimodal chat models;
+    // anything not matched (pro, reasoning, codex) is only reached via the
+    // first-available fallback.
+    const preferences: Array<(m: string) => boolean> = [
+      (m) => m.includes("gpt-4o-mini") && !nonChat.test(m),
+      (m) => m.includes("-mini") && !nonChat.test(m),
+      (m) => m.includes("gpt-4o") && !nonChat.test(m),
+      (m) => m.includes("gpt-4.1") && !nonChat.test(m),
+    ];
+
+    let chosenIndex = -1;
+    for (const matches of preferences) {
+      const idx = labels.findIndex(matches);
+      if (idx !== -1) {
+        chosenIndex = idx;
+        break;
+      }
+    }
+    if (chosenIndex === -1) chosenIndex = 0; // no preferred match — first available
+
+    await options.nth(chosenIndex).click();
   }
 }
