@@ -62,8 +62,8 @@
 - [ ] Delete a component
 - [x] Run a flow → `helpers/flows/run-flow.ts`
 - [ ] Pause a flow
-- [ ] Send a chat input
-- [ ] Verify the chat output
+- [x] Send a chat input → `flow-functionality/flow-execution-canvas.spec.ts`
+- [x] Verify the chat output → `flow-functionality/flow-execution-canvas.spec.ts`
 
 ---
 
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 231 `test()` calls carrying the `@stable` tag, distributed across 81 spec
+> 233 `test()` calls carrying the `@stable` tag, distributed across 81 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1016,7 +1016,9 @@
 - [x] export flow to JSON triggers success toast and produces a valid file → `export-import-flow.spec.ts`
 - [x] imported JSON flow must load all components on canvas → `export-import-flow.spec.ts`
 - [x] import flow from JSON via upload button must load flow on canvas → `export-import-flow.spec.ts`
-- [x] user can run a flow from the canvas; every node reaches build success and output is produced → `flow-execution-canvas.spec.ts`
+- [x] 1 - runs the flow from the canvas terminal node → `flow-execution-canvas.spec.ts`
+- [x] 2 - the flow ran correctly: every node reached build success → `flow-execution-canvas.spec.ts`
+- [x] 3 - the chat input and chat output are visible in the Playground → `flow-execution-canvas.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`

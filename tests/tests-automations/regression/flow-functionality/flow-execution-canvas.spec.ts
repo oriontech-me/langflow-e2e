@@ -8,97 +8,112 @@ import {
 import { runFlow } from "../../../helpers/flows/run-flow";
 
 /**
- * Flow execution via the canvas — the generic "run a flow" journey.
+ * Flow execution via the canvas — one ChatInput -> ChatOutput journey, split
+ * into three sequential tests for clarity:
+ *   1. Run the flow from the canvas (Langflow 1.11 has no global run button — a
+ *      flow is run from a terminal node's `button_run_{node}`, which builds the
+ *      whole upstream graph). Uses the reusable `runFlow` helper and anchors
+ *      completion on the terminal node's persistent success badge (not the
+ *      transient "built successfully" toast, which flakes — see #506 / #507).
+ *   2. The flow ran correctly — every node reached build success (both duration
+ *      badges), the same signal asserted by the original merged test.
+ *   3. The chat input and chat output are visible in the Playground — covers the
+ *      "Send a chat input" and "Verify the chat output" checklist items.
  *
- * Langflow (1.11) has no global run button: a flow is run by triggering a
- * terminal node's run control (`button_run_{node}`), which builds the whole
- * upstream graph. This test asserts that journey end to end — the build reaches
- * EVERY node (both duration badges) and the output is produced — exercising the
- * reusable `runFlow` helper.
+ * The three tests share ONE flow and ONE page (`test.describe.configure` serial
+ * + a page created once in `beforeAll`), so the journey is not restarted between
+ * steps — step 3 sees the output produced by step 1's run.
  *
- * Distinct from sibling specs (intentionally not duplicated here):
+ * Note: the shared page is created via `browser.newPage()`, so the fixture's
+ * automatic backend-error monitor (which wraps the per-test `page` fixture) does
+ * not apply here; the happy-path assertions below (built successfully, duration
+ * badges, echoed bubbles) fail on a real flow error anyway.
+ *
+ * Distinct from sibling specs (intentionally not duplicated):
  *   - `run-flow.spec.ts` covers the RunFlow *component* (one flow invoking another).
  *   - `chat-input-output-component-regression.spec.ts` covers the components'
  *     handles/fields/propagation.
  *   - `stop-building.spec.ts` / `stop-button-playground.spec.ts` cover stopping a run.
  *
- * Idempotent re-run is intentionally not covered — after the first build the
- * terminal node's run control sits under a right-anchored react-flow panel that
- * intercepts a second click; see the spec doc's "does not cover" section.
- *
  * Deterministic: ChatInput -> ChatOutput echo, no LLM / provider / API key.
  */
+test.describe("Flow execution — run a ChatInput -> ChatOutput flow", () => {
+  // Serial: the three tests are a single dependent journey on a shared page.
+  test.describe.configure({ mode: "serial" });
 
-// Open the Chat Output inspection dialog and return its full text. Reading the
-// whole dialog (not one inner node) mirrors the chat-input-output spec: the
-// Message output renders as a structured view that may mix labeled sections
-// with a JSON-style preview.
-async function readChatOutputInspection(page: Page) {
-  const inspect = page.getByTestId("output-inspection-output message-chatoutput");
-  await expect(inspect).toBeAttached({ timeout: 10000 });
-  await inspect.click();
-  // Scope out the first-run `assistant-onboarding-tooltip`, which also carries
-  // role="dialog" and would otherwise make this locator strict-mode-ambiguous.
-  const dialog = page.locator(
-    '[role="dialog"]:not([data-testid="assistant-onboarding-tooltip"])',
-  );
-  await expect(dialog).toBeVisible({ timeout: 10000 });
-  const text =
-    (await dialog.evaluate((el: HTMLElement) => el.textContent ?? "")) ?? "";
-  // No need to close the dialog — reading the output is the last assertion of
-  // the test; the flow is deleted in `finally`. (Test 2 runs on its own flow.)
-  return text;
-}
+  let page: Page;
+  let flowId: string;
+  let deleteFlow: () => Promise<void>;
 
-test("user can run a flow from the canvas; every node reaches build success and output is produced",
-  { tag: ["@stable", "@release", "@workspace", "@regression"] },
-  async ({ page, request }) => {
+  test.beforeAll(async ({ browser, request }) => {
+    // Create the flow once via the API (deterministic, avoids the UI
+    // unique-name race) and open its canvas once — no per-test restart.
     const authToken = await getAuthToken(request);
-    const { flowId, deleteFlow } = await createRunnableChatFlowViaApi(request, {
+    ({ flowId, deleteFlow } = await createRunnableChatFlowViaApi(request, {
       Authorization: authToken,
+    }));
+
+    page = await browser.newPage();
+    await page.goto(`/flow/${flowId}`);
+    await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+      timeout: 30000,
     });
+  });
 
-    try {
-      await test.step("Open the created flow on the canvas", async () => {
-        await page.goto(`/flow/${flowId}`);
-        await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
-          timeout: 30000,
-        });
-      });
+  test.afterAll(async () => {
+    // Unmount the editor before deleting so its GET /flows/{id}/events poll does
+    // not 404 mid-delete (same teardown race fixed in publish-flow / triage #364).
+    await page.goto("/").catch(() => {});
+    await deleteFlow();
+    await page.close();
+  });
 
-      await test.step("Run the flow from the terminal node", async () => {
-        // Gate on the terminal node's run control being rendered before running,
-        // so runFlow does not race canvas hydration (previously masked by
-        // adjustScreenView, removed by request).
-        await expect(page.getByTestId("button_run_chat output")).toBeVisible({
-          timeout: 30000,
-        });
-        await runFlow(page, "chat output");
-        await expect(page.getByText("built successfully").last()).toBeVisible({
-          timeout: 45000,
-        });
+  test("1 - runs the flow from the canvas terminal node",
+    { tag: ["@stable", "@release", "@workspace", "@regression"] },
+    async () => {
+      // Gate on the run control being rendered so the run does not race canvas
+      // hydration.
+      await expect(page.getByTestId("button_run_chat output")).toBeVisible({
+        timeout: 30000,
       });
+      await runFlow(page, "chat output");
+      // Anchor build completion on the terminal node's persistent success badge,
+      // NOT the transient "built successfully" toast — the toast fades and flakes
+      // the wait (same fix as #506 / #507: anchor on node status, not toast). The
+      // badge renders only on a successful build, so failure semantics are kept.
+      await expect(page.getByTestId("node_duration_chat output")).toBeVisible({
+        timeout: 45000,
+      });
+    },
+  );
 
-      await test.step("Every node reached build success (duration badge)", async () => {
-        await expect(page.getByTestId("node_duration_chat input")).toBeVisible({
-          timeout: 15000,
-        });
-        await expect(
-          page.getByTestId("node_duration_chat output"),
-        ).toBeVisible({ timeout: 15000 });
+  test("2 - the flow ran correctly: every node reached build success",
+    { tag: ["@stable", "@release", "@workspace", "@regression"] },
+    async () => {
+      // A duration badge renders only when a node's build succeeded — asserting
+      // BOTH proves the whole graph built, not just the output node.
+      await expect(page.getByTestId("node_duration_chat input")).toBeVisible({
+        timeout: 15000,
       });
+      await expect(page.getByTestId("node_duration_chat output")).toBeVisible({
+        timeout: 15000,
+      });
+    },
+  );
 
-      await test.step("Output was produced (echoed input value)", async () => {
-        const text = await readChatOutputInspection(page);
-        expect(text).toContain(RUNNABLE_CHAT_FLOW_DEFAULT_INPUT);
-      });
-    } finally {
-      // Unmount the editor before deleting: it keeps a GET /flows/{id}/events
-      // subscription polling build state; deleting mid-poll yields a benign but
-      // log-dirtying 404 "Flow not found" (same teardown race fixed in
-      // publish-flow.spec.ts / triage #364).
-      await page.goto("/").catch(() => {});
-      await deleteFlow();
-    }
-  },
-);
+  test("3 - the chat input and chat output are visible in the Playground",
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@playground"] },
+    async () => {
+      await page.getByTestId("playground-btn-flow-io").click();
+      // The run from step 1 produced a session message: the User bubble is the
+      // chat input, the AI bubble is the Chat Output echo. Both embed the input
+      // value in their testid.
+      await expect(
+        page.getByTestId(`chat-message-User-${RUNNABLE_CHAT_FLOW_DEFAULT_INPUT}`),
+      ).toBeVisible({ timeout: 30000 });
+      await expect(
+        page.getByTestId(`chat-message-AI-${RUNNABLE_CHAT_FLOW_DEFAULT_INPUT}`),
+      ).toBeVisible({ timeout: 45000 });
+    },
+  );
+});

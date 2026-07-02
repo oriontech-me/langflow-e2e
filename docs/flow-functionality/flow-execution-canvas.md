@@ -36,38 +36,55 @@ No LLM / provider / API key required (ChatInput → ChatOutput echo).
 
 ## Tags *(required)*
 
-`@stable` `@release` `@workspace` `@regression`
+- Test 1 (canvas run): `@stable` `@release` `@workspace` `@regression`
+- Test 2 (Playground round-trip): `@stable` `@release` `@workspace` `@regression` `@playground`
 
-> Note: `flow-functionality` specs carry `@workspace` (cross-cutting) and no
-> functional tag — the tag taxonomy in `CLAUDE.md` has no functional tag for
-> "flow execution" (functional tags are provider/agents/mcp/playground/auth/
-> observability/files/templates/settings/ui-ux). This matches the sibling
-> `run-flow.spec.ts` (`@release @workspace @api @regression`). `@stable` is added
-> only after team validation.
+> Note: the canvas-run test carries `@workspace` (cross-cutting) with no
+> functional tag — the `CLAUDE.md` taxonomy has none for "flow execution"
+> (matches the sibling `run-flow.spec.ts`). The Playground round-trip test adds
+> the `@playground` functional tag since it exercises the Playground surface.
+> `@stable` is added only after team validation.
 
 ---
 
 ## Step by step *(required)*
 
-### Test 1 — `user can run a flow from the canvas; every node reaches build success and output is produced`
+One ChatInput → ChatOutput journey split into three sequential tests inside a
+`test.describe.configure({ mode: "serial" })` block. To avoid restarting the
+journey between tests, the flow is created **once** via the API and its canvas is
+opened **once** on a shared page (`browser.newPage()` in `beforeAll`); the three
+tests run in order on that same page.
 
-1. Create a ChatInput → ChatOutput flow via `POST /api/v1/flows/` using the
-   `chat-io-ok-trace-fixture.json` fixture (via `createRunnableChatFlowViaApi`,
-   which applies a unique name — deterministic, avoids the UI unique-name race).
-2. Navigate to `/flow/{id}` and wait for the canvas (`sidebar-search-input`).
-   No zoom/screen adjustment — the fixture's nodes render in a runnable position.
-3. Gate on the terminal node's run control (`button_run_chat output`) being
-   visible before running — a readiness wait so the run does not race canvas
-   hydration (this replaces the sync that `adjustScreenView` implicitly provided).
-4. Trigger the run from the terminal node via the reusable `runFlow(page, "chat output")`
-   helper (clicks `button_run_chat output`, expanding the node first if minimized).
-5. Assert the `built successfully` toast appears (whole-graph build completed).
-6. Assert **both** nodes reached success — each shows its duration badge
-   (`node_duration_chat input`, `node_duration_chat output`) after the run
-   (confirmed live in the running nightly).
-7. Open the Chat Output inspection (`output-inspection-output message-chatoutput`)
-   and assert the echoed input value (`Hello`) is present.
-8. `finally`: `DELETE /api/v1/flows/{id}`.
+**`beforeAll`** — create the ChatInput → ChatOutput flow via `POST /api/v1/flows/`
+(`createRunnableChatFlowViaApi`, unique name; deterministic, avoids the UI
+unique-name race), open `/flow/{id}`, wait for the canvas (`sidebar-search-input`).
+No zoom/screen adjustment — the fixture's nodes render in a runnable position.
+
+**Test 1 — `1 - runs the flow from the canvas terminal node`**
+1. Gate on the terminal node's run control (`button_run_chat output`) being
+   visible — a readiness wait so the run does not race canvas hydration.
+2. Trigger the run via `runFlow(page, "chat output")` (Langflow 1.11 has no
+   global run button; running a terminal node builds the whole upstream graph).
+3. Assert the terminal node's persistent success badge `node_duration_chat output`
+   is visible — build completed. **Not** the transient `built successfully` toast,
+   which fades and flakes the wait (same anchor-on-node-status fix as #506 / #507).
+
+**Test 2 — `2 - the flow ran correctly: every node reached build success`**
+1. Assert **both** duration badges — `node_duration_chat input` and
+   `node_duration_chat output` — are visible. A badge renders only on a node's
+   successful build, so both present proves the whole graph built, not just the
+   output node.
+
+**Test 3 — `3 - the chat input and chat output are visible in the Playground`** (`@playground`)
+1. Open the Playground via `playground-btn-flow-io`.
+2. **Verify the chat input:** assert the user bubble
+   `chat-message-User-Hello` is visible (step 1's run produced the session message).
+3. **Verify the chat output:** assert the AI bubble `chat-message-AI-Hello` is
+   visible — the Chat Output echo (confirmed live: a canvas run's output shows in
+   the Playground of the same flow).
+
+**`afterAll`** — navigate to `/` (unmount editor), `DELETE /api/v1/flows/{id}`,
+close the shared page.
 
 ---
 
@@ -109,7 +126,6 @@ The spec must:
   `chat-input-output-component-regression.spec.ts`.
 - Stopping/pausing a run — covered by `flow-functionality/stop-building.spec.ts`
   and `core-functionality/playground/stop-button-playground.spec.ts`.
-- Running via the Playground send action — exercised by playground specs.
 - Running flows that require an LLM/provider — this is the deterministic,
   provider-free baseline.
 - The RunFlow component (running one flow from another) — `run-flow.spec.ts`.
