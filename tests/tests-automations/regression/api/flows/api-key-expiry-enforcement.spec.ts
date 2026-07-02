@@ -1,5 +1,9 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  SUPERUSER_PASSWORD,
+  SUPERUSER_USERNAME,
+} from "../../../../helpers/auth/credentials";
 
 /**
  * Companion to the PR #13471 timezone-display regression: that fix proved the
@@ -24,8 +28,8 @@ async function resolveBearer(request: APIRequestContext): Promise<string> {
     if (body?.access_token) return `Bearer ${body.access_token}`;
   }
   const form = new URLSearchParams();
-  form.append("username", process.env.LF_TEST_USERNAME ?? "langflow");
-  form.append("password", process.env.LF_TEST_PASSWORD ?? "langflow");
+  form.append("username", SUPERUSER_USERNAME);
+  form.append("password", SUPERUSER_PASSWORD);
   const res = await request.post("/api/v1/login", {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     data: form.toString(),

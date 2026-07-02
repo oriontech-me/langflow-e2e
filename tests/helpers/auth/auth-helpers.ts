@@ -1,9 +1,10 @@
 import { expect } from "../../fixtures/fixtures";
+import { SUPERUSER_PASSWORD, SUPERUSER_USERNAME } from "./credentials";
 
 export async function getAuthToken(request: any) {
   const formData = new URLSearchParams();
-  formData.append("username", "langflow");
-  formData.append("password", "langflow");
+  formData.append("username", SUPERUSER_USERNAME);
+  formData.append("password", SUPERUSER_PASSWORD);
 
   const loginResponse = await request.post("/api/v1/login", {
     headers: {

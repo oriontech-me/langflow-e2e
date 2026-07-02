@@ -1,4 +1,8 @@
 import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  SUPERUSER_PASSWORD,
+  SUPERUSER_USERNAME,
+} from "../../../../helpers/auth/credentials";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 
@@ -43,8 +47,8 @@ test(
 
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    await page.getByPlaceholder("Username").fill("langflow");
-    await page.getByPlaceholder("Password").fill("langflow");
+    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
+    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
 
     await page.evaluate(() => {
       sessionStorage.removeItem("testMockAutoLogin");
@@ -244,8 +248,8 @@ test(
 
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    await page.getByPlaceholder("Username").fill("langflow");
-    await page.getByPlaceholder("Password").fill("langflow");
+    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
+    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
 
     await page.evaluate(() => {
       sessionStorage.removeItem("testMockAutoLogin");

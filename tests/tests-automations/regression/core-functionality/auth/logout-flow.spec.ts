@@ -1,4 +1,8 @@
 import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  SUPERUSER_PASSWORD,
+  SUPERUSER_USERNAME,
+} from "../../../../helpers/auth/credentials";
 
 function setupAutoLoginMock(page: any) {
   return Promise.all([
@@ -26,7 +30,7 @@ function setupAutoLoginMock(page: any) {
 
 test(
   "logout must redirect user to login page",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@release", "@api", "@regression", "@auth", "@stable"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
@@ -34,8 +38,8 @@ test(
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
     // Login with valid credentials
-    await page.getByPlaceholder("Username").fill("langflow");
-    await page.getByPlaceholder("Password").fill("langflow");
+    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
+    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
 
     await page.evaluate(() => {
       sessionStorage.removeItem("testMockAutoLogin");
@@ -77,15 +81,15 @@ test(
 
 test(
   "after logout, navigating to root must redirect to login",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@release", "@api", "@regression", "@auth", "@stable"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
     await page.goto("/");
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    await page.getByPlaceholder("Username").fill("langflow");
-    await page.getByPlaceholder("Password").fill("langflow");
+    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
+    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
 
     await page.evaluate(() => {
       sessionStorage.removeItem("testMockAutoLogin");
@@ -121,15 +125,15 @@ test(
 
 test(
   "after logout, reload must stay on login page",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@release", "@api", "@regression", "@auth", "@stable"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
     await page.goto("/");
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    await page.getByPlaceholder("Username").fill("langflow");
-    await page.getByPlaceholder("Password").fill("langflow");
+    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
+    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
 
     await page.evaluate(() => {
       sessionStorage.removeItem("testMockAutoLogin");

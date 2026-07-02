@@ -1,4 +1,8 @@
 import type { Page } from "@playwright/test";
+import {
+  SUPERUSER_PASSWORD,
+  SUPERUSER_USERNAME,
+} from "../helpers/auth/credentials";
 import { BasePage } from "./BasePage";
 
 export class LoginPage extends BasePage {
@@ -6,7 +10,10 @@ export class LoginPage extends BasePage {
     super(page);
   }
 
-  async login(username: string = "langflow", password: string = "langflow") {
+  async login(
+    username: string = SUPERUSER_USERNAME,
+    password: string = SUPERUSER_PASSWORD,
+  ) {
     await this.page.goto("/");
     await this.page.getByPlaceholder("Username").fill(username);
     await this.page.getByPlaceholder("Password").fill(password);

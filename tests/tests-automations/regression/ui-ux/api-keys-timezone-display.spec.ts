@@ -1,5 +1,9 @@
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
+import {
+  SUPERUSER_PASSWORD,
+  SUPERUSER_USERNAME,
+} from "../../../helpers/auth/credentials";
 
 /**
  * Regression for PR #13471 — "Fix timestamp rendering for expires_at in API Key model".
@@ -30,8 +34,8 @@ const EXPIRES_AT_LOCAL_SAO_PAULO = "2026-06-10 20:59:59"; // 23:59:59 UTC − 03
 const UI_TIMEZONE = "America/Sao_Paulo";
 
 // Resolve an auth token across environments: auto_login when enabled, otherwise a
-// form login. Credentials come from env (LF_TEST_USERNAME / LF_TEST_PASSWORD) so the
-// spec is portable between the auto_login CI image and a superuser dev instance.
+// form login. Credentials come from the shared credentials module (env-driven) so
+// the spec is portable between the auto_login CI image and a superuser dev instance.
 async function resolveBearer(request: APIRequestContext): Promise<string> {
   const auto = await request.get("/api/v1/auto_login");
   if (auto.ok()) {
@@ -39,8 +43,8 @@ async function resolveBearer(request: APIRequestContext): Promise<string> {
     if (body?.access_token) return `Bearer ${body.access_token}`;
   }
   const form = new URLSearchParams();
-  form.append("username", process.env.LF_TEST_USERNAME ?? "langflow");
-  form.append("password", process.env.LF_TEST_PASSWORD ?? "langflow");
+  form.append("username", SUPERUSER_USERNAME);
+  form.append("password", SUPERUSER_PASSWORD);
   const res = await request.post("/api/v1/login", {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     data: form.toString(),
@@ -63,11 +67,11 @@ async function ensureLoggedInUI(page: Page): Promise<void> {
   });
 
   if ((await usernameField.count()) > 0) {
-    await usernameField.fill(process.env.LF_TEST_USERNAME ?? "langflow");
+    await usernameField.fill(SUPERUSER_USERNAME);
     await page
       .locator('input[type="password"]')
       .first()
-      .fill(process.env.LF_TEST_PASSWORD ?? "langflow");
+      .fill(SUPERUSER_PASSWORD);
     await page.getByRole("button", { name: /Sign In|Conectar/i }).click();
   }
   await expect(mainTitle).toBeVisible({ timeout: 30000 });

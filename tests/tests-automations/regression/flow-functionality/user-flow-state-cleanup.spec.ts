@@ -1,4 +1,8 @@
 import { expect, test } from "../../../fixtures/fixtures";
+import {
+  SUPERUSER_PASSWORD,
+  SUPERUSER_USERNAME,
+} from "../../../helpers/auth/credentials";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
 
 test(
@@ -39,8 +43,8 @@ test(
     // Log in as admin and create test user
     await page.goto("/");
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
-    await page.getByPlaceholder("Username").fill("langflow");
-    await page.getByPlaceholder("Password").fill("langflow");
+    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
+    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
     await page.evaluate(() => {
       sessionStorage.removeItem("testMockAutoLogin");
     });
@@ -132,8 +136,8 @@ test(
 
     // Log in as admin again
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
-    await page.getByPlaceholder("Username").fill("langflow");
-    await page.getByPlaceholder("Password").fill("langflow");
+    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
+    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
     await page.evaluate(() => {
       sessionStorage.removeItem("testMockAutoLogin");
     });

@@ -75,7 +75,7 @@ jobs:
         env:
           LANGFLOW_AUTO_LOGIN: "true"
           LANGFLOW_SUPERUSER: langflow
-          LANGFLOW_SUPERUSER_PASSWORD: langflow
+          LANGFLOW_SUPERUSER_PASSWORD: langflow123
           # Keep tracing ON: the observability/traces specs probe
           # /api/v1/monitor/traces, populated by the internal native tracer whose
           # worker never starts when tracing is deactivated — disabling it makes
