@@ -22,7 +22,7 @@ fi
 echo "Starting Langflow on port ${PORT}..."
 LANGFLOW_AUTO_LOGIN=true \
 LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
-LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow}" \
+LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
 LANGFLOW_DEACTIVATE_TRACING=true \
   langflow run --host 0.0.0.0 --port "${PORT}" --no-open-browser &
 echo $! > "${PID_FILE}"

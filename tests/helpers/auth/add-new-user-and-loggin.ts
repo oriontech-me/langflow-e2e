@@ -1,5 +1,6 @@
 import { type Page } from "@playwright/test";
 import { expect } from "../../fixtures/fixtures";
+import { SUPERUSER_PASSWORD, SUPERUSER_USERNAME } from "./credentials";
 
 export const addNewUserAndLogin = async (page: Page) => {
   await page.route("**/api/v1/auto_login", (route) => {
@@ -33,8 +34,8 @@ export const addNewUserAndLogin = async (page: Page) => {
 
   await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-  await page.getByPlaceholder("Username").fill("langflow");
-  await page.getByPlaceholder("Password").fill("langflow");
+  await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
+  await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
 
   await page.evaluate(() => {
     sessionStorage.removeItem("testMockAutoLogin");

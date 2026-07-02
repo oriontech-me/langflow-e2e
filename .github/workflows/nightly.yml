@@ -30,7 +30,7 @@ jobs:
         env:
           LANGFLOW_AUTO_LOGIN: "true"
           LANGFLOW_SUPERUSER: langflow
-          LANGFLOW_SUPERUSER_PASSWORD: langflow
+          LANGFLOW_SUPERUSER_PASSWORD: langflow123
           LANGFLOW_DEACTIVATE_TRACING: "true"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
