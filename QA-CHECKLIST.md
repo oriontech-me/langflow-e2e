@@ -60,7 +60,7 @@
 - [ ] Configure an MCP
 - [ ] Configure a Custom Component
 - [ ] Delete a component
-- [ ] Run a flow
+- [x] Run a flow → `helpers/flows/run-flow.ts`
 - [ ] Pause a flow
 - [ ] Send a chat input
 - [ ] Verify the chat output
@@ -630,7 +630,8 @@
 
 #### 12.6 Flow Execution
 - [x] Run Flow component executes another flow → `flow-functionality/run-flow.spec.ts`
-- [-] Stop building flow → `core/features/stop-building.spec.ts`
+- [x] Run a flow from the canvas — terminal-node run builds the whole graph; all nodes reach build success and output is produced → `flow-functionality/flow-execution-canvas.spec.ts`
+- [-] Stop building flow → `flow-functionality/stop-building.spec.ts`
 - [!] Playground button disabled with empty flow — needs review → `regression/flow-functionality/generalBugs-shard-3.spec.ts` (**test skipped: assertion was a no-op, current Langflow behavior to confirm**)
 
 ---
@@ -761,12 +762,12 @@
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 27 | 12 | 13 | 2 | 0 |
+| `flow-functionality/` | 28 | 13 | 13 | 2 | 0 |
 | `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **450** | **223 (50%)** | **171 (38%)** | **7 (2%)** | **49 (11%)** |
+| **TOTAL** | **451** | **224 (50%)** | **171 (38%)** | **7 (2%)** | **49 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -782,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 230 `test()` calls carrying the `@stable` tag, distributed across 80 spec
+> 231 `test()` calls carrying the `@stable` tag, distributed across 81 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1015,6 +1016,7 @@
 - [x] export flow to JSON triggers success toast and produces a valid file → `export-import-flow.spec.ts`
 - [x] imported JSON flow must load all components on canvas → `export-import-flow.spec.ts`
 - [x] import flow from JSON via upload button must load flow on canvas → `export-import-flow.spec.ts`
+- [x] user can run a flow from the canvas; every node reaches build success and output is produced → `flow-execution-canvas.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
