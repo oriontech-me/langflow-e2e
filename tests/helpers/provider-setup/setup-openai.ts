@@ -99,19 +99,28 @@ export async function setupOpenAI(
     const options = page.locator('[data-testid$="-option"]');
     await options.first().waitFor({ state: "visible", timeout: 10000 });
     const count = await options.count();
+    // Lower-case each label so matching is case-insensitive: textContent may
+    // carry display casing (e.g. "GPT-4o Mini") that plain includes() would miss.
     const labels: string[] = [];
     for (let i = 0; i < count; i++) {
-      labels.push(((await options.nth(i).textContent()) ?? "").trim());
+      labels.push(((await options.nth(i).textContent()) ?? "").trim().toLowerCase());
     }
 
-    // Ordered most- to least-preferred. All target small multimodal chat models
-    // and exclude search-preview / nano variants; anything not matched (pro,
-    // reasoning, codex) is only reached via the first-available fallback.
+    // Reject families that are NOT general-purpose vision chat models: reasoning
+    // (o1/o3/o4…), audio/realtime/tts/transcribe, search-preview and nano
+    // variants. Substring "gpt-4o-mini" alone would otherwise match e.g.
+    // "gpt-4o-mini-tts" or rank a text-only "o3-mini" as a fallback, breaking
+    // callers like the agent image test that need real vision output.
+    const nonChat = /\bo\d|audio|realtime|tts|transcribe|search|nano/;
+
+    // Ordered most- to least-preferred. All target small multimodal chat models;
+    // anything not matched (pro, reasoning, codex) is only reached via the
+    // first-available fallback.
     const preferences: Array<(m: string) => boolean> = [
-      (m) => m.includes("gpt-4o-mini") && !m.includes("search"),
-      (m) => m.includes("-mini") && !m.includes("nano") && !m.includes("search"),
-      (m) => m.includes("gpt-4o") && !m.includes("search"),
-      (m) => m.includes("gpt-4.1") && !m.includes("search"),
+      (m) => m.includes("gpt-4o-mini") && !nonChat.test(m),
+      (m) => m.includes("-mini") && !nonChat.test(m),
+      (m) => m.includes("gpt-4o") && !nonChat.test(m),
+      (m) => m.includes("gpt-4.1") && !nonChat.test(m),
     ];
 
     let chosenIndex = -1;
