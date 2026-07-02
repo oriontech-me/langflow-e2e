@@ -88,7 +88,42 @@ export async function setupOpenAI(
     }
     await modelOption.click();
   } else {
-    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().waitFor({ state: "visible", timeout: 10000 });
-    await page.locator('[data-testid$="-option"]', { hasText: "gpt-4o-mini" }).first().click();
+    // No explicit model requested — pick a fast, general-purpose model from the
+    // enabled dropdown. Hardcoding a single name (previously "gpt-4o-mini")
+    // breaks whenever that model leaves the lineup on gpt-5.x nightlies. Instead
+    // we rank the available options by a preference list and only fall back to
+    // the first available if none match. This keeps the default cheap and
+    // vision-capable — callers like the agent image test rely on that — while
+    // surviving model-family churn and skipping the slow/expensive
+    // "pro"/reasoning models that tend to top the dropdown.
+    const options = page.locator('[data-testid$="-option"]');
+    await options.first().waitFor({ state: "visible", timeout: 10000 });
+    const count = await options.count();
+    const labels: string[] = [];
+    for (let i = 0; i < count; i++) {
+      labels.push(((await options.nth(i).textContent()) ?? "").trim());
+    }
+
+    // Ordered most- to least-preferred. All target small multimodal chat models
+    // and exclude search-preview / nano variants; anything not matched (pro,
+    // reasoning, codex) is only reached via the first-available fallback.
+    const preferences: Array<(m: string) => boolean> = [
+      (m) => m.includes("gpt-4o-mini") && !m.includes("search"),
+      (m) => m.includes("-mini") && !m.includes("nano") && !m.includes("search"),
+      (m) => m.includes("gpt-4o") && !m.includes("search"),
+      (m) => m.includes("gpt-4.1") && !m.includes("search"),
+    ];
+
+    let chosenIndex = -1;
+    for (const matches of preferences) {
+      const idx = labels.findIndex(matches);
+      if (idx !== -1) {
+        chosenIndex = idx;
+        break;
+      }
+    }
+    if (chosenIndex === -1) chosenIndex = 0; // no preferred match — first available
+
+    await options.nth(chosenIndex).click();
   }
 }
