@@ -782,7 +782,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 227 `test()` calls carrying the `@stable` tag, distributed across 79 spec
+> 230 `test()` calls carrying the `@stable` tag, distributed across 80 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -921,6 +921,11 @@
 - [x] Webhook component — valid JSON payload is propagated as structured Data output → `webhook-component-regression.spec.ts`
 - [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
+
+#### core-functionality/auth/
+- [x] logout must redirect user to login page → `logout-flow.spec.ts`
+- [x] after logout, navigating to root must redirect to login → `logout-flow.spec.ts`
+- [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
 
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
