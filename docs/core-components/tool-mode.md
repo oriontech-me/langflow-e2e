@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/tool-mode.spec.ts`
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -38,10 +38,10 @@ For the Custom Component branch the test asserts that `tool_name` is present but
 6. Open the **Models & Agents** sidebar disclosure and drag an **Agent** component onto the canvas.
 7. Connect the URL component's `handle-urlcomponent-shownode-toolset-right` to the Agent's `handle-agent-shownode-tools-left`.
 8. Assert that at least one `.react-flow__edge` exists.
-9. Run the URL component (`button_run_url`) and wait for the `built successfully` notification.
+9. Run the URL component (`button_run_url`) and wait for the URL node's success duration badge (`node_duration_url`) to appear.
 10. Open `output-inspection-toolset-urlcomponent` and assert that `tool_name`, `tool_description`, and `tool_tags` test IDs are all present.
 11. Add a **Custom Component** from the sidebar and click `tool-mode-button` on it.
-12. Wait for `output-inspection-toolset-customcomponent` to appear, then run the Custom Component (`button_run_custom component`) and wait for `built successfully`.
+12. Wait for `output-inspection-toolset-customcomponent` to appear, then run the Custom Component (`button_run_custom component`) and wait for its success duration badge (`node_duration_custom component`).
 13. Open the Custom Component toolset inspector and assert that `tool_name` is present while `tool_description` and `tool_tags` are absent.
 
 ---
@@ -54,7 +54,7 @@ For the Custom Component branch the test asserts that `tool_name` is present but
 | After second `Ctrl+Shift+M` | `text=toolset` is hidden (`count === 0`) |
 | After 7 alternations on `tool-mode-button` | Toggle remains deterministic (no stuck visible/hidden state); final state is visible |
 | After connecting URL `toolset → tools` | At least one `.react-flow__edge` exists |
-| After running URL component | `text=built successfully` is shown |
+| After running URL component | `node_duration_url` success badge is visible |
 | After opening URL toolset inspection | `tool_name`, `tool_description`, `tool_tags` test IDs are present |
 | After adding Custom Component + Tool Mode | `output-inspection-toolset-customcomponent` is visible |
 | After running Custom Component | `tool_name` is present; `tool_description` and `tool_tags` are absent |
@@ -92,3 +92,4 @@ For the Custom Component branch the test asserts that `tool_name` is present but
 - Validated across 5 deterministic runs (~17–21s each) on Langflow 1.10.0 with zero backend errors and zero flow errors.
 - Force-fail probe on the first `toolset` count assertion confirms the test catches real regressions (no false positive masking).
 - The repeated 7-click sequence in the middle of the test is intentional: it stresses the toggle path that historically raced when keyboard and button events overlapped.
+- Build completion after each `button_run_*` is anchored on the node's success duration badge (`node_duration_url`, `node_duration_custom component`), not the transient `built successfully` toast. The toast fades and caused the test to flake for three consecutive runs (issue #464); the badge is a persistent success indicator (it only renders when the node's build succeeded), so it removes the race without changing what the test validates.
