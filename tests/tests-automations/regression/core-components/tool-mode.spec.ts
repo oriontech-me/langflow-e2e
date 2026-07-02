@@ -139,7 +139,9 @@ test(
     expect(await page.locator(".react-flow__edge").count()).toBeGreaterThan(0);
 
     await page.getByTestId("button_run_url").click();
-    await page.waitForSelector("text=built successfully", { timeout: 30000 });
+    await expect(page.getByTestId("node_duration_url")).toBeVisible({
+      timeout: 30000,
+    });
 
     await page.getByTestId("output-inspection-toolset-urlcomponent").click();
 
@@ -169,7 +171,9 @@ test(
 
     await page.getByTestId("button_run_custom component").click();
 
-    await page.waitForSelector("text=built successfully", { timeout: 30000 });
+    await expect(
+      page.getByTestId("node_duration_custom component"),
+    ).toBeVisible({ timeout: 30000 });
 
     await page
       .getByTestId("output-inspection-toolset-customcomponent")
