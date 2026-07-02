@@ -22,7 +22,8 @@ the app).
 
 The suite forces a manual-login environment by mocking `/api/v1/auto_login`
 (→ 500) so the login form is shown even when the instance runs with
-`AUTO_LOGIN=true`. It then signs in with the configured superuser credentials.
+`LANGFLOW_AUTO_LOGIN=true`. It then signs in with the configured superuser
+credentials.
 
 ---
 
@@ -82,7 +83,7 @@ The suite forces a manual-login environment by mocking `/api/v1/auto_login`
 
 - **Legacy default password (issue #510).** Since nightly `1.11.0.dev29`, a
   superuser password equal to the legacy default `langflow` is rejected under
-  `AUTO_LOGIN=true` (a random bootstrap password is generated instead, so a
+  `LANGFLOW_AUTO_LOGIN=true` (a random bootstrap password is generated instead, so a
   manual Sign In returns `401`). This produced the daily hard failure tracked in
   #477: the manual Sign In never authenticated, so `mainpage_title` never mounted
   and the test timed out after 30s — a login rejection, not a slow first paint.

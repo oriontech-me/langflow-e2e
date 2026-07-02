@@ -26,7 +26,7 @@ Copy `.env.example` to `.env` and configure:
 ```
 PLAYWRIGHT_BASE_URL=http://localhost:7860/
 LANGFLOW_SUPERUSER=langflow
-LANGFLOW_SUPERUSER_PASSWORD=langflow
+LANGFLOW_SUPERUSER_PASSWORD=langflow123
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 ```
