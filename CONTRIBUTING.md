@@ -510,14 +510,14 @@ State persistence requires the secret `GH_PAT_VARIABLES` (a PAT with `Variables:
 
 ### What it is
 
-`@stable` identifies tests that have been reviewed by the team and confirmed as correct and reliable. Only these tests run in the weekly workflow (`weekly-stable.yml`). A failure in this workflow automatically opens an issue for triage.
+`@stable` identifies tests that have been reviewed by the team and confirmed as correct and reliable. Only these tests run in the stable workflow (`daily-stable.yml`, every weekday; `weekly-stable.yml` is a disabled fallback). A hard failure there **automatically removes `@stable`** from the offending test and opens an issue for triage — restoring the tag is the only human-gated step (see lifecycle below).
 
 ### Standard: every new test enters with @stable
 
 `@stable` is the default for any new test. The test **enters with the tag in the PR itself**, together with the documentation file in `docs/` (see step 7 of the guide above). The reviewer, upon approving the merge, is confirming that:
 
 1. The test passed all 5 steps of the validation guide (trace, forced failure, debug, no backend errors, checklist)
-2. The validated behavior is real and relevant for weekly monitoring
+2. The validated behavior is real and relevant for daily monitoring
 3. The documentation file in `docs/` is present with the mandatory sections filled in
 
 If any of these points is absent or incomplete, the reviewer must **request changes** before approving.
@@ -534,36 +534,47 @@ Three cases where the tag is intentionally absent:
 
 1. **Inherited tests not yet reviewed** — they exist in the repository but have not yet gone through the validation and documentation process.
 2. **Tests temporarily removed while failing** — the tag was removed while the test awaits correction (see lifecycle below).
-3. **Utility specs** — scripts that collect data or configure infrastructure rather than asserting product behavior (e.g. `collect-models.spec.ts`). These are not regression tests and must never enter the weekly workflow.
+3. **Utility specs** — scripts that collect data or configure infrastructure rather than asserting product behavior (e.g. `collect-models.spec.ts`). These are not regression tests and must never enter the stable workflow.
 
 **When `@stable` is permanently absent** (case 3): state the reason in the spec doc's **Tags** section so it is visible without reading PR history.
 
-**When `@stable` is temporarily absent** (cases 1 and 2): no spec doc update is required — the absence is tracked via the GitHub issue and the PR that removed the tag.
+**When `@stable` is temporarily absent** (cases 1 and 2): no spec doc update is required — the absence is tracked via the GitHub issue and the commit that removed the tag (auto-removed by the workflow on a hard failure, or a manual PR for inherited tests).
 
-### @stable lifecycle when a weekly failure occurs
+### @stable lifecycle: from the triage issue to restoration
+
+On a red scheduled `daily-stable.yml` run, the workflow does two things **automatically**:
+
+1. Removes `@stable` from **every hard failure** (a test that failed all retries), regenerates `QA-CHECKLIST.md`, and commits it to `main` with `[skip ci]` — no PR, no approval. If the mass-failure guard trips (too many at once → treated as infra), nothing is removed.
+2. Opens a single **triage issue** for the run, listing what was removed.
+
+The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. The analyst fans it out into one **dedicated issue per problem**; each tag is restored, per problem, once resolved. The human steps are the fan-out, the manual removal for recurrent flakes, and the restoration.
 
 ```
-@stable present
+daily-stable.yml run goes red
       │
-      │  weekly-stable.yml opens a failure issue
+      │  AUTOMATIC:
+      │   • @stable removed from each hard failure + committed to main [skip ci]
+      │     (unless the mass-failure guard trips → nothing removed)
+      │   • one TRIAGE ISSUE opened for the run, listing what was removed
       ▼
-Evaluate: did the product break, or is the test wrong?
+Analyst works the triage issue (dispatcher):
       │
-      ├─► Product broke (test is correct)
-      │       Flag the issue to the product team.
-      │       Monitor upstream. The tag remains.
+      ├─► per HARD FAILURE  (tag already auto-removed)
+      │        → open a DEDICATED issue, classify (criteria table below),
+      │          then fix the test or flag the regression upstream
       │
-      └─► Test is wrong or behavior changed
-              │
-              ▼
-          @stable removed  ◄── PR references the issue; tag removed; test exits weekly workflow
-              │
-              │  Test is corrected and re-validated (5-step guide)
-              ▼
-          @stable restored  ◄── Same correction PR restores the tag; issue is closed
+      └─► per RECURRENT FLAKE  (same test flaky in 2 consecutive dailies,
+      │        confirmed in reports/daily-history.jsonl)
+      │        → open a DEDICATED issue AND remove @stable via PR (manual)
+      ▼
+Problem resolved → @stable RESTORED via PR; the dedicated issue is closed
 ```
 
-**Criteria for deciding "product broke" vs "test wrong":**
+> **Mass-failure guard.** The threshold is the `max_auto_remove` input of the `auto-remove-stable` action (default `5`). Above it, the workflow assumes an environment-wide failure and removes nothing, so a bad infra day cannot strip `@stable` off the whole suite. When it trips, the triage issue says so and the tags are still in place — investigate the environment; there is nothing to restore.
+
+> **Trade-off.** Auto-removal does not distinguish a product regression from a test bug before removing — a hard failure quarantines the test either way, and the classification happens afterwards on the dedicated issue. Accepted trade-off: a genuine regression stops being tracked by the stable suite until a human restores the tag, but the daily stops going red immediately.
+
+**Criteria for deciding "product broke" vs "test wrong" (for hard failures):**
 
 | Observation | Classification |
 |---|---|
@@ -572,44 +583,42 @@ Evaluate: did the product break, or is the test wrong?
 | Assertion fails but the UI works correctly in manual testing | Test wrong — fix assertion logic |
 | Assertion fails and manual testing confirms the same failure | Product broke — flag upstream |
 
-**Step 1 — Analyst (upon receiving the workflow issue):**
-1. Identify the failing test and classify the failure using the table above
-2. Open a PR removing the `@stable` tag from the test; reference the issue in the PR body
-3. After merge, the test immediately stops running in the weekly workflow
-4. Update the issue with the classification and the name of the test that needs correction
+**Step 1 — Analyst (working the triage issue):**
+1. **Hard failures** — the tag is already auto-removed. For each one, open a **dedicated issue**, classify it with the table above, and either fix the test or flag the regression upstream.
+2. **Flakes** — check `reports/daily-history.jsonl`. If the same test is flaky in **2 consecutive dailies**, open a **dedicated issue** and remove `@stable` from it via PR (flake removal is manual — the workflow never auto-removes flakes). A first-time flake is only noted; the retry budget absorbs single-run noise.
+3. **Mass-failure guard tripped** — nothing was removed; investigate the environment first. The tags are still in place, so no restoration is owed.
+4. Once every problem is dispatched into its dedicated issue, the triage issue can be closed.
 
-**Step 2 — Dev (upon fixing the test):**
-1. Fix the test following the validation guide (all 5 steps)
-2. Restore the `@stable` tag in the same correction PR
-3. Reference the issue in the PR body; close the issue upon merge
+**Step 2 — Restoration (upon fixing the problem):**
+1. Fix the test following the validation guide (all 5 steps), or confirm the Langflow regression is resolved.
+2. **Re-add the `@stable` tag** in the correction PR — restoration is always manual, for both hard failures and flakes.
+3. Reference the dedicated issue in the PR body; close it upon merge.
 
-The spec doc is **not updated** during this cycle — the issue and the two PRs are the traceability record.
+The spec doc is **not updated** during this cycle — the auto-removal commit, the dedicated issue, and the restoration PR are the traceability record.
 
 ### Monitoring rules driven by run history
 
-Triage decisions should be informed by `reports/weekly-history.jsonl` rather than by gut feel — the file makes recurrence visible. Before deciding whether to act on a failure, check the last 4 weekly entries for the same test:
+Hard failures are now handled automatically (removed on the first red day — see the lifecycle above), so these history-driven rules are mostly about **flakes**, which are never auto-removed. Triage decisions should be informed by `reports/daily-history.jsonl` rather than by gut feel — the file makes recurrence visible. Before deciding whether to act on a flake, check the last few daily entries for the same test:
 
 ```bash
 jq -r --arg t "<full test title>" \
   '. as $row | (.failures + .flaky)[] | select(.test == $t) | "\($row.date)  \($row.workflow)  \(.error_signature // "flaky")"' \
-  reports/weekly-history.jsonl | tail -4
+  reports/daily-history.jsonl | tail -4
 ```
 
-The action depends on **what kind** of failure recurred and **how many** consecutive weekly runs it appeared in:
+The action depends on **what kind** of failure recurred and **how many** consecutive daily runs it appeared in:
 
-| Symptom in the latest weekly run | History context | Action |
+| Symptom in the latest daily run | History context | Action |
 |---|---|---|
-| Hard failure (all retries failed) | First occurrence | Open a fix issue. Remove `@stable` only if the root cause is upstream and won't be fixed before the next weekly. |
-| Hard failure | 2nd consecutive | Remove `@stable` in a PR that references the existing issue. Re-add when fixed. |
-| Flake (passed on retry) | First occurrence | Note in the triage; **do not** open an issue yet. The retry budget exists to absorb single-run noise. |
-| Flake | 2nd consecutive | Open a dedicated issue with `bug` + `area:<...>` labels. Cite both run ids. Do not remove `@stable` yet. |
-| Flake | 3rd consecutive | Remove `@stable` in a PR that references the issue from the previous step. The test is no longer stable enough for weekly. |
-| Mix (failed one week, flaky the next) | 2+ weeks | Treat as the "Flake 2nd consecutive" row above — open the issue; the alternation between hard fail and flake is itself a signal worth tracking. |
+| Hard failure (all retries failed) | any | `@stable` was already auto-removed (or the mass-failure guard tripped and left it in place). No manual removal — classify on the issue and restore the tag when the test is fixed. |
+| Flake (passed on retry) | First occurrence | Note in the triage; **do not** open an issue yet. The retry budget absorbs single-run noise. |
+| Flake (recurrent) | 2nd consecutive daily | Open a **dedicated issue** (`bug` + `area:<...>`, cite both run ids) **and remove `@stable` via PR**. Flake removal is manual — the workflow never auto-removes flakes. Restore the tag once the flakiness is fixed. |
+| Mix (hard-failed one day, flaky later) | 2+ days | The hard-fail day already auto-removed `@stable`; once restored, apply the flake rows above if the flakiness persists. |
 
-**Examples from issue #206 (2026-05-11):**
+**Historical examples (issue #206, 2026-05-11) — these predate auto-removal; the hard-fail removal below is now automatic, the flake handling still applies:**
 
 - `Webhook component — flow is saved to database…` (line 60) — Hard fail, 2nd consecutive (first in 25441253323). → `@stable` removed in this PR; #180 remains open until upstream fixes the bundle.
-- `Memory Chatbot Regression › message history retains context within same session` (line 78) — Flake, first occurrence. → No action yet; if it flakes again in the next weekly, open an issue.
+- `Memory Chatbot Regression › message history retains context within same session` (line 78) — Flake, first occurrence. → No action yet; if it flakes again in the next daily, open an issue.
 - `Playground Message Edit — hover reveals edit button…` (line 98) — Flake, first occurrence. → Same: monitor; act only on the second occurrence.
 
 **Why "consecutive" and not "in the last N runs":**

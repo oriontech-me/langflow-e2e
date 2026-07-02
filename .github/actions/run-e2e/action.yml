@@ -1,0 +1,61 @@
+name: "Run E2E tests"
+description: >-
+  Run the Playwright suite (optionally filtered by tag and/or name regex),
+  produce a navigable HTML report, and upload it as an artifact. Shared by the
+  two manual.yml jobs (Docker service vs. external URL) so the run/upload logic
+  lives in one place. Assumes checkout + npm ci + Playwright browser install
+  already ran in the calling job.
+
+inputs:
+  base_url:
+    description: "PLAYWRIGHT_BASE_URL for the run (Docker service or external URL)."
+    required: true
+  test_tag:
+    description: "Playwright tag to run (e.g. @stable, @release, @api). Empty = all tags."
+    required: false
+    default: ""
+  test_grep:
+    description: "Additional name/regex filter, ANDed with test_tag when both are set. Empty = no name filter."
+    required: false
+    default: ""
+  openai_api_key:
+    description: "OpenAI key for model-dependent specs (agents, playground). Optional."
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Run tests
+      shell: bash
+      env:
+        CI: "true"
+        PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+        # Inputs are passed through env (never interpolated into the script body)
+        # so a value like "; rm -rf" cannot break out of the string — the shell
+        # only ever sees them as variable contents.
+        TEST_TAG: ${{ inputs.test_tag }}
+        TEST_GREP: ${{ inputs.test_grep }}
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+      run: |
+        # Build the arg list as an array (no eval) so quoting is safe. Playwright
+        # only honors one --grep, so to run "tag AND name" we combine them into a
+        # single lookahead regex; a single filter is passed verbatim.
+        ARGS=(--pass-with-no-tests --reporter=html,github)
+        if [ -n "$TEST_TAG" ] && [ -n "$TEST_GREP" ]; then
+          ARGS+=(--grep "(?=.*${TEST_TAG})(?=.*${TEST_GREP})")
+        elif [ -n "$TEST_TAG" ]; then
+          ARGS+=(--grep "$TEST_TAG")
+        elif [ -n "$TEST_GREP" ]; then
+          ARGS+=(--grep "$TEST_GREP")
+        fi
+        echo "Running: npx playwright test ${ARGS[*]}"
+        npx playwright test "${ARGS[@]}"
+
+    - name: Upload Playwright report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: playwright-report-manual-${{ github.run_id }}
+        path: playwright-report/
+        retention-days: 14

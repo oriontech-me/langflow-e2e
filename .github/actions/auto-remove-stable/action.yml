@@ -1,0 +1,78 @@
+name: "Auto-remove @stable from hard failures"
+description: >-
+  On a scheduled stable run, remove the @stable tag from tests that hard-failed
+  (failed every retry), regenerate QA-CHECKLIST.md, and commit the change back
+  to main — no human review (leadership decision; restoring the tag is the
+  human-gated step). A mass-failure guard leaves everything untouched when too
+  many tests fail at once (treated as infra, not per-test rot). Shared by
+  daily-stable.yml and weekly-stable.yml. Assumes checkout + npm ci already ran.
+
+inputs:
+  playwright_json:
+    description: "Path to the Playwright JSON report."
+    required: false
+    default: "results.json"
+  max_auto_remove:
+    description: "Mass-failure guard: if more than this many tests hard-fail, remove nothing."
+    required: false
+    default: "5"
+  run_label:
+    description: "Human label for the commit message, e.g. 'daily #123'."
+    required: true
+
+outputs:
+  status:
+    description: "removed | none | guard_tripped"
+    value: ${{ steps.remove.outputs.status }}
+  removed_count:
+    description: "Number of tests the @stable tag was removed from."
+    value: ${{ steps.remove.outputs.removed_count }}
+  summary_md:
+    description: "Markdown summary for the triage issue body."
+    value: ${{ steps.remove.outputs.summary_md }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Detect and remove @stable from hard failures
+      id: remove
+      shell: bash
+      env:
+        PLAYWRIGHT_JSON: ${{ inputs.playwright_json }}
+        MAX_AUTO_REMOVE: ${{ inputs.max_auto_remove }}
+      run: |
+        set -euo pipefail
+        npx ts-node scripts/remove-stable-from-failures.ts > auto-remove-result.json
+        echo "Script result:"; cat auto-remove-result.json; echo
+        {
+          echo "status=$(node -p "require('./auto-remove-result.json').status")"
+          echo "removed_count=$(node -p "require('./auto-remove-result.json').removed.length")"
+        } >> "$GITHUB_OUTPUT"
+        # Multi-line markdown value via a heredoc delimiter (GitHub Actions format).
+        SUMMARY="$(node scripts/format-auto-remove-summary.mjs auto-remove-result.json)"
+        {
+          echo "summary_md<<__AUTOREMOVE_EOF__"
+          echo "$SUMMARY"
+          echo "__AUTOREMOVE_EOF__"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Commit @stable removals to main
+      if: steps.remove.outputs.status == 'removed'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Same "dubious ownership" workaround as the history commit step: the job
+        # runs as root in the Playwright container over a host-owned workspace, so
+        # re-declare safe.directory or git refuses to operate (see issue #385).
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        # Removing @stable changes the auto-generated Phase 0 / Coverage blocks in
+        # QA-CHECKLIST.md — regenerate them so the commit stays self-consistent.
+        npm run coverage:summary
+        git config user.name "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        # Stage ONLY spec edits + the regenerated checklist. Never `git add -A`:
+        # results.json / payload.json / auto-remove-result.json at repo root are
+        # not git-ignored and must not be committed.
+        git add tests/tests-automations/regression QA-CHECKLIST.md
+        git commit -m "chore(triage): auto-remove @stable from ${{ steps.remove.outputs.removed_count }} hard-failing test(s) (${{ inputs.run_label }}) [skip ci]"
+        git push
