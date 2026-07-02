@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-01
+> **Last updated:** 2026-07-02
 
 ---
 
@@ -782,7 +782,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 232 `test()` calls carrying the `@stable` tag, distributed across 80 spec
+> 227 `test()` calls carrying the `@stable` tag, distributed across 79 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -840,7 +840,6 @@
 - [x] API Request component — renders on canvas with correct output and URL handles → `api-request-component-regression.spec.ts`
 - [x] API Request component — inspector fields accept configured values → `api-request-component-regression.spec.ts`
 - [x] API Request component — invalid URL is accepted by field and run shows error notification → `api-request-component-regression.spec.ts`
-- [x] API Request component — POST method executes POST verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PUT method executes PUT verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — PATCH method executes PATCH verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
@@ -923,11 +922,6 @@
 - [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
-#### core-functionality/auth/
-- [x] logout must redirect user to login page → `logout-flow.spec.ts`
-- [x] after logout, navigating to root must redirect to login → `logout-flow.spec.ts`
-- [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
-
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
@@ -986,7 +980,6 @@
 - [x] playground must show non-image preview tile (delete button, no <img>) in input area after attaching a .txt file → `playground-non-image-attachment.spec.ts`
 - [x] playground must render non-image attachment in user message (truncated filename + zero file-images) after sending a .txt → `playground-non-image-attachment.spec.ts`
 - [x] playground must render JSON Data output as a code block → `playground-output-data.spec.ts`
-- [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
 - [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
 - [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
