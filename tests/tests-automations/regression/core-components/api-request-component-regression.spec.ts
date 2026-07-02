@@ -107,37 +107,15 @@ async function closeOutputDialog(page: Page): Promise<void> {
   await expect(dialog).toBeHidden({ timeout: 5000 });
 }
 
-// Helper: run the component once and return the COMPLETE output Data as a string.
-//
-// Anchors the build-finished signal on this run's build event stream closing
-// (NDJSON stream end = build complete), NOT on the inspect-output button being
-// enabled. The button stays enabled across re-runs because the prior output
-// persists in the flowPool, so on a retry `toBeEnabled` would resolve instantly
-// and we'd re-read the stale output instead of the fresh run (issue #383).
-//
-// Reads the output via the dialog's copy button + clipboard rather than the
-// Monaco editor's textContent: the editor is virtualized, so textContent only
-// returns the lines in the viewport and silently truncates fields below the
-// fold for long responses.
 async function runOnce(page: Page): Promise<string> {
   const inspectButton = page.getByTestId(
     "output-inspection-api response-apirequest",
   );
-  // Register the waiter before the click so we capture THIS run's build stream.
-  // Assumes streaming event delivery (the default for the nightly image under
-  // test — the build events come back as a single application/x-ndjson stream).
-  // If the instance is ever configured for POLLING event delivery, the events
-  // endpoint is fetched in a loop of short requests and `finished()` would
-  // resolve on the first poll rather than at build completion — the anchor
-  // below would then need to key off build completion differently.
-  const buildComplete = page.waitForResponse(
-    (r) => r.url().includes("/api/v1/build/") && r.url().includes("/events"),
-    { timeout: 45000 },
-  );
+  const durationBadge = page.getByTestId("node_duration_api request");
+
   await page.getByTestId("button_run_api request").click();
-  // `finished()` resolves when the NDJSON event stream closes — i.e. the build
-  // (with its fresh output) is complete and the flowPool has been updated.
-  await (await buildComplete).finished();
+  await expect(durationBadge).toBeHidden();
+  await expect(durationBadge).toBeVisible({ timeout: 45000 });
   await expect(inspectButton).toBeEnabled({ timeout: 45000 });
 
   await inspectButton.click();
