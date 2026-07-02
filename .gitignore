@@ -17,3 +17,6 @@ docs/superpowers/
 # Artefatos gerados localmente — cada dev gera via collect-models.spec.ts
 tests/helpers/provider-setup/data/models.json
 tests/helpers/provider-setup/data/providers.json
+
+# Transient spec fixtures written at runtime by remove-stable-from-failures.spec.ts
+tests/scripts/.auto-remove-fixture-*.ts

@@ -60,7 +60,26 @@ interface Skipped {
 // Mirrors scripts/build-run-payload.mjs: only status "unexpected" counts as a
 // hard failure; "flaky"/"skipped"/"expected" are ignored.
 
-function collectHardFailures(reportFile: string): Failure[] {
+/**
+ * Base directories to try, in order, when resolving a non-absolute spec path
+ * from the report. The Playwright JSON reporter emits `spec.file` relative to
+ * the Playwright `rootDir` (`<repo>/tests`, from `testDir: "./tests"`), NOT the
+ * repo root — so `REPO_ROOT` alone never matches and every failure was silently
+ * skipped as "spec file not found" (issue #476). We prefer the report's own
+ * `config.rootDir` (absolute, correct in the run that produced it), then the
+ * conventional `<repo>/tests`, then `REPO_ROOT` as a last resort, and pick the
+ * first base under which the file actually exists on disk.
+ */
+function candidateBases(report: any): string[] {
+  const bases: string[] = [];
+  const rootDir = report?.config?.rootDir;
+  if (typeof rootDir === "string" && rootDir) bases.push(rootDir);
+  bases.push(path.join(REPO_ROOT, "tests"));
+  bases.push(REPO_ROOT);
+  return bases;
+}
+
+export function collectHardFailures(reportFile: string): Failure[] {
   if (!fs.existsSync(reportFile)) return [];
   let report: any;
   try {
@@ -69,9 +88,18 @@ function collectHardFailures(reportFile: string): Failure[] {
     return [];
   }
   const failures: Failure[] = [];
+  const bases = candidateBases(report);
   const resolveFile = (spec: any): string => {
     const f = spec?.file || spec?.location?.file || "";
-    return path.isAbsolute(f) ? f : path.resolve(REPO_ROOT, f);
+    if (!f) return "";
+    if (path.isAbsolute(f)) return f;
+    for (const base of bases) {
+      const candidate = path.resolve(base, f);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+    // Nothing matched: return the tests/-rebased path (the correct base per
+    // testDir) so the downstream "spec file not found" skip is meaningful.
+    return path.resolve(path.join(REPO_ROOT, "tests"), f);
   };
   const visit = (node: any): void => {
     for (const spec of node.specs || []) {
@@ -281,7 +309,24 @@ function main(): void {
   }
 
   result.status = result.removed.length > 0 ? "removed" : "none";
+
+  // Fail louder: a "spec file not found" skip means path resolution is broken
+  // (the exact failure mode of #476) — the report has real hard failures we
+  // couldn't act on. Surface a GitHub Actions warning annotation on stderr so
+  // it's visible in the log instead of exiting quietly as `none`.
+  const notFound = result.skipped.filter((s) => s.reason === "spec file not found");
+  if (notFound.length > 0) {
+    process.stderr.write(
+      `::warning title=Auto-remove @stable::${notFound.length} hard failure(s) skipped because their spec file could not be resolved on disk — path resolution may be broken (see #476). Files: ${notFound
+        .map((s) => s.file)
+        .join(", ")}\n`,
+    );
+  }
+
   process.stdout.write(JSON.stringify(result));
 }
 
-main();
+// Only run when invoked as a script — keeps the module importable from tests.
+if (require.main === module) {
+  main();
+}
