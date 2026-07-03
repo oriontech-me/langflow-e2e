@@ -380,9 +380,9 @@
 - [-] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
 
 #### 7.2 OpenAI
-- [-] Configure OpenAI API key via GlobalVariables
-- [-] Select GPT model in agent
-- [-] Execute flow with OpenAI
+- [x] Configure OpenAI API key in Settings → Model Providers → `core-functionality/model-provider/openai-provider.spec.ts`
+- [x] Select GPT model in agent → `core-functionality/model-provider/openai-provider.spec.ts`
+- [x] Execute flow with OpenAI → `core-functionality/model-provider/openai-provider.spec.ts`
 - [x] Invalid API key error — display error message → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.3 Anthropic
@@ -757,7 +757,7 @@
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 16 | 2 | 0 | 22 |
-| `core-functionality/model-provider/` | 33 | 6 | 18 | 0 | 9 |
+| `core-functionality/model-provider/` | 33 | 9 | 15 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **226 (50%)** | **172 (38%)** | **7 (2%)** | **46 (10%)** |
+| **TOTAL** | **451** | **229 (51%)** | **169 (37%)** | **7 (2%)** | **46 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 237 `test()` calls carrying the `@stable` tag, distributed across 83 spec
+> 239 `test()` calls carrying the `@stable` tag, distributed across 84 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -943,6 +943,10 @@
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
 - [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
 
+#### core-functionality/model-provider/
+- [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
+- [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
+
 #### core-functionality/observability-monitoring/
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
 - [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
@@ -1059,7 +1063,7 @@
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 22 |
-| `core-functionality/model-provider/` | 18 | 9 |
+| `core-functionality/model-provider/` | 15 | 9 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
