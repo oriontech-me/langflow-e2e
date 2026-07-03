@@ -754,7 +754,7 @@
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
 | `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
-| `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
+| `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 15 | 2 | 0 | 23 |
 | `core-functionality/model-provider/` | 33 | 6 | 18 | 0 | 9 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **225 (50%)** | **171 (38%)** | **7 (2%)** | **48 (11%)** |
+| **TOTAL** | **451** | **225 (50%)** | **172 (38%)** | **7 (2%)** | **47 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1055,7 +1055,7 @@
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 0 | 2 |
-| `core-functionality/auth/` | 12 | 1 |
+| `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 23 |
 | `core-functionality/model-provider/` | 18 | 9 |
 | `core-functionality/playground/` | 3 | 1 |
