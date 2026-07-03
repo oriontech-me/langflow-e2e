@@ -61,7 +61,7 @@
 - [ ] Configure a Custom Component
 - [x] Delete a component → `helpers/flows/delete-component.ts`
 - [x] Run a flow → `helpers/flows/run-flow.ts`
-- [ ] Pause a flow
+- [-] Pause a flow → `flow-functionality/stop-building.spec.ts`
 - [x] Send a chat input → `flow-functionality/flow-execution-canvas.spec.ts`
 - [x] Verify the chat output → `flow-functionality/flow-execution-canvas.spec.ts`
 

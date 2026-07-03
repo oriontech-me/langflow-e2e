@@ -1,128 +1,87 @@
 import { expect, test } from "../../../fixtures/fixtures";
-import { addLegacyComponents } from "../../../helpers/flows/add-legacy-components";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 
-import { clearApiKeyBadges } from "../../../helpers/ui/clear-api-key-badges";
-import { updateOldComponents } from "../../../helpers/flows/update-old-components";
-import { zoomOut } from "../../../helpers/ui/zoom-out";
+// Flow created by the test (blank-flow → /flow/{id}); captured so afterEach can
+// delete only this one via the API. Targeted (not cleanAllFlows) so the teardown
+// is safe under parallel runs, and idempotent if capture never happened.
+let createdFlowId: string | undefined;
 
-// TODO: fix this test
-test(
-  "user must be able to stop a building",
-  { tag: ["@release", "@workspace", "@api"] },
+test.afterEach(async ({ page }) => {
+  if (!createdFlowId) return;
+  const login = await page.request.get("/api/v1/auto_login");
+  const headers: Record<string, string> = {};
+  if (login.ok()) {
+    const body = await login.json();
+    if (body?.access_token) headers.Authorization = `Bearer ${body.access_token}`;
+  }
+  await page.request.delete(`/api/v1/flows/${createdFlowId}`, { headers });
+  createdFlowId = undefined;
+});
+
+test("user must be able to stop a building from the canvas",
+  { tag: ["@release", "@workspace", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
-    await page.getByTestId("blank-flow").click();
 
-    await addLegacyComponents(page);
+    await test.step("open blank flow and add custom component to canvas", async () => {
+      await expect(page.getByTestId("blank-flow")).toBeVisible({
+        timeout: 10000,
+      });
+      await page.getByTestId("blank-flow").click();
 
-    //first component
-
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("text input");
-
-    await page
-      .getByTestId("input_outputText Input")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 50, y: 50 },
+      // Readiness gate: the canvas controls confirm the editor has mounted
+      // before we reach for the sidebar. Anchoring on this (instead of a tight
+      // waitForSelector) lets the button click auto-wait for visibility and
+      // avoids the "sidebar-custom-component-button hidden" flake.
+      await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
+        timeout: 10000,
       });
 
-    await zoomOut(page, 3);
-    //second component
+      // Canvas mounted at /flow/{id} — wait for the URL to settle before
+      // reading it, so teardown reliably captures the id (a bare page.url()
+      // here can race the navigation and miss it, leaking the flow).
+      await page.waitForURL(/\/flow\/[^/?#]+/, { timeout: 10000 });
+      createdFlowId = page.url().split("/flow/")[1]?.split(/[/?#]/)[0];
 
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("url");
+      await page.getByTestId("sidebar-custom-component-button").click();
+      await adjustScreenView(page);
+    });
 
-    await page
-      .getByTestId("data_sourceURL")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 50, y: 300 },
+    await test.step("add chat output component via sidebar", async () => {
+      await page.getByTestId("sidebar-search-input").fill("chat output");
+
+      await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
+        timeout: 10000,
       });
 
-    //third component
+      await page
+        .getByTestId("input_outputChat Output")
+        .dragTo(page.locator('//*[@id="react-flow-id"]'), {
+          targetPosition: { x: 400, y: 400 },
+        });
 
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("split text");
+      await adjustScreenView(page);
+    });
 
-    await page
-      .getByTestId("processingSplit Text")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 300, y: 500 },
-      });
+    await test.step("inject 60-second sleep into custom component code", async () => {
+      await page.getByTestId("div-generic-node").nth(1).click();
 
-    //fourth component
+      await page.getByTestId("more-options-modal").click();
 
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("data to message");
+      await page.getByTestId("expand-button-modal").click();
 
-    await page
-      .getByTestId("processingData to Message")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 100, y: 500 },
-      });
+      await page.getByTestId("div-generic-node").nth(0).click();
 
-    //fifth component
+      await page.getByTestId("code-button-modal").nth(0).click();
 
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("chat output");
-
-    await page
-      .getByTestId("input_outputChat Output")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 600, y: 300 },
-      });
-
-    await updateOldComponents(page);
-    await clearApiKeyBadges(page);
-
-    await adjustScreenView(page, { numberOfZoomOut: 3 });
-
-    //connection 1
-    await page
-      .getByTestId("handle-urlcomponent-shownode-extracted pages-right")
-      .click();
-    await page.getByTestId("handle-splittext-shownode-input-left").click();
-
-    //connection 2
-    await page
-      .getByTestId("handle-textinput-shownode-output text-right")
-      .click();
-    await page.getByTestId("handle-splittext-shownode-separator-left").click();
-
-    //connection 3
-    await page.getByTestId("handle-splittext-shownode-chunks-right").click();
-    await page.getByTestId("handle-parsedata-shownode-data-left").click();
-
-    //connection 4
-    await page.getByTestId("handle-parsedata-shownode-message-right").click();
-    await page
-      .getByTestId("handle-chatoutput-noshownode-inputs-target")
-      .click();
-
-    await adjustScreenView(page);
-
-    await page.getByText("Text Input", { exact: true }).click();
-
-    await page.getByTestId("textarea_str_input_value").first().fill(",");
-
-    await page.getByText("URL", { exact: true }).click();
-
-    await page
-      .getByTestId("inputlist_str_urls_0")
-      .fill("https://www.nature.com/articles/d41586-023-02870-5");
-
-    await page.getByText("Split Text", { exact: true }).click();
-
-    await page.getByTestId("int_int_chunk_size").fill("2");
-    await page.getByTestId("int_int_chunk_overlap").fill("1");
-
-    const timerCode = `
+      const waitTimeoutCode = `
 # from langflow.field_typing import Data
 from langflow.custom import Component
 from langflow.io import MessageTextInput, Output
 from langflow.schema import Data
-import time
+from time import sleep
+from langflow.schema.message import Message
 
 class CustomComponent(Component):
     display_name = "Custom Component"
@@ -132,55 +91,61 @@ class CustomComponent(Component):
     name = "CustomComponent"
 
     inputs = [
-        MessageTextInput(name="input_value", display_name="Input Value", value="Hello, World!", tool_mode=True),
+        MessageTextInput(name="input_value", display_name="Input Value", value="Hello, World!"),
     ]
 
     outputs = [
         Output(display_name="Output", name="output", method="build_output"),
     ]
 
-    def build_output(self) -> Data:
-        time.sleep(10000)
+    def build_output(self) -> Message:
         data = Data(value=self.input_value)
         self.status = data
-        return data
-  `;
+        sleep(60)
+        return data`;
 
-    await page.getByTestId("sidebar-custom-component-button").click();
-    await adjustScreenView(page, { numberOfZoomOut: 2 });
+      await page.locator(".ace_content").click();
+      await page.keyboard.press(`ControlOrMeta+A`);
+      await page.locator("textarea").fill(waitTimeoutCode);
 
-    await page.getByTestId("title-Custom Component").first().click();
-
-    await expect(page.getByTestId("code-button-modal").last()).toBeVisible({
-      timeout: 3000,
+      await page.getByText("Check & Save").last().click();
+      await adjustScreenView(page, { numberOfZoomOut: 2 });
     });
 
-    await page.getByTestId("code-button-modal").last().click();
-
-    await page.waitForSelector('[id="checkAndSaveBtn"]', {
-      timeout: 3000,
+    await test.step("connect custom component output to chat output input", async () => {
+      await page
+        .getByTestId("handle-customcomponent-shownode-output-right")
+        .first()
+        .click();
+      await page
+        .getByTestId("handle-chatoutput-shownode-inputs-left")
+        .first()
+        .click();
+      await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
+        timeout: 8000,
+      });
     });
 
-    await page.locator("textarea").last().press(`ControlOrMeta+a`);
-    await page.keyboard.press("Backspace");
-    await page.locator("textarea").last().fill(timerCode);
-    await page.locator('//*[@id="checkAndSaveBtn"]').click();
-    await page.waitForTimeout(500);
+    await test.step("run the flow from the canvas terminal node", async () => {
+      await expect(page.getByTestId("button_run_chat output")).toBeVisible({
+        timeout: 10000,
+      });
 
-    await page.getByTestId("button_run_custom component").click();
-
-    await page.waitForSelector("text=running", {
-      timeout: 100000,
+      await page.getByTestId("button_run_chat output").click();
     });
 
-    await page.waitForSelector('[data-testid="stop_building_button"]', {
-      timeout: 100000,
+    await test.step("stop the build from the canvas", async () => {
+      await expect(page.getByTestId("stop_building_button").last()).toBeVisible({
+        timeout: 30000,
+      });
+
+      await page.getByTestId("stop_building_button").last().click();
     });
 
-    await page.getByTestId("stop_building_button").last().click();
-
-    await page.waitForSelector("text=build stopped", {
-      timeout: 100000,
+    await test.step("assert build stopped confirmation", async () => {
+      await expect(page.getByText("build stopped")).toBeVisible({
+        timeout: 30000,
+      });
     });
   },
 );
