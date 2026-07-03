@@ -358,7 +358,7 @@
 - [ ] Inspect tools used by Agent in Playground
 - [ ] Agent returns output in structured JSON format (output_schema) → `agent-structured-output.spec.ts`
 - [ ] Agent returns output in correctly rendered Markdown
-- [ ] Agent Instructions (system prompt) is respected in the model response → `agent-system-prompt.spec.ts`
+- [x] Agent Instructions (system prompt) is respected in the model response → `agent-system-prompt.spec.ts`
 - [ ] Input via direct field vs handle (ChatInput) — both work → `agent-input-sources.spec.ts`
 - [ ] Empty response or model refusal — component does not crash → `agent-empty-refusal-response.spec.ts`
 - [ ] Toggle add_current_date_tool works (enables/disables date tool) → `agent-current-date-tool.spec.ts`
@@ -756,7 +756,7 @@
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 12 | 0 | 1 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
-| `core-functionality/llm-agents/` | 40 | 14 | 2 | 0 | 24 |
+| `core-functionality/llm-agents/` | 40 | 15 | 2 | 0 | 23 |
 | `core-functionality/model-provider/` | 33 | 6 | 18 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **224 (50%)** | **171 (38%)** | **7 (2%)** | **49 (11%)** |
+| **TOTAL** | **451** | **225 (50%)** | **171 (38%)** | **7 (2%)** | **48 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 233 `test()` calls carrying the `@stable` tag, distributed across 81 spec
+> 235 `test()` calls carrying the `@stable` tag, distributed across 82 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -931,6 +931,8 @@
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
+- [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
+- [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
@@ -1054,7 +1056,7 @@
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 12 | 1 |
-| `core-functionality/llm-agents/` | 2 | 24 |
+| `core-functionality/llm-agents/` | 2 | 23 |
 | `core-functionality/model-provider/` | 18 | 9 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
