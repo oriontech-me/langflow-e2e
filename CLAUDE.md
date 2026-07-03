@@ -62,8 +62,13 @@ Filter by tag: `npx playwright test --grep "@api"` — available tags listed in 
 ## What to work on
 
 `ROADMAP.md` is the source of truth for **direction and order** — it schedules the
-decided backlog into 2-week waves. Before picking up work, read the current dated
-wave there and take items from it.
+decided backlog into 2-week waves. Each dated wave is a GitHub milestone named after
+its `### Wave N — Axis` heading; its work items are the issues labeled `roadmap`
+assigned to it. Before picking up work, take an open issue from the current wave:
+
+```bash
+gh issue list --label roadmap --milestone "Wave N — Axis"
+```
 
 Off-wave work is allowed **only** when it traces to an approved exception issue: a
 follow-up, a `daily-failure` triage issue, or a `community`-labeled regression

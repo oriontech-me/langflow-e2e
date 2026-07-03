@@ -112,6 +112,17 @@ MCP specs promoted to `@stable`).
 > Sized to the 50–60 capacity band; items are pointers to decided `QA-CHECKLIST.md`
 > backlog (created `[ ]`→`[x]` and validated `[-]`→`[x]`).
 
+> **Operationalized as GitHub milestones.** Each dated wave below is a GitHub
+> milestone named exactly like the wave's `### Wave N — Axis` heading; its work
+> items are the issues labeled `roadmap` assigned to it. Pick work with:
+>
+> ```bash
+> gh issue list --label roadmap --milestone "Wave N — Axis"
+> ```
+>
+> This file owns the wave's **definition, order and deadline**; the milestone
+> mirrors the deadline and holds the concrete issues (never listed here).
+
 | Wave | Axis (focus) | Bullets (planned) | Sources in `QA-CHECKLIST.md` | Coverage target | Delivery date |
 |---|---|---|---|---|---|
 | **1** | Agents & providers | ~53 | llm-agents §6.2–6.5 & §7.7 (26) + model-provider §7.1–7.6 (27) | ~61% | 2026-07-14 |
