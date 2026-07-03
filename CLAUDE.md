@@ -59,6 +59,24 @@ npm run lint                                  # ESLint (same check as PR CI)
 
 Filter by tag: `npx playwright test --grep "@api"` — available tags listed in the Tag Semantics section below.
 
+## What to work on
+
+`ROADMAP.md` is the source of truth for **direction and order** — it schedules the
+decided backlog into 2-week waves. Each dated wave is a GitHub milestone named after
+its `### Wave N — Axis` heading; its work items are the issues labeled `roadmap`
+assigned to it. Before picking up work, take an open issue from the current wave:
+
+```bash
+gh issue list --label roadmap --milestone "Wave N — Axis"
+```
+
+Off-wave work is allowed **only** when it traces to an approved exception issue: a
+follow-up, a `daily-failure` triage issue, or a `community`-labeled regression
+(worked in severity order — `high` → `medium` → `low priority` — when indicated;
+see `ROADMAP.md` → *Intake*). No exception issue ⇒ it belongs to the current wave.
+
+Do not restate the current wave here — it changes every cycle; follow the pointer.
+
 ## Architecture
 
 ### Test Infrastructure
@@ -108,6 +126,7 @@ regression/
 5. Update `QA-CHECKLIST.md` coverage symbols
 
 **PR review checklist** — request changes if any of these are missing:
+- The PR links a **current-wave item** or an **approved exception issue** (follow-up / `daily-failure` / `community`, in severity order) — see `ROADMAP.md`
 - `@stable` is present **or** its absence is explicitly explained: utility specs state the reason in the spec doc's **Tags** section; temporary removals are tracked via a GitHub issue (no spec doc change required)
 - Spec doc exists under `docs/` mirroring the test's path under `regression/`
 - Spec doc has all mandatory sections filled: **What this test validates**, **Tags**, **Validation criterion**, **External dependencies**
