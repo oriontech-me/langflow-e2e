@@ -135,7 +135,13 @@ test.describe("Playground Output – Structured Data", () => {
     // mid-build, the output never renders, and the run "does not settle" (#465).
     // Scoped deletion by id is collision-free. (The broader suite-wide hazard —
     // other specs still calling the global cleanAllFlows — is tracked in #515.)
-    const flowId = createdFlowId;
+    //
+    // Fall back to the id in the current URL when setup threw before returning
+    // it: the flow was already created (we navigated to /flow/<id>) but the
+    // fragile drag/connect steps failed, so createdFlowId is still unset. Without
+    // this, a partial setup failure would orphan the flow it created.
+    const flowId =
+      createdFlowId ?? page.url().match(/\/flow\/([0-9a-f-]+)/i)?.[1];
     createdFlowId = undefined;
     if (!flowId) return;
 
