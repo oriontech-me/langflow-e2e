@@ -390,6 +390,7 @@ All work enters via PR — no direct push to `main`.
 - What it adds or fixes
 - How the test was validated (the 5 steps from the guide)
 - Related issue, if it comes from a file-watcher alert
+- **Roadmap linkage**: the current-wave item it advances, or the approved exception issue that justifies off-wave work — a follow-up, a `daily-failure` triage issue, or a `community`-labeled regression (worked in severity order, when indicated). See `ROADMAP.md`
 
 ### Describing a new test PR
 

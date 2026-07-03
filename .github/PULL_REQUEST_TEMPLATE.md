@@ -9,6 +9,17 @@
 
 ---
 
+## Roadmap linkage (required — do not delete)
+
+<!-- Every PR must trace to the roadmap. Check exactly one box. -->
+
+- [ ] **Current wave** — item from the current dated wave in `ROADMAP.md` (a `QA-CHECKLIST.md` bullet): #___
+- [ ] **Exception** — off-wave work backed by an issue: a follow-up, a `daily-failure` triage issue, or a `community`-labeled regression (worked in severity order — `high` → `medium` → `low priority` — when indicated). Issue #___
+
+<!-- Neither box checked ⇒ off-roadmap; expect request-changes. -->
+
+---
+
 ## What this PR does
 
 <!-- Describe what was added, fixed or changed. Be direct. -->
