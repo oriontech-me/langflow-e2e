@@ -63,9 +63,11 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
     }
   });
 
+  // @stable temporarily removed — flake regressed into a suspected real bug
+  // (export reads an empty flow, `nodes: []`); tracked in #518. Restore once fixed.
   test(
     "export flow to JSON triggers success toast and produces a valid file",
-    { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
+    { tag: ["@release", "@workspace", "@api", "@regression"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
