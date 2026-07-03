@@ -1234,6 +1234,37 @@
 
 ---
 
+### 16.6 Use (bind) a Credential global variable in a component secret field `[-]`
+
+**File:** `ui-ux/use-global-variable-in-component.spec.ts`
+
+**Objective:** Confirm the consumption side of global variables — a Credential-typed variable can be selected and bound to a component's secret field (OpenAI `api_key`, a `SecretStrInput`) via the field's Globe dropdown, and that the bound value shows the variable **name** while never exposing the secret value.
+
+**Step by step:**
+1. Add the OpenAI component to the canvas; open its `api_key` field.
+2. Open the field's global-variable dropdown (if the field is auto-bound to an existing Credential variable it renders a badge; the dropdown trigger is still reachable).
+3. Create a Credential variable with a distinctive sentinel value (Credential tab before save).
+4. Select the variable from the dropdown to bind it to the field.
+
+**Validation:** the field displays the variable **name** as its bound value; `getByText(sentinelValue)` has count 0 (the secret never renders as visible text).
+
+---
+
+### 16.7 Component secret-field global-variable binding persists across reload `[-]`
+
+**File:** `ui-ux/use-global-variable-in-component.spec.ts`
+
+**Objective:** Confirm that a global-variable binding on a component secret field survives a full page reload (rehydrated from the saved flow), and that auto-bind never overrides an explicit binding.
+
+**Step by step:**
+1. Add OpenAI, create and bind a Credential variable to `api_key` (as in 16.6).
+2. Wait for the flow to autosave, then reload the page.
+3. Reopen the OpenAI node.
+
+**Validation:** the `api_key` field still shows the same variable name as its bound value after reload.
+
+---
+
 ---
 
 ## 17. File Upload and Processing

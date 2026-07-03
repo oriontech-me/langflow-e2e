@@ -284,7 +284,7 @@
 
 #### 4.3 Global Variables (API Keys)
 - [x] Create global variable
-- [ ] Use global variable in component (API key)
+- [-] Use global variable in component (API key) → `ui-ux/use-global-variable-in-component.spec.ts`
 - [x] Edit existing global variable → `ui-ux/global-variable-edit.spec.ts`
 - [x] Delete global variable
 - [x] Create global variable of type "Generic"
