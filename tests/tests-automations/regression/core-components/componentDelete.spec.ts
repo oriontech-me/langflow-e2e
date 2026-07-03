@@ -1,6 +1,7 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
+import { deleteComponent } from "../../../helpers/flows/delete-component";
 
 test.describe("Delete a component from the canvas", () => {
   let createdFlowId: string | null = null;
@@ -24,8 +25,7 @@ test.describe("Delete a component from the canvas", () => {
     }
   });
 
-  test(
-    "Should delete a single component with the Backspace key",
+  test("Should delete a single component with the Backspace key",
     { tag: ["@release", "@stable", "@workspace", "@components"] },
     async ({ page }) => {
       await test.step("Add a Chat Input component to the canvas", async () => {
@@ -36,16 +36,13 @@ test.describe("Delete a component from the canvas", () => {
       });
 
       await test.step("Select the node and delete it with Backspace", async () => {
-        // Clicking the node selects it; Backspace then deletes the selection.
-        await page.locator(".react-flow__node").click();
-        await page.keyboard.press("Backspace");
+        await deleteComponent(page, "backspace");
         await expect(page.locator(".react-flow__node")).toHaveCount(0);
       });
     },
   );
 
-  test(
-    "Should delete a single component via the node options menu",
+  test("Should delete a single component via the node options menu",
     { tag: ["@release", "@stable", "@workspace", "@components"] },
     async ({ page }) => {
       await test.step("Add a Chat Input component to the canvas", async () => {
@@ -56,20 +53,13 @@ test.describe("Delete a component from the canvas", () => {
       });
 
       await test.step("Delete the node via its options (...) menu", async () => {
-        // Select the node first so its toolbar (the ... button) is shown —
-        // explicit instead of relying on the just-added node being auto-selected.
-        await page.locator(".react-flow__node").click();
-        // Neither the 3-dot button nor the "Delete" menu item has its own
-        // testid — target their inner icons instead.
-        await page.getByTestId("icon-MoreHorizontal").click();
-        await page.getByTestId("icon-Delete").click();
+        await deleteComponent(page, "menu");
         await expect(page.locator(".react-flow__node")).toHaveCount(0);
       });
     },
   );
 
-  test(
-    "Should delete multiple selected components with a marquee selection",
+  test("Should delete multiple selected components with a marquee selection",
     { tag: ["@release", "@stable", "@workspace", "@components"] },
     async ({ page }) => {
       await test.step("Add two components to the canvas", async () => {

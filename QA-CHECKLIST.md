@@ -59,7 +59,7 @@
 
 - [ ] Configure an MCP
 - [ ] Configure a Custom Component
-- [ ] Delete a component
+- [x] Delete a component → `helpers/flows/delete-component.ts`
 - [x] Run a flow → `helpers/flows/run-flow.ts`
 - [ ] Pause a flow
 - [x] Send a chat input → `flow-functionality/flow-execution-canvas.spec.ts`
