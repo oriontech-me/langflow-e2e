@@ -392,8 +392,8 @@
 - [x] Invalid Anthropic API key error → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.4 Google Generative AI
-- [-] Configure Google API key in agent
-- [-] Select Gemini model in agent
+- [x] Configure Google API key in Settings → Model Providers → `core-functionality/model-provider/google-provider.spec.ts`
+- [x] Select Gemini model in agent → `core-functionality/model-provider/google-provider.spec.ts`
 - [x] Invalid Google API key error → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.5 Provider Management
@@ -757,7 +757,7 @@
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 16 | 2 | 0 | 22 |
-| `core-functionality/model-provider/` | 33 | 9 | 15 | 0 | 9 |
+| `core-functionality/model-provider/` | 33 | 11 | 13 | 0 | 9 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **229 (51%)** | **169 (37%)** | **7 (2%)** | **46 (10%)** |
+| **TOTAL** | **451** | **231 (51%)** | **167 (37%)** | **7 (2%)** | **46 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 239 `test()` calls carrying the `@stable` tag, distributed across 84 spec
+> 241 `test()` calls carrying the `@stable` tag, distributed across 85 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -944,6 +944,8 @@
 - [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
 
 #### core-functionality/model-provider/
+- [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
+- [x] configured Google selects a Gemini model in the Agent and executes the flow → `google-provider.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
 - [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
@@ -1063,7 +1065,7 @@
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 22 |
-| `core-functionality/model-provider/` | 15 | 9 |
+| `core-functionality/model-provider/` | 13 | 9 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
