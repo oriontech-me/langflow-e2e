@@ -155,6 +155,22 @@ jobs:
           path: playwright-report/index.html
           retention-days: 90
 
+      # Raw Playwright JSON report (the --reporter=json output already produced
+      # by the "Run @stable tests" step above). Uploaded UNMODIFIED — no
+      # transform, no enrichment — as the machine-readable source of truth for
+      # downstream per-test import/analysis: each test's status, duration,
+      # retries (results[]), error, annotations and projectName plus the run's
+      # stats.startTime. 90-day retention (matching the lightweight index) so a
+      # late/backfill import can still reach it long after the run; the JSON is
+      # small, so the long window costs ~nothing.
+      - name: Upload Playwright JSON report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-json-daily-${{ github.run_id }}
+          path: results.json
+          retention-days: 90
+
       # ── Record in the QA Platform DB: EVERY run (scheduled + manual dispatch).
       # Not gated on `schedule`, so manual runs are recorded too. Coverage is
       # best-effort; the POST is warning-only so a platform outage never fails
