@@ -335,7 +335,7 @@
 - [ ] Agent with configured timeout respects the limit
 - [x] Connecting an external model in Agent drops the prior model selection (connection-mode isolation, prevents stale provider config) → `llm-agents/agent-model-connection-isolation.spec.ts`
 - [ ] Flow with Agent saved and reopened → settings preserved → `agent-config-persistence.spec.ts`
-- [ ] max_tokens truncates response as configured → `agent-max-tokens.spec.ts`
+- [x] max_tokens truncates response as configured → `llm-agents/agent-max-tokens.spec.ts` (validated at token level via the Playground token-usage tooltip)
 - [ ] reasoning_effort field appears/disappears based on selected model → `agent-reasoning-effort.spec.ts`
 
 #### 6.3 Memory and Context
@@ -412,9 +412,9 @@
 - [ ] Configure and execute flow with Mistral
 
 #### 7.7 Model Parameters (Agent)
-- [ ] Temperature parameter (verify via network payload) → `agent-max-tokens.spec.ts`
+- [ ] Temperature parameter (verify via network payload) → `agent-max-tokens.spec.ts` (**not implementable on 1.11**: the Agent no longer has a temperature parameter — left with the model-bundle refactor; bullet pending re-scope)
 - [ ] Reasoning effort parameter — conditional field based on model → `agent-reasoning-effort.spec.ts`
-- [ ] Maximum token count — response truncated as configured → `agent-max-tokens.spec.ts`
+- [x] Maximum token count — response truncated as configured → `llm-agents/agent-max-tokens.spec.ts`
 - [x] Maximum agent iterations → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
 - [ ] Use of custom `context_id` for memory isolation → `agent-context-id-isolation.spec.ts`
 - [ ] Output formatting (JSON via output_schema, Markdown, plain text) → `agent-structured-output.spec.ts`
@@ -756,8 +756,8 @@
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
-| `core-functionality/llm-agents/` | 40 | 20 | 2 | 0 | 18 |
-| `core-functionality/model-provider/` | 33 | 12 | 13 | 0 | 8 |
+| `core-functionality/llm-agents/` | 40 | 21 | 2 | 0 | 17 |
+| `core-functionality/model-provider/` | 33 | 13 | 13 | 0 | 7 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **236 (52%)** | **167 (37%)** | **7 (2%)** | **41 (9%)** |
+| **TOTAL** | **451** | **238 (53%)** | **167 (37%)** | **7 (2%)** | **39 (9%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 248 `test()` calls carrying the `@stable` tag, distributed across 89 spec
+> 250 `test()` calls carrying the `@stable` tag, distributed across 90 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -936,6 +936,8 @@
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
 - [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
 - [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
+- [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
+- [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] image via input handle is described by the agent → `agent-multimodal-image-input.spec.ts`
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
@@ -1071,8 +1073,8 @@
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 2 | 18 |
-| `core-functionality/model-provider/` | 13 | 8 |
+| `core-functionality/llm-agents/` | 2 | 17 |
+| `core-functionality/model-provider/` | 13 | 7 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
