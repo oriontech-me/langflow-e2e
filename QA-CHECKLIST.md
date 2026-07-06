@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-03
+> **Last updated:** 2026-07-06
 
 ---
 
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 243 `test()` calls carrying the `@stable` tag, distributed across 86 spec
+> 242 `test()` calls carrying the `@stable` tag, distributed across 86 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1007,7 +1007,6 @@
 - [x] Shareable playground URL is generated when publishing is enabled → `playground-shareable-url.spec.ts`
 - [x] user message must appear instantly in playground before AI responds → `playground-ux.spec.ts`
 - [x] playground must scroll to latest message after sending → `playground-ux.spec.ts`
-- [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
 #### core-functionality/project-management/
