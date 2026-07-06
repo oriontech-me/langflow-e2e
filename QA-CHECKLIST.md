@@ -336,7 +336,7 @@
 - [x] Connecting an external model in Agent drops the prior model selection (connection-mode isolation, prevents stale provider config) → `llm-agents/agent-model-connection-isolation.spec.ts`
 - [ ] Flow with Agent saved and reopened → settings preserved → `agent-config-persistence.spec.ts`
 - [x] max_tokens truncates response as configured → `llm-agents/agent-max-tokens.spec.ts` (validated at token level via the Playground token-usage tooltip)
-- [ ] reasoning_effort field appears/disappears based on selected model → `agent-reasoning-effort.spec.ts`
+- [ ] reasoning_effort field appears/disappears based on selected model → `agent-reasoning-effort.spec.ts` (**not implementable on 1.11**: no reasoning_effort field exists in the Agent UI, backend, or frontend — left with the model-bundle refactor; pending re-scope, see #484)
 
 #### 6.3 Memory and Context
 - [x] Memory Chatbot template loads with correct node and edge structure → `llm-agents/memory-history-regression.spec.ts`
@@ -413,7 +413,7 @@
 
 #### 7.7 Model Parameters (Agent)
 - [ ] Temperature parameter (verify via network payload) → `agent-max-tokens.spec.ts` (**not implementable on 1.11**: the Agent no longer has a temperature parameter — left with the model-bundle refactor; bullet pending re-scope)
-- [ ] Reasoning effort parameter — conditional field based on model → `agent-reasoning-effort.spec.ts`
+- [ ] Reasoning effort parameter — conditional field based on model → `agent-reasoning-effort.spec.ts` (**not implementable on 1.11** — see #484)
 - [x] Maximum token count — response truncated as configured → `llm-agents/agent-max-tokens.spec.ts`
 - [x] Maximum agent iterations → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
 - [ ] Use of custom `context_id` for memory isolation → `agent-context-id-isolation.spec.ts`
