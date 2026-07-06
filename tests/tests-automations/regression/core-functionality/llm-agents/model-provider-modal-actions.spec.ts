@@ -1,229 +1,102 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
-// Navigate to Settings > Model Providers and return the first provider item
-// locator, waiting until at least one is visible.
-async function openModelProviders(page: any) {
+// Settings > Model Providers page actions (QA-CHECKLIST §7.5 "Available
+// provider count" + key validation). Hardened for @stable (issue #505): the
+// previous version carried `expect(x || true).toBe(true)` dead assertions and
+// clicked the FIRST provider (risking the environment's real key). The
+// invalid-key test now targets OpenRouter (never configured) and asserts the
+// backend actually rejected the key — scouted live: a fake key creates no
+// global variable and no "N models" badge.
+
+const MIN_PROVIDER_COUNT = 8;
+
+async function openModelProviders(page: any): Promise<void> {
   await awaitBootstrapTest(page, { skipModal: true });
-  await page.waitForTimeout(1000);
   await navigateSettingsPages(page, "Settings", "Model Providers");
-  await expect(
-    page.getByTestId("settings_menu_header").last(),
-  ).toContainText("Model Providers", { timeout: 5000 });
-  await page.waitForTimeout(500);
+  await expect(page.getByTestId("settings_menu_header").last()).toContainText(
+    "Model Providers",
+    { timeout: 10000 },
+  );
 }
 
 test.describe("Model Provider Modal Actions", () => {
   test(
-    "model provider page opens and shows provider list",
-    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
+    "page opens with its description and the available provider count",
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await openModelProviders(page);
 
-      // The page description must be visible
       await expect(
-        page.getByText(
-          "Configure AI model providers and manage their API keys.",
-        ),
-      ).toBeVisible({ timeout: 5000 });
+        page.getByText("Configure AI model providers and manage their API keys."),
+      ).toBeVisible({ timeout: 10000 });
 
-      // At least one provider item or the provider list container should be present
-      const providerList = page.getByTestId("provider-list");
-      const providerItems = page.locator('[data-testid^="provider-item-"]');
-
-      const listVisible = await providerList
-        .isVisible({ timeout: 3000 })
-        .catch(() => false);
-      const itemCount = await providerItems.count();
-
-      // Either the list container or individual provider items must be present
-      expect(
-        listVisible || itemCount > 0,
-        "Expected at least one provider to be visible in the Model Providers page",
-      ).toBe(true);
+      // §7.5 "Available provider count" — the unified catalog ships 8
+      // providers on 1.11; fewer means the list regressed.
+      await expect(
+        page.locator('[data-testid^="provider-item-"]'),
+      ).toHaveCount(MIN_PROVIDER_COUNT, { timeout: 10000 });
     },
   );
 
   test(
-    "entering an API key in provider modal enables the provider",
-    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
-    async ({ page }) => {
+    "an invalid API key is rejected and does not enable the provider",
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
+    async ({ page, request }) => {
       await openModelProviders(page);
 
-      // Click the first available provider item to expand its details
-      const providerItems = page.locator('[data-testid^="provider-item-"]');
-      const count = await providerItems.count();
+      await page.getByTestId("provider-item-OpenRouter").click();
+      const keyInput = page.getByTestId("provider-variable-input-OPENROUTER_API_KEY");
+      await expect(keyInput).toBeVisible({ timeout: 10000 });
 
-      if (count === 0) {
-        // No providers rendered — page may use a different structure; skip gracefully
-        test.skip();
-        return;
-      }
+      await keyInput.fill(`sk-or-invalid-${Date.now()}`);
+      await page.getByRole("button", { name: "Save", exact: true }).click();
 
-      await providerItems.first().click();
-      await page.waitForTimeout(500);
+      // Save validates the key against the provider's API (a real 1-token
+      // call) and rejects it. Give the round-trip time to settle, then assert
+      // the provider did NOT become configured.
+      await page.waitForTimeout(5000);
 
-      // Look for an API key input field — could be a standard input or a password input
-      const apiKeyInput = page
-        .locator(
-          'input[type="password"], input[placeholder*="key" i], input[placeholder*="API" i], [data-testid*="api-key"] input, [data-testid*="apikey"] input',
-        )
-        .first();
-
-      const inputVisible = await apiKeyInput
-        .isVisible({ timeout: 3000 })
-        .catch(() => false);
-
-      if (!inputVisible) {
-        // Provider detail may not show an input if already configured or locked
-        // Verify the provider item itself is still visible as a pass condition
-        await expect(providerItems.first()).toBeVisible();
-        return;
-      }
-
-      const fakeKey = "sk-test-fake-key-12345";
-
-      try {
-        await apiKeyInput.fill(fakeKey);
-        await page.waitForTimeout(300);
-
-        // Submit / save the key — look for a Save, Confirm, or Apply button
-        const saveButton = page
-          .getByRole("button", {
-            name: /save|confirm|apply|add/i,
-          })
-          .first();
-
-        const saveVisible = await saveButton
-          .isVisible({ timeout: 2000 })
-          .catch(() => false);
-
-        if (saveVisible) {
-          await saveButton.click();
-          await page.waitForTimeout(500);
-
-          // After saving, either a success toast appears or the input state changes
-          const successVisible = await page
-            .getByText(/saved|success|updated|added/i)
-            .first()
-            .isVisible({ timeout: 5000 })
-            .catch(() => false);
-
-          // If no explicit success text, verify the page is still in a valid state
-          await expect(
-            page.getByTestId("settings_menu_header").last(),
-          ).toBeVisible({ timeout: 5000 });
-
-          // Best-effort assertion — success feedback OR page still rendered correctly
-          expect(
-            successVisible || true,
-            "Provider page still rendered after saving key",
-          ).toBe(true);
-        } else {
-          // No save button found — key might auto-save; verify input accepted the value
-          const inputValue = await apiKeyInput.inputValue();
-          expect(inputValue).toBe(fakeKey);
-        }
-      } finally {
-        // Cleanup: clear the API key field if it still has the fake value
-        const currentValue = await apiKeyInput
-          .inputValue()
-          .catch(() => "");
-        if (currentValue === fakeKey) {
-          await apiKeyInput.fill("");
-          const saveButton = page
-            .getByRole("button", { name: /save|confirm|apply/i })
-            .first();
-          const saveVisible = await saveButton
-            .isVisible({ timeout: 1000 })
-            .catch(() => false);
-          if (saveVisible) {
-            await saveButton.click().catch(() => {});
-          }
-        }
-      }
-    },
-  );
-
-  test(
-    "removing an API key shows confirmation or success",
-    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
-    async ({ page }) => {
-      await openModelProviders(page);
-
-      const providerItems = page.locator('[data-testid^="provider-item-"]');
-      const count = await providerItems.count();
-
-      if (count === 0) {
-        test.skip();
-        return;
-      }
-
-      await providerItems.first().click();
-      await page.waitForTimeout(500);
-
-      // Look for a remove / clear / delete button next to the API key
-      const removeButton = page
-        .locator(
-          '[data-testid*="remove"], [data-testid*="delete"], [data-testid*="clear"], button[aria-label*="remove" i], button[aria-label*="delete" i], button[aria-label*="clear" i]',
-        )
-        .first();
-
-      const removeVisible = await removeButton
-        .isVisible({ timeout: 3000 })
-        .catch(() => false);
-
-      if (!removeVisible) {
-        // No remove button visible — this is acceptable if no key has been set
-        // Verify the provider page still renders correctly
-        await expect(
-          page.getByTestId("settings_menu_header").last(),
-        ).toContainText("Model Providers", { timeout: 5000 });
-        return;
-      }
-
-      await removeButton.click();
-      await page.waitForTimeout(500);
-
-      // A confirmation dialog or inline success/cleared state should appear
-      const confirmDialog = page.locator(
-        '[role="alertdialog"], [role="dialog"]',
+      // The list item never gains the "N models" configured badge.
+      await expect(page.getByTestId("provider-item-OpenRouter")).not.toContainText(
+        /\d+\s*models/,
+        { timeout: 10000 },
       );
-      const dialogVisible = await confirmDialog
-        .isVisible({ timeout: 2000 })
-        .catch(() => false);
 
-      if (dialogVisible) {
-        // Confirm the removal
-        const confirmButton = confirmDialog
-          .getByRole("button", { name: /confirm|yes|delete|remove/i })
-          .first();
-        const confirmExists = await confirmButton
-          .isVisible({ timeout: 2000 })
-          .catch(() => false);
-        if (confirmExists) {
-          await confirmButton.click();
-          await page.waitForTimeout(500);
-        }
-      }
+      // And the backend stored no credential for it.
+      const bearer = await getAuthToken(request);
+      const vars = await request
+        .get("/api/v1/variables/", { headers: { Authorization: bearer } })
+        .then((r) => r.json());
+      const created = (Array.isArray(vars) ? vars : []).some(
+        (v: { name?: string }) => v.name === "OPENROUTER_API_KEY",
+      );
+      expect(created, "rejected key must not create a global variable").toBe(false);
+    },
+  );
 
-      // After removal, either a success toast or cleared input should be visible
-      const successVisible = await page
-        .getByText(/removed|cleared|deleted|saved/i)
-        .first()
-        .isVisible({ timeout: 5000 })
-        .catch(() => false);
+  test(
+    "selecting another provider switches the visible detail panel",
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
+    async ({ page }) => {
+      await openModelProviders(page);
 
-      // If no explicit success text, verify the page is still in a valid state
+      await page.getByTestId("provider-item-OpenRouter").click();
       await expect(
-        page.getByTestId("settings_menu_header").last(),
-      ).toBeVisible({ timeout: 5000 });
+        page.getByTestId("provider-variable-input-OPENROUTER_API_KEY"),
+      ).toBeVisible({ timeout: 10000 });
 
-      expect(
-        successVisible || true,
-        "Provider page still rendered after removing key",
-      ).toBe(true);
+      // The detail area is an accordion — selecting Anthropic must render its
+      // own key input and drop OpenRouter's.
+      await page.getByTestId("provider-item-Anthropic").click();
+      await expect(
+        page.getByTestId("provider-variable-input-ANTHROPIC_API_KEY"),
+      ).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.getByTestId("provider-variable-input-OPENROUTER_API_KEY"),
+      ).toBeHidden({ timeout: 10000 });
     },
   );
 });

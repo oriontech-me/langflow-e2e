@@ -123,6 +123,7 @@ jobs:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
 
       - name: Run @stable tests
         run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=html,github,json
@@ -131,6 +132,7 @@ jobs:
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
 
       - name: Upload Playwright report (full, heavy)
         id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)

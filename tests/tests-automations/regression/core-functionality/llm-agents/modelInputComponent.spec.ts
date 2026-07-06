@@ -1,151 +1,115 @@
 import { expect, test } from "../../../../fixtures/fixtures";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
+
+// The Model Input selector on the canonical Language Model component
+// (QA-CHECKLIST §7.5 "Model Input component"). Hardened for @stable (issue
+// #505): the previous version targeted the legacy `modelsOpenAI` sidebar entry
+// with every assertion inside `if (visible)` guards — it passed when the
+// component never rendered. Now the canonical models_and_agents Language Model
+// component is added unconditionally and every behavior is a hard assertion.
+
+// UI-created flows need explicit cleanup or they accumulate on the instance.
+// The canvas URL carries a TRANSIENT id on 1.11 (the persisted flow gets a
+// different one — deleting the URL id 404s), so capture the real id from the
+// page's own POST /api/v1/flows/ response instead. Targeted delete, never
+// cleanAllFlows: parallel workers own their own flows.
+const createdFlowIds: string[] = [];
+
+async function addLanguageModelNode(page: any) {
+  await awaitBootstrapTest(page);
+  const flowCreated = page
+    .waitForResponse(
+      (r: any) =>
+        r.url().includes("/api/v1/flows/") &&
+        r.request().method() === "POST" &&
+        r.status() < 300,
+      { timeout: 30000 },
+    )
+    .then(async (r: any) => (await r.json()).id as string)
+    .catch(() => undefined);
+  await page.getByTestId("blank-flow").click();
+  await page.waitForURL(/\/flow\/[^/?#]+/, { timeout: 30000 });
+  const flowId = await flowCreated;
+  if (flowId) createdFlowIds.push(flowId);
+  await page
+    .getByTestId("sidebar-search-input")
+    .waitFor({ state: "visible", timeout: 30000 });
+  await addComponentFromSidebar(
+    page,
+    "language model",
+    "add-component-button-language-model",
+  );
+  const node = page.locator('[data-testid^="rf__node-"]').first();
+  await expect(node).toBeVisible({ timeout: 15000 });
+  return node;
+}
 
 test.describe("ModelInputComponent", () => {
+  test.afterEach(async ({ request }) => {
+    // page.request carries only browser cookies — the flows API wants the
+    // Bearer token, so authenticate explicitly (a silent 401 here leaks flows).
+    if (createdFlowIds.length === 0) return;
+    const bearer = await getAuthToken(request);
+    while (createdFlowIds.length > 0) {
+      const id = createdFlowIds.pop();
+      await request
+        .delete(`/api/v1/flows/${id}`, { headers: { Authorization: bearer } })
+        .catch(() => {});
+    }
+  });
+
   test(
-    "should display model selector in a node with model input",
-    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
+    "the Language Model node renders its model selector",
+    { tag: ["@stable", "@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
-      await awaitBootstrapTest(page);
-
-      // Create a new blank flow
-      await page.getByTestId("blank-flow").click();
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 3000,
-      });
-
-      // Search for OpenAI component which has model input
-      await page.getByTestId("sidebar-search-input").click();
-      await page.getByTestId("sidebar-search-input").fill("OpenAI");
-
-      // Wait for search results
-      await page.waitForTimeout(500);
-
-      // Look for OpenAI component and add it
-      const openaiComponent = page.getByTestId("modelsOpenAI").first();
-      if (await openaiComponent.isVisible()) {
-        await openaiComponent.click();
-        await page.waitForTimeout(500);
-
-        // The node should now be in the flow
-        const node = page.locator(".react-flow__node").first();
-        await expect(node).toBeVisible({ timeout: 5000 });
-
-        // The model input should be present (either as dropdown or setup button)
-        // This verifies the ModelInputComponent is rendering
-        const modelSection = node.locator(
-          '[data-testid*="model"], button:has-text("Setup Provider"), [role="combobox"]',
-        );
-        await expect(modelSection.first()).toBeVisible({ timeout: 3000 });
-      }
+      const node = await addLanguageModelNode(page);
+      await expect(node.getByTestId("model_model")).toBeVisible({ timeout: 10000 });
     },
   );
 
   test(
-    "should open model dropdown and show providers",
-    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
+    "opening the model dropdown lists model options",
+    { tag: ["@stable", "@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
-      await awaitBootstrapTest(page);
+      await addLanguageModelNode(page);
+      await page.getByTestId("model_model").click();
 
-      // Create a blank flow
-      await page.getByTestId("blank-flow").click();
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 3000,
-      });
-
-      // Add an OpenAI model node
-      await page.getByTestId("sidebar-search-input").fill("OpenAI");
-      await page.waitForTimeout(500);
-
-      const openaiComponent = page.getByTestId("modelsOpenAI").first();
-      if (await openaiComponent.isVisible()) {
-        await openaiComponent.click();
-        await page.waitForTimeout(1000);
-
-        // Find and click the model dropdown trigger (combobox)
-        const modelDropdown = page.locator('[role="combobox"]').first();
-        if (await modelDropdown.isVisible()) {
-          await modelDropdown.click();
-
-          // Should show the dropdown content with model options or manage providers
-          await page.waitForTimeout(500);
-
-          // Look for typical dropdown content
-          const dropdownContent = page.locator('[role="listbox"], [cmdk-list]');
-          if (await dropdownContent.isVisible({ timeout: 2000 })) {
-            await expect(dropdownContent).toBeVisible();
-          }
-        }
-      }
+      // The unified catalog renders one `<model>-option` entry per model.
+      await expect(
+        page.locator('[data-testid$="-option"]').first(),
+      ).toBeVisible({ timeout: 10000 });
+      expect(
+        await page.locator('[data-testid$="-option"]').count(),
+      ).toBeGreaterThan(1);
     },
   );
 
   test(
-    "should show Refresh List button in dropdown",
-    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
+    "the model dropdown exposes the Manage Model Providers entry",
+    { tag: ["@stable", "@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
-      await awaitBootstrapTest(page);
+      await addLanguageModelNode(page);
+      await page.getByTestId("model_model").click();
 
-      // Create a blank flow
-      await page.getByTestId("blank-flow").click();
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 3000,
+      await expect(page.getByTestId("manage-model-providers")).toBeVisible({
+        timeout: 10000,
       });
-
-      // Add a model component
-      await page.getByTestId("sidebar-search-input").fill("OpenAI");
-      await page.waitForTimeout(500);
-
-      const openaiComponent = page.getByTestId("modelsOpenAI").first();
-      if (await openaiComponent.isVisible()) {
-        await openaiComponent.click();
-        await page.waitForTimeout(1000);
-
-        // Open dropdown
-        const modelDropdown = page.locator('[role="combobox"]').first();
-        if (await modelDropdown.isVisible()) {
-          await modelDropdown.click();
-          await page.waitForTimeout(500);
-
-          // Should have refresh list option
-          const refreshText = page.getByText("Refresh List");
-          if (await refreshText.isVisible({ timeout: 2000 })) {
-            await expect(refreshText).toBeVisible();
-          }
-        }
-      }
     },
   );
 
   test(
-    "should display selected model in trigger button",
-    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
+    "the trigger shows the selected model name",
+    { tag: ["@stable", "@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
-      await awaitBootstrapTest(page);
+      await addLanguageModelNode(page);
 
-      // Create a blank flow
-      await page.getByTestId("blank-flow").click();
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 3000,
-      });
-
-      // Add a model component
-      await page.getByTestId("sidebar-search-input").fill("OpenAI");
-      await page.waitForTimeout(500);
-
-      const openaiComponent = page.getByTestId("modelsOpenAI").first();
-      if (await openaiComponent.isVisible()) {
-        await openaiComponent.click();
-        await page.waitForTimeout(1000);
-
-        // The combobox should show selected model or placeholder
-        const modelDropdown = page.locator('[role="combobox"]').first();
-        if (await modelDropdown.isVisible()) {
-          // Should have some text content (model name or "Select a model")
-          const text = await modelDropdown.textContent();
-          expect(text).toBeTruthy();
-        }
-      }
+      // The catalog pre-selects a default model (key-independent), so the
+      // trigger must show a concrete model name, not a "Select…" placeholder.
+      const text = (await page.getByTestId("model_model").textContent())?.trim() ?? "";
+      expect(text.length).toBeGreaterThan(0);
+      expect(text).not.toMatch(/select a model/i);
     },
   );
 });
