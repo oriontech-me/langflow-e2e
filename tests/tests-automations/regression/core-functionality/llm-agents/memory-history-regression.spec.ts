@@ -87,9 +87,9 @@ test.describe("Memory Chatbot Regression", () => {
       });
 
       await test.step("multiple consecutive messages accumulate in history", async () => {
-        // div-chat-message marks bot responses only; 2 exchanges → 2 bot responses.
-        // Web-first count so a still-settling message list cannot false-fail.
-        await expect.soft(page.getByTestId("div-chat-message")).toHaveCount(2, { timeout: 10000 });
+        await expect
+          .poll(() => page.getByTestId("div-chat-message").count(), { timeout: 10000 })
+          .toBeGreaterThanOrEqual(2);
       });
 
       await test.step("messages persist after closing and reopening playground", async () => {

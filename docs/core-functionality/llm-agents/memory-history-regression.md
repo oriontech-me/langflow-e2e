@@ -44,7 +44,7 @@ Requires `OPENAI_API_KEY`. Groups behavior validations in `test.step` with `expe
    - Click `model_model` and select a chat model **resiliently**: `MODEL_TEST_ID` (env) if set → first available preferred cheap chat model (`gpt-4o-mini`, then `gpt-5.4-nano`, `gpt-5.4-mini`, …) → first option that is not a non-chat model (image/embedding/audio). This adapts to builds where `gpt-4o-mini` was dropped from the OpenAI bundle (1.11.0 ships `gpt-5.x` instead) and avoids slow/expensive models that would reintroduce the LLM-response timeout
 2. Open the Playground (`playground-btn-flow-io`) and wait for `input-chat-playground`
 3. *Step: context retention* — Send `"My name is Alice..."`, wait for the response to **complete** (`waitForChatResponse` counts `chat-message-token-usage` badges, which render once per finished response), send `"What is my name?"` and assert the latest `div-chat-message` contains "Alice"
-4. *Step: multiple messages* — web-first `toHaveCount(2)` on `div-chat-message` (testid is present only on bot responses)
+4. *Step: multiple messages* — web-first `expect.poll` on `div-chat-message` count asserting `>= 2` (testid is present only on bot responses). Not an exact count: the classic template is a linear flow (exactly 2 responses), but the agent-based Memory Chatbot template on nightly emits extra intermediate tool/memory-retrieval bubbles, so the bubble count is non-deterministic (`>= 2`). An exact `toHaveCount(2)` false-failed on the agent variant when it settled on 3 (issue #466)
 5. *Step: persistence* — close the Playground via `playground-close-button` (wait for `input-chat-playground` to hide), reopen it, and web-first assert `div-chat-message` count is restored to the previous value
 
 ---
