@@ -397,12 +397,12 @@
 - [x] Invalid Google API key error → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.5 Provider Management
-- [-] "Manage Model Providers" modal
-- [-] Available provider count
-- [-] Language Model component — configuration
-- [-] Model Input component
-- [-] Add new provider via modal
-- [-] Remove API key from existing provider
+- [x] "Manage Model Providers" modal → `llm-agents/modelProviderModal.spec.ts` + `llm-agents/model-provider-modal-actions.spec.ts`
+- [x] Available provider count → `llm-agents/model-provider-modal-actions.spec.ts`
+- [x] Language Model component — configuration → `llm-agents/language-model-regression.spec.ts`
+- [x] Model Input component → `llm-agents/modelInputComponent.spec.ts`
+- [x] Add new provider via modal → `llm-agents/model-provider-api-key.spec.ts` (positive add validated via invalid-key rejection + Replace edit surface — a real re-add poisons a backend credential cache, see #505)
+- [x] Remove API key from existing provider → `llm-agents/remove-provider-api-key.spec.ts`
 - [x] Per-model enable/disable toggle changes immediately and persists across reopen → `llm-agents/model-provider-model-toggle.spec.ts`
 - [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
@@ -757,7 +757,7 @@
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 21 | 2 | 0 | 17 |
-| `core-functionality/model-provider/` | 33 | 13 | 13 | 0 | 7 |
+| `core-functionality/model-provider/` | 33 | 19 | 7 | 0 | 7 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **238 (53%)** | **167 (37%)** | **7 (2%)** | **39 (9%)** |
+| **TOTAL** | **451** | **244 (54%)** | **161 (36%)** | **7 (2%)** | **39 (9%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 250 `test()` calls carrying the `@stable` tag, distributed across 90 spec
+> 269 `test()` calls carrying the `@stable` tag, distributed across 96 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -946,12 +946,31 @@
 - [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
+- [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
+- [x] language model must respond with Google provider → `language-model-regression.spec.ts`
+- [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
+- [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
 - [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
+- [x] OpenAI provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
+- [x] Anthropic provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
+- [x] a configured provider exposes the key edit surface (Replace, no raw input) → `model-provider-api-key.spec.ts`
+- [x] page opens with its description and the available provider count → `model-provider-modal-actions.spec.ts`
+- [x] an invalid API key is rejected and does not enable the provider → `model-provider-modal-actions.spec.ts`
+- [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
 - [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
+- [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
+- [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
+- [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
+- [x] the trigger shows the selected model name → `modelInputComponent.spec.ts`
+- [x] provider list renders with the known providers → `modelProviderModal.spec.ts`
+- [x] selecting a provider opens its API key configuration detail → `modelProviderModal.spec.ts`
+- [x] a configured provider shows its model selection panel → `modelProviderModal.spec.ts`
+- [x] a provider credential variable can be removed through the Global Variables UI → `remove-provider-api-key.spec.ts`
+- [x] DELETE /api/v1/variables/{id} removes a provider API key variable → `remove-provider-api-key.spec.ts`
 
 #### core-functionality/model-provider/
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
@@ -1074,7 +1093,7 @@
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 17 |
-| `core-functionality/model-provider/` | 13 | 7 |
+| `core-functionality/model-provider/` | 7 | 7 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
