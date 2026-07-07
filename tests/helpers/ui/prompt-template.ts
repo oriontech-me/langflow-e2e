@@ -1,6 +1,7 @@
 import { type Locator, type Page, expect } from "@playwright/test";
 import { awaitBootstrapTest } from "../other/await-bootstrap-test";
 import { waitForFlowSaveSettled } from "../flows/wait-for-flow-save-settled";
+import { addComponentFromSidebar } from "../flows/add-component-from-sidebar";
 import { adjustScreenView } from "./adjust-screen-view";
 
 // `waitForFlowSaveSettled` now lives in the flows domain (autosave is a flow
@@ -34,6 +35,14 @@ const MUSTACHE_TEXTAREA = "modal-mustachepromptarea_mustache_template";
  * sidebar search/add path, and waits for exactly one node to render on the
  * canvas.
  *
+ * It waits for `sidebar-search-input` to be visible before interacting: the
+ * flow editor's left sidebar re-renders as its component catalog streams in,
+ * and touching the input too early detaches it mid-click, which hard-failed the
+ * prompt-template specs under a slow CI cluster (issue #537). The search/add is
+ * delegated to `addComponentFromSidebar` — a `fill` (no stability-sensitive
+ * `click`) — mirroring the hardening already applied in `setupPlayground`
+ * (issue #278).
+ *
  * Before returning, it waits for the node-add / viewport autosaves to settle
  * (`waitForFlowSaveSettled`) so the next flow-save the caller triggers — e.g.
  * saving the prompt modal — runs on its own and cannot race a still-in-flight
@@ -44,12 +53,14 @@ export async function addPromptComponent(page: Page): Promise<void> {
   await expect(page.getByTestId("blank-flow")).toBeAttached({ timeout: 30000 });
   await page.getByTestId("blank-flow").click();
 
-  await page.getByTestId("sidebar-search-input").click();
-  await page.getByTestId("sidebar-search-input").fill("prompt");
-  await expect(
-    page.getByTestId("add-component-button-prompt-template"),
-  ).toBeAttached({ timeout: 30000 });
-  await page.getByTestId("add-component-button-prompt-template").click();
+  await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+    timeout: 30000,
+  });
+  await addComponentFromSidebar(
+    page,
+    "prompt",
+    "add-component-button-prompt-template",
+  );
 
   await adjustScreenView(page);
   await expect(page.locator(".react-flow__node")).toHaveCount(1, {
