@@ -2,6 +2,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 // The Model Input selector on the canonical Language Model component
 // (QA-CHECKLIST §7.5 "Model Input component"). Hardened for @stable (issue
@@ -54,9 +55,8 @@ test.describe("ModelInputComponent", () => {
     const bearer = await getAuthToken(request);
     while (createdFlowIds.length > 0) {
       const id = createdFlowIds.pop();
-      await request
-        .delete(`/api/v1/flows/${id}`, { headers: { Authorization: bearer } })
-        .catch(() => {});
+      if (!id) continue;
+      await deleteFlow(request, id, { headers: { Authorization: bearer } }).catch(() => {});
     }
   });
 

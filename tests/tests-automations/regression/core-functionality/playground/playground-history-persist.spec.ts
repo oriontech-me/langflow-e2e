@@ -1,5 +1,6 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 test.describe("Playground — history persistence", () => {
   test.describe.configure({ mode: "serial" });
@@ -9,7 +10,7 @@ test.describe("Playground — history persistence", () => {
   test.afterEach(async ({ page }) => {
     if (createdFlowId) {
       await page.goto("/");
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

@@ -5,6 +5,7 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { simulateDragAndDrop } from "../../../helpers/ui/simulate-drag-and-drop";
 import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Force serial execution within this file so the diff-based cleanup remains
 // safe — the snapshot/diff pattern is racy across workers when multiple tests
@@ -54,7 +55,8 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
           : (body?.flows ?? []);
         for (const f of flows) {
           if (!snapshot.has(f.id)) {
-            await request.delete(`/api/v1/flows/${f.id}`, { headers });
+            // Best-effort per-flow so one failure does not abort the sweep.
+            await deleteFlow(request, f.id, { headers }).catch(() => {});
           }
         }
       }

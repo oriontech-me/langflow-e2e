@@ -2,6 +2,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 test(
   "Flow save button saves the current flow",
@@ -162,12 +163,13 @@ test(
     expect(importedFlow.name).toBe(`${templateName} (copy)`);
     expect(importedFlow.id).not.toBe(flowId);
 
-    // Cleanup
-    await request.delete(`/api/v1/flows/${flowId}`, {
+    // Multi-step cleanup: swallow so a failed first delete still lets the
+    // second run (a throw here would leak the sibling flow).
+    await deleteFlow(request, flowId, {
       headers: { Authorization: authToken },
-    });
-    await request.delete(`/api/v1/flows/${importedFlow.id}`, {
+    }).catch(() => {});
+    await deleteFlow(request, importedFlow.id, {
       headers: { Authorization: authToken },
-    });
+    }).catch(() => {});
   },
 );

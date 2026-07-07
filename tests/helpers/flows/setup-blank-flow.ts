@@ -1,5 +1,6 @@
 import { Page, expect } from "@playwright/test";
 import { getAuthToken } from "../auth/get-auth-token";
+import { deleteFlow } from "./delete-flow";
 
 /**
  * Creates a new blank flow via the REST API and navigates to it through the
@@ -15,9 +16,9 @@ import { getAuthToken } from "../auth/get-auth-token";
  * that need a populated flow (ChatInput → ChatOutput), use `setupPlayground`.
  *
  * Returns the created flow's ID so the caller can clean up in `afterEach`
- * with `page.request.delete(\`/api/v1/flows/\${id}\`)`. The browser-context
- * auth (cookie/state) is reused automatically — no explicit Authorization
- * header is required on the cleanup call.
+ * with `deleteFlow(page.request, id)`. The browser-context auth (cookie/state)
+ * is reused automatically — no explicit Authorization header is required on
+ * the cleanup call.
  */
 export async function setupBlankFlow(page: Page): Promise<string> {
   const flowName = `e2e-blank-${Date.now()}-${Math.random()
@@ -60,7 +61,9 @@ export async function setupBlankFlow(page: Page): Promise<string> {
       timeout: 30000,
     });
   } catch (err) {
-    await page.request.delete(`/api/v1/flows/${flowId}`).catch(() => {});
+    // Best-effort rollback of the created flow — swallow so the original
+    // failure (err) is the one that surfaces, not a secondary cleanup error.
+    await deleteFlow(page.request, flowId).catch(() => {});
     throw err;
   }
 

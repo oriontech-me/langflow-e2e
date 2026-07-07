@@ -3,6 +3,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 type SetupOptions = { selectDataOutput?: boolean };
 
@@ -159,9 +160,7 @@ test.describe("Playground Output – Structured Data", () => {
         headers = { Authorization: `Bearer ${body.access_token}` };
       }
     }
-    await page.request
-      .delete(`/api/v1/flows/${flowId}`, { headers })
-      .catch(() => {});
+    await deleteFlow(page.request, flowId, { headers });
   });
 
   test(

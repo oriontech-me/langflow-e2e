@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import type { APIRequestContext } from "@playwright/test";
 import { expect } from "../../fixtures/fixtures";
+import { deleteFlow } from "./delete-flow";
 
 // A minimal, version-current runnable flow: Chat Input -> Chat Output passthrough
 // (single edge, no LLM or external provider key required). Chat Output echoes
@@ -63,9 +64,7 @@ export async function createRunnableChatFlowViaApi(
   return {
     flowId,
     deleteFlow: async () => {
-      await request
-        .delete(`/api/v1/flows/${flowId}`, { headers })
-        .catch(() => {});
+      await deleteFlow(request, flowId, { headers }).catch(() => {});
     },
   };
 }

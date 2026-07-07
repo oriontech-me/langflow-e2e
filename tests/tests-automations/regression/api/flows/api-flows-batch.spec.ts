@@ -1,5 +1,6 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 const FLOW_BASE = {
   name: "",
@@ -62,11 +63,9 @@ test.describe("Batch/Bulk Flow API Operations", () => {
       } finally {
         // Cleanup any remaining flows (in case batch failed or was skipped)
         for (const id of flowIds) {
-          await request
-            .delete(`/api/v1/flows/${id}`, {
-              headers: { Authorization: authToken },
-            })
-            .catch(() => {});
+          await deleteFlow(request, id, {
+            headers: { Authorization: authToken },
+          }).catch(() => {});
         }
       }
     },
@@ -121,11 +120,9 @@ test.describe("Batch/Bulk Flow API Operations", () => {
         }
       } finally {
         for (const id of flowIds) {
-          await request
-            .delete(`/api/v1/flows/${id}`, {
-              headers: { Authorization: authToken },
-            })
-            .catch(() => {});
+          await deleteFlow(request, id, {
+            headers: { Authorization: authToken },
+          }).catch(() => {});
         }
       }
     },

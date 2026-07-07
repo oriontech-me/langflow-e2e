@@ -2,6 +2,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 const FLOW_BASE = {
   description: "Publish flow test",
@@ -140,7 +141,7 @@ test(
       await page.goto("/").catch(() => {});
 
       // Clean up the flow so repeated runs do not accumulate workspace artifacts
-      await request.delete(`/api/v1/flows/${flowId}`, {
+      await deleteFlow(request, flowId, {
         headers: { Authorization: authToken },
       });
     }
@@ -192,7 +193,7 @@ test(
       expect(getPrivate.status()).toBe(200);
       expect((await getPrivate.json()).access_type).toBe("PRIVATE");
     } finally {
-      await request.delete(`/api/v1/flows/${flowId}`, {
+      await deleteFlow(request, flowId, {
         headers: { Authorization: authToken },
       });
     }

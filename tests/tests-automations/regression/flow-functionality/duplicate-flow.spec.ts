@@ -1,6 +1,7 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 const FLOW_BASE = {
   description: "Flow duplicate test",
@@ -114,13 +115,15 @@ test(
       expect(flowList.some((f) => f.id === original.id)).toBe(true);
       expect(flowList.some((f) => f.id === duplicate.id)).toBe(true);
     } finally {
-      await request.delete(`/api/v1/flows/${original.id}`, {
+      // Multi-step teardown: swallow so a failed first delete still lets the
+      // second run (a throw here would leak the sibling flow).
+      await deleteFlow(request, original.id, {
         headers: { Authorization: authToken },
-      });
+      }).catch(() => {});
       if (duplicateId) {
-        await request.delete(`/api/v1/flows/${duplicateId}`, {
+        await deleteFlow(request, duplicateId, {
           headers: { Authorization: authToken },
-        });
+        }).catch(() => {});
       }
     }
   },

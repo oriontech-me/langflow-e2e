@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 const TRACE_FIXTURE = JSON.parse(
   readFileSync(
@@ -139,7 +140,7 @@ test.describe("Transaction record shape — seeded flow", () => {
 
   test.afterAll(async ({ request }) => {
     if (flowId) {
-      await request.delete(`/api/v1/flows/${flowId}`, {
+      await deleteFlow(request, flowId, {
         headers: { "x-api-key": apiKey },
       });
     }

@@ -4,6 +4,7 @@ import {
   SUPERUSER_PASSWORD,
   SUPERUSER_USERNAME,
 } from "../../../../helpers/auth/credentials";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 /**
  * Companion to the PR #13471 timezone-display regression: that fix proved the
@@ -99,9 +100,7 @@ test.describe("API key expiry enforcement (PR #13471 companion)", () => {
       });
     }
     if (flowId) {
-      await request.delete(`/api/v1/flows/${flowId}`, {
-        headers: { Authorization: bearer },
-      });
+      await deleteFlow(request, flowId, { headers: { Authorization: bearer } });
     }
   });
 

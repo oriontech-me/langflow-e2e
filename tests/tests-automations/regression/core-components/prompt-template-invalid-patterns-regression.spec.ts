@@ -7,6 +7,7 @@ import {
   fillPromptTemplate,
 } from "../../../helpers/ui/prompt-template";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Flows are created via the REST API (setupBlankFlow) and deleted in afterEach
 // (issue #545). Kept serial so the per-file flow lifecycle stays deterministic
@@ -28,7 +29,7 @@ test.afterEach(async ({ page }) => {
     // Leave the editor first: staying on it while the flow is deleted makes
     // background polling 404, which the fixture's error monitor would flag.
     await page.goto("/").catch(() => {});
-    await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+    await deleteFlow(page.request, createdFlowId);
     createdFlowId = null;
   }
 });

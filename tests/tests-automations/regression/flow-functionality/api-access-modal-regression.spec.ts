@@ -1,6 +1,7 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Run this file's tests serially. All four open the same "Basic Prompting" template, each creating a
 // fresh flow; running them in parallel within one worker pool makes the backend receive near-identical
@@ -53,7 +54,8 @@ test.afterEach(async ({ request }) => {
         : (body?.flows ?? []);
       for (const f of flows) {
         if (!snapshot.has(f.id)) {
-          await request.delete(`/api/v1/flows/${f.id}`, { headers });
+          // Best-effort per-flow so one failure does not abort the sweep.
+          await deleteFlow(request, f.id, { headers }).catch(() => {});
         }
       }
     }

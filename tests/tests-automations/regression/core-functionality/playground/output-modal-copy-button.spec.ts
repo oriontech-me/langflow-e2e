@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 // Expand the currently focused node from minimized to full view. Chat Input
 // defaults to `minimized = True` (see lfx/components/input_output/chat.py);
@@ -30,7 +31,7 @@ test.describe("Output Modal — Copy Button", () => {
       // for the current flow; without this, pending polling GETs complete
       // after the DELETE and trigger spurious 404 fixture errors.
       await page.goto("/");
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

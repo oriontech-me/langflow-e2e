@@ -3,6 +3,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { openNewFlowTemplatesModal } from "../../../../helpers/flows/open-new-flow-templates-modal";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 test(
   "user should be able to select flows with different methods and perform bulk actions",
@@ -169,7 +170,7 @@ test(
         const headers = { Authorization: await getAuthToken(request) };
         for (const id of createdFlowIds) {
           try {
-            await request.delete(`/api/v1/flows/${id}`, { headers });
+            await deleteFlow(request, id, { headers });
           } catch {
             // Best-effort per-flow — do not mask the original test failure.
           }

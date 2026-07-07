@@ -5,6 +5,7 @@ import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 test(
   "user should be able to use Run Flow without any issues",
@@ -161,7 +162,7 @@ test(
         const headers = { Authorization: await getAuthToken(request) };
         for (const id of createdFlowIds) {
           try {
-            await request.delete(`/api/v1/flows/${id}`, { headers });
+            await deleteFlow(request, id, { headers });
           } catch {
             // Best-effort per-flow — do not mask the original test failure.
           }

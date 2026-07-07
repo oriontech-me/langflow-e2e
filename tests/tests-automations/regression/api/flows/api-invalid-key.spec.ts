@@ -1,5 +1,6 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 const FLOW_BASE = {
   name: "",
@@ -75,7 +76,7 @@ test.describe("API Invalid Key Handling", () => {
 
         expect([401, 403]).toContain(runRes.status());
       } finally {
-        await request.delete(`/api/v1/flows/${flowId}`, {
+        await deleteFlow(request, flowId, {
           headers: { Authorization: authToken },
         });
       }
@@ -127,7 +128,7 @@ test.describe("API Invalid Key Handling", () => {
         const flow = await getRes.json();
         expect(flow.name).toBe(flowName);
       } finally {
-        await request.delete(`/api/v1/flows/${flowId}`, {
+        await deleteFlow(request, flowId, {
           headers: { Authorization: authToken },
         });
       }

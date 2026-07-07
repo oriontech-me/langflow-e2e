@@ -1,6 +1,7 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 test.describe("Canvas copy / paste", () => {
   let createdFlowId: string | null = null;
@@ -11,7 +12,7 @@ test.describe("Canvas copy / paste", () => {
       // flow is deleted causes background polling/WS requests to 404, which
       // the fixture's backend error monitor would flag as failures.
       await page.goto("/").catch(() => {});
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

@@ -1,6 +1,7 @@
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 // The server prefixes uploaded filenames with a timestamp, so alt becomes e.g.
 // "2026-03-22_20-09-16_chain.png". Match by src path instead of alt.
@@ -17,7 +18,7 @@ test.describe("Playground Output – Image Upload (ID B0c)", () => {
   test.afterEach(async ({ page }) => {
     if (createdFlowId) {
       await page.goto("/");
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

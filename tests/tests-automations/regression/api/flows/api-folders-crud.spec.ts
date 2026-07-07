@@ -1,5 +1,6 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 // Folders use the /api/v1/projects/ endpoint (legacy alias kept for compatibility)
 test.describe("Folder (Projects) CRUD via API", () => {
@@ -146,7 +147,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
       expect(updatedFlow.folder_id).toBe(folder2.id);
 
       // Cleanup
-      await request.delete(`/api/v1/flows/${flow.id}`, {
+      await deleteFlow(request, flow.id, {
         headers: { Authorization: authToken },
       });
       await request.delete(`/api/v1/projects/${folder1.id}`, {

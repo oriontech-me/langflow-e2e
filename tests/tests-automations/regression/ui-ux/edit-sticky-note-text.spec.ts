@@ -2,6 +2,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 test.describe("Sticky Note — Edit Text", () => {
   let flowId = "";
@@ -10,7 +11,7 @@ test.describe("Sticky Note — Edit Text", () => {
     // Delete the flow created during this test so it does not pollute the
     // instance for subsequent runs.
     if (flowId) {
-      await page.request.delete(`/api/v1/flows/${flowId}`).catch(() => {});
+      await deleteFlow(page.request, flowId);
     }
   });
 

@@ -1,6 +1,7 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Flow created by the test (blank-flow → /flow/{id}); captured so afterEach can
 // delete only this one via the API. Targeted (not cleanAllFlows) so the teardown
@@ -15,7 +16,7 @@ test.afterEach(async ({ page }) => {
     const body = await login.json();
     if (body?.access_token) headers.Authorization = `Bearer ${body.access_token}`;
   }
-  await page.request.delete(`/api/v1/flows/${createdFlowId}`, { headers });
+  await deleteFlow(page.request, createdFlowId, { headers });
   createdFlowId = undefined;
 });
 
