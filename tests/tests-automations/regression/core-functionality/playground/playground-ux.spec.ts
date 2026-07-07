@@ -80,7 +80,7 @@ test.describe("Playground UX", () => {
 
   test(
     "playground input field must be ready after flow responds",
-    { tag: ["@release", "@regression", "@playground"] },
+    { tag: ["@release", "@regression", "@playground", "@stable"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
         createdFlowId = await setupPlayground(page);
