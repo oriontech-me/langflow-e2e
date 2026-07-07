@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
@@ -8,58 +9,48 @@ import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 // creating the flow"). Serializing removes that self-collision and keeps the run free of backend errors.
 test.describe.configure({ mode: "serial" });
 
-const LIST_PARAMS = { get_all: "true", remove_example_flows: "true" };
+// Ids of flows created by THIS page's own requests, collected from the
+// flow-creating POST responses and deleted one by one in afterEach. The
+// previous diff-based cleanup (snapshot the list, delete the difference)
+// deleted any flow a PARALLEL worker created during the test window — the
+// cross-worker destructive-cleanup class from #553/#561; here it was the
+// wiper that killed edit-flow-name's in-flight flows in the daily (#519).
+// This also runs for tests that fail mid-way, so a flow created before an
+// assertion failure is still swept.
+let createdFlowIds: string[] = [];
 
-// Snapshot/diff cleanup — same pattern as the validated sibling export-import-flow.spec.ts in this
-// directory: record the flow IDs that exist before each test, then delete any that appeared after it.
-// `null` is a sentinel meaning "snapshot failed — skip cleanup this run" so a list-endpoint hiccup
-// never deletes the whole workspace. This also runs for tests that fail mid-way, so a flow created
-// before an assertion failure is still swept.
-let preTestFlowIds: Set<string> | null = null;
-
-test.beforeEach(async ({ request }) => {
-  preTestFlowIds = null;
-  try {
-    const headers = { Authorization: await getAuthToken(request) };
-    const listRes = await request.get("/api/v1/flows/", {
-      headers,
-      params: LIST_PARAMS,
-    });
-    if (listRes.ok()) {
-      const body = await listRes.json();
-      const flows: Array<{ id: string }> = Array.isArray(body)
-        ? body
-        : (body?.flows ?? []);
-      preTestFlowIds = new Set(flows.map((f) => f.id));
+const trackFlowCreations = (page: Page) => {
+  page.on("response", async (resp) => {
+    if (
+      !resp.url().includes("/api/v1/flows") ||
+      resp.request().method() !== "POST" ||
+      !resp.ok()
+    ) {
+      return;
     }
-  } catch {
-    // Leave sentinel as null so afterEach skips cleanup.
-  }
+    try {
+      const body = await resp.json();
+      const items = Array.isArray(body) ? body : (body?.flows ?? [body]);
+      for (const item of items) {
+        if (item?.id) createdFlowIds.push(item.id);
+      }
+    } catch {
+      // Non-JSON response — nothing to track.
+    }
+  });
+};
+
+test.beforeEach(async ({ page }) => {
+  createdFlowIds = [];
+  trackFlowCreations(page);
 });
 
 test.afterEach(async ({ request }) => {
-  if (preTestFlowIds === null) return;
-  const snapshot = preTestFlowIds;
-  try {
-    const headers = { Authorization: await getAuthToken(request) };
-    const listRes = await request.get("/api/v1/flows/", {
-      headers,
-      params: LIST_PARAMS,
-    });
-    if (listRes.ok()) {
-      const body = await listRes.json();
-      const flows: Array<{ id: string }> = Array.isArray(body)
-        ? body
-        : (body?.flows ?? []);
-      for (const f of flows) {
-        if (!snapshot.has(f.id)) {
-          await request.delete(`/api/v1/flows/${f.id}`, { headers });
-        }
-      }
-    }
-  } catch {
-    // Cleanup is best-effort.
+  const headers = { Authorization: await getAuthToken(request) };
+  for (const id of createdFlowIds) {
+    await request.delete(`/api/v1/flows/${id}`, { headers }).catch(() => {});
   }
+  createdFlowIds = [];
 });
 
 // Opens the Basic Prompting template (matching curlApiGeneration / pythonApiGeneration), then opens

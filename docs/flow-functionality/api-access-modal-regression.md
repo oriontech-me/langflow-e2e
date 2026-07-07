@@ -35,7 +35,7 @@ A shared `openApiAccessModal(page)` helper performs the common opening sequence 
 
 A second helper `selectUnixCurlTab(page)` clicks `api_tab_curl` then the `macOS/Linux` platform sub-tab, so the generated cURL is deterministic (the default platform follows `getOS()`, which can resolve to Windows/PowerShell on some runners).
 
-Cleanup is handled by a shared **snapshot/diff `afterEach`** (same pattern as the validated sibling `export-import-flow.spec.ts`), not by per-test `finally` blocks: `beforeEach` records the flow IDs that exist before the test, `afterEach` deletes any that appeared after it. A `null` sentinel means "snapshot failed — skip cleanup" so a list-endpoint hiccup never wipes the workspace; it also runs for tests that fail mid-way, so a flow created before an assertion failure is still swept.
+Cleanup tracks the ids returned by this page's own flow-creating responses (`POST` under `/api/v1/flows`) and deletes exactly those in `afterEach` (same pattern as `export-import-flow.spec.ts` post-#561). The previous snapshot/diff cleanup deleted any flow a PARALLEL worker created during the test window — the cross-worker destructive-cleanup class from #553; in the daily it was the wiper that killed `edit-flow-name`'s in-flight flows (#519). The tracker also runs for tests that fail mid-way, so a flow created before an assertion failure is still swept.
 
 ### Test 1 — `API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs`
 
@@ -69,7 +69,7 @@ Cleanup is handled by a shared **snapshot/diff `afterEach`** (same pattern as th
 - Tab switching is proven by reading the clipboard after each tab's Copy click (the visible code is a tokenized `SyntaxHighlighter` tree, not a plain string) and asserting the snippets differ AND each matches its language signature
 - The endpoint URL assertion uses the **specific** captured `flowId` (`/api/v1/run/{flowId}`), not a generic UUID match — coherence with the open flow is the distinct concern of this spec
 - Both close paths (`Escape`, `Close` button) drive `api_tab_curl` to hidden — a partial close (overlay lingering) would fail
-- A shared snapshot/diff `afterEach` deletes any flow created during the test so repeated runs do not accumulate workspace artifacts; the `null` sentinel keeps a failed snapshot from wiping the workspace
+- A shared tracked-ids `afterEach` deletes exactly the flows this page created, so repeated runs do not accumulate workspace artifacts without ever touching parallel workers' flows (#519)
 
 ---
 
