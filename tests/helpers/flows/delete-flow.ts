@@ -28,11 +28,14 @@ export async function deleteFlow(
   options?: { headers?: Record<string, string> },
 ): Promise<void> {
   const res = await request.delete(`/api/v1/flows/${id}`, options);
-  if (res.ok()) return;
+  // 404 means the flow is already gone — for idempotent cleanup that IS the
+  // desired end state (e.g. a concurrent worker's sweep removed it first), not
+  // a failure. Only a genuine error (403/5xx/…) should surface.
+  if (res.ok() || res.status() === 404) return;
 
   // One retry to absorb a transient teardown 5xx under parallel load.
   const retry = await request.delete(`/api/v1/flows/${id}`, options);
-  if (!retry.ok()) {
+  if (!retry.ok() && retry.status() !== 404) {
     throw new Error(
       `Flow cleanup failed: ${retry.status()} — ${await retry.text()}`,
     );
