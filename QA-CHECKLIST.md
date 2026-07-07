@@ -362,7 +362,7 @@
 - [x] Input via direct field vs handle (ChatInput) — both work → `core-functionality/llm-agents/agent-input-sources.spec.ts`
 - [x] Empty response or model refusal — component does not crash → `core-functionality/llm-agents/agent-empty-refusal-response.spec.ts`
 - [ ] Toggle add_current_date_tool works (enables/disables date tool) → `agent-current-date-tool.spec.ts`
-- [ ] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts`
+- [ ] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts` (**not implementable on 1.11**: the field now only toggles `ToolRetryMiddleware`, and component-tool failures are converted to content by the hardcoded `handle_tool_error=True` before the middleware can observe them — True/False proven behaviorally identical; the only live trigger (LLM-emitted malformed args) is non-deterministic; pending re-scope, see #496)
 - [x] Image passed via input handle is processed correctly → `core-functionality/llm-agents/agent-multimodal-image-input.spec.ts`
 
 ---
