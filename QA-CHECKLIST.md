@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 272 `test()` calls carrying the `@stable` tag, distributed across 98 spec
+> 267 `test()` calls carrying the `@stable` tag, distributed across 95 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -912,7 +912,6 @@
 - [x] should not allow adding a Chat Input while a Webhook is on the canvas → `singleton-components.spec.ts`
 - [x] should not allow duplicating a Webhook → `singleton-components.spec.ts`
 - [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
-- [x] User should be able to use components as tool → `tool-mode.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
@@ -955,8 +954,6 @@
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
-- [x] message history context retention suite → `memory-history-regression.spec.ts`
-- [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
 - [x] OpenAI provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] Anthropic provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] a configured provider exposes the key edit surface (Replace, no raw input) → `model-provider-api-key.spec.ts`
@@ -964,7 +961,6 @@
 - [x] an invalid API key is rejected and does not enable the provider → `model-provider-modal-actions.spec.ts`
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
-- [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
 - [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
 - [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
@@ -1067,7 +1063,6 @@
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 
 #### mcp/client/
-- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 

@@ -59,7 +59,7 @@ test.describe("Memory Chatbot Regression", () => {
 
   test(
     "message history context retention suite",
-    { tag: ["@stable", "@release", "@agents", "@playground"] },
+    { tag: ["@release", "@agents", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process.env.OPENAI_API_KEY,
@@ -111,7 +111,7 @@ test.describe("Memory Chatbot Regression", () => {
 
   test(
     "session isolation: new session has no context from previous session",
-    { tag: ["@stable", "@release", "@agents", "@playground"] },
+    { tag: ["@release", "@agents", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process.env.OPENAI_API_KEY,

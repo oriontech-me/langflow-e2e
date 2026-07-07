@@ -158,7 +158,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent calls echo MCP tool and returns echoed message",
-      { tag: ["@stable", "@mcp", "@agents", "@regression"] },
+      { tag: ["@mcp", "@agents", "@regression"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
