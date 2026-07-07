@@ -1,6 +1,6 @@
 # Playground — Chat UX
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
