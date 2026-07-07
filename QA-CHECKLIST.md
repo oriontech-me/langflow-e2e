@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 269 `test()` calls carrying the `@stable` tag, distributed across 96 spec
+> 270 `test()` calls carrying the `@stable` tag, distributed across 97 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -912,6 +912,7 @@
 - [x] should not allow adding a Chat Input while a Webhook is on the canvas → `singleton-components.spec.ts`
 - [x] should not allow duplicating a Webhook → `singleton-components.spec.ts`
 - [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
+- [x] User should be able to use components as tool → `tool-mode.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
