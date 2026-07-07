@@ -50,35 +50,50 @@ async function setIntField(page: Page, testId: string, value: string): Promise<v
   await expect(field).toHaveValue(value, { timeout: 5000 });
 }
 
-// Resolve the single post-wipe flow from the flows list (the canvas URL id is
-// transient on 1.11) and return the Agent node's template.
+// Fetch the flow by the id captured at template instantiation (the canvas URL
+// id is transient on 1.11) and return its Agent node's template. Resolving by
+// id — instead of scanning the whole flows list — keeps the assert immune to
+// flows created by other specs or parallel workers (#553).
 async function getPersistedAgentTemplate(
   request: APIRequestContext,
+  flowId: string,
 ): Promise<any> {
   const bearer = await getAuthToken(request);
-  const res = await request.get(
-    "/api/v1/flows/?remove_example_flows=true&header_flows=false",
-    { headers: { Authorization: bearer } },
-  );
+  const res = await request.get(`/api/v1/flows/${flowId}`, {
+    headers: { Authorization: bearer },
+  });
   expect(res.status()).toBe(200);
-  const flows = await res.json();
-  const agentNodes = (Array.isArray(flows) ? flows : [])
-    .flatMap((f: any) => f.data?.nodes ?? [])
-    .filter((n: any) => n.data?.type === "Agent");
-  expect(agentNodes.length, "exactly one Agent flow must exist post-wipe").toBe(1);
+  const flow = await res.json();
+  const agentNodes = (flow.data?.nodes ?? []).filter(
+    (n: any) => n.data?.type === "Agent",
+  );
+  expect(agentNodes.length, "the template flow must have exactly one Agent node").toBe(1);
   return agentNodes[0].data.node.template;
 }
 
 test.describe.configure({ mode: "serial" });
+
+let createdFlowId: string | null = null;
+
+// Delete only the flow this test created (by id) — a broad cleanup here
+// would kill parallel workers' in-flight flows (#553).
+test.afterEach(async ({ page }) => {
+  if (createdFlowId) {
+    await page.request.delete(`/api/v1/flows/${createdFlowId}`).catch(() => {});
+    createdFlowId = null;
+  }
+});
 
 test(
   "Agent settings survive save and reopen",
   { tag: ["@stable", "@regression", "@agents", "@workspace"] },
   async ({ page, request }) => {
     const nonce = `PERSIST_PROBE_${Date.now()}`;
+    let flowId = "";
 
     await test.step("load the Simple Agent template (no provider setup — model-free)", async () => {
-      await loadTemplateByName(page, "Simple Agent");
+      flowId = await loadTemplateByName(page, "Simple Agent");
+      createdFlowId = flowId;
     });
 
     await test.step("set string, int and bool sentinels in the Controls dialog", async () => {
@@ -125,7 +140,7 @@ test(
       await expect
         .poll(
           async () => {
-            const t = await getPersistedAgentTemplate(request);
+            const t = await getPersistedAgentTemplate(request, flowId);
             return {
               system_prompt: t.system_prompt?.value,
               max_iterations: t.max_iterations?.value,
@@ -144,7 +159,7 @@ test(
     await test.step("reopen the flow from the home page", async () => {
       await page.goto("/");
       await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
-      await page.locator('[data-testid^="flow-name-"]').first().click();
+      await page.getByTestId(`flow-name-${flowId}`).click();
       await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
         timeout: 30000,
       });

@@ -9,6 +9,13 @@ import type { Page } from "@playwright/test";
  *
  * Works in the default auto_login mode; falls back gracefully if the token
  * endpoint is unavailable (flows simply won't be deleted in that case).
+ *
+ * WARNING: destructive across parallel workers. This deletes EVERY user
+ * flow on the shared instance, including flows another worker is actively
+ * using — in the fully-parallel CI suite that kills the neighbor's test
+ * mid-flight (its page starts 404ing "Flow not found"; see #553). Do NOT
+ * call this as pre-test cleanup in specs that run in the parallel suite;
+ * create your flow, keep its id, and delete only that id in your cleanup.
  */
 export const cleanAllFlows = async (page: Page) => {
   // Obtain a bearer token via auto_login (no credentials required in dev/test).
