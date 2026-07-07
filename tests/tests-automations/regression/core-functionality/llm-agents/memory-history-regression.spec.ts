@@ -12,12 +12,14 @@ if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
 }
 
-async function loadMemoryChatbot(page: Page): Promise<void> {
-  await loadTemplateByName(page, "Memory Chatbot");
+async function loadMemoryChatbot(page: Page): Promise<string> {
+  const flowId = await loadTemplateByName(page, "Memory Chatbot");
 
   await adjustScreenView(page);
   await updateOldComponents(page);
   await adjustScreenView(page);
+
+  return flowId;
 }
 
 // Waits until `expectedResponses` bot responses have *fully completed*.
@@ -35,11 +37,22 @@ async function waitForChatResponse(page: Page, expectedResponses: number): Promi
 }
 
 test.describe("Memory Chatbot Regression", () => {
+  let createdFlowId: string | null = null;
+
+  // Delete only the flow this test created (by id) — a broad cleanup here
+  // would kill parallel workers' in-flight flows (#553).
+  test.afterEach(async ({ page }) => {
+    if (createdFlowId) {
+      await page.request.delete(`/api/v1/flows/${createdFlowId}`).catch(() => {});
+      createdFlowId = null;
+    }
+  });
+
   test(
     "memory chatbot template loads with correct node structure",
     { tag: ["@release", "@agents", "@playground"] },
     async ({ page }) => {
-      await loadMemoryChatbot(page);
+      createdFlowId = await loadMemoryChatbot(page);
 
       // Template redesigned upstream (1.11.0.dev34): Agent + Memory Base
       // replaced the Message History / Language Model / Prompt Template trio
@@ -68,7 +81,7 @@ test.describe("Memory Chatbot Regression", () => {
         "OPENAI_API_KEY required to run this test",
       );
 
-      await loadMemoryChatbot(page);
+      createdFlowId = await loadMemoryChatbot(page);
       await setupLanguageModelOpenAI(page);
 
       const playground = new PlaygroundPage(page);
@@ -120,7 +133,7 @@ test.describe("Memory Chatbot Regression", () => {
         "OPENAI_API_KEY required to run this test",
       );
 
-      await loadMemoryChatbot(page);
+      createdFlowId = await loadMemoryChatbot(page);
       await setupLanguageModelOpenAI(page);
 
       const playground = new PlaygroundPage(page);

@@ -34,7 +34,7 @@ Does not require an API key. Validates only the canvas structure.
 > `initial_setup/starter_projects/Memory Chatbot.json`). Structure
 > assertions track the shipped template (issue #550).
 
-1. Delete existing flows and load the "Memory Chatbot" template from `All Templates`
+1. Load the "Memory Chatbot" template from `All Templates`, capturing the created flow's id (no pre-cleanup of existing flows — a wipe kills parallel workers' in-flight flows, #553; duplicate names auto-suffix; each test deletes its own flow by id in `afterEach`)
 2. Wait for `canvas_controls_dropdown` to appear; adjust view and update components
 3. *Step: canvas has all 5 required nodes* — `expect.soft` for each of the 5 nodes:
    - `title-Chat Input`, `title-Chat Output`, `title-Agent`

@@ -51,8 +51,8 @@ Agent configuration surface; `@workspace` — flow save/reopen lifecycle.
 
 - Langflow running at `PLAYWRIGHT_BASE_URL`.
 - No provider key or `models.json` needed (model-free).
-- Run with `--workers=1` — the spec is serial (`loadTemplateByName` wipes all
-  flows).
+- Run with `--workers=1` — the spec is serial (named template flows collide
+  under parallelism).
 
 ---
 
@@ -60,8 +60,11 @@ Agent configuration surface; `@workspace` — flow save/reopen lifecycle.
 
 **Test — Agent settings survive save and reopen** (§6.2)
 
-1. Load the Simple Agent template via `loadTemplateByName` (wipes flows; no
-   provider setup).
+1. Load the Simple Agent template via `loadTemplateByName`, capturing the
+   created flow's id from the `POST /api/v1/flows/` response. No pre-cleanup
+   of existing flows (a wipe kills parallel workers' in-flight flows, #553;
+   duplicate names auto-suffix) — the spec deletes its own flow by id in
+   `afterEach`. No provider setup (model-free).
 2. Open the Agent's **Controls** dialog. The `edit-button-modal` toolbar
    button only renders with the node selected AND the Inspector Panel hidden
    (`hideInspectorPanel` first, then click the Agent node).
@@ -80,9 +83,10 @@ Agent configuration surface; `@workspace` — flow save/reopen lifecycle.
    - `toggle_bool_edit_add_current_date_tool` — assert `aria-checked="true"`
      (template default), click, assert `"false"`.
 4. Close (`edit-button-close`) and `waitForFlowSaveSettled`.
-5. **Saved assert (API):** resolve the flow from the flows list (the canvas
-   URL id is transient on 1.11; the wipe guarantees a single flow) and poll
-   until the Agent template shows all three sentinel values.
+5. **Saved assert (API):** fetch the flow by the id captured at creation
+   (`GET /api/v1/flows/{id}` — the canvas URL id is transient on 1.11, so
+   the id comes from the template-instantiation `POST` response, not the
+   URL) and poll until the Agent template shows all three sentinel values.
 6. Navigate home (`page.goto("/")`), reopen the flow via its
    `flow-name-<id>` card, wait for the canvas.
 7. Reopen the Controls dialog (same hide-inspector + select-node dance).
