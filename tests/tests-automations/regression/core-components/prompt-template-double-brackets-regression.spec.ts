@@ -6,10 +6,32 @@ import {
   fillPromptTemplate,
   setUseDoubleBrackets,
 } from "../../../helpers/ui/prompt-template";
+import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 
-// Run serially to avoid 500 errors from concurrent POST /api/v1/flows/
-// when several workers create a blank flow at the same time.
+// Flows are created via the REST API (setupBlankFlow) and deleted in afterEach
+// (issue #545). Kept serial so the per-file flow lifecycle stays deterministic
+// under load.
 test.describe.configure({ mode: "serial" });
+
+let createdFlowId: string | null = null;
+
+test.beforeEach(async ({ page }) => {
+  // setupBlankFlow creates the flow via API (no UI-creation 500 race) and
+  // returns its id so afterEach can delete it. Capturing the id before the
+  // component add means a failure in addPromptComponent still cleans up.
+  createdFlowId = await setupBlankFlow(page);
+  await addPromptComponent(page);
+});
+
+test.afterEach(async ({ page }) => {
+  if (createdFlowId) {
+    // Leave the editor first: staying on it while the flow is deleted makes
+    // background polling 404, which the fixture's error monitor would flag.
+    await page.goto("/").catch(() => {});
+    await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+    createdFlowId = null;
+  }
+});
 
 // `use_double_brackets` carries `advanced=True` upstream, which only filters the
 // field from the on-canvas node body via `isCanvasVisible()`. The right-hand
@@ -21,10 +43,6 @@ test(
   "Prompt Template — use_double_brackets toggle is exposed in the InspectionPanel with its upstream display name",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step(
       "Toggle is visible in the InspectionPanel by default",
       async () => {
@@ -68,10 +86,6 @@ test(
   "Prompt Template — default toggle state is OFF; f-string mode extracts {var} and treats {{var}} as literal",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step(
       "Save template `Hello {single} and {{double}}!` in default (f-string) mode",
       async () => {
@@ -98,10 +112,6 @@ test(
   "Prompt Template — enabling toggle switches parser to mustache mode; {{var}} creates handle and {var} is ignored",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step("Enable double brackets — switches to mustache mode", async () => {
       await setUseDoubleBrackets(page, true);
     });
@@ -134,10 +144,6 @@ test(
   "Prompt Template — disabling toggle reverts to f-string mode and variables are re-extracted under the new parser",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step(
       "Enable mustache mode and save `Hello {{name}}!` — `name` handle appears",
       async () => {
@@ -217,13 +223,10 @@ test(
   "Prompt Template — use_double_brackets value persists in the autosaved flow",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    let flowId = "";
-
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-      flowId = page.url().split("/").slice(-1)[0];
-      expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
-    });
+    // The flow is created in beforeEach; `createdFlowId` is its authoritative
+    // API id — assert its shape here to keep the original UUID sanity check.
+    expect(createdFlowId).toMatch(/^[0-9a-f-]{36}$/);
+    const flowId = createdFlowId as string;
 
     await test.step(
       "Baseline — `template.use_double_brackets.value` starts as `false`",

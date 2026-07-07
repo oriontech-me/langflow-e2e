@@ -7,10 +7,32 @@ import {
   fillPromptTemplate,
   setUseDoubleBrackets,
 } from "../../../helpers/ui/prompt-template";
+import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 
-// Run serially to avoid 500 errors from concurrent POST /api/v1/flows/
-// when several workers create a blank flow at the same time.
+// Flows are created via the REST API (setupBlankFlow) and deleted in afterEach
+// (issue #545). Kept serial so the per-file flow lifecycle stays deterministic
+// under load.
 test.describe.configure({ mode: "serial" });
+
+let createdFlowId: string | null = null;
+
+test.beforeEach(async ({ page }) => {
+  // setupBlankFlow creates the flow via API (no UI-creation 500 race) and
+  // returns its id so afterEach can delete it. Capturing the id before the
+  // component add means a failure in addPromptComponent still cleans up.
+  createdFlowId = await setupBlankFlow(page);
+  await addPromptComponent(page);
+});
+
+test.afterEach(async ({ page }) => {
+  if (createdFlowId) {
+    // Leave the editor first: staying on it while the flow is deleted makes
+    // background polling 404, which the fixture's error monitor would flag.
+    await page.goto("/").catch(() => {});
+    await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+    createdFlowId = null;
+  }
+});
 
 // Backend contract — POST /api/v1/validate/prompt with `mustache: true` raises
 // HTTP 500 with `detail=str(ValueError(...))` when `validate_mustache_template`
@@ -106,8 +128,7 @@ test(
   "Prompt Template — mustache `{{ var }}` (spaces inside braces) is rejected with an error toast and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template and enable mustache mode", async () => {
-      await addPromptComponent(page);
+    await test.step("Enable mustache mode", async () => {
       await setUseDoubleBrackets(page, true);
     });
 
@@ -131,8 +152,7 @@ test(
   "Prompt Template — mustache `{{var.attr}}` (dot notation) is rejected with an error toast and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template and enable mustache mode", async () => {
-      await addPromptComponent(page);
+    await test.step("Enable mustache mode", async () => {
       await setUseDoubleBrackets(page, true);
     });
 
@@ -154,8 +174,7 @@ test(
   "Prompt Template — mustache `{{#section}}{{/section}}` is rejected with the complex-syntax message and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template and enable mustache mode", async () => {
-      await addPromptComponent(page);
+    await test.step("Enable mustache mode", async () => {
       await setUseDoubleBrackets(page, true);
     });
 
@@ -176,8 +195,7 @@ test(
   "Prompt Template — mustache `{{{var}}}` (triple braces) is rejected with the complex-syntax message and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template and enable mustache mode", async () => {
-      await addPromptComponent(page);
+    await test.step("Enable mustache mode", async () => {
       await setUseDoubleBrackets(page, true);
     });
 

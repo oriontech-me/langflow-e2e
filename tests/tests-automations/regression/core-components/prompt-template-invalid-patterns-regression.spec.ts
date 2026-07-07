@@ -6,10 +6,32 @@ import {
   errorToastLocator,
   fillPromptTemplate,
 } from "../../../helpers/ui/prompt-template";
+import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 
-// Run serially to avoid 500 errors from concurrent POST /api/v1/flows/
-// when several workers create a blank flow at the same time.
+// Flows are created via the REST API (setupBlankFlow) and deleted in afterEach
+// (issue #545). Kept serial so the per-file flow lifecycle stays deterministic
+// under load.
 test.describe.configure({ mode: "serial" });
+
+let createdFlowId: string | null = null;
+
+test.beforeEach(async ({ page }) => {
+  // setupBlankFlow creates the flow via API (no UI-creation 500 race) and
+  // returns its id so afterEach can delete it. Capturing the id before the
+  // component add means a failure in addPromptComponent still cleans up.
+  createdFlowId = await setupBlankFlow(page);
+  await addPromptComponent(page);
+});
+
+test.afterEach(async ({ page }) => {
+  if (createdFlowId) {
+    // Leave the editor first: staying on it while the flow is deleted makes
+    // background polling 404, which the fixture's error monitor would flag.
+    await page.goto("/").catch(() => {});
+    await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+    createdFlowId = null;
+  }
+});
 
 // Backend contract — POST /api/v1/validate/prompt raises HTTP 500 with
 // `detail=str(ValueError(...))` when the f-string parser flags an invalid
@@ -97,10 +119,6 @@ test(
   "Prompt Template — `{var.attr}` (dot notation) is rejected with an error toast and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await runRejectionContract(page, "Hello {var.attr}", "var.attr");
 
     // Fourth piece of the rejection contract — kept at the test body level
@@ -114,10 +132,6 @@ test(
   "Prompt Template — `{var name}` (space inside identifier) is rejected with an error toast and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await runRejectionContract(page, "Hello {var name}", "var name");
 
     await expect(dynamicHandlesLocator(page)).toHaveCount(0);
@@ -131,10 +145,6 @@ test(
     // Comma is in `_INVALID_CHARACTERS` and users sometimes mistakenly write
     // `{a,b}` thinking it declares multiple variables — this case catches a
     // regression where comma is silently dropped from the set.
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await runRejectionContract(page, "Hello {var,name}", "var,name");
 
     await expect(dynamicHandlesLocator(page)).toHaveCount(0);
@@ -145,10 +155,6 @@ test(
   "Prompt Template — `{1var}` (leading digit) is rejected with an error toast and creates no handle",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     // Anchor on "Invalid variables: 1" instead of just "1" — the bare digit
     // could match incidental substrings in the toast (build numbers, icon
     // names, etc.); the full fragment proves the upstream `_fix_variable`
@@ -169,10 +175,6 @@ test(
     // out. The save succeeds without raising and no dynamic handle appears.
     // If a future change starts rejecting `{}` (or extracting it as a real
     // variable), this test breaks first.
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step(
       "Save `Plain {} text` — save closes the modal, no error toast, no handle",
       async () => {
@@ -199,10 +201,6 @@ test(
     // Documents the dedup behavior of `extract_input_variables_from_prompt`,
     // which tracks seen field names in a set — repeating `{name}` does not
     // duplicate the handle, even though the template has two placeholders.
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step(
       "Save `Hello {name}, goodbye {name}.` — both placeholders share the `name` slot",
       async () => {
