@@ -162,7 +162,7 @@ test.describe("Model Provider Model Toggle", () => {
   test(
     "disabling a model removes it from a component model dropdown",
     {
-      tag: ["@regression", "@components", "@agents", "@model-provider"],
+      tag: ["@stable", "@regression", "@components", "@agents", "@model-provider"],
     },
     async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");
