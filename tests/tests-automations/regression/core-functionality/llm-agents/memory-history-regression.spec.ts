@@ -12,12 +12,14 @@ if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
 }
 
-async function loadMemoryChatbot(page: Page): Promise<void> {
-  await loadTemplateByName(page, "Memory Chatbot");
+async function loadMemoryChatbot(page: Page): Promise<string> {
+  const flowId = await loadTemplateByName(page, "Memory Chatbot");
 
   await adjustScreenView(page);
   await updateOldComponents(page);
   await adjustScreenView(page);
+
+  return flowId;
 }
 
 // Waits until `expectedResponses` bot responses have *fully completed*.
@@ -35,38 +37,51 @@ async function waitForChatResponse(page: Page, expectedResponses: number): Promi
 }
 
 test.describe("Memory Chatbot Regression", () => {
+  let createdFlowId: string | null = null;
+
+  // Delete only the flow this test created (by id) — a broad cleanup here
+  // would kill parallel workers' in-flight flows (#553).
+  test.afterEach(async ({ page }) => {
+    if (createdFlowId) {
+      await page.request.delete(`/api/v1/flows/${createdFlowId}`).catch(() => {});
+      createdFlowId = null;
+    }
+  });
+
   test(
     "memory chatbot template loads with correct node structure",
     { tag: ["@release", "@agents", "@playground"] },
     async ({ page }) => {
-      await loadMemoryChatbot(page);
+      createdFlowId = await loadMemoryChatbot(page);
 
-      await test.step("canvas has all 6 required nodes", async () => {
+      // Template redesigned upstream (1.11.0.dev34): Agent + Memory Base
+      // replaced the Message History / Language Model / Prompt Template trio
+      // (issue #550; verified in the shipped starter-project JSON).
+      await test.step("canvas has all 5 required nodes", async () => {
         await expect.soft(page.getByTestId("title-Chat Input")).toBeVisible({ timeout: 10000 });
         await expect.soft(page.getByTestId("title-Chat Output")).toBeVisible({ timeout: 10000 });
-        await expect.soft(page.getByTestId("title-Message History")).toBeVisible({ timeout: 10000 });
-        await expect.soft(page.getByTestId("title-Language Model")).toBeVisible({ timeout: 10000 });
-        await expect.soft(page.getByTestId("title-Prompt Template")).toBeVisible({ timeout: 10000 });
+        await expect.soft(page.getByTestId("title-Agent")).toBeVisible({ timeout: 10000 });
+        await expect.soft(page.getByTestId("title-Memory Base")).toBeVisible({ timeout: 10000 });
         await expect.soft(page.getByTestId("note_node")).toBeVisible({ timeout: 10000 });
       });
 
-      await test.step("canvas has exactly 6 nodes", async () => {
+      await test.step("canvas has exactly 5 nodes", async () => {
         const nodeCount = await page.locator(".react-flow__node").count();
-        expect.soft(nodeCount).toBe(6);
+        expect.soft(nodeCount).toBe(5);
       });
     },
   );
 
   test(
     "message history context retention suite",
-    { tag: ["@release", "@agents", "@playground"] },
+    { tag: ["@stable", "@release", "@agents", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process.env.OPENAI_API_KEY,
         "OPENAI_API_KEY required to run this test",
       );
 
-      await loadMemoryChatbot(page);
+      createdFlowId = await loadMemoryChatbot(page);
       await setupLanguageModelOpenAI(page);
 
       const playground = new PlaygroundPage(page);
@@ -111,14 +126,14 @@ test.describe("Memory Chatbot Regression", () => {
 
   test(
     "session isolation: new session has no context from previous session",
-    { tag: ["@release", "@agents", "@playground"] },
+    { tag: ["@stable", "@release", "@agents", "@playground"] },
     async ({ page }) => {
       test.skip(
         !process.env.OPENAI_API_KEY,
         "OPENAI_API_KEY required to run this test",
       );
 
-      await loadMemoryChatbot(page);
+      createdFlowId = await loadMemoryChatbot(page);
       await setupLanguageModelOpenAI(page);
 
       const playground = new PlaygroundPage(page);
@@ -140,6 +155,15 @@ test.describe("Memory Chatbot Regression", () => {
       await expect(page.getByTestId("div-chat-message")).toHaveCount(0, {
         timeout: 10000,
       });
+
+      // Backend-isolation probe: the UI-reset check above would still pass if
+      // the backend leaked memory across sessions — only a model answer proves
+      // the new session's context is really empty. A leak surfaces "Bob" and
+      // fails; a model that answers "I don't know your name" passes.
+      await playground.sendMessage("What is my name?");
+      await waitForChatResponse(page, 1);
+      const response = await page.getByTestId("div-chat-message").last().innerText();
+      expect(response).not.toMatch(/Bob/i);
     },
   );
 });

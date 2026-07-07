@@ -8,6 +8,10 @@ import { adjustScreenView } from "./adjust-screen-view";
 // it here so existing importers of this module keep working unchanged.
 export { waitForFlowSaveSettled };
 
+// `errorToastLocator` now lives in its own module so every spec that waits on an
+// error toast shares one anchor (issue #224). Re-exported for existing importers.
+export { errorToastLocator } from "./error-toast";
+
 // Shared testids and selectors for the Prompt Template component, sourced
 // from live UI inspection and the upstream Langflow frontend source:
 //   add button:               "add-component-button-prompt-template"
@@ -80,15 +84,6 @@ export function dynamicHandlesLocator(page: Page): Locator {
   return page.locator(
     '[data-testid^="handle-prompt template-shownode-"][data-testid$="-left"]',
   );
-}
-
-/**
- * Locator for the error toast rendered by `ErrorAlert` when the prompt modal's
- * `onError` callback fires (no `data-testid` is exposed by the upstream alert
- * component, so the CSS class is the stable anchor).
- */
-export function errorToastLocator(page: Page): Locator {
-  return page.locator(".error-build-message");
 }
 
 /**

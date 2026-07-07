@@ -1,6 +1,6 @@
 # Flow Functionality — Export and Import Flow
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -26,12 +26,23 @@ If these break, users cannot share flows, back them up, or restore previously ex
 
 **Test 1 — export produces a valid downloadable file with success feedback**
 
-1. Create blank flow, add ChatInput component, return to main page
-2. Arm `page.waitForEvent("download")` BEFORE clicking export (Promise-based capture to avoid race with modal interaction)
-3. Open three-dot menu → `btn-download-json` → confirm "Export" modal text → click `modal-export-button`
-4. Assert toast matching `.*exported successfully` is visible
-5. Await the download event (hard-fails if it doesn't fire within 30s)
-6. Read file, `JSON.parse`, assert `data.nodes` is a non-empty array
+1. Create blank flow (capturing the flow id from the `POST /api/v1/flows/` 201
+   response) and add a ChatInput component
+2. Poll `GET /api/v1/flows/{id}` until `data.nodes.length > 0` — server-truth
+   proof the node-add autosave persisted, replacing the quiet-window guard
+   (`waitForFlowSaveSettled` resolves after 700 ms of silence even when the
+   debounced PATCH hasn't fired yet — the #384 loophole)
+3. Return to main page and open the three-dot menu **of the created flow's own
+   card**: `list-card` filtered by `flow-name-{id}` → `home-dropdown-menu`
+   inside it. Never `nth(0)`: the home sorts by `updated_at` DESC, so under
+   parallel CI the first card is whatever flow a neighbor worker touched last
+   — exporting it produced the `nodes: []` failures (#518; export serializes
+   the card's client-side data, no server fetch)
+4. Arm `page.waitForEvent("download")` BEFORE clicking export (Promise-based capture to avoid race with modal interaction)
+5. `btn-download-json` → confirm "Export" modal text → click `modal-export-button`
+6. Assert toast matching `.*exported successfully` is visible
+7. Await the download event (hard-fails if it doesn't fire within 30s)
+8. Read file, `JSON.parse`, assert `data.nodes` is a non-empty array
 
 **Test 2 — imported JSON loads on canvas**
 
@@ -90,4 +101,5 @@ If these break, users cannot share flows, back them up, or restore previously ex
 - Test 1 sets up the download event listener via `page.waitForEvent("download")` BEFORE clicking the export button — a race-condition-avoidance pattern. The test hard-fails if the download event doesn't fire and also asserts the visible toast, so both the user-facing signal and the actual file artifact are validated in one run (the toast-only variant was consolidated into this test to avoid redundant blank-flow setup).
 - Test 3 hard-asserts `upload-project-button` is visible before importing and then actually exercises it via `filechooser` + `setFiles` — distinct from Test 2's drag-and-drop path.
 - The 2-minute timeout on "uploaded successfully" in Test 2 is intentional: large collections can take time to process on slow machines.
-- The describe is configured `mode: "serial"` so the diff-based cleanup (`beforeEach` snapshot of existing flow IDs, `afterEach` delete-the-diff) runs without cross-worker races within this file. The list calls use `get_all=true&remove_example_flows=true` to match the existing `cleanAllFlows` helper. A null sentinel on snapshot failure skips cleanup entirely so a hiccup on the list endpoint can never delete the whole workspace.
+- Cleanup tracks the ids returned by this page's own flow-creating responses (`POST` under `/api/v1/flows`) and deletes exactly those in `afterEach`. The previous diff-based cleanup (snapshot → delete-the-difference) deleted any flow created by PARALLEL workers during the test window — the destructive-cleanup class from #553 — and is gone. The describe stays `mode: "serial"` so the three tests share the tracker safely within the file.
+- The exported JSON is serialized client-side from the home card's store data (`ExportModal` → `downloadFlow`; no server fetch on download) — which is why exporting the wrong (fresh, empty) card yields `nodes: []` with a perfectly healthy backend.

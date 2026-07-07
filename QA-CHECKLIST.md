@@ -362,7 +362,7 @@
 - [x] Input via direct field vs handle (ChatInput) — both work → `core-functionality/llm-agents/agent-input-sources.spec.ts`
 - [x] Empty response or model refusal — component does not crash → `core-functionality/llm-agents/agent-empty-refusal-response.spec.ts`
 - [ ] Toggle add_current_date_tool works (enables/disables date tool) → `agent-current-date-tool.spec.ts`
-- [ ] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts`
+- [ ] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts` (**not implementable on 1.11**: the field now only toggles `ToolRetryMiddleware`, and component-tool failures are converted to content by the hardcoded `handle_tool_error=True` before the middleware can observe them — True/False proven behaviorally identical; the only live trigger (LLM-emitted malformed args) is non-deterministic; pending re-scope, see #496)
 - [x] Image passed via input handle is processed correctly → `core-functionality/llm-agents/agent-multimodal-image-input.spec.ts`
 
 ---
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 269 `test()` calls carrying the `@stable` tag, distributed across 96 spec
+> 274 `test()` calls carrying the `@stable` tag, distributed across 98 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -912,6 +912,7 @@
 - [x] should not allow adding a Chat Input while a Webhook is on the canvas → `singleton-components.spec.ts`
 - [x] should not allow duplicating a Webhook → `singleton-components.spec.ts`
 - [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
+- [x] User should be able to use components as tool → `tool-mode.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
@@ -955,6 +956,8 @@
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
+- [x] message history context retention suite → `memory-history-regression.spec.ts`
+- [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
 - [x] OpenAI provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] Anthropic provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] a configured provider exposes the key edit surface (Replace, no raw input) → `model-provider-api-key.spec.ts`
@@ -962,6 +965,7 @@
 - [x] an invalid API key is rejected and does not enable the provider → `model-provider-modal-actions.spec.ts`
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
+- [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
 - [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
 - [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
@@ -1053,6 +1057,7 @@
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
+- [x] export flow to JSON triggers success toast and produces a valid file → `export-import-flow.spec.ts`
 - [x] imported JSON flow must load all components on canvas → `export-import-flow.spec.ts`
 - [x] import flow from JSON via upload button must load flow on canvas → `export-import-flow.spec.ts`
 - [x] 1 - runs the flow from the canvas terminal node → `flow-execution-canvas.spec.ts`

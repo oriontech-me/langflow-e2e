@@ -1,82 +1,82 @@
 import { readFileSync } from "fs";
 import path from "path";
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { simulateDragAndDrop } from "../../../helpers/ui/simulate-drag-and-drop";
-import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
-// Force serial execution within this file so the diff-based cleanup remains
-// safe — the snapshot/diff pattern is racy across workers when multiple tests
-// run concurrently against the same backend.
+// Serial so the three tests share the created-flow tracker safely within
+// this file.
 test.describe.configure({ mode: "serial" });
 
 test.describe("Export and Import Flow (IDs 173 + 120)", () => {
-  const LIST_PARAMS = { get_all: "true", remove_example_flows: "true" };
+  // Ids of flows created by THIS page's own requests, collected from the
+  // flow-creating POST responses and deleted one by one in afterEach. The
+  // previous diff-based cleanup (snapshot the list, delete the difference)
+  // deleted any flow a PARALLEL worker created during the test window — the
+  // cross-worker destructive-cleanup class from #553.
+  let createdFlowIds: string[] = [];
 
-  // `null` is a sentinel meaning "snapshot failed — skip cleanup this run" so
-  // we never delete the entire workspace if the list endpoint hiccups.
-  let preTestFlowIds: Set<string> | null = null;
-
-  test.beforeEach(async ({ request }) => {
-    preTestFlowIds = null;
-    try {
-      const headers = { Authorization: await getAuthToken(request) };
-      const listRes = await request.get("/api/v1/flows/", {
-        headers,
-        params: LIST_PARAMS,
-      });
-      if (listRes.ok()) {
-        const body = await listRes.json();
-        const flows: Array<{ id: string }> = Array.isArray(body)
-          ? body
-          : (body?.flows ?? []);
-        preTestFlowIds = new Set(flows.map((f) => f.id));
+  const trackFlowCreations = (page: Page) => {
+    page.on("response", async (resp) => {
+      if (
+        !resp.url().includes("/api/v1/flows") ||
+        resp.request().method() !== "POST" ||
+        !resp.ok()
+      ) {
+        return;
       }
-    } catch {
-      // Leave sentinel as null so afterEach skips cleanup.
-    }
+      try {
+        const body = await resp.json();
+        const items = Array.isArray(body) ? body : (body?.flows ?? [body]);
+        for (const item of items) {
+          if (item?.id) createdFlowIds.push(item.id);
+        }
+      } catch {
+        // Non-JSON response — nothing to track.
+      }
+    });
+  };
+
+  test.beforeEach(async ({ page }) => {
+    createdFlowIds = [];
+    trackFlowCreations(page);
   });
 
   test.afterEach(async ({ request }) => {
-    if (preTestFlowIds === null) return;
-    const snapshot = preTestFlowIds;
-    try {
-      const headers = { Authorization: await getAuthToken(request) };
-      const listRes = await request.get("/api/v1/flows/", {
-        headers,
-        params: LIST_PARAMS,
-      });
-      if (listRes.ok()) {
-        const body = await listRes.json();
-        const flows: Array<{ id: string }> = Array.isArray(body)
-          ? body
-          : (body?.flows ?? []);
-        for (const f of flows) {
-          if (!snapshot.has(f.id)) {
-            // Best-effort per-flow so one failure does not abort the sweep.
-            await deleteFlow(request, f.id, { headers }).catch(() => {});
-          }
-        }
-      }
-    } catch {
-      // Cleanup is best-effort.
+    const headers = { Authorization: await getAuthToken(request) };
+    for (const id of createdFlowIds) {
+      // Best-effort per-flow so one failure does not abort the sweep.
+      await deleteFlow(request, id, { headers }).catch(() => {});
     }
+    createdFlowIds = [];
   });
 
-  // @stable temporarily removed — flake regressed into a suspected real bug
-  // (export reads an empty flow, `nodes: []`); tracked in #518. Restore once fixed.
   test(
     "export flow to JSON triggers success toast and produces a valid file",
-    { tag: ["@release", "@workspace", "@api", "@regression"] },
-    async ({ page }) => {
+    { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
+    async ({ page, request }) => {
       await awaitBootstrapTest(page);
 
       await page.waitForSelector('[data-testid="blank-flow"]', {
         timeout: 30000,
       });
+
+      // Capture the created flow's id from the creation response — the only
+      // reliable handle for picking the right home card later (#518).
+      const flowCreationPromise = page.waitForResponse(
+        (resp) =>
+          resp.url().includes("/api/v1/flows") &&
+          resp.request().method() === "POST" &&
+          resp.status() === 201,
+        { timeout: 15000 },
+      );
       await page.getByTestId("blank-flow").click();
+      const flowId = ((await flowCreationPromise.then((r) => r.json())) as { id?: string })
+        .id;
+      expect(flowId, "flow creation response must include an id").toBeTruthy();
 
       await page.waitForSelector('[data-testid="sidebar-search-input"]', {
         timeout: 30000,
@@ -93,12 +93,23 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
           await page.getByTestId("add-component-button-chat-input").click();
         });
 
-      // Wait for the node-add autosave (debounced `PATCH /api/v1/flows/{id}`)
-      // to persist before leaving the editor. The export reads the *persisted*
-      // flow, so navigating back/exporting while the PATCH is still in flight
-      // produces an empty file (`parsed.data.nodes.length === 0`) — the flake
-      // observed in the weekly run (issue #384).
-      await waitForFlowSaveSettled(page);
+      // Server-truth guard: poll the flow by id until the node-add autosave is
+      // PERSISTED. The previous quiet-window guard (`waitForFlowSaveSettled`,
+      // #384) resolves after 700ms of network silence even when the debounced
+      // PATCH hasn't fired yet — under CI load that let the test leave the
+      // editor before the node ever reached the backend.
+      const headers = { Authorization: await getAuthToken(request) };
+      await expect
+        .poll(
+          async () => {
+            const res = await request.get(`/api/v1/flows/${flowId}`, { headers });
+            if (!res.ok()) return -1;
+            const flow = await res.json();
+            return flow?.data?.nodes?.length ?? 0;
+          },
+          { timeout: 15000 },
+        )
+        .toBeGreaterThan(0);
 
       await page.getByTestId("icon-ChevronLeft").click();
 
@@ -110,7 +121,15 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
       // race between the download event and modal interaction.
       const downloadPromise = page.waitForEvent("download", { timeout: 30000 });
 
-      await page.getByTestId("home-dropdown-menu").nth(0).click();
+      // Export from the created flow's OWN card. The home list sorts by
+      // `updated_at` DESC, so `.nth(0)` picks whatever flow ANY parallel
+      // worker touched last — in the daily that exported a neighbor's empty
+      // flow (`nodes: []`, #518): the export modal serializes the card's
+      // client-side data with no server fetch.
+      const ownCard = page
+        .getByTestId("list-card")
+        .filter({ has: page.getByTestId(`flow-name-${flowId}`) });
+      await ownCard.getByTestId("home-dropdown-menu").click();
       await page.getByTestId("btn-download-json").last().click();
 
       await expect(page.getByText("Export").first()).toBeVisible({

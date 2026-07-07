@@ -26,12 +26,20 @@ The spec contains **3 tests** inside `test.describe("Memory Chatbot Regression")
 
 Does not require an API key. Validates only the canvas structure.
 
-1. Delete existing flows and load the "Memory Chatbot" template from `All Templates`
+> **Template redesigned upstream (first shipped in 1.11.0.dev34):** the
+> Memory Chatbot starter project is now an **Agent + Memory Base** flow —
+> the previous `Message History` / `Language Model` / `Prompt Template`
+> trio was replaced by a single `Agent` node plus the new `Memory Base`
+> component (verified in the container's
+> `initial_setup/starter_projects/Memory Chatbot.json`). Structure
+> assertions track the shipped template (issue #550).
+
+1. Load the "Memory Chatbot" template from `All Templates`, capturing the created flow's id (no pre-cleanup of existing flows — a wipe kills parallel workers' in-flight flows, #553; duplicate names auto-suffix; each test deletes its own flow by id in `afterEach`)
 2. Wait for `canvas_controls_dropdown` to appear; adjust view and update components
-3. *Step: canvas has all 6 required nodes* — `expect.soft` for each of the 6 nodes:
-   - `title-Chat Input`, `title-Chat Output`, `title-Message History`
-   - `title-Language Model`, `title-Prompt Template`, `note_node`
-4. *Step: canvas has exactly 6 nodes* — count `.react-flow__node` and assert `=== 6`
+3. *Step: canvas has all 5 required nodes* — `expect.soft` for each of the 5 nodes:
+   - `title-Chat Input`, `title-Chat Output`, `title-Agent`
+   - `title-Memory Base`, `note_node`
+4. *Step: canvas has exactly 5 nodes* — count `.react-flow__node` and assert `=== 5`
 
 ---
 
@@ -58,12 +66,13 @@ Requires `OPENAI_API_KEY`. Kept separate because it is destructive (creates a ne
 3. Wait for the response to complete (`waitForChatResponse` — counts `chat-message-token-usage`)
 4. Click `new-chat` (the "+" button in the sessions sidebar)
 5. Web-first assert `div-chat-message` `toHaveCount(0)` — auto-retries until the session reset settles, so a reset slower than a fixed wait cannot false-fail (replaced the old `waitForTimeout(500)` + hard count)
+6. *Backend-isolation probe:* send `"What is my name?"` in the NEW session and assert the response does **not** match `/Bob/i` — the UI-reset check alone (step 5) would still pass if the backend leaked memory across sessions; only a model answer proves the new session's context is really empty (inverted mirror of Test 2's positive `/Alice/i` assert). Fail-safe: a leak surfaces "Bob" and fails; a model that answers "I don't know" passes
 
 ---
 
 ## Validation criterion *(required)*
 
-- Template loads with exactly 6 nodes: Chat Input, Chat Output, Message History, Language Model, Prompt Template, note (README)
+- Template loads with exactly 5 nodes: Chat Input, Chat Output, Agent, Memory Base, note (README)
 - The LLM recalls the name provided in a previous message within the same session ("Alice")
 - Bot responses accumulate in the history (`div-chat-message` ≥ 2 after 2 exchanges)
 - History persists after closing and reopening the Playground
@@ -74,8 +83,8 @@ Requires `OPENAI_API_KEY`. Kept separate because it is destructive (creates a ne
 ## External dependencies *(required)*
 
 - `src/backend/base/langflow/initial_setup/starter_projects/Memory Chatbot.json` — defines the template graph at runtime (overrides the `.py`); changes to nodes or edges break Test 1
-- `src/lfx/src/lfx/components/models_and_agents/memory.py` — `MemoryComponent` (`display_name = "Message History"`); renaming or removing it breaks Tests 1 and 2
-- `src/lfx/src/lfx/components/models_and_agents/language_model.py` — `LanguageModelComponent` (`display_name = "Language Model"`); changes to the `model` field or `display_name` affect Tests 1, 2, and 3
+- `initial_setup/starter_projects/Memory Chatbot.json` — the shipped template (Agent + Memory Base since 1.11.0.dev34); node renames/additions there break Test 1
+- The Agent node's `model_model` field — `setupLanguageModelOpenAI` resolves it on the Agent (the helper predates the redesign; it targets whatever node exposes `model_model`); changes there affect Tests 2 and 3
 - `src/frontend/src/components/core/playgroundComponent/` — `input-chat-playground`, `div-chat-message`, `chat-message-token-usage`, `playground-close-button`, `new-chat` — any rename breaks Tests 2 and 3. `chat-message-token-usage` is the completion signal used by `waitForChatResponse`; if a future build stops rendering it (or a provider returns no token usage), the response wait must switch to another per-response completion marker
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeName/index.tsx` — `data-testid="title-{display_name}"` — a change to this testid pattern breaks Test 1
 - `src/frontend/src/modals/modelProviderModal/components/ProviderConfigurationForm.tsx` — "Save" button (exact text to save the API key); changing it breaks `setupLanguageModelOpenAI`

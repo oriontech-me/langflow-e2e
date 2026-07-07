@@ -64,7 +64,8 @@ test.describe("Flow execution — run a ChatInput -> ChatOutput flow", () => {
     // Unmount the editor before deleting so its GET /flows/{id}/events poll does
     // not 404 mid-delete (same teardown race fixed in publish-flow / triage #364).
     await page.goto("/").catch(() => {});
-    await deleteFlow();
+    // Swallow so a failed delete still lets page.close() run below.
+    await deleteFlow().catch(() => {});
     await page.close();
   });
 

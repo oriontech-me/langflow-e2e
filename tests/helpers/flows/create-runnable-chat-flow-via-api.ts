@@ -63,8 +63,11 @@ export async function createRunnableChatFlowViaApi(
 
   return {
     flowId,
+    // Surfaces a genuinely-failed deletion (404 already counts as done). Callers
+    // that compose this into multi-step cleanup should wrap with .catch() so a
+    // failure here does not skip their remaining teardown.
     deleteFlow: async () => {
-      await deleteFlow(request, flowId, { headers }).catch(() => {});
+      await deleteFlow(request, flowId, { headers });
     },
   };
 }
