@@ -1,5 +1,4 @@
 import { type Locator, type Page, expect } from "@playwright/test";
-import { awaitBootstrapTest } from "../other/await-bootstrap-test";
 import { waitForFlowSaveSettled } from "../flows/wait-for-flow-save-settled";
 import { addComponentFromSidebar } from "../flows/add-component-from-sidebar";
 import { adjustScreenView } from "./adjust-screen-view";
@@ -31,16 +30,22 @@ const MUSTACHE_OPEN_BUTTON = "button_open_mustache_prompt_modal";
 const MUSTACHE_TEXTAREA = "modal-mustachepromptarea_mustache_template";
 
 /**
- * Bootstraps a fresh blank flow, drops a Prompt Template node onto it via the
+ * Drops a Prompt Template node onto the currently-open blank flow via the
  * sidebar search/add path, and waits for exactly one node to render on the
  * canvas.
  *
+ * The caller is responsible for creating and opening the blank flow first —
+ * use `setupBlankFlow` (API creation + navigation), which returns the flow id
+ * for `afterEach` cleanup (issue #545). Creating the flow via the REST API
+ * instead of the UI avoids the `POST /api/v1/flows/` 500 race that made these
+ * specs flaky under load, and pairing it with a teardown stops the blank-flow
+ * accumulation the UI path left behind.
+ *
  * It waits for `sidebar-search-input` to be visible before interacting: the
  * flow editor's left sidebar re-renders as its component catalog streams in,
- * and touching the input too early detaches it mid-click, which hard-failed the
- * prompt-template specs under a slow CI cluster (issue #537). The search/add is
- * delegated to `addComponentFromSidebar` — a `fill` (no stability-sensitive
- * `click`) — mirroring the hardening already applied in `setupPlayground`
+ * and touching the input too early detaches it mid-click (issue #537). The
+ * search/add is delegated to `addComponentFromSidebar` — a `fill` (no
+ * stability-sensitive `click`) — mirroring the hardening in `setupPlayground`
  * (issue #278).
  *
  * Before returning, it waits for the node-add / viewport autosaves to settle
@@ -49,10 +54,6 @@ const MUSTACHE_TEXTAREA = "modal-mustachepromptarea_mustache_template";
  * autosave into a spurious "Failed to save flow" toast (issue #358).
  */
 export async function addPromptComponent(page: Page): Promise<void> {
-  await awaitBootstrapTest(page);
-  await expect(page.getByTestId("blank-flow")).toBeAttached({ timeout: 30000 });
-  await page.getByTestId("blank-flow").click();
-
   await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
     timeout: 30000,
   });

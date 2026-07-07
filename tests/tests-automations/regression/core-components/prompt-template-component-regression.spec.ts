@@ -4,19 +4,37 @@ import {
   dynamicHandlesLocator,
   fillPromptTemplate,
 } from "../../../helpers/ui/prompt-template";
+import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 
-// Run serially to avoid 500 errors from concurrent POST /api/v1/flows/
-// when several workers create a blank flow at the same time.
+// Flows are created via the REST API (setupBlankFlow) and deleted in afterEach
+// (issue #545). Kept serial so the per-file flow lifecycle stays deterministic
+// under load.
 test.describe.configure({ mode: "serial" });
+
+let createdFlowId: string | null = null;
+
+test.beforeEach(async ({ page }) => {
+  // setupBlankFlow creates the flow via API (no UI-creation 500 race) and
+  // returns its id so afterEach can delete it. Capturing the id before the
+  // component add means a failure in addPromptComponent still cleans up.
+  createdFlowId = await setupBlankFlow(page);
+  await addPromptComponent(page);
+});
+
+test.afterEach(async ({ page }) => {
+  if (createdFlowId) {
+    // Leave the editor first: staying on it while the flow is deleted makes
+    // background polling 404, which the fixture's error monitor would flag.
+    await page.goto("/").catch(() => {});
+    await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+    createdFlowId = null;
+  }
+});
 
 test(
   "Prompt Template component — renders on canvas with output handle",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step("Node title is visible on the canvas", async () => {
       await expect(page.getByTestId("title-Prompt Template")).toBeVisible({
         timeout: 10000,
@@ -42,10 +60,6 @@ test(
   "Prompt Template component — variables in curly braces generate dynamic input handles",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step(
       "Save template with two {variable} placeholders",
       async () => {
@@ -82,10 +96,6 @@ test(
       "handle-prompt template-shownode-name-left",
     );
 
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step(
       "Save template `Hello {name}!` — expect 1 dynamic handle for {name}",
       async () => {
@@ -110,10 +120,6 @@ test(
   "Prompt Template component — replacing a variable updates handles accordingly",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step(
       "Save template `Hello {name}, you are {role}.` — both handles render",
       async () => {
@@ -149,10 +155,6 @@ test(
   "Prompt Template component — clearing the template removes all dynamic handles",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-    });
-
     await test.step(
       "Save template with 3 variables — expect 3 dynamic handles",
       async () => {
@@ -180,13 +182,10 @@ test(
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     const expected = "Persisted prompt text {topic}.";
-    let flowId = "";
-
-    await test.step("Add Prompt Template to a blank flow", async () => {
-      await addPromptComponent(page);
-      flowId = page.url().split("/").slice(-1)[0];
-      expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
-    });
+    // The flow is created in beforeEach; `createdFlowId` is its authoritative
+    // API id — assert its shape here to keep the original UUID sanity check.
+    expect(createdFlowId).toMatch(/^[0-9a-f-]{36}$/);
+    const flowId = createdFlowId as string;
 
     await test.step(
       "Save template — the {topic} handle confirms save was applied",
