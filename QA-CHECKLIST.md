@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 273 `test()` calls carrying the `@stable` tag, distributed across 98 spec
+> 274 `test()` calls carrying the `@stable` tag, distributed across 98 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1057,6 +1057,7 @@
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
+- [x] export flow to JSON triggers success toast and produces a valid file → `export-import-flow.spec.ts`
 - [x] imported JSON flow must load all components on canvas → `export-import-flow.spec.ts`
 - [x] import flow from JSON via upload button must load flow on canvas → `export-import-flow.spec.ts`
 - [x] 1 - runs the flow from the canvas terminal node → `flow-execution-canvas.spec.ts`
