@@ -7,6 +7,7 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
+import { errorToastLocator } from "../../../../helpers/ui/error-toast";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -121,7 +122,7 @@ for (const {
 
         try {
           await test.step("Validate that the invalid authentication error is displayed", async () => {
-            const errorBox = page.locator(".error-build-message");
+            const errorBox = errorToastLocator(page);
             await expect(
               errorBox.getByText(/Invalid API key/i),
             ).toBeVisible({ timeout: 30000 });

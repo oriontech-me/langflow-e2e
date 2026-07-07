@@ -2,6 +2,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
+import { errorToastLocator } from "../../../helpers/ui/error-toast";
 
 async function setupChatFlow(page: any) {
   await awaitBootstrapTest(page);
@@ -91,8 +92,7 @@ test.describe("Execution Error Notifications", () => {
         .isVisible({ timeout: 8000 })
         .catch(() => false);
 
-      const errorToast = await page
-        .locator(".error-build-message")
+      const errorToast = await errorToastLocator(page)
         .first()
         .isVisible({ timeout: 3000 })
         .catch(() => false);
@@ -148,8 +148,7 @@ test.describe("Execution Error Notifications", () => {
         .isVisible({ timeout: 10000 })
         .catch(() => false);
 
-      const errorToast = await page
-        .locator(".error-build-message")
+      const errorToast = await errorToastLocator(page)
         .first()
         .isVisible({ timeout: 5000 })
         .catch(() => false);
