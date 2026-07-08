@@ -28,14 +28,14 @@ Requires `OPENAI_API_KEY` (vision-capable `gpt-4o-mini`); skips when the key is 
 4. Attach `tests/assets/media/chain.png` via the Playground file input (`[data-testid="input-wrapper"] input[type="file"]`) and confirm the `img[alt="chain.png"]` preview
 5. Clear the input and type `"what is this image?"` with real keystrokes (`pressSequentially`), retrying the clear+type until the value sticks so a late async pre-fill cannot clobber the prompt, then click `button-send`
 6. Wait for the streamed model reply (web-first `toContainText`, no fixed sleep)
-7. Read the last `.markdown.prose` block (the model reply) and assert it matches `/chain|link|inkscape|logo|icon/i` and is longer than 50 characters
+7. Read the last `.markdown.prose` block (the model reply) and assert it matches `/\b(chains?|links?|inkscape|logos?|icons?)\b/i` and is longer than 50 characters
 
 ---
 
 ## Validation criterion *(required)*
 
 - The dropped image (`chain.png`) is attached and rendered as an `img[alt="chain.png"]` preview before sending
-- The model reply references the image content (matches `chain`, `link`, `inkscape`, `logo`, or `icon`)
+- The model reply references the image content (matches `chain(s)`, `link(s)`, `inkscape`, `logo(s)`, or `icon(s)` as whole words)
 - The reply is a substantive description (> 50 characters)
 
 ---
@@ -80,4 +80,4 @@ Requires `OPENAI_API_KEY` (vision-capable `gpt-4o-mini`); skips when the key is 
 - **Why OpenAI**: the test needs a vision-capable model. It originally used Anthropic, but the weekly workflow only provides `OPENAI_API_KEY`, so an Anthropic-keyed test would always skip in CI and give no weekly signal. `gpt-4o-mini` is vision-capable and runs in the weekly.
 - **1.11.0 template-load fix**: the test previously loaded the template with a manual `awaitBootstrapTest` + `side_nav_options_all-templates` + heading click. On Langflow 1.11.0 that path landed on the projects list instead of the flow canvas (post-create navigation race), so the provider entry point never appeared and the test failed at the 30s `model_model`/`Setup Provider` wait. It now uses the canonical `SimpleAgentTemplatePage.load()` (same helper as the other agent/memory specs), which waits for `canvas_controls_dropdown` before returning.
 - **1.10.x quirks handled**: (1) the image is attached via `setInputFiles` because the old manual `DataTransfer` drop no longer renders the attachment; (2) the chat input is pre-filled with a sample prompt and the send action reads the component's internal state, so the prompt is typed with `pressSequentially` (a programmatic `.fill()` is ignored).
-- **Flake fix (issue #411, item 3)**: the pre-fill in (2) lands asynchronously and could clobber the typed prompt after a one-shot clear+type, and the earlier wait was swallowed by a silent `.catch(() => {})`. The clear+type is now wrapped in `expect(async () => {...}).toPass()` so it retries until the value holds. The response regex was also widened from `chain|inkscape|logo` to `chain|link|inkscape|logo|icon` to match the descriptors a vision model reliably uses for the flat chain illustration. Product side was confirmed healthy on nightly `1.11.0.dev34` (image upload + agent response) before landing this test-only fix.
+- **Flake fix (issue #411, item 3)**: the pre-fill in (2) lands asynchronously and could clobber the typed prompt after a one-shot clear+type, and the earlier wait was swallowed by a silent `.catch(() => {})`. The clear+type is now wrapped in `expect(async () => {...}).toPass()` — with a short stability re-check inside the callback so it only succeeds once the value proves it stays put (a late pre-fill landing after a fast first pass would otherwise clobber it before the send click). The response regex was also widened from `chain|inkscape|logo` to `\b(chains?|links?|inkscape|logos?|icons?)\b` to match the descriptors a vision model reliably uses for the flat chain illustration, using whole-word (plural-aware) boundaries to avoid accidental substring matches. Product side was confirmed healthy on nightly `1.11.0.dev34` (image upload + agent response) before landing this test-only fix.

@@ -70,6 +70,15 @@ test(
       await expect(chatInput).toHaveValue("what is this image?", {
         timeout: 2000,
       });
+      // Stability window: the value can pass instantly on a fast attempt while a
+      // late pre-fill is still pending, which would then clobber the prompt
+      // between here and the send click. Wait a beat and re-assert so the block
+      // only succeeds once the value has proven it stays put — if a late pre-fill
+      // lands in the window, this re-assert fails and toPass re-types.
+      await page.waitForTimeout(500);
+      await expect(chatInput).toHaveValue("what is this image?", {
+        timeout: 1000,
+      });
     }).toPass({ timeout: 15000 });
 
     await page.waitForSelector('[data-testid="button-send"]', {
@@ -85,10 +94,13 @@ test(
     // illustration of two chains, so it widens the previous `chain|inkscape|logo`
     // set to the descriptors a vision model reliably uses for it — "chain",
     // "link(s)", "icon" — while keeping the historical terms as harmless extras.
+    // Word boundaries (with optional plurals) keep the intent while avoiding
+    // accidental substring matches like "blinking" or "linking".
     const llmResponse = page.locator(".markdown.prose").last();
-    await expect(llmResponse).toContainText(/chain|link|inkscape|logo|icon/i, {
-      timeout: 60000,
-    });
+    await expect(llmResponse).toContainText(
+      /\b(chains?|links?|inkscape|logos?|icons?)\b/i,
+      { timeout: 60000 },
+    );
 
     // Secondary guard against a one-word answer; kept modest since gpt-4o-mini
     // replies are terser than the Anthropic model this test was first calibrated for.
