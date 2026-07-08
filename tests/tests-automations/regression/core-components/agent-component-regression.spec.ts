@@ -105,7 +105,18 @@ test.describe("Agent Component — canvas regression", () => {
       await page.waitForSelector('[data-testid="mainpage_title"]', {
         timeout: 15000,
       });
-      await page.getByText(flowName, { exact: true }).click();
+      // The /flows a11y refactor (Langflow #13891) makes the card content
+      // pointer-events-none; open the flow via the card's overlay button.
+      await page
+        .getByTestId("list-card")
+        .filter({
+          has: page
+            .getByTestId("flow-name-div")
+            .filter({ hasText: flowName }),
+        })
+        .getByTestId("list-card-open-button")
+        .first()
+        .click();
 
       await expect(page.getByTestId("title-Agent")).toBeVisible({
         timeout: 15000,
