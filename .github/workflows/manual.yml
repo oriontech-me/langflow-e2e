@@ -81,12 +81,40 @@ jobs:
           # worker never starts when tracing is deactivated — disabling it makes
           # those specs fail deterministically (see #352). Matches daily/weekly.
           LANGFLOW_DEACTIVATE_TRACING: "false"
+          # Ollama runs as a sibling service; without the allowlist the
+          # nightly's SSRF protection 400s the component's model-list fetch
+          # (private address) — see ollama-provider.spec.ts / its spec doc.
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s
           --health-timeout 10s
           --health-retries 10
           --health-start-period 90s
+      # Local Ollama instance for ollama-provider.spec.ts (§7.6), with the
+      # test model BAKED into the image (built by build-ollama-image.yml —
+      # no per-run model pull, no registry.ollama.ai dependency). The tests
+      # skip with a reason when the service is absent.
+      ollama:
+        image: ghcr.io/${{ github.repository }}/ollama-e2e:llama3.2-1b
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        ports:
+          - 11434:11434
+        options: >-
+          --health-cmd "ollama list || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
+
+    # Reaches the services two ways: the test host uses the mapped port
+    # (localhost), Langflow uses the job network's service hostname.
+    env:
+      OLLAMA_BASE_URL: http://localhost:11434
+      OLLAMA_BASE_URL_FROM_LANGFLOW: http://ollama:11434
+      OLLAMA_TEST_MODEL: llama3.2:1b
 
     steps:
       - uses: actions/checkout@v4
@@ -97,6 +125,13 @@ jobs:
       - run: npm ci
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
+      - name: Confirm the baked Ollama model is served
+        run: |
+          # The model ships inside the image — cheap readiness/sanity check,
+          # not a pull.
+          curl -sf --retry 10 --retry-delay 3 --retry-connrefused \
+            "$OLLAMA_BASE_URL/api/tags" | grep -q "$OLLAMA_TEST_MODEL" \
+            && echo "model $OLLAMA_TEST_MODEL ready"
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e
         with:
