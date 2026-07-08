@@ -344,7 +344,7 @@
 - [x] Session isolation: distinct session IDs have independent histories → `llm-agents/memory-history-regression.spec.ts`
 - [x] Without Message History, LLM does not retain context between messages → `llm-agents/memory-history-regression.spec.ts`
 - [x] n_messages parameter limits the number of retained messages → `llm-agents/agent-n-messages-limit.spec.ts` (bug reported fixed on 1.11.0.dev33 — parameter now respected; validated by deterministic message count)
-- [ ] Agent uses custom `context_id` — continuity between session messages → `agent-context-id-continuity.spec.ts`
+- [x] Agent uses custom `context_id` — continuity between session messages → `agent-context-id-continuity.spec.ts`
 - [ ] Switching `context_id` isolates history between distinct sessions → `agent-context-id-isolation.spec.ts`
 
 #### 6.4 Tools and Integrations
