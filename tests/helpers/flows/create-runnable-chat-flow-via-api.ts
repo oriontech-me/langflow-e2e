@@ -64,10 +64,15 @@ export async function createRunnableChatFlowViaApi(
   return {
     flowId,
     // Surfaces a genuinely-failed deletion (404 already counts as done). Callers
-    // that compose this into multi-step cleanup should wrap with .catch() so a
-    // failure here does not skip their remaining teardown.
-    deleteFlow: async () => {
-      await deleteFlow(request, flowId, { headers });
+    // that compose this into multi-step cleanup should wrap with .catch() (or a
+    // try/finally) so a failure here does not skip their remaining teardown.
+    //
+    // Pass `reqOverride` when deleting from a different fixture scope than the
+    // one this flow was created in: Playwright forbids reusing a `beforeAll`
+    // `request` after beforeAll, so a `beforeAll`-created flow deleted in
+    // `afterAll` must be given the afterAll's own live `request`.
+    deleteFlow: async (reqOverride?: APIRequestContext) => {
+      await deleteFlow(reqOverride ?? request, flowId, { headers });
     },
   };
 }

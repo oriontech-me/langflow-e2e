@@ -1,3 +1,4 @@
+import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
@@ -46,7 +47,7 @@ test.describe("POST /api/v1/run with tweaks", () => {
   let apiKey: string;
   let apiKeyId: string;
   let flowId: string;
-  let deleteFlow: () => Promise<void>;
+  let deleteFlow: (reqOverride?: APIRequestContext) => Promise<void>;
 
   test.beforeAll(async ({ request }) => {
     bearerToken = await getAuthToken(request);
@@ -70,15 +71,21 @@ test.describe("POST /api/v1/run with tweaks", () => {
   });
 
   test.afterAll(async ({ request }) => {
-    if (deleteFlow) {
-      await deleteFlow();
-    }
-    if (apiKeyId) {
-      await request
-        .delete(`/api/v1/api_key/${apiKeyId}`, {
-          headers: { Authorization: bearerToken },
-        })
-        .catch(() => {});
+    try {
+      // Delete flow with afterAll's OWN request — the beforeAll `request` that
+      // created it cannot be reused here (Playwright fixture-scope rule).
+      if (deleteFlow) {
+        await deleteFlow(request);
+      }
+    } finally {
+      // Runs even if the flow delete surfaced a failure.
+      if (apiKeyId) {
+        await request
+          .delete(`/api/v1/api_key/${apiKeyId}`, {
+            headers: { Authorization: bearerToken },
+          })
+          .catch(() => {});
+      }
     }
   });
 
