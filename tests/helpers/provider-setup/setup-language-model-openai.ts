@@ -153,7 +153,12 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
     await modelDropdown.waitFor({ state: "visible", timeout: 30000 });
   }
 
-  await modelDropdown.click();
+  // Open the dropdown with a dispatched click, not a hit-tested .click(): at
+  // zoomed-out scale the node's bound `api_key` popover (anchor-popover-anchor-input-
+  // api_key) renders on top of the ~10px-tall model_model trigger and intercepts
+  // pointer events, timing the click out (issue #580). dispatchEvent bypasses
+  // hit-testing and still opens the dropdown.
+  await modelDropdown.dispatchEvent("click");
   await selectPreferredChatModel(page);
 }
 
