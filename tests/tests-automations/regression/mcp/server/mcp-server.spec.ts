@@ -786,15 +786,15 @@ test(
 
     // The /flows a11y refactor (Langflow #13891) makes `flow-name-div`
     // `pointer-events-none`; open the flow via the card's overlay button.
-    const newFlowDiv = page
+    const flowOpenButton = page
       .getByTestId("list-card")
       .filter({
         has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
       })
       .getByTestId("list-card-open-button")
       .first();
-    await newFlowDiv.waitFor({ state: "visible", timeout: 10000 });
-    await newFlowDiv.click();
+    await flowOpenButton.waitFor({ state: "visible", timeout: 10000 });
+    await flowOpenButton.click();
 
     // Wait for the MCP Tools component to be visible on canvas
     await page.waitForSelector('text="MCP Tools"', {
@@ -900,15 +900,15 @@ test(
     await awaitBootstrapTest(page, { skipModal: true });
 
     // See note above: open the flow via the card's overlay button.
-    const newFlowDiv2 = page
+    const flowOpenButton2 = page
       .getByTestId("list-card")
       .filter({
         has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
       })
       .getByTestId("list-card-open-button")
       .first();
-    await newFlowDiv2.waitFor({ state: "visible", timeout: 10000 });
-    await newFlowDiv2.click();
+    await flowOpenButton2.waitFor({ state: "visible", timeout: 10000 });
+    await flowOpenButton2.click();
 
     // Wait for the MCP Tools component to be visible on canvas
     await page.waitForSelector('text="MCP Tools"', {

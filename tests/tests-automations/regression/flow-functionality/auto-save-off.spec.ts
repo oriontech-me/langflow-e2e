@@ -74,14 +74,14 @@ test(
 
     // The /flows a11y refactor (Langflow #13891) makes `flow-name-div`
     // `pointer-events-none`; open the flow via the card's overlay button.
-    const newFlowDiv = page
+    const flowOpenButton = page
       .getByTestId("list-card")
       .filter({
         has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
       })
       .getByTestId("list-card-open-button")
       .first();
-    await newFlowDiv.click();
+    await flowOpenButton.click();
 
     await page.waitForSelector('[data-testid="sidebar-search-input"]', {
       timeout: 5000,
@@ -126,14 +126,14 @@ test(
     await page.getByText("Save And Exit", { exact: true }).click();
 
     // See note above: open the flow via the card's overlay button.
-    const newFlow = page
+    const flowOpenButton2 = page
       .getByTestId("list-card")
       .filter({
         has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
       })
       .getByTestId("list-card-open-button")
       .first();
-    await newFlow.click();
+    await flowOpenButton2.click();
 
     await page.waitForSelector("text=loading", {
       state: "hidden",
@@ -182,14 +182,14 @@ test(
     }
 
     // See note above: open the flow via the card's overlay button.
-    const newFlow2 = page
+    const flowOpenButton3 = page
       .getByTestId("list-card")
       .filter({
         has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
       })
       .getByTestId("list-card-open-button")
       .first();
-    await newFlow2.click();
+    await flowOpenButton3.click();
 
     await page.waitForSelector('[data-testid="sidebar-search-input"]', {
       timeout: 5000,
