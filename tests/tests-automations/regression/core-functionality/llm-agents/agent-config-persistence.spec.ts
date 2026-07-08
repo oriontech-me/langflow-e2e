@@ -159,7 +159,14 @@ test(
     await test.step("reopen the flow from the home page", async () => {
       await page.goto("/");
       await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
-      await page.getByTestId(`flow-name-${flowId}`).click();
+      // The /flows a11y refactor (Langflow #13891) makes the card content
+      // pointer-events-none; open the flow via the card's overlay button.
+      await page
+        .getByTestId("list-card")
+        .filter({ has: page.getByTestId(`flow-name-${flowId}`) })
+        .getByTestId("list-card-open-button")
+        .first()
+        .click();
       await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
         timeout: 30000,
       });

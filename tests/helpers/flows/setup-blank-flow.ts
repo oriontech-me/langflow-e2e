@@ -52,9 +52,15 @@ export async function setupBlankFlow(page: Page): Promise<string> {
     // immediately after an API-created flow, the direct URL hits a stale
     // React Router cache and redirects back to the flows list.
     await page.goto("/");
+    // The /flows a11y refactor (Langflow #13891) wraps each card in an
+    // `list-card-open-button` overlay and makes `flow-name-div`
+    // `pointer-events-none`, so we open the flow via the overlay button.
     await page
-      .getByTestId("flow-name-div")
-      .filter({ hasText: flowName })
+      .getByTestId("list-card")
+      .filter({
+        has: page.getByTestId("flow-name-div").filter({ hasText: flowName }),
+      })
+      .getByTestId("list-card-open-button")
       .first()
       .click();
     await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({

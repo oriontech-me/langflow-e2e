@@ -41,9 +41,14 @@ async function createTwoNodeFlow(page: Page): Promise<string> {
   // Going via the dashboard avoids the stale-cache redirect that
   // `page.goto("/flow/${id}")` triggers right after an API-created flow.
   await page.goto("/");
+  // The /flows a11y refactor (Langflow #13891) makes `flow-name-div`
+  // `pointer-events-none`; open the flow via the card's overlay button.
   await page
-    .getByTestId("flow-name-div")
-    .filter({ hasText: body.name })
+    .getByTestId("list-card")
+    .filter({
+      has: page.getByTestId("flow-name-div").filter({ hasText: body.name }),
+    })
+    .getByTestId("list-card-open-button")
     .first()
     .click();
   await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
