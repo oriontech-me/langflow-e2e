@@ -72,9 +72,14 @@ test(
       console.error("Warning text not visible, skipping dialog confirmation");
     }
 
-    const newFlowDiv = await page
-      .getByTestId("flow-name-div")
-      .filter({ hasText: "New Flow" })
+    // The /flows a11y refactor (Langflow #13891) makes `flow-name-div`
+    // `pointer-events-none`; open the flow via the card's overlay button.
+    const newFlowDiv = page
+      .getByTestId("list-card")
+      .filter({
+        has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
+      })
+      .getByTestId("list-card-open-button")
       .first();
     await newFlowDiv.click();
 
@@ -120,9 +125,13 @@ test(
 
     await page.getByText("Save And Exit", { exact: true }).click();
 
-    const newFlow = await page
-      .getByTestId("flow-name-div")
-      .filter({ hasText: "New Flow" })
+    // See note above: open the flow via the card's overlay button.
+    const newFlow = page
+      .getByTestId("list-card")
+      .filter({
+        has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
+      })
+      .getByTestId("list-card-open-button")
       .first();
     await newFlow.click();
 
@@ -172,9 +181,13 @@ test(
       await page.getByText("Save And Exit", { exact: true }).last().click();
     }
 
-    const newFlow2 = await page
-      .getByTestId("flow-name-div")
-      .filter({ hasText: "New Flow" })
+    // See note above: open the flow via the card's overlay button.
+    const newFlow2 = page
+      .getByTestId("list-card")
+      .filter({
+        has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
+      })
+      .getByTestId("list-card-open-button")
       .first();
     await newFlow2.click();
 
