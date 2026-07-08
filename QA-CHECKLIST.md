@@ -356,7 +356,7 @@
 
 #### 6.5 Output and Reasoning
 - [ ] Inspect tools used by Agent in Playground
-- [ ] Agent returns output in structured JSON format (output_schema) → `agent-structured-output.spec.ts`
+- [x] Agent returns output in structured JSON format (output_schema) → `agent-structured-output.spec.ts`
 - [ ] Agent returns output in correctly rendered Markdown
 - [x] Agent Instructions (system prompt) is respected in the model response → `agent-system-prompt.spec.ts`
 - [x] Input via direct field vs handle (ChatInput) — both work → `core-functionality/llm-agents/agent-input-sources.spec.ts`
@@ -417,7 +417,7 @@
 - [x] Maximum token count — response truncated as configured → `llm-agents/agent-max-tokens.spec.ts`
 - [x] Maximum agent iterations → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
 - [x] Use of custom `context_id` for memory isolation → `agent-context-id-isolation.spec.ts`
-- [ ] Output formatting (JSON via output_schema, Markdown, plain text) → `agent-structured-output.spec.ts`
+- [x] Output formatting (JSON via output_schema, Markdown, plain text) → `agent-structured-output.spec.ts`
 
 ---
 
