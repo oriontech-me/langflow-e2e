@@ -14,15 +14,28 @@ to the Agent — URL (`URLComponent`, tool `fetch_content`) and Web Search
 `starter_projects/Simple Agent.json` — making it the canonical multi-tool
 surface.
 
-The contract: given a prompt that unambiguously calls for one capability, the
-agent must invoke **that tool and not the other**. Two prompts, two tests:
+The contract: given a prompt that unambiguously calls for one capability,
+the agent's **first tool call** must be that tool — the first call IS the
+selection decision. Two prompts, two tests:
 
-1. **Fetch prompt → URL tool.** "Fetch https://httpbin.org/json …" must
-   produce a `fetch_content` `tool_use` block and **no** `perform_search`
-   block in the persisted AI message; the reply must contain the
-   deterministic content of that endpoint (`Sample Slide Show`).
-2. **Search prompt → Web Search tool.** "Search the web for …" must produce
-   a `perform_search` `tool_use` block and **no** `fetch_content` block.
+1. **Fetch prompt → URL tool first.** "Fetch https://httpbin.org/json …"
+   must produce a persisted AI message whose FIRST `tool_use` block is
+   `fetch_content`; the reply must contain the deterministic content of
+   that endpoint (`Sample Slide Show`).
+2. **Search prompt → Web Search tool first.** "Search the web for …" must
+   produce a FIRST `tool_use` block of `perform_search`.
+
+> **Why first-call, not exclusive-call (drift event, 2026-07-08).** The
+> original design asserted the sibling tool was NEVER called. Overnight —
+> with zero Langflow changes (dev34 and dev36 fail identically; template,
+> `agent.py` and `web_search.py` byte-identical between the images) —
+> gemini-3.5-flash started appending a "verification" `perform_search`
+> call after a correct `fetch_content` call, despite instructions to use
+> exactly one tool. That is provider-side model drift, not mis-selection:
+> the agent still reaches for the right tool first. Asserting the FIRST
+> call keeps the §6.4 contract sharp (a fetch prompt answered by search
+> still fails) while surviving stylistic extra calls the test does not
+> own.
 
 The Agent Instructions force tool use for every question **without naming any
 tool** ("you MUST call exactly one tool… choose the tool that fits") — tool
@@ -106,23 +119,25 @@ describe with two tests:
 
 ## Validation criterion *(required)*
 
-Per prompt, the persisted AI message's `tool_use` blocks name **the expected
-tool and not the sibling tool** (`fetch_content` without `perform_search` for
-the fetch prompt; `perform_search` without `fetch_content` for the search
-prompt), keyed to the run's session via a per-run nonce — plus, for the fetch
+Per prompt, the **first** `tool_use` block persisted for the run's
+nonce-keyed session names the expected tool (`fetch_content` for the fetch
+prompt, `perform_search` for the search prompt) — plus, for the fetch
 prompt, the reply contains the endpoint's deterministic `Sample Slide Show`
-title. The positive+negative pair per prompt is the distinctive observable:
-a wrong-tool run fails the negative half even when the model salvages a
-correct-looking answer.
+title. First-call is the distinctive observable: a wrong-tool run fails on
+its very first block even when the model salvages a correct-looking answer
+later; extra follow-up calls (provider-side style drift) do not pass a
+wrong first choice.
 
 ## Guarding against false positives *(how)*
 
 - **Nonce-keyed session lookup** — monitor messages persist across flow
   wipes; the per-run nonce pins every API assertion to THIS run (same
   technique as `agent-tool-error-handling`).
-- **Negative assert is mandatory** — asserting only "expected tool present"
-  would pass a run that called BOTH tools indiscriminately; the
-  "sibling tool absent" half is what proves *selection*.
+- **First-call assert, not presence** — asserting only "expected tool
+  present anywhere" would pass a run that opened with the WRONG tool and
+  recovered; anchoring on the chronologically first `tool_use` block is
+  what proves *selection*. (Sibling-absent was the original, stricter form
+  — retired after the 2026-07-08 provider drift; see the Why note above.)
 - **Tool use is forced, tool choice is not** — instructions demand exactly
   one tool call but never name a tool; a model that answers from memory
   produces zero `tool_use` blocks and fails the positive half (not a silent
@@ -132,10 +147,10 @@ correct-looking answer.
   search tool errors at runtime (rate limit), `handle_tool_error=True` turns
   it into tool output — the selection evidence still persists and the run
   produces no flow error, so the test still measures what it claims.
-- **Force-failure checks** (CONTRIBUTING §2): M1 — swap the expected/negative
-  tool names in test 1 ⇒ selection assert must fail; M2 — assert an
+- **Force-failure checks** (CONTRIBUTING §2): M1 — expect the sibling tool
+  as first call in test 1 ⇒ selection assert must fail; M2 — assert an
   impossible title (e.g. `Sample Slide Show XYZ`) ⇒ execution assert must
-  fail; M3 — swap the expected/negative names in test 2 ⇒ must fail.
+  fail; M3 — same first-call swap in test 2 ⇒ must fail.
 
 ---
 
