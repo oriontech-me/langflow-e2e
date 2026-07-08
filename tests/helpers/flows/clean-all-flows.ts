@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import { deleteFlow } from "./delete-flow";
 
 /**
  * Deletes all user-created flows via the Langflow REST API.
@@ -40,7 +41,20 @@ export const cleanAllFlows = async (page: Page) => {
   const flows: Array<{ id: string }> = Array.isArray(raw) ? raw : (raw.flows ?? []);
   if (flows.length === 0) return;
 
+  // Best-effort bulk sweep: keep deleting the rest even if one fails, then
+  // surface any failures at the end so a silently-incomplete cleanup is visible.
+  const failures: string[] = [];
   for (const flow of flows) {
-    await page.request.delete(`/api/v1/flows/${flow.id}`, { headers });
+    try {
+      await deleteFlow(page.request, flow.id, { headers });
+    } catch (err) {
+      failures.push(`${flow.id}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(
+      `cleanAllFlows: ${failures.length} of ${flows.length} flow deletion(s) failed:\n${failures.join("\n")}`,
+    );
   }
 };

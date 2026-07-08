@@ -4,6 +4,7 @@ import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Asset is a 2-node subset of the Basic Prompting starter template: a
 // Prompt Template wired into a Language Model. We use a custom flow (not a
@@ -125,7 +126,7 @@ test.describe("Nested / Grouping", () => {
 
   test.afterEach(async ({ page }) => {
     if (createdFlowId) {
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`).catch(() => {});
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

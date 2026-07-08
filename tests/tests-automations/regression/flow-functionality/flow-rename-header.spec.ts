@@ -2,6 +2,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 const FLOW_BASE = {
   description: "Flow rename test",
@@ -72,9 +73,7 @@ test.describe("Flow Rename via Header", () => {
         expect(getBody.name).not.toBe(originalName);
       } finally {
         // Cleanup
-        await request.delete(`/api/v1/flows/${id}`, {
-          headers: { Authorization: authToken },
-        });
+        await deleteFlow(request, id, { headers: { Authorization: authToken } });
       }
     },
   );

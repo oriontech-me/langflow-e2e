@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 test(
   "creating a flow in a specific folder via API places it in that folder",
@@ -43,11 +44,9 @@ test(
       expect(flow.folder_id).toBe(folderId);
     } finally {
       if (flowId) {
-        await request
-          .delete(`/api/v1/flows/${flowId}`, {
-            headers: { Authorization: authToken },
-          })
-          .catch(() => {});
+        await deleteFlow(request, flowId, {
+          headers: { Authorization: authToken },
+        }).catch(() => {});
       }
       await request
         .delete(`/api/v1/folders/${folderId}`, {
@@ -118,11 +117,9 @@ test(
       expect(updated.folder_id).toBe(folder2Id);
     } finally {
       if (flowId) {
-        await request
-          .delete(`/api/v1/flows/${flowId}`, {
-            headers: { Authorization: authToken },
-          })
-          .catch(() => {});
+        await deleteFlow(request, flowId, {
+          headers: { Authorization: authToken },
+        }).catch(() => {});
       }
       await request
         .delete(`/api/v1/folders/${folder1Id}`, {
@@ -188,11 +185,9 @@ test(
       await expect(page.getByText(flowName)).toBeVisible({ timeout: 15000 });
     } finally {
       if (flowId) {
-        await request
-          .delete(`/api/v1/flows/${flowId}`, {
-            headers: { Authorization: authToken },
-          })
-          .catch(() => {});
+        await deleteFlow(request, flowId, {
+          headers: { Authorization: authToken },
+        }).catch(() => {});
       }
       await request
         .delete(`/api/v1/folders/${folderId}`, {

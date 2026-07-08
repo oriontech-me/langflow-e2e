@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { MainPage } from "../../../../pages/MainPage";
 
 /**
@@ -121,11 +122,9 @@ test(
       });
     } finally {
       if (flowId) {
-        await request
-          .delete(`/api/v1/flows/${flowId}`, {
-            headers: { Authorization: authToken },
-          })
-          .catch(() => {});
+        await deleteFlow(request, flowId, {
+          headers: { Authorization: authToken },
+        }).catch(() => {});
       }
       if (!folderDeleted) {
         await request

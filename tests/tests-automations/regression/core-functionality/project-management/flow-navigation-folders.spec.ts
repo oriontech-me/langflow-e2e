@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 test(
   "flows created via API appear on the home listing",
@@ -36,9 +37,7 @@ test(
 
       await expect(page.getByText(flowName)).toBeVisible({ timeout: 10000 });
     } finally {
-      await request.delete(`/api/v1/flows/${flowId}`, {
-        headers: { Authorization: authToken },
-      });
+      await deleteFlow(request, flowId, { headers: { Authorization: authToken } });
     }
   },
 );
@@ -97,12 +96,14 @@ test(
         timeout: 10000,
       });
     } finally {
-      await request.delete(`/api/v1/flows/${flow1Id}`, {
+      // Multi-step teardown: swallow so a failed first delete still lets the
+      // second run (a throw here would leak the sibling flow).
+      await deleteFlow(request, flow1Id, {
         headers: { Authorization: authToken },
-      });
-      await request.delete(`/api/v1/flows/${flow2Id}`, {
+      }).catch(() => {});
+      await deleteFlow(request, flow2Id, {
         headers: { Authorization: authToken },
-      });
+      }).catch(() => {});
     }
   },
 );

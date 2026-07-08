@@ -7,6 +7,7 @@ import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
 import { setupGoogle } from "../../../../helpers/provider-setup/setup-google";
 import { hideInspectorPanel } from "../../../../helpers/ui/hide-inspector-panel";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 // Language Model component execution and provider management (QA-CHECKLIST
 // §7.5 "Language Model component — configuration"). Hardened for @stable
@@ -58,9 +59,8 @@ test.describe("Language Model Component Regression", () => {
     const bearer = await getAuthToken(request);
     while (createdFlowIds.length > 0) {
       const id = createdFlowIds.pop();
-      await request
-        .delete(`/api/v1/flows/${id}`, { headers: { Authorization: bearer } })
-        .catch(() => {});
+      if (!id) continue;
+      await deleteFlow(request, id, { headers: { Authorization: bearer } }).catch(() => {});
     }
   });
 

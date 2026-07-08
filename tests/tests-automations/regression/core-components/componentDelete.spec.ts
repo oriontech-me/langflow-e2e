@@ -2,6 +2,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { deleteComponent } from "../../../helpers/flows/delete-component";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 test.describe("Delete a component from the canvas", () => {
   let createdFlowId: string | null = null;
@@ -20,7 +21,7 @@ test.describe("Delete a component from the canvas", () => {
       // Leave the editor first: staying on it while the flow is deleted makes
       // background polling 404, which the fixture's error monitor would flag.
       await page.goto("/").catch(() => {});
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

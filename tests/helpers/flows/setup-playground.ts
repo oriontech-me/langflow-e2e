@@ -2,6 +2,7 @@ import { expect, Page } from "@playwright/test";
 import { adjustScreenView } from "../ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../other/await-bootstrap-test";
 import { zoomOut } from "../ui/zoom-out";
+import { deleteFlow } from "./delete-flow";
 
 export async function setupPlayground(page: Page): Promise<string> {
   await awaitBootstrapTest(page);
@@ -72,7 +73,9 @@ export async function setupPlayground(page: Page): Promise<string> {
       timeout: 8000,
     });
   } catch (err) {
-    await page.request.delete(`/api/v1/flows/${flowId}`).catch(() => {});
+    // Best-effort rollback of the created flow — swallow so the original
+    // failure (err) is the one that surfaces, not a secondary cleanup error.
+    await deleteFlow(page.request, flowId).catch(() => {});
     throw err;
   }
 

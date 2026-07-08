@@ -3,6 +3,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 /**
  * Session behavior confirmed from source (chat-header.tsx):
@@ -101,7 +102,7 @@ test.describe("Playground – Clear History & Session Delete", () => {
   test.afterEach(async ({ page }) => {
     if (createdFlowId) {
       await page.goto("/");
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

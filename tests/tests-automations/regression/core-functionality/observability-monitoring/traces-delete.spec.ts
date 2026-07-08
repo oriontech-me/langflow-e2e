@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 const TRACE_FIXTURE = JSON.parse(
   readFileSync(
@@ -124,7 +125,7 @@ test.describe("Bulk delete traces — seeded flow", () => {
     const cleanups: Promise<unknown>[] = [];
     if (flowId) {
       cleanups.push(
-        request.delete(`/api/v1/flows/${flowId}`, {
+        deleteFlow(request, flowId, {
           headers: { Authorization: bearerToken },
         }),
       );

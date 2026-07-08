@@ -1,13 +1,14 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 test.describe("MCP Server – Flow Exposed as MCP Tool", () => {
   let flowId = "";
 
   test.afterEach(async ({ page }) => {
     if (flowId) {
-      await page.request.delete(`/api/v1/flows/${flowId}`).catch(() => {});
+      await deleteFlow(page.request, flowId);
       flowId = "";
     }
   });

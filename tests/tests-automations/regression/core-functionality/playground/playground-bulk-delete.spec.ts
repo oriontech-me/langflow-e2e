@@ -1,5 +1,6 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 /**
  * Bulk session operations in the Playground sidebar.
@@ -21,7 +22,7 @@ test.describe("Playground – Bulk Session Operations", () => {
   test.afterEach(async ({ page }) => {
     if (createdFlowId) {
       await page.goto("/");
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

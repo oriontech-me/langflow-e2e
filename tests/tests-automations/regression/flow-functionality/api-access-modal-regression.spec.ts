@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Run this file's tests serially. All four open the same "Basic Prompting" template, each creating a
 // fresh flow; running them in parallel within one worker pool makes the backend receive near-identical
@@ -48,7 +49,8 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(async ({ request }) => {
   const headers = { Authorization: await getAuthToken(request) };
   for (const id of createdFlowIds) {
-    await request.delete(`/api/v1/flows/${id}`, { headers }).catch(() => {});
+    // Best-effort per-flow so one failure does not abort the sweep.
+    await deleteFlow(request, id, { headers }).catch(() => {});
   }
   createdFlowIds = [];
 });

@@ -1,6 +1,7 @@
 import { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 /**
  * Pre-fill behavior of the Playground textarea driven by the ChatInput
@@ -88,7 +89,7 @@ test.describe("Playground – Input Text Pre-fill Behavior", () => {
     if (createdFlowId) {
       await page.unrouteAll({ behavior: "ignoreErrors" }).catch(() => {});
       await page.goto("/");
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

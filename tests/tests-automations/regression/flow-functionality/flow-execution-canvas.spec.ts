@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import {
@@ -43,7 +43,7 @@ test.describe("Flow execution — run a ChatInput -> ChatOutput flow", () => {
 
   let page: Page;
   let flowId: string;
-  let deleteFlow: () => Promise<void>;
+  let deleteFlow: (reqOverride?: APIRequestContext) => Promise<void>;
 
   test.beforeAll(async ({ browser, request }) => {
     // Create the flow once via the API (deterministic, avoids the UI
@@ -60,12 +60,17 @@ test.describe("Flow execution — run a ChatInput -> ChatOutput flow", () => {
     });
   });
 
-  test.afterAll(async () => {
+  test.afterAll(async ({ request }) => {
     // Unmount the editor before deleting so its GET /flows/{id}/events poll does
     // not 404 mid-delete (same teardown race fixed in publish-flow / triage #364).
     await page.goto("/").catch(() => {});
-    await deleteFlow();
-    await page.close();
+    try {
+      // Delete with afterAll's OWN request — the beforeAll `request` that created
+      // the flow cannot be reused here (Playwright fixture-scope rule).
+      await deleteFlow(request);
+    } finally {
+      await page.close();
+    }
   });
 
   test("1 - runs the flow from the canvas terminal node",

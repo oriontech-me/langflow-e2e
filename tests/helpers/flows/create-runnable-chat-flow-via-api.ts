@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import type { APIRequestContext } from "@playwright/test";
 import { expect } from "../../fixtures/fixtures";
+import { deleteFlow } from "./delete-flow";
 
 // A minimal, version-current runnable flow: Chat Input -> Chat Output passthrough
 // (single edge, no LLM or external provider key required). Chat Output echoes
@@ -62,10 +63,16 @@ export async function createRunnableChatFlowViaApi(
 
   return {
     flowId,
-    deleteFlow: async () => {
-      await request
-        .delete(`/api/v1/flows/${flowId}`, { headers })
-        .catch(() => {});
+    // Surfaces a genuinely-failed deletion (404 already counts as done). Callers
+    // that compose this into multi-step cleanup should wrap with .catch() (or a
+    // try/finally) so a failure here does not skip their remaining teardown.
+    //
+    // Pass `reqOverride` when deleting from a different fixture scope than the
+    // one this flow was created in: Playwright forbids reusing a `beforeAll`
+    // `request` after beforeAll, so a `beforeAll`-created flow deleted in
+    // `afterAll` must be given the afterAll's own live `request`.
+    deleteFlow: async (reqOverride?: APIRequestContext) => {
+      await deleteFlow(reqOverride ?? request, flowId, { headers });
     },
   };
 }

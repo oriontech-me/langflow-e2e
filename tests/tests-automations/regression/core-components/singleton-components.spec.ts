@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Single source of truth for each component under test. Keeping the search
 // term and the testids together here is what prevents the copy/paste class of
@@ -81,7 +82,7 @@ test.describe("Singleton and mutually-exclusive components (Chat Input ↔ Webho
       // Leave the editor first: staying on it while the flow is deleted makes
       // background polling 404, which the fixture's error monitor would flag.
       await page.goto("/").catch(() => {});
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });

@@ -94,7 +94,9 @@ async function seedFlowSession(request: APIRequestContext): Promise<SeededFlow> 
     session,
     sentinel,
     cleanup: async () => {
-      await deleteFlow();
+      // Multi-step teardown: swallow so a failed flow delete still lets the
+      // API-key cleanup below run.
+      await deleteFlow().catch(() => {});
       await request
         .delete(`/api/v1/api_key/${apiKeyId}`, { headers: { Authorization: bearer } })
         .catch(() => {});

@@ -5,6 +5,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { simulateDragAndDrop } from "../../../helpers/ui/simulate-drag-and-drop";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Serial so the three tests share the created-flow tracker safely within
 // this file.
@@ -47,7 +48,8 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
   test.afterEach(async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     for (const id of createdFlowIds) {
-      await request.delete(`/api/v1/flows/${id}`, { headers }).catch(() => {});
+      // Best-effort per-flow so one failure does not abort the sweep.
+      await deleteFlow(request, id, { headers }).catch(() => {});
     }
     createdFlowIds = [];
   });

@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 const ERROR_FIXTURE = JSON.parse(
   readFileSync(
@@ -159,14 +160,14 @@ test.describe("Trace list filters — status / start_time / query / session_id",
     const cleanups: Promise<unknown>[] = [];
     if (errorFlowId && apiKey) {
       cleanups.push(
-        request.delete(`/api/v1/flows/${errorFlowId}`, {
+        deleteFlow(request, errorFlowId, {
           headers: { "x-api-key": apiKey },
         }),
       );
     }
     if (okFlowId && apiKey) {
       cleanups.push(
-        request.delete(`/api/v1/flows/${okFlowId}`, {
+        deleteFlow(request, okFlowId, {
           headers: { "x-api-key": apiKey },
         }),
       );

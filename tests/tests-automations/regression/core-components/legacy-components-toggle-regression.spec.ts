@@ -1,6 +1,7 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { addLegacyComponents } from "../../../helpers/flows/add-legacy-components";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 test.describe("Show Legacy Components toggle", () => {
   let createdFlowId: string | null = null;
@@ -19,7 +20,7 @@ test.describe("Show Legacy Components toggle", () => {
       // Leave the editor first: staying on it while the flow is deleted makes
       // background polling 404, which the fixture's error monitor would flag.
       await page.goto("/").catch(() => {});
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`);
+      await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }
   });
