@@ -39,7 +39,7 @@ If any of these tests fails, the Webhook component is broken in one of its core 
 
 **Setup helper — `addWebhookComponent`** (shared by tests 1–9)
 1. Call `awaitBootstrapTest`
-2. Click `blank-flow`, then capture the created flow id from the `/flow/{id}` URL so `afterEach` can delete only that flow (scoped teardown, #515 — never a global `cleanAllFlows`, which races concurrent workers)
+2. Click `blank-flow`, then capture the created flow id from the `POST /api/v1/flows/` response so `afterEach` can delete only that flow (scoped teardown, #515 — never a global `cleanAllFlows`, which races concurrent workers). The canvas `/flow/{id}` URL id is a transient client-side handle here and 404s on delete; the tests still read it for their own webhook-endpoint assertions, which resolve fine by that id
 3. Search "webhook" in the sidebar and wait for `input_outputWebhook` to appear
 4. Hover over the result and click `add-component-button-webhook`
 5. Call `adjustScreenView`

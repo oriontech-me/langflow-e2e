@@ -9,7 +9,7 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 // from the canvas URL: the URL id is a transient client-side handle on this
 // Langflow version and does not match the persisted flow (deleting it 404s and
 // silently leaks the real one). The POST response is the authoritative id.
-async function openBlankFlow(page: Page): Promise<string | undefined> {
+async function openBlankFlow(page: Page): Promise<string> {
   const flowCreation = page.waitForResponse(
     (resp) =>
       resp.url().includes("/api/v1/flows") &&
@@ -18,9 +18,12 @@ async function openBlankFlow(page: Page): Promise<string | undefined> {
     { timeout: 30000 },
   );
   await page.getByTestId("blank-flow").click();
-  const id = ((await (await flowCreation).json()) as { id?: string }).id;
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
   await page.waitForURL(/\/flow\//, { timeout: 30000 });
-  return id;
+  return created.id;
 }
 
 // MCP-server pre-clean/verification calls authenticate via the shared

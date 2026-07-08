@@ -31,7 +31,11 @@ async function addAgentToBlankFlow(page: Page): Promise<void> {
     { timeout: 30000 },
   );
   await page.getByTestId("blank-flow").click();
-  createdFlowId = ((await (await flowCreation).json()) as { id?: string }).id;
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
+  createdFlowId = created.id;
   await page.waitForURL(/\/flow\//, { timeout: 30000 });
 
   await page.getByTestId("disclosure-models & agents").click();

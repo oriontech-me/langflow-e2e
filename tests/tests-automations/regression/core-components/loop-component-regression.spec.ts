@@ -48,8 +48,11 @@ async function addLoopComponent(page: Page) {
     { timeout: 30000 },
   );
   await page.getByTestId("blank-flow").click();
-  const id = ((await (await flowCreation).json()) as { id?: string }).id;
-  if (id) createdFlowIds.push(id);
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
+  createdFlowIds.push(created.id);
   await page.waitForURL(/\/flow\//, { timeout: 30000 });
   await page.getByTestId("sidebar-search-input").fill("Loop");
   await page.waitForSelector('[data-testid="add-component-button-loop"]', {
@@ -180,8 +183,11 @@ test(
       { timeout: 30000 },
     );
     await page.getByTestId("template-research-translation-loop").click();
-    const createdId = ((await (await flowCreation).json()) as { id?: string }).id;
-    if (createdId) createdFlowIds.push(createdId);
+    const createdTemplate = (await (await flowCreation).json()) as { id?: string };
+    if (!createdTemplate.id) {
+      throw new Error("template instantiation returned no flow id");
+    }
+    createdFlowIds.push(createdTemplate.id);
     await page.waitForSelector('[data-testid="title-Loop"]', { timeout: 15000 });
     await adjustScreenView(page);
 
