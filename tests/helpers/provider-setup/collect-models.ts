@@ -121,17 +121,96 @@ async function validateGoogle(model: string): Promise<ProviderRecord> {
   }
 }
 
-function firstModelFor(models: ModelRecord[], provider: string): string {
-  return models.find((m) => m.provider === provider)?.model ?? "";
+// Cheap/small models to try first (fast + inexpensive validation calls).
+const CHEAP_HINT = /nano|mini|flash|haiku|lite|small/i;
+// Gated or non-chat models to try last: reasoning "pro" tiers, the o-series,
+// codex, preview/image/embedding/audio variants. These lead the nightly provider
+// panel (e.g. `gpt-5.5-pro`, `gpt-image-2`) but are commonly access-gated, so they
+// must not be the sole basis for marking a provider inactive (issue #570).
+const GATED_OR_NON_CHAT =
+  /(^|[-\s])pro([-\s]|$)|(^|[-\s])o[1-9]([-\s]|$)|reasoning|codex|preview|image|embedding|audio|tts|realtime|vision|deep-research|moderation|transcribe/i;
+// Cap the number of real validation calls per provider.
+const MAX_CANDIDATES = 6;
+
+// Ordered list of models to try when validating a provider: cheap/small first,
+// then normal chat models, then gated/non-chat last — so a gated lead model does not
+// disable the whole provider when an accessible model exists (issue #570).
+function candidateModelsFor(models: ModelRecord[], provider: string): string[] {
+  const all = models.filter((m) => m.provider === provider).map((m) => m.model);
+  const cheap = all.filter((m) => CHEAP_HINT.test(m) && !GATED_OR_NON_CHAT.test(m));
+  const normal = all.filter((m) => !CHEAP_HINT.test(m) && !GATED_OR_NON_CHAT.test(m));
+  const gated = all.filter((m) => GATED_OR_NON_CHAT.test(m));
+  return [...new Set([...cheap, ...normal, ...gated])].slice(0, MAX_CANDIDATES);
+}
+
+// Validates a provider against its candidate models in order, stopping at the first
+// that succeeds. Returns that active record, or the last inactive one (with its real
+// error) if none validate. Logs each attempt so CI shows what was tried and settled on.
+async function validateWithCandidates(
+  provider: string,
+  candidates: string[],
+  validateOne: (model: string) => Promise<ProviderRecord>,
+): Promise<ProviderRecord> {
+  let last: ProviderRecord | null = null;
+  for (const model of candidates) {
+    const rec = await validateOne(model);
+    if (rec.status === "active") {
+      console.log(`   ${provider}: settled on ${model}`);
+      return rec;
+    }
+    console.log(`   ${provider}: ${model} unavailable — ${rec.error ?? "unknown"}`);
+    last = rec;
+  }
+  return (
+    last ?? {
+      provider,
+      model: null,
+      status: "inactive",
+      error: "no candidate models found",
+      checkedAt: new Date().toISOString(),
+    }
+  );
+}
+
+// Reorders models.json so each active provider's *validated* model leads its group.
+// getTestTargets picks the first model per provider, so without this the agent specs
+// would still parametrize on the gated lead (e.g. `gpt-5.5-pro`) even though the
+// provider validated on an accessible model — running (not skipping) but then failing
+// on a no-access/reasoning model (issue #570). Provider grouping and intra-group order
+// are otherwise preserved.
+function reorderModelsByValidated(
+  models: ModelRecord[],
+  providers: ProviderRecord[],
+): ModelRecord[] {
+  const validated = new Map<string, string>();
+  for (const p of providers) {
+    if (p.status === "active" && p.model) validated.set(p.provider, p.model);
+  }
+
+  const byProvider = new Map<string, ModelRecord[]>();
+  for (const m of models) {
+    const list = byProvider.get(m.provider) ?? [];
+    list.push(m);
+    byProvider.set(m.provider, list);
+  }
+
+  const result: ModelRecord[] = [];
+  for (const [provider, list] of byProvider) {
+    const lead = validated.get(provider);
+    const leadEntries = lead ? list.filter((m) => m.model === lead) : [];
+    const rest = list.filter((m) => !(lead && m.model === lead));
+    result.push(...leadEntries, ...rest);
+  }
+  return result;
 }
 
 async function collectProviders(models: ModelRecord[]): Promise<ProviderRecord[]> {
   console.log("Validando provedores via API...");
 
   const results = await Promise.all([
-    validateOpenAI(firstModelFor(models, "openai")),
-    validateAnthropic(firstModelFor(models, "anthropic")),
-    validateGoogle(firstModelFor(models, "google")),
+    validateWithCandidates("openai", candidateModelsFor(models, "openai"), validateOpenAI),
+    validateWithCandidates("anthropic", candidateModelsFor(models, "anthropic"), validateAnthropic),
+    validateWithCandidates("google", candidateModelsFor(models, "google"), validateGoogle),
   ]);
 
   for (const r of results) {
@@ -246,11 +325,17 @@ export async function collectAll(page: Page): Promise<void> {
 
   // Step 1: Collect models from UI via Settings
   const models = await collectModels(page);
-  fs.writeFileSync(MODELS_PATH, JSON.stringify(models, null, 2), "utf-8");
-  console.log(`models.json salvo com ${models.length} modelos.`);
 
-  // Step 2: Validate providers via API using the first model of each provider
+  // Step 2: Validate providers via API, trying candidate models until one works
+  // (a gated lead model must not disable the whole provider — issue #570).
   const providers = await collectProviders(models);
+
+  // Step 3: Lead each provider's group with its validated model so getTestTargets
+  // parametrizes agent specs on an accessible model, not the gated lead (issue #570).
+  const orderedModels = reorderModelsByValidated(models, providers);
+
+  fs.writeFileSync(MODELS_PATH, JSON.stringify(orderedModels, null, 2), "utf-8");
+  console.log(`models.json salvo com ${orderedModels.length} modelos.`);
   fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
   console.log(`providers.json salvo com ${providers.length} provedores.`);
 }
