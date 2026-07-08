@@ -756,8 +756,8 @@
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
-| `core-functionality/llm-agents/` | 40 | 28 | 2 | 0 | 10 |
-| `core-functionality/model-provider/` | 33 | 19 | 7 | 0 | 7 |
+| `core-functionality/llm-agents/` | 40 | 29 | 2 | 0 | 9 |
+| `core-functionality/model-provider/` | 33 | 20 | 7 | 0 | 6 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **251 (56%)** | **161 (36%)** | **7 (2%)** | **32 (7%)** |
+| **TOTAL** | **451** | **253 (56%)** | **161 (36%)** | **7 (2%)** | **30 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 280 `test()` calls carrying the `@stable` tag, distributed across 101 spec
+> 282 `test()` calls carrying the `@stable` tag, distributed across 102 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -933,6 +933,8 @@
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
 - [x] agent run persists every session message tagged with the custom context_id → `agent-context-id-continuity.spec.ts`
 - [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
+- [x] mirrored context-scoped retrievals return only their own context's messages → `agent-context-id-isolation.spec.ts`
+- [x] switching the agent's context_id re-tags new turns without touching previous ones → `agent-context-id-isolation.spec.ts`
 - [x] toggle ON (default): agent's date tool returns today's date → `agent-current-date-tool.spec.ts`
 - [x] toggle OFF: the date tool is removed from the agent's toolkit → `agent-current-date-tool.spec.ts`
 - [x] model refusal does not crash the component → `agent-empty-refusal-response.spec.ts`
@@ -1103,8 +1105,8 @@
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 2 | 10 |
-| `core-functionality/model-provider/` | 7 | 7 |
+| `core-functionality/llm-agents/` | 2 | 9 |
+| `core-functionality/model-provider/` | 7 | 6 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
