@@ -1,21 +1,59 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { cleanAllFlows } from "../../../helpers/flows/clean-all-flows";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 
-// Run tests serially because addWebhookComponent calls cleanAllFlows() —
-// without serial mode, parallel tests delete each other's flows mid-run,
-// turning the webhook POST into a 404 race.
+// Run tests serially to avoid 400 "flow must be unique" errors from parallel
+// autosaves of blank flows created within this file.
 test.describe.configure({ mode: "serial" });
+
+// Id of the flow the running test created; teardown deletes only this one via
+// the API (scoped) — never a global cleanAllFlows, which wipes flows other
+// parallel workers are actively building mid-run (#515).
+let createdFlowId: string | undefined;
+
+test.afterEach(async ({ page }) => {
+  const flowId = createdFlowId;
+  createdFlowId = undefined;
+  if (!flowId) return;
+  // Delete ONLY the flow this test created (scoped teardown, #515). Navigate off
+  // the editor first so the unmounted flow page stops polling the flow we are
+  // about to delete, then pass an explicit auth header — page.request is
+  // unauthenticated under AUTO_LOGIN and would 401 otherwise. Not swallowed: a
+  // failed cleanup surfaces instead of silently leaking the flow (#547).
+  await page.goto("/");
+  const authHeader = await getAuthToken(page.request);
+  await deleteFlow(
+    page.request,
+    flowId,
+    authHeader ? { headers: { Authorization: authHeader } } : undefined,
+  );
+});
 
 // Reusable helper: create blank flow and add the Webhook component.
 // After this call the component is visible on the canvas and the inspector is open.
 async function addWebhookComponent(page: any) {
   await awaitBootstrapTest(page);
-  // Clean existing flows first to avoid 400 "flow must be unique" under parallelism
-  await cleanAllFlows(page);
+  // Capture the teardown id from the flow-creation POST, NOT from the canvas URL:
+  // the URL id is a transient client-side handle on this Langflow version and
+  // does not match the persisted flow (deleting it 404s and silently leaks the
+  // real one). Tests still read the URL id for their own webhook-endpoint
+  // assertions — that id resolves fine for the webhook route, just not for DELETE.
+  const flowCreation = page.waitForResponse(
+    (resp: any) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 30000 },
+  );
   await page.getByTestId("blank-flow").click();
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
+  createdFlowId = created.id;
+  await page.waitForURL(/\/flow\//, { timeout: 30000 });
   await page.getByTestId("sidebar-search-input").click();
   await page.getByTestId("sidebar-search-input").fill("webhook");
   await page.waitForSelector('[data-testid="input_outputWebhook"]', {

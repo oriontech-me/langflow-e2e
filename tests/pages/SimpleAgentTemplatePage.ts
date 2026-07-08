@@ -19,7 +19,13 @@ export class SimpleAgentTemplatePage extends BasePage {
     super(page);
   }
 
-  async load(options: LoadSimpleAgentOptions = {}): Promise<void> {
+  /**
+   * Loads the Simple Agent template and configures the provider. Returns the
+   * created flow's id (from `loadTemplateByName`) so callers can delete only
+   * that flow in their teardown — never a global `cleanAllFlows`, which races
+   * concurrent tests in the fully-parallel suite (#515).
+   */
+  async load(options: LoadSimpleAgentOptions = {}): Promise<string> {
     const { provider = "openai", model } = options;
 
     if (!hasProviderEnvKeys(provider)) {
@@ -28,13 +34,16 @@ export class SimpleAgentTemplatePage extends BasePage {
       );
     }
 
-    // Load the Simple Agent template onto the canvas (clears existing flows,
-    // opens the templates modal, handles the 1.10.0 welcome overlay).
-    await loadTemplateByName(this.page, "Simple Agent");
+    // Load the Simple Agent template onto the canvas (opens the templates modal,
+    // handles the 1.10.0 welcome overlay). Deliberately does NOT clear existing
+    // flows — the cross-worker wipe was removed in #553.
+    const flowId = await loadTemplateByName(this.page, "Simple Agent");
 
     // Adjust canvas view and configure the provider.
     // JSON stores model names (e.g. "claude-opus-4-6") — passed directly to setup for hasText matching
     await adjustScreenView(this.page);
     await providerSetupMap[provider](this.page, model);
+
+    return flowId;
   }
 }

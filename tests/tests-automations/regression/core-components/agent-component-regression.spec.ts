@@ -2,17 +2,41 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
-import { cleanAllFlows } from "../../../helpers/flows/clean-all-flows";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
 
 // Each test creates a flow that autosaves to the backend. Serial mode prevents
-// parallel autosave races and keeps cleanAllFlows deterministic between tests.
+// parallel autosave races within this file.
 test.describe.configure({ mode: "serial" });
+
+// Id of the flow the running test created; teardown deletes only this one via
+// the API (scoped) — never a global cleanAllFlows, which wipes flows other
+// parallel workers are actively building mid-run (#515).
+let createdFlowId: string | undefined;
 
 async function addAgentToBlankFlow(page: Page): Promise<void> {
   await awaitBootstrapTest(page);
   await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
+  // Capture the id from the flow-creation POST, NOT from the canvas URL: the URL
+  // id is a transient client-side handle on this Langflow version and does not
+  // match the persisted flow (deleting it 404s and silently leaks the real one).
+  // The POST response is the authoritative id (same pattern as setup-blank-flow
+  // and load-template-by-name).
+  const flowCreation = page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 30000 },
+  );
   await page.getByTestId("blank-flow").click();
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
+  createdFlowId = created.id;
+  await page.waitForURL(/\/flow\//, { timeout: 30000 });
 
   await page.getByTestId("disclosure-models & agents").click();
   await page.waitForSelector('[data-testid="models_and_agentsAgent"]', {
@@ -31,12 +55,21 @@ async function addAgentToBlankFlow(page: Page): Promise<void> {
 
 test.describe("Agent Component — canvas regression", () => {
   test.afterEach(async ({ page }) => {
-    try {
-      await page.goto("/");
-      await cleanAllFlows(page);
-    } catch {
-      // best-effort cleanup
-    }
+    const flowId = createdFlowId;
+    createdFlowId = undefined;
+    if (!flowId) return;
+    // Delete ONLY the flow this test created (scoped teardown, #515). Navigate
+    // off the editor first so the unmounted flow page stops polling the flow we
+    // are about to delete, then pass an explicit auth header — page.request is
+    // unauthenticated under AUTO_LOGIN and would 401 otherwise. Not swallowed: a
+    // failed cleanup surfaces instead of silently leaking the flow (#547).
+    await page.goto("/");
+    const authHeader = await getAuthToken(page.request);
+    await deleteFlow(
+      page.request,
+      flowId,
+      authHeader ? { headers: { Authorization: authHeader } } : undefined,
+    );
   });
 
   test(

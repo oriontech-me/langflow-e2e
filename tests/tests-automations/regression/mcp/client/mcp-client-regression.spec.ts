@@ -1,8 +1,30 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
+
+// Clicks the blank-flow card and returns the id from the flow-creation POST, NOT
+// from the canvas URL: the URL id is a transient client-side handle on this
+// Langflow version and does not match the persisted flow (deleting it 404s and
+// silently leaks the real one). The POST response is the authoritative id.
+async function openBlankFlow(page: Page): Promise<string> {
+  const flowCreation = page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 30000 },
+  );
+  await page.getByTestId("blank-flow").click();
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
+  await page.waitForURL(/\/flow\//, { timeout: 30000 });
+  return created.id;
+}
 
 // MCP-server pre-clean/verification calls authenticate via the shared
 // `getAuthToken` helper (which uses `GET /api/v1/auto_login`). The suite starts
@@ -37,24 +59,39 @@ test.describe.configure({ mode: "serial" });
 const BAD_SERVER_NAME = "bad-server";
 const HTTP_FORM_SERVER_NAME = "http-form-server";
 
+// Id of the flow the running test created; teardown deletes only this one via
+// the API (scoped) — never a global cleanAllFlows, which wipes flows other
+// parallel workers are actively building mid-run (#515).
+let createdFlowId: string | undefined;
+
 test.describe("MCP Client – Configure and Execute Tool", () => {
   test.afterEach(async ({ page }) => {
+    const flowId = createdFlowId;
+    createdFlowId = undefined;
+
+    // Navigate off the editor first so the unmounted flow page stops polling the
+    // flow we are about to delete. The auth header is reused for both the MCP
+    // server cleanup and the flow deletion — page.request is unauthenticated
+    // under AUTO_LOGIN and would 401 otherwise.
+    await page.goto("/");
+    const authHeader = await getAuthToken(page.request);
+    const opts = authHeader
+      ? { headers: { Authorization: authHeader } }
+      : undefined;
+
     const serversToClean = [MCP_SERVER_NAME, BAD_SERVER_NAME, HTTP_FORM_SERVER_NAME];
     try {
-      const authHeader = await getAuthToken(page.request);
       for (const name of serversToClean) {
-        await page.request.delete(`/api/v2/mcp/servers/${name}`, {
-          headers: { Authorization: authHeader },
-        });
+        await page.request.delete(`/api/v2/mcp/servers/${name}`, opts);
       }
     } catch {
       // best-effort
     }
-    try {
-      await page.goto("/");
-      await cleanAllFlows(page);
-    } catch {
-      // best-effort
+
+    // Delete ONLY the flow this test created (scoped teardown, #515). Not
+    // swallowed: a failed cleanup surfaces instead of silently leaking (#547).
+    if (flowId) {
+      await deleteFlow(page.request, flowId, opts);
     }
   });
 
@@ -68,7 +105,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
         await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-        await page.getByTestId("blank-flow").click();
+        createdFlowId = await openBlankFlow(page);
       });
 
       await test.step("Delete existing MCP server and re-add via JSON", async () => {
@@ -174,7 +211,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
         await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-        await page.getByTestId("blank-flow").click();
+        createdFlowId = await openBlankFlow(page);
       });
 
       await test.step("Pre-clean: delete bad-server if it exists", async () => {
@@ -263,7 +300,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
         await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-        await page.getByTestId("blank-flow").click();
+        createdFlowId = await openBlankFlow(page);
       });
 
       await test.step("Pre-clean: delete http-form-server if it exists", async () => {
@@ -331,7 +368,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
         await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-        await page.getByTestId("blank-flow").click();
+        createdFlowId = await openBlankFlow(page);
       });
 
       await test.step("Register everything server via JSON and wait for tools", async () => {
