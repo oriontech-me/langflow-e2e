@@ -259,16 +259,21 @@ async function runFlowAndReadDoneCount(
   request: APIRequestContext,
   texts: string[],
 ): Promise<number> {
-  const { flow, name } = buildFlowBody(texts);
-  await createFlowFromAsset(request, flow);
+  const { flow } = buildFlowBody(texts);
+  const flowId = await createFlowFromAsset(request, flow);
 
-  // Click the flow card on the home page — matches user behavior and is more
-  // reliable than deep-linking /flow/{id}, which intermittently redirects to
-  // the flows list when the React app's owned-flows cache is stale at boot.
+  // Open the flow from the home page (deep-linking /flow/{id} intermittently
+  // redirects to the flows list when the React owned-flows cache is stale at boot).
+  // Target the exact card by flow id and open it with a dispatched click: a plain
+  // name click (or .first()) is intercepted when residual cards left by an incomplete
+  // cleanAllFlows overlap the target's absolute-inset open button (#580 watch-list),
+  // and dispatchEvent bypasses that hit-test interception.
   await page.goto("/");
-  const flowCard = page.getByText(name, { exact: true }).first();
-  await flowCard.waitFor({ state: "visible", timeout: 30000 });
-  await flowCard.click();
+  const openButton = page.locator(
+    `[data-testid="list-card-open-button"][aria-labelledby*="${flowId}"]`,
+  );
+  await openButton.waitFor({ state: "visible", timeout: 30000 });
+  await openButton.dispatchEvent("click");
   await page.waitForURL(/\/flow\//, { timeout: 30000 });
   await page.waitForSelector('[data-testid="title-Loop"]', { timeout: 30000 });
   await adjustScreenView(page);
