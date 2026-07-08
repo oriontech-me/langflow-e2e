@@ -756,7 +756,7 @@
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
-| `core-functionality/llm-agents/` | 40 | 27 | 2 | 0 | 11 |
+| `core-functionality/llm-agents/` | 40 | 28 | 2 | 0 | 10 |
 | `core-functionality/model-provider/` | 33 | 19 | 7 | 0 | 7 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **250 (55%)** | **161 (36%)** | **7 (2%)** | **33 (7%)** |
+| **TOTAL** | **451** | **251 (56%)** | **161 (36%)** | **7 (2%)** | **32 (7%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 278 `test()` calls carrying the `@stable` tag, distributed across 100 spec
+> 280 `test()` calls carrying the `@stable` tag, distributed across 101 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -933,6 +933,8 @@
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
 - [x] agent run persists every session message tagged with the custom context_id → `agent-context-id-continuity.spec.ts`
 - [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
+- [x] toggle ON (default): agent's date tool returns today's date → `agent-current-date-tool.spec.ts`
+- [x] toggle OFF: the date tool is removed from the agent's toolkit → `agent-current-date-tool.spec.ts`
 - [x] model refusal does not crash the component → `agent-empty-refusal-response.spec.ts`
 - [x] empty response does not crash the component → `agent-empty-refusal-response.spec.ts`
 - [x] input via ChatInput handle drives the agent response → `agent-input-sources.spec.ts`
@@ -1101,7 +1103,7 @@
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 2 | 11 |
+| `core-functionality/llm-agents/` | 2 | 10 |
 | `core-functionality/model-provider/` | 7 | 7 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
