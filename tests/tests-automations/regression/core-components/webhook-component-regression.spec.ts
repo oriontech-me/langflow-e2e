@@ -1,20 +1,54 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { cleanAllFlows } from "../../../helpers/flows/clean-all-flows";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 
-// Run tests serially because addWebhookComponent calls cleanAllFlows() —
-// without serial mode, parallel tests delete each other's flows mid-run,
-// turning the webhook POST into a 404 race.
+// Keep the file's tests in one worker in a fixed order; each test still
+// creates its own flow and cleans up only that flow in afterEach.
 test.describe.configure({ mode: "serial" });
+
+// Flow ids created by addWebhookComponent, deleted id-scoped in afterEach.
+// A pre-test cleanAllFlows here used to wipe flows OTHER parallel workers
+// were actively driving (#464 — tool-mode's build started 404ing "Flow not
+// found" on its own flow). Duplicate blank-flow names don't need a wipe
+// either: the backend auto-suffixes copies ("Untitled document (1)").
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ page }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearerToken = await getAuthToken(page.request);
+  const headers = bearerToken ? { Authorization: bearerToken } : undefined;
+  while (createdFlowIds.length > 0) {
+    const id = createdFlowIds.pop()!;
+    await deleteFlow(page.request, id, { headers });
+  }
+});
 
 // Reusable helper: create blank flow and add the Webhook component.
 // After this call the component is visible on the canvas and the inspector is open.
 async function addWebhookComponent(page: any) {
+  // Record every flow this page creates (persisted ids from the creation
+  // POST responses — the canvas URL id can be transient) so afterEach can
+  // delete exactly this test's flows. Besides the blank flow, the bootstrap
+  // "New Flow" entry point can create a transient flow of its own; deleteFlow
+  // treats an already-gone id (404) as success, so tracking both is safe.
+  // The listener dies with the page at test end — no teardown needed.
+  page.on("response", async (resp: any) => {
+    if (
+      resp.url().includes("/api/v1/flows/") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      try {
+        const id = (await resp.json()).id;
+        if (typeof id === "string" && id.length > 0) createdFlowIds.push(id);
+      } catch {
+        // Non-JSON or already-disposed response body — nothing to track.
+      }
+    }
+  });
   await awaitBootstrapTest(page);
-  // Clean existing flows first to avoid 400 "flow must be unique" under parallelism
-  await cleanAllFlows(page);
   await page.getByTestId("blank-flow").click();
   await page.getByTestId("sidebar-search-input").click();
   await page.getByTestId("sidebar-search-input").fill("webhook");
