@@ -756,8 +756,8 @@
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
-| `core-functionality/llm-agents/` | 40 | 29 | 2 | 0 | 9 |
-| `core-functionality/model-provider/` | 33 | 20 | 7 | 0 | 6 |
+| `core-functionality/llm-agents/` | 40 | 30 | 2 | 0 | 8 |
+| `core-functionality/model-provider/` | 33 | 21 | 7 | 0 | 5 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **253 (56%)** | **161 (36%)** | **7 (2%)** | **30 (7%)** |
+| **TOTAL** | **451** | **255 (57%)** | **161 (36%)** | **7 (2%)** | **28 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 282 `test()` calls carrying the `@stable` tag, distributed across 102 spec
+> 284 `test()` calls carrying the `@stable` tag, distributed across 103 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -952,6 +952,8 @@
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
 - [x] a small n_messages truncates retrieval to the most recent messages → `agent-n-messages-limit.spec.ts`
 - [x] causal control — a large n_messages retrieves the full seeded history → `agent-n-messages-limit.spec.ts`
+- [x] output_schema fields come back as typed JSON keys on the structured response → `agent-structured-output.spec.ts`
+- [x] a multiple (As List) schema row returns an array of the row's type → `agent-structured-output.spec.ts`
 - [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
 - [x] agent handles a tool error and continues execution → `agent-tool-error-handling.spec.ts`
@@ -1105,8 +1107,8 @@
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 2 | 9 |
-| `core-functionality/model-provider/` | 7 | 6 |
+| `core-functionality/llm-agents/` | 2 | 8 |
+| `core-functionality/model-provider/` | 7 | 5 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
