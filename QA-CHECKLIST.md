@@ -331,7 +331,7 @@
 - [x] Playground input remains usable after API error (mocked) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
 - [ ] Agent stops when configured stop condition is reached
 - [x] Agent stops when maximum number of iterations is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
-- [ ] Agent with multiple configured tools executes correctly → `agent-multi-tool-selection.spec.ts`
+- [x] Agent with multiple configured tools executes correctly → `agent-multi-tool-selection.spec.ts`
 - [ ] Agent with configured timeout respects the limit
 - [x] Connecting an external model in Agent drops the prior model selection (connection-mode isolation, prevents stale provider config) → `llm-agents/agent-model-connection-isolation.spec.ts`
 - [x] Flow with Agent saved and reopened → settings preserved → `core-functionality/llm-agents/agent-config-persistence.spec.ts`
@@ -351,7 +351,7 @@
 - [ ] Agent with integrated external MCP tool executes action and returns result
 - [ ] Agent executes multiple tools in sequence
 - [x] Tool returns error — agent handles it and continues execution → `core-functionality/llm-agents/agent-tool-error-handling.spec.ts`
-- [ ] Multiple connected tools — agent selects the correct one for each prompt → `agent-multi-tool-selection.spec.ts`
+- [x] Multiple connected tools — agent selects the correct one for each prompt → `agent-multi-tool-selection.spec.ts`
 - [x] Tool with invalid name — validation prevents execution with clear message → `core-functionality/llm-agents/agent-tool-name-validation.spec.ts`
 
 #### 6.5 Output and Reasoning
