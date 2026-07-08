@@ -38,8 +38,8 @@ If any of these tests fails, the Webhook component is broken in one of its core 
 ## Step by step *(required)*
 
 **Setup helper — `addWebhookComponent`** (shared by tests 1–9)
-1. Call `awaitBootstrapTest` and `cleanAllFlows` to ensure a clean state
-2. Click `blank-flow`
+1. Call `awaitBootstrapTest`
+2. Click `blank-flow`, then capture the created flow id from the `/flow/{id}` URL so `afterEach` can delete only that flow (scoped teardown, #515 — never a global `cleanAllFlows`, which races concurrent workers)
 3. Search "webhook" in the sidebar and wait for `input_outputWebhook` to appear
 4. Hover over the result and click `add-component-button-webhook`
 5. Call `adjustScreenView`

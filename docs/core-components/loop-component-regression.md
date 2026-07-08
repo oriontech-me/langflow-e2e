@@ -54,7 +54,7 @@ If any of these tests fails, the Loop component is broken in the product: either
 11. Assert the message **contains** "title" (case-insensitive) via `toContainText(/title/i, { timeout: 240000 })`. `toContainText` re-evaluates as tokens stream in, so it never samples a partially-streamed response — this is what makes the assertion robust against the streaming race tracked in #356 (the earlier code read the text once, on the first streamed token, and intermittently saw no "title" yet). Matching ≥ 1 occurrence confirms at least one complete loop iteration (Parser → LLM → done)
 
 **Test 4 — stops after exhausting input DataFrame and emits aggregated done**
-1. `awaitBootstrapTest` and `cleanAllFlows`
+1. `awaitBootstrapTest` (each created flow's id is tracked and deleted in `afterEach` — scoped teardown, #515 — never a global `cleanAllFlows`, which races concurrent workers)
 2. Build a flow body in-memory from `tests/assets/flows/loop-exit-condition.json` with the Create List node's `texts.value` set to a 3-element list and a randomized flow name
 3. `POST /api/v1/flows/` with the body to create the flow server-side
 4. Navigate to "/" and click the flow card matching the randomized name (the home navigation triggers a full owned-flows re-fetch, avoiding the deep-link cache race)

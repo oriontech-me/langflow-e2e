@@ -4,17 +4,53 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { cleanAllFlows } from "../../../helpers/flows/clean-all-flows";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { setupLanguageModelOpenAI } from "../../../helpers/provider-setup/setup-language-model-openai";
 
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
 
+// Ids of the flows each test creates; teardown deletes only these via the API
+// (scoped) — never a global cleanAllFlows, which wipes flows other parallel
+// workers are actively building mid-run (#515).
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ page }) => {
+  const ids = createdFlowIds.splice(0);
+  if (ids.length === 0) return;
+  // Delete ONLY the flows this test created (scoped teardown, #515). Navigate
+  // off the editor first so the unmounted flow page stops polling a flow we are
+  // about to delete, then pass an explicit auth header — page.request is
+  // unauthenticated under AUTO_LOGIN and would 401 otherwise. Not swallowed: a
+  // failed cleanup surfaces instead of silently leaking the flow (#547).
+  await page.goto("/");
+  const authHeader = await getAuthToken(page.request);
+  const opts = authHeader
+    ? { headers: { Authorization: authHeader } }
+    : undefined;
+  for (const id of ids) {
+    await deleteFlow(page.request, id, opts);
+  }
+});
+
 // Helper: create a blank flow and add the Loop component to the canvas.
 // After this call the component node is visible and the inspector is open.
 async function addLoopComponent(page: Page) {
   await awaitBootstrapTest(page);
+  // Capture the id from the flow-creation POST, NOT from the canvas URL: the URL
+  // id is a transient client-side handle on this Langflow version and does not
+  // match the persisted flow (deleting it 404s and silently leaks the real one).
+  const flowCreation = page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 30000 },
+  );
   await page.getByTestId("blank-flow").click();
+  const id = ((await (await flowCreation).json()) as { id?: string }).id;
+  if (id) createdFlowIds.push(id);
+  await page.waitForURL(/\/flow\//, { timeout: 30000 });
   await page.getByTestId("sidebar-search-input").fill("Loop");
   await page.waitForSelector('[data-testid="add-component-button-loop"]', {
     timeout: 10000,
@@ -134,7 +170,18 @@ test(
     await page.waitForSelector('[data-testid="template-research-translation-loop"]', {
       timeout: 10000,
     });
+    // Capture the id from the template-instantiation POST so teardown can delete
+    // only this flow (scoped, #515).
+    const flowCreation = page.waitForResponse(
+      (resp) =>
+        resp.url().includes("/api/v1/flows") &&
+        resp.request().method() === "POST" &&
+        resp.status() === 201,
+      { timeout: 30000 },
+    );
     await page.getByTestId("template-research-translation-loop").click();
+    const createdId = ((await (await flowCreation).json()) as { id?: string }).id;
+    if (createdId) createdFlowIds.push(createdId);
     await page.waitForSelector('[data-testid="title-Loop"]', { timeout: 15000 });
     await adjustScreenView(page);
 
@@ -234,9 +281,9 @@ function buildFlowBody(texts: string[]): {
 
 // Creates the flow server-side via POST /api/v1/flows/ using Playwright's
 // request context. Avoids the drag-drop upload race observed with
-// simulateDragAndDrop and aligns with the pattern used by cleanAllFlows and
-// the api/flows specs (request context + getAuthToken). Returns the new flow
-// id so callers can target cleanup or deep-link if needed.
+// simulateDragAndDrop and aligns with the pattern used by the api/flows specs
+// (request context + getAuthToken). Returns the new flow id so callers can
+// target scoped cleanup or deep-link if needed.
 async function createFlowFromAsset(
   request: APIRequestContext,
   flow: Record<string, unknown>,
@@ -260,7 +307,8 @@ async function runFlowAndReadDoneCount(
   texts: string[],
 ): Promise<number> {
   const { flow, name } = buildFlowBody(texts);
-  await createFlowFromAsset(request, flow);
+  const flowId = await createFlowFromAsset(request, flow);
+  createdFlowIds.push(flowId);
 
   // Click the flow card on the home page — matches user behavior and is more
   // reliable than deep-linking /flow/{id}, which intermittently redirects to
@@ -308,13 +356,11 @@ test(
 
     await test.step("N=3: loop iterates 3 times and done aggregates 3 items", async () => {
       await awaitBootstrapTest(page, { skipModal: true });
-      await cleanAllFlows(page);
       count = await runFlowAndReadDoneCount(page, request, ["a", "b", "c"]);
       expect(count).toBe(3);
     });
 
     await test.step("N=1: edge case — single iteration aggregates 1 item", async () => {
-      await cleanAllFlows(page);
       count = await runFlowAndReadDoneCount(page, request, ["only"]);
       expect(count).toBe(1);
     });
