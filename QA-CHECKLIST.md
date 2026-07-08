@@ -345,7 +345,7 @@
 - [x] Without Message History, LLM does not retain context between messages → `llm-agents/memory-history-regression.spec.ts`
 - [x] n_messages parameter limits the number of retained messages → `llm-agents/agent-n-messages-limit.spec.ts` (bug reported fixed on 1.11.0.dev33 — parameter now respected; validated by deterministic message count)
 - [x] Agent uses custom `context_id` — continuity between session messages → `agent-context-id-continuity.spec.ts`
-- [ ] Switching `context_id` isolates history between distinct sessions → `agent-context-id-isolation.spec.ts`
+- [x] Switching `context_id` isolates history between distinct sessions → `agent-context-id-isolation.spec.ts`
 
 #### 6.4 Tools and Integrations
 - [ ] Agent with integrated external MCP tool executes action and returns result
@@ -416,7 +416,7 @@
 - [ ] Reasoning effort parameter — conditional field based on model → `agent-reasoning-effort.spec.ts` (**not implementable on 1.11** — see #484)
 - [x] Maximum token count — response truncated as configured → `llm-agents/agent-max-tokens.spec.ts`
 - [x] Maximum agent iterations → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
-- [ ] Use of custom `context_id` for memory isolation → `agent-context-id-isolation.spec.ts`
+- [x] Use of custom `context_id` for memory isolation → `agent-context-id-isolation.spec.ts`
 - [ ] Output formatting (JSON via output_schema, Markdown, plain text) → `agent-structured-output.spec.ts`
 
 ---
