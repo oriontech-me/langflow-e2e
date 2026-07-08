@@ -407,7 +407,7 @@
 - [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
 #### 7.6 Open-Source Providers
-- [ ] Configure and execute flow with Ollama (local model)
+- [x] Configure and execute flow with Ollama (local model) → `model-provider/ollama-provider.spec.ts`
 - [ ] Configure and execute flow with Groq
 - [ ] Configure and execute flow with Mistral
 
