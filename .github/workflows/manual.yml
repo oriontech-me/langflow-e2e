@@ -91,11 +91,15 @@ jobs:
           --health-timeout 10s
           --health-retries 10
           --health-start-period 90s
-      # Local Ollama instance for ollama-provider.spec.ts (§7.6). The tests
-      # skip with a reason when it is absent, so other workflows are
-      # unaffected until they add the same service.
+      # Local Ollama instance for ollama-provider.spec.ts (§7.6), with the
+      # test model BAKED into the image (built by build-ollama-image.yml —
+      # no per-run model pull, no registry.ollama.ai dependency). The tests
+      # skip with a reason when the service is absent.
       ollama:
-        image: ollama/ollama
+        image: ghcr.io/${{ github.repository }}/ollama-e2e:llama3.2-1b
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
         ports:
           - 11434:11434
         options: >-
@@ -121,16 +125,12 @@ jobs:
       - run: npm ci
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
-      - name: Pull the Ollama test model
+      - name: Confirm the baked Ollama model is served
         run: |
-          # Readiness first (the service health check should have covered
-          # this; the retry is belt-and-braces), then a blocking pull via the
-          # HTTP API — no docker socket needed from the job.
+          # The model ships inside the image — cheap readiness/sanity check,
+          # not a pull.
           curl -sf --retry 10 --retry-delay 3 --retry-connrefused \
-            "$OLLAMA_BASE_URL/api/tags" > /dev/null
-          curl -s "$OLLAMA_BASE_URL/api/pull" \
-            -d "{\"name\":\"$OLLAMA_TEST_MODEL\"}" | tail -n 1
-          curl -sf "$OLLAMA_BASE_URL/api/tags" | grep -q "$OLLAMA_TEST_MODEL" \
+            "$OLLAMA_BASE_URL/api/tags" | grep -q "$OLLAMA_TEST_MODEL" \
             && echo "model $OLLAMA_TEST_MODEL ready"
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e
