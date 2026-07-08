@@ -126,7 +126,7 @@ function firstModelFor(models: ModelRecord[], provider: string): string {
 }
 
 async function collectProviders(models: ModelRecord[]): Promise<ProviderRecord[]> {
-  console.log("Validando provedores via API...");
+  console.log("Validating providers via API...");
 
   const results = await Promise.all([
     validateOpenAI(firstModelFor(models, "openai")),
@@ -208,7 +208,7 @@ async function collectModelsForProvider(
     }
   }
 
-  console.log(`Modelos encontrados (${providerName}):`, models.map((m) => m.model));
+  console.log(`Models found (${providerName}):`, models.map((m) => m.model));
 
   await page.getByTestId("sidebar-nav-Model Providers").click();
 
@@ -247,10 +247,10 @@ export async function collectAll(page: Page): Promise<void> {
   // Step 1: Collect models from UI via Settings
   const models = await collectModels(page);
   fs.writeFileSync(MODELS_PATH, JSON.stringify(models, null, 2), "utf-8");
-  console.log(`models.json salvo com ${models.length} modelos.`);
+  console.log(`models.json saved with ${models.length} models.`);
 
   // Step 2: Validate providers via API using the first model of each provider
   const providers = await collectProviders(models);
   fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
-  console.log(`providers.json salvo com ${providers.length} provedores.`);
+  console.log(`providers.json saved with ${providers.length} providers.`);
 }

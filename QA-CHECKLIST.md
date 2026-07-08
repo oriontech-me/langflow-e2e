@@ -373,11 +373,11 @@
 > See `helpers/provider-setup/` for the setup helpers of each provider.
 
 #### 7.1 Provider Collection and Validation
-- [-] Validate API keys of all providers via real call → `collect-models.spec.ts`
-- [-] Collect available models per provider via UI → `collect-models.spec.ts`
+- [x] Validate API keys of all providers via real call → `collect-models.spec.ts`
+- [x] Collect available models per provider via UI → `collect-models.spec.ts`
 - [x] Inactive providers appear as skipped in tests with reason → `agent-component-regression.spec.ts`
-- [-] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
-- [-] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
+- [x] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
+- [x] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
 
 #### 7.2 OpenAI
 - [x] Configure OpenAI API key in Settings → Model Providers → `core-functionality/model-provider/openai-provider.spec.ts`
