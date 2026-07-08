@@ -6,7 +6,10 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { updateOldComponents } from "../../../../helpers/flows/update-old-components";
 import { loadTemplateByName } from "../../../../helpers/flows/load-template-by-name";
 import { PlaygroundPage } from "../../../../pages";
-import { setupLanguageModelOpenAI } from "../../../../helpers/provider-setup/setup-language-model-openai";
+import {
+  setupLanguageModelOpenAI,
+  setAgentModelViaApi,
+} from "../../../../helpers/provider-setup/setup-language-model-openai";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -22,18 +25,43 @@ async function loadMemoryChatbot(page: Page): Promise<string> {
   return flowId;
 }
 
+// Configures the provider (UI) and pins the Agent's executable model to a cheap chat
+// model (API), then opens the Playground. The model pin is why this goes through the
+// API: the Agent template defaults `model` to `gpt-5.5-pro` and the in-canvas widget
+// does not persist a UI selection to the executed graph, so without this the flow runs
+// gpt-5.5-pro (rejected by keys without access; slow reasoning model — issue #569).
+// The reload makes the frontend/playground build pick up the patched model.
+async function openConfiguredPlayground(page: Page, flowId: string): Promise<PlaygroundPage> {
+  await setupLanguageModelOpenAI(page);
+  await setAgentModelViaApi(page, flowId);
+  await page.reload();
+
+  const playground = new PlaygroundPage(page);
+  await playground.waitForLoad();
+  await page.getByTestId("playground-btn-flow-io").click();
+  await page.waitForSelector('[data-testid="input-chat-playground"]', { timeout: 30000 });
+  return playground;
+}
+
 // Waits until `expectedResponses` bot responses have *fully completed*.
 //
-// A response's `chat-message-token-usage` badge is rendered only once that response
-// finishes, so its count is a stable completion signal. The `div-chat-message` element
-// is NOT usable for this: its count flickers while a response streams in (the bubble
-// mounts, unmounts on a re-render, then settles), so waiting on it can return on a
-// transient peak before the new response actually arrives — the root cause of the flaky
-// history/isolation assertions in issue #354. The 120s budget covers live LLM latency.
+// Two gates, in order:
+//  1. `div-chat-message` reaches the expected count — the bot bubble mounts when the
+//     turn begins, so this confirms the new turn actually started before we look at
+//     the generating indicator (guards the "checked completion before generation
+//     started" race that made the old stop-button wait return early — issue #354).
+//  2. The generating indicator clears: `button-stop` hidden and `button-send` back.
+//     This is the completion signal because it is *model-agnostic*. The previous
+//     signal — counting `chat-message-token-usage` badges — was the root cause of the
+//     #569 flake: not every model/response emits the badge, so the count could sit
+//     below the expected value for the full 120s even though the response had already
+//     rendered. The 120s budget covers live LLM latency.
 async function waitForChatResponse(page: Page, expectedResponses: number): Promise<void> {
-  await expect(page.getByTestId("chat-message-token-usage")).toHaveCount(expectedResponses, {
+  await expect(page.getByTestId("div-chat-message")).toHaveCount(expectedResponses, {
     timeout: 120000,
   });
+  await expect(page.getByTestId("button-stop")).toBeHidden({ timeout: 120000 });
+  await expect(page.getByTestId("button-send")).toBeVisible({ timeout: 10000 });
 }
 
 test.describe("Memory Chatbot Regression", () => {
@@ -43,6 +71,10 @@ test.describe("Memory Chatbot Regression", () => {
   // would kill parallel workers' in-flight flows (#553).
   test.afterEach(async ({ page }) => {
     if (createdFlowId) {
+      // Navigate home first so the flow editor / open playground stops polling
+      // this flow's /events endpoint; otherwise the delete below races those
+      // in-flight requests, which then 404 ("Flow not found") as teardown noise.
+      await page.goto("/").catch(() => {});
       await page.request.delete(`/api/v1/flows/${createdFlowId}`).catch(() => {});
       createdFlowId = null;
     }
@@ -82,17 +114,11 @@ test.describe("Memory Chatbot Regression", () => {
       );
 
       createdFlowId = await loadMemoryChatbot(page);
-      await setupLanguageModelOpenAI(page);
-
-      const playground = new PlaygroundPage(page);
-
-      await page.getByTestId("playground-btn-flow-io").click();
-      await page.waitForSelector('[data-testid="input-chat-playground"]', { timeout: 30000 });
+      const playground = await openConfiguredPlayground(page, createdFlowId);
 
       await test.step("message history retains context within same session", async () => {
         await playground.sendMessage("My name is Alice. Please confirm you received my name.");
         await waitForChatResponse(page, 1);
-        await expect.soft(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
 
         await playground.sendMessage("What is my name?");
         await waitForChatResponse(page, 2);
@@ -134,16 +160,10 @@ test.describe("Memory Chatbot Regression", () => {
       );
 
       createdFlowId = await loadMemoryChatbot(page);
-      await setupLanguageModelOpenAI(page);
-
-      const playground = new PlaygroundPage(page);
-
-      await page.getByTestId("playground-btn-flow-io").click();
-      await page.waitForSelector('[data-testid="input-chat-playground"]', { timeout: 30000 });
+      const playground = await openConfiguredPlayground(page, createdFlowId);
 
       await playground.sendMessage("My name is Bob. Please confirm you received my name.");
       await waitForChatResponse(page, 1);
-      await expect(page.getByTestId("div-chat-message").last()).toBeVisible({ timeout: 30000 });
 
       // "new-chat" button is in the sessions sidebar (data-testid="new-chat")
       await page.getByTestId("new-chat").click();
@@ -162,7 +182,11 @@ test.describe("Memory Chatbot Regression", () => {
       // fails; a model that answers "I don't know your name" passes.
       await playground.sendMessage("What is my name?");
       await waitForChatResponse(page, 1);
-      const response = await page.getByTestId("div-chat-message").last().innerText();
+      const response = (await page.getByTestId("div-chat-message").last().innerText()).trim();
+      // Require a real answer first: an empty/errored response (e.g. a reasoning model
+      // that returns no content) would pass `not.toMatch(/Bob/)` vacuously and mask a
+      // broken run as a green isolation result.
+      expect(response.length).toBeGreaterThan(0);
       expect(response).not.toMatch(/Bob/i);
     },
   );
