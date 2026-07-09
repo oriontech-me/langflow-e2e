@@ -10,6 +10,8 @@ import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
 } from "../../../../helpers/provider-setup";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 /**
  * OpenAI provider happy path (QA-CHECKLIST §7.2) as a provider-centric journey:
@@ -56,7 +58,26 @@ function resolveGptModel(): string | undefined {
   return openai[0];
 }
 
+// SimpleAgentTemplatePage.load() does NO cleanup (post-#553 contract) and the
+// canvas URL id is transient on 1.11 — track every flow the load actually
+// creates (POST /api/v1/flows → 201) and delete those ids in afterEach (#605).
+const createdFlowIds: string[] = [];
+
 async function loadAgent(page: Page, model?: string): Promise<void> {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {}); // non-JSON / batch payloads
+    }
+  });
   try {
     await new SimpleAgentTemplatePage(page).load({ provider: PROVIDER, model });
   } catch (e: any) {
@@ -64,6 +85,16 @@ async function loadAgent(page: Page, model?: string): Promise<void> {
     throw e;
   }
 }
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  // page.request carries only browser cookies — the flows API wants the
+  // Bearer token, so authenticate explicitly (a silent 401 here leaks flows).
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, { headers: { Authorization: bearer } });
+  }
+});
 
 async function waitForAgentToFinish(page: Page): Promise<void> {
   const stopButton = page.getByRole("button", { name: "Stop" });
@@ -73,8 +104,8 @@ async function waitForAgentToFinish(page: Page): Promise<void> {
   }
 }
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template;
-// serial mode + --workers=1 keeps the shared instance state deterministic.
+// Serial mode + --workers=1 keeps the shared instance state deterministic
+// (agent-family convention — named template loads collide under parallelism).
 test.describe.configure({ mode: "serial" });
 
 test.describe("OpenAI Provider", () => {

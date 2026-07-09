@@ -42,7 +42,7 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 - `models.json` / `providers.json` generated via
   `npx playwright test tests/collect-models.spec.ts` (Google must be `active`).
 - Run with `--workers=1` (Test 2 loads a named template via
-  `SimpleAgentTemplatePage`, which wipes flows). File is serial.
+  `SimpleAgentTemplatePage`; agent-family convention). File is serial.
 
 ---
 
@@ -172,6 +172,13 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   completion. Tool execution stays covered by `agent-component-regression.spec.ts`.
   The Playground builds the *persisted* flow, so the deletion is followed by
   `waitForFlowSaveSettled`.
+- **Flow cleanup (id-scoped, issue #605):** Test 2 creates a flow via
+  `SimpleAgentTemplatePage.load()`, which does NO cleanup (post-#553 contract).
+  The spec tracks every `POST /api/v1/flows` → 201 id fired during load and
+  deletes them by id in `test.afterEach` (transient ids 404 harmlessly —
+  `deleteFlow` treats 404 as done). Never a name-based or delete-all cleanup
+  (cross-worker wiper class, #553/#520). Same pattern as
+  `anthropic-provider.spec.ts`.
 - **Per-run sentinel** proves *this* execution produced the output.
 - **Shared global key:** the Google key is global and persists across runs. Test 1
   is idempotent — it re-saves and asserts the request outcomes, not a fresh start.
