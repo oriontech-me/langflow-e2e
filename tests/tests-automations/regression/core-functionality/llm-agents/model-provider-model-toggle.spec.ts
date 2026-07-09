@@ -10,6 +10,8 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -43,11 +45,39 @@ const providerItemTestId = provider
 
 const ENABLED_MODELS_ENDPOINT = "/api/v1/models/enabled_models";
 
+// SimpleAgentTemplatePage.load() does NO cleanup (post-#553 contract) and the
+// canvas URL id is transient on 1.11 — track every flow the load actually
+// creates (POST /api/v1/flows → 201) and delete those ids in afterEach (#605
+// pattern; this file previously leaked 2 flows per run).
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, { headers: { Authorization: bearer } }).catch(() => {});
+  }
+});
+
 // Load the Simple Agent template with the configured provider. This configures
 // the provider's API key globally and enables all of its models — the known
 // baseline both tests start from. MODEL_NOT_AVAILABLE (a model present in
 // models.json but absent from the picker) is turned into a skip.
 async function loadAgentWithProvider(page: Page): Promise<void> {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {}); // non-JSON / batch payloads
+    }
+  });
   try {
     await new SimpleAgentTemplatePage(page).load({ provider });
   } catch (e: any) {
@@ -108,9 +138,8 @@ async function setToggle(
   await save;
 }
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template,
-// so sibling agent specs that also wipe flows must not run concurrently — this
-// file is serial and the folder is run with --workers=1.
+// Named template loads collide under parallelism — this file is serial and
+// the folder is run with --workers=1 (agent-family convention).
 test.describe.configure({ mode: "serial" });
 
 test.describe("Model Provider Model Toggle", () => {
@@ -162,7 +191,7 @@ test.describe("Model Provider Model Toggle", () => {
   test(
     "disabling a model removes it from a component model dropdown",
     {
-      tag: ["@regression", "@components", "@agents", "@model-provider"],
+      tag: ["@stable", "@regression", "@components", "@agents", "@model-provider"],
     },
     async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");
@@ -173,6 +202,8 @@ test.describe("Model Provider Model Toggle", () => {
 
       let flowUrl = "";
       let targetModel = "";
+      let dropdownModels: string[] = [];
+      let dropdownSelected = "";
 
       await test.step("load Agent with configured provider and capture model options", async () => {
         await loadAgentWithProvider(page);
@@ -195,18 +226,46 @@ test.describe("Model Provider Model Toggle", () => {
             ),
           )
         ).filter((n) => n.length > 0);
-        // Pick a model that is NOT the currently selected one — disabling the
-        // active selection would entangle the test with selection-reset logic.
-        targetModel = names.find((n) => n !== selectedModel) ?? "";
-        test.skip(
-          targetModel.length === 0,
-          "Provider exposes only one model in the dropdown — cannot test removal of a non-selected model.",
-        );
+        dropdownModels = names;
+        dropdownSelected = selectedModel;
         await page.keyboard.press("Escape");
       });
 
       await test.step("disable the target model in Settings → Model Providers", async () => {
         await openProviderModelList(page);
+        // The component dropdown mixes models from EVERY configured provider
+        // (#597: with Google configured by sibling specs it listed
+        // gemini-3.5-flash first while this test's provider was OpenAI, and
+        // the toggle lookup below never resolves). Pick the target from the
+        // intersection of the dropdown options and THIS provider's own model
+        // list — the attached llm-toggle-* testids Settings just rendered —
+        // and never the currently selected model (disabling the active
+        // selection would entangle the test with selection-reset logic).
+        await page
+          .locator('[data-testid^="llm-toggle-"]')
+          .first()
+          .waitFor({ state: "attached", timeout: 10000 });
+        const providerModels = new Set(
+          (
+            await page
+              .locator('[data-testid^="llm-toggle-"]')
+              .evaluateAll((els) =>
+                els.map(
+                  (el) =>
+                    el.getAttribute("data-testid")?.replace(/^llm-toggle-/, "") ??
+                    "",
+                ),
+              )
+          ).filter((n) => n.length > 0),
+        );
+        targetModel =
+          dropdownModels.find(
+            (n) => providerModels.has(n) && n !== dropdownSelected,
+          ) ?? "";
+        test.skip(
+          targetModel.length === 0,
+          "No non-selected dropdown option belongs to the test's provider — cannot test removal.",
+        );
         const toggle = await toggleForModel(page, targetModel);
         await setToggle(page, toggle, false);
       });

@@ -40,8 +40,17 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
 ### Test 2 — disabling a model removes it from a component dropdown
 
 1. `SimpleAgentTemplatePage.load({ provider })` — same baseline (all models enabled, a model selected on the Agent). Capture the flow URL.
-2. Open the Agent's `model_model` picker, collect the option names (`[data-testid$="-option"]`), and pick a model that is **not** the currently selected one (avoids entangling with selection-reset logic). Skip if the provider exposes only one model.
-3. In **Settings → Model Providers**, disable that target model (immediate + persisted, as in Test 1).
+2. Open the Agent's `model_model` picker and collect the option names
+   (`[data-testid$="-option"]`). **The dropdown mixes models from every
+   configured provider** (#597 — with Google configured by sibling specs it
+   listed `gemini-3.5-flash` first while the test's provider was OpenAI), so
+   the options alone cannot pick the target.
+3. In **Settings → Model Providers**, open the test's provider and read the
+   attached `llm-toggle-<model>` testids — the provider's own model set.
+   Pick the target as the first dropdown option that is **in that set** and
+   is **not** the currently selected model (avoids entangling with
+   selection-reset logic). Skip if the intersection is empty. Then disable
+   the target (immediate + persisted, as in Test 1).
 4. Return to the flow (`page.goto(flowUrl)`), open the `model_model` picker, and assert the target model option has count `0` (anchored exact-match regex so substrings like `gpt-4o` vs `gpt-4o-mini` don't collide).
 5. Re-enable the target model in Settings, return to the flow, and assert the option reappears (count `1`).
 
@@ -53,6 +62,17 @@ Both tests resolve a single provider — `MODEL_TEST_PROVIDER` when its env keys
 - A `POST /api/v1/models/enabled_models` is sent after the debounce; reopening Model Providers reflects the persisted state.
 - A disabled model disappears from the Agent's `model_model` dropdown; re-enabling restores it.
 - The baseline is restored at the end of each test (model left enabled) so sibling specs are unaffected.
+
+---
+
+## Flow cleanup *(required)*
+
+Both tests create a flow via `SimpleAgentTemplatePage.load()`, which does NO
+cleanup (post-#553 contract). The spec tracks every `POST /api/v1/flows` →
+201 id fired during load and deletes them by id in `test.afterEach`
+(id-scoped — never name-based or delete-all; the file previously leaked 2
+flows per run). Behavioral force-fail contract: no-op the cleanup and the
+flow count grows.
 
 ---
 
