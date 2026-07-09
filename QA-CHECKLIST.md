@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-08
+> **Last updated:** 2026-07-09
 
 ---
 
@@ -373,11 +373,11 @@
 > See `helpers/provider-setup/` for the setup helpers of each provider.
 
 #### 7.1 Provider Collection and Validation
-- [-] Validate API keys of all providers via real call → `collect-models.spec.ts`
-- [-] Collect available models per provider via UI → `collect-models.spec.ts`
+- [x] Validate API keys of all providers via real call → `collect-models.spec.ts`
+- [x] Collect available models per provider via UI → `collect-models.spec.ts`
 - [x] Inactive providers appear as skipped in tests with reason → `agent-component-regression.spec.ts`
-- [-] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
-- [-] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
+- [x] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
+- [x] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
 
 #### 7.2 OpenAI
 - [x] Configure OpenAI API key in Settings → Model Providers → `core-functionality/model-provider/openai-provider.spec.ts`
@@ -386,9 +386,9 @@
 - [x] Invalid API key error — display error message → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.3 Anthropic
-- [-] Configure Anthropic API key
-- [-] Select Claude model in agent
-- [-] Switch between Claude models (Sonnet, Haiku, Opus)
+- [x] Configure Anthropic API key in Settings → Model Providers → `core-functionality/model-provider/anthropic-provider.spec.ts`
+- [x] Select Claude model in agent → `core-functionality/model-provider/anthropic-provider.spec.ts`
+- [x] Switch between Claude models (Sonnet, Haiku, Opus) → `core-functionality/model-provider/anthropic-provider.spec.ts`
 - [x] Invalid Anthropic API key error → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.4 Google Generative AI
@@ -407,8 +407,8 @@
 - [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
 #### 7.6 Open-Source Providers
-- [ ] Configure and execute flow with Ollama (local model)
-- [ ] Configure and execute flow with Groq
+- [x] Configure and execute flow with Ollama (local model) → `model-provider/ollama-provider.spec.ts`
+- [x] Configure and execute flow with Groq → `model-provider/groq-provider.spec.ts`
 - [ ] Configure and execute flow with Mistral
 
 #### 7.7 Model Parameters (Agent)
@@ -757,7 +757,7 @@
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 30 | 2 | 0 | 8 |
-| `core-functionality/model-provider/` | 33 | 21 | 7 | 0 | 5 |
+| `core-functionality/model-provider/` | 33 | 30 | 0 | 0 | 3 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **255 (57%)** | **161 (36%)** | **7 (2%)** | **28 (6%)** |
+| **TOTAL** | **451** | **264 (59%)** | **154 (34%)** | **7 (2%)** | **26 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 284 `test()` calls carrying the `@stable` tag, distributed across 103 spec
+> 286 `test()` calls carrying the `@stable` tag, distributed across 105 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -879,7 +879,6 @@
 - [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
-- [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
 - [x] Loop component — stops after exhausting input DataFrame and emits aggregated done → `loop-component-regression.spec.ts`
 - [x] box-selecting two connected non-IO components and clicking Group collapses them into a single Group node → `nested-grouping-regression.spec.ts`
 - [x] ungrouping a Group node restores the original components and the edge between them → `nested-grouping-regression.spec.ts`
@@ -961,7 +960,6 @@
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
-- [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
@@ -975,7 +973,6 @@
 - [x] an invalid API key is rejected and does not enable the provider → `model-provider-modal-actions.spec.ts`
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
-- [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
 - [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
 - [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
@@ -987,8 +984,14 @@
 - [x] DELETE /api/v1/variables/{id} removes a provider API key variable → `remove-provider-api-key.spec.ts`
 
 #### core-functionality/model-provider/
+- [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
+- [x] configured Anthropic selects a Claude model in the Agent and executes the flow → `anthropic-provider.spec.ts`
+- [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
 - [x] configured Google selects a Gemini model in the Agent and executes the flow → `google-provider.spec.ts`
+- [x] the Groq component configures the API key and executes the flow → `groq-provider.spec.ts`
+- [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
+- [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
 - [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
@@ -1052,7 +1055,6 @@
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
 #### core-functionality/project-management/
-- [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
 - [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
 - [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
@@ -1108,7 +1110,7 @@
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 8 |
-| `core-functionality/model-provider/` | 7 | 5 |
+| `core-functionality/model-provider/` | 0 | 3 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |

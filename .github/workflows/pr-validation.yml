@@ -42,3 +42,94 @@ jobs:
 
       - name: Lint
         run: npm run lint:ci
+
+  detect-specs:
+    name: Detect changed specs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      specs: ${{ steps.diff.outputs.specs }}
+      has_specs: ${{ steps.diff.outputs.has_specs }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: diff
+        name: List added/modified spec files in this PR
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch origin "$BASE_REF" --quiet
+          SPECS=$(git diff --name-only --diff-filter=d "origin/$BASE_REF"...HEAD -- 'tests/**/*.spec.ts' | tr '\n' ' ' | sed 's/ *$//')
+          echo "Changed specs: ${SPECS:-<none>}"
+          if [ -n "$SPECS" ]; then
+            echo "has_specs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_specs=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "specs=$SPECS" >> "$GITHUB_OUTPUT"
+
+  e2e:
+    name: Run impacted E2E specs
+    needs: detect-specs
+    if: needs.detect-specs.outputs.has_specs == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      langflow:
+        image: langflowai/langflow-nightly:latest
+        ports:
+          - 7860:7860
+        env:
+          LANGFLOW_AUTO_LOGIN: "true"
+          LANGFLOW_SUPERUSER: langflow
+          LANGFLOW_SUPERUSER_PASSWORD: langflow123
+          LANGFLOW_DEACTIVATE_TRACING: "true"
+        options: >-
+          --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
+          --health-interval 15s
+          --health-timeout 10s
+          --health-retries 10
+          --health-start-period 90s
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - run: npm ci
+
+      - name: Install Playwright browsers
+        uses: ./.github/actions/setup-playwright
+
+      - name: Run impacted specs
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SPECS: ${{ needs.detect-specs.outputs.specs }}
+        run: |
+          echo "Running specs: $SPECS"
+          # shellcheck disable=SC2086
+          npx playwright test $SPECS --reporter=github
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report-pr-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 14
+
+      - name: Upload test results on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-results-pr-${{ github.run_id }}
+          path: test-results/
+          retention-days: 7

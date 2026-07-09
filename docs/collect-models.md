@@ -1,6 +1,6 @@
 # Collect Models
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -17,7 +17,15 @@ If this spec is not run before the LLM agent specs, those specs fall back to a h
 
 ## Tags *(required)*
 
-_(none — this is a setup helper, not a validation test)_
+`@stable` `@model-provider` `@settings`
+
+Promoted by issue #501 (QA-CHECKLIST §7.1 ×4: key validation via real call,
+model collection via UI, Save Configuration, Replace/Disconnect state).
+Historically untagged as "just a setup helper" — promotion required a
+force-failability hardening pass (see Validation criterion): the previous
+contract ("never throws") meant a fully broken Model Providers UI still
+produced a green run with empty JSONs, which would blind the daily on this
+surface (the #505 lesson).
 
 ---
 
@@ -37,9 +45,23 @@ _(none — this is a setup helper, not a validation test)_
 
 ## Validation criterion *(required)*
 
-- `data/models.json` is written with at least one model per provider whose API key is set in the environment
-- `data/providers.json` is written with one record per provider; `status` is `"active"` if the direct API call returned 2xx, `"inactive"` otherwise
-- No unhandled exception is thrown; providers whose key is missing are recorded as `inactive` without failing the test
+Hard asserts in the spec, executed AFTER `collectAll` (the helper itself
+stays tolerant — writing "inactive" records instead of throwing is its
+contract; the SPEC now verifies the outcome):
+
+- `data/providers.json` exists and contains exactly one record per known
+  provider (`openai`, `anthropic`, `google`), each with
+  `status ∈ {active, inactive}` and a `checkedAt` timestamp;
+- every provider recorded `active` contributed **at least one model** to
+  `data/models.json` (an active key with an empty model collection means the
+  Settings UI collection broke — the exact silent failure the old contract
+  hid);
+- every provider with its env key set that came back `inactive` carries a
+  non-empty `error` (the probe's reason is visible, never silently dropped).
+
+A provider with a key that genuinely fails its probe (e.g. a model the
+account cannot access) is a legitimate `inactive` — recorded, logged, not a
+test failure.
 
 ---
 
@@ -75,6 +97,7 @@ _(none — this is a setup helper, not a validation test)_
 
 ## Notes *(optional)*
 
-- In CI (`weekly-stable.yml`) this spec runs as a dedicated **Collect models** step before the `@stable` suite, ensuring `models.json` is on disk before Playwright's collection phase. The step uses `continue-on-error: true` so a missing API key does not block the rest of the run.
+- In CI (`daily-stable.yml`) this spec runs as a dedicated **Collect models** step before the `@stable` suite, ensuring `models.json` is on disk before Playwright's collection phase. The step uses `continue-on-error: true` so a missing API key does not block the rest of the run.
+- **Double-run in the daily (analyzed, benign):** with `@stable` the spec ALSO runs inside the suite. The in-suite run re-saves the same keys (the exact flow `openai-provider`/`google-provider` test 1 already exercise in-suite) and rewrites the JSONs with equivalent content; workers read the files at module load, so a mid-suite rewrite does not change already-collected test targets.
 - Run this spec locally before any LLM agent or model-provider specs: `npx playwright test tests/collect-models.spec.ts`
 - If `models.json` is empty after running, check that the provider panel animates in before the form is read and that button labels match (`Save` / `Replace`)

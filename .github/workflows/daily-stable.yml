@@ -23,6 +23,10 @@ on:
 permissions:
   issues: write
   contents: write
+  # Pull the private ollama-e2e service image from GHCR with GITHUB_TOKEN.
+  # An explicit permissions block defaults every unlisted scope to `none`,
+  # so without this the container pull is denied (see #594).
+  packages: read
 
 jobs:
   e2e-daily-stable:
@@ -54,12 +58,40 @@ jobs:
           # (see #352). External tracers (LangSmith/Langfuse/etc.) stay dormant
           # here because their API keys are absent.
           LANGFLOW_DEACTIVATE_TRACING: "false"
+          # Ollama runs as a sibling service; without the allowlist the
+          # nightly's SSRF protection 400s the Ollama component's model-list
+          # fetch (private address) — see ollama-provider.spec.ts (#583).
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s
           --health-timeout 10s
           --health-retries 10
           --health-start-period 90s
+      # Local Ollama for ollama-provider.spec.ts (§7.6), test model BAKED
+      # into the image (build-ollama-image.yml) — no per-run model pull. The
+      # tests skip with a reason if the service is absent/unreachable.
+      ollama:
+        image: ghcr.io/${{ github.repository }}/ollama-e2e:llama3.2-1b
+        credentials:
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+        ports:
+          - 11434:11434
+        options: >-
+          --health-cmd "ollama list || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+          --health-start-period 20s
+
+    # This job runs INSIDE the Playwright container, so both the test process
+    # and Langflow reach Ollama via the job network's service hostname (no
+    # localhost port mapping in here — unlike manual.yml/nightly.yml).
+    env:
+      OLLAMA_BASE_URL: http://ollama:11434
+      OLLAMA_BASE_URL_FROM_LANGFLOW: http://ollama:11434
+      OLLAMA_TEST_MODEL: llama3.2:1b
 
     steps:
       - uses: actions/checkout@v4

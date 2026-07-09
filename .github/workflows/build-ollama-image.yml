@@ -1,0 +1,48 @@
+# Builds and pushes the Ollama-with-model CI image (issue #583).
+#
+# The image is consumed as a service container by the e2e workflows for
+# ollama-provider.spec.ts. Rebuilds are rare: only when docker/ollama-e2e/
+# changes (new model / base bump) or on manual dispatch. Runs on push so it
+# also works from feature branches (workflow_dispatch only resolves workflows
+# present on the default branch).
+name: Build Ollama E2E image
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "docker/ollama-e2e/**"
+      - ".github/workflows/build-ollama-image.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}/ollama-e2e
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Log in to ghcr
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build
+        run: docker build -t "$IMAGE:llama3.2-1b" docker/ollama-e2e
+      - name: Smoke-test the baked model
+        run: |
+          docker run -d --name smoke -p 11434:11434 "$IMAGE:llama3.2-1b"
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:11434/api/tags && break; sleep 2;
+          done
+          curl -sf http://localhost:11434/api/tags | grep -q "llama3.2:1b"
+          echo "baked model present"
+          docker rm -f smoke
+      - name: Push
+        run: docker push "$IMAGE:llama3.2-1b"
