@@ -1,6 +1,5 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage, SimpleAgentTemplatePage } from "../../../../pages";
@@ -10,6 +9,7 @@ import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
 } from "../../../../helpers/provider-setup";
+import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
 
 /**
  * Google (Gemini) provider path (QA-CHECKLIST §7.4) as a provider-centric journey:
@@ -33,35 +33,6 @@ if (!process.env.CI) {
 }
 
 const PROVIDER = "google";
-
-// Resolve a Gemini flash chat model from models.json, preferring fast, cheap,
-// non-image/non-tts/non-preview ones. Returns undefined if none/absent — then
-// setup-google picks a default.
-function resolveGeminiModel(): string | undefined {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/models.json",
-  );
-  if (!fs.existsSync(jsonPath)) return undefined;
-  const models = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as Array<{
-    provider: string;
-    model: string;
-  }>;
-  const google = models.filter((m) => m.provider === PROVIDER).map((m) => m.model);
-  const bad = /image|tts|audio|preview|embedding|customtools/;
-  const prefs = [
-    (m: string) => /^gemini-2\.5-flash$/.test(m),
-    (m: string) => /^gemini-3\.5-flash$/.test(m),
-    (m: string) => /^gemini-flash-latest$/.test(m),
-    (m: string) => /gemini.*flash/.test(m) && !bad.test(m),
-    (m: string) => /gemini/.test(m) && !bad.test(m),
-  ];
-  for (const pref of prefs) {
-    const hit = google.find(pref);
-    if (hit) return hit;
-  }
-  return google[0];
-}
 
 async function loadAgent(page: Page, model?: string): Promise<void> {
   try {
