@@ -5,6 +5,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
 import { setupGoogle } from "../../../../helpers/provider-setup/setup-google";
+import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
 import { hideInspectorPanel } from "../../../../helpers/ui/hide-inspector-panel";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -109,7 +110,7 @@ test.describe("Language Model Component Regression", () => {
 
   test(
     "language model must respond with Google provider",
-    { tag: ["@release", "@components", "@model-provider"] },
+    { tag: ["@stable", "@release", "@components", "@model-provider"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.GOOGLE_API_KEY,
@@ -118,9 +119,36 @@ test.describe("Language Model Component Regression", () => {
 
       await openBasicPrompting(page);
 
-      await setupGoogle(page);
+      // Pin a deterministic Gemini flash model instead of "first gemini in
+      // the dropdown" — the dropdown order follows the catalog and the node's
+      // default follows the first configured provider (#596).
+      const geminiModel = resolveGeminiModel();
+      try {
+        await setupGoogle(page, geminiModel);
+      } catch (e: any) {
+        if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
+        throw e;
+      }
       // Same autosave-debounce guard as the OpenAI test above.
       await waitForFlowSaveSettled(page);
+
+      // Pre-run widget gate (#596, same class as #491): a custom_component/
+      // update racing the selection can silently revert the node to the
+      // workspace-default model (an unrelated provider — the build then fails
+      // and "built successfully" never fires). If the selection dropped,
+      // re-apply it; the race becomes a re-select instead of a wrong-model
+      // build. Bounded — three drops in a row is a real failure.
+      const modelWidget = page.locator('[data-testid="model_model"]').first();
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const shown = await modelWidget.innerText().catch(() => "");
+        if (/gemini/i.test(shown)) break;
+        console.log(
+          `model selection dropped to "${shown.trim()}" — re-applying (attempt ${attempt + 1}/3, see #596)`,
+        );
+        await setupGoogle(page, geminiModel);
+        await waitForFlowSaveSettled(page);
+      }
+      await expect(modelWidget).toContainText(/gemini/i, { timeout: 10000 });
 
       await page.getByTestId("button_run_chat output").click();
       await page.waitForSelector("text=built successfully", { timeout: 30000 });
