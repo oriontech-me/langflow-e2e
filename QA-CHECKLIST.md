@@ -408,7 +408,7 @@
 
 #### 7.6 Open-Source Providers
 - [x] Configure and execute flow with Ollama (local model) → `model-provider/ollama-provider.spec.ts`
-- [ ] Configure and execute flow with Groq
+- [x] Configure and execute flow with Groq → `model-provider/groq-provider.spec.ts`
 - [ ] Configure and execute flow with Mistral
 
 #### 7.7 Model Parameters (Agent)
