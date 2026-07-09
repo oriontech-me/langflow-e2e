@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 290 `test()` calls carrying the `@stable` tag, distributed across 107 spec
+> 291 `test()` calls carrying the `@stable` tag, distributed across 108 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1084,6 +1084,7 @@
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
+- [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 
 #### mcp/client/
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
