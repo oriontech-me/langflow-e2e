@@ -1,6 +1,6 @@
 # Provider Invalid API Key Error
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0`)
+**Last validated:** Langflow 1.11.x
 
 ---
 
