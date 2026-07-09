@@ -82,7 +82,7 @@ async function navigateAndFillProviderApiKey(
   const settingsPage = new SettingsPage(page);
   await settingsPage.navigate();
 
-  await page.getByTestId("icon-Brain").click();
+  await page.getByTestId("icon-BrainCircuit").click();
   await page.getByTestId(providerTestId).click();
 
   // Wait for the provider form to finish loading before filling
@@ -105,7 +105,7 @@ for (const {
   test.describe.serial(`Invalid Auth Error — ${provider}`, () => {
     test(
       `should display error message when using invalid authentication for provider ${provider}`,
-      { tag: ["@regression", "@model-provider", "@agents"] },
+      { tag: ["@stable", "@regression", "@model-provider", "@agents"] },
       async ({ page }) => {
 
         await page.goto("/");
