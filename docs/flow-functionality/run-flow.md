@@ -1,12 +1,14 @@
 # Flow Functionality — Run Flow
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
 ## What this test validates *(required)*
 
-Validates the **Run Flow** component end-to-end: a pipeline flow (ChatInput → TextOutput → ChatOutput) is built, then a second flow uses the Run Flow component to invoke the pipeline. The test verifies that the output of the pipeline matches the input text — confirming that the Run Flow component correctly chains flows together.
+Validates the **Run Flow** component end-to-end: a pipeline flow (ChatInput → ChatOutput) is built, then a second flow uses the Run Flow component to invoke the pipeline. The test verifies that the output of the pipeline matches the input text — confirming that the Run Flow component correctly chains flows together.
+
+The built flow is renamed to a unique name so it can be selected deterministically by name in the Run Flow "Flow Name" dropdown, rather than by the fragile first-option (`dropdown-option-0`) position that failed when the instance held other flows (issue #340).
 
 If this breaks, users cannot compose flows via the Run Flow component — a core Langflow orchestration feature.
 
@@ -21,17 +23,18 @@ If this breaks, users cannot compose flows via the Run Flow component — a core
 ## Step by step *(required)*
 
 1. Bootstrap the app and create a blank flow
-2. Add ChatOutput, ChatInput, and TextOutput components to the canvas
-3. Connect: ChatInput → TextOutput (inputs) → TextOutput (output) → ChatOutput
-4. Return to main page and create a second blank flow
-5. Add the Run Flow component to the second flow
-6. Open the flow name dropdown in Run Flow and refresh the list
-7. Select the first flow (pipeline) from the dropdown
-8. Fill the `chatinput` textarea with `"THIS IS A TEST FOR RUN FLOW COMPONENT"`
-9. Click `button_run_run flow`
-10. Wait for "built successfully" notification
-11. Click the output inspection button (`output-inspection-*`)
-12. Assert the "Empty" placeholder input value equals `"THIS IS A TEST FOR RUN FLOW COMPONENT"`
+2. Add ChatOutput and ChatInput components to the canvas
+3. Connect: ChatInput → ChatOutput
+4. Rename the built flow to a unique name (for deterministic selection later)
+5. Return to main page and create a second blank flow
+6. Add the Run Flow component to the second flow
+7. Open the flow name dropdown in Run Flow and refresh the list
+8. Select the built flow by its unique name from the dropdown
+9. Fill the `chatinput` textarea with `"THIS IS A TEST FOR RUN FLOW COMPONENT"`
+10. Click `button_run_run flow`
+11. Wait for "built successfully" notification
+12. Click the output inspection button (`output-inspection-*`)
+13. Assert the "Empty" placeholder input value equals `"THIS IS A TEST FOR RUN FLOW COMPONENT"`
 
 ---
 
@@ -61,7 +64,7 @@ If this breaks, users cannot compose flows via the Run Flow component — a core
 ## Preconditions *(optional)*
 
 - Langflow running at `PLAYWRIGHT_BASE_URL`
-- No LLM required — ChatInput → TextOutput echo requires no AI calls
+- No LLM required — ChatInput → ChatOutput echo requires no AI calls
 
 ---
 
