@@ -757,7 +757,7 @@
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 30 | 2 | 0 | 8 |
-| `core-functionality/model-provider/` | 33 | 30 | 0 | 0 | 3 |
+| `core-functionality/model-provider/` | 33 | 31 | 0 | 0 | 2 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **264 (59%)** | **154 (34%)** | **7 (2%)** | **26 (6%)** |
+| **TOTAL** | **451** | **265 (59%)** | **154 (34%)** | **7 (2%)** | **25 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 286 `test()` calls carrying the `@stable` tag, distributed across 105 spec
+> 287 `test()` calls carrying the `@stable` tag, distributed across 106 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -990,6 +990,7 @@
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
 - [x] configured Google selects a Gemini model in the Agent and executes the flow → `google-provider.spec.ts`
 - [x] the Groq component configures the API key and executes the flow → `groq-provider.spec.ts`
+- [x] the MistralAI component configures the API key and executes the flow → `mistral-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
 - [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
@@ -1110,7 +1111,7 @@
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 8 |
-| `core-functionality/model-provider/` | 0 | 3 |
+| `core-functionality/model-provider/` | 0 | 2 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
