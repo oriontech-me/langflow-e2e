@@ -26,7 +26,12 @@ test(
 
     // Unique name for the sub-flow we build so the Run Flow "Flow Name" dropdown
     // can pick it deterministically by name instead of by position (issue #340).
-    const targetFlowName = `Run Flow Target ${Date.now()}`;
+    // The worker index + a random suffix keep it collision-free across parallel
+    // workers/projects sharing one Langflow instance, where a bare millisecond
+    // timestamp could repeat and make the dropdown locator match >1 option.
+    const targetFlowName = `Run Flow Target ${test.info().workerIndex}-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`;
     const captureFlowIdFromUrl = async () => {
       // `waitForURL` enforces the URL matches, so the subsequent match() is
       // guaranteed — no need for a runtime null check.
