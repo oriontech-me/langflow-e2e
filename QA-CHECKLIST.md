@@ -409,7 +409,7 @@
 #### 7.6 Open-Source Providers
 - [x] Configure and execute flow with Ollama (local model) → `model-provider/ollama-provider.spec.ts`
 - [x] Configure and execute flow with Groq → `model-provider/groq-provider.spec.ts`
-- [ ] Configure and execute flow with Mistral
+- [x] Configure and execute flow with Mistral → `model-provider/mistral-provider.spec.ts`
 
 #### 7.7 Model Parameters (Agent)
 - [ ] Temperature parameter (verify via network payload) → `agent-max-tokens.spec.ts` (**not implementable on 1.11**: the Agent no longer has a temperature parameter — left with the model-bundle refactor; bullet pending re-scope)
