@@ -1,8 +1,8 @@
 import type { Page } from "@playwright/test";
 import fs from "fs";
-import path from "path";
 import { expect } from "../../fixtures/fixtures";
 import { generateRandomFilename } from "./generate-filename";
+import { resolveAssetPath } from "./resolve-asset-path";
 import { unselectNodes } from "../ui/unselect-nodes";
 
 // Function to get the correct mimeType based on file extension
@@ -59,14 +59,14 @@ export async function uploadFile(page: Page, fileName: string) {
     const fileChooserPromise = page.waitForEvent("filechooser");
     await page.getByTestId("button_upload_file").click();
     const fileChooser = await fileChooserPromise;
-    await fileChooser.setFiles(path.join(__dirname, `../../assets/${fileName}`));
+    await fileChooser.setFiles(resolveAssetPath(fileName));
     await page.getByText(fileName).isVisible();
     return;
   }
   await page.getByTestId("button_open_file_management").first().click();
   const drag = await page.getByTestId("drag-files-component");
   const sourceFileName = generateRandomFilename();
-  const testFilePath = path.join(__dirname, `../../assets/${fileName}`);
+  const testFilePath = resolveAssetPath(fileName);
   const testFileType = fileName.split(".").pop() || "";
   const fileContent = fs.readFileSync(testFilePath);
 

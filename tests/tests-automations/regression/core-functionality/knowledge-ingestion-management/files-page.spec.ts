@@ -1,9 +1,9 @@
 import fs from "fs";
-import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { addFlowToTestOnEmptyLangflow } from "../../../../helpers/flows/add-flow-to-test-on-empty-langflow";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { generateRandomFilename } from "../../../../helpers/filesystem/generate-filename";
+import { resolveAssetPath } from "../../../../helpers/filesystem/resolve-asset-path";
 
 // Configure tests to run serially with a delay between each test
 test(
@@ -52,7 +52,7 @@ test(
   { tag: ["@release", "@components", "@files"] },
   async ({ page }) => {
     const fileName = generateRandomFilename();
-    const testFilePath = path.join(__dirname, "../../assets/test-file.txt");
+    const testFilePath = resolveAssetPath("test-file.txt");
     const fileContent = fs.readFileSync(testFilePath);
 
     await awaitBootstrapTest(page, { skipModal: true });
@@ -159,9 +159,9 @@ test(
     };
 
     const testFiles = [
-      path.join(__dirname, "../../assets/test-file.txt"),
-      path.join(__dirname, "../../assets/test-file.json"),
-      path.join(__dirname, "../../assets/test-file.py"),
+      resolveAssetPath("test-file.txt"),
+      resolveAssetPath("test-file.json"),
+      resolveAssetPath("test-file.py"),
     ];
 
     const fileContents = testFiles.map((file) => fs.readFileSync(file));
@@ -231,9 +231,9 @@ test(
     };
 
     const testFiles = [
-      path.join(__dirname, "../../assets/test-file.txt"),
-      path.join(__dirname, "../../assets/test-file.json"),
-      path.join(__dirname, "../../assets/test-file.py"),
+      resolveAssetPath("test-file.txt"),
+      resolveAssetPath("test-file.json"),
+      resolveAssetPath("test-file.py"),
     ];
 
     const fileContents = testFiles.map((file) => fs.readFileSync(file));
@@ -330,9 +330,9 @@ test(
     };
 
     const testFiles = [
-      path.join(__dirname, "../../assets/test-file.txt"),
-      path.join(__dirname, "../../assets/test-file.json"),
-      path.join(__dirname, "../../assets/test-file.py"),
+      resolveAssetPath("test-file.txt"),
+      resolveAssetPath("test-file.json"),
+      resolveAssetPath("test-file.py"),
     ];
 
     const fileContents = testFiles.map((file) => fs.readFileSync(file));

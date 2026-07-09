@@ -2,6 +2,7 @@ import * as dotenv from "dotenv";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { resolveAssetPath } from "../../../../helpers/filesystem/resolve-asset-path";
 import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
 import {
   closeAdvancedOptions,
@@ -43,7 +44,7 @@ test(
     });
 
     // Upload image using the hidden file input
-    const filePath = path.resolve(__dirname, "../../assets/chain.png");
+    const filePath = resolveAssetPath("chain.png");
     const fileInput = page.locator('input[type="file"]');
     await fileInput.setInputFiles(filePath);
 

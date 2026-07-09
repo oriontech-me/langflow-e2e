@@ -1,6 +1,6 @@
-import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { resolveAssetPath } from "../../../helpers/filesystem/resolve-asset-path";
 import { simulateDragAndDrop } from "../../../helpers/ui/simulate-drag-and-drop";
 
 test.describe("Import Flow JSON (ID 120 - Upload)", () => {
@@ -17,7 +17,7 @@ test.describe("Import Flow JSON (ID 120 - Upload)", () => {
       // Use the existing collection.json asset which is known valid
       await simulateDragAndDrop(
         page,
-        path.join(__dirname, "../../assets/collection.json"),
+        resolveAssetPath("collection.json"),
         "cards-wrapper",
       );
 
@@ -83,7 +83,7 @@ test.describe("Import Flow JSON (ID 120 - Upload)", () => {
         // Fall back to drag-and-drop with test asset
         await simulateDragAndDrop(
           page,
-          path.join(__dirname, "../../assets/collection.json"),
+          resolveAssetPath("collection.json"),
           "cards-wrapper",
         );
 
@@ -109,7 +109,7 @@ test.describe("Import Flow JSON (ID 120 - Upload)", () => {
       // We need a predictable flow name - use a known JSON file from assets
       await simulateDragAndDrop(
         page,
-        path.join(__dirname, "../../assets/flow.json"),
+        resolveAssetPath("flow.json"),
         "cards-wrapper",
       );
 
@@ -139,7 +139,7 @@ test.describe("Import Flow JSON (ID 120 - Upload)", () => {
       // First upload a flow so there's something to export
       await simulateDragAndDrop(
         page,
-        path.join(__dirname, "../../assets/collection.json"),
+        resolveAssetPath("collection.json"),
         "cards-wrapper",
       );
 
