@@ -1,6 +1,6 @@
 # Loop Component — Rendering, Error and Iteration
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -46,7 +46,7 @@ If any of these tests fails, the Loop component is broken in the product: either
 3. Click the template and wait for `title-Loop` to appear
 4. Verify that there are edges on the canvas (confirms template wiring)
 5. Verify the 4 handles of the Loop (same criterion as Test 1)
-6. Click "Setup Provider" on the Language Model component, select OpenAI, fill in `OPENAI_API_KEY`, save and select `gpt-4o-mini`
+6. Click "Setup Provider" on the Language Model component, select OpenAI, fill in `OPENAI_API_KEY`, save and select a cheap chat model. Both the "Setup Provider" button and the `model_model` dropdown are opened with a dispatched click (`dispatchEvent("click")`), not a hit-tested `.click()`: selecting the node opens the `InspectionPanel` (a pinned top-right card) over the Setup Provider button, and at zoomed-out scale the bound `api_key` popover renders over the ~10px-tall `model_model` trigger — both intercept a normal click and time out (issue #580). `dispatchEvent` targets each element directly and bypasses the interception. Handled inside the shared `setupLanguageModelOpenAI` helper
 7. Change `int_int_max_results` to `2` (limit ArXiv to 2 results)
 8. Open the Playground via `playground-btn-flow-io`
 9. Type "transformer neural networks" in `input-chat-playground` and send
@@ -56,13 +56,13 @@ If any of these tests fails, the Loop component is broken in the product: either
 **Test 4 — stops after exhausting input DataFrame and emits aggregated done**
 1. `awaitBootstrapTest` (each created flow's id is tracked and deleted in `afterEach` — scoped teardown, #515 — never a global `cleanAllFlows`, which races concurrent workers)
 2. Build a flow body in-memory from `tests/assets/flows/loop-exit-condition.json` with the Create List node's `texts.value` set to a 3-element list and a randomized flow name
-3. `POST /api/v1/flows/` with the body to create the flow server-side
-4. Navigate to "/" and click the flow card matching the randomized name (the home navigation triggers a full owned-flows re-fetch, avoiding the deep-link cache race)
+3. `POST /api/v1/flows/` with the body to create the flow server-side, capturing the returned flow id (pushed to `createdFlowIds` so `afterEach` deletes it)
+4. Navigate to "/" and open the exact card by flow id — locate `[data-testid="list-card-open-button"][aria-labelledby*="${flowId}"]` and open it with a dispatched click (`dispatchEvent("click")`). Scoping by id avoids `.first()` picking the wrong card; the dispatched click bypasses the hit-test interception when residual cards from other specs/workers on the shared home grid overlap the target's absolute-inset open button (issue #580). The home navigation triggers a full owned-flows re-fetch, avoiding the deep-link cache race
 5. Wait for `title-Loop` on the canvas; call `adjustScreenView`
 6. Click `button_run_loop`; wait for "built successfully"
 7. Click `output-inspection-done-loopcomponent`, wait for `[role="dialog"]`, read the pagination summary "1 to N of N. Page 1 of 1" via regex; assert N === 3
 8. Press Escape to close the modal
-9. Repeat steps 1–8 with `texts` set to a 1-element list; assert N === 1
+9. Repeat with `texts` set to a 1-element list — steps 2–8 only (the N=3 step already bootstrapped; scoped `afterEach` handles cleanup); assert N === 1
 
 ---
 
