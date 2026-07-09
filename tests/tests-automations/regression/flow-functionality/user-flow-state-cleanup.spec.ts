@@ -4,6 +4,7 @@ import {
   SUPERUSER_USERNAME,
 } from "../../../helpers/auth/credentials";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
+import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
 
 test(
   "flow state should be properly cleaned up between user sessions",
@@ -99,15 +100,7 @@ test(
       timeout: 30000,
     });
 
-    try {
-      await page.getByTestId("new_project_btn_empty_page").click();
-    } catch (_error) {
-      await page.getByTestId("new-project-btn").click();
-    }
-
-    await page.waitForSelector('[data-testid="modal-title"]', {
-      timeout: 3000,
-    });
+    await openNewFlowTemplatesModal(page);
     await page.getByRole("heading", { name: "Basic Prompting" }).click();
     await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
       timeout: 30000,
