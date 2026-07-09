@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 287 `test()` calls carrying the `@stable` tag, distributed across 106 spec
+> 288 `test()` calls carrying the `@stable` tag, distributed across 106 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -879,6 +879,7 @@
 - [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
+- [x] Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers → `loop-component-regression.spec.ts`
 - [x] Loop component — stops after exhausting input DataFrame and emits aggregated done → `loop-component-regression.spec.ts`
 - [x] box-selecting two connected non-IO components and clicking Group collapses them into a single Group node → `nested-grouping-regression.spec.ts`
 - [x] ungrouping a Group node restores the original components and the edge between them → `nested-grouping-regression.spec.ts`
