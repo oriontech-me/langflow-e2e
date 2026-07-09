@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 const WELCOME_PANEL = '[data-testid="flow-builder-welcome-panel"]';
 const MODAL_TITLE = '[data-testid="modal-title"]';
@@ -16,12 +16,26 @@ const MODAL_TITLE = '[data-testid="modal-title"]';
  * selector/timeout logic can't drift.
  */
 export const dismissWelcomeOverlayAndWaitForModal = async (page: Page) => {
-  await Promise.race([
-    page.waitForSelector(WELCOME_PANEL, { timeout: 30000 }),
-    page.waitForSelector(MODAL_TITLE, { timeout: 30000 }),
-  ]);
+  // expect.poll instead of Promise.race(waitForSelector×2): the race's losing
+  // wait survives as a spurious red ✗ step in every trace that goes through
+  // the overlay branch, reading like a recurring failure (#599). Not
+  // locator.or().first() either — .first() picks by DOM order, so an
+  // attached-but-hidden welcome panel sitting before the modal in the DOM
+  // pins the visibility wait to the full timeout.
+  const welcomePanel = page.locator(WELCOME_PANEL);
+  const modalTitle = page.locator(MODAL_TITLE);
+  await expect
+    .poll(
+      async () =>
+        (await modalTitle.isVisible().catch(() => false)) ||
+        (await welcomePanel.isVisible().catch(() => false)),
+      { timeout: 30000 },
+    )
+    .toBe(true);
 
-  if ((await page.locator(WELCOME_PANEL).count()) > 0) {
+  // isVisible, not count() — an attached-but-hidden panel must not trigger a
+  // click on the (equally hidden) "Browse more templates" button.
+  if (await welcomePanel.isVisible().catch(() => false)) {
     await page.getByTestId("flow-builder-welcome-browse-more").click();
   }
 

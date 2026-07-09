@@ -1,32 +1,77 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+
+// Each test creates a blank flow it never deleted — 3 leaked flows per run,
+// feeding the instance-state degradation behind the #599 flake. Track the ids
+// the page actually creates (POST /api/v1/flows → 201; the canvas URL id is
+// transient on 1.11) and delete them in afterEach.
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, { headers: { Authorization: bearer } }).catch(() => {});
+  }
+});
+
+// Shared setup: blank flow → OpenAI component → Global Variables modal.
+// The sidebar-search-input and icon-Globe clicks come right after heavy page
+// transitions (canvas mount; node panel render). Under CI load those exceed
+// the 20s implicit action timeout — the recurring #599 flake — so each click
+// is gated on visibility with the file's standard 30s transition timeout.
+// Behavior asserts are untouched.
+async function openGlobalVariablesModal(page: Page): Promise<void> {
+  // Use large viewport so the global variables modal is fully visible
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {}); // non-JSON / batch payloads
+    }
+  });
+  await awaitBootstrapTest(page);
+  await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
+  await page.getByTestId("blank-flow").click();
+
+  const searchInput = page.getByTestId("sidebar-search-input");
+  await expect(searchInput).toBeVisible({ timeout: 30000 }); // readiness gate (#599)
+  await searchInput.click();
+  await searchInput.fill("openai");
+  await page.waitForSelector('[data-testid="openaiOpenAI"]', {
+    timeout: 30000,
+  });
+  await page
+    .getByTestId("openaiOpenAI")
+    .hover()
+    .then(async () => {
+      await page.getByTestId("add-component-button-openai").last().click();
+    });
+
+  await page.waitForTimeout(1000);
+  await page.getByText("OpenAI", { exact: true }).last().click();
+  const globeIcon = page.getByTestId("icon-Globe").first();
+  await expect(globeIcon).toBeVisible({ timeout: 30000 }); // readiness gate (#599)
+  await globeIcon.click();
+  await page.waitForTimeout(500);
+}
 
 test(
   "create a Generic type global variable",
   { tag: ["@stable", "@release", "@workspace", "@regression"] },
   async ({ page }) => {
-    // Use large viewport so the global variables modal is fully visible
-    await page.setViewportSize({ width: 1920, height: 1080 });
-    await awaitBootstrapTest(page);
-    await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
-    await page.getByTestId("blank-flow").click();
-
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("openai");
-    await page.waitForSelector('[data-testid="openaiOpenAI"]', {
-      timeout: 30000,
-    });
-    await page
-      .getByTestId("openaiOpenAI")
-      .hover()
-      .then(async () => {
-        await page.getByTestId("add-component-button-openai").last().click();
-      });
-
-    await page.waitForTimeout(1000);
-    await page.getByText("OpenAI", { exact: true }).last().click();
-    await page.getByTestId("icon-Globe").nth(0).click();
-    await page.waitForTimeout(500);
+    await openGlobalVariablesModal(page);
 
     const varName = `test-generic-${Date.now()}`;
 
@@ -80,27 +125,7 @@ test(
   "delete a global variable removes it from the list",
   { tag: ["@stable", "@release", "@workspace", "@regression"] },
   async ({ page }) => {
-    await page.setViewportSize({ width: 1920, height: 1080 });
-    await awaitBootstrapTest(page);
-    await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
-    await page.getByTestId("blank-flow").click();
-
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("openai");
-    await page.waitForSelector('[data-testid="openaiOpenAI"]', {
-      timeout: 30000,
-    });
-    await page
-      .getByTestId("openaiOpenAI")
-      .hover()
-      .then(async () => {
-        await page.getByTestId("add-component-button-openai").last().click();
-      });
-
-    await page.waitForTimeout(1000);
-    await page.getByText("OpenAI", { exact: true }).last().click();
-    await page.getByTestId("icon-Globe").nth(0).click();
-    await page.waitForTimeout(500);
+    await openGlobalVariablesModal(page);
 
     const varName = `delete-me-${Date.now()}`;
     let varCreated = false;
@@ -161,27 +186,7 @@ test(
   "Credential variable value is hidden from the variable list",
   { tag: ["@stable", "@release", "@workspace", "@regression"] },
   async ({ page }) => {
-    await page.setViewportSize({ width: 1920, height: 1080 });
-    await awaitBootstrapTest(page);
-    await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
-    await page.getByTestId("blank-flow").click();
-
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("openai");
-    await page.waitForSelector('[data-testid="openaiOpenAI"]', {
-      timeout: 30000,
-    });
-    await page
-      .getByTestId("openaiOpenAI")
-      .hover()
-      .then(async () => {
-        await page.getByTestId("add-component-button-openai").last().click();
-      });
-
-    await page.waitForTimeout(1000);
-    await page.getByText("OpenAI", { exact: true }).last().click();
-    await page.getByTestId("icon-Globe").nth(0).click();
-    await page.waitForTimeout(500);
+    await openGlobalVariablesModal(page);
 
     const varName = `credential-${Date.now()}`;
     // Distinctive sentinel — if this string surfaces anywhere as visible text

@@ -1,6 +1,6 @@
 # Global Variables — CRUD via Component
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -26,9 +26,16 @@ If these break, users cannot manage global variables (API keys, shared values) t
 
 **All three tests share the same setup:**
 1. Set viewport to 1920×1080 (modal can overflow on smaller screens)
-2. Bootstrap app, create blank flow, add OpenAI component
-3. Click the OpenAI component header, then click the Globe icon
-4. Wait for Global Variables modal to open
+2. Bootstrap app, create blank flow (id captured from the page's own
+   `POST /api/v1/flows/` response for the id-scoped `afterEach` cleanup — #599),
+   add OpenAI component
+3. **Readiness gates (#599):** wait for `sidebar-search-input` to be visible
+   before clicking it (canvas mount), and for `icon-Globe` to be visible
+   before clicking it (node panel render) — both 30s, matching the file's
+   other page-transition waits. Under CI load these transitions exceed the
+   20s implicit action timeout; the behavior asserts are unchanged.
+4. Click the OpenAI component header, then click the Globe icon
+5. Wait for Global Variables modal to open
 
 **Test 1 — create Generic variable**
 
@@ -103,3 +110,19 @@ If these break, users cannot manage global variables (API keys, shared values) t
 
 - `page.evaluate()` is used to click "Add New Variable" because the modal can render outside the viewport on smaller screens. The JS click bypasses the viewport boundary.
 - `try/finally` cleanup ensures variables are deleted even when assertions fail mid-test — preventing test pollution between runs.
+- **#599 flake verdict (transient / instance load, not a regression):** the
+  `sidebar-search-input` 20s click timeout flaked on 2026-07-02 and
+  2026-07-09, both times inside correlated collapses (10 and 7 simultaneous
+  unrelated flakes; the daily baseline is 4–13). Reproduced locally: a fresh
+  instance runs the file green in ~24s; an instance with accumulated state
+  degrades progressively (element-visibility timeouts, then raw i18n keys in
+  the DOM), with the backend logging
+  `sqlite3.OperationalError: database is locked` in `delete_multiple_flows`
+  during the deployment-attachment prune — UI waits on a locked backend and
+  element timeouts follow. Stabilization: readiness gates (above) + the
+  id-scoped flow cleanup (the file previously leaked 3 blank flows per run,
+  feeding the degradation). No assert was weakened; `@stable` stays.
+- Verified on a fresh 1.11 instance: a pre-existing global
+  `OPENAI_API_KEY` credential (created by provider specs in the same CI run)
+  does NOT remove the Globe icon — no ordering hazard with the provider
+  specs.
