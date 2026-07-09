@@ -4,58 +4,63 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 
-// Keep the file's tests in one worker in a fixed order; each test still
-// creates its own flow and cleans up only that flow in afterEach.
+// Run tests serially to avoid 400 "flow must be unique" errors from parallel
+// autosaves of blank flows created within this file.
 test.describe.configure({ mode: "serial" });
 
-// Flow ids created by addWebhookComponent, deleted id-scoped in afterEach.
-// A pre-test cleanAllFlows here used to wipe flows OTHER parallel workers
-// were actively driving (#464 — tool-mode's build started 404ing "Flow not
-// found" on its own flow). Duplicate blank-flow names don't need a wipe
-// either: the backend auto-suffixes copies ("Untitled document (1)").
-const createdFlowIds: string[] = [];
+// Id of the flow the running test created; teardown deletes only this one via
+// the API (scoped) — never a global cleanAllFlows, which wipes flows other
+// parallel workers are actively building mid-run (#515).
+let createdFlowId: string | undefined;
 
 test.afterEach(async ({ page }) => {
-  if (createdFlowIds.length === 0) return;
-  const bearerToken = await getAuthToken(page.request);
-  const headers = bearerToken ? { Authorization: bearerToken } : undefined;
-  while (createdFlowIds.length > 0) {
-    const id = createdFlowIds.pop()!;
-    await deleteFlow(page.request, id, { headers });
-  }
+  const flowId = createdFlowId;
+  createdFlowId = undefined;
+  if (!flowId) return;
+  // Delete ONLY the flow this test created (scoped teardown, #515). Navigate off
+  // the editor first so the unmounted flow page stops polling the flow we are
+  // about to delete, then pass an explicit auth header — page.request is
+  // unauthenticated under AUTO_LOGIN and would 401 otherwise. Not swallowed: a
+  // failed cleanup surfaces instead of silently leaking the flow (#547).
+  await page.goto("/");
+  const authHeader = await getAuthToken(page.request);
+  await deleteFlow(
+    page.request,
+    flowId,
+    authHeader ? { headers: { Authorization: authHeader } } : undefined,
+  );
 });
 
 // Reusable helper: create blank flow and add the Webhook component.
 // After this call the component is visible on the canvas and the inspector is open.
 async function addWebhookComponent(page: any) {
-  // Record every flow this page creates (persisted ids from the creation
-  // POST responses — the canvas URL id can be transient) so afterEach can
-  // delete exactly this test's flows. Besides the blank flow, the bootstrap
-  // "New Flow" entry point can create a transient flow of its own; deleteFlow
-  // treats an already-gone id (404) as success, so tracking both is safe.
-  // The listener dies with the page at test end — no teardown needed.
-  page.on("response", async (resp: any) => {
-    if (
-      resp.url().includes("/api/v1/flows/") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201
-    ) {
-      try {
-        const id = (await resp.json()).id;
-        if (typeof id === "string" && id.length > 0) createdFlowIds.push(id);
-      } catch {
-        // Non-JSON or already-disposed response body — nothing to track.
-      }
-    }
-  });
   await awaitBootstrapTest(page);
   // Let the home page's own transient-flow sweep (batch DELETE /api/v1/flows/)
   // finish before creating a flow — a create POST landing mid-sweep makes the
   // sweep 500 with SQLite "database is locked" (upstream delete_multiple_flows
-  // weakness; log-only, but noisy). The old pre-test wipe masked this by
-  // emptying transients first; this wait serializes instead of wiping.
+  // weakness; log-only, no flow leak, but noisy). Waiting for network idle
+  // serializes the sweep before our creation POST, removing the contention
+  // window (#464).
   await page.waitForLoadState("networkidle").catch(() => {});
+  // Capture the teardown id from the flow-creation POST, NOT from the canvas URL:
+  // the URL id is a transient client-side handle on this Langflow version and
+  // does not match the persisted flow (deleting it 404s and silently leaks the
+  // real one). Tests still read the URL id for their own webhook-endpoint
+  // assertions — that id resolves fine for the webhook route, just not for DELETE.
+  const flowCreation = page.waitForResponse(
+    (resp: any) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 30000 },
+  );
   await page.getByTestId("blank-flow").click();
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
+  createdFlowId = created.id;
+  await page.waitForURL(/\/flow\//, { timeout: 30000 });
   await page.getByTestId("sidebar-search-input").click();
   await page.getByTestId("sidebar-search-input").fill("webhook");
   await page.waitForSelector('[data-testid="input_outputWebhook"]', {

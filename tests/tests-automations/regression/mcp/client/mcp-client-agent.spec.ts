@@ -11,7 +11,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
-import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
@@ -112,9 +112,14 @@ function getTestTargets(): TestTarget[] {
   }));
 }
 
+// Id of the flow the running test created; teardown deletes only this one via
+// the API (scoped) — never a global cleanAllFlows, which wipes flows other
+// parallel workers are actively building mid-run (#515).
+let createdFlowId: string | undefined;
+
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
   try {
-    await new SimpleAgentTemplatePage(page).load(options);
+    createdFlowId = await new SimpleAgentTemplatePage(page).load(options);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
@@ -131,8 +136,9 @@ async function waitForAgentToFinish(page: Page): Promise<void> {
 
 const targets = getTestTargets();
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template.
-// Serial mode prevents parallel provider blocks from wiping each other's flows.
+// Serial mode prevents parallel provider blocks from racing autosaves of the
+// template flow. (load() no longer deletes all flows — that cross-worker wipe
+// was removed in #553; teardown is now scoped per created flow, #515.)
 test.describe.configure({ mode: "serial" });
 
 for (const { label, options, skipReason } of targets) {
@@ -140,19 +146,29 @@ for (const { label, options, skipReason } of targets) {
 
   test.describe(`MCP Client – Agent using MCPTools [${label}]`, () => {
     test.afterEach(async ({ page }) => {
+      const flowId = createdFlowId;
+      createdFlowId = undefined;
+
+      // Navigate off the editor first so the unmounted flow page stops polling
+      // the flow we are about to delete. The auth header is reused for both the
+      // MCP server cleanup and the flow deletion — page.request is
+      // unauthenticated under AUTO_LOGIN and would 401 otherwise.
+      await page.goto("/");
+      const authHeader = await getAuthToken(page.request);
+      const opts = authHeader
+        ? { headers: { Authorization: authHeader } }
+        : undefined;
+
       try {
-        const authHeader = await getAuthToken(page.request);
-        await page.request.delete(`/api/v2/mcp/servers/${MCP_SERVER_NAME}`, {
-          headers: { Authorization: authHeader },
-        });
+        await page.request.delete(`/api/v2/mcp/servers/${MCP_SERVER_NAME}`, opts);
       } catch {
         // best-effort
       }
-      try {
-        await page.goto("/");
-        await cleanAllFlows(page);
-      } catch {
-        // best-effort
+
+      // Delete ONLY the flow this test created (scoped teardown, #515). Not
+      // swallowed: a failed cleanup surfaces instead of silently leaking (#547).
+      if (flowId) {
+        await deleteFlow(page.request, flowId, opts);
       }
     });
 

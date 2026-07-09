@@ -373,11 +373,11 @@
 > See `helpers/provider-setup/` for the setup helpers of each provider.
 
 #### 7.1 Provider Collection and Validation
-- [-] Validate API keys of all providers via real call → `collect-models.spec.ts`
-- [-] Collect available models per provider via UI → `collect-models.spec.ts`
+- [x] Validate API keys of all providers via real call → `collect-models.spec.ts`
+- [x] Collect available models per provider via UI → `collect-models.spec.ts`
 - [x] Inactive providers appear as skipped in tests with reason → `agent-component-regression.spec.ts`
-- [-] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
-- [-] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
+- [x] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
+- [x] Replace provider API key via Replace Configuration (existing key) → `collect-models.spec.ts`
 
 #### 7.2 OpenAI
 - [x] Configure OpenAI API key in Settings → Model Providers → `core-functionality/model-provider/openai-provider.spec.ts`
@@ -757,7 +757,7 @@
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 30 | 2 | 0 | 8 |
-| `core-functionality/model-provider/` | 33 | 22 | 7 | 0 | 4 |
+| `core-functionality/model-provider/` | 33 | 26 | 3 | 0 | 4 |
 | `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **256 (57%)** | **161 (36%)** | **7 (2%)** | **27 (6%)** |
+| **TOTAL** | **451** | **260 (58%)** | **157 (35%)** | **7 (2%)** | **27 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1110,7 +1110,7 @@
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 8 |
-| `core-functionality/model-provider/` | 7 | 4 |
+| `core-functionality/model-provider/` | 3 | 4 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
