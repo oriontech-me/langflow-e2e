@@ -111,8 +111,13 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
   const hasModelDropdown = await modelDropdown.isVisible({ timeout: 5000 }).catch(() => false);
 
   if (!hasModelDropdown) {
-    // "Setup Provider" opens the provider modal (no data-testid on this button)
-    await page.getByRole("button", { name: "Setup Provider" }).click();
+    // "Setup Provider" opens the provider modal (no data-testid on this button).
+    // Open it with a dispatched click, not a hit-tested .click(): selecting the
+    // node opens the InspectionPanel (a 320px pointer-events-auto card pinned
+    // top-right) which, at the template's node layout, renders on top of the
+    // Setup Provider button and intercepts the click (issue #580). dispatchEvent
+    // targets the button directly and bypasses that interception.
+    await page.getByRole("button", { name: "Setup Provider" }).dispatchEvent("click");
     await page.waitForSelector('[data-testid="provider-item-OpenAI"]', { timeout: 10000 });
     await page.getByTestId("provider-item-OpenAI").click();
 
