@@ -45,7 +45,7 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 - `models.json` / `providers.json` generated via
   `npx playwright test tests/collect-models.spec.ts` (Anthropic must be `active`).
 - Run with `--workers=1` (Tests 2–3 load a named template via
-  `SimpleAgentTemplatePage`, which wipes flows). File is serial.
+  `SimpleAgentTemplatePage`; agent-family convention). File is serial.
 
 ---
 

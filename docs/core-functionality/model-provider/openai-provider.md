@@ -42,7 +42,7 @@ Settings) · `@agents` + `@playground` (Test 2 executes an agent).
 - `models.json` / `providers.json` generated via
   `npx playwright test tests/collect-models.spec.ts`.
 - Run with `--workers=1` (Test 2 loads a named template via
-  `SimpleAgentTemplatePage`, which wipes flows). File is serial.
+  `SimpleAgentTemplatePage`; agent-family convention). File is serial.
 
 ---
 
@@ -171,6 +171,13 @@ Settings) · `@agents` + `@playground` (Test 2 executes an agent).
 - **Per-run sentinel** over a generic non-empty check: proves *this* execution
   produced the output, so the "execute with OpenAI" bullet can't pass on stale
   text.
+- **Flow cleanup (id-scoped, issue #605):** Test 2 creates a flow via
+  `SimpleAgentTemplatePage.load()`, which does NO cleanup (post-#553 contract).
+  The spec tracks every `POST /api/v1/flows` → 201 id fired during load and
+  deletes them by id in `test.afterEach` (transient ids 404 harmlessly —
+  `deleteFlow` treats 404 as done). Never a name-based or delete-all cleanup
+  (cross-worker wiper class, #553/#520). Same pattern as
+  `anthropic-provider.spec.ts`.
 - **Why the tools are removed before executing (root-caused during validation):**
   the Simple Agent template ships with Web Search + URL tools. Executing it with
   those tools on `gpt-4o-mini` failed ~1 in 5 runs (even spaced ~60s apart) with a
