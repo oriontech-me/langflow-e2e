@@ -46,10 +46,16 @@ dialog test).
 Common: open the Basic Prompting template (flow id captured from the page's
 own `POST /api/v1/flows/` response; deleted in `afterEach`).
 
-**OpenAI test:** `initialGPTsetup` → `waitForFlowSaveSettled` (autosave
-debounce — building earlier runs the template's DEFAULT model) → run the
-Chat Output node → wait `built successfully` (30s) → Playground → send
-`What is 2+2?` → last AI bubble contains `4`.
+**OpenAI test:** `initialGPTsetup` — which pins a deterministic GPT model
+from `models.json` via `resolveGptModel()` (#606; UI preference-ranking is
+the fallback when `models.json` is absent or the pinned model left the
+lineup) → `waitForFlowSaveSettled` (autosave debounce — building earlier
+runs the template's DEFAULT model) → **pre-run widget gate (#596/#491
+class, #606):** if the node's `model_model` widget does not show `/gpt/i`,
+the selection was silently reverted by a `custom_component/update` race —
+re-apply (bounded, 3 attempts), then hard-assert → run the Chat Output
+node → wait `built successfully` (30s) → Playground → send `What is 2+2?`
+→ last AI bubble contains `4`.
 
 **Google test:** `setupGoogle(page, resolveGeminiModel())` — a deterministic
 Gemini **flash** model pinned from `models.json` (never "first gemini in the
@@ -116,6 +122,17 @@ visible → Escape.
   the fix PR; per the user's decision the resolution is test-side only
   (explicit model + re-apply gate), no upstream ask — the race is not
   reproducible at manual UI speed.
-- **Latent sibling:** the OpenAI tests go through `initialGPTsetup` →
-  `setupOpenAI(page)` with no explicit model (same latent class); out of
-  #596's scope, noted for a follow-up if the daily flags them.
+- **Latent sibling — resolved (#606):** the OpenAI tests went through
+  `initialGPTsetup` → `setupOpenAI(page)` with no explicit model.
+  `initialGPTsetup` now defaults the model to `resolveGptModel()`
+  (deterministic pick from `models.json`, extracted from
+  `openai-provider.spec.ts` into `tests/helpers/provider-setup/`), falling
+  back to `setupOpenAI`'s UI preference-ranking when `models.json` is
+  absent or the pinned model is not in the dropdown
+  (`fallbackToRanking: true` — the fallback happens in-dropdown, never via
+  close-and-retry, which races the providers refetch and clicks a detached
+  option; the 13 consumer specs never break on stale collected data).
+  Premise correction vs the issue text: the no-model branch of
+  `setupOpenAI` was already preference-ranked, not blind "first
+  available" — the nondeterminism was the last-resort fallback and the
+  missing race gate, both addressed.

@@ -1,6 +1,5 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage, SimpleAgentTemplatePage } from "../../../../pages";
@@ -12,6 +11,7 @@ import {
 } from "../../../../helpers/provider-setup";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { resolveGptModel } from "../../../../helpers/provider-setup/resolve-gpt-model";
 
 /**
  * OpenAI provider happy path (QA-CHECKLIST §7.2) as a provider-centric journey:
@@ -36,27 +36,6 @@ if (!process.env.CI) {
 }
 
 const PROVIDER = "openai";
-
-// Resolve a GPT chat model from models.json, preferring small general-purpose
-// ones. Returns undefined if none/absent — setup-openai then picks a default.
-function resolveGptModel(): string | undefined {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/models.json",
-  );
-  if (!fs.existsSync(jsonPath)) return undefined;
-  const models = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as Array<{
-    provider: string;
-    model: string;
-  }>;
-  const openai = models.filter((m) => m.provider === PROVIDER).map((m) => m.model);
-  const prefs = [/^gpt-4o-mini$/, /^gpt-4o$/, /^gpt-4\.1(-mini|-nano)?$/, /^gpt-4/];
-  for (const pref of prefs) {
-    const hit = openai.find((m) => pref.test(m));
-    if (hit) return hit;
-  }
-  return openai[0];
-}
 
 // SimpleAgentTemplatePage.load() does NO cleanup (post-#553 contract) and the
 // canvas URL id is transient on 1.11 — track every flow the load actually

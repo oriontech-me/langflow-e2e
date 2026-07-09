@@ -4,6 +4,15 @@ import { hideInspectorPanel } from "../ui/hide-inspector-panel";
 export async function setupOpenAI(
   page: Page,
   modelTestId?: string,
+  opts?: {
+    // When the requested model is not in the live dropdown, fall through to
+    // the UI preference-ranking below instead of throwing MODEL_NOT_AVAILABLE.
+    // Used by initialGPTsetup (#606): its pin comes from models.json, which
+    // can be stale — its consumers must degrade, not fail. The in-dropdown
+    // fallback matters: closing (Escape) and re-opening the dropdown for a
+    // retry races the providers refetch and clicks a detached option.
+    fallbackToRanking?: boolean;
+  },
 ): Promise<void> {
   // Step 1: Find the entry point into the provider management panel.
   // "model_model" exists only when a provider is already configured.
@@ -79,15 +88,23 @@ export async function setupOpenAI(
   const modelTrigger = page.getByTestId("model_model");
   await modelTrigger.waitFor({ state: "visible", timeout: 15000 });
   await modelTrigger.click();
+  let pickByRanking = !modelTestId;
   if (modelTestId) {
     const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${modelTestId}$`) });
     const isAvailable = await modelOption.isVisible({ timeout: 10000 }).catch(() => false);
-    if (!isAvailable) {
+    if (isAvailable) {
+      await modelOption.click();
+    } else if (opts?.fallbackToRanking) {
+      console.log(
+        `pinned model "${modelTestId}" not in the live dropdown — falling back to UI preference-ranking (#606)`,
+      );
+      pickByRanking = true;
+    } else {
       await page.keyboard.press("Escape");
       throw new Error(`MODEL_NOT_AVAILABLE: "${modelTestId}" not found in dropdown — model may not be supported.`);
     }
-    await modelOption.click();
-  } else {
+  }
+  if (pickByRanking) {
     // No explicit model requested — pick a fast, general-purpose model from the
     // enabled dropdown. Hardcoding a single name (previously "gpt-4o-mini")
     // breaks whenever that model leaves the lineup on gpt-5.x nightlies. Instead
