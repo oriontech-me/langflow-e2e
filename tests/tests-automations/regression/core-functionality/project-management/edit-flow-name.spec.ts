@@ -23,16 +23,16 @@ test(
 
       await page.getByTestId("icon-ChevronLeft").first().click();
 
-      await page.waitForSelector('[data-testid="home-dropdown-menu"]', {
-        timeout: 5000,
+      await expect(page.getByTestId("home-dropdown-menu").first()).toBeVisible({
+        timeout: 30000,
       });
 
-      await page.waitForSelector(`text=${targetName}`, {
-        timeout: 3000,
-        state: "visible",
+      // Auto-waits for the renamed flow to appear (home refetch + render).
+      // Web-first assertion instead of a fixed 3s waitForSelector, which raced
+      // the flow-list API refetch under parallel load (flaky, see issue #410).
+      await expect(page.getByText(targetName)).toHaveCount(1, {
+        timeout: 30000,
       });
-
-      await expect(page.getByText(targetName)).toHaveCount(1);
 
       // Re-open the flow by clicking its name in the listing — required so the next
       // iteration starts inside the editor with renameFlow() targeting the flow header.
