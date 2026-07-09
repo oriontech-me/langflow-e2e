@@ -6,10 +6,12 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { renameFlow } from "../../../helpers/flows/rename-flow";
+import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
 
 test(
   "user should be able to use Run Flow without any issues",
-  { tag: ["@release", "@workspace", "@api", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
   async ({ page, request }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
@@ -21,6 +23,10 @@ test(
     // those via the API, not example/starter flows or flows belonging to
     // sibling specs running in parallel.
     const createdFlowIds: string[] = [];
+
+    // Unique name for the sub-flow we build so the Run Flow "Flow Name" dropdown
+    // can pick it deterministically by name instead of by position (issue #340).
+    const targetFlowName = `Run Flow Target ${Date.now()}`;
     const captureFlowIdFromUrl = async () => {
       // `waitForURL` enforces the URL matches, so the subsequent match() is
       // guaranteed — no need for a runtime null check.
@@ -64,37 +70,27 @@ test(
           targetPosition: { x: 100, y: 100 },
         });
 
-      await page.getByTestId("sidebar-search-input").click();
-      await page.getByTestId("sidebar-search-input").fill("text output");
-      await page.waitForSelector('[data-testid="input_outputText Output"]', {
-        timeout: 30000,
-      });
-
-      await page
-        .getByTestId("input_outputText Output")
-        .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-          targetPosition: { x: 300, y: 300 },
-        });
-
       await adjustScreenView(page);
 
+      // Connect Chat Input → Chat Output directly. The intermediate Text Output
+      // was dropped: Langflow flipped Text Input/Output to legacy and hides them
+      // from the sidebar (see CONTRIBUTING "Do not build on legacy components"),
+      // and this shorter pipeline still echoes the input, so the assertion below
+      // is unchanged.
       await page
         .getByTestId("handle-chatinput-noshownode-chat message-source")
-        .click();
-
-      await page.getByTestId("handle-textoutput-shownode-inputs-left").click();
-
-      await page
-        .getByTestId("handle-textoutput-shownode-output text-right")
         .click();
       await page
         .getByTestId("handle-chatoutput-noshownode-inputs-target")
         .click();
 
+      // Rename the built flow to a unique name so the Run Flow dropdown below can
+      // select it deterministically by name (issue #340).
+      await renameFlow(page, { flowName: targetFlowName });
+
       await page.getByTestId("icon-ChevronLeft").click();
 
-      await expect(page.getByText("New Flow")).toBeVisible({ timeout: 10000 });
-      await page.getByTestId("new-project-btn").click();
+      await openNewFlowTemplatesModal(page);
 
       await page.getByTestId("blank-flow").click();
       await captureFlowIdFromUrl();
@@ -125,7 +121,10 @@ test(
         .getByTestId("value-dropdown-dropdown_str_flow_name_selected")
         .click();
 
-      await page.getByTestId("dropdown-option-0-container").click();
+      await page
+        .getByTestId(/^dropdown-option-\d+-container$/)
+        .filter({ hasText: targetFlowName })
+        .click();
 
       await page.getByTestId(/^textarea_str_chatinput.*/).click();
       await page
