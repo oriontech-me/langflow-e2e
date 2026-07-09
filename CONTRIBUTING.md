@@ -117,6 +117,14 @@ Use the maintained core equivalents instead. The canonical case:
 
 ---
 
+## Browser locale is pinned to `en-US`
+
+`playwright.config.ts` pins the browser context locale (and the `Accept-Language` header) to `en-US` for every test in every project. The suite asserts on English strings throughout — toast titles, button labels, status messages, upstream error text — so the locale must stay fixed regardless of host machine settings, CI runner defaults, or future i18n locale detection in Langflow.
+
+Do **not** override `locale` per test or per project. If a test ever needs a non-English locale (e.g. deliberate multi-locale coverage), that is a separate, parameterised concern — raise it as its own issue rather than editing the shared default.
+
+---
+
 ## Creating tests with LLM (agents, providers, MCP)
 
 Tests that execute an agent with an LLM require a specific setup. **Do not hardcode provider, API key or model** — use the project infrastructure.

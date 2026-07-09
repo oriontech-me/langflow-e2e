@@ -21,6 +21,10 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
+    // Pin the browser context locale (and Accept-Language header) so the
+    // English-string assertions throughout the suite stay stable regardless
+    // of host machine settings or future i18n locale detection. See issue #225.
+    locale: "en-US",
     actionTimeout: 20000,
     trace: "on-first-retry",
     screenshot: process.env.CI ? "only-on-failure" : "off",
