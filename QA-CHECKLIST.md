@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 289 `test()` calls carrying the `@stable` tag, distributed across 106 spec
+> 290 `test()` calls carrying the `@stable` tag, distributed across 107 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -982,6 +982,7 @@
 - [x] provider list renders with the known providers → `modelProviderModal.spec.ts`
 - [x] selecting a provider opens its API key configuration detail → `modelProviderModal.spec.ts`
 - [x] a configured provider shows its model selection panel → `modelProviderModal.spec.ts`
+- [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
 - [x] a provider credential variable can be removed through the Global Variables UI → `remove-provider-api-key.spec.ts`
 - [x] DELETE /api/v1/variables/{id} removes a provider API key variable → `remove-provider-api-key.spec.ts`
 
