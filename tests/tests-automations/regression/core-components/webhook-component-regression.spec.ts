@@ -35,6 +35,13 @@ test.afterEach(async ({ page }) => {
 // After this call the component is visible on the canvas and the inspector is open.
 async function addWebhookComponent(page: any) {
   await awaitBootstrapTest(page);
+  // Let the home page's own transient-flow sweep (batch DELETE /api/v1/flows/)
+  // finish before creating a flow — a create POST landing mid-sweep makes the
+  // sweep 500 with SQLite "database is locked" (upstream delete_multiple_flows
+  // weakness; log-only, no flow leak, but noisy). Waiting for network idle
+  // serializes the sweep before our creation POST, removing the contention
+  // window (#464).
+  await page.waitForLoadState("networkidle").catch(() => {});
   // Capture the teardown id from the flow-creation POST, NOT from the canvas URL:
   // the URL id is a transient client-side handle on this Langflow version and
   // does not match the persisted flow (deleting it 404s and silently leaks the
