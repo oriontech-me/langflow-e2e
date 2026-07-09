@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 288 `test()` calls carrying the `@stable` tag, distributed across 106 spec
+> 289 `test()` calls carrying the `@stable` tag, distributed across 106 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -961,6 +961,7 @@
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
+- [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
