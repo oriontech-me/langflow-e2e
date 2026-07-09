@@ -167,14 +167,54 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
   await selectPreferredChatModel(page);
 }
 
-// Forces the Agent node's *executable* model to a cheap chat model via the flows API.
-// The Agent template ships `model` defaulting to `gpt-5.5-pro` — a restricted,
-// expensive reasoning model — and its in-canvas model widget does not reliably
-// persist a UI selection to the executed graph, so a plain UI click leaves the flow
-// running gpt-5.5-pro (rejected by keys without access, and slow/reasoning — the #569
-// flake). Resolution mirrors selectPreferredChatModel: MODEL_TEST_ID → first preferred
-// → first non-chat/non-avoided option offered by the node. Returns the chosen name.
-// Caller must reload the flow afterwards so the playground build uses the patched model.
+// Cheap, non-reasoning OpenAI chat models, in priority order. Unlike the gpt-5.x
+// nano/mini tier — which the current nightly bundle classifies as *reasoning* models
+// (see `isReasoningOption` below) — these are plain chat models with bounded latency.
+// `gpt-4o-mini` leads: it is the cheapest, is present on the account catalog, and is
+// the deterministic fallback synthesized when the Agent still carries the curated
+// reasoning-only default option list (issue #569).
+const NON_REASONING_CHAT_MODELS = [
+  "gpt-4o-mini",
+  "gpt-4.1-mini",
+  "gpt-4.1-nano",
+  "gpt-4o",
+  "gpt-5.3-chat-latest",
+  "gpt-5.2-chat-latest",
+  "gpt-5.1-chat-latest",
+];
+
+// The backend tags every *reasoning* model by self-listing its own name in
+// `metadata.reasoning_models`; plain chat models omit the field. This is the
+// authoritative, build-agnostic signal — the hardcoded name lists drift as the
+// OpenAI bundle changes (the gpt-5.x nano/mini tier is now reasoning, so the old
+// PREFERRED list picked `gpt-5.4-nano`, whose variable latency intermittently blew
+// the 120s response budget — the reopened #569 flake).
+function isReasoningOption(o: any): boolean {
+  const rm = o?.metadata?.reasoning_models;
+  return Array.isArray(rm) && rm.length > 0;
+}
+
+function isOpenAIOption(o: any): boolean {
+  return String(o?.provider ?? "").toLowerCase() === "openai";
+}
+
+// Forces the Agent node's *executable* model to a cheap, **non-reasoning** OpenAI
+// chat model via the flows API. Two problems this guards against, both root causes of
+// the #569 flake:
+//   1. The Agent template ships `model` defaulting to `gpt-5.5-pro` — a restricted,
+//      expensive reasoning model (rejected by keys without access). The in-canvas
+//      widget does not reliably persist a UI selection to the executed graph, so a
+//      plain UI click leaves the flow running gpt-5.5-pro.
+//   2. The Agent's `model.options` list refreshes to the full OpenAI catalog only
+//      *after* the provider is configured; before that it carries a curated default
+//      where **every** OpenAI option is a reasoning model (gpt-5.x). Reading that
+//      window pins a reasoning model (`gpt-5.4-nano`), whose latency variance
+//      occasionally exceeds the 120s response budget → the reopened flake.
+// Resolution: MODEL_TEST_ID (env, if non-reasoning) → first available non-reasoning
+// OpenAI chat option → synthesize `gpt-4o-mini` by name from any OpenAI option's shape
+// (the backend executes `model.value[0].name` directly, so the name is authoritative
+// even when the stale options list lacks it). Returns the chosen name. Caller must
+// reload the flow afterwards so the playground build uses the patched model.
 export async function setAgentModelViaApi(page: Page, flowId: string): Promise<string> {
   const flow = await (await page.request.get(`/api/v1/flows/${flowId}`)).json();
   const nodes = flow?.data?.nodes ?? [];
@@ -185,23 +225,41 @@ export async function setAgentModelViaApi(page: Page, flowId: string): Promise<s
 
   const modelField = agent.data.node.template.model;
   const options = (modelField?.options ?? []) as any[];
-  const names: string[] = options
-    .map((o) => (typeof o === "string" ? o : o?.name))
-    .filter(Boolean);
+  const nameOf = (o: any) => (typeof o === "string" ? o : o?.name);
+
+  // Usable = OpenAI, non-reasoning, and neither a non-chat nor an avoided variant.
+  const usable = options.filter(
+    (o) =>
+      isOpenAIOption(o) &&
+      !isReasoningOption(o) &&
+      !NON_CHAT_MODEL.test(nameOf(o) ?? "") &&
+      !AVOID_MODEL.test(nameOf(o) ?? ""),
+  );
 
   const envModel = process.env.MODEL_TEST_ID?.trim();
-  const chosenName =
-    (envModel && names.includes(envModel) && envModel) ||
-    PREFERRED_CHAT_MODELS.find((m) => names.includes(m)) ||
-    names.find((n) => !NON_CHAT_MODEL.test(n) && !AVOID_MODEL.test(n));
+  const preferred = [envModel, ...NON_REASONING_CHAT_MODELS].filter(Boolean) as string[];
 
-  if (!chosenName) {
-    throw new Error(
-      `setAgentModelViaApi: no usable cheap chat model in Agent options: ${names.join(", ")}`,
-    );
+  let chosenOption =
+    preferred.map((m) => usable.find((o) => nameOf(o) === m)).find(Boolean) ??
+    usable[0];
+
+  // Curated-default window: the Agent still carries only reasoning OpenAI options, so
+  // there is no non-reasoning option to pick. Synthesize `gpt-4o-mini` from any OpenAI
+  // option's shape (metadata is provider-level: model_class, model_name_param, …) and
+  // strip the reasoning tag. The executed model is `model.value[0].name`, so this runs
+  // a real non-reasoning model regardless of what the options list happens to show.
+  if (!chosenOption) {
+    const template = options.find(isOpenAIOption);
+    if (!template) {
+      throw new Error(
+        `setAgentModelViaApi: no OpenAI model in Agent options: ${options.map(nameOf).join(", ")}`,
+      );
+    }
+    chosenOption = JSON.parse(JSON.stringify(template));
+    chosenOption.name = NON_REASONING_CHAT_MODELS[0];
+    if (chosenOption.metadata) delete chosenOption.metadata.reasoning_models;
   }
 
-  const chosenOption = options.find((o) => (typeof o === "string" ? o : o?.name) === chosenName);
   modelField.value = [chosenOption];
 
   const res = await page.request.patch(`/api/v1/flows/${flowId}`, {
@@ -211,5 +269,5 @@ export async function setAgentModelViaApi(page: Page, flowId: string): Promise<s
     throw new Error(`setAgentModelViaApi: PATCH failed (${res.status()}): ${await res.text()}`);
   }
 
-  return chosenName;
+  return nameOf(chosenOption);
 }
