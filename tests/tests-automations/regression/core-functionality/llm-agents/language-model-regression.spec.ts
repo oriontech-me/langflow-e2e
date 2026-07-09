@@ -82,6 +82,25 @@ test.describe("Language Model Component Regression", () => {
       // gpt-5.5-pro instead of the selected one).
       await waitForFlowSaveSettled(page);
 
+      // Pre-run widget gate (#606, same class as #596/#491): a
+      // custom_component/update racing the selection can silently revert the
+      // node to the workspace-default model. If the selection dropped,
+      // re-apply it; bounded — three drops in a row is a real failure.
+      const modelWidget = page.locator('[data-testid="model_model"]').first();
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const shown = await modelWidget.innerText().catch(() => "");
+        if (/gpt/i.test(shown)) break;
+        console.log(
+          `model selection dropped to "${shown.trim()}" — re-applying (attempt ${attempt + 1}/3, see #606)`,
+        );
+        await initialGPTsetup(page, {
+          skipAdjustScreenView: true,
+          skipUpdateOldComponents: true,
+        });
+        await waitForFlowSaveSettled(page);
+      }
+      await expect(modelWidget).toContainText(/gpt/i, { timeout: 10000 });
+
       await page.getByTestId("button_run_chat output").click();
       await page.waitForSelector("text=built successfully", { timeout: 30000 });
 
