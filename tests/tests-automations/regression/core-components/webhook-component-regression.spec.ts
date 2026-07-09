@@ -49,6 +49,12 @@ async function addWebhookComponent(page: any) {
     }
   });
   await awaitBootstrapTest(page);
+  // Let the home page's own transient-flow sweep (batch DELETE /api/v1/flows/)
+  // finish before creating a flow — a create POST landing mid-sweep makes the
+  // sweep 500 with SQLite "database is locked" (upstream delete_multiple_flows
+  // weakness; log-only, but noisy). The old pre-test wipe masked this by
+  // emptying transients first; this wait serializes instead of wiping.
+  await page.waitForLoadState("networkidle").catch(() => {});
   await page.getByTestId("blank-flow").click();
   await page.getByTestId("sidebar-search-input").click();
   await page.getByTestId("sidebar-search-input").fill("webhook");
