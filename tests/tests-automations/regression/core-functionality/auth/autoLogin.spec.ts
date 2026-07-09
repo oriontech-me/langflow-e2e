@@ -1,5 +1,6 @@
 import { test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { openNewFlowTemplatesModal } from "../../../../helpers/flows/open-new-flow-templates-modal";
 
 test.describe(
   "Auto_login tests",
@@ -13,7 +14,7 @@ test.describe(
         await awaitBootstrapTest(page, {
           skipModal: true,
         });
-        await page.getByTestId("new-project-btn").click();
+        await openNewFlowTemplatesModal(page);
       },
     );
 
@@ -24,27 +25,15 @@ test.describe(
         await awaitBootstrapTest(page, {
           skipModal: true,
         });
-        await page.getByTestId("new-project-btn").click();
-        await page.waitForSelector('[data-testid="modal-title"]', {
-          timeout: 5000,
-        });
+        await openNewFlowTemplatesModal(page);
 
         await page.goto("/login");
-        await page.getByTestId("new-project-btn").click();
-        await page.waitForSelector('[data-testid="modal-title"]', {
-          timeout: 5000,
-        });
+        await openNewFlowTemplatesModal(page);
         await page.goto("/admin");
-        await page.getByTestId("new-project-btn").click();
-        await page.waitForSelector('[data-testid="modal-title"]', {
-          timeout: 5000,
-        });
+        await openNewFlowTemplatesModal(page);
 
         await page.goto("/admin/login");
-        await page.getByTestId("new-project-btn").click();
-        await page.waitForSelector('[data-testid="modal-title"]', {
-          timeout: 5000,
-        });
+        await openNewFlowTemplatesModal(page);
       },
     );
   },
