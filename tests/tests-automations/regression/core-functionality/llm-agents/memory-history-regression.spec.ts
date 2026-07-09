@@ -18,7 +18,17 @@ if (!process.env.CI) {
 async function loadMemoryChatbot(page: Page): Promise<string> {
   const flowId = await loadTemplateByName(page, "Memory Chatbot");
 
-  await adjustScreenView(page);
+  // Only one adjustScreenView is needed here, and only *after* the update. Each
+  // adjustScreenView waits up to 30s on `canvas_controls_dropdown`, which is the
+  // exact render race that flakes this heavy test under CI contention (#569) — so
+  // we keep that exposure to the minimum this test actually requires:
+  //  - loadTemplateByName already confirmed the canvas rendered, so a pre-update
+  //    fit adds no signal;
+  //  - updateOldComponents only clicks the global `update-all-button` toolbar
+  //    action — it does not touch a node, so it needs no fitted view (unlike the
+  //    adjustScreenView×2 sandwich in specs that edit a node between the two).
+  // The single fit below is functionally required: it brings the Agent node into
+  // the viewport so setupLanguageModelOpenAI can click its provider/model widgets.
   await updateOldComponents(page);
   await adjustScreenView(page);
 
