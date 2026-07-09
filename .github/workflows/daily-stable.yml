@@ -23,6 +23,10 @@ on:
 permissions:
   issues: write
   contents: write
+  # Pull the private ollama-e2e service image from GHCR with GITHUB_TOKEN.
+  # An explicit permissions block defaults every unlisted scope to `none`,
+  # so without this the container pull is denied (see #594).
+  packages: read
 
 jobs:
   e2e-daily-stable:
