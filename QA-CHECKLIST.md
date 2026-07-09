@@ -386,9 +386,9 @@
 - [x] Invalid API key error — display error message → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.3 Anthropic
-- [-] Configure Anthropic API key
-- [-] Select Claude model in agent
-- [-] Switch between Claude models (Sonnet, Haiku, Opus)
+- [x] Configure Anthropic API key in Settings → Model Providers → `core-functionality/model-provider/anthropic-provider.spec.ts`
+- [x] Select Claude model in agent → `core-functionality/model-provider/anthropic-provider.spec.ts`
+- [x] Switch between Claude models (Sonnet, Haiku, Opus) → `core-functionality/model-provider/anthropic-provider.spec.ts`
 - [x] Invalid Anthropic API key error → `core-functionality/llm-agents/provider-invalid-auth-error.spec.ts`
 
 #### 7.4 Google Generative AI
