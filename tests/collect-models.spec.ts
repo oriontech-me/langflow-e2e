@@ -78,5 +78,26 @@ test(
         }
       }
     });
+
+    await test.step("every env-keyed provider is ACTIVE — inactive silently skips its whole parametrization", async () => {
+      // The #570 guarantee: a provider whose key is configured but that ends
+      // "inactive" silently test.skip()s every spec parametrized on it (16
+      // OpenAI-variant agent tests on 2026-07-08) — and a skip never trips
+      // the daily-failure gate. With the candidate fallback in collectAll,
+      // inactive-with-key now means ALL probed candidates failed: a real
+      // key/account/provider problem that must fail this spec (and the CI
+      // "Collect models" step) loudly instead of eroding coverage quietly.
+      const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
+      for (const p of providers) {
+        const envKeys = providerConfigMap[p.provider as Provider]?.envKeys ?? [];
+        const hasEnvKey = envKeys.some((k: string) => !!process.env[k]);
+        if (hasEnvKey) {
+          expect(
+            p.status,
+            `env-keyed provider "${p.provider}" must probe active (error: ${p.error})`,
+          ).toBe("active");
+        }
+      }
+    });
   },
 );
