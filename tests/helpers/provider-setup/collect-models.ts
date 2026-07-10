@@ -121,17 +121,65 @@ async function validateGoogle(model: string): Promise<ProviderRecord> {
   }
 }
 
-function firstModelFor(models: ModelRecord[], provider: string): string {
-  return models.find((m) => m.provider === provider)?.model ?? "";
+function modelsFor(models: ModelRecord[], provider: string): string[] {
+  return models.filter((m) => m.provider === provider).map((m) => m.model);
+}
+
+// A single gated/preview lead model must not disable the whole provider
+// (#570: nightly listed gpt-5.5-pro first, the CI project had no access to
+// it, and 16 OpenAI-variant agent tests silently skipped). Try EVERY
+// collected model in catalog order and settle on the first that validates —
+// failed probes are rejected before inference (zero token cost), and only
+// the single successful probe consumes ~1 token, so exhausting the catalog
+// costs time (~1s per candidate, once per run), not money. "inactive" then
+// genuinely means nothing the provider exposes works with this key.
+async function validateProviderWithFallback(
+  provider: string,
+  candidates: string[],
+  validate: (model: string) => Promise<ProviderRecord>,
+): Promise<ProviderRecord> {
+  if (candidates.length === 0) {
+    return {
+      provider,
+      model: null,
+      status: "inactive",
+      error: "no models collected from the providers panel",
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  const tried: string[] = [];
+  let last: ProviderRecord | null = null;
+  for (const model of candidates) {
+    const result = await validate(model);
+    if (result.status === "active") {
+      if (tried.length > 0) {
+        console.log(
+          `   ${provider}: settled on "${model}" after skipping ${tried.length} gated/unavailable candidate(s): ${tried.join(", ")}`,
+        );
+      }
+      return result;
+    }
+    // A missing key fails identically for every candidate — stop immediately.
+    if (result.error?.endsWith("not set")) return result;
+    console.log(`   ${provider}: candidate "${model}" failed — ${result.error}`);
+    tried.push(model);
+    last = result;
+  }
+
+  return {
+    ...(last as ProviderRecord),
+    error: `all ${tried.length} candidate model(s) failed validation (tried: ${tried.join(", ")}); last error: ${last?.error}`,
+  };
 }
 
 async function collectProviders(models: ModelRecord[]): Promise<ProviderRecord[]> {
   console.log("Validating providers via API...");
 
   const results = await Promise.all([
-    validateOpenAI(firstModelFor(models, "openai")),
-    validateAnthropic(firstModelFor(models, "anthropic")),
-    validateGoogle(firstModelFor(models, "google")),
+    validateProviderWithFallback("openai", modelsFor(models, "openai"), validateOpenAI),
+    validateProviderWithFallback("anthropic", modelsFor(models, "anthropic"), validateAnthropic),
+    validateProviderWithFallback("google", modelsFor(models, "google"), validateGoogle),
   ]);
 
   for (const r of results) {
@@ -239,6 +287,30 @@ async function collectModels(page: Page): Promise<ModelRecord[]> {
 
 // ─── Main export ───────────────────────────────────────────────────────────────
 
+// Move each provider's settled (probe-validated) model to the front of its
+// group in models.json. Spec parametrization ("one model per provider")
+// takes the FIRST model per provider, so without this a provider validated
+// via a fallback model would still be TESTED against its gated/unrunnable
+// lead model — converting #570's silent skips into hard failures (e.g.
+// google settling on gemini-3.5-flash while specs still ran
+// gemini-omni-flash-preview, which only supports the Interactions API).
+function promoteSettledModels(
+  models: ModelRecord[],
+  providers: ProviderRecord[],
+): ModelRecord[] {
+  const settled = new Map(
+    providers
+      .filter((p) => p.status === "active" && p.model)
+      .map((p) => [p.provider, p.model as string]),
+  );
+  return [...models].sort((a, b) => {
+    if (a.provider !== b.provider) return 0; // keep provider group order
+    const aSettled = settled.get(a.provider) === a.model ? 0 : 1;
+    const bSettled = settled.get(b.provider) === b.model ? 0 : 1;
+    return aSettled - bSettled;
+  });
+}
+
 export async function collectAll(page: Page): Promise<void> {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -246,11 +318,16 @@ export async function collectAll(page: Page): Promise<void> {
 
   // Step 1: Collect models from UI via Settings
   const models = await collectModels(page);
-  fs.writeFileSync(MODELS_PATH, JSON.stringify(models, null, 2), "utf-8");
-  console.log(`models.json saved with ${models.length} models.`);
 
-  // Step 2: Validate providers via API using the first model of each provider
+  // Step 2: Validate providers via API, falling back across candidate models
   const providers = await collectProviders(models);
   fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
   console.log(`providers.json saved with ${providers.length} providers.`);
+
+  // Step 3: Persist models with each provider's settled model first, so
+  // "one model per provider" spec parametrization targets the model that
+  // actually validated.
+  const ordered = promoteSettledModels(models, providers);
+  fs.writeFileSync(MODELS_PATH, JSON.stringify(ordered, null, 2), "utf-8");
+  console.log(`models.json saved with ${ordered.length} models.`);
 }
