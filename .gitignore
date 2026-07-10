@@ -9,7 +9,15 @@ dist/
 *.db
 *.sqlite
 *.zip
-.claude/
+# .claude/ is local-only EXCEPT the shared homegrown skills below (team uses + updates them).
+# Runtime state (issue-pipeline/*.json), local settings, and caches stay ignored.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/README.md
+!.claude/skills/langflow-e2e/
+!.claude/skills/langflow-e2e-issues/
+!.claude/skills/langflow-e2e-issue-deterministic/
 docs/superpowers/
 .playwright-mcp/
 .worktrees/
