@@ -14,7 +14,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 // return **500** for both conditions (`api/v2/mcp.py` — "Server already exists."
 // / "Server not found."), so these tests are EXPECTED TO FAIL against the
 // nightly until the defect is fixed upstream. That failure is intentional and is
-// the formal, dated record (daily-history.jsonl + QA Platform + daily-failure
+// the formal, dated record (reports/daily-history.jsonl + QA Platform + daily-failure
 // issue) that the suite detected the bug. On the first daily failure the daily
 // workflow auto-removes `@stable` from these tests; once upstream returns the
 // correct codes, restore `@stable` and the tests become forward regression

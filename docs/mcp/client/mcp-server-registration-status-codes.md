@@ -16,7 +16,7 @@ server-registration endpoints (`/api/v2/mcp/servers/{name}`). It asserts the
 > **This test is a known-defect watchdog (issue #396) and is EXPECTED TO FAIL
 > against current Langflow builds.** `api/v2/mcp.py` currently returns **500**
 > for both conditions ("Server already exists." / "Server not found."). The
-> intentional failure is the formal record — captured in `daily-history.jsonl`,
+> intentional failure is the formal record — captured in `reports/daily-history.jsonl`,
 > the QA Platform, and the `[Daily Failure]` issue — that the suite detected the
 > defect. On the first daily failure the workflow auto-removes `@stable` from
 > these tests (so they stop running); once upstream returns the correct codes,
