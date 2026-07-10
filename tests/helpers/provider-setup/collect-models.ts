@@ -125,6 +125,35 @@ function modelsFor(models: ModelRecord[], provider: string): string[] {
   return models.filter((m) => m.provider === provider).map((m) => m.model);
 }
 
+// Probe order: known agent-compatible models first, then the raw catalog.
+// The raw API probe (~1-token completion) validates ACCESS, not that
+// Langflow's Agent can drive the model — gpt-5.6 passes the probe but the
+// Agent returns an empty reply with it on 1.11 (every downstream agent spec
+// failed when it settled first, #570). The pref regexes mirror
+// resolveGptModel / resolveGeminiModel, the models the agent suite already
+// runs green on; the catalog order stays as the tail so a provider with
+// none of the preferred models still validates on whatever it exposes.
+const CANDIDATE_PREFS: Record<string, RegExp[]> = {
+  openai: [/^gpt-4o-mini$/, /^gpt-4o$/, /^gpt-4\.1(-mini|-nano)?$/, /^gpt-4/],
+  google: [
+    /^gemini-2\.5-flash$/,
+    /^gemini-3\.5-flash$/,
+    /^gemini-flash-latest$/,
+  ],
+  anthropic: [/^claude-sonnet-5$/, /sonnet/, /haiku/],
+};
+
+function rankCandidates(provider: string, candidates: string[]): string[] {
+  const prefs = CANDIDATE_PREFS[provider] ?? [];
+  const preferred: string[] = [];
+  for (const pref of prefs) {
+    for (const model of candidates) {
+      if (pref.test(model) && !preferred.includes(model)) preferred.push(model);
+    }
+  }
+  return [...preferred, ...candidates.filter((m) => !preferred.includes(m))];
+}
+
 // A single gated/preview lead model must not disable the whole provider
 // (#570: nightly listed gpt-5.5-pro first, the CI project had no access to
 // it, and 16 OpenAI-variant agent tests silently skipped). Try EVERY
@@ -177,9 +206,9 @@ async function collectProviders(models: ModelRecord[]): Promise<ProviderRecord[]
   console.log("Validating providers via API...");
 
   const results = await Promise.all([
-    validateProviderWithFallback("openai", modelsFor(models, "openai"), validateOpenAI),
-    validateProviderWithFallback("anthropic", modelsFor(models, "anthropic"), validateAnthropic),
-    validateProviderWithFallback("google", modelsFor(models, "google"), validateGoogle),
+    validateProviderWithFallback("openai", rankCandidates("openai", modelsFor(models, "openai")), validateOpenAI),
+    validateProviderWithFallback("anthropic", rankCandidates("anthropic", modelsFor(models, "anthropic")), validateAnthropic),
+    validateProviderWithFallback("google", rankCandidates("google", modelsFor(models, "google")), validateGoogle),
   ]);
 
   for (const r of results) {
