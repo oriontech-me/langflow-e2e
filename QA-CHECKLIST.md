@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-09
+> **Last updated:** 2026-07-10
 
 ---
 
@@ -650,6 +650,8 @@
 - [-] MCP server connection error — unreachable server produces empty tool dropdown → `mcp/client/mcp-client-regression.spec.ts`
 - [-] Configure connection via HTTP form tab → `mcp/client/mcp-client-regression.spec.ts`
 - [-] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
+- [x] Duplicate MCP server registration returns 409 Conflict → `mcp/client/mcp-server-registration-status-codes.spec.ts`
+- [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
 - [ ] List available resources via MCP protocol
 - [ ] Consume resource URI and inject content into flow
@@ -763,11 +765,11 @@
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 13 | 13 | 2 | 0 |
-| `mcp/client/` | 9 | 0 | 7 | 0 | 2 |
+| `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **265 (59%)** | **154 (34%)** | **7 (2%)** | **25 (6%)** |
+| **TOTAL** | **453** | **267 (59%)** | **154 (34%)** | **7 (2%)** | **25 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +785,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 292 `test()` calls carrying the `@stable` tag, distributed across 108 spec
+> 294 `test()` calls carrying the `@stable` tag, distributed across 109 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1090,6 +1092,8 @@
 #### mcp/client/
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
+- [x] registering an already-existing MCP server returns 409 Conflict → `mcp-server-registration-status-codes.spec.ts`
+- [x] deleting a non-existent MCP server returns 404 Not Found → `mcp-server-registration-status-codes.spec.ts`
 
 #### ui-ux/
 - [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
