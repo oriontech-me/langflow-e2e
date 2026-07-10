@@ -9,7 +9,9 @@
  *
  * Expected Results:
  * - All sent and received messages appear in the message history
- * - Messages are displayed in chronological order (oldest first)
+ * - Messages are displayed newest first (the backend orders by
+ *   timestamp DESC by design — monitor.py get_messages always applies
+ *   .desc(); verified in the 1.11 nightly source, #616)
  * - All columns display correct information: timestamp, text, sender, sender_name,
  *   session_id, files, id, flow_id, properties, category, content_blocks
  * - Message content matches what was sent/received in Playground
@@ -26,11 +28,17 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { initialGPTsetup } from "../../../helpers/other/initialGPTsetup";
 import { navigateSettingsPages } from "../../../helpers/ui/go-to-settings";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { FlowEditorPage, PlaygroundPage } from "../../../pages";
 
 const FIRST_MESSAGE = "Hello, how are you?";
 const SECOND_MESSAGE = "What is 2+2?";
 
+// The columns the message-history feature promises. Asserted as a REQUIRED
+// SUBSET of the rendered set — upstream adding columns (1.11 added
+// context_id, edit, duration, session_metadata) must not fail the test;
+// removing one of these must (#616).
 const EXPECTED_COLUMNS = [
   "timestamp",
   "text",
@@ -44,6 +52,20 @@ const EXPECTED_COLUMNS = [
   "category",
   "content_blocks",
 ];
+
+// The test creates one flow (Simple Agent template); track every
+// POST /api/v1/flows → 201 id and delete them in afterEach (id-scoped —
+// deleting the flow also cascades its messages, leaving the shared
+// instance clean).
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, { headers: { Authorization: bearer } }).catch(() => {});
+  }
+});
 
 test(
   "Settings > Messages displays sent messages in correct order with working filters",
@@ -60,6 +82,22 @@ test(
 
     const flowEditor = new FlowEditorPage(page);
     const playground = new PlaygroundPage(page);
+
+    // Track the flow the template click creates so afterEach can delete it.
+    page.on("response", (resp) => {
+      if (
+        resp.url().includes("/api/v1/flows") &&
+        resp.request().method() === "POST" &&
+        resp.status() === 201
+      ) {
+        resp
+          .json()
+          .then((body: { id?: string }) => {
+            if (body?.id) createdFlowIds.push(body.id);
+          })
+          .catch(() => {}); // non-JSON / batch payloads
+      }
+    });
 
     // Steps 1-2: Create flow from "Simple Agent" template and open Playground
     await awaitBootstrapTest(page);
@@ -107,22 +145,50 @@ test(
       page.getByTestId("settings_menu_header"),
     ).toContainText("Messages");
 
-    // Step 10: Verify the messages table has all required columns
+    // Step 10: Verify the messages table has all required columns.
+    // AG Grid VIRTUALIZES columns horizontally — header cells outside the
+    // scrolled-into-view region are not in the DOM, so per-column
+    // toBeVisible() breaks as soon as upstream adds enough columns to push
+    // one past the viewport (#616: `id` was never removed; four new 1.11
+    // columns pushed it off-screen). Sweep the horizontal scroll collecting
+    // every col-id, then assert the promised set is contained.
+    await expect(page.locator(".ag-header-cell").first()).toBeVisible({
+      timeout: 10000,
+    });
+    const renderedColumnIds = await page.evaluate(async () => {
+      const viewport = document.querySelector(".ag-center-cols-viewport");
+      const seen = new Set<string>();
+      const collect = () => {
+        document.querySelectorAll(".ag-header-cell").forEach((h) => {
+          const id = h.getAttribute("col-id");
+          if (id) seen.add(id);
+        });
+      };
+      collect();
+      const maxScroll = viewport?.scrollWidth ?? 0;
+      for (let x = 0; x <= maxScroll; x += 300) {
+        if (viewport) viewport.scrollLeft = x;
+        await new Promise((r) => setTimeout(r, 100));
+        collect();
+      }
+      if (viewport) viewport.scrollLeft = 0;
+      return [...seen];
+    });
     for (const column of EXPECTED_COLUMNS) {
-      await expect(
-        page.locator(`.ag-header-cell[col-id="${column}"]`),
-      ).toBeVisible({ timeout: 10000 });
+      expect(renderedColumnIds, `column "${column}" missing from the messages grid`).toContain(column);
     }
 
-    // Steps 11-13: Verify chronological order — find user messages and check timestamps
-    // AG Grid rows are rendered as .ag-row elements; timestamp column contains the time values
+    // Steps 11-13: Verify display order — newest first. The backend orders
+    // messages by timestamp DESC by design (monitor.py get_messages always
+    // applies .desc(); verified in the 1.11 nightly source — #616), and the
+    // grid renders the API order.
     const timestampCells = page.locator('.ag-cell[col-id="timestamp"]');
     await expect(timestampCells.first()).toBeVisible({ timeout: 10000 });
 
     const rowCount = await timestampCells.count();
     expect(rowCount).toBeGreaterThanOrEqual(4); // at least: 2 user msgs + 2 agent responses
 
-    // Collect timestamps and verify ascending (chronological) order
+    // Collect timestamps and verify descending (newest-first) order
     const timestamps: number[] = [];
     for (let i = 0; i < rowCount; i++) {
       const rawTimestamp = await timestampCells.nth(i).textContent();
@@ -134,7 +200,7 @@ test(
       }
     }
     for (let i = 1; i < timestamps.length; i++) {
-      expect(timestamps[i]).toBeGreaterThanOrEqual(timestamps[i - 1]);
+      expect(timestamps[i]).toBeLessThanOrEqual(timestamps[i - 1]);
     }
 
     // Step 14: Verify sender values — "User" rows and "Machine"/"AI" rows exist
@@ -166,14 +232,16 @@ test(
     expect(joinedTexts).toContain(SECOND_MESSAGE);
 
     // Steps 16-18: Filter by sender "Equals User"
-    // Hover over the sender column header to reveal the menu icon, then open filter
+    // The header renders a dedicated filter button (.ag-header-cell-filter-button)
+    // that opens the filter popup directly — the old .ag-icon-menu +
+    // "Filter" tab flow no longer exists on the 1.11 nightly (#616).
     await page.hover('.ag-header-cell[col-id="sender"]');
     await page
-      .locator('.ag-header-cell[col-id="sender"] .ag-icon-menu')
+      .locator('.ag-header-cell[col-id="sender"] .ag-header-cell-filter-button')
       .click({ timeout: 5000 });
-
-    // Click the "Filter" tab in the column menu popup
-    await page.getByRole("tab", { name: "Filter" }).click({ timeout: 5000 });
+    await expect(page.locator(".ag-filter").first()).toBeVisible({
+      timeout: 5000,
+    });
 
     // Select "Equals" in the filter type dropdown
     const filterTypeSelect = page.locator(
@@ -185,25 +253,30 @@ test(
     // Type "User" in the filter input
     const filterInput = page.locator('.ag-filter input[type="text"]').first();
     await filterInput.fill("User");
-    await page.waitForTimeout(500); // allow AG Grid to apply debounced filter
 
-    // Step 18: Verify only User messages are displayed
-    const filteredSenderCells = page.locator('.ag-cell[col-id="sender"]');
-    const filteredCount = await filteredSenderCells.count();
+    // Step 18: Verify only User messages are displayed. AG Grid applies the
+    // filter after a debounce and re-renders asynchronously — poll until the
+    // row set settles instead of sleeping a fixed amount (a fixed 500ms read
+    // the grid mid-transition and caught a leftover Machine row).
+    const senderCellLocator = page.locator('.ag-cell[col-id="sender"]');
+    await expect
+      .poll(
+        async () => {
+          const texts = await senderCellLocator.allTextContents();
+          return texts.length > 0 && texts.every((t) => t.trim() === "User");
+        },
+        { timeout: 10000 },
+      )
+      .toBe(true);
+    const filteredCount = await senderCellLocator.count();
     expect(filteredCount).toBeGreaterThan(0);
-
-    for (let i = 0; i < filteredCount; i++) {
-      const senderText = await filteredSenderCells.nth(i).textContent();
-      expect(senderText?.trim()).toBe("User");
-    }
 
     // Steps 19-20: Remove filter value → all messages restored
     await filterInput.clear();
-    await page.waitForTimeout(500); // allow AG Grid to clear the filter
-
-    const restoredSenderCells = page.locator('.ag-cell[col-id="sender"]');
-    const restoredCount = await restoredSenderCells.count();
-    expect(restoredCount).toBeGreaterThan(filteredCount); // should have more rows than filtered
+    await expect
+      .poll(async () => senderCellLocator.count(), { timeout: 10000 })
+      .toBeGreaterThan(filteredCount); // more rows than the filtered set
+    const restoredCount = await senderCellLocator.count();
     expect(restoredCount).toBeGreaterThanOrEqual(4); // back to at least 4 rows
   },
 );
