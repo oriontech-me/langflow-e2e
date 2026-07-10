@@ -356,11 +356,13 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
   );
 
   test(
-    // @stable removed pending #463 — depends on the `npx server-everything` MCP
-    // server registering its tools in time, which hard-failed the daily suite
-    // (2026-07-01) on cold startup. Re-add once server startup is reliable in CI.
+    // Re-added @stable (#463): the daily-stable workflow now warms the
+    // `npx server-everything` package in the Langflow container before the suite
+    // runs, so the cold npm fetch no longer happens inside this test's poll
+    // budget (which was the 2026-07-01 hard failure). Budget also raised to 120s
+    // below to cover warm startup with margin.
     "selects get-sum tool, provides numeric inputs, and verifies sum in output",
-    { tag: ["@mcp", "@regression"] },
+    { tag: ["@mcp", "@regression", "@stable"] },
     async ({ page }) => {
       // Allow backend errors — npx server may return transient errors while starting
       (page as any).allowFlowErrors();
@@ -411,7 +413,10 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
                 await resp.json();
               return servers.find((s) => s.name === MCP_SERVER_NAME)?.toolsCount ?? null;
             },
-            { timeout: 90000, intervals: [3000] },
+            // 120s (raised from 90s, #463): the daily workflow pre-warms the
+            // server-everything package, so this only needs to cover warm
+            // startup, but the extra margin absorbs a slow re-spawn without flaking.
+            { timeout: 120000, intervals: [3000] },
           )
           .not.toBeNull();
       });

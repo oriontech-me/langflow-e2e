@@ -213,6 +213,56 @@ jobs:
           done
           echo "::warning::go-httpbin at $IP:8080 did not answer; ECHO_BASE_URL left unset (specs use postman-echo.com)."
 
+      # Warm the `@modelcontextprotocol/server-everything` npm package inside the
+      # LANGFLOW container BEFORE any test runs, so the cold `npx` fetch happens
+      # here — outside every test's poll budget — instead of during the test
+      # (#463). The MCP stdio server is spawned by the Langflow backend, so the
+      # npm/npx cache we need to warm lives in the langflow service container, not
+      # in this test-runner container: we can only reach it through Langflow's API.
+      # Registering a throwaway server and hitting `action_count=true` forces the
+      # backend to spawn `npx`, which fetches + caches the package; once cached,
+      # the test's own registration finds tools within its (120s) budget.
+      # Fail-soft: a warm-up failure only logs a warning and deletes the temp
+      # server — the test then falls back to its own budget, no worse than before.
+      - name: Warm MCP server-everything package
+        continue-on-error: true
+        shell: bash
+        run: |
+          BASE="http://localhost:7860"
+          WARM_NAME="warmup-everything"
+          # AUTO_LOGIN is on, but the v2 MCP endpoints still expect a bearer token;
+          # /api/v1/auto_login mints one. Parse with node (no jq in this image).
+          TOKEN="$(curl -sf --max-time 15 "$BASE/api/v1/auto_login" \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write((JSON.parse(d).access_token||"").toString())}catch{process.stdout.write("")}})')"
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::Could not obtain auth token; skipping MCP warm-up (test uses its own budget)."
+            exit 0
+          fi
+          AUTH="Authorization: Bearer $TOKEN"
+          # Register the throwaway server (same package the test uses).
+          curl -sf --max-time 15 -X POST "$BASE/api/v2/mcp/servers/$WARM_NAME" \
+            -H "$AUTH" -H "Content-Type: application/json" \
+            --data '{"command":"npx","args":["@modelcontextprotocol/server-everything"]}' \
+            >/dev/null || echo "::warning::MCP warm-up registration returned non-2xx (continuing)."
+          # Poll action_count=true (this is what makes the backend actually spawn
+          # npx and count tools) until toolsCount is non-null. Generous 240s budget
+          # — this is the cold fetch we are deliberately paying up front, once.
+          WARMED=0
+          for i in $(seq 1 80); do
+            COUNT="$(curl -sf --max-time 15 "$BASE/api/v2/mcp/servers?action_count=true" -H "$AUTH" \
+              | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{const s=JSON.parse(d).find(x=>x.name==="'"$WARM_NAME"'");process.stdout.write(s&&s.toolsCount!=null?String(s.toolsCount):"")}catch{process.stdout.write("")}})')"
+            if [ -n "$COUNT" ]; then
+              echo "MCP server-everything warmed: toolsCount=$COUNT after ~$((i*3))s."
+              WARMED=1
+              break
+            fi
+            sleep 3
+          done
+          [ "$WARMED" -eq 1 ] || echo "::warning::MCP server-everything did not warm within 240s; test falls back to its own budget."
+          # Remove the throwaway server so it never interferes with the specs
+          # (which poll only their own uniquified server name, but keep it clean).
+          curl -sf --max-time 15 -X DELETE "$BASE/api/v2/mcp/servers/$WARM_NAME" -H "$AUTH" >/dev/null || true
+
       - name: Collect models
         run: npx playwright test tests/collect-models.spec.ts --reporter=line
         continue-on-error: true
