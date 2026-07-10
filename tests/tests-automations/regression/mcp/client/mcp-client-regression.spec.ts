@@ -356,11 +356,11 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
   );
 
   test(
-    // Re-added @stable (#463): the daily-stable workflow now warms the
-    // `npx server-everything` package in the Langflow container before the suite
-    // runs, so the cold npm fetch no longer happens inside this test's poll
-    // budget (which was the 2026-07-01 hard failure). Budget also raised to 120s
-    // below to cover warm startup with margin.
+    // Re-added @stable (#463): the 2026-07-01 hard failure was cold `npx
+    // server-everything` startup not registering tools within budget, whose
+    // dominant root cause was an upstream Langflow defect (root-owned npm cache,
+    // langflow-ai/langflow#13992), now fixed in the published nightly. Poll
+    // budget kept at 120s (raised from 90s) as modest margin for startup.
     "selects get-sum tool, provides numeric inputs, and verifies sum in output",
     { tag: ["@mcp", "@regression", "@stable"] },
     async ({ page }) => {
@@ -413,9 +413,9 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
                 await resp.json();
               return servers.find((s) => s.name === MCP_SERVER_NAME)?.toolsCount ?? null;
             },
-            // 120s (raised from 90s, #463): the daily workflow pre-warms the
-            // server-everything package, so this only needs to cover warm
-            // startup, but the extra margin absorbs a slow re-spawn without flaking.
+            // 120s (raised from 90s, #463): modest margin for `npx
+            // server-everything` startup; the cold-fetch root cause was the
+            // upstream npm-cache defect (langflow-ai/langflow#13992), now fixed.
             { timeout: 120000, intervals: [3000] },
           )
           .not.toBeNull();
