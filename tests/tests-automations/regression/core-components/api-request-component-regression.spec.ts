@@ -25,14 +25,17 @@ test.describe.configure({ mode: "serial" });
 // unaffected — the verb tests assert the output contains `200`, and 404 is just
 // as much "not 200" as 405, so sending the wrong verb still fails the test.
 //
-// The override knob remains for anyone who wants to point the tests at a
-// different echo endpoint (e.g. a locally self-hosted go-httpbin). The value
-// must be reachable BY LANGFLOW — the component's backend makes the request, not
-// the Playwright runner — and a self-hosted host on a private IP must be added
-// to LANGFLOW_SSRF_ALLOWED_HOSTS. Note the component's URL validator rejects
-// single-label hostnames, so a CI service-container reachable only by its bare
-// service label will not work. ECHO_HOST is derived from the same base URL so
-// the echoed-host assertions match whatever endpoint is configured.
+// The override knob is what the daily workflow uses: it self-hosts a go-httpbin
+// service and sets ECHO_BASE_URL to that container's IP (#462), so CI runs
+// against a reliable in-network endpoint instead of the public default. The
+// value must be reachable BY LANGFLOW — the component's backend makes the
+// request, not the Playwright runner — and a self-hosted host on a private IP
+// must be added to LANGFLOW_SSRF_ALLOWED_HOSTS (the daily allows the RFC-1918
+// CIDRs). Note the component's URL validator rejects single-label hostnames, so
+// a CI service-container reachable only by its bare service label will NOT work
+// — which is why ECHO_BASE_URL is built from the raw IP, not the service name.
+// ECHO_HOST is derived from the same base URL so the echoed-host assertions
+// match whatever endpoint is configured.
 const ECHO_BASE = (
   process.env.ECHO_BASE_URL ??
   process.env.HTTPBIN_BASE_URL ??
@@ -350,12 +353,12 @@ test(
 // =============================================================================
 
 test(
-  // @stable removed pending #462 — this test depends on the public postman-echo
-  // endpoint, which hard-fails the daily suite during external outages (daily
-  // 2026-07-01, weekly 2026-06-22). Re-add once a reliable echo endpoint is
-  // provided in CI.
+  // @stable restored (#462): the daily workflow now self-hosts a go-httpbin
+  // service and points ECHO_BASE_URL at its container IP, so this no longer
+  // depends on the public postman-echo endpoint that hard-failed the suite on
+  // external outages (daily 2026-07-01, weekly 2026-06-22).
   "API Request component — GET request returns 200 and output Data contains all required fields",
-  { tag: ["@release", "@regression", "@components"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
