@@ -228,6 +228,11 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
+          # `shell: bash` runs with `-eo pipefail`; disable errexit for this
+          # best-effort step so a transient curl/node failure in a command
+          # substitution (TOKEN/COUNT) doesn't abort the poll loop mid-warm or
+          # skip the final DELETE. Emptiness is checked explicitly below.
+          set +e
           BASE="http://localhost:7860"
           WARM_NAME="warmup-everything"
           # AUTO_LOGIN is on, but the v2 MCP endpoints still expect a bearer token;
