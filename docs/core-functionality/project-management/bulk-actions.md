@@ -71,7 +71,7 @@ The test creates its 3 flows from starter templates and captures each flow ID fr
 Under `fullyParallel` CI load this is a heavy test (it creates 3 flows and navigates editor↔home repeatedly). Two load-induced flake modes have been observed on the weekly run:
 
 - The home listing taking >10s to render after returning from the editor (the `Projects` visibility wait). **Mitigated** by raising that wait to 30s.
-- Clicking the "New Flow" entry point not opening the templates modal within 30s, inside the shared `openNewFlowTemplatesModal` helper — **tracked in #420** (not yet mitigated).
+- Clicking the "New Flow" entry point not opening the templates modal ("swallowed click": the button is actionable but its React handler is not wired yet under load), inside the shared `openNewFlowTemplatesModal` helper — **mitigated** in #420 by a click-and-probe retry loop in that helper (re-clicks the entry point if neither the templates modal nor the welcome overlay surfaces within a short budget).
 
 Both reproduce only under contention; a single isolated run against a fresh instance passes consistently.
 
