@@ -65,10 +65,20 @@ jobs:
           # cascade guard would pass for the wrong reason. The dict replaces the
           # product default wholesale, so the default pragmas are repeated here.
           LANGFLOW_SQLITE_PRAGMAS: '{"synchronous": "NORMAL", "journal_mode": "WAL", "busy_timeout": 30000, "foreign_keys": "ON"}'
-          # Ollama runs as a sibling service; without the allowlist the
-          # nightly's SSRF protection 400s the Ollama component's model-list
-          # fetch (private address) — see ollama-provider.spec.ts (#583).
-          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama"
+          # SSRF allowlist. Two consumers:
+          #  - "ollama": the Ollama component's model-list fetch targets the
+          #    sibling service by hostname; without it the nightly's SSRF
+          #    protection 400s the private address — see ollama-provider.spec.ts (#583).
+          #  - private CIDRs: the api-request-component specs point at the
+          #    self-hosted go-httpbin service (below) by its container IP (the
+          #    component's validators.url() rejects the single-label service
+          #    name, so ECHO_BASE_URL must be a raw IP). The IP is whatever the
+          #    Docker network assigns, so we pre-authorize the RFC-1918 ranges
+          #    rather than a fixed address — the SSRF layer matches the resolved
+          #    private IP against these CIDRs and skips its private-IP block
+          #    (#462). This lets the echo-dependent tests run against a reliable
+          #    in-CI endpoint instead of the flaky public postman-echo.
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s
@@ -91,6 +101,19 @@ jobs:
           --health-timeout 5s
           --health-retries 10
           --health-start-period 20s
+      # Self-hosted echo endpoint for the API Request component specs — replaces
+      # the public postman-echo.com the suite defaulted to, which hard-fails the
+      # daily on external outages (#462, prior recurrences #383/#407). go-httpbin
+      # is an httpbin-compatible echo (paths /get, /post, /put, /patch, /delete,
+      # /status/{code}, query + Host/url echo) reached BY LANGFLOW at its
+      # container IP (resolved in the step below). Public GHCR image, pinned by
+      # tag; pulled anonymously (no Docker Hub rate limits). No healthcheck: the
+      # scratch-based image ships only the Go binary (no shell/curl), so the
+      # "Resolve go-httpbin endpoint" step below both waits for and verifies it.
+      go-httpbin:
+        image: ghcr.io/mccutchen/go-httpbin:v2.23.1
+        ports:
+          - 8080:8080
 
     # This job runs INSIDE the Playwright container, so both the test process
     # and Langflow reach Ollama via the job network's service hostname (no
@@ -154,6 +177,37 @@ jobs:
           echo "::error::Port forward to langflow:7860 did not come up"
           cat /tmp/socat.log || true
           exit 1
+
+      # Resolve the go-httpbin service to the IP Langflow must call. The API
+      # Request component runs validators.url() on the URL and REJECTS a
+      # single-label host (http://go-httpbin:8080 fails), but ACCEPTS a raw IP —
+      # so ECHO_BASE_URL is built from the container IP, not the service name.
+      # The IP is stable within the job (same Docker network as the langflow
+      # service, which reaches it directly), and it is pre-authorized by the
+      # RFC-1918 CIDRs in LANGFLOW_SSRF_ALLOWED_HOSTS above. Exported to
+      # $GITHUB_ENV so the test step (and collect-models) inherit it; the specs
+      # fall back to postman-echo.com only if ECHO_BASE_URL is unset. Fail-soft:
+      # if go-httpbin never comes up we log and skip the export, leaving the
+      # public default in place rather than breaking the whole daily suite.
+      - name: Resolve go-httpbin endpoint
+        shell: bash
+        run: |
+          IP="$(getent hosts go-httpbin | awk '{print $1}' | head -1)"
+          if [ -z "$IP" ]; then
+            echo "::warning::Could not resolve go-httpbin service; ECHO_BASE_URL left unset (specs use postman-echo.com)."
+            exit 0
+          fi
+          echo "go-httpbin resolved to $IP"
+          # Wait for the echo server to answer before the tests need it.
+          for i in $(seq 1 20); do
+            if curl -sf --max-time 5 "http://$IP:8080/get" >/dev/null 2>&1; then
+              echo "ECHO_BASE_URL=http://$IP:8080" >> "$GITHUB_ENV"
+              echo "ECHO_BASE_URL=http://$IP:8080 is up."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::warning::go-httpbin at $IP:8080 did not answer; ECHO_BASE_URL left unset (specs use postman-echo.com)."
 
       - name: Collect models
         run: npx playwright test tests/collect-models.spec.ts --reporter=line
