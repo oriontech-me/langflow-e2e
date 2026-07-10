@@ -59,8 +59,8 @@ Playground.
 - `models.json` / `providers.json` generated via
   `npx playwright test tests/collect-models.spec.ts`.
 - At least one active provider API key in `.env`.
-- Run with `--workers=1` — the spec is serial
-  (`SimpleAgentTemplatePage.load()` wipes all flows).
+- Run with `--workers=1` — the spec is serial (named template loads collide
+  under parallelism; agent-family convention).
 
 ---
 
@@ -71,8 +71,11 @@ The spec generates **2 tests per active model** via `getTestTargets()`
 `agent-max-iterations.spec.ts`).
 
 Shared setup per test:
-1. Load the Simple Agent template (`SimpleAgentTemplatePage.load()` — wipes
-   existing flows, configures the target provider/model).
+1. Load the Simple Agent template (`SimpleAgentTemplatePage.load()` —
+   configures the target provider/model and returns the created flow's id
+   from the template-instantiation `POST /api/v1/flows/` 201 response; the
+   canvas URL id is transient on 1.11, so this returned id is the only
+   reliable handle).
 2. Open the URL tool's actions modal: the button is scoped to the node —
    `[data-testid^="rf__node-URLComponent"]` → `button_open_actions` — and the
    modal is ready when `btn_close_tools_modal` renders.
@@ -81,11 +84,15 @@ Shared setup per test:
    press `Enter` to commit, and assert the slug cell
    (`.ag-cell[col-id="name_1"]`) reflects the new value before closing
    (`Escape`).
-4. **Verify the persisted name via the API** (`GET /api/v1/flows/{id}` → URL
-   node → `template.tools_metadata.value[0].name`) before running — the modal
+4. **Verify the persisted name via the API** (`GET /api/v1/flows/{id}` with
+   the id returned by `load()` → the flow's single URL node →
+   `template.tools_metadata.value[0].name`) before running — the modal
    normalizes case/spaces, so the assertion targets the normalized form; a
    silently unsaved rename must fail the setup step, not produce a
-   false-positive run.
+   false-positive run. The check is scoped to the test's own flow — it must
+   NOT assume anything about other flows on the instance (#632: a global
+   "exactly 1 URLComponent flow" invariant broke under the daily run, where
+   sibling specs leave their own template flows).
 5. Open the Playground and send a fixed message.
 
 ---
@@ -96,8 +103,11 @@ Shared setup per test:
   `!` characters violate every provider's function-name pattern).
 - `page.allowFlowErrors()` — the failure is intentional.
 - **Validation:** the Playground surfaces an error state for the run and its
-  text matches `/invalid function name|does not match pattern|INVALID_ARGUMENT/i`
-  (covers Google and OpenAI wording). No agent answer is produced.
+  text matches
+  `/invalid function name|does not match pattern|should match pattern|INVALID_ARGUMENT/i`
+  (covers Google, OpenAI and Anthropic wording — Anthropic rejects with
+  `tools.N.custom.name: String should match pattern '^[a-zA-Z0-9_-]{1,128}$'`,
+  probed live on claude-sonnet-5, #632). No agent answer is produced.
 
 ---
 
@@ -132,6 +142,16 @@ Shared setup per test:
   validity differs.
 - **Force-failure check** (CONTRIBUTING §2) run during VERIFY on each hard
   assertion before `@stable`.
+
+---
+
+## Flow cleanup *(required)*
+
+Both tests create a flow via `SimpleAgentTemplatePage.load()`, which does NO
+cleanup (post-#553 contract). The spec tracks every `POST /api/v1/flows` →
+201 id fired during load and deletes them by id in `test.afterEach`
+(id-scoped — never name-based or delete-all). Behavioral force-fail
+contract: no-op the cleanup and the flow count grows.
 
 ---
 
