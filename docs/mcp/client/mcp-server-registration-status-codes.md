@@ -65,11 +65,18 @@ intended lifecycle, not a regression. Restore `@stable` once Langflow returns
 
 ## Validation criterion *(required)*
 
-- Test 1: the second `POST` of an existing name returns HTTP `409`
-- Test 2: `DELETE` of a non-existent server returns HTTP `404`
+- Test 1: the second `POST` of an existing name returns HTTP `409` **and** a
+  `detail` matching `/already exists/i`
+- Test 2: `DELETE` of a non-existent server returns HTTP `404` **and** a `detail`
+  matching `/server not found/i`
 
-(Until upstream is fixed, both fail with `Expected 409/404, Received 500` — the
-intended, self-documenting failure signature.)
+Each assertion checks the `detail` in addition to the status so a status that is
+correct-by-accident does not pass — e.g. a renamed/removed route returning a bare
+`404 "Not Found"` must not masquerade as the resource-level `404`.
+
+(Until upstream is fixed, both fail at the status check with `Expected 409/404,
+Received 500` — the intended, self-documenting failure signature. The `detail`
+check only runs once the status is correct.)
 
 ---
 
@@ -104,8 +111,11 @@ intended, self-documenting failure signature.)
 - Uses `page.request` (APIRequestContext) exclusively: it runs outside the
   browser page, so the intentional 5xx does **not** trip the fixture's
   `page.on("response")` backend-error monitor — no `allowFlowErrors()` needed.
-- Server names are worker- and timestamp-scoped to avoid collisions with sibling
-  MCP specs running in parallel.
+- Server names are worker-, timestamp-, and UUID-scoped so neither parallel
+  workers nor two independent invocations sharing one backend can collide.
+- The empty-token path is guarded up front (`expect(authHeader).toBeTruthy()`) so
+  an auth misconfiguration fails with a clear signal rather than a misleading
+  status mismatch.
 - Split out of the investigation in #396; the passing `mcp-client-regression.spec.ts`
   Test 3 only exercises successful registration (it pre-cleans to avoid the
   duplicate), so it never covered the 409 path — this spec fills that gap.
