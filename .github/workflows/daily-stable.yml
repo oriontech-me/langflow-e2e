@@ -110,8 +110,12 @@ jobs:
       # tag; pulled anonymously (no Docker Hub rate limits). No healthcheck: the
       # scratch-based image ships only the Go binary (no shell/curl), so the
       # "Resolve go-httpbin endpoint" step below both waits for and verifies it.
+      # Tag has NO `v` prefix: mccutchen/go-httpbin dropped the `v` from its GHCR
+      # tags at 2.17 (the `v`-prefixed series stops at v2.16.1), so `v2.23.1`
+      # returns `manifest unknown` and fails container init before any test runs.
+      # The pullable tag is the unprefixed `2.23.1` (#639).
       go-httpbin:
-        image: ghcr.io/mccutchen/go-httpbin:v2.23.1
+        image: ghcr.io/mccutchen/go-httpbin:2.23.1
         ports:
           - 8080:8080
 
