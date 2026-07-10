@@ -58,6 +58,13 @@ jobs:
           # (see #352). External tracers (LangSmith/Langfuse/etc.) stay dormant
           # here because their API keys are absent.
           LANGFLOW_DEACTIVATE_TRACING: "false"
+          # Enforce SQLite foreign keys (OFF by default in Langflow). Without
+          # this, cascade/orphan bugs like #13955 (bulk trace delete vs. the
+          # span->trace FK) are invisible — the raw DELETE "succeeds" leaving
+          # orphaned rows, so traces-delete-cascade.spec.ts and any future
+          # cascade guard would pass for the wrong reason. The dict replaces the
+          # product default wholesale, so the default pragmas are repeated here.
+          LANGFLOW_SQLITE_PRAGMAS: '{"synchronous": "NORMAL", "journal_mode": "WAL", "busy_timeout": 30000, "foreign_keys": "ON"}'
           # Ollama runs as a sibling service; without the allowlist the
           # nightly's SSRF protection 400s the Ollama component's model-list
           # fetch (private address) — see ollama-provider.spec.ts (#583).
