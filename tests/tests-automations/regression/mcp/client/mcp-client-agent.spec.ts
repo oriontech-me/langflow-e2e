@@ -174,7 +174,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent calls echo MCP tool and returns echoed message",
-      { tag: ["@mcp", "@agents", "@regression"] },
+      { tag: ["@mcp", "@agents", "@regression", "@stable"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -342,9 +342,9 @@ for (const { label, options, skipReason } of targets) {
               return text.includes("Finished") || text.includes("Steps");
             });
             for (const row of rows) {
-              const chevron = row.querySelector<HTMLElement>(
-                "div.cursor-pointer",
-              );
+              // Tag-agnostic: the accordion trigger is a <div> on older builds
+              // and a <button> on 1.11.0.dev38+ (see NOTE below).
+              const chevron = row.querySelector<HTMLElement>(".cursor-pointer");
               chevron?.click();
             }
           });
@@ -354,12 +354,13 @@ for (const { label, options, skipReason } of targets) {
           // This DOM only exists after the agent invoked a tool — if the LLM hallucinated
           // a response without using any tool, the row is absent.
           //
-          // NOTE: Langflow's `AccordionTrigger` (src/frontend/src/components/ui/accordion.tsx)
-          // passes `asChild` to Radix and wraps a <div className="cursor-pointer ...">,
-          // NOT a <button>. Selector must therefore not constrain by tag name.
+          // NOTE: Langflow's `AccordionTrigger` markup has flipped between a
+          // <div className="cursor-pointer ..."> (pre-1.11 nightlies) and a real
+          // <button className="... cursor-pointer ..."> (1.11.0.dev38+). Selector
+          // must therefore not constrain by tag name — match the class only.
           // Ref: src/frontend/src/components/core/chatComponents/ContentBlockDisplay.tsx
           const calledToolTrigger = page
-            .locator("div.cursor-pointer")
+            .locator(".cursor-pointer")
             .filter({ hasText: "Called tool" });
           await expect(
             calledToolTrigger.last(),
