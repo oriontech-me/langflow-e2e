@@ -4,16 +4,19 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
-// ChatInput -> ChatOutput. Runs to completion WITHOUT a provider and still emits
-// a trace with a populated span tree (one span per executed component). That
-// populated span tree is the whole point of this spec: the #13955 bug only fires
-// when the trace being deleted is referenced by span rows, so a fixture that
-// deterministically produces spans (independent of any API key) is required.
+// Same provider-less Basic Prompting fixture used by traces-delete.spec.ts and
+// the traces-detail-* specs: its run fails (no model configured) but STILL emits
+// a trace with a populated span tree. That span tree is the whole point of this
+// spec — the #13955 bug only fires when the trace being deleted is referenced by
+// span rows. This fixture is the portable, CI-proven source of that span tree
+// (the traces-detail-* @stable specs assert `spans.length > 0` on it against the
+// nightly SUT every day); a successful ChatInput->ChatOutput run produced spans
+// locally but not reliably on the nightly image, so it is deliberately avoided.
 const TRACE_FIXTURE = JSON.parse(
   readFileSync(
     path.resolve(
       __dirname,
-      "../../../../assets/flows/chat-io-ok-trace-fixture.json",
+      "../../../../assets/flows/basic-prompting-trace-fixture.json",
     ),
     "utf8",
   ),
@@ -27,11 +30,11 @@ const TRACE_FIXTURE = JSON.parse(
 // merged to release-1.11.0) adds the cascade so the delete removes the trace
 // AND its spans in one statement.
 //
-// This spec deletes a trace that is GUARANTEED to have spans and asserts the
-// delete succeeds — the plain `traces-delete.spec.ts` deletes a trace from a
-// provider-less failed run (a thin/fragile span tree) and pins the status-code
-// / ownership contract; it does not target the cascade dimension. See the spec
-// doc's "What this test does not cover" for the boundary between the two.
+// This spec anchors on the trace HAVING spans and asserts the delete succeeds —
+// the plain `traces-delete.spec.ts` uses the same fixture but pins the
+// status-code / ownership contract and only polls the trace count; it never
+// verifies a span tree exists, so it does not target the cascade dimension. See
+// the spec doc's "What this test does not cover" for the boundary between the two.
 //
 // IMPORTANT: this bug is only observable when the database enforces foreign
 // keys. Postgres always does; SQLite does NOT by default (Langflow's default
@@ -74,9 +77,10 @@ test.describe("Clear traces with a populated span tree (regression #13955)", () 
     expect(flowRes.status()).toBe(201);
     flowId = (await flowRes.json()).id;
 
-    // Run the flow once to emit a trace with spans. Unlike the provider-less
-    // fixture in traces-delete.spec.ts, ChatInput -> ChatOutput completes
-    // successfully (HTTP 200) and produces a deterministic span tree.
+    // Run the flow once to emit a trace with spans. The fixture has no provider
+    // configured, so the LanguageModelComponent fails — that is intentional: the
+    // failure still emits a trace with a span tree (the same behaviour the
+    // traces-detail-* specs rely on). Accept HTTP 200 or 500.
     const runRes = await request.post(`/api/v1/run/${flowId}`, {
       headers: { "x-api-key": apiKey },
       data: {
@@ -85,7 +89,7 @@ test.describe("Clear traces with a populated span tree (regression #13955)", () 
         output_type: "chat",
       },
     });
-    expect(runRes.status()).toBe(200);
+    expect([200, 500]).toContain(runRes.status());
 
     // Stable-count poll on the SPAN count of the emitted trace. A single
     // `spans.length > 0` read could fire DELETE while more spans are still being
@@ -152,7 +156,7 @@ test.describe("Clear traces with a populated span tree (regression #13955)", () 
 
   test(
     "Clearing traces for a flow whose trace has spans succeeds (cascade), leaving no traces behind",
-    { tag: ["@stable", "@regression", "@api", "@observability"] },
+    { tag: ["@stable", "@release", "@regression", "@api", "@observability"] },
     async ({ request }) => {
       // Anchor: the seeded trace MUST have spans before DELETE. This is what
       // distinguishes the cascade path from the plain bulk-delete contract test.

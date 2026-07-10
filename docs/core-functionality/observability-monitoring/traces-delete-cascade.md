@@ -1,6 +1,6 @@
 # Bulk Delete Traces — span cascade regression (#13955)
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x (green on the fixed release; confirmed red on 1.10.0 with FK enforcement — see Validation criterion)
 
 ---
 
@@ -16,7 +16,7 @@ The test seeds a flow whose run emits a trace with a **guaranteed non-empty span
 
 ## Tags *(required)*
 
-`@stable` `@regression` `@api` `@observability`
+`@stable` `@release` `@api` `@regression` `@observability`
 
 ---
 
@@ -25,8 +25,8 @@ The test seeds a flow whose run emits a trace with a **guaranteed non-empty span
 **`describe("Clear traces with a populated span tree (regression #13955)")` — `mode: "serial"`, shared `beforeAll`**
 1. Get a bearer token via `getAuthToken(request)`
 2. Create an API key (`POST /api/v1/api_key/`, Bearer auth, name `traces-delete-cascade-test-<timestamp>`); capture `api_key` + `id`
-3. Create a flow (`POST /api/v1/flows/`, `x-api-key` auth) from `tests/assets/flows/chat-io-ok-trace-fixture.json` (ChatInput → ChatOutput), name suffixed with the timestamp; expect HTTP 201; capture `flowId`
-4. Run the flow once (`POST /api/v1/run/{flowId}`, `x-api-key` auth). Unlike the provider-less fixture in `traces-delete.spec.ts`, this flow **completes successfully (HTTP 200)** and emits a deterministic span tree (one span per executed component — observed: 2)
+3. Create a flow (`POST /api/v1/flows/`, `x-api-key` auth) from `tests/assets/flows/basic-prompting-trace-fixture.json` (the same fixture as `traces-delete.spec.ts` and the `traces-detail-*` specs), name suffixed with the timestamp; expect HTTP 201; capture `flowId`
+4. Run the flow once (`POST /api/v1/run/{flowId}`, `x-api-key` auth). The fixture has no provider configured, so the LanguageModelComponent fails — intentional: the failed run still emits a trace with a populated span tree. Accept HTTP 200 or 500
 5. **Stable-count poll on the span count**: repeatedly `GET /api/v1/monitor/traces?flow_id=<flowId>` (capture the first `trace.id`), then `GET /api/v1/monitor/traces/{trace_id}` and read `spans.length`, until the count is the same across two consecutive reads (`stableConfirms >= 1`), up to 30 s with intervals `[500, 500, 1000, 1000, 2000]` ms. Capture the settled count as `spanCount`. The trace row can land a beat before its spans, and spans can be inserted asynchronously — polling on the span count guards both races
 
 **`afterAll`** — delete the flow and the API key, both with the bearer token (flow delete intentionally does **not** use the api_key, so the two deletes do not race), via `Promise.allSettled`.
@@ -61,7 +61,7 @@ References in the **main Langflow repository**:
 
 References in this repository:
 
-- `tests/assets/flows/chat-io-ok-trace-fixture.json` — ChatInput → ChatOutput flow; runs to completion with **no provider** and emits a trace with a populated span tree
+- `tests/assets/flows/basic-prompting-trace-fixture.json` — provider-less Basic Prompting flow; its run fails but still emits a trace with a populated span tree (shared with `traces-delete.spec.ts` and the `traces-detail-*` specs, which prove it emits `spans.length > 0` on the nightly SUT)
 - `tests/helpers/auth/get-auth-token.ts` — issues a bearer token (auto_login)
 - `tests/helpers/flows/delete-flow.ts` — flow cleanup with failed-deletion surfacing
 - `tests/tests-automations/regression/core-functionality/observability-monitoring/traces-delete.spec.ts` — companion spec covering the delete endpoint's **status-code / ownership contract**
@@ -82,11 +82,11 @@ References in this repository:
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
 - The SUT database **enforces foreign keys** (Postgres, or SQLite with `foreign_keys=ON`) — otherwise the test passes without exercising the bug
 - The configured auth (`auto_login` or superuser) can issue a token via `getAuthToken`
-- No provider keys required — the fixture runs ChatInput → ChatOutput
+- No provider keys required — the fixture runs without a model configured
 
 ---
 
 ## Notes *(optional)*
 
-- The seeding pattern (key + flow + run + stable-count poll) mirrors `traces-delete.spec.ts` on purpose, differing only in (a) the fixture — a successful ChatInput → ChatOutput run that guarantees spans, rather than a provider-less failed run — and (b) the poll anchoring on **span count** rather than trace count.
+- The seeding pattern (key + flow + run + stable-count poll) and the fixture are shared with `traces-delete.spec.ts` on purpose; this spec differs only in the poll anchoring on **span count** (via the trace detail) rather than trace count, so it can assert a populated span tree exists before the delete.
 - Making this test bite in the daily/nightly CI requires enabling FK enforcement on the CI SUT — a shared-infrastructure change (`scripts/start-langflow-docker.sh`) intentionally kept out of this spec's scope and tracked as a dedicated follow-up.
