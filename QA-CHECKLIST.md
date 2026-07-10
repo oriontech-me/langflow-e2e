@@ -786,7 +786,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 296 `test()` calls carrying the `@stable` tag, distributed across 111 spec
+> 297 `test()` calls carrying the `@stable` tag, distributed across 111 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -969,6 +969,7 @@
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
+- [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
 - [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
 - [x] OpenAI provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
