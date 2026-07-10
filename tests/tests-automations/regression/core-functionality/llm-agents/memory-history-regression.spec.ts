@@ -92,7 +92,7 @@ test.describe("Memory Chatbot Regression", () => {
 
   test(
     "memory chatbot template loads with correct node structure",
-    { tag: ["@release", "@agents", "@playground"] },
+    { tag: ["@stable", "@release", "@agents", "@playground"] },
     async ({ page }) => {
       createdFlowId = await loadMemoryChatbot(page);
 

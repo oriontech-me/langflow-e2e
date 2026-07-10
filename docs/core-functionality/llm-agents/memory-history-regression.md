@@ -1,6 +1,6 @@
 # Memory Chatbot — History and Memory Regression
 
-**Last validated:** Langflow 1.11.x (1.11.0.dev36)
+**Last validated:** Langflow 1.11.x (1.11.0)
 
 ---
 
