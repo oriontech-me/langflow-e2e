@@ -7,6 +7,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
@@ -43,8 +44,11 @@ const VALID_TOOL_NAME = "fetch_content_renamed";
 // any model call regardless; Test 2 completes in a single cheap turn.
 const TASK = "Reply with exactly: hello from the control test";
 // Provider wording for a rejected function name — Google ("Invalid function
-// name…", INVALID_ARGUMENT) and OpenAI ("string does not match pattern").
-const INVALID_NAME_ERROR = /invalid function name|does not match pattern|INVALID_ARGUMENT/i;
+// name…", INVALID_ARGUMENT), OpenAI ("string does not match pattern") and
+// Anthropic ("tools.N.custom.name: String should match pattern '^[a-zA-Z0-9_-]…'",
+// probed live on claude-sonnet-5 — #632).
+const INVALID_NAME_ERROR =
+  /invalid function name|does not match pattern|should match pattern|INVALID_ARGUMENT/i;
 
 interface ModelRecord {
   provider: string;
@@ -137,9 +141,40 @@ function getTestTargets(): TestTarget[] {
   }));
 }
 
-async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
+// SimpleAgentTemplatePage.load() does NO cleanup (post-#553 contract) — track
+// every flow the load actually creates (POST /api/v1/flows → 201) and delete
+// those ids in afterEach (#605 pattern; this file previously leaked its flows,
+// feeding the daily-run accumulation behind #632).
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, { headers: { Authorization: bearer } }).catch(() => {});
+  }
+});
+
+// Loads the Simple Agent template and returns the created flow's id (from the
+// template-instantiation POST 201 response — the canvas URL id is transient
+// on 1.11, so this is the only reliable handle for by-id API reads).
+async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<string> {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {}); // non-JSON / batch payloads
+    }
+  });
   try {
-    await new SimpleAgentTemplatePage(page).load(options);
+    return await new SimpleAgentTemplatePage(page).load(options);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
@@ -182,11 +217,11 @@ async function renameUrlTool(page: Page, newName: string): Promise<void> {
 // The rename only matters if it reached the persisted flow document — a lost
 // edit would make the control test vacuous. Polls the flows API for the URL
 // node's tools_metadata name (autosave may lag the UI commit).
-// The canvas URL's flow id can be TRANSIENT on 1.11 (GET by that id 404s), so
-// the flow is resolved from the flows list instead — SimpleAgentTemplatePage
-// wipes all flows on load, so exactly one flow with a URLComponent exists.
+// Scoped to the flow this test created (GET by the id load() returned) — a
+// global "exactly 1 URLComponent flow instance-wide" invariant broke in the
+// daily run, where sibling specs leave their own template flows (#632).
 async function expectPersistedToolName(
-  _page: Page,
+  flowId: string,
   request: APIRequestContext,
   expected: string,
 ): Promise<void> {
@@ -194,15 +229,17 @@ async function expectPersistedToolName(
   await expect
     .poll(
       async () => {
-        const res = await request.get(`/api/v1/flows/?remove_example_flows=true&header_flows=false`, {
+        const res = await request.get(`/api/v1/flows/${flowId}`, {
           headers: { Authorization: bearer },
         });
-        if (res.status() !== 200) return `GET flows -> ${res.status()}`;
-        const flows = await res.json();
-        const urlNodes = (Array.isArray(flows) ? flows : [])
-          .flatMap((f: any) => f.data?.nodes ?? [])
-          .filter((n: any) => n.data?.type === "URLComponent");
-        if (urlNodes.length !== 1) return `expected 1 URLComponent flow, found ${urlNodes.length}`;
+        if (res.status() !== 200) return `GET flow ${flowId} -> ${res.status()}`;
+        const flow = await res.json();
+        const urlNodes = (flow.data?.nodes ?? []).filter(
+          (n: any) => n.data?.type === "URLComponent",
+        );
+        if (urlNodes.length !== 1) {
+          return `expected 1 URLComponent node in flow, found ${urlNodes.length}`;
+        }
         return urlNodes[0]?.data?.node?.template?.tools_metadata?.value?.[0]?.name;
       },
       { timeout: 15000 },
@@ -242,8 +279,8 @@ async function openPlaygroundAndSend(page: Page): Promise<void> {
 
 const targets = getTestTargets();
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template;
-// serial mode + --workers=1 keeps the shared instance state deterministic.
+// Named template loads collide under parallelism — this file is serial and
+// the folder is run with --workers=1 (agent-family convention).
 test.describe.configure({ mode: "serial" });
 
 for (const { label, options, skipReason } of targets) {
@@ -252,7 +289,7 @@ for (const { label, options, skipReason } of targets) {
   test.describe(`Agent Tool Name Validation [${label}]`, () => {
     test(
       "an invalid tool name blocks execution with a clear message",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -260,13 +297,13 @@ for (const { label, options, skipReason } of targets) {
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
 
-        await loadAgent(page, options);
+        const flowId = await loadAgent(page, options);
 
         await test.step("rename the URL tool to an invalid function name", async () => {
           await renameUrlTool(page, INVALID_TOOL_NAME);
           await setChatInputText(page, TASK);
           await waitForFlowSaveSettled(page);
-          await expectPersistedToolName(page, request, "invalid_tool_name!!");
+          await expectPersistedToolName(flowId, request, "invalid_tool_name!!");
         });
 
         await test.step("run and assert the clear invalid-name error", async () => {
@@ -291,13 +328,13 @@ for (const { label, options, skipReason } of targets) {
           `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
         );
 
-        await loadAgent(page, options);
+        const flowId = await loadAgent(page, options);
 
         await test.step("rename the URL tool to a valid custom name", async () => {
           await renameUrlTool(page, VALID_TOOL_NAME);
           await setChatInputText(page, TASK);
           await waitForFlowSaveSettled(page);
-          await expectPersistedToolName(page, request, VALID_TOOL_NAME);
+          await expectPersistedToolName(flowId, request, VALID_TOOL_NAME);
         });
 
         await test.step("run and assert a normal answer with no error", async () => {
