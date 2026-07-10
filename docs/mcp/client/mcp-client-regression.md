@@ -12,9 +12,11 @@ Validates the full MCP client configuration and tool execution path — without 
 
 ## Tags *(required)*
 
-All tests: `@mcp` `@regression`. Tests 2 (echo tool execution) and 3 (HTTP form registration) additionally carry `@stable`.
+All tests: `@mcp` `@regression`. Tests 2 (unreachable HTTP server), 3 (HTTP form registration), and 4 (numeric `get-sum`) additionally carry `@stable`.
 
-Test 4 (numeric `get-sum`) does **not** carry `@stable` — it was removed in the #461 daily-triage PR because the test depends on the `npx server-everything` MCP server registering its tools in time, which hard-fails the daily suite on cold startup (see #463). Re-add once server startup is reliable in CI.
+Test 4 (numeric `get-sum`) had `@stable` temporarily removed in the #461 daily-triage PR because it depends on the `npx server-everything` MCP server registering its tools in time, which hard-failed the daily suite on cold startup (#463). `@stable` was **re-added** once the daily-stable workflow started warming the `server-everything` package in the Langflow container before the suite runs (the cold `npx` fetch now happens outside the test's poll budget), and the test's poll budget was raised 90s → 120s to cover warm startup with margin.
+
+Test 1 (JSON config → echo tool) shares the same `npx server-everything` dependency and is intentionally **not** `@stable` — it was not in scope for #463.
 
 ---
 
@@ -91,7 +93,7 @@ Test 4 (numeric `get-sum`) does **not** carry `@stable` — it was removed in th
 
 ## Notes *(optional)*
 
-- The npx process takes 5–30 seconds to start. Tests 1 and 4 poll `GET /api/v2/mcp/servers?action_count=true` (up to 90s) until `toolsCount` is non-null before interacting with the canvas node.
+- The npx process takes 5–30 seconds to start once the package is cached. Tests 1 and 4 poll `GET /api/v2/mcp/servers?action_count=true` until `toolsCount` is non-null before interacting with the canvas node — Test 1 up to 90s, Test 4 up to 120s. The daily-stable workflow pre-warms the `server-everything` package in the Langflow container (registering a throwaway server and hitting `action_count=true` before the suite), so the cold `npx` fetch is paid once up front rather than inside a test's budget (#463).
 - Tool dropdown interactions use `page.evaluate((el) => el.click())` instead of Playwright's `.click()` to avoid viewport and overlay constraints.
 - The `get-sum` tool option testid is `get-sum-6-option` — index 6 reflects its position in `server-everything`'s tool list and may shift if the package reorders tools in a future release.
 - Test 2 uses `page.waitForFunction` to confirm the dropdown is genuinely open before asserting zero options, preventing a false-positive where the evaluate click fails silently.
