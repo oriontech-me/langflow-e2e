@@ -291,7 +291,7 @@ for (const { label, options, skipReason } of targets) {
   test.describe(`Agent Multi-Tool Selection [${label}]`, () => {
     test(
       "agent selects the URL tool for a fetch prompt",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

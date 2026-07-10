@@ -786,7 +786,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 297 `test()` calls carrying the `@stable` tag, distributed across 111 spec
+> 293 `test()` calls carrying the `@stable` tag, distributed across 110 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -949,7 +949,6 @@
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
-- [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
 - [x] agent selects the Web Search tool for a search prompt → `agent-multi-tool-selection.spec.ts`
 - [x] image via input handle is described by the agent → `agent-multimodal-image-input.spec.ts`
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
@@ -960,7 +959,6 @@
 - [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
 - [x] agent handles a tool error and continues execution → `agent-tool-error-handling.spec.ts`
-- [x] an invalid tool name blocks execution with a clear message → `agent-tool-name-validation.spec.ts`
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
@@ -1096,8 +1094,6 @@
 #### mcp/client/
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
-- [x] registering an already-existing MCP server returns 409 Conflict → `mcp-server-registration-status-codes.spec.ts`
-- [x] deleting a non-existent MCP server returns 404 Not Found → `mcp-server-registration-status-codes.spec.ts`
 
 #### ui-ux/
 - [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`

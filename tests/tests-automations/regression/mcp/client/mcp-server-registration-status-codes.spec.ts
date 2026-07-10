@@ -69,7 +69,7 @@ async function readDetail(resp: {
 test.describe("MCP v2 server registration — HTTP status codes", () => {
   test(
     "registering an already-existing MCP server returns 409 Conflict",
-    { tag: ["@mcp", "@regression", "@api", "@stable"] },
+    { tag: ["@mcp", "@regression", "@api"] },
     async ({ page }) => {
       const authHeader = await getAuthToken(page.request);
       expect(
@@ -130,7 +130,7 @@ test.describe("MCP v2 server registration — HTTP status codes", () => {
 
   test(
     "deleting a non-existent MCP server returns 404 Not Found",
-    { tag: ["@mcp", "@regression", "@api", "@stable"] },
+    { tag: ["@mcp", "@regression", "@api"] },
     async ({ page }) => {
       const authHeader = await getAuthToken(page.request);
       expect(

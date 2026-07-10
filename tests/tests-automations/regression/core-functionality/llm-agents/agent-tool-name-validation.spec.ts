@@ -252,7 +252,7 @@ for (const { label, options, skipReason } of targets) {
   test.describe(`Agent Tool Name Validation [${label}]`, () => {
     test(
       "an invalid tool name blocks execution with a clear message",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
