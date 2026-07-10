@@ -786,7 +786,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 294 `test()` calls carrying the `@stable` tag, distributed across 110 spec
+> 295 `test()` calls carrying the `@stable` tag, distributed across 111 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1093,6 +1093,7 @@
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 
 #### mcp/client/
+- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 
