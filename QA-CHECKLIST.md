@@ -433,6 +433,7 @@
 - [x] Single-trace API returns populated tokenUsage + modelName on the LLM span (OpenAI) → `traces-detail-llm-span-populated.spec.ts`
 - [x] Bulk delete traces API returns 404 for an unknown flow_id → `traces-delete.spec.ts`
 - [x] Bulk delete traces API clears all traces for the flow (204 + empty list) → `traces-delete.spec.ts`
+- [x] Bulk delete of a trace with a populated span tree cascades (204, no FK violation) — regression #13955 → `traces-delete-cascade.spec.ts`
 - [x] Trace list filter `?status=error` returns only the failing trace; `?status=<unknown>` returns 422 → `traces-list-filters.spec.ts`
 - [x] Trace list filter `?status=ok` returns only the successful trace → `traces-list-filters.spec.ts`
 - [x] Trace list filter `?start_time` pins the >= lower bound (past hits, future misses) → `traces-list-filters.spec.ts`
@@ -760,7 +761,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
 | `core-functionality/llm-agents/` | 40 | 30 | 2 | 0 | 8 |
 | `core-functionality/model-provider/` | 33 | 31 | 0 | 0 | 2 |
-| `core-functionality/observability-monitoring/` | 23 | 15 | 7 | 0 | 1 |
+| `core-functionality/observability-monitoring/` | 24 | 16 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -769,7 +770,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **453** | **267 (59%)** | **154 (34%)** | **7 (2%)** | **25 (6%)** |
+| **TOTAL** | **454** | **268 (59%)** | **154 (34%)** | **7 (2%)** | **25 (6%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -785,7 +786,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 295 `test()` calls carrying the `@stable` tag, distributed across 110 spec
+> 296 `test()` calls carrying the `@stable` tag, distributed across 111 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1003,6 +1004,7 @@
 - [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
+- [x] Clearing traces for a flow whose trace has spans succeeds (cascade), leaving no traces behind → `traces-delete-cascade.spec.ts`
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
 - [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
 - [x] GET /api/v1/monitor/traces/{trace_id} returns a populated tokenUsage + modelName on the LLM span → `traces-detail-llm-span-populated.spec.ts`
