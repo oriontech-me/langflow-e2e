@@ -135,6 +135,40 @@ test.describe("Playground – Session Rename (B2)", () => {
       );
 
       await test.step(
+        "Wait until the new session's message is durably persisted server-side",
+        async () => {
+          // The rename option is enabled from the client-side React Query
+          // message cache, which the build stream fills BEFORE the messages are
+          // committed to the DB. The rename endpoint
+          // (PATCH /api/v1/monitor/messages/session/{old}) reads the DB and
+          // 404s when no rows exist for {old} yet — on 404 the frontend keeps
+          // the old name (toast only), so the renamed label never appears and
+          // the assertion below times out. This is the #637 flake. Poll the
+          // SAME table the PATCH reads (GET /monitor/messages) until the new
+          // session's message is queryable, sequencing the rename against real
+          // persistence instead of widening a timeout. The new session's rows
+          // carry a session_id other than the flow id (the Default Session).
+          await expect
+            .poll(
+              async () => {
+                const resp = await page.request.get(
+                  `/api/v1/monitor/messages?flow_id=${createdFlowId}`,
+                );
+                if (!resp.ok()) return 0;
+                const messages = (await resp.json()) as Array<{
+                  session_id: string;
+                }>;
+                return messages.filter(
+                  (m) => m.session_id !== createdFlowId,
+                ).length;
+              },
+              { timeout: 15000, intervals: [250, 500, 1000] },
+            )
+            .toBeGreaterThan(0);
+        },
+      );
+
+      await test.step(
         "Open the session more-menu and verify rename option is available",
         async () => {
           await page
