@@ -14,7 +14,7 @@ Validates the full MCP client configuration and tool execution path — without 
 
 All tests: `@mcp` `@regression`. Tests 2 (unreachable HTTP server), 3 (HTTP form registration), and 4 (numeric `get-sum`) additionally carry `@stable`.
 
-Test 4 (numeric `get-sum`) had `@stable` temporarily removed in the #461 daily-triage PR because it depends on the `npx server-everything` MCP server registering its tools in time, which hard-failed the daily suite on cold startup (#463). `@stable` was **re-added** once the daily-stable workflow started warming the `server-everything` package in the Langflow container before the suite runs (the cold `npx` fetch now happens outside the test's poll budget), and the test's poll budget was raised 90s → 120s to cover warm startup with margin.
+Test 4 (numeric `get-sum`) had `@stable` temporarily removed in the #461 daily-triage PR because it depends on the `npx server-everything` MCP server registering its tools in time, which hard-failed the daily suite on cold startup (#463). The dominant root cause was an upstream Langflow defect — root-owned npm cache, `langflow-ai/langflow#13992` — now fixed in the published nightly (see #638/#552). `@stable` was **re-added** (#463) and the poll budget kept at 120s (raised from 90s) as modest margin for startup.
 
 Test 1 (JSON config → echo tool) shares the same `npx server-everything` dependency and is intentionally **not** `@stable` — it was not in scope for #463.
 
@@ -93,7 +93,7 @@ Test 1 (JSON config → echo tool) shares the same `npx server-everything` depen
 
 ## Notes *(optional)*
 
-- The npx process takes 5–30 seconds to start once the package is cached. Tests 1 and 4 poll `GET /api/v2/mcp/servers?action_count=true` until `toolsCount` is non-null before interacting with the canvas node — Test 1 up to 90s, Test 4 up to 120s. The daily-stable workflow pre-warms the `server-everything` package in the Langflow container (registering a throwaway server and hitting `action_count=true` before the suite), so the cold `npx` fetch is paid once up front rather than inside a test's budget (#463).
+- The npx process takes 5–30 seconds to start once the package is cached. Tests 1 and 4 poll `GET /api/v2/mcp/servers?action_count=true` until `toolsCount` is non-null before interacting with the canvas node — Test 1 up to 90s, Test 4 up to 120s. The cold-fetch fragility that de-stabled Test 4 (removed in the #461 triage; re-added in #463) was an upstream Langflow defect (root-owned npm cache, `langflow-ai/langflow#13992`), now fixed in the published nightly.
 - Tool dropdown interactions use `page.evaluate((el) => el.click())` instead of Playwright's `.click()` to avoid viewport and overlay constraints.
 - The `get-sum` tool option testid is `get-sum-6-option` — index 6 reflects its position in `server-everything`'s tool list and may shift if the package reorders tools in a future release.
 - Test 2 uses `page.waitForFunction` to confirm the dropdown is genuinely open before asserting zero options, preventing a false-positive where the evaluate click fails silently.
