@@ -93,7 +93,7 @@ Test 1 (JSON config → echo tool) shares the same `npx server-everything` depen
 
 ## Notes *(optional)*
 
-- The npx process takes 5–30 seconds to start once the package is cached. Tests 1 and 4 poll `GET /api/v2/mcp/servers?action_count=true` until `toolsCount` is non-null before interacting with the canvas node — Test 1 up to 90s, Test 4 up to 120s. The cold-fetch fragility that de-stabled Test 4 (#463) was an upstream Langflow defect (root-owned npm cache, `langflow-ai/langflow#13992`), now fixed in the published nightly.
+- The npx process takes 5–30 seconds to start once the package is cached. Tests 1 and 4 poll `GET /api/v2/mcp/servers?action_count=true` until `toolsCount` is non-null before interacting with the canvas node — Test 1 up to 90s, Test 4 up to 120s. The cold-fetch fragility that de-stabled Test 4 (removed in the #461 triage; re-added in #463) was an upstream Langflow defect (root-owned npm cache, `langflow-ai/langflow#13992`), now fixed in the published nightly.
 - Tool dropdown interactions use `page.evaluate((el) => el.click())` instead of Playwright's `.click()` to avoid viewport and overlay constraints.
 - The `get-sum` tool option testid is `get-sum-6-option` — index 6 reflects its position in `server-everything`'s tool list and may shift if the package reorders tools in a future release.
 - Test 2 uses `page.waitForFunction` to confirm the dropdown is genuinely open before asserting zero options, preventing a false-positive where the evaluate click fails silently.
