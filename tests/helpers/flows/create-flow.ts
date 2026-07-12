@@ -42,7 +42,13 @@ export async function createFlow(
       data,
     });
     if (res.status() === 201) {
-      const { id } = (await res.json()) as { id: string };
+      const { id } = (await res.json()) as { id?: string };
+      // A 201 without an id is a malformed success: returning `undefined` here
+      // lets callers build an `undefined` id handle (e.g. `aria-labelledby*=`)
+      // that only fails much later, far from the cause. Surface it right away.
+      if (!id) {
+        throw new Error(`POST ${url} returned 201 with no flow id`);
+      }
       return id;
     }
 
