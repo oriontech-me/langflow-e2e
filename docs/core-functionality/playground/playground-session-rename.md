@@ -67,7 +67,7 @@ When `canRenameSession` is false the rename option is not rendered in the DOM at
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/session-selector.tsx` — `canRenameSession = canModifySession && hasMessages` logic and `data-testid="rename-session-option"`; any change to this conditional or to these testids will break the tests
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/session-selector.tsx` — `canRenameSession = canModifySession && hasMessages` logic (where `canModifySession === !isDefaultSession`, as noted above) and `data-testid="rename-session-option"`; any change to this conditional or to these testids will break the tests
 - `hasMessages` (`.../chat-header/hooks/use-session-has-messages.ts`) is derived from the **client-side React Query message cache**, which is populated by the build stream — so the rename option becomes available before the messages are committed to the DB. The rename endpoint (`PATCH /api/v1/monitor/messages/session/{old}?new_session_id={new}`) queries the DB and **404s when no rows exist for `{old}` yet**; on 404 the frontend keeps the old name (toast only). Test 3 must therefore wait for server-side persistence before renaming
 - Radix `SelectContent` only renders children when the dropdown is open — the more-menu must be clicked before asserting the absence of `rename-session-option`
 
