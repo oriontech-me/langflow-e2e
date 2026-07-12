@@ -1,7 +1,7 @@
 import * as dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
-import type { APIRequestContext, Page } from "@playwright/test";
+import type { APIRequestContext, Page, Response } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
@@ -138,25 +138,33 @@ function getTestTargets(): TestTarget[] {
 const createdFlowIds: string[] = [];
 
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
-  page.on("response", (resp) => {
+  // Collect the POST /api/v1/flows → 201 responses synchronously as they arrive,
+  // then resolve their bodies in `finally`. Awaiting the .json() here (instead of
+  // a fire-and-forget .then()) guarantees every created id is recorded BEFORE the
+  // test proceeds to afterEach — otherwise the last flow's id can land after
+  // cleanup already ran, leaking that flow.
+  const flowCreations: Response[] = [];
+  const onResponse = (resp: Response) => {
     if (
       resp.url().includes("/api/v1/flows") &&
       resp.request().method() === "POST" &&
       resp.status() === 201
     ) {
-      resp
-        .json()
-        .then((body: { id?: string }) => {
-          if (body?.id) createdFlowIds.push(body.id);
-        })
-        .catch(() => {}); // non-JSON / batch payloads
+      flowCreations.push(resp);
     }
-  });
+  };
+  page.on("response", onResponse);
   try {
     await new SimpleAgentTemplatePage(page).load(options);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
+  } finally {
+    page.off("response", onResponse);
+    for (const resp of flowCreations) {
+      const body = (await resp.json().catch(() => null)) as { id?: string } | null; // non-JSON / batch payloads
+      if (body?.id) createdFlowIds.push(body.id);
+    }
   }
 }
 
@@ -198,7 +206,9 @@ async function expectSentinelPersistedInFlows(
           ? "persisted"
           : "sentinel not yet persisted in any flow";
       },
-      { timeout: 15000 },
+      // Explicit, backing-off intervals: GET /api/v1/flows/ returns every flow's
+      // full graph, so avoid hammering it with the default aggressive cadence.
+      { timeout: 15000, intervals: [500, 1000, 2000] },
     )
     .toBe("persisted");
 }
