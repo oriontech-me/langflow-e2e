@@ -79,10 +79,20 @@ A per-run token `SENTINEL_<Date.now()>` is generated so a match is unambiguous.
    the node is gone and the edge count dropped by one.
 3. Type the distinctive echo prompt into the Agent's `Input` field
    (`popover-anchor-input-input_value`):
-   `Repeat this token exactly and nothing else: FIELD-<sentinel>`.
-4. **Wait for the debounced autosave to settle** (`waitForFlowSaveSettled`) —
-   `button_run_agent` builds the *persisted* flow, so the model selection, the
-   node deletion and the field value must all be saved first (see Notes).
+   `Repeat this token exactly and nothing else: FIELD-<sentinel>`, then `blur()`
+   to commit it. `fill` alone can leave the change uncommitted (the node applies
+   it on blur/change), so without the blur the value can miss the autosave PATCH
+   and the build runs with an EMPTY `input_value` — the agent then replies
+   generically ("I don't see any prior conversation history…"), the #635 flaky
+   symptom. Every other field-set in the suite blurs; this step did not.
+4. **Wait for the debounced autosave to settle** (`waitForFlowSaveSettled`),
+   then **confirm server-side** that the field value reached the PERSISTED flow:
+   poll `GET /api/v1/flows/` until the unique sentinel appears in a flow's `data`
+   graph. `button_run_agent` builds the *persisted* flow, so this is the
+   payload-level proof the input actually reaches the run (#635) — DOM state and
+   PATCH quiescence do not prove persistence. A value that never persists fails
+   HERE as a save/wiring issue, instead of surfacing later as a generic reply
+   that looks like model non-adherence.
 5. Run the Agent node via `button_run_agent`.
 6. Wait for build success on the canvas — the `node_duration_agent` badge
    (canonical completion signal; not the transient toast).

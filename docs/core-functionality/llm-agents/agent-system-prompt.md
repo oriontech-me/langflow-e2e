@@ -56,8 +56,18 @@ override). Skip a target if its provider is inactive or its env key is missing.
    (clears flows, loads template, configures provider/model). Skip on
    `MODEL_NOT_AVAILABLE`.
 2. Generate a per-run sentinel `PINEAPPLE-<uniq>`. Set the Agent Instructions:
-   fill `textarea_str_system_prompt` with an instruction forcing the sentinel into
-   every reply, blur, wait for the autosave `PATCH /api/v1/flows/` to succeed.
+   fill `textarea_str_system_prompt`, blur, **drain every pending autosave**
+   (`waitForFlowSaveSettled`), then **confirm server-side** that the instruction
+   reached the PERSISTED flow — poll `GET /api/v1/flows/` until the unique
+   sentinel appears in a flow's `data` graph. The earlier single
+   `waitForResponse(PATCH /api/v1/flows/)` could match a STALE PATCH still in
+   flight from `load()` (model selection), resolving before the instruction's own
+   save landed — so the build could run the template default (no instruction) and
+   the model answers the literal question without the sentinel (#635). The
+   server-side check is the payload-level proof the instruction reaches the
+   provider (DOM state cannot prove persistence): if the sentinel IS in the
+   persisted flow but the reply omits it, that is unambiguously model-side
+   non-adherence, not a dropped instruction.
 3. Open the Playground (`playground-btn-flow-io`), send an unrelated message
    ("What is the capital of France?"), wait for the run to finish (Stop button
    appears then hides).
