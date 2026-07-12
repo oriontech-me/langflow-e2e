@@ -1,6 +1,6 @@
 import { readFileSync } from "fs";
 import type { APIRequestContext } from "@playwright/test";
-import { expect } from "../../fixtures/fixtures";
+import { createFlow } from "./create-flow";
 import { deleteFlow } from "./delete-flow";
 
 // A minimal, version-current runnable flow: Chat Input -> Chat Output passthrough
@@ -46,20 +46,20 @@ export async function createRunnableChatFlowViaApi(
   // constraint, and its auto-rename fallback is not transaction-safe — two parallel
   // creations with the same name race and the loser gets a 500. A random suffix on
   // top of the timestamp avoids same-millisecond collisions across parallel specs
-  // (same convention as setup-blank-flow.ts).
+  // (same convention as setup-blank-flow.ts). createFlow additionally retries the
+  // transient 500 that survives the unique naming (#588).
   const uniqueSuffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-  const res = await request.post("/api/v1/flows/", {
-    headers,
-    data: {
+  const flowId = await createFlow(
+    request,
+    {
       name: `Runnable Chat Flow ${uniqueSuffix}`,
       description: "Chat Input -> Chat Output passthrough for API run tests",
       data: fixture.data,
       is_component: false,
     },
-  });
-  expect(res.status()).toBe(201);
-  const flowId = (await res.json()).id as string;
+    { headers },
+  );
 
   return {
     flowId,
