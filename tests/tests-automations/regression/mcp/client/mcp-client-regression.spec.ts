@@ -45,6 +45,13 @@ async function openBlankFlow(page: Page): Promise<string> {
       );
     }
     // A 5xx is the transient race: loop and re-click until the budget is spent.
+    // The templates modal stays open on a failed creation but its internal
+    // `loading` guard only clears on the request promise's `.finally`; re-click
+    // too soon and the button's onClick early-returns (no new POST) and the next
+    // waitForResponse would time out. Give React a beat to commit that reset.
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
   }
 
   throw new Error(
