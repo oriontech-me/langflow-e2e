@@ -252,7 +252,9 @@ test.describe("OpenAI Provider", () => {
         // token. Re-asserting it here (after the gate, no stream race) keeps
         // end-to-end UI coverage: a bubble stuck on "Message empty." while the
         // reply persisted would be a real frontend bug and must still fail.
-        expect(await aiMessage.innerText()).toContain(token);
+        // Use the retrying locator assertion (not innerText()) — even post-gate
+        // the bubble can lag briefly from placeholder to final text.
+        await expect(aiMessage).toContainText(token, { timeout: 15000 });
       });
     },
   );
