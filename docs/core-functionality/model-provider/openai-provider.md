@@ -88,9 +88,18 @@ Settings) · `@agents` + `@playground` (Test 2 executes an agent).
    `input-chat-playground`.
 5. Send `Repeat this token exactly and nothing else: OPENAI-<sentinel>`; wait for
    the agent to finish (`waitForAgentToFinish`).
-6. **Validation:** the last `div-chat-message` (AI bubble) **contains**
-   `OPENAI-<sentinel>` — the configured OpenAI provider, on a selected GPT model,
-   executed the flow to produce this run's token (bullet §7.2.3).
+6. **Validation (two-stage):** first gate on the **persisted** reply (monitor
+   API — the token is unique per run and appears in both the user prompt and the
+   echoed reply, so it keys the session lookup and is the content assert)
+   **containing** `OPENAI-<sentinel>` — a race-free completion signal, because
+   the live bubble shows the empty placeholder ("Message empty.") while the model
+   streams and `waitForAgentToFinish` can return before the final text lands (the
+   #634 flaky symptom). **Then**, with the run confirmed complete, re-assert the
+   live bubble also echoes the token — keeping end-to-end UI coverage (a bubble
+   stuck on "Message empty." while the reply persisted is a real frontend bug and
+   must still fail) without the stream race. This proves the configured OpenAI
+   provider, on a selected GPT model, executed the flow to produce this run's
+   token (bullet §7.2.3).
 
 ---
 

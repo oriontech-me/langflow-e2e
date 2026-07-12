@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import type { Page } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage, SimpleAgentTemplatePage } from "../../../../pages";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
@@ -83,6 +83,52 @@ async function waitForAgentToFinish(page: Page): Promise<void> {
   }
 }
 
+// Assert the echoed sentinel on the PERSISTED reply (monitor API), NOT the live
+// playground bubble. The bubble renders the empty placeholder ("Message empty.",
+// the frontend's EMPTY_OUTPUT_SEND_MESSAGE) while the model is streaming, and
+// `waitForAgentToFinish` can return before the final text lands — so reading the
+// live bubble races the stream, the #634 flaky "Message empty." symptom (no
+// backend 5xx; monitor state=complete — a streaming/empty-turn artifact, not a
+// product error). The token is unique per run and appears in BOTH the user
+// prompt and the expected reply, so it keys the session lookup and is the
+// content assert. A genuinely empty final turn (rare, model-side, #634) fails
+// here rather than passing on the placeholder.
+async function expectReplyContainsToken(
+  request: APIRequestContext,
+  token: string,
+): Promise<void> {
+  const bearer = await getAuthToken(request);
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get("/api/v1/monitor/messages", {
+          headers: { Authorization: bearer },
+        });
+        if (res.status() !== 200) return `GET monitor -> ${res.status()}`;
+        const messages = await res.json();
+        if (!Array.isArray(messages)) return "monitor payload not a list";
+
+        const userMsg = messages.find(
+          (m: any) => m.sender !== "Machine" && (m.text ?? "").includes(token),
+        );
+        if (!userMsg) return "user message with token not persisted yet";
+
+        const replies = messages
+          .filter((m: any) => m.sender === "Machine" && m.session_id === userMsg.session_id)
+          .map((m: any) => ((m.text as string) ?? "").trim());
+        if (replies.length === 0) return "AI reply for the session not persisted yet";
+        if (replies.every((t) => t === ""))
+          return "AI reply persisted but still empty (run not finished / empty final turn)";
+
+        return replies.some((t) => t.includes(token))
+          ? "reply-contains-token"
+          : `reply did not echo the token: ${JSON.stringify(replies.map((t) => t.slice(0, 80)))}`;
+      },
+      { timeout: 60000 },
+    )
+    .toBe("reply-contains-token");
+}
+
 // Serial mode + --workers=1 keeps the shared instance state deterministic
 // (agent-family convention — named template loads collide under parallelism).
 test.describe.configure({ mode: "serial" });
@@ -146,7 +192,7 @@ test.describe("OpenAI Provider", () => {
   test(
     "configured OpenAI selects a GPT model in the Agent and executes the flow",
     { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
-    async ({ page }) => {
+    async ({ page, request }) => {
       test.skip(
         !hasProviderEnvKeys(PROVIDER),
         `Missing env vars for provider "${PROVIDER}": ${missingProviderEnvKeys(PROVIDER).join(", ")}`,
@@ -199,6 +245,13 @@ test.describe("OpenAI Provider", () => {
 
         const aiMessage = page.getByTestId("div-chat-message").last();
         await expect(aiMessage).toBeVisible({ timeout: 30000 });
+        // Gate on the PERSISTED reply first — race-free completion signal; the
+        // live bubble shows the empty placeholder mid-stream (#634 race).
+        await expectReplyContainsToken(request, token);
+        // The run is now complete, so the user-visible bubble must ALSO echo the
+        // token. Re-asserting it here (after the gate, no stream race) keeps
+        // end-to-end UI coverage: a bubble stuck on "Message empty." while the
+        // reply persisted would be a real frontend bug and must still fail.
         expect(await aiMessage.innerText()).toContain(token);
       });
     },
