@@ -556,7 +556,9 @@ On a red scheduled `daily-stable.yml` run, the workflow does two things **automa
 1. Removes `@stable` from **every hard failure** (a test that failed all retries), regenerates `QA-CHECKLIST.md`, and commits it to `main` with `[skip ci]` — no PR, no approval. If the mass-failure guard trips (too many at once → treated as infra), nothing is removed.
 2. Opens a single **triage issue** for the run, listing what was removed.
 
-The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. The analyst fans it out into one **dedicated issue per problem**; each tag is restored, per problem, once resolved. The human steps are the fan-out, the manual removal for recurrent flakes, and the restoration.
+The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. Its only deliverable is the **triage itself**: read the run, route each occurrence into a dedicated issue (or enrich an existing one), and then **close the triage issue**. It never carries an investigation or a fix. When the mass-failure guard trips (see below), the triage gains one extra deliverable: **decide whether the day was environmental** and, if not, **manually remove `@stable`** from the real hard failures. The human steps are the fan-out, the manual removal for recurrent flakes, and the restoration.
+
+The runbook — order, dedup, analysis depth, and how the follow-up issue must be written — is in **[Triage protocol — working the triage issue](#triage-protocol--working-the-triage-issue)** below.
 
 ```
 daily-stable.yml run goes red
@@ -566,24 +568,62 @@ daily-stable.yml run goes red
       │     (unless the mass-failure guard trips → nothing removed)
       │   • one TRIAGE ISSUE opened for the run, listing what was removed
       ▼
-Analyst works the triage issue (dispatcher):
+Analyst works the triage issue (dispatcher) — order: HARD FAILURES → FLAKES → SKIPS:
       │
       ├─► per HARD FAILURE  (tag already auto-removed)
-      │        → open a DEDICATED issue, classify (criteria table below),
-      │          then fix the test or flag the regression upstream
+      │        → one DEDICATED issue per failure
+      │          (group failures that share a root cause into one issue)
       │
-      └─► per RECURRENT FLAKE  (same test flaky in 2 consecutive dailies,
+      ├─► per RECURRENT FLAKE  (same error_signature within a 30-day window,
       │        confirmed in reports/daily-history.jsonl)
       │        → open a DEDICATED issue AND remove @stable via PR (manual)
+      │
+      └─► per UNEXPECTED SKIP  (reason not already tracked)
+      │        → open a DEDICATED issue
+      ▼
+Before opening ANY issue: search for an OPEN issue on the same subject
+      │        → if one exists, ENRICH it instead of duplicating
       ▼
 Problem resolved → @stable RESTORED via PR; the dedicated issue is closed
 ```
 
-> **Mass-failure guard.** The threshold is the `max_auto_remove` input of the `auto-remove-stable` action (default `5`). Above it, the workflow assumes an environment-wide failure and removes nothing, so a bad infra day cannot strip `@stable` off the whole suite. When it trips, the triage issue says so and the tags are still in place — investigate the environment; there is nothing to restore.
+> **Mass-failure guard.** The threshold is the `max_auto_remove` input of the `auto-remove-stable` action (default `5`, so the guard trips at **6+** hard failures in a run). Above the threshold, the workflow assumes an environment-wide failure and removes nothing, so a bad infra day cannot strip `@stable` off the whole suite. When it trips, the triage issue says so and the tags are still in place — investigate the environment; if it turns out not to be environmental, remove `@stable` manually from the real hard failures. There is nothing to restore for tags never removed.
 
 > **Trade-off.** Auto-removal does not distinguish a product regression from a test bug before removing — a hard failure quarantines the test either way, and the classification happens afterwards on the dedicated issue. Accepted trade-off: a genuine regression stops being tracked by the stable suite until a human restores the tag, but the daily stops going red immediately.
 
-**Criteria for deciding "product broke" vs "test wrong" (for hard failures):**
+### Triage protocol — working the triage issue
+
+The triage is **dispatch, not solution**. Its analysis is **preliminary and descriptive**: it says *what happened*, it does not conclude *why*. The deep investigation always happens on the dedicated issues, so that we keep tight control over what gets analysed and where. Explicit beats implicit — every member and contributor triages the same way by following the steps below, in this order of severity.
+
+**1. Hard failures (first).**
+- Open one dedicated issue **per failure**.
+- **Group** two or more failures into a single issue when they share an **equal or related root cause** — a shared root cause is one problem.
+- The `@stable` tag was already auto-removed by the workflow; there is no manual removal at this step.
+
+**2. Flakes (second).** Consult `reports/daily-history.jsonl`.
+- Open an issue **only for a recurrent flake**. A first occurrence is **only noted** in the triage — the retry budget absorbs single-run noise.
+- **Recurrence window: 30 days.** The criterion is the **cause, not the count**: it is not enough that the test flaked 2+ times in the window — the occurrences must share the **same `error_signature`** (the cheap, descriptive proxy for "same cause" at triage time). Same signature within the window → recurrent → open a **dedicated issue and remove `@stable` via PR** (flake removal is always manual; the workflow never auto-removes flakes). *(30 days is a revisable convention, not an absolute.)*
+
+**3. Skips (third).**
+- Analyse the **reason** for each skip.
+- Open an issue **only for an unexpected skip**, or one whose reason is not yet tracked. An intentional/known skip already linked to an open issue is **just noted — no new issue**.
+
+**Before opening any issue — deduplicate.** Search for an **open issue on the same subject** first. Another issue may already be attacking the same problem; if so, **do not duplicate** — **enrich** the existing issue with the new information (run id, error signature, new occurrence).
+
+**Depth of the triage analysis — keep it shallow and descriptive.**
+- **Do not assume** the failure was caused by a test bug, a product regression, or the environment. Not even the environment — usually the easiest to spot — may be asserted without caution.
+- Environment signals (guard tripped, many unrelated tests failing together, a network/provider error in the signature) **may be noted descriptively**, as an observation — never as a verdict.
+- Advancing root-cause **leads** is welcome, as long as nothing closes the analysis. The definitive classification (product broke × test wrong) happens **on the dedicated issue**, not here.
+
+### Writing the dedicated (follow-up) issue
+
+The dedicated issue spun out of the triage must be **clear and agnostic**:
+
+- **Never assert** that the problem is the test, a product regression, or the environment.
+- State explicitly that **all paths must be investigated independently**.
+- **Burden of proof — suspect the product first.** The analyst who picks up the issue is directed to treat the **product as the prime suspect** at the first moment: investigate whether the test failure is in fact pointing at a regression. **A "test bug" explanation may be dismissed only after confirming the failure does not mask a regression.** Once the regression hypothesis is ruled out, proceed to the other paths (test, then environment). If the evidence already points clearly at upstream UI drift, record that — but the confirm-it-is-not-a-regression step remains mandatory.
+
+**Classifying "product broke" vs "test wrong" — on the dedicated issue, not at triage:**
 
 | Observation | Classification |
 |---|---|
@@ -592,13 +632,7 @@ Problem resolved → @stable RESTORED via PR; the dedicated issue is closed
 | Assertion fails but the UI works correctly in manual testing | Test wrong — fix assertion logic |
 | Assertion fails and manual testing confirms the same failure | Product broke — flag upstream |
 
-**Step 1 — Analyst (working the triage issue):**
-1. **Hard failures** — the tag is already auto-removed. For each one, open a **dedicated issue**, classify it with the table above, and either fix the test or flag the regression upstream.
-2. **Flakes** — check `reports/daily-history.jsonl`. If the same test is flaky in **2 consecutive dailies**, open a **dedicated issue** and remove `@stable` from it via PR (flake removal is manual — the workflow never auto-removes flakes). A first-time flake is only noted; the retry budget absorbs single-run noise.
-3. **Mass-failure guard tripped** — nothing was removed; investigate the environment first. The tags are still in place, so no restoration is owed.
-4. Once every problem is dispatched into its dedicated issue, the triage issue can be closed.
-
-**Step 2 — Restoration (upon fixing the problem):**
+**Restoration (upon fixing the problem):**
 1. Fix the test following the validation guide (all 5 steps), or confirm the Langflow regression is resolved.
 2. **Re-add the `@stable` tag** in the correction PR — restoration is always manual, for both hard failures and flakes.
 3. Reference the dedicated issue in the PR body; close it upon merge.
@@ -607,31 +641,26 @@ The spec doc is **not updated** during this cycle — the auto-removal commit, t
 
 ### Monitoring rules driven by run history
 
-Hard failures are now handled automatically (removed on the first red day — see the lifecycle above), so these history-driven rules are mostly about **flakes**, which are never auto-removed. Triage decisions should be informed by `reports/daily-history.jsonl` rather than by gut feel — the file makes recurrence visible. Before deciding whether to act on a flake, check the last few daily entries for the same test:
+Hard failures are now handled automatically (removed on the first red day — see the lifecycle above), so these history-driven rules are mostly about **flakes**, which are never auto-removed. Triage decisions should be informed by `reports/daily-history.jsonl` rather than by gut feel — the file makes recurrence visible. Before deciding whether to act on a flake, list every occurrence of the same test with its date and error signature (weekday dailies over 30 days are ≈22 runs):
 
 ```bash
 jq -r --arg t "<full test title>" \
-  '. as $row | (.failures + .flaky)[] | select(.test == $t) | "\($row.date)  \($row.workflow)  \(.error_signature // "flaky")"' \
-  reports/daily-history.jsonl | tail -4
+  '. as $row | (.failures + .flaky)[] | select(.test == $t) | "\($row.date)  \(.error_signature // "flaky")"' \
+  reports/daily-history.jsonl | tail -25
 ```
 
-The action depends on **what kind** of failure recurred and **how many** consecutive daily runs it appeared in:
+Then compare the signatures — the action depends on **what** recurred (same cause) and **whether** it recurred within the 30-day window:
 
 | Symptom in the latest daily run | History context | Action |
 |---|---|---|
-| Hard failure (all retries failed) | any | `@stable` was already auto-removed (or the mass-failure guard tripped and left it in place). No manual removal — classify on the issue and restore the tag when the test is fixed. |
-| Flake (passed on retry) | First occurrence | Note in the triage; **do not** open an issue yet. The retry budget absorbs single-run noise. |
-| Flake (recurrent) | 2nd consecutive daily | Open a **dedicated issue** (`bug` + `area:<...>`, cite both run ids) **and remove `@stable` via PR**. Flake removal is manual — the workflow never auto-removes flakes. Restore the tag once the flakiness is fixed. |
+| Hard failure (all retries failed) | any | `@stable` was already auto-removed (or the mass-failure guard tripped and left it in place). No manual removal — classify on the dedicated issue and restore the tag when the test is fixed. |
+| Flake (passed on retry) | No matching signature in the last 30 days | Note in the triage; **do not** open an issue yet. The retry budget absorbs single-run noise. |
+| Flake (recurrent) | **Same `error_signature`** seen before within 30 days | Open a **dedicated issue** (`bug` + `area:<...>`, cite the run ids) **and remove `@stable` via PR**. Flake removal is manual — the workflow never auto-removes flakes. Restore the tag once the flakiness is fixed. |
+| Flake with a **different** signature | Prior flake on the same test, but a different signature | Treat as a first occurrence of a **new cause** — note it; the raw count alone does not trigger an issue. |
 | Mix (hard-failed one day, flaky later) | 2+ days | The hard-fail day already auto-removed `@stable`; once restored, apply the flake rows above if the flakiness persists. |
 
-**Historical examples (issue #206, 2026-05-11) — these predate auto-removal; the hard-fail removal below is now automatic, the flake handling still applies:**
+**Why a 30-day window keyed on the signature, and not "2 consecutive runs":**
 
-- `Webhook component — flow is saved to database…` (line 60) — Hard fail, 2nd consecutive (first in 25441253323). → `@stable` removed in this PR; #180 remains open until upstream fixes the bundle.
-- `Memory Chatbot Regression › message history retains context within same session` (line 78) — Flake, first occurrence. → No action yet; if it flakes again in the next daily, open an issue.
-- `Playground Message Edit — hover reveals edit button…` (line 98) — Flake, first occurrence. → Same: monitor; act only on the second occurrence.
-
-**Why "consecutive" and not "in the last N runs":**
-
-Two consecutive failures indicate a sustained problem (regression that didn't self-heal). Two failures separated by a passing run are more likely transient (test flake, network blip). The history file is the source of truth: walk `tail` of the JSONL, do not rely on memory of past runs.
+A flake that appears every other day never trips a "2 consecutive dailies" rule, yet it is a real, sustained problem — a 30-day window catches it. Keying on the `error_signature` (not on the raw count) is what separates a sustained cause from two unrelated blips that happen to hit the same test: two flakes with **different** signatures are two different (probably transient) events, not one recurrence. The history file is the source of truth: read the signatures out of the JSONL, do not rely on memory of past runs.
 
 The history file is the *signal source*. The issue tracker remains the *workflow*. Do not skip opening issues just because the history shows a recurrence — issues carry the investigation and the fix; history only tells you when to open one.
