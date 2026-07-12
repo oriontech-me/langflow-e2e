@@ -645,7 +645,14 @@ test(
     await page.getByTestId("fit_view").click();
 
     await zoomOut(page, 3);
-    await page.getByTestId("canvas_controls_dropdown").click({ force: true });
+
+    // zoomOut() already toggles the canvas-controls menu closed. The previous
+    // extra click({ force: true }) here re-opened it, leaving the Radix zoom
+    // menu overlay on screen where it intercepted the mcp-server-dropdown click
+    // ("<html> intercepts pointer events"). Ensure the menu is fully closed
+    // before interacting with the MCP node.
+    await page.keyboard.press("Escape");
+    await expect(page.getByTestId("zoom_out")).toBeHidden();
 
     await openAddMcpServerModal(page);
 
