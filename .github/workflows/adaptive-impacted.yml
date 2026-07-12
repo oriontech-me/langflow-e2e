@@ -37,8 +37,8 @@ jobs:
       baseSha: ${{ steps.delta.outputs.baseSha }}
       isBootstrap: ${{ steps.delta.outputs.isBootstrap }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -70,13 +70,13 @@ jobs:
       specs: ${{ steps.impact.outputs.specs }}
       summary: ${{ steps.impact.outputs.summary }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
         with:
           repository: langflow-ai/langflow
           path: langflow-upstream
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -168,9 +168,9 @@ jobs:
           --health-start-period 90s
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "20"
           cache: "npm"
@@ -199,7 +199,7 @@ jobs:
           fi
 
       - name: Upload Playwright report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-report-adaptive-${{ github.run_id }}
@@ -207,7 +207,7 @@ jobs:
           retention-days: 14
 
       - name: Upload test results on failure
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: test-results-adaptive-${{ github.run_id }}
@@ -216,7 +216,7 @@ jobs:
 
       - name: Create issue on failure
         if: failure() && github.event_name == 'schedule'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const today = new Date().toISOString().split('T')[0];
