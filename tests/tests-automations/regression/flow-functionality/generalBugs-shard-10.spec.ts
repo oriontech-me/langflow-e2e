@@ -84,10 +84,9 @@ test(
     // await page.getByText("Close").last().click();
     await page.getByTestId("playground-close-button").click();
 
-    // Freeze the path feeding Chat Output so the entire response is cached. The
-    // freeze button runs FreezeAllVertices(stopNodeId=Chat Output), which caches
-    // the outputs of Chat Output and its upstream nodes — enough that a later
-    // prompt edit cannot change the re-run result.
+    // Freeze the path feeding Chat Output so the entire response is cached:
+    // freezing Chat Output caches its own output plus the outputs of its upstream
+    // nodes — enough that a later prompt edit cannot change the re-run result.
     await page.getByText("Chat Output", { exact: true }).last().click();
 
     // On the 1.11 nightly the node toolbar was re-laid-out: Freeze is now a
@@ -103,10 +102,11 @@ test(
 
     // `.border-ring-frozen` marks the SELECTED frozen node only (NodeStatus:
     // `selected ? "border-ring-frozen" : "border-frozen"`), so the count is 1
-    // even if freezing cascades up the path.
-    await page.waitForSelector(".border-ring-frozen", { timeout: 5000 });
-
-    await expect(page.locator(".border-ring-frozen")).toHaveCount(1);
+    // even if freezing cascades up the path. A single retrying assertion waits
+    // for the frozen ring to appear and pins the count in one step.
+    await expect(page.locator(".border-ring-frozen")).toHaveCount(1, {
+      timeout: 5000,
+    });
 
     await page.getByText("Prompt Template", { exact: true }).last().click();
 
