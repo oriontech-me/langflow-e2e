@@ -144,10 +144,11 @@ test.describe("Playground – Session Rename (B2)", () => {
           // 404s when no rows exist for {old} yet — on 404 the frontend keeps
           // the old name (toast only), so the renamed label never appears and
           // the assertion below times out. This is the #637 flake. Poll the
-          // SAME table the PATCH reads (GET /monitor/messages) until the new
-          // session's message is queryable, sequencing the rename against real
-          // persistence instead of widening a timeout. The new session's rows
-          // carry a session_id other than the flow id (the Default Session).
+          // SAME table the PATCH reads (GET /api/v1/monitor/messages) until the
+          // new session's message is queryable, sequencing the rename against
+          // real persistence instead of widening a timeout. The new session's
+          // rows carry a session_id other than the flow id (the Default
+          // Session).
           await expect
             .poll(
               async () => {

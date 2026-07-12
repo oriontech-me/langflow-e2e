@@ -9,7 +9,7 @@
 Verifies the session rename availability rule enforced by the Playground:
 
 ```
-canRenameSession = !isDefaultSession && hasMessages
+canRenameSession = canModifySession && hasMessages   // canModifySession === !isDefaultSession
 ```
 
 When `canRenameSession` is false the rename option is not rendered in the DOM at all (not just hidden). Three scenarios are covered:
@@ -91,4 +91,4 @@ When `canRenameSession` is false the rename option is not rendered in the DOM at
 ## Notes *(optional)*
 
 - Radix `SelectContent` is conditionally rendered — the more-menu must be opened before querying `rename-session-option`; `count()` is used instead of `isVisible()` to assert DOM absence rather than visibility.
-- **Rename-404 race (why Test 3 waits for persistence):** the rename option is enabled from the client message cache, which the build stream fills *before* the messages are committed to the DB. Sending a message and waiting only for the input to clear leaves a window where `PATCH /monitor/messages/session/{old}` runs before any row exists for `{old}` → 404 → the frontend silently keeps the old name and the "renamed label visible" assertion times out. This is the flake tracked in issue #637 (daily #629; recurring 2026-07-02 and 2026-07-10). The fix is not a wider timeout — it polls `GET /monitor/messages` (the same table the PATCH reads) so the rename is sequenced against real persistence, making the test deterministic. The endpoint's 404 itself is correct behavior; the underlying UI enabling rename ahead of the DB commit is a minor client-side robustness gap, handled gracefully (toast) and out of scope for this test.
+- **Rename-404 race (why Test 3 waits for persistence):** the rename option is enabled from the client message cache, which the build stream fills *before* the messages are committed to the DB. Sending a message and waiting only for the input to clear leaves a window where `PATCH /monitor/messages/session/{old}` runs before any row exists for `{old}` → 404 → the frontend silently keeps the old name and the "renamed label visible" assertion times out. This is the flake tracked in issue #637 (daily #629; recurring 2026-07-02 and 2026-07-10). The fix is not a wider timeout — it polls `GET /api/v1/monitor/messages` (the same table the PATCH reads) so the rename is sequenced against real persistence, making the test deterministic. The endpoint's 404 itself is correct behavior; the underlying UI enabling rename ahead of the DB commit is a minor client-side robustness gap, handled gracefully (toast) and out of scope for this test.
