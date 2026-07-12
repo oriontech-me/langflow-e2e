@@ -34,15 +34,32 @@ import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-
  * naming any tool: tool USE is instructed (a from-memory answer would flake
  * the positive half), tool CHOICE is the agent's — the behavior under test.
  * Search result content is never asserted (non-deterministic); the fetch
- * prompt additionally asserts httpbin.org/json's fixed "Sample Slide Show"
- * title reached the reply.
+ * prompt additionally asserts the URL endpoint's fixed "Sample Slide Show"
+ * title reached the reply (see FETCH_URL — httpbin.org by default, go-httpbin
+ * in the daily; both serve the identical /json slideshow).
  */
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
 }
 
-const FETCH_URL = "https://httpbin.org/json";
+// URL-tool fetch target. Defaults to the public httpbin.org, overridable via
+// ECHO_BASE_URL / HTTPBIN_BASE_URL. httpbin.org is chronically unreliable —
+// sustained 503s/timeouts hard-failed this test on the 2026-07-10 daily (#631),
+// and broke the API-request suite repeatedly (#383/#407/#462). The daily
+// workflow self-hosts a go-httpbin service and exports ECHO_BASE_URL to its
+// container IP (see daily-stable.yml + api-request-component-regression.spec.ts),
+// so CI fetches an in-network, httpbin-compatible endpoint instead of the flaky
+// public host. go-httpbin's /json serves the IDENTICAL "Sample Slide Show"
+// slideshow (httpbin/static/sample.json), so the deterministic-title assertion
+// below holds against either backend. The env-var names match the ones the daily
+// already exports, so no workflow change is needed to pick this up.
+const HTTPBIN_BASE = (
+  process.env.ECHO_BASE_URL ??
+  process.env.HTTPBIN_BASE_URL ??
+  "https://httpbin.org"
+).replace(/\/$/, "");
+const FETCH_URL = `${HTTPBIN_BASE}/json`;
 const URL_TOOL = "fetch_content";
 const SEARCH_TOOL = "perform_search";
 const EXPECTED_TITLE = /Sample Slide Show/i;
@@ -278,6 +295,72 @@ async function expectToolSelectionPersisted(
     .toBe("correct-tool-selected");
 }
 
+// Execution check via the persisted monitor messages (nonce-keyed), NOT the
+// live playground bubble. The bubble renders the empty placeholder
+// ("Message empty.", the frontend's EMPTY_OUTPUT_SEND_MESSAGE) while the agent is
+// mid-tool-execution, and a multi-tool run can take 40s+; asserting the live
+// bubble therefore races the stream and the run's own completion signal
+// (`waitForAgentToFinish` can return between tool phases) — the #631
+// "Message empty." failure mode. The persisted messages appear only once the run
+// completes, so polling them is both the completion gate AND a race-free assert.
+//
+// The observable is the `fetch_content` tool_use block's OUTPUT matching
+// `expectedOutput` — proving the tool actually fetched the real endpoint payload.
+// This is the sharp #631 signal: the root cause was httpbin unreachable from the
+// backend, so the tool returned an error/nothing, never the slideshow. Asserting
+// the tool OUTPUT, not the model's prose, is deliberate: the slideshow title is a
+// famous httpbin fixture a model can recite from memory, so a prose check could
+// false-pass even if Langflow dropped the tool output (the product-bug masking
+// #631's mandate warns against). Mirrors `agent-current-date-tool.spec.ts`
+// (assert the tool output, never prose). We deliberately do NOT also require a
+// non-empty final reply: a completed-but-empty final turn ("Message empty.") is a
+// rare, model-side behavior tracked separately as a flake in #634 — coupling it
+// here would re-import that flakiness into a test whose contract is tool
+// selection + execution, both fully proven by the selection assert + this one.
+async function expectFetchToolReturned(
+  request: APIRequestContext,
+  nonce: string,
+  toolName: string,
+  expectedOutput: RegExp,
+): Promise<void> {
+  const bearer = await getAuthToken(request);
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get("/api/v1/monitor/messages", {
+          headers: { Authorization: bearer },
+        });
+        if (res.status() !== 200) return `GET monitor -> ${res.status()}`;
+        const messages = await res.json();
+        if (!Array.isArray(messages)) return "monitor payload not a list";
+
+        const userMsg = messages.find(
+          (m: any) => m.sender !== "Machine" && (m.text ?? "").includes(nonce),
+        );
+        if (!userMsg) return "user message with nonce not persisted yet";
+
+        const aiMsgs = messages.filter(
+          (m: any) => m.sender === "Machine" && m.session_id === userMsg.session_id,
+        );
+        if (aiMsgs.length === 0) return "AI message for the session not persisted yet";
+
+        const toolOutputs = aiMsgs
+          .flatMap((m: any) => (m.content_blocks ?? []) as any[])
+          .flatMap((b: any) => (b.contents ?? []) as any[])
+          .filter((c: any) => c.type === "tool_use" && c.name === toolName)
+          .map((c: any) => JSON.stringify(c.output ?? ""));
+        if (toolOutputs.length === 0)
+          return `no ${toolName} tool_use block persisted yet`;
+
+        return toolOutputs.some((o) => expectedOutput.test(o))
+          ? "fetch-tool-returned-expected"
+          : `${toolName} output did not contain ${expectedOutput}: ${toolOutputs[0].slice(0, 200)}`;
+      },
+      { timeout: 90000 },
+    )
+    .toBe("fetch-tool-returned-expected");
+}
+
 const targets = getTestTargets();
 
 // Serial mode + --workers=1 keeps the shared instance state deterministic
@@ -291,7 +374,7 @@ for (const { label, options, skipReason } of targets) {
   test.describe(`Agent Multi-Tool Selection [${label}]`, () => {
     test(
       "agent selects the URL tool for a fetch prompt",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -314,10 +397,14 @@ for (const { label, options, skipReason } of targets) {
           await openPlaygroundAndSend(page, task);
         });
 
-        await test.step("execution: the reply carries httpbin's deterministic slideshow title", async () => {
+        await test.step("execution: fetch_content's output carries the deterministic slideshow title", async () => {
+          // A reply bubble renders in the Playground (interaction observable)…
           const bubble = page.getByTestId("div-chat-message").last();
           await expect(bubble).toBeVisible({ timeout: 30000 });
-          await expect(bubble).toContainText(EXPECTED_TITLE, { timeout: 30000 });
+          // …but assert the title on the PERSISTED fetch tool OUTPUT (monitor),
+          // not the live bubble (empty placeholder mid-run, #631) nor the model's
+          // prose (recitable from memory): the tool output proves the real fetch.
+          await expectFetchToolReturned(request, nonce, URL_TOOL, EXPECTED_TITLE);
         });
 
         await test.step("selection: the FIRST tool call is fetch_content", async () => {
