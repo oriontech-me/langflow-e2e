@@ -2,7 +2,6 @@ import type { Page } from "@playwright/test";
 import { BasePage } from "./BasePage";
 import { SidebarComponent } from "./SidebarComponent";
 import { addFlowToTestOnEmptyLangflow } from "../helpers/flows/add-flow-to-test-on-empty-langflow";
-import { cleanAllFlows as cleanAllFlowsHelper } from "../helpers/flows/clean-all-flows";
 
 export class MainPage extends BasePage {
   readonly sidebar: SidebarComponent;
@@ -72,10 +71,6 @@ export class MainPage extends BasePage {
     });
     await this.page.getByText("Delete").last().click();
     await this.page.getByText("Delete").last().click();
-  }
-
-  async cleanAllFlows() {
-    await cleanAllFlowsHelper(this.page);
   }
 
   // Folders / Projects
