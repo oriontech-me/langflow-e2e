@@ -2,9 +2,11 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { renameFlow } from "../../../../helpers/flows/rename-flow";
 
+// @stable removed by daily triage #704 — recurrent flake on healthy days
+// (07-03, 07-10; see reports/daily-history.jsonl). Restore once fixed — #727.
 test(
   "user should be able to edit flow name and see it reflected in the main page listing",
-  { tag: ["@release", "@workspace", "@regression", "@stable"] },
+  { tag: ["@release", "@workspace", "@regression"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
