@@ -42,7 +42,7 @@ The spec runs **2 independent tests** via Playwright's `request` fixture, sharin
 3. Assert response status is `200`.
 4. Read the response body as text and parse it as NDJSON (one JSON object per non-empty line).
 5. Assert the body carries the inline event stream — the parsed events include `vertices_sorted`, `build_start`, and a terminal `end` event — proving the entire build streamed within this single response.
-6. Assert the body contains **no `job_id`** (neither as a parsed `{ job_id }` shell nor the substring) — this is the direct path, not the two-step job path.
+6. Assert **no parsed event carries a `job_id`** — assert on the parsed event shape (not a raw substring, which could false-positive on an unrelated payload) — this is the direct path, not the two-step job path.
 7. Assert the sentinel appears in an `add_message` event's `text` — the Chat Output echoed the input, so the flow genuinely executed inside the direct response.
 
 **Test 2 — direct is distinct from the job_id path: `event_delivery=streaming` returns a `job_id`, direct does not**

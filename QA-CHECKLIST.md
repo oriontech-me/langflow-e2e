@@ -462,7 +462,7 @@
 - [x] Receive LLM response → exercised by all specs that send a message via ChatInput → ChatOutput echo flow
 - [-] Response streaming (SSE) → no dedicated spec; exercised implicitly by `playground-ux.spec.ts`
 - [-] Response polling → no dedicated spec
-- [x] Direct response → api/flows/api-build-direct-response.spec.ts
+- [x] Direct response → `api/flows/api-build-direct-response.spec.ts`
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
 - [x] Send empty message — send button stays enabled by design (only disabled while a file upload is in progress) → `playground/playground-empty-message-send.spec.ts`
 - [ ] Send message while response is in progress — should wait or queue
