@@ -336,7 +336,6 @@
 - [x] Connecting an external model in Agent drops the prior model selection (connection-mode isolation, prevents stale provider config) → `llm-agents/agent-model-connection-isolation.spec.ts`
 - [x] Flow with Agent saved and reopened → settings preserved → `core-functionality/llm-agents/agent-config-persistence.spec.ts`
 - [x] max_tokens truncates response as configured → `llm-agents/agent-max-tokens.spec.ts` (validated at token level via the Playground token-usage tooltip)
-- [ ] reasoning_effort field appears/disappears based on selected model → `agent-reasoning-effort.spec.ts` (**not implementable on 1.11**: no reasoning_effort field exists in the Agent UI, backend, or frontend — left with the model-bundle refactor; pending re-scope, see #484)
 
 #### 6.3 Memory and Context
 - [x] Memory Chatbot template loads with correct node and edge structure → `llm-agents/memory-history-regression.spec.ts`
@@ -362,7 +361,7 @@
 - [x] Input via direct field vs handle (ChatInput) — both work → `core-functionality/llm-agents/agent-input-sources.spec.ts`
 - [x] Empty response or model refusal — component does not crash → `core-functionality/llm-agents/agent-empty-refusal-response.spec.ts`
 - [x] Toggle add_current_date_tool works (enables/disables date tool) → `agent-current-date-tool.spec.ts`
-- [ ] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts` (**not implementable on 1.11**: the field now only toggles `ToolRetryMiddleware`, and component-tool failures are converted to content by the hardcoded `handle_tool_error=True` before the middleware can observe them — True/False proven behaviorally identical; the only live trigger (LLM-emitted malformed args) is non-deterministic; pending re-scope, see #496)
+- [~] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts` (**partially covered on 1.11**: the field is present and togglable, but True/False are behaviorally identical — the field now only toggles `ToolRetryMiddleware`, and component-tool failures are converted to content by the hardcoded `handle_tool_error=True` before the middleware can observe them; the only live trigger (LLM-emitted malformed args) is non-deterministic, so the semantic difference is not deterministically testable — re-scope tracked in #496)
 - [x] Image passed via input handle is processed correctly → `core-functionality/llm-agents/agent-multimodal-image-input.spec.ts`
 
 ---
@@ -412,8 +411,6 @@
 - [x] Configure and execute flow with Mistral → `model-provider/mistral-provider.spec.ts`
 
 #### 7.7 Model Parameters (Agent)
-- [ ] Temperature parameter (verify via network payload) → `agent-max-tokens.spec.ts` (**not implementable on 1.11**: the Agent no longer has a temperature parameter — left with the model-bundle refactor; bullet pending re-scope)
-- [ ] Reasoning effort parameter — conditional field based on model → `agent-reasoning-effort.spec.ts` (**not implementable on 1.11** — see #484)
 - [x] Maximum token count — response truncated as configured → `llm-agents/agent-max-tokens.spec.ts`
 - [x] Maximum agent iterations → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
 - [x] Use of custom `context_id` for memory isolation → `agent-context-id-isolation.spec.ts`
@@ -759,8 +756,8 @@
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
-| `core-functionality/llm-agents/` | 40 | 30 | 2 | 0 | 8 |
-| `core-functionality/model-provider/` | 33 | 31 | 0 | 0 | 2 |
+| `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
+| `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 16 | 7 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
@@ -770,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **454** | **268 (59%)** | **154 (34%)** | **7 (2%)** | **25 (6%)** |
+| **TOTAL** | **451** | **268 (59%)** | **154 (34%)** | **8 (2%)** | **21 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1124,8 +1121,8 @@
 | `core-components/` — Component Config | 18 | 1 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 2 | 8 |
-| `core-functionality/model-provider/` | 0 | 2 |
+| `core-functionality/llm-agents/` | 2 | 6 |
+| `core-functionality/model-provider/` | 0 | 0 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
