@@ -86,7 +86,14 @@ machinery as `agent-max-iterations.spec.ts` / `agent-tool-name-validation.spec.t
    version value it returns. (probe `<nonce>`)"* — the per-run nonce keys the
    monitor-API lookup to THIS run's session.
 4. Open the Playground, send, wait for the run to finish.
-5. **Continuation assert (UI):** the final AI bubble contains `TOOL_FAILED`.
+5. **Continuation assert (two-stage):** first gate on the **persisted** final
+   reply (monitor API, nonce-keyed session) containing `TOOL_FAILED` — a
+   race-free completion signal, because the live bubble shows the empty
+   placeholder ("Message empty.") mid-run and a run can outlast the assert window
+   (the #634 flaky symptom). **Then**, with the run confirmed complete,
+   re-assert the live bubble also contains `TOOL_FAILED` — this keeps end-to-end
+   UI coverage (a bubble stuck on "Message empty." while the reply persisted is a
+   real frontend bug and must still fail) without reintroducing the stream race.
 6. **Tool-error assert (API):** poll `GET /api/v1/monitor/messages` — find
    the user message containing the nonce, take its `session_id`, find that
    session's AI message, and assert its `fetch_content` `tool_use` block's

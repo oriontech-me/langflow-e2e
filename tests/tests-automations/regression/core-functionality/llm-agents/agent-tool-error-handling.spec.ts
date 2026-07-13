@@ -233,6 +233,54 @@ async function expectToolErrorPersisted(
     .toBe("tool-error-persisted");
 }
 
+// Assert the agent's continuation reply carries `expected` on the PERSISTED
+// message (monitor API, nonce-keyed session), NOT the live playground bubble.
+// The bubble renders the empty placeholder ("Message empty.", the frontend's
+// EMPTY_OUTPUT_SEND_MESSAGE) while the agent is mid-execution, and a run can
+// outlast the old 30s bubble window / return between phases from
+// `waitForAgentToFinish` — so reading the live bubble races the stream, which
+// was the #634 flaky "Message empty." symptom (verified: no backend 5xx, monitor
+// state=complete; the empty bubble is a streaming/empty-turn artifact, not a
+// product error). The persisted reply appears only once the run completes, so
+// polling it is a race-free completion gate. A genuinely empty final turn (rare,
+// model-side, tracked in #634) still fails here rather than silently passing.
+async function expectReplyContainsPersisted(
+  request: APIRequestContext,
+  nonce: string,
+  expected: RegExp,
+): Promise<void> {
+  const bearer = await getAuthToken(request);
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get("/api/v1/monitor/messages", {
+          headers: { Authorization: bearer },
+        });
+        if (res.status() !== 200) return `GET monitor -> ${res.status()}`;
+        const messages = await res.json();
+        if (!Array.isArray(messages)) return "monitor payload not a list";
+
+        const userMsg = messages.find(
+          (m: any) => m.sender !== "Machine" && (m.text ?? "").includes(nonce),
+        );
+        if (!userMsg) return "user message with nonce not persisted yet";
+
+        const replies = messages
+          .filter((m: any) => m.sender === "Machine" && m.session_id === userMsg.session_id)
+          .map((m: any) => ((m.text as string) ?? "").trim());
+        if (replies.length === 0) return "AI message for the session not persisted yet";
+        if (replies.every((t) => t === ""))
+          return "AI reply persisted but still empty (run not finished / empty final turn)";
+
+        return replies.some((t) => expected.test(t))
+          ? "reply-contains-expected"
+          : `reply did not match ${expected}: ${JSON.stringify(replies.map((t) => t.slice(0, 120)))}`;
+      },
+      { timeout: 60000 },
+    )
+    .toBe("reply-contains-expected");
+}
+
 const targets = getTestTargets();
 
 // SimpleAgentTemplatePage.load() deletes all flows before loading the template;
@@ -273,7 +321,15 @@ for (const { label, options, skipReason } of targets) {
         await test.step("agent continued: final reply carries the TOOL_FAILED sentinel", async () => {
           const bubble = page.getByTestId("div-chat-message").last();
           await expect(bubble).toBeVisible({ timeout: 30000 });
-          await expect(bubble).toContainText(CONTINUATION_SENTINEL, { timeout: 30000 });
+          // Gate on the PERSISTED reply first — race-free completion signal; the
+          // live bubble shows the empty placeholder mid-run (#634 "Message
+          // empty." race), so it must not be the primary observable.
+          await expectReplyContainsPersisted(request, nonce, CONTINUATION_SENTINEL);
+          // The run is now complete, so the user-visible bubble must ALSO carry
+          // the sentinel. Re-asserting it here (after the gate, so no stream race)
+          // keeps end-to-end UI coverage: a bubble stuck on "Message empty." while
+          // the reply persisted would be a real frontend bug and must still fail.
+          await expect(bubble).toContainText(CONTINUATION_SENTINEL, { timeout: 15000 });
         });
 
         await test.step("tool really errored: persisted tool output carries the SSRF rejection", async () => {
