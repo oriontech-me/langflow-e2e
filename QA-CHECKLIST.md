@@ -596,7 +596,7 @@
 - [-] Create blank flow
 - [-] Create flow from template
 - [x] Create flow by duplicating an existing one → `flow-functionality/duplicate-flow.spec.ts`
-- [-] Create flow via JSON file import
+- [x] Create flow via JSON file import → `flow-functionality/export-import-flow.spec.ts`
 
 #### 12.2 View and Edit Flow
 - [x] Rename flow via editor header → `flow-functionality/flow-rename-header.spec.ts`
