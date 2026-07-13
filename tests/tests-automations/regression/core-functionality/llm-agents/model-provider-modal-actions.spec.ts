@@ -23,9 +23,12 @@ async function openModelProviders(page: any): Promise<void> {
 }
 
 test.describe("Model Provider Modal Actions", () => {
+  // @stable removed by daily triage #704 — provider count assertion fails
+  // deterministically (hardcoded 8, live catalog now 9 on 1.11.0.dev41).
+  // Restore once reconciled — see #721.
   test(
     "page opens with its description and the available provider count",
-    { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
+    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await openModelProviders(page);
 
