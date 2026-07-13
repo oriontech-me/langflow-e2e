@@ -60,6 +60,26 @@ usefulness contract of multi-tool agents.
 the agent's toolset; `@agents` — agent tool-calling behavior; `@playground` —
 the run and the reply observable live in the Playground.
 
+**@stable removed then restored (#631).** On the 2026-07-10 daily the fetch test
+hard-failed because `httpbin.org` returned sustained 503s/timeouts — the tool
+executed and Langflow surfaced the upstream error correctly (no product bug), but
+the deterministic-title assert cannot pass when the third-party endpoint is down.
+The daily's `auto-remove-stable` stripped `@stable` from the fetch test only.
+Root cause (verified live on `1.11.0.dev38`): httpbin.org was reachable only
+~1 in 3 attempts *from the Langflow container's network*, so the `fetch_content`
+tool hung/timed out and the run ended with an empty reply (the "Message empty."
+placeholder) — the same symptom as #634, but here driven by endpoint
+unavailability, not a UI-only race. Two-part fix: (1) route the fetch through
+the daily's self-hosted go-httpbin via `ECHO_BASE_URL` (see External
+dependencies); (2) assert the deterministic title on the **persisted
+`fetch_content` tool output** (monitor API) instead of the live bubble (which
+shows the empty placeholder mid-run) or the model's prose (recitable from
+memory) — the tool output proves the real fetch and fails when the endpoint is
+unreachable. The completed-but-empty final turn is left to #634 (not asserted
+here). Validated on `1.11.0.dev38`: clean `--retries=0` runs via go-httpbin on
+`gpt-4o-mini` + force-fail M2. Then `@stable` restored. The search test was
+unaffected (never depended on httpbin).
+
 ---
 
 ## Preconditions *(optional)*
@@ -94,11 +114,25 @@ describe with two tests:
    finish (Stop button hidden).
 5. **Selection assert (API):** poll `GET /api/v1/monitor/messages` — find the
    user message with the nonce, take its `session_id`, find the session's AI
-   message; its `tool_use` blocks must include `fetch_content` and must NOT
-   include `perform_search`.
-6. **Execution assert (UI):** the final AI bubble (`div-chat-message`)
-   contains `Sample Slide Show` — the deterministic title served by
-   httpbin.org/json (proves the tool ran and its output reached the answer).
+   message; its **first** `tool_use` block must be `fetch_content` (first call is
+   the selection decision; extra follow-up calls are tolerated — see the
+   first-call note above).
+6. **Execution assert:** a reply bubble renders in the Playground
+   (`div-chat-message` visible), and — asserted on the **persisted** run (monitor
+   API, same nonce-keyed session lookup as step 5) — the `fetch_content`
+   `tool_use` block's **OUTPUT** contains `Sample Slide Show`, the deterministic
+   title served by the `/json` endpoint. This proves the tool actually fetched
+   the real payload (the #631 root cause was the endpoint unreachable from the
+   backend → the tool returned an error/nothing, never the slideshow). Two
+   deliberate choices: (a) assert the persisted tool output, **not** the live
+   bubble, which shows the empty placeholder ("Message empty.") mid-run and races
+   the stream (#631); (b) assert the tool **OUTPUT**, **not** the model's prose —
+   the slideshow title is a famous httpbin fixture a model can recite from
+   memory, so a prose check could false-pass even if the fetch failed. A
+   completed-but-empty final reply ("Message empty.") is NOT asserted here: it is
+   a rare model-side behavior tracked as a flake in #634, and this test's
+   contract (tool selection + execution) is fully proven by step 5 + this output
+   assert without coupling to it.
 7. No `allowFlowErrors` — any flow error fails the test via the fixture.
 
 **Test 2 — search prompt selects the Web Search tool (§6.4)**
@@ -108,8 +142,8 @@ describe with two tests:
    framework and summarize one headline. (probe `<nonce>`)"*.
 4. Open the Playground, send, wait for the run to finish.
 5. **Selection assert (API):** same nonce-keyed monitor lookup; the AI
-   message's `tool_use` blocks must include `perform_search` and must NOT
-   include `fetch_content`.
+   message's **first** `tool_use` block must be `perform_search` (first-call
+   design; extra follow-up calls tolerated).
 6. **Execution assert (UI):** the final AI bubble is visible and non-empty
    (search result content is inherently non-deterministic — the selection
    assert in step 5 is the concrete observable; see false-positive notes).
@@ -122,8 +156,10 @@ describe with two tests:
 Per prompt, the **first** `tool_use` block persisted for the run's
 nonce-keyed session names the expected tool (`fetch_content` for the fetch
 prompt, `perform_search` for the search prompt) — plus, for the fetch
-prompt, the reply contains the endpoint's deterministic `Sample Slide Show`
-title. First-call is the distinctive observable: a wrong-tool run fails on
+prompt, the `fetch_content` tool_use block's **output** contains the
+endpoint's deterministic `Sample Slide Show` title (asserted on the tool
+output, not the model prose, so a from-memory recitation cannot mask a failed
+fetch). First-call is the distinctive observable: a wrong-tool run fails on
 its very first block even when the model salvages a correct-looking answer
 later; extra follow-up calls (provider-side style drift) do not pass a
 wrong first choice.
@@ -149,8 +185,11 @@ wrong first choice.
   produces no flow error, so the test still measures what it claims.
 - **Force-failure checks** (CONTRIBUTING §2): M1 — expect the sibling tool
   as first call in test 1 ⇒ selection assert must fail; M2 — assert an
-  impossible title (e.g. `Sample Slide Show XYZ`) ⇒ execution assert must
-  fail; M3 — same first-call swap in test 2 ⇒ must fail.
+  impossible title (e.g. `Sample Slide Show XYZ`) ⇒ the `fetch_content`
+  tool-output execution assert must fail (verified against go-httpbin: the assert
+  surfaced the real tool output containing *"title": "Sample Slide Show"* and
+  failed the impossible pattern); M3 — same first-call swap in test 2 ⇒ must
+  fail.
 
 ---
 
@@ -169,8 +208,17 @@ wrong first choice.
 
 - **LLM provider API** (per `models.json` target): one completion with one
   tool round-trip per test.
-- **httpbin.org** (test 1) — repo-standard deterministic HTTP endpoint
-  (`/json` → fixed `Sample Slide Show` payload).
+- **URL-tool fetch endpoint** (test 1) — `${ECHO_BASE_URL}/json`, defaulting to
+  `https://httpbin.org/json` (fixed `Sample Slide Show` payload). httpbin.org is
+  chronically unreliable (sustained 503s/timeouts hard-failed this test on the
+  2026-07-10 daily — #631), so the daily workflow self-hosts a go-httpbin service
+  and exports `ECHO_BASE_URL` to its container IP; go-httpbin's `/json` serves the
+  identical `Sample Slide Show` slideshow, keeping the content assert deterministic
+  while removing the third-party-availability dependency in CI. The env-var names
+  (`ECHO_BASE_URL` / `HTTPBIN_BASE_URL`) match the ones `daily-stable.yml` already
+  exports — no workflow change was needed. **Note the endpoint runs the fetch from
+  Langflow's backend, so a private-IP override must be in `LANGFLOW_SSRF_ALLOWED_HOSTS`
+  (the daily already allows the RFC-1918 CIDRs).**
 - **Web search backend** (test 2) — the `UnifiedWebSearch` component's live
   search; only tool *selection* is asserted, never result content.
 - `tests/helpers/provider-setup/data/models.json` + `providers.json`
