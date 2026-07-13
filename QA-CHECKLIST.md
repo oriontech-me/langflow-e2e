@@ -443,7 +443,7 @@
 - [-] Outdated component notification
 
 #### 8.3 User State
-- [-] Track user progress
+- [x] Track user progress → `core-functionality/project-management/user-progress-track.spec.ts`
 - [-] User flow state cleanup
 
 #### 8.4 Error Handling and Edge Cases
