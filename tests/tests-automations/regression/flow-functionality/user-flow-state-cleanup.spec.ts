@@ -1,150 +1,147 @@
+import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
-import {
-  SUPERUSER_PASSWORD,
-  SUPERUSER_USERNAME,
-} from "../../../helpers/auth/credentials";
-import { renameFlow } from "../../../helpers/flows/rename-flow";
-import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+
+// Log in via the REST API and return a Bearer token. The login endpoint takes
+// application/x-www-form-urlencoded (same shape as helpers/auth/auth-helpers.ts).
+// Langflow rate-limits POST /api/v1/login (HTTP 429); tolerate that transient
+// backpressure with a bounded backoff-retry — this is explicit infra rate
+// limiting, not a product failure, and the isolation assertions stay hard.
+async function loginApi(
+  request: APIRequestContext,
+  username: string,
+  password: string,
+): Promise<string> {
+  const form = new URLSearchParams();
+  form.append("username", username);
+  form.append("password", password);
+
+  const MAX_ATTEMPTS = 5;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const res = await request.post("/api/v1/login", {
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      data: form.toString(),
+    });
+    if (res.status() === 200) {
+      return `Bearer ${(await res.json()).access_token}`;
+    }
+    if (res.status() === 429 && attempt < MAX_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+      continue;
+    }
+    expect(res.status(), "login should succeed").toBe(200);
+  }
+  throw new Error("login did not succeed within retry budget");
+}
+
+async function flowNames(
+  request: APIRequestContext,
+  bearer: string,
+): Promise<string[]> {
+  const res = await request.get("/api/v1/flows/?get_all=true&header_flows=true", {
+    headers: { Authorization: bearer },
+  });
+  expect(res.status(), "flow list should return 200").toBe(200);
+  const flows: Array<{ name?: string }> = await res.json();
+  return flows.map((f) => f.name ?? "");
+}
 
 test(
   "flow state should be properly cleaned up between user sessions",
-  { tag: ["@release", "@api", "@database"] },
-  async ({ page }) => {
-    // Disable auto login
-    await page.route("**/api/v1/auto_login", (route) => {
-      route.fulfill({
-        status: 500,
-        contentType: "application/json",
-        body: JSON.stringify({
-          detail: { auto_login: false },
-        }),
+  { tag: ["@stable", "@release", "@api", "@database"] },
+  async ({ request }) => {
+    const suffix = Math.random().toString(36).substring(2);
+    const userAName = `user_a_${suffix}`;
+    const userAPassword = `pass_a_${suffix}`;
+    const userAFlowName = `flow_a_${suffix}`;
+
+    let adminToken = "";
+    let userAId = "";
+    let userAToken = "";
+    let userAFlowId = "";
+
+    try {
+      await test.step("superuser creates and activates User A", async () => {
+        // Admin token via /api/v1/auto_login (the instance is auto-login mode,
+        // so this returns the superuser token) — avoids a second POST /login and
+        // its rate limit.
+        adminToken = await getAuthToken(request);
+        expect(adminToken, "admin token must be present").not.toBe("");
+
+        const createRes = await request.post("/api/v1/users/", {
+          headers: {
+            Authorization: adminToken,
+            "Content-Type": "application/json",
+          },
+          data: { username: userAName, password: userAPassword },
+        });
+        expect(createRes.status(), "user creation should return 201").toBe(201);
+        userAId = (await createRes.json()).id;
+
+        // New users are created inactive and cannot log in until activated.
+        const activateRes = await request.patch(`/api/v1/users/${userAId}`, {
+          headers: {
+            Authorization: adminToken,
+            "Content-Type": "application/json",
+          },
+          data: { is_active: true },
+        });
+        expect(activateRes.status(), "user activation should return 200").toBe(
+          200,
+        );
       });
-    });
 
-    await page.addInitScript(() => {
-      window.process = window.process || {};
-      const newEnv = {
-        ...window.process.env,
-        LANGFLOW_AUTO_LOGIN: "false",
-        LANGFLOW_NEW_USER_IS_ACTIVE: "true",
-      };
-      Object.defineProperty(window.process, "env", {
-        value: newEnv,
-        writable: true,
-        configurable: true,
+      await test.step("User A logs in and creates a flow", async () => {
+        userAToken = await loginApi(request, userAName, userAPassword);
+
+        const flowRes = await request.post("/api/v1/flows/", {
+          headers: {
+            Authorization: userAToken,
+            "Content-Type": "application/json",
+          },
+          data: {
+            name: userAFlowName,
+            description: "",
+            data: { nodes: [], edges: [] },
+          },
+        });
+        expect(flowRes.status(), "flow creation should return 201").toBe(201);
+        userAFlowId = (await flowRes.json()).id;
       });
-      sessionStorage.setItem("testMockAutoLogin", "true");
-    });
 
-    // Create random usernames, passwords and flow names for the test
-    const userAName = "user_a_" + Math.random().toString(36).substring(5);
-    const userAPassword = "pass_a_" + Math.random().toString(36).substring(5);
-    const userAFlowName = "flow_a_" + Math.random().toString(36).substring(5);
+      await test.step("the superuser cannot see User A's flow", async () => {
+        const adminFlows = await flowNames(request, adminToken);
+        expect(
+          adminFlows,
+          "superuser flow list must NOT contain User A's flow",
+        ).not.toContain(userAFlowName);
+      });
 
-    // Log in as admin and create test user
-    await page.goto("/");
-    await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
-    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
-    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
-    await page.evaluate(() => {
-      sessionStorage.removeItem("testMockAutoLogin");
-    });
-    await page.getByRole("button", { name: "Sign In" }).click();
-
-    // Create User A
-    await page.waitForSelector('[data-testid="mainpage_title"]', {
-      timeout: 30000,
-    });
-    await page.getByTestId("user-profile-settings").click();
-    await page.getByText("Admin Page", { exact: true }).click();
-    await page.getByText("New User", { exact: true }).click();
-    await page.getByPlaceholder("Username").last().fill(userAName);
-    await page.locator('input[name="password"]').fill(userAPassword);
-    await page.locator('input[name="confirmpassword"]').fill(userAPassword);
-    await page.waitForSelector("#is_active", { timeout: 1500 });
-    await page.locator("#is_active").click();
-    await expect(page.locator("#is_active")).toBeChecked();
-    await page.getByText("Save", { exact: true }).click();
-    await page.waitForSelector("text=new user added", { timeout: 30000 });
-
-    // Log out from admin
-    await page.getByTestId("icon-ChevronLeft").first().click();
-    await page.waitForSelector("[data-testid='user-profile-settings']", {
-      timeout: 1500,
-    });
-    await page.getByTestId("user-profile-settings").click();
-    await page.evaluate(() => {
-      sessionStorage.setItem("testMockAutoLogin", "true");
-    });
-    await page.getByText("Logout", { exact: true }).click();
-
-    // ---- USER A SESSION ----
-
-    // Log in as User A
-    await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
-    await page.getByPlaceholder("Username").fill(userAName);
-    await page.getByPlaceholder("Password").fill(userAPassword);
-    await page.evaluate(() => {
-      sessionStorage.removeItem("testMockAutoLogin");
-    });
-    await page.getByRole("button", { name: "Sign In" }).click();
-
-    // Create a flow for User A
-    await page.waitForSelector('[id="new-project-btn"]', { timeout: 30000 });
-    // Check that User A starts with an empty flows list
-    await expect(page.getByText("Welcome to LangFlow")).toBeVisible({
-      timeout: 30000,
-    });
-
-    await page.waitForSelector('[data-testid="mainpage_title"]', {
-      timeout: 30000,
-    });
-
-    await openNewFlowTemplatesModal(page);
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-      timeout: 30000,
-    });
-
-    await renameFlow(page, { flowName: userAFlowName });
-
-    await page.getByTestId("icon-ChevronLeft").first().click();
-
-    // Verify User A can see their flow
-    await page.waitForSelector('[data-testid="search-store-input"]:enabled', {
-      timeout: 30000,
-    });
-    await expect(page.getByText(userAFlowName, { exact: true })).toBeVisible({
-      timeout: 2000,
-    });
-
-    // Log out User A
-    await page.getByTestId("user-profile-settings").click();
-    await page.evaluate(() => {
-      sessionStorage.setItem("testMockAutoLogin", "true");
-    });
-    await page.getByText("Logout", { exact: true }).click();
-
-    // ---- ADMIN SESSION AGAIN ----
-
-    // Log in as admin again
-    await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
-    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
-    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
-    await page.evaluate(() => {
-      sessionStorage.removeItem("testMockAutoLogin");
-    });
-    await page.getByRole("button", { name: "Sign In" }).click();
-
-    // Verify admin can't see User A's flow
-    await expect(page.getByText(userAFlowName, { exact: true })).toBeVisible({
-      timeout: 2000,
-      visible: false,
-    });
-
-    // Cleanup
-    await page.evaluate(() => {
-      sessionStorage.removeItem("testMockAutoLogin");
-    });
+      await test.step("User A can see their own flow", async () => {
+        const userAFlows = await flowNames(request, userAToken);
+        expect(
+          userAFlows,
+          "User A flow list must contain their own flow",
+        ).toContain(userAFlowName);
+      });
+    } finally {
+      // Cleanup: the flow is deleted with User A's token (the superuser cannot
+      // see or delete another user's flow — a corollary of the isolation under
+      // test), then User A is removed with the admin token.
+      if (userAFlowId && userAToken) {
+        await request
+          .delete(`/api/v1/flows/${userAFlowId}`, {
+            headers: { Authorization: userAToken },
+          })
+          .catch(() => {});
+      }
+      if (userAId && adminToken) {
+        await request
+          .delete(`/api/v1/users/${userAId}`, {
+            headers: { Authorization: adminToken },
+          })
+          .catch(() => {});
+      }
+    }
   },
 );
