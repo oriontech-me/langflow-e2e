@@ -41,21 +41,21 @@ and the per-wave convergence target.** Everything else is a pointer.
 
 > Snapshot — refresh from `QA-CHECKLIST.md` when it changes. Do not hand-maintain.
 
-- **Coverage (validated `[x]` / total):** ~49% (222 / 450 checklist bullets)
-- **`@stable` `test()` calls:** ~240 across the suite
-- **Total `test()` calls:** ~500 in ~211 spec files
-- **Disabled tests:** 53 `test.skip` (32 files) + 1 `test.fixme` (`webhook-component-regression.spec.ts`)
-- **Spec-doc coverage:** ~39% of specs have a matching doc under `docs/`
+- **Coverage (validated `[x]` / total):** ~59% (268 / 454 checklist bullets)
+- **`@stable` `test()` calls:** ~298 across 111 spec files
+- **Total `test()` calls:** ~541 in ~222 spec files
+- **Disabled tests:** 54 `test.skip` (51 files) + 1 `test.fixme` (`webhook-component-regression.spec.ts`)
+- **Spec-doc coverage:** ~117 docs under `docs/`
 - **Langflow version last validated against:** `1.10.x`
 
 **Biggest structural gaps** (where coverage is near-zero relative to product value):
 
-- **RAG / knowledge ingestion** — full pipeline uncovered (0 validated of 8 bullets).
-- **Agent behavior backlog** — ~24 not-automated bullets, most with spec filenames already named.
+- **RAG / knowledge ingestion** — full pipeline uncovered (0 validated of 8 bullets). *(Wave 2 target.)*
 - **Templates** — 41 bullets, 2 validated; the product showcase is almost untested.
-- **MCP** (client + server) — files exist but almost entirely `[-]` (unvalidated).
-- **Inherited `ui-ux` canvas specs** — ~36 `[-]` carried from upstream, never validated.
-- **Spec-doc debt** — ~129 specs without a doc (worst in `flow-functionality` and `ui-ux`).
+- **MCP** (client + server) — files exist but almost entirely `[-]` (unvalidated). *(Wave 3 target.)*
+- **Inherited `ui-ux` canvas specs** — ~36 `[-]` carried from upstream, never validated. *(Wave 3 target.)*
+- **Component-configuration & flow-lifecycle** — large `[-]` backlogs awaiting `@stable`. *(Wave 2 target.)*
+- **Spec-doc debt** — ~100+ specs without a matching doc (worst in `flow-functionality` and `ui-ux`).
 
 ---
 
@@ -87,23 +87,23 @@ and the per-wave convergence target.** Everything else is a pointer.
 
 ## The full horizon — how many waves total?
 
-`QA-CHECKLIST.md` holds **228 non-validated bullets** (50 `[ ]` to create, 171 `[-]`
+`QA-CHECKLIST.md` holds **186 non-validated bullets** (25 `[ ]` to create, 154 `[-]`
 to validate, 7 `[~]`/`[!]`). That backlog is the fuel for every wave. At 50–60 bullets
-per wave, three dated waves absorb the ~169 bullets that are **decided and ready to
-schedule now**; the remaining ~59 stay in the pool because they need a scoping pass
-before they can become concrete wave items.
+per wave, the two remaining dated waves (2–3) absorb the ~116 bullets that are
+**decided and ready to schedule now**; the rest stay in the pool because they need a
+scoping pass before they can become concrete wave items.
 
 | Source | Nature | Bullets | Dated? |
 |---|---|---|---|
-| **Dated waves 1–3** | Blend of net-new specs (`[ ]`→`[x]`) and validation promotions (`[-]`→`[x]`), by product axis | ~169 | ✅ Waves 1–3 |
+| **Dated waves 2–3** | Blend of net-new specs (`[ ]`→`[x]`) and validation promotions (`[-]`→`[x]`), by product axis | ~116 | ✅ Waves 2–3 |
 | **Pool — needs scoping** | Templates (§11, 39 bullets — depth per category undecided) + auth & project-management tail (~20) | ~59 | ⬜ pool |
-| **Continuous** | Spec-doc backfill (~129 missing) — runs alongside, not a wave | — | ⬜ track |
+| **Continuous** | Spec-doc backfill (~100+ missing) — runs alongside, not a wave | — | ⬜ track |
 
-So the realistic horizon is **~4 dated waves (~2 months)** to converge the schedulable
-backlog, then templates once a scoping session turns §11 into a concrete list. Each
-dated wave leans on both creation and validation: early waves carry the deepest
-net-new bucket (agent backlog), later waves are validation-heavy (inherited canvas &
-MCP specs promoted to `@stable`).
+So the realistic horizon is **~2 more dated waves (~1 month)** to converge the
+schedulable backlog, then the pool tail (auth, project-management) and templates once
+a scoping session turns §11 into a concrete list. Wave 1 (agents & providers) is done;
+the remaining dated waves are validation-heavy (component, flow, canvas & MCP specs
+promoted to `@stable`).
 
 ---
 
@@ -125,29 +125,26 @@ MCP specs promoted to `@stable`).
 
 | Wave | Axis (focus) | Bullets (planned) | Sources in `QA-CHECKLIST.md` | Coverage target | Delivery date |
 |---|---|---|---|---|---|
-| **1** | Agents & providers | ~53 | llm-agents §6.2–6.5 & §7.7 (26) + model-provider §7.1–7.6 (27) | ~61% | 2026-07-14 |
-| **2** | Components, RAG, flows & observability | ~58 | core-components §2 (22) + knowledge-ingestion §5 (8) + flow-functionality §12 (15) + observability §8 (8) + playground §9 (5) | ~74% | 2026-07-28 |
+| ~~**1**~~ ✅ | Agents & providers | ~53 | llm-agents §6.2–6.5 & §7.7 (26) + model-provider §7.1–7.6 (27) | ~61% | ✅ 2026-07-14 (**59%**) |
+| **2** ◀ current | Components, RAG, flows & observability | ~58 | core-components §2 (22) + knowledge-ingestion §5 (8) + flow-functionality §12 (15) + observability §8 (8) + playground §9 (5) | ~74% | 2026-07-17 |
 | **3** | Canvas UI/UX & MCP | ~58 | ui-ux §15 (42) + mcp §13–14 (16) | ~87% | 2026-08-11 |
 
 > Bullet counts and `%` are planned targets (`~`), not contracts — see **Cadence & review**.
 > Each wave mixes creation (`[ ]`→`[x]`) and validation (`[-]`→`[x]`): Wave 1 is
 > creation-heavy (agent backlog), Wave 3 is validation-heavy (inherited specs).
 
-### Wave 1 — Agents & providers  ·  2026-06-30 → 2026-07-14
+### ✅ Wave 1 — Agents & providers  ·  2026-06-30 → 2026-07-14 · **DONE**
 
-The deepest decided **creation** bucket (agent backlog, all named in `llm-agents/`
-§6.2–6.5 & §7.7) paired with the **provider-management validation** backlog (§7,
-mostly `[-]` specs awaiting `@stable`). Together they fill a 50–60 band-wave.
+> Delivered 2026-07-14. Final coverage **~59% (268/454)** — target was ~61%; the gap
+> is denominator growth (450→454), as **Cadence & review** anticipates. All **25**
+> `roadmap`-labeled issues closed (GitHub milestone *Wave 1 — Agents & providers*, #482–#505).
+> Delivered the agent parameter/behavior/tool/memory creation backlog (§6.2–6.5 & §7.7,
+> incl. `agent-max-iterations` gated as expected-fail) + open-source providers
+> (Ollama/Groq/Mistral), and promoted the provider-management surface (§7.1–7.5:
+> collect-models, OpenAI/Anthropic/Google configure/select/execute, provider modal &
+> keys) to `@stable`.
 
-Requires:
-- **Create** (named-but-unwritten specs, §6.2–6.5 & §7.7): `agent-max-iterations` (**confirmed backend bug** — gate as expected-fail), `agent-max-tokens`, `agent-reasoning-effort`, `agent-n-messages-limit`, `agent-structured-output`, `agent-system-prompt`, `agent-config-persistence`, `agent-empty-refusal-response`, `agent-input-sources`, `agent-current-date-tool`, `agent-parse-error-behavior`, `agent-multimodal-image-input`, `agent-tool-error-handling`, `agent-multi-tool-selection`, `agent-tool-name-validation`, `agent-context-id-continuity`, `agent-context-id-isolation`; open-source providers `Ollama`/`Groq`/`Mistral` (§7.6).
-- **Validate** (`[-]` → `@stable`, §7.1–7.5): `collect-models` key/model collection & Save/Replace Configuration; OpenAI/Anthropic/Google configure + select + execute; "Manage Model Providers" modal, provider count, Language Model & Model Input components, add/remove provider key.
-
-Convergence: ~49% → **~61%**
-Exit: agent parameter/behavior/tool/memory surfaces validated under `@stable`; provider-management surface promoted.
-Review (2026-07-14): reassess delivered vs. target; promote the next pool item into a dated wave.
-
-### Wave 2 — Components, RAG, flows & observability  ·  2026-07-14 → 2026-07-28
+### Wave 2 — Components, RAG, flows & observability  ·  2026-07-13 → 2026-07-17 ◀ **CURRENT**
 
 Bundles the component-configuration backlog with the highest product-value gap
 (RAG, 0% covered) plus the flow-lifecycle and observability tails.
@@ -156,9 +153,9 @@ Requires:
 - **Create**: `knowledge-ingestion-management/` §5.1–5.2 — upload via component; file types (txt, pdf, json, py, wav); size limit; file management page; ingestion via Split Text + Embeddings; Vector Store index + query; full RAG pipeline (ingest → embed → store → retrieve → answer).
 - **Validate** (`[-]` → `@stable`): `core-components/` §2.1–2.4 — Parameters Panel field-type matrix (text, dropdown, textarea, code, float, int, toggle, key-pair, input list, table, slider, tab), Tool Mode grouping + edit-tools, component-update notification/action, full custom component; `flow-functionality/` §12 — create blank/from-template/import, edit name & description, auto-save, settings, lock/unlock, move-between-folders, save-as-template; `observability-monitoring/` §8.2–8.4 — execution-error & outdated notifications, user-state tracking, Python-error/network-error/timeout handling; `playground/` §9 — streaming/polling/direct-response paths.
 
-Convergence: ~61% → **~74%**
+Convergence: ~59% → **~74%**
 Exit: a RAG flow is validated end-to-end; the component-configuration, flow-lifecycle and observability surfaces are promoted.
-Review (2026-07-28): reassess delivered vs. target; promote the next pool item into a dated wave.
+Review (2026-07-17): reassess delivered vs. target; promote the next pool item into a dated wave.
 
 ### Wave 3 — Canvas UI/UX & MCP  ·  2026-07-28 → 2026-08-11
 
