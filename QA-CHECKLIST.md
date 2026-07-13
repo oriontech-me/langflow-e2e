@@ -296,7 +296,7 @@
 ### core-functionality/knowledge-ingestion-management/ — Upload, Processing and Vectors
 
 #### 5.1 File Upload
-- [-] Upload file via component
+- [x] Upload file via component → `core-functionality/knowledge-ingestion-management/upload-via-component.spec.ts`
 - [-] Upload files of different types (txt, pdf, json, py, wav)
 - [-] File size limit
 - [-] File management page
