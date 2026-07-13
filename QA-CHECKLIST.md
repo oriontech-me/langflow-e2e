@@ -449,7 +449,7 @@
 #### 8.4 Error Handling and Edge Cases
 - [-] Component that raises Python error
 - [ ] Flow with error displays appropriate message
-- [-] Network error during execution
+- [x] Network error during execution → ui-ux/execution-error-notification.spec.ts
 - [-] Execution timeout — clear message to user
 
 ---
