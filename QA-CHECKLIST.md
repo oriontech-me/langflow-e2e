@@ -448,7 +448,7 @@
 
 #### 8.4 Error Handling and Edge Cases
 - [-] Component that raises Python error
-- [ ] Flow with error displays appropriate message
+- [x] Flow with error displays appropriate message → `core-functionality/observability-monitoring/flow-error-message.spec.ts`
 - [-] Network error during execution
 - [-] Execution timeout — clear message to user
 
