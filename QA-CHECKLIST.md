@@ -602,7 +602,7 @@
 - [x] Rename flow via editor header → `flow-functionality/flow-rename-header.spec.ts`
 - [x] Rename flow and verify on main page listing → `core-functionality/project-management/edit-flow-name.spec.ts`
 - [-] Edit flow name and description
-- [-] Flow auto-save on changes
+- [x] Flow auto-save on changes → `flow-functionality/auto-save-off.spec.ts`
 - [x] Flow settings → `core-functionality/project-management/flowSettings.spec.ts`
 
 #### 12.3 Delete Flow
