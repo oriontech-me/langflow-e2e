@@ -84,8 +84,12 @@ tail -n 4 reports/weekly-history.jsonl \
 # Frequency of failure per test (all-time)
 jq -r '.failures[].test' reports/weekly-history.jsonl | sort | uniq -c | sort -rn
 
-# Tests that were flaky in 2+ runs (candidate for @stable removal under the monitoring rule)
-jq -r '.flaky[].test' reports/weekly-history.jsonl | sort | uniq -c | awk '$1 >= 2'
+# Recurrent flakes: the SAME (test, error_signature) seen 2+ times.
+# This is the monitoring rule (CONTRIBUTING.md): recurrence is same cause within a
+# 30-day window — grouping by signature, not by raw test-name count. Pipe through a
+# 30-day date filter first when you only care about the window.
+jq -r '.flaky[] | "\(.test) :: \(.error_signature // "flaky")"' reports/daily-history.jsonl \
+  | sort | uniq -c | awk '$1 >= 2'
 
 # Did a Langflow image upgrade correlate with new failures?
 jq -r '"\(.date)  \(.langflow_image)  failed=\(.totals.failed)"' reports/weekly-history.jsonl
