@@ -462,7 +462,7 @@
 - [x] Receive LLM response → exercised by all specs that send a message via ChatInput → ChatOutput echo flow
 - [-] Response streaming (SSE) → no dedicated spec; exercised implicitly by `playground-ux.spec.ts`
 - [-] Response polling → no dedicated spec
-- [-] Direct response → no dedicated spec
+- [x] Direct response → api/flows/api-build-direct-response.spec.ts
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
 - [x] Send empty message — send button stays enabled by design (only disabled while a file upload is in progress) → `playground/playground-empty-message-send.spec.ts`
 - [ ] Send message while response is in progress — should wait or queue
@@ -759,7 +759,7 @@
 | `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 16 | 7 | 0 | 1 |
-| `core-functionality/playground/` | 48 | 43 | 3 | 1 | 1 |
+| `core-functionality/playground/` | 48 | 44 | 2 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 13 | 13 | 2 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **268 (59%)** | **154 (34%)** | **8 (2%)** | **21 (5%)** |
+| **TOTAL** | **451** | **269 (60%)** | **153 (34%)** | **8 (2%)** | **21 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,13 +783,15 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 298 `test()` calls carrying the `@stable` tag, distributed across 111 spec
+> 300 `test()` calls carrying the `@stable` tag, distributed across 112 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
 
 #### api/flows/
+- [x] direct event_delivery streams build events inline (no job_id) and echoes the input → `api-build-direct-response.spec.ts`
+- [x] direct is distinct from the job_id path: streaming delivery returns a job_id → `api-build-direct-response.spec.ts`
 - [x] POST /api/v1/custom_component returns valid component structure → `api-custom-component-creation.spec.ts`
 - [x] POST /api/v1/custom_component with invalid code returns error → `api-custom-component-creation.spec.ts`
 - [x] GET /api/v1/all includes component types → `api-custom-component-creation.spec.ts`
@@ -1123,7 +1125,7 @@
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 6 |
 | `core-functionality/model-provider/` | 0 | 0 |
-| `core-functionality/playground/` | 3 | 1 |
+| `core-functionality/playground/` | 2 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
 | `ui-ux/` — Canvas | 36 | 0 |
