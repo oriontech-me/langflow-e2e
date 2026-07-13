@@ -603,7 +603,7 @@
 - [x] Rename flow and verify on main page listing → `core-functionality/project-management/edit-flow-name.spec.ts`
 - [-] Edit flow name and description
 - [-] Flow auto-save on changes
-- [-] Flow settings
+- [x] Flow settings → `core-functionality/project-management/flowSettings.spec.ts`
 
 #### 12.3 Delete Flow
 - [x] Delete individual flow → `ui-ux/actionsMainPage-shard-1.spec.ts`
