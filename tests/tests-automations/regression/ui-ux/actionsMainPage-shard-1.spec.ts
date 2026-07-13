@@ -1,8 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
 import { loadTemplateByName } from "../../../helpers/flows/load-template-by-name";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
@@ -83,103 +81,91 @@ test(
   },
 );
 
-test("search flows", { tag: ["@release", "@mainpage"] }, async ({ page }) => {
-  trackCreatedFlows(page);
-  await awaitBootstrapTest(page);
+test(
+  "search flows",
+  { tag: ["@release", "@mainpage", "@workspace"] },
+  async ({ page }) => {
+    trackCreatedFlows(page);
 
-  await page.getByTestId("side_nav_options_all-templates").click();
-  await page.getByRole("heading", { name: "Basic Prompting" }).click();
+    // Two flows with known ids — search assertions are anchored to
+    // flow-name-{id} cards, never to template display names (which other
+    // workers' flows can duplicate).
+    const basicId = await loadTemplateByName(page, "Basic Prompting");
+    const memoryId = await loadTemplateByName(page, "Memory Chatbot");
 
-  await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-    timeout: 100000,
-  });
+    await page.goto("/");
+    await expect(page.getByTestId(`flow-name-${basicId}`)).toBeVisible({
+      timeout: 15000,
+    });
+    await expect(page.getByTestId(`flow-name-${memoryId}`)).toBeVisible({
+      timeout: 15000,
+    });
 
-  await page.getByTestId("icon-ChevronLeft").first().click();
+    // Searching filters the grid down to matching names only. The search is
+    // debounced: assert the NEGATIVE first (it only passes once the filter
+    // actually applied — the non-matching card left the grid), and only
+    // then the positive, so it is evaluated against the POST-filter grid.
+    // Positive-first would resolve on the first poll, before the debounce,
+    // and pass even for a search that matches nothing (#706 FF finding).
+    await page.getByPlaceholder("Search flows").fill("Memory Chatbot");
+    await expect(page.getByTestId(`flow-name-${basicId}`)).toHaveCount(0, {
+      timeout: 10000,
+    });
+    await expect(page.getByTestId(`flow-name-${memoryId}`)).toBeVisible({
+      timeout: 10000,
+    });
 
-  await openNewFlowTemplatesModal(page);
-  await page.getByTestId("side_nav_options_all-templates").click();
-  await page.getByRole("heading", { name: "Memory Chatbot" }).click();
-
-  await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-    timeout: 100000,
-  });
-
-  await page.getByTestId("icon-ChevronLeft").first().click();
-  await openNewFlowTemplatesModal(page);
-  await page.getByTestId("side_nav_options_all-templates").click();
-  await page.getByRole("heading", { name: "Document Q&A" }).click();
-
-  await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-    timeout: 100000,
-  });
-
-  await page.getByTestId("icon-ChevronLeft").first().click();
-  await page.getByPlaceholder("Search flows").fill("Memory Chatbot");
-  await page.getByText("Memory Chatbot", { exact: true }).isVisible();
-  await page.getByText("Document Q&A", { exact: true }).isHidden();
-  await page.getByText("Basic Prompting", { exact: true }).isHidden();
-});
+    // Clearing the search restores the full grid.
+    await page.getByPlaceholder("Search flows").clear();
+    await expect(page.getByTestId(`flow-name-${basicId}`)).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(page.getByTestId(`flow-name-${memoryId}`)).toBeVisible({
+      timeout: 10000,
+    });
+  },
+);
 
 test(
   "search components",
-  { tag: ["@release", "@mainpage"] },
+  { tag: ["@release", "@components", "@ui-ux"] },
   async ({ page }) => {
     trackCreatedFlows(page);
-    await awaitBootstrapTest(page);
 
-    if (await page.getByTestId("components-btn").isVisible()) {
-      await page.getByTestId("side_nav_options_all-templates").click();
-      await page.getByRole("heading", { name: "Basic Prompting" }).click();
+    // The old home "components-btn" tab left the product on 1.11 (the
+    // pre-#706 test guarded its whole body on it and ran nothing). Saved
+    // components now surface in the CANVAS sidebar under the "saved"
+    // category — this is the live surface, scouted on 1.11.0.dev41.
+    await loadTemplateByName(page, "Basic Prompting");
+    await adjustScreenView(page, { numberOfZoomOut: 2 });
 
-      await adjustScreenView(page, { numberOfZoomOut: 2 });
+    // Save the Chat Input node as a component. The save itself is a
+    // POST /api/v1/flows (is_component) — the tracker above captures it,
+    // so afterEach also removes the saved component.
+    await page.getByText("Chat Input").first().click();
+    await page.getByTestId("more-options-modal").click();
+    await page.getByTestId("icon-SaveAll").first().click();
+    await page.keyboard.press("Escape");
 
-      await page.getByText("Chat Input").first().click();
-      await page.waitForSelector('[data-testid="more-options-modal"]', {
-        timeout: 1000,
-      });
-      await page.getByTestId("more-options-modal").click();
+    // Order matters (debounced search, same trap as the flows grid): run
+    // the NEGATIVE first — "Prompt" exists as a regular component (renders
+    // under "models & agents", scouted live) but was NOT saved, so once the
+    // filter settles the saved category must be gone. Only then search the
+    // saved name: the saved category reappearing is a 0→1 transition, so
+    // the positive assert necessarily observes the POST-filter sidebar.
+    const sidebarSearch = page.getByTestId("sidebar-search-input");
+    await sidebarSearch.fill("Prompt");
+    await expect(page.getByTestId("disclosure-saved")).toHaveCount(0, {
+      timeout: 10000,
+    });
+    await expect(page.getByTestId("disclosure-models & agents")).toBeVisible({
+      timeout: 10000,
+    });
 
-      await page.getByTestId("icon-SaveAll").first().click();
-      await page.keyboard.press("Escape");
-      await page
-        .getByText("Prompt", {
-          exact: true,
-        })
-        .first()
-        .click();
-      await page.getByTestId("more-options-modal").click();
-
-      await page.getByTestId("icon-SaveAll").first().click();
-      await page.keyboard.press("Escape");
-
-      await page
-        .getByText("OpenAI", {
-          exact: true,
-        })
-        .first()
-        .click();
-      await page.getByTestId("more-options-modal").click();
-
-      await page.getByTestId("icon-SaveAll").first().click();
-      await page.keyboard.press("Escape");
-
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 100000,
-      });
-
-      await page.getByTestId("icon-ChevronLeft").first().click();
-
-      const exitButton = await page.getByText("Exit", { exact: true }).count();
-
-      if (exitButton > 0) {
-        await page.getByText("Exit", { exact: true }).click();
-      }
-
-      await page.getByTestId("components-btn").click();
-      await page.getByPlaceholder("Search components").fill("Chat Input");
-      await page.getByText("Chat Input", { exact: true }).isVisible();
-      await page.getByText("Prompt", { exact: true }).isHidden();
-      await page.getByText("OpenAI", { exact: true }).isHidden();
-    }
+    // Searching the saved name surfaces the "saved" category again.
+    await sidebarSearch.fill("Chat Input");
+    await expect(page.getByTestId("disclosure-saved")).toBeVisible({
+      timeout: 10000,
+    });
   },
 );
