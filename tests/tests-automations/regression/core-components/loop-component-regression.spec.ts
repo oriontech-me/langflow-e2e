@@ -4,6 +4,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { setupLanguageModelOpenAI } from "../../../helpers/provider-setup/setup-language-model-openai";
 
@@ -288,23 +289,19 @@ function buildFlowBody(texts: string[]): {
 // Creates the flow server-side via POST /api/v1/flows/ using Playwright's
 // request context. Avoids the drag-drop upload race observed with
 // simulateDragAndDrop and aligns with the pattern used by the api/flows specs
-// (request context + getAuthToken). Returns the new flow id so callers can
-// target scoped cleanup or deep-link if needed.
+// (request context + getAuthToken). Delegates to the shared createFlow helper,
+// which retries the transient concurrent-creation 500 (#588). Returns the new
+// flow id so callers can target scoped cleanup or deep-link if needed.
 async function createFlowFromAsset(
   request: APIRequestContext,
   flow: Record<string, unknown>,
 ): Promise<string> {
   const authToken = await getAuthToken(request);
-  const res = await request.post("/api/v1/flows/", {
-    headers: authToken ? { Authorization: authToken } : {},
-    data: flow,
-  });
-  if (res.status() !== 201) {
-    const body = (await res.text()).slice(0, 200);
-    throw new Error(`POST /api/v1/flows/ failed: status ${res.status()}: ${body}`);
-  }
-  const body = (await res.json()) as { id: string };
-  return body.id;
+  return createFlow(
+    request,
+    flow,
+    authToken ? { headers: { Authorization: authToken } } : undefined,
+  );
 }
 
 async function runFlowAndReadDoneCount(

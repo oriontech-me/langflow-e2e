@@ -9,21 +9,54 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 // from the canvas URL: the URL id is a transient client-side handle on this
 // Langflow version and does not match the persisted flow (deleting it 404s and
 // silently leaks the real one). The POST response is the authoritative id.
+//
+// Retries the transient concurrent-creation 500 (#588): on a 5xx the click
+// created nothing and the app stays on the flows list (an error toast, no
+// navigation), so re-clicking blank-flow is a safe retry. A 4xx is
+// deterministic and surfaces immediately.
 async function openBlankFlow(page: Page): Promise<string> {
-  const flowCreation = page.waitForResponse(
-    (resp) =>
-      resp.url().includes("/api/v1/flows") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201,
-    { timeout: 30000 },
-  );
-  await page.getByTestId("blank-flow").click();
-  const created = (await (await flowCreation).json()) as { id?: string };
-  if (!created.id) {
-    throw new Error("blank-flow creation returned no flow id");
+  const MAX_ATTEMPTS = 3;
+  let lastStatus = 0;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const flowCreation = page.waitForResponse(
+      (resp) =>
+        resp.url().includes("/api/v1/flows") &&
+        resp.request().method() === "POST",
+      { timeout: 30000 },
+    );
+    await page.getByTestId("blank-flow").click();
+    const resp = await flowCreation;
+    lastStatus = resp.status();
+
+    if (lastStatus === 201) {
+      const created = (await resp.json()) as { id?: string };
+      if (!created.id) {
+        throw new Error("blank-flow creation returned no flow id");
+      }
+      await page.waitForURL(/\/flow\//, { timeout: 30000 });
+      return created.id;
+    }
+
+    // A 4xx is a deterministic client error — surface it right away.
+    if (lastStatus < 500) {
+      throw new Error(
+        `blank-flow creation failed: ${lastStatus} — ${(await resp.text()).slice(0, 200)}`,
+      );
+    }
+    // A 5xx is the transient race: loop and re-click until the budget is spent.
+    // The templates modal stays open on a failed creation but its internal
+    // `loading` guard only clears on the request promise's `.finally`; re-click
+    // too soon and the button's onClick early-returns (no new POST) and the next
+    // waitForResponse would time out. Give React a beat to commit that reset.
+    if (attempt < MAX_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
   }
-  await page.waitForURL(/\/flow\//, { timeout: 30000 });
-  return created.id;
+
+  throw new Error(
+    `blank-flow creation failed after ${MAX_ATTEMPTS} attempts: last status ${lastStatus}`,
+  );
 }
 
 // MCP-server pre-clean/verification calls authenticate via the shared

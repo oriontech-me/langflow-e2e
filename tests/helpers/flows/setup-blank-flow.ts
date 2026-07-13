@@ -1,5 +1,6 @@
 import { Page, expect } from "@playwright/test";
 import { getAuthToken } from "../auth/get-auth-token";
+import { createFlow } from "./create-flow";
 import { deleteFlow } from "./delete-flow";
 
 /**
@@ -27,9 +28,11 @@ export async function setupBlankFlow(page: Page): Promise<string> {
 
   const authToken = await getAuthToken(page.request);
 
-  const createRes = await page.request.post("/api/v1/flows/", {
-    headers: authToken ? { Authorization: authToken } : {},
-    data: {
+  // createFlow retries the transient POST /api/v1/flows/ 500 that Langflow
+  // emits under concurrent creation (#588); a 4xx still surfaces immediately.
+  const flowId = await createFlow(
+    page.request,
+    {
       name: flowName,
       description: "",
       is_component: false,
@@ -39,30 +42,29 @@ export async function setupBlankFlow(page: Page): Promise<string> {
         viewport: { x: 0, y: 0, zoom: 1 },
       },
     },
-  });
-  if (createRes.status() !== 201) {
-    throw new Error(
-      `API flow creation failed: ${createRes.status()} — ${await createRes.text()}`,
-    );
-  }
-  const { id: flowId } = (await createRes.json()) as { id: string };
+    authToken ? { headers: { Authorization: authToken } } : undefined,
+  );
 
   try {
     // Navigate via dashboard click instead of page.goto(`/flow/${flowId}`):
     // immediately after an API-created flow, the direct URL hits a stale
     // React Router cache and redirects back to the flows list.
     await page.goto("/");
-    // The /flows a11y refactor (Langflow #13891) wraps each card in an
+    // The /flows a11y refactor (Langflow #13891) wraps each card in a
     // `list-card-open-button` overlay and makes `flow-name-div`
-    // `pointer-events-none`, so we open the flow via the overlay button.
-    await page
-      .getByTestId("list-card")
-      .filter({
-        has: page.getByTestId("flow-name-div").filter({ hasText: flowName }),
-      })
-      .getByTestId("list-card-open-button")
-      .first()
-      .click();
+    // `pointer-events-none`, so we open the flow via that overlay button.
+    //
+    // Target the button by the flow's exact id (via `aria-labelledby`) rather
+    // than filtering cards by name, and dispatch the click: on the shared home
+    // grid, residual cards left by other parallel workers overlap the target's
+    // absolute-inset open button and intercept a plain hit-tested click
+    // (#580/#588). Matching by id + dispatchEvent sidesteps both the name race
+    // and the interception. Mirrors the validated pattern in the loop spec.
+    const openButton = page.locator(
+      `[data-testid="list-card-open-button"][aria-labelledby*="${flowId}"]`,
+    );
+    await openButton.waitFor({ state: "visible", timeout: 30000 });
+    await openButton.dispatchEvent("click");
     await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
       timeout: 30000,
     });
