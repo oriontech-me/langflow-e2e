@@ -58,6 +58,14 @@ rule — see `CLAUDE.md`.
   has produced false "all passed" reports. If you already told the user a result
   and later find it wrong, correct it explicitly. (How to read output:
   `langflow-e2e` → Running tests.)
+- **Every final report ends with (user rule, asked explicitly):**
+  1. a **step-by-step of what each touched/created test does and validates**
+     (per-test table or list: setup → action → concrete observables asserted);
+  2. the **copy-paste run command** for the touched spec(s) — including any
+     env overrides needed locally, `--workers=1 --retries=0`, and the expected
+     outcome ("N passed, ~Xs") — plus the `--debug` variant. The user runs the
+     spec himself before authorizing the PR; a report without these two items
+     is incomplete.
 
 ## Companion skills — invoke when needed
 
