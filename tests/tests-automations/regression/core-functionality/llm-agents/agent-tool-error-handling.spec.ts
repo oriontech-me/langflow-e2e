@@ -291,9 +291,11 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Tool Error Handling [${label}]`, () => {
+    // @stable removed by daily triage #704 — recurrent flake on healthy days
+    // (07-07, 07-10; see reports/daily-history.jsonl). Restore once fixed — #726.
     test(
       "agent handles a tool error and continues execution",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

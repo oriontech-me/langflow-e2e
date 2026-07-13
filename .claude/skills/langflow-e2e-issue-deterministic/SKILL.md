@@ -60,6 +60,15 @@ $PIPE authorize-pr <NNN> --quote "<user's exact words>"   # ONLY after explicit 
   `test()` in every touched `.spec.ts` gets a verified red run + revert proof
   (gate 3). No "the test obviously works" exception; if there's a spec change,
   it gets force-failed.
+- **VALIDATE's burst IS the determinism evidence — don't re-run it by hand.**
+  The VALIDATE phase already runs the spec `BURST` times (default 3) at
+  `--retries=0 --workers=1`, caches the clean runs, and gates on
+  `BURST` unexpected-free/flaky-free results. Those `run i/BURST …` lines ARE
+  the determinism proof to report. Do NOT hand-run extra `npx playwright test`
+  bursts before or after VALIDATE to "double-check" — it re-runs the same
+  slow spec for zero added signal (a real session ran a spec ~10× this way).
+  Scout runs to design/debug are fine; redundant confirmation bursts are not.
+  Need more/fewer runs? Set `PIPELINE_BURST`, don't loop manually.
 - **Never bypass the CLI**: no `gh pr create`, no commit/push, no phase
   skipping, no editing files under `.claude/issue-pipeline/`.
 - **Never fabricate evidence**: `userConfirmed: true` only after the user
@@ -75,6 +84,12 @@ $PIPE authorize-pr <NNN> --quote "<user's exact words>"   # ONLY after explicit 
   flow created during a PLAN scout (id from the URL, DELETE via API) and any
   throwaway scout `.spec.ts` (the burst scan excludes `scout-*`/`*-tmp` globs
   as a backstop, but the file shouldn't survive the phase).
+- **The REPORT phase output always ends with two user-required items**
+  (besides whatever the phase instruction asks): a per-test step-by-step of
+  what each touched/created test does and validates (concrete observables,
+  not intents), and the copy-paste run command for the touched spec(s) —
+  env overrides, `--workers=1 --retries=0`, expected outcome — plus the
+  `--debug` variant. The user runs the spec before authorizing the PR.
 - **Every touched spec that creates flows ships id-scoped cleanup — always
   delete the flow at the end, never pollute the instance.** Audit `afterEach`
   + `deleteFlow` on ANY spec you touch (fixes/promotions included — legacy
