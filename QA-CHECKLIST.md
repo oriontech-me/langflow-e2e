@@ -758,7 +758,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 1 | 3 | 0 | 4 |
 | `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
-| `core-functionality/observability-monitoring/` | 24 | 19 | 5 | 0 | 0 |
+| `core-functionality/observability-monitoring/` | 24 | 20 | 4 | 0 | 0 |
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **282 (63%)** | **141 (31%)** | **8 (2%)** | **20 (4%)** |
+| **TOTAL** | **451** | **283 (63%)** | **140 (31%)** | **8 (2%)** | **20 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 310 `test()` calls carrying the `@stable` tag, distributed across 122 spec
+> 311 `test()` calls carrying the `@stable` tag, distributed across 123 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1102,6 +1102,7 @@
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
+- [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
 - [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
@@ -1150,7 +1151,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 5 | 0 |
+| `core-functionality/observability-monitoring/` | 4 | 0 |
 | `core-functionality/knowledge-ingestion/` | 3 | 4 |
 | `flow-functionality/` | 6 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
