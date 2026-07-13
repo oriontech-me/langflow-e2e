@@ -84,19 +84,29 @@ test(
     // await page.getByText("Close").last().click();
     await page.getByTestId("playground-close-button").click();
 
-    // Freeze the Chat Output node (not Prompt) so the entire response is cached
+    // Freeze the path feeding Chat Output so the entire response is cached:
+    // freezing Chat Output caches its own output plus the outputs of its upstream
+    // nodes — enough that a later prompt edit cannot change the re-run result.
     await page.getByText("Chat Output", { exact: true }).last().click();
 
-    await page.waitForSelector('[data-testid="more-options-modal"]', {
-      timeout: 1000,
+    // On the 1.11 nightly the node toolbar was re-laid-out: Freeze is now a
+    // DIRECT toolbar button (`freeze-all-button-modal`) inside `toolbar-wrapper`,
+    // not a text item reached through the more-options dropdown. The old
+    // `getByText("Freeze")` resolved to that button's label but the click was
+    // swallowed by the `toolbar-wrapper` overlay that intercepts pointer events
+    // (#615). Clicking the button by its testid targets the interactive element
+    // directly and is layering-independent.
+    const freezeButton = page.getByTestId("freeze-all-button-modal").first();
+    await expect(freezeButton).toBeVisible({ timeout: 10000 });
+    await freezeButton.click();
+
+    // `.border-ring-frozen` marks the SELECTED frozen node only (NodeStatus:
+    // `selected ? "border-ring-frozen" : "border-frozen"`), so the count is 1
+    // even if freezing cascades up the path. A single retrying assertion waits
+    // for the frozen ring to appear and pins the count in one step.
+    await expect(page.locator(".border-ring-frozen")).toHaveCount(1, {
+      timeout: 5000,
     });
-    await page.getByTestId("more-options-modal").click();
-
-    await page.getByText("Freeze", { exact: true }).first().click();
-
-    await page.waitForSelector(".border-ring-frozen", { timeout: 3000 });
-
-    await expect(page.locator(".border-ring-frozen")).toHaveCount(1);
 
     await page.getByText("Prompt Template", { exact: true }).last().click();
 
