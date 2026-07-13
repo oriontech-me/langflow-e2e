@@ -205,6 +205,15 @@ bullets** — the Coverage Summary table and Phase 0 block auto-regenerate.
      `page.waitForResponse(r => r.url().includes("/api/v1/flows/") &&
      r.request().method() === "POST" && r.status() < 300)` **before** the
      click that creates the flow, then `(await r.json()).id`.
+     **When `awaitBootstrapTest` (or any helper that itself creates a flow)
+     runs before the click, do NOT use `page.url()` AND do NOT tie capture to
+     a single `waitForResponse` — the bootstrap flow's own `POST /flows`
+     competes and the URL id is the STALE bootstrap id.** Use the Pattern A
+     accumulator below (`page.on("response")` collecting EVERY `POST /flows`
+     201 id, delete them all in `afterEach`) — it captures the real
+     just-created flow regardless of the bootstrap race. URL capture has now
+     bitten twice (#490, #681 — the latter deleted the bootstrap flow and
+     leaked the renamed one, 8 orphans).
   2. **`page.request` carries only browser cookies** — the flows API wants the
      Bearer token, so an `afterEach` delete via bare `page.request.delete(...)`
      401s and a trailing `.catch(() => {})` swallows it (flows leak silently).
@@ -307,7 +316,9 @@ harmlessly — `deleteFlow` treats 404 as done). Reference:
 **B — blank flow (id observable):** capture the id from the `blank-flow`
 click's `POST /flows` 201 response, delete in `finally` (runs even on
 failure). Reference: `ollama-provider.spec.ts`, `groq-provider.spec.ts`,
-`mistral-provider.spec.ts`.
+`mistral-provider.spec.ts`. **If `awaitBootstrapTest` runs first, use A, not
+B** — the bootstrap flow's `POST /flows` competes with the blank-flow click
+and `page.url()` returns the stale bootstrap id (#681).
 
 Validation contract (both patterns): (1) a **behavioral force-fail** of the
 cleanup itself — no-op the delete, run green, count surviving orphans (>0),
