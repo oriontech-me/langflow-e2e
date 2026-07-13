@@ -444,7 +444,7 @@
 
 #### 8.3 User State
 - [x] Track user progress → `core-functionality/project-management/user-progress-track.spec.ts`
-- [-] User flow state cleanup
+- [x] User flow state cleanup → `flow-functionality/user-flow-state-cleanup.spec.ts`
 
 #### 8.4 Error Handling and Edge Cases
 - [-] Component that raises Python error
