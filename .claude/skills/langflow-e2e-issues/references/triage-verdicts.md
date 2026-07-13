@@ -3,6 +3,21 @@
 Loaded on demand from SKILL.md → CLASSIFY. Full decision framework for
 routing a failing/suspicious behavior before "fixing" anything.
 
+> **SCOPE — this is a DEDICATED-issue tool, not the initial-triage protocol.**
+> `CONTRIBUTING.md` → *Triage protocol — working the triage issue* is the
+> repository's convention and **outranks this file**. Skills are tools that
+> assist; the convention is the rule — on any conflict, follow `CONTRIBUTING.md`
+> and fix the skill. Use the verdicts below only when working a **dedicated
+> issue** (root-cause → fix → restore `@stable`). When working the
+> **daily-failure triage issue itself**, do NOT run this framework: the triage
+> is *dispatch — shallow and descriptive*. Read the run, fan out one dedicated
+> issue per problem (order: hard-failure → flake → skip), note environment
+> signals *descriptively — never as a verdict*, dedup against open issues, and
+> close the triage. Reaching a verdict (especially TRANSIENT) or "proving on 3
+> environments" at the triage stage overrides `CONTRIBUTING.md` and is wrong.
+> The origin case for the TRANSIENT verdict (#549) was itself a **dedicated
+> issue** derived from triage #548 — proof of where this framework belongs.
+
 **Test defect vs Langflow regression — decide with evidence, at ANY phase.**
 Not every failing test means the test is wrong: the product itself regresses
 (this suite exists to catch exactly that). Whenever a failure/behavior looks
@@ -47,7 +62,8 @@ Route by the verdict:
   in-protocol vs transport, flow-as-tool, BaseException classes) and give
   each a source-level or empirical verdict before flagging
   not-implementable — the audit table IS the issue-closure evidence.
-- **Third verdict for daily-failure triage: TRANSIENT (CI saturation).** When
+- **TRANSIENT (CI saturation) — a DEDICATED-issue verdict, never concluded at
+  triage** (see SCOPE banner). When
   the failing daily had MANY simultaneous unrelated failures + backend 500s
   on unrelated endpoints, suspect the shared Langflow container saturated
   under the full parallel suite. Prove it on three environments: (1) local

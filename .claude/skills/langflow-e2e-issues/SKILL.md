@@ -166,15 +166,19 @@ it as, before touching code.
 |---|---|---|
 | **new-spec** | `test-automation` label, "Create `<name>.spec.ts` — …" | Full SDD: author spec doc → build POM/helpers → write `.spec.ts` → tag → validate. |
 | **validate-&-promote** | "Validate & promote …", "Promote … to `@stable`" | The spec/test usually **already exists** — locate it. Validate it runs green (see Promotion below), then add `@stable`. Author a spec doc only if missing. |
-| **daily-failure triage** | `daily-failure` label, "triage", lists multiple removed tests | This is a **dispatcher**, not a fix. Per `CONTRIBUTING.md` § @stable lifecycle: fan it out into one **dedicated issue per problem**, classify each (hard-failure vs recurrent-flake), then work them separately. Don't fix everything on one branch. |
+| **daily-failure triage** | `daily-failure` label, "triage", lists multiple removed tests | **Dispatch only — `CONTRIBUTING.md` → *Triage protocol* governs and outranks this skill.** Shallow & descriptive: read the run, fan out one **dedicated issue per problem** in order **hard-failure → flake → skip**, note environment signals *descriptively — never as a verdict*, dedup against open issues, then **close the triage**. Do NOT reach a verdict, "prove on 3 environments", or fix anything here — `triage-verdicts.md` runs on the **dedicated issues** this spawns, not on the triage. If the mass-failure guard tripped, the one extra deliverable is a *descriptive* environmental call deciding whether to manually remove `@stable` from the real hard failures. |
 | **fix (dedicated)** | "Fixes #…", single hard-failure/flake | `systematic-debugging` → root-cause → fix → prove N clean `--retries=0` runs → **restore `@stable`** via PR on resolve. |
 | **community regression** | `community` label (+ `high`/`medium`/`low`) | Lives outside the wave milestone; work in severity order. Becomes a named `@regression` spec + `QA-CHECKLIST.md` bullet. |
 | **file-watcher** | opened by `file-watcher.yml`, lists upstream commits + a `--grep` table | Read the listed commits, run the indicated tests, fix any drift, close the issue (`CONTRIBUTING.md` § file-watcher). |
 
-**Failure triage — decide with evidence before "fixing" anything.** Not every
-failing test means the test is wrong; the verdict routes the work. Whenever a
-failure/behavior looks broken — in the issue body, during reproduction, or on
-a previously-green spec — read
+**Failure triage — decide with evidence before "fixing" anything (on a DEDICATED
+issue).** Not every failing test means the test is wrong; the verdict routes the
+work. **This applies when working a dedicated `fix` / `community` / `file-watcher`
+issue — NOT the daily-failure triage dispatcher**, which stays shallow and
+descriptive per `CONTRIBUTING.md` → *Triage protocol* (see the CLASSIFY row
+above); the verdicts run on the dedicated issues a triage spawns, never on the
+triage itself. Whenever a failure/behavior looks broken — in the issue body,
+during reproduction, or on a previously-green spec — read
 **`references/triage-verdicts.md`** and classify into one of the six
 verdicts before touching code:
 
@@ -184,7 +188,7 @@ verdicts before touching code:
 3. **Product changed intentionally** → not-implementable / re-scope closure
    (steelman every trigger path first).
 4. **Transient (CI saturation)** → prove on 3 environments; restore @stable
-   with no test change.
+   with no test change. *(Concluded on the dedicated issue, never at triage.)*
 5. **Cross-worker destructive cleanup** → fix the WIPER (hunt transitively
    through POMs), never the victim.
 6. **Stale "confirmed bug"** → reproduce on the live nightly FIRST; if fixed,
@@ -343,6 +347,14 @@ Only when the user authorizes, follow `langflow-e2e/references/pr-guide.md`:
   user had to ask on #503 and #597; never a third time.
 
 ## Boundaries
+
+**`CONTRIBUTING.md` is the repository's convention and outranks this skill.**
+Skills are tools that assist; the convention is the rule. On any conflict
+between a skill instruction and `CONTRIBUTING.md`, follow `CONTRIBUTING.md` and
+fix the skill. Concretely: the daily-failure **triage issue** follows
+`CONTRIBUTING.md` → *Triage protocol* (dispatch — shallow, descriptive); the
+verdicts framework in `references/triage-verdicts.md` is for the **dedicated
+issues** it spawns, not for the triage.
 
 This skill is versioned in the repo (`.claude/skills/`) and shared with the team
 — keep it accurate and English-only, like any tracked file. It orchestrates; the
