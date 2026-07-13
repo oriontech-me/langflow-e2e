@@ -17,6 +17,19 @@ import { deleteFlow } from "./delete-flow";
  * mid-flight (its page starts 404ing "Flow not found"; see #553). Do NOT
  * call this as pre-test cleanup in specs that run in the parallel suite;
  * create your flow, keep its id, and delete only that id in your cleanup.
+ *
+ * DEPRECATED — scoped teardown is the default (#515/#589). Every spec that can
+ * express its cleanup as scoped has been migrated to capture its own flow id and
+ * delete only that id (see `setup-blank-flow.ts` and the `deleteFlow`-based
+ * `afterEach` in the loop, mcp-client and playground-session-clear specs). The
+ * ONE legitimate remaining caller is `user-progress-track.spec.ts`, whose
+ * assertions require the shared superuser's flow space to be *globally empty*
+ * (empty getting-started state + progress reset) — a need scoped teardown cannot
+ * express. Because this helper still wipes flows globally, that spec is NOT
+ * safe under concurrent neighbors and must run isolated/serial until per-worker
+ * user isolation (#589 item 3) exists — that isolation is the structural fix
+ * that would let it drop this helper and let this file be deleted. Do NOT add
+ * new callers.
  */
 export const cleanAllFlows = async (page: Page) => {
   // Obtain a bearer token via auto_login (no credentials required in dev/test).

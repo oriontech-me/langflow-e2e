@@ -2,8 +2,14 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { cleanAllFlows } from "../../../../helpers/flows/clean-all-flows";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
+
+// Id of the flow the running test created; teardown deletes only this one via
+// the API (scoped) — never a global cleanAllFlows, which wipes flows other
+// parallel workers are actively building mid-run (#515/#589).
+let createdFlowId: string | undefined;
 
 /**
  * Clear chat is available via chat-header-more-menu (not the session more-menu).
@@ -13,7 +19,24 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 async function setupChatEchoFlow(page: Page): Promise<void> {
   await awaitBootstrapTest(page);
   await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
+
+  // Capture the id from the flow-creation POST so teardown can delete only this
+  // flow (scoped), NOT from the canvas URL: the URL id is a transient
+  // client-side handle on this Langflow version and does not match the
+  // persisted flow (deleting it 404s and silently leaks the real one).
+  const flowCreation = page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 30000 },
+  );
   await page.getByTestId("blank-flow").click();
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
+  createdFlowId = created.id;
 
   await page.getByTestId("sidebar-search-input").fill("chat output");
   await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
@@ -70,8 +93,21 @@ async function sendMessage(page: Page, text: string): Promise<void> {
 
 test.describe("Playground – Clear Session History", () => {
   test.afterEach(async ({ page }) => {
+    const flowId = createdFlowId;
+    createdFlowId = undefined;
+    if (!flowId) return;
+
+    // Delete ONLY the flow this test created (scoped teardown, #515/#589).
+    // Navigate off the editor first so the unmounted flow page stops polling
+    // the flow we are about to delete, then pass an explicit auth header —
+    // page.request is unauthenticated under AUTO_LOGIN and would 401 otherwise.
+    // Not swallowed: a failed cleanup surfaces instead of silently leaking.
     await page.goto("/");
-    await cleanAllFlows(page);
+    const authHeader = await getAuthToken(page.request);
+    const opts = authHeader
+      ? { headers: { Authorization: authHeader } }
+      : undefined;
+    await deleteFlow(page.request, flowId, opts);
   });
 
   test(
