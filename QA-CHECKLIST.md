@@ -629,7 +629,7 @@
 #### 12.6 Flow Execution
 - [x] Run Flow component executes another flow → `flow-functionality/run-flow.spec.ts`
 - [x] Run a flow from the canvas — terminal-node run builds the whole graph; all nodes reach build success and output is produced → `flow-functionality/flow-execution-canvas.spec.ts`
-- [-] Stop building flow → `flow-functionality/stop-building.spec.ts`
+- [x] Stop building flow → `flow-functionality/stop-building.spec.ts`
 - [!] Playground button disabled with empty flow — needs review → `regression/flow-functionality/generalBugs-shard-3.spec.ts` (**test skipped: assertion was a no-op, current Langflow behavior to confirm**)
 
 ---

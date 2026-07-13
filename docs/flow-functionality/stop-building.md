@@ -25,9 +25,10 @@ spinning build.
 
 ## Tags
 
-`@release` `@workspace` `@components`
+`@stable` `@release` `@workspace` `@components`
 
-`@stable` is added only after team validation (see CONTRIBUTING.md). This spec
+`@stable` added by #687 after deterministic validation on the 1.11 nightly
+(burst runs with `--retries=0` + executed force-fail per assert). This spec
 replaces the previous fragile version (5 dragged legacy components + manual
 connections + text/timeout waits, flagged `// TODO: fix this test`) with the
 proven custom-component + `sleep(60)` recipe from `stop-button-playground.spec.ts`.
