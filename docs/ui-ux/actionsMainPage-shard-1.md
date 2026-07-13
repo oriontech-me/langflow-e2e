@@ -18,24 +18,46 @@ from the home grid, and the flow is gone from the backend.
    target another worker's card), delete it through the confirmation modal,
    and prove removal three ways: success toast, card gone from the grid,
    `GET /api/v1/flows/{id}` → 404.
-2. **search flows** — the home search filters the flow grid by name
-   *(known-weak: assertions are dead `isVisible()`/`isHidden()` booleans —
-   NOT hardened here, out of #682's scope; do not promote as-is)*.
-3. **search components** — sidebar component search after saving components
-   *(known-weak: whole body inside an `if (visible)` guard, the #505
-   conditional-bypass class — NOT hardened here, do not promote as-is.
-   PROVEN vacuous on 1.11.0.dev41 during #682's force-fail pass: the
-   `components-btn` guard is false, the body never executes, and an
-   in-guard mutation cannot make the test fail)*.
+2. **search flows** *(hardened by #706)* — the home search filters the flow
+   grid by name: with two template flows created (Basic Prompting + Memory
+   Chatbot, both tracked by POST-201 id), searching "Memory Chatbot" leaves
+   the memory flow's card (`flow-name-{id}`) visible and removes the basic
+   flow's card (count 0); clearing the search restores both. Id-anchored
+   asserts — the pre-#706 version discarded its `isVisible()`/`isHidden()`
+   booleans and could not fail.
+3. **search components** *(redesigned by #706 — old premise DEAD)* — the
+   home `components-btn` tab the old test guarded on no longer exists on
+   1.11 (proven vacuous during #682's force-fail pass: the guard was false
+   and the body never executed). Saved components now live in the CANVAS
+   sidebar under the **`disclosure-saved`** category (scouted live on
+   1.11.0.dev41). The redesigned test saves the Chat Input node as a
+   component (node → `more-options-modal` → `icon-SaveAll`), then proves
+   the sidebar search exposes it. **Assert order is part of the contract**
+   (both searches are debounced — a positive assert evaluated first
+   resolves on the pre-filter DOM and can pass vacuously, an FF finding of
+   #706): first the causal negative — searching "Prompt", a component that
+   exists but was NOT saved, must remove `disclosure-saved` once the filter
+   settles — then searching "Chat Input" must bring `disclosure-saved`
+   back, a 0→1 transition that necessarily observes the post-filter
+   sidebar. The same negative-first ordering applies to Test 2's grid
+   asserts.
 
-## What broke the old Test 1 contract *(hardening rationale)*
+## What broke the old contracts *(hardening rationale)*
 
-The pre-#682 test could never fail: both its "assertions" were bare
+The pre-#682 Test 1 could never fail: both its "assertions" were bare
 `locator.isVisible()` calls whose boolean result was discarded (a fully
 broken delete flow still produced a green run), the dropdown was targeted
 with `.first()` (parallel-unsafe), and nothing verified the flow actually
 disappeared. Hardening these is the required force-failability work of a
 validate-&-promote issue (see #505 precedent).
+
+Tests 2–3 (hardened by the #706 follow-up) had the same disease: dead
+boolean asserts in Test 2, and Test 3's whole body inside an
+`if (components-btn visible)` guard whose home-tab surface left the
+product — green in seconds while executing nothing. The saved-components
+feature itself survives (node menu → Save As Component; canvas sidebar
+`disclosure-saved`), so Test 3 was redesigned against the live surface
+rather than re-scoped away.
 
 ---
 
@@ -43,8 +65,11 @@ validate-&-promote issue (see #505 precedent).
 
 - Test 1: `@stable` `@release` `@workspace` `@mainpage` (promoted by #682;
   `@workspace` added — flow lifecycle management is the subject)
-- Tests 2–3: `@release` `@mainpage` (unchanged; not promoted — see
-  known-weak notes)
+- Test 2: `@release` `@mainpage` `@workspace` (hardened by #706; promotion
+  is a separate decision after soak)
+- Test 3: `@release` `@components` `@ui-ux` (redesigned by #706 — the
+  observable moved to the canvas sidebar, so `@mainpage` no longer applies;
+  promotion after soak)
 
 ---
 
