@@ -609,7 +609,7 @@
 - [-] Flow settings
 
 #### 12.3 Delete Flow
-- [-] Delete individual flow
+- [x] Delete individual flow → `ui-ux/actionsMainPage-shard-1.spec.ts`
 - [x] Delete multiple flows (bulk actions) → `core-functionality/project-management/bulk-actions.spec.ts`
 - [x] Shift-click range select + Ctrl/Cmd-click multi-select on main page → `core-functionality/project-management/bulk-actions.spec.ts`
 - [x] Bulk download selected flows → `core-functionality/project-management/bulk-actions.spec.ts`
