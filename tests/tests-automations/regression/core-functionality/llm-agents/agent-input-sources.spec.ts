@@ -1,10 +1,11 @@
 import * as dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
-import type { Page } from "@playwright/test";
+import type { APIRequestContext, Page, Response } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
@@ -130,13 +131,86 @@ function getTestTargets(): TestTarget[] {
   }));
 }
 
+// Track every flow the template load creates (POST /api/v1/flows → 201) so
+// afterEach can delete exactly those ids. SimpleAgentTemplatePage.load() does NO
+// cleanup (post-#553 contract), so without this each run leaks a "Simple Agent"
+// flow into the instance.
+const createdFlowIds: string[] = [];
+
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
+  // Collect the POST /api/v1/flows → 201 responses synchronously as they arrive,
+  // then resolve their bodies in `finally`. Awaiting the .json() here (instead of
+  // a fire-and-forget .then()) guarantees every created id is recorded BEFORE the
+  // test proceeds to afterEach — otherwise the last flow's id can land after
+  // cleanup already ran, leaking that flow.
+  const flowCreations: Response[] = [];
+  const onResponse = (resp: Response) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      flowCreations.push(resp);
+    }
+  };
+  page.on("response", onResponse);
   try {
     await new SimpleAgentTemplatePage(page).load(options);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
+  } finally {
+    page.off("response", onResponse);
+    for (const resp of flowCreations) {
+      const body = (await resp.json().catch(() => null)) as { id?: string } | null; // non-JSON / batch payloads
+      if (body?.id) createdFlowIds.push(body.id);
+    }
   }
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    const res = await request.delete(`/api/v1/flows/${id}`, {
+      headers: { Authorization: bearer },
+    });
+    // 404 = transient flow the app already discarded — expected noise.
+    if (!res.ok() && res.status() !== 404) {
+      console.warn(`flow cleanup: DELETE ${id} -> ${res.status()}`);
+    }
+  }
+});
+
+// Server-side confirmation that `sentinel` actually reached the PERSISTED flow —
+// the true "does the input reach the provider" gate (#635). DOM state and PATCH
+// quiescence don't prove persistence; the build (and thus the provider call)
+// reads the persisted flow. Poll GET /api/v1/flows/ (the list carries each
+// flow's full `data` graph) until the unique per-run sentinel appears in it.
+// If it never persists, this fails as a SAVE/WIRING issue — unambiguously
+// distinct from the model later ignoring an input that WAS persisted.
+async function expectSentinelPersistedInFlows(
+  request: APIRequestContext,
+  sentinel: string,
+): Promise<void> {
+  const bearer = await getAuthToken(request);
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get("/api/v1/flows/", {
+          headers: { Authorization: bearer },
+        });
+        if (!res.ok()) return `GET flows -> ${res.status()}`;
+        const flows = await res.json();
+        return JSON.stringify(flows).includes(sentinel)
+          ? "persisted"
+          : "sentinel not yet persisted in any flow";
+      },
+      // Explicit, backing-off intervals: GET /api/v1/flows/ returns every flow's
+      // full graph, so avoid hammering it with the default aggressive cadence.
+      { timeout: 15000, intervals: [500, 1000, 2000] },
+    )
+    .toBe("persisted");
 }
 
 async function waitForAgentToFinish(page: Page): Promise<void> {
@@ -197,7 +271,7 @@ for (const { label, options, skipReason } of targets) {
     test(
       "input via the Agent's direct field drives the agent response",
       { tag: ["@stable", "@components", "@agents", "@playground"] },
-      async ({ page }) => {
+      async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
           !hasProviderEnvKeys(provider),
@@ -225,15 +299,26 @@ for (const { label, options, skipReason } of targets) {
         await test.step("type the sentinel directly into the Agent's Input field", async () => {
           const inputField = page.getByTestId("popover-anchor-input-input_value");
           await expect(inputField).toBeVisible({ timeout: 15000 });
-          await inputField.fill(`Repeat this token exactly and nothing else: ${token}`);
-          // button_run_agent builds the PERSISTED flow. Drain the debounced
+          const fieldValue = `Repeat this token exactly and nothing else: ${token}`;
+          await inputField.click();
+          await inputField.fill(fieldValue);
+          // COMMIT the value: `fill` alone can leave the change uncommitted (the
+          // node applies it on blur/change); without an explicit blur the value
+          // can miss the autosave PATCH, so the build runs with an EMPTY
+          // input_value and the agent replies generically ("I don't see any prior
+          // conversation history…") — the #635 flaky symptom. Every other
+          // field-set in this suite blurs; this one didn't.
+          await inputField.blur();
+          // button_run_agent builds the PERSISTED flow, so drain the debounced
           // autosave PATCHes (model selection from load(), the ChatInput deletion,
-          // and this field value) before running — otherwise the build can race a
-          // still-pending save and run the template default model
-          // (`__default_language_model__ variable not found`), so the agent never
-          // builds and node_duration_agent never appears. Same class of race the
-          // agent-system-prompt spec guards with an autosave wait.
+          // and this field value) first.
           await waitForFlowSaveSettled(page);
+          // Then CONFIRM server-side that the field value actually reached the
+          // persisted flow — the payload-level proof the input reaches the run
+          // (#635). If it didn't persist, this fails as a save/wiring problem
+          // here, rather than surfacing later as a misleading generic reply that
+          // looks like model non-adherence.
+          await expectSentinelPersistedInFlows(request, token);
         });
 
         await test.step("run the Agent node from the canvas", async () => {
