@@ -1,10 +1,51 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
-import { errorToastLocator } from "../../../helpers/ui/error-toast";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
-async function setupChatFlow(page: any) {
+// Playground execution on 1.11 runs through POST /api/v2/workflows (SSE), NOT
+// the retired /api/v1/build/{id}/flow path — the mocks below intercept that
+// endpoint. Confirmed live on 1.11.0.dev41: aborting it surfaces a persistent
+// "Workflow run failed" / "Failed to fetch" entry in the notifications dropdown.
+const WORKFLOWS_ENDPOINT = "**/api/v2/workflows";
+
+// Capture every flow THIS page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach. awaitBootstrapTest runs
+// first, so a bare page.url() capture races the bootstrap flow's stale id
+// (#490/#681); the response ids are authoritative and worker-safe.
+const createdFlowIds: string[] = [];
+
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
+  }
+});
+
+async function setupChatFlow(page: Page): Promise<void> {
   await awaitBootstrapTest(page);
   await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
   await page.getByTestId("blank-flow").click();
@@ -31,10 +72,11 @@ async function setupChatFlow(page: any) {
   await page.waitForSelector('[data-testid="input_outputChat Input"]', {
     timeout: 30000,
   });
-  await page.getByTestId("input_outputChat Input").dragTo(
-    page.locator('//*[@id="react-flow-id"]'),
-    { targetPosition: { x: 100, y: 100 } },
-  );
+  await page
+    .getByTestId("input_outputChat Input")
+    .dragTo(page.locator('//*[@id="react-flow-id"]'), {
+      targetPosition: { x: 100, y: 100 },
+    });
 
   await adjustScreenView(page);
 
@@ -47,182 +89,111 @@ async function setupChatFlow(page: any) {
     .click();
 }
 
+async function openPlayground(page: Page): Promise<void> {
+  await page.getByTestId("playground-btn-flow-io").click();
+  await page.waitForSelector('[data-testid="input-chat-playground"]', {
+    timeout: 30000,
+  });
+}
+
+async function sendMessage(page: Page, text: string): Promise<void> {
+  await page.getByTestId("input-chat-playground").last().fill(text);
+  await page.getByTestId("button-send").last().click();
+}
+
 test.describe("Execution Error Notifications", () => {
   test(
-    "executing flow with server error shows error feedback",
-    { tag: ["@release", "@workspace", "@regression"] },
+    "executing flow with network error shows error feedback",
+    { tag: ["@stable", "@release", "@workspace", "@observability"] },
     async ({ page }) => {
+      // The run is intercepted and aborted on purpose — allow the flow error.
+      (page as any).allowFlowErrors();
+      trackCreatedFlows(page);
       await setupChatFlow(page);
+      await openPlayground(page);
 
-      // Open playground first, before setting up the mock, so the modal can load normally
-      await page.getByTestId("playground-btn-flow-io").click();
-      await page.waitForSelector('[data-testid="input-chat-playground"]', {
-        timeout: 30000,
+      // Abort the execution request at the transport layer (dropped connection
+      // / timeout). The browser reports this to fetch as "Failed to fetch".
+      await page.route(WORKFLOWS_ENDPOINT, async (route) => {
+        await route.abort("timedout");
       });
 
-      // The playground uses /api/v1/build/{flowId}/flow (not /run).
-      // Now that the playground is open, mock to return 500 to simulate an execution failure.
-      await page.route("**/api/v1/build/**", async (route) => {
-        const url = route.request().url();
-        // Only intercept the /flow build endpoint (not vertices order or others)
-        if (url.includes("/flow")) {
-          await route.fulfill({
-            status: 500,
-            contentType: "application/json",
-            body: JSON.stringify({
-              detail: "Internal server error during execution",
-            }),
-          });
-        } else {
-          await route.continue();
-        }
+      await sendMessage(page, "network error test");
+
+      // Assert against the PERSISTENT notifications dropdown, not the
+      // auto-dismissing slide-in toast (toast-fade race — #695). The dropdown
+      // entry distinguishes a transport failure ("Failed to fetch") from a
+      // server-side failure (which carries the server's detail instead).
+      await page.getByTestId("notification_button").click();
+      const dropdown = page.getByTestId("notification-dropdown-content");
+      await expect(dropdown).toBeVisible({ timeout: 15000 });
+      await expect(dropdown).toContainText("Workflow run failed", {
+        timeout: 15000,
       });
-
-      await page.getByTestId("input-chat-playground").last().fill("test message");
-      await page.getByTestId("button-send").last().click();
-
-      // Langflow shows error feedback as:
-      // 1. A build-failure banner: "Flow build failed" / "Error starting build process"
-      // 2. A slide-in toast with class "error-build-message"
-      // 3. Text from the alert store (MISSED_ERROR_ALERT = "Oops! Looks like you missed something")
-      // 4. Inline error in chat (bg-error-red class)
-      const buildFailedText = await page
-        .getByText(/flow build failed|error starting build|build process/i)
-        .first()
-        .isVisible({ timeout: 8000 })
-        .catch(() => false);
-
-      const errorToast = await errorToastLocator(page)
-        .first()
-        .isVisible({ timeout: 3000 })
-        .catch(() => false);
-
-      const errorAlertText = await page
-        .getByText(/oops|looks like you missed|error occurred|internal server/i)
-        .first()
-        .isVisible({ timeout: 3000 })
-        .catch(() => false);
-
-      const inlineChatError = await page
-        .locator('[class*="bg-error-red"], [class*="error-red"]')
-        .first()
-        .isVisible({ timeout: 3000 })
-        .catch(() => false);
-
-      expect(
-        buildFailedText || errorToast || errorAlertText || inlineChatError,
-        "Expected error feedback when execution fails with 500",
-      ).toBe(true);
+      await expect(dropdown).toContainText("Failed to fetch");
     },
   );
 
   test(
-    "executing flow with network timeout shows error feedback",
-    { tag: ["@release", "@workspace", "@regression"] },
+    "executing flow with server error shows error feedback",
+    { tag: ["@release", "@workspace", "@observability"] },
     async ({ page }) => {
+      (page as any).allowFlowErrors();
+      trackCreatedFlows(page);
       await setupChatFlow(page);
+      await openPlayground(page);
 
-      // Open playground first, before setting up the mock
-      await page.getByTestId("playground-btn-flow-io").click();
-      await page.waitForSelector('[data-testid="input-chat-playground"]', {
-        timeout: 30000,
+      // Return a 5xx from the execution endpoint (server-side failure). Uses
+      // 503, not 500: the fixture's global response monitor flags real backend
+      // errors on 400/404/422/500 (see fixtures.ts) and would treat this mocked
+      // 500 as an instance error. 503 is an equally valid server failure that
+      // drives the same "Workflow run failed" path without tripping the monitor
+      // on the shared instance. Live-confirmed on 1.11.0.dev41.
+      await page.route(WORKFLOWS_ENDPOINT, async (route) => {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({
+            detail: "Service unavailable",
+          }),
+        });
       });
 
-      // Abort the build request to simulate a network timeout
-      await page.route("**/api/v1/build/**", async (route) => {
-        const url = route.request().url();
-        if (url.includes("/flow")) {
-          await route.abort("timedout");
-        } else {
-          await route.continue();
-        }
+      await sendMessage(page, "server error test");
+
+      await page.getByTestId("notification_button").click();
+      const dropdown = page.getByTestId("notification-dropdown-content");
+      await expect(dropdown).toBeVisible({ timeout: 15000 });
+      await expect(dropdown).toContainText("Workflow run failed", {
+        timeout: 15000,
       });
-
-      await page.getByTestId("input-chat-playground").last().fill("timeout test");
-      await page.getByTestId("button-send").last().click();
-
-      // Wait for error feedback
-      const buildFailedText = await page
-        .getByText(/flow build failed|error starting build|build process/i)
-        .first()
-        .isVisible({ timeout: 10000 })
-        .catch(() => false);
-
-      const errorToast = await errorToastLocator(page)
-        .first()
-        .isVisible({ timeout: 5000 })
-        .catch(() => false);
-
-      const errorText = await page
-        .getByText(/oops|looks like you missed|error|failed|timeout|network/i)
-        .first()
-        .isVisible({ timeout: 5000 })
-        .catch(() => false);
-
-      expect(
-        buildFailedText || errorToast || errorText,
-        "Expected error feedback when execution times out",
-      ).toBe(true);
     },
   );
 
   test(
     "flow run button shows loading state during execution",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@observability"] },
     async ({ page }) => {
+      trackCreatedFlows(page);
       await setupChatFlow(page);
+      await openPlayground(page);
 
-      // Open playground first, before setting up the mock
-      await page.getByTestId("playground-btn-flow-io").click();
-      await page.waitForSelector('[data-testid="input-chat-playground"]', {
-        timeout: 30000,
+      // Hold the execution request open so the in-progress state is observable.
+      // Never fulfilling keeps the run pending; the route is torn down after the
+      // assertion so the test can finish.
+      await page.route(WORKFLOWS_ENDPOINT, async () => {
+        await new Promise<void>(() => {});
       });
 
-      // Mock with a delayed response so we can observe the loading state
-      await page.route("**/api/v1/build/**", async (route) => {
-        const url = route.request().url();
-        if (url.includes("/flow")) {
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          await route.fulfill({
-            status: 200,
-            contentType: "text/event-stream",
-            body: `data: {"event": "end", "data": {"outputs": [{"outputs": [{"results": {"message": {"text": "Delayed mock response"}}}]}], "session_id": "test-session-loading"}}\n\n`,
-          });
-        } else {
-          await route.continue();
-        }
+      await sendMessage(page, "loading state test");
+
+      // While the run is pending, the send button is replaced by a stop button.
+      await expect(page.getByTestId("button-stop").last()).toBeVisible({
+        timeout: 15000,
       });
 
-      await page.getByTestId("input-chat-playground").last().fill("loading test");
-      await page.getByTestId("button-send").last().click();
-
-      // While waiting for the delayed response, check for loading state indicators
-      const stopButtonVisible = await page
-        .getByRole("button", { name: /stop/i })
-        .isVisible({ timeout: 5000 })
-        .catch(() => false);
-
-      const sendButtonDisabled = await page
-        .getByTestId("button-send")
-        .last()
-        .isDisabled({ timeout: 5000 })
-        .catch(() => false);
-
-      const loadingIndicator = await page
-        .locator(
-          '[class*="loading"], [class*="spinner"], [aria-busy="true"], [data-testid*="loading"]',
-        )
-        .first()
-        .isVisible({ timeout: 5000 })
-        .catch(() => false);
-
-      expect(
-        stopButtonVisible || sendButtonDisabled || loadingIndicator,
-        "Expected loading state indicator while execution is in progress",
-      ).toBe(true);
-
-      // Wait for the delayed response to complete
-      await page.waitForTimeout(2000);
+      // Release the pending request so teardown (afterEach) is not blocked.
+      await page.unroute(WORKFLOWS_ENDPOINT);
     },
   );
 });
