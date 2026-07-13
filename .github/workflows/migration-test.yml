@@ -45,7 +45,7 @@ jobs:
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -258,7 +258,7 @@ jobs:
 
       - name: Upload test artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: migration-test-${{ github.run_number }}
           path: |
@@ -273,7 +273,7 @@ jobs:
 
       - name: Close issue on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: existing } = await github.rest.issues.listForRepo({
@@ -306,7 +306,7 @@ jobs:
 
       - name: Create or update issue on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -369,7 +369,7 @@ jobs:
       OFFICIAL_COMPOSE_URL: https://raw.githubusercontent.com/langflow-ai/langflow/main/docker_example/docker-compose.yml
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Verify OPENAI_API_KEY secret is configured
         env:
@@ -677,7 +677,7 @@ jobs:
 
       - name: Upload artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: migration-compose-${{ github.run_number }}
           path: |
@@ -690,7 +690,7 @@ jobs:
 
       - name: Close issue on success
         if: success()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: existing } = await github.rest.issues.listForRepo({
@@ -723,7 +723,7 @@ jobs:
 
       - name: Create or update issue on failure
         if: failure()
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const { data: existing } = await github.rest.issues.listForRepo({

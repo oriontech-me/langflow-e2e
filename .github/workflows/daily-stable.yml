@@ -128,7 +128,7 @@ jobs:
       OLLAMA_TEST_MODEL: llama3.2:1b
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No actions/setup-node: the Playwright image already ships the Node
       # toolchain it was built against, so we use it directly instead of
@@ -239,7 +239,7 @@ jobs:
 
       - name: Upload Playwright report (full, heavy)
         id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-report-daily-${{ github.run_id }}
@@ -253,7 +253,7 @@ jobs:
       # and it gets the longest retention GitHub allows (90 days) since it's small.
       - name: Upload report index (lightweight, long-lived)
         id: upload_index                      # ← artifact-url fed to the QA Platform payload below
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-report-index-daily-${{ github.run_id }}
@@ -269,7 +269,7 @@ jobs:
       # late/backfill import can still reach it long after the run; the JSON is
       # small, so the long window costs ~nothing.
       - name: Upload Playwright JSON report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-json-daily-${{ github.run_id }}
@@ -403,7 +403,7 @@ jobs:
       # recurs 2+ times), so an auto-umbrella on manual runs would just be noise.
       - name: Create issue on failure
         if: failure() && github.event_name == 'schedule'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
           # Set by the (schedule-only) auto-remove step above; empty only if that

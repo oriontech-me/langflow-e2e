@@ -57,7 +57,7 @@ jobs:
           --health-start-period 90s
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No actions/setup-node: the Playwright image already ships the Node
       # toolchain it was built against, so we use it directly instead of
@@ -129,7 +129,7 @@ jobs:
 
       - name: Upload Playwright report
         id: upload_report                     # ← id to expose artifact-url to the payload step
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: playwright-report-weekly-${{ github.run_id }}
@@ -230,7 +230,7 @@ jobs:
 
       - name: Create issue on failure
         if: failure() && github.event_name == 'schedule'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
           AUTO_REMOVE_STATUS: ${{ steps.auto_remove.outputs.status }}
