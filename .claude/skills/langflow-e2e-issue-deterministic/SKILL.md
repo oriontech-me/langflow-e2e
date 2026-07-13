@@ -75,6 +75,12 @@ $PIPE authorize-pr <NNN> --quote "<user's exact words>"   # ONLY after explicit 
   flow created during a PLAN scout (id from the URL, DELETE via API) and any
   throwaway scout `.spec.ts` (the burst scan excludes `scout-*`/`*-tmp` globs
   as a backstop, but the file shouldn't survive the phase).
+- **The REPORT phase output always ends with two user-required items**
+  (besides whatever the phase instruction asks): a per-test step-by-step of
+  what each touched/created test does and validates (concrete observables,
+  not intents), and the copy-paste run command for the touched spec(s) —
+  env overrides, `--workers=1 --retries=0`, expected outcome — plus the
+  `--debug` variant. The user runs the spec before authorizing the PR.
 - **Every touched spec that creates flows ships id-scoped cleanup — always
   delete the flow at the end, never pollute the instance.** Audit `afterEach`
   + `deleteFlow` on ANY spec you touch (fixes/promotions included — legacy
