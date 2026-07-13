@@ -762,12 +762,12 @@
 | `core-functionality/playground/` | 48 | 44 | 2 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 14 | 12 | 2 | 0 |
+| `flow-functionality/` | 28 | 15 | 11 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **270 (60%)** | **152 (34%)** | **8 (2%)** | **21 (5%)** |
+| **TOTAL** | **451** | **271 (60%)** | **151 (33%)** | **8 (2%)** | **21 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 301 `test()` calls carrying the `@stable` tag, distributed across 113 spec
+> 302 `test()` calls carrying the `@stable` tag, distributed across 114 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1092,6 +1092,7 @@
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
+- [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 
 #### mcp/client/
 - [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
@@ -1141,7 +1142,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 7 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 12 | 0 |
+| `flow-functionality/` | 11 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
