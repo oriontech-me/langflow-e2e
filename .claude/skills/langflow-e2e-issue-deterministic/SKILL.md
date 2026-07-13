@@ -60,6 +60,15 @@ $PIPE authorize-pr <NNN> --quote "<user's exact words>"   # ONLY after explicit 
   `test()` in every touched `.spec.ts` gets a verified red run + revert proof
   (gate 3). No "the test obviously works" exception; if there's a spec change,
   it gets force-failed.
+- **VALIDATE's burst IS the determinism evidence — don't re-run it by hand.**
+  The VALIDATE phase already runs the spec `BURST` times (default 3) at
+  `--retries=0 --workers=1`, caches the clean runs, and gates on
+  `BURST` unexpected-free/flaky-free results. Those `run i/BURST …` lines ARE
+  the determinism proof to report. Do NOT hand-run extra `npx playwright test`
+  bursts before or after VALIDATE to "double-check" — it re-runs the same
+  slow spec for zero added signal (a real session ran a spec ~10× this way).
+  Scout runs to design/debug are fine; redundant confirmation bursts are not.
+  Need more/fewer runs? Set `PIPELINE_BURST`, don't loop manually.
 - **Never bypass the CLI**: no `gh pr create`, no commit/push, no phase
   skipping, no editing files under `.claude/issue-pipeline/`.
 - **Never fabricate evidence**: `userConfirmed: true` only after the user

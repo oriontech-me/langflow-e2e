@@ -296,7 +296,7 @@
 ### core-functionality/knowledge-ingestion-management/ — Upload, Processing and Vectors
 
 #### 5.1 File Upload
-- [-] Upload file via component
+- [x] Upload file via component → `core-functionality/knowledge-ingestion-management/upload-via-component.spec.ts`
 - [-] Upload files of different types (txt, pdf, json, py, wav)
 - [-] File size limit
 - [-] File management page
@@ -443,7 +443,7 @@
 - [-] Outdated component notification
 
 #### 8.3 User State
-- [-] Track user progress
+- [x] Track user progress → `core-functionality/project-management/user-progress-track.spec.ts`
 - [-] User flow state cleanup
 
 #### 8.4 Error Handling and Edge Cases
@@ -594,16 +594,16 @@
 
 #### 12.1 Create Flow
 - [x] Create blank flow → `flow-functionality/create-blank-flow.spec.ts`
-- [-] Create flow from template
+- [x] Create flow from template → `flow-functionality/create-flow-from-template.spec.ts`
 - [x] Create flow by duplicating an existing one → `flow-functionality/duplicate-flow.spec.ts`
-- [-] Create flow via JSON file import
+- [x] Create flow via JSON file import → `flow-functionality/export-import-flow.spec.ts`
 
 #### 12.2 View and Edit Flow
 - [x] Rename flow via editor header → `flow-functionality/flow-rename-header.spec.ts`
 - [x] Rename flow and verify on main page listing → `core-functionality/project-management/edit-flow-name.spec.ts`
 - [-] Edit flow name and description
 - [-] Flow auto-save on changes
-- [-] Flow settings
+- [x] Flow settings → `core-functionality/project-management/flowSettings.spec.ts`
 
 #### 12.3 Delete Flow
 - [x] Delete individual flow → `ui-ux/actionsMainPage-shard-1.spec.ts`
@@ -629,7 +629,7 @@
 #### 12.6 Flow Execution
 - [x] Run Flow component executes another flow → `flow-functionality/run-flow.spec.ts`
 - [x] Run a flow from the canvas — terminal-node run builds the whole graph; all nodes reach build success and output is produced → `flow-functionality/flow-execution-canvas.spec.ts`
-- [-] Stop building flow → `flow-functionality/stop-building.spec.ts`
+- [x] Stop building flow → `flow-functionality/stop-building.spec.ts`
 - [!] Playground button disabled with empty flow — needs review → `regression/flow-functionality/generalBugs-shard-3.spec.ts` (**test skipped: assertion was a no-op, current Langflow behavior to confirm**)
 
 ---
@@ -755,19 +755,19 @@
 | `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
-| `core-functionality/knowledge-ingestion/` | 8 | 0 | 4 | 0 | 4 |
+| `core-functionality/knowledge-ingestion/` | 8 | 1 | 3 | 0 | 4 |
 | `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
-| `core-functionality/observability-monitoring/` | 24 | 16 | 7 | 0 | 1 |
+| `core-functionality/observability-monitoring/` | 24 | 17 | 6 | 0 | 1 |
 | `core-functionality/playground/` | 48 | 44 | 2 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 14 | 12 | 2 | 0 |
+| `flow-functionality/` | 28 | 18 | 8 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **270 (60%)** | **152 (34%)** | **8 (2%)** | **21 (5%)** |
+| **TOTAL** | **451** | **276 (61%)** | **146 (32%)** | **8 (2%)** | **21 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 301 `test()` calls carrying the `@stable` tag, distributed across 113 spec
+> 306 `test()` calls carrying the `@stable` tag, distributed across 118 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -931,6 +931,9 @@
 - [x] after logout, navigating to root must redirect to login → `logout-flow.spec.ts`
 - [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
 
+#### core-functionality/knowledge-ingestion-management/
+- [x] upload a file through the Read File component and read its content → `upload-via-component.spec.ts`
+
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
@@ -1067,8 +1070,10 @@
 #### core-functionality/project-management/
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
+- [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
 - [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
 - [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
+- [x] getting-started progress increments as onboarding steps complete → `user-progress-track.spec.ts`
 
 #### flow-functionality/
 - [x] API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs → `api-access-modal-regression.spec.ts`
@@ -1077,6 +1082,7 @@
 - [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+- [x] user can create a flow from a starter template → `create-flow-from-template.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
@@ -1092,6 +1098,7 @@
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
+- [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 
 #### mcp/client/
 - [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
@@ -1139,9 +1146,9 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 7 | 1 |
-| `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 12 | 0 |
+| `core-functionality/observability-monitoring/` | 6 | 1 |
+| `core-functionality/knowledge-ingestion/` | 3 | 4 |
+| `flow-functionality/` | 8 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
