@@ -118,7 +118,7 @@ export function instructionFor(s: PipelineState): string {
     case 'DISPATCH':
       return [
         `This is a triage dispatcher, not a fix — CONTRIBUTING § Triage protocol governs and outranks this skill. Shallow & descriptive: open one dedicated issue per problem in order hard-failure → flake → skip, dedup against open issues, and do NOT fix anything on this branch.`,
-        `hard-failure vs recurrent-flake vs transient vs wiper here is a routing bucket noted DESCRIPTIVELY — never a closing verdict. The verdict + evidence framework runs on the dedicated issues (DEBUG phase), not here. If the mass-failure guard tripped, add one descriptive call — was the day environmental? — and only if NOT, remove @stable manually from the real hard failures.`,
+        `The hard-failure / recurrent-flake / transient / wiper labels here are routing buckets noted DESCRIPTIVELY — never closing verdicts. The verdict + evidence framework runs on the dedicated issues (DEBUG phase), not here. If the mass-failure guard tripped, add one descriptive call — was the day environmental? — and only if NOT, remove @stable manually from the real hard failures.`,
         done('DISPATCH', '{"createdIssues":["#NNN"]}'),
       ].join('\n')
 

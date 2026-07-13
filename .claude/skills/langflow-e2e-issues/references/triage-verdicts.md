@@ -18,7 +18,9 @@ routing a failing/suspicious behavior before "fixing" anything.
 > The origin case for the TRANSIENT verdict (#549) was itself a **dedicated
 > issue** derived from triage #548 — proof of where this framework belongs.
 
-**Test defect vs Langflow regression — decide with evidence, at ANY phase.**
+**Test defect vs Langflow regression — decide with evidence, at any resolution
+phase** (while working a dedicated issue, SPECIFY→VERIFY or during reproduction —
+never at triage; see the SCOPE banner above).
 Not every failing test means the test is wrong: the product itself regresses
 (this suite exists to catch exactly that). Whenever a failure/behavior looks
 broken — in the issue body, during reproduction, or when a previously-green
