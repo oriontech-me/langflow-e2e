@@ -762,12 +762,12 @@
 | `core-functionality/playground/` | 48 | 44 | 2 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 15 | 11 | 2 | 0 |
+| `flow-functionality/` | 28 | 16 | 10 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **272 (60%)** | **150 (33%)** | **8 (2%)** | **21 (5%)** |
+| **TOTAL** | **451** | **273 (61%)** | **149 (33%)** | **8 (2%)** | **21 (5%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 303 `test()` calls carrying the `@stable` tag, distributed across 115 spec
+> 304 `test()` calls carrying the `@stable` tag, distributed across 116 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1067,6 +1067,7 @@
 #### core-functionality/project-management/
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
+- [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
 - [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
 - [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
 - [x] getting-started progress increments as onboarding steps complete → `user-progress-track.spec.ts`
@@ -1143,7 +1144,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 6 | 1 |
 | `core-functionality/knowledge-ingestion/` | 4 | 4 |
-| `flow-functionality/` | 11 | 0 |
+| `flow-functionality/` | 10 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
