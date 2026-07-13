@@ -762,12 +762,12 @@
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 19 | 7 | 2 | 0 |
+| `flow-functionality/` | 28 | 20 | 6 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **281 (62%)** | **142 (31%)** | **8 (2%)** | **20 (4%)** |
+| **TOTAL** | **451** | **282 (63%)** | **141 (31%)** | **8 (2%)** | **20 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 309 `test()` calls carrying the `@stable` tag, distributed across 121 spec
+> 310 `test()` calls carrying the `@stable` tag, distributed across 122 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1081,6 +1081,7 @@
 - [x] API access modal switches the displayed snippet when changing language tabs → `api-access-modal-regression.spec.ts`
 - [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
 - [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
+- [x] user should be able to manually save a flow when the auto_save is off → `auto-save-off.spec.ts`
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] user can create a blank flow from the new-project modal → `create-blank-flow.spec.ts`
@@ -1151,7 +1152,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 5 | 0 |
 | `core-functionality/knowledge-ingestion/` | 3 | 4 |
-| `flow-functionality/` | 7 | 0 |
+| `flow-functionality/` | 6 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
