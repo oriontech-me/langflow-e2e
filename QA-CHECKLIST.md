@@ -297,7 +297,7 @@
 
 #### 5.1 File Upload
 - [x] Upload file via component → `core-functionality/knowledge-ingestion-management/upload-via-component.spec.ts`
-- [-] Upload files of different types (txt, pdf, json, py, wav)
+- [x] Upload files of different types (txt, pdf, json, py, wav) → `core-functionality/knowledge-ingestion-management/file-types-upload.spec.ts`
 - [-] File size limit
 - [-] File management page
 
