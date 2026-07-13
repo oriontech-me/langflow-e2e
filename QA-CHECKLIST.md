@@ -460,7 +460,7 @@
 - [x] Open Playground → exercised by every `@stable` playground spec via `playground-btn-flow-io`
 - [x] Send text message → exercised by `playground-ux.spec.ts`, `playground-message-edit.spec.ts`, `playground-session-nav.spec.ts` and others
 - [x] Receive LLM response → exercised by all specs that send a message via ChatInput → ChatOutput echo flow
-- [-] Response streaming (SSE) → no dedicated spec; exercised implicitly by `playground-ux.spec.ts`
+- [x] Response streaming (SSE) → `core-functionality/playground/playground-response-streaming-sse.spec.ts`
 - [x] Response polling → api/flows/api-build-polling-response.spec.ts
 - [-] Direct response → no dedicated spec
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
