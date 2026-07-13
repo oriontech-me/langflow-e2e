@@ -593,7 +593,7 @@
 ## flow-functionality/ — Graph Execution, Drag-and-Drop and JSON
 
 #### 12.1 Create Flow
-- [-] Create blank flow
+- [x] Create blank flow → `flow-functionality/create-blank-flow.spec.ts`
 - [x] Create flow from template → `flow-functionality/create-flow-from-template.spec.ts`
 - [x] Create flow by duplicating an existing one → `flow-functionality/duplicate-flow.spec.ts`
 - [x] Create flow via JSON file import → `flow-functionality/export-import-flow.spec.ts`
