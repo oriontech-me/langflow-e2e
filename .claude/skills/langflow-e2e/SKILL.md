@@ -98,9 +98,13 @@ tag (`@model-provider`, `@agents`, `@mcp`, `@playground`, `@auth`,
 selector conventions: `references/authoring-conventions.md`.
 
 **5 — VERIFY.** Close the loop against the spec's **Validation criterion** and
-the checklist below. Update the `QA-CHECKLIST.md` **bullet** (never the
-auto-generated tables) and the spec doc status. Add `@stable` only after team
-validation. If the test can't satisfy the spec, return to phase 1 — don't
+the checklist below. Update the `QA-CHECKLIST.md` **bullet** only (never the
+auto-generated blocks — table, note, Phase 0/1/2 lists); in a PR, do NOT run
+`npm run coverage:summary` and commit its output — the counts regenerate on
+merge and committing them makes concurrent PRs collide (issue #741; the
+`pr-validation.yml` guard fails such PRs). Also update the spec doc status. Add
+`@stable` only after team validation. If the test can't satisfy the spec, return
+to phase 1 — don't
 quietly weaken it to make it pass.
 
 > **Trigger — when the user says a test is concluded** ("concluído", "está

@@ -22,7 +22,7 @@
 //   "duration_ms": 0,
 //   "totals": { "passed": 0, "failed": 0, "flaky": 0, "skipped": 0 },
 //   "failures": [ { test, file, line, tags, attempts, error_signature } ],
-//   "flaky":    [ { test, file, line, tags, attempts } ]
+//   "flaky":    [ { test, file, line, tags, attempts, error_signature } ]
 // }
 
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
@@ -49,7 +49,10 @@ function firstErrorMessage(result) {
   const err = result?.error || result?.errors?.[0];
   if (!err) return null;
   const raw = err.message || err.value || "";
-  return raw.split("\n")[0].slice(0, 240);
+  // First *non-empty* line (some messages lead with a blank line), trimmed and
+  // capped so equal causes cluster to an equal signature.
+  const line = raw.split("\n").map((l) => l.trim()).find((l) => l.length > 0);
+  return line ? line.slice(0, 240) : null;
 }
 
 function specRelFile(spec) {
@@ -82,7 +85,24 @@ function visit(node) {
       }
       if (status === "flaky") {
         totals.flaky++;
-        flaky.push({ test: title, file, line, tags, attempts });
+        // A flaky test failed on an earlier attempt and passed on a retry.
+        // Surface that first failed attempt's message through the same
+        // normaliser used for hard failures, so the flake-recurrence criterion
+        // in CONTRIBUTING.md (same signature within 30 days) can be applied
+        // mechanically to `.flaky[]` rows too. Pick the first result that
+        // actually carries a message — skipping any interrupted/no-message
+        // attempt that may precede the real failure.
+        const firstFailedSignature = (test.results || [])
+          .map((r) => firstErrorMessage(r))
+          .find((m) => m);
+        flaky.push({
+          test: title,
+          file,
+          line,
+          tags,
+          attempts,
+          error_signature: firstFailedSignature || "unknown",
+        });
         continue;
       }
       // unexpected (or anything else) → failure

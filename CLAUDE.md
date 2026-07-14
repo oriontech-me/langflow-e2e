@@ -195,7 +195,9 @@ Two passages in `QA-CHECKLIST.md` are **auto-generated**:
 1. The **Coverage Summary table** is derived from the bullet markers (`[x]` / `[-]` / `[ ]` / `[~]` / `[!]`) inside Part II. Never propose manual edits to the table's numbers, percentages, or `**TOTAL**` row — only edit the bullets, and the workflow regenerates the table on the next merge to `main`. Logic lives in `scripts/coverage-summary.ts`. If a new module section is added to Part II, update the `MODULES` array in the script.
 2. The **Coverage Summary Note** and the **`Phase 0 — Validated`** block (header counts and bulleted list) are derived from `@stable` `test()` calls parsed out of `tests/tests-automations/regression/**.spec.ts`. Never edit those by hand. Add or remove the `@stable` tag on the relevant `test(...)` and the workflow regenerates on the next merge to `main`. Logic lives in `scripts/stable-tests.ts`.
 
-Both regenerators run together via `npm run coverage:summary` (locally or in `update-coverage-summary.yml`) and are idempotent — a second run produces no diff when in sync.
+Both regenerators run together via `npm run coverage:summary` and are idempotent — a second run produces no diff when in sync.
+
+> **In a PR, edit ONLY the manual Part II bullets — do NOT run `npm run coverage:summary` and commit its output.** The generated blocks (Coverage Summary table + note, `Phase 0 — Validated` list, Phase 1/2 tables) are regenerated on merge to `main` by `update-coverage-summary.yml`. Committing regenerated counts in a PR makes concurrent `@stable` PRs collide on the same count lines (the recurring `QA-CHECKLIST.md` conflict — issue #741). `npm run coverage:summary` is for local inspection only; the `pr-validation.yml` **QA-CHECKLIST guard** job (`scripts/check-checklist-guard.mjs`) fails any PR that edits a generated block.
 
 ## Playwright Configuration
 

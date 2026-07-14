@@ -1,6 +1,6 @@
 # Agent structured output — output_schema returns schema-shaped JSON
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.11.x (re-validated on 1.11.0.dev38, #724)
 
 ---
 
@@ -127,16 +127,26 @@ persisted output — never on the model's wording.
   asserts fail on that shape (no key `name`/`colors`), so an errored run
   cannot pass silently.
 - **Model-selection guards (setup stabilization, found via live flake
-  hunt).** The node run builds from the frontend's in-memory graph, and the
-  canvas's `custom_component/update` storm intermittently DROPS the Agent's
-  model selection (`__default_language_model__ variable not found` in the
-  backend log) — the build then falls back to the legacy default model of an
-  inactive provider and never reports success (~1/5 observed). Two guards:
-  the API PATCH polls the flow until the POM's model selection is autosaved
-  before writing (write-clobber race), and the run helper re-checks the
-  node's model widget right before running, reloading (bounded ×3) until the
-  selection is present. Product-bug candidate — flagged on the PR; the
-  structured-output asserts are untouched by both guards.
+  hunt).** The Agent's model choice lands via ASYNC autosave; a GET+PATCH
+  that races it re-writes the template default (the leader/default provider's
+  model, e.g. `claude-sonnet-5`) back over the selection. Two guards: the API
+  PATCH polls the flow until the POM's model selection is autosaved before
+  writing (write-clobber race), and the run helper re-checks the node's model
+  widget right before running, reloading (bounded — 3 checks, at most 2
+  reloads) until the selection is present. The structured-output asserts are
+  untouched by both guards.
+  - **#724 fix — the poll must check the SELECTED value, not the serialized
+    field.** `template.model` embeds an `options` list of every enabled model
+    (~59 on a multi-provider nightly), so the original substring check over
+    the stringified field matched `expectedModel` inside `options` regardless
+    of what was actually selected — the poll returned "ready" on the first
+    GET even before the autosave, and the PATCH clobbered the selection with
+    the leader model (daily #704 hard failure). The poll now inspects
+    `template.model.value` (the array of selected model objects) only.
+  - **Not a product bug (re-confirmed live on #724).** Selecting a non-leader
+    model in the widget, waiting for autosave, and reloading persists the
+    selection correctly on the nightly; the flake was entirely the test's own
+    write-clobber, now fixed.
 - **Force-failure checks** (CONTRIBUTING §2): M1 — test 1 expects a key
   absent from the schema (`city`) ⇒ must fail; M2 — test 1 expects `age` to
   be a string (wrong type) ⇒ must fail; M3 — test 2 expects `colors` NOT to

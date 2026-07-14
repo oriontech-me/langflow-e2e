@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-13
+> **Last updated:** 2026-07-14
 
 ---
 
@@ -297,12 +297,12 @@
 
 #### 5.1 File Upload
 - [x] Upload file via component → `core-functionality/knowledge-ingestion-management/upload-via-component.spec.ts`
-- [-] Upload files of different types (txt, pdf, json, py, wav)
-- [-] File size limit
+- [x] Upload files of different types (txt, pdf, json, py, wav) → `core-functionality/knowledge-ingestion-management/file-types-upload.spec.ts`
+- [x] File size limit → `core-functionality/knowledge-ingestion-management/limit-file-size-upload.spec.ts`
 - [-] File management page
 
 #### 5.2 Processing and Vectorization
-- [ ] Document ingestion via Split Text + Embeddings component
+- [x] Split Text chunking of an ingested document → `core-functionality/knowledge-ingestion-management/split-text-chunking.spec.ts`
 - [ ] Indexing in Vector Store — document available for query
 - [ ] Vector Store query returns relevant chunks for the prompt
 - [ ] Complete RAG pipeline (ingest → embed → store → retrieve → answer)
@@ -444,12 +444,12 @@
 
 #### 8.3 User State
 - [x] Track user progress → `core-functionality/project-management/user-progress-track.spec.ts`
-- [-] User flow state cleanup
+- [x] User flow state cleanup → `flow-functionality/user-flow-state-cleanup.spec.ts`
 
 #### 8.4 Error Handling and Edge Cases
 - [x] Component that raises Python error → `core-components/validate-raise-errors-components.spec.ts`
-- [ ] Flow with error displays appropriate message
-- [-] Network error during execution
+- [x] Flow with error displays appropriate message → `core-functionality/observability-monitoring/flow-error-message.spec.ts`
+- [x] Network error during execution → ui-ux/execution-error-notification.spec.ts
 - [-] Execution timeout — clear message to user
 
 ---
@@ -460,9 +460,9 @@
 - [x] Open Playground → exercised by every `@stable` playground spec via `playground-btn-flow-io`
 - [x] Send text message → exercised by `playground-ux.spec.ts`, `playground-message-edit.spec.ts`, `playground-session-nav.spec.ts` and others
 - [x] Receive LLM response → exercised by all specs that send a message via ChatInput → ChatOutput echo flow
-- [-] Response streaming (SSE) → no dedicated spec; exercised implicitly by `playground-ux.spec.ts`
+- [x] Response streaming (SSE) → `core-functionality/playground/playground-response-streaming-sse.spec.ts`
 - [x] Response polling → api/flows/api-build-polling-response.spec.ts
-- [-] Direct response → no dedicated spec
+- [x] Direct response → `api/flows/api-build-direct-response.spec.ts`
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
 - [x] Send empty message — send button stays enabled by design (only disabled while a file upload is in progress) → `playground/playground-empty-message-send.spec.ts`
 - [ ] Send message while response is in progress — should wait or queue
@@ -593,16 +593,16 @@
 ## flow-functionality/ — Graph Execution, Drag-and-Drop and JSON
 
 #### 12.1 Create Flow
-- [-] Create blank flow
-- [-] Create flow from template
+- [x] Create blank flow → `flow-functionality/create-blank-flow.spec.ts`
+- [x] Create flow from template → `flow-functionality/create-flow-from-template.spec.ts`
 - [x] Create flow by duplicating an existing one → `flow-functionality/duplicate-flow.spec.ts`
-- [-] Create flow via JSON file import
+- [x] Create flow via JSON file import → `flow-functionality/export-import-flow.spec.ts`
 
 #### 12.2 View and Edit Flow
 - [x] Rename flow via editor header → `flow-functionality/flow-rename-header.spec.ts`
 - [x] Rename flow and verify on main page listing → `core-functionality/project-management/edit-flow-name.spec.ts`
-- [-] Edit flow name and description
-- [-] Flow auto-save on changes
+- [x] Edit flow name and description → `core-components/edit-name-description-node.spec.ts`
+- [x] Flow auto-save on changes → `flow-functionality/auto-save-off.spec.ts`
 - [x] Flow settings → `core-functionality/project-management/flowSettings.spec.ts`
 
 #### 12.3 Delete Flow
@@ -617,7 +617,7 @@
 - [x] Exported JSON contains valid data.nodes structure → `flow-functionality/export-import-flow.spec.ts`
 - [x] Import flow via JSON file upload (drag-drop + upload button) → `flow-functionality/export-import-flow.spec.ts`
 - [~] Import flow with outdated components
-- [-] Import invalid JSON — should display error message
+- [x] Import invalid JSON — should display error message → `flow-functionality/import-invalid-json.spec.ts`
 
 #### 12.5 Flow Operations
 - [-] Lock flow — prevents editing
@@ -755,19 +755,19 @@
 | `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
-| `core-functionality/knowledge-ingestion/` | 8 | 1 | 3 | 0 | 4 |
+| `core-functionality/knowledge-ingestion/` | 8 | 4 | 1 | 0 | 3 |
 | `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
-| `core-functionality/observability-monitoring/` | 24 | 17 | 6 | 0 | 1 |
-| `core-functionality/playground/` | 48 | 44 | 2 | 1 | 1 |
+| `core-functionality/observability-monitoring/` | 24 | 20 | 4 | 0 | 0 |
+| `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 16 | 10 | 2 | 0 |
+| `flow-functionality/` | 28 | 22 | 4 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **274 (61%)** | **148 (33%)** | **8 (2%)** | **21 (5%)** |
+| **TOTAL** | **451** | **288 (64%)** | **136 (30%)** | **8 (2%)** | **19 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,13 +783,15 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 305 `test()` calls carrying the `@stable` tag, distributed across 117 spec
+> 319 `test()` calls carrying the `@stable` tag, distributed across 128 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
 > mix of tagged and untagged tests over time.
 
 #### api/flows/
+- [x] direct event_delivery streams build events inline (no job_id) and echoes the input → `api-build-direct-response.spec.ts`
+- [x] direct is distinct from the job_id path: streaming delivery returns a job_id → `api-build-direct-response.spec.ts`
 - [x] polling is the two-step path: POST returns a job_id shell (no inline events) → `api-build-polling-response.spec.ts`
 - [x] the poll loop drains the build to completion across repeated GET /events calls → `api-build-polling-response.spec.ts`
 - [x] POST /api/v1/custom_component returns valid component structure → `api-custom-component-creation.spec.ts`
@@ -870,6 +872,8 @@
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
+- [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
+- [x] user should be able to edit name and description of a node with inspect panel disabled → `edit-name-description-node.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
@@ -932,6 +936,9 @@
 - [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
 
 #### core-functionality/knowledge-ingestion-management/
+- [x] upload a <ext> file through the Files page → `file-types-upload.spec.ts`
+- [x] user should not be able to upload a file larger than the limit → `limit-file-size-upload.spec.ts`
+- [x] Split Text splits an ingested document into the expected number of chunks → `split-text-chunking.spec.ts`
 - [x] upload a file through the Read File component and read its content → `upload-via-component.spec.ts`
 
 #### core-functionality/llm-agents/
@@ -962,7 +969,6 @@
 - [x] a multiple (As List) schema row returns an array of the row's type → `agent-structured-output.spec.ts`
 - [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
-- [x] agent handles a tool error and continues execution → `agent-tool-error-handling.spec.ts`
 - [x] an invalid tool name blocks execution with a clear message → `agent-tool-name-validation.spec.ts`
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
@@ -978,7 +984,6 @@
 - [x] OpenAI provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] Anthropic provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] a configured provider exposes the key edit surface (Replace, no raw input) → `model-provider-api-key.spec.ts`
-- [x] page opens with its description and the available provider count → `model-provider-modal-actions.spec.ts`
 - [x] an invalid API key is rejected and does not enable the provider → `model-provider-modal-actions.spec.ts`
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
@@ -1008,6 +1013,7 @@
 - [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
+- [x] a misconfigured flow surfaces an appropriate build-error message → `flow-error-message.spec.ts`
 - [x] Clearing traces for a flow whose trace has spans succeeds (cascade), leaving no traces behind → `traces-delete-cascade.spec.ts`
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
 - [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
@@ -1058,6 +1064,7 @@
 - [x] playground must render DataFrame output as a markdown table → `playground-output-data.spec.ts`
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
 - [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
+- [x] Playground run is delivered over an SSE (text/event-stream) response → `playground-response-streaming-sse.spec.ts`
 - [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
 - [x] rename option must not be available for a session with no messages → `playground-session-rename.spec.ts`
 - [x] rename option must be available and functional for a session with messages → `playground-session-rename.spec.ts`
@@ -1069,7 +1076,6 @@
 
 #### core-functionality/project-management/
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
-- [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
 - [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
 - [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
 - [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
@@ -1080,8 +1086,11 @@
 - [x] API access modal switches the displayed snippet when changing language tabs → `api-access-modal-regression.spec.ts`
 - [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
 - [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
+- [x] user should be able to manually save a flow when the auto_save is off → `auto-save-off.spec.ts`
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+- [x] user can create a blank flow from the new-project modal → `create-blank-flow.spec.ts`
+- [x] user can create a flow from a starter template → `create-flow-from-template.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
 - [x] user can duplicate a flow from the home page dropdown menu → `duplicate-flow.spec.ts`
 - [x] duplicate flow via API auto-suffixes the name on collision → `duplicate-flow.spec.ts`
@@ -1093,11 +1102,15 @@
 - [x] 3 - the chat input and chat output are visible in the Playground → `flow-execution-canvas.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
+- [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
+- [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
+- [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
+- [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
 - [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
@@ -1110,6 +1123,7 @@
 - [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
 - [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
 - [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
+- [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
@@ -1132,7 +1146,7 @@
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 6 |
 | `core-functionality/model-provider/` | 0 | 0 |
-| `core-functionality/playground/` | 2 | 1 |
+| `core-functionality/playground/` | 0 | 1 |
 | `mcp/client/` | 7 | 2 |
 | `mcp/server/` | 3 | 4 |
 | `ui-ux/` — Canvas | 36 | 0 |
@@ -1145,9 +1159,9 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 6 | 1 |
-| `core-functionality/knowledge-ingestion/` | 3 | 4 |
-| `flow-functionality/` | 10 | 0 |
+| `core-functionality/observability-monitoring/` | 4 | 0 |
+| `core-functionality/knowledge-ingestion/` | 1 | 3 |
+| `flow-functionality/` | 4 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |

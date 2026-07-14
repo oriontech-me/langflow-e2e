@@ -206,6 +206,15 @@ interface SchemaRow {
 // races it writes the stale default model back (observed live: the agent
 // then built with the inactive provider's default and the run hung — ~1/5
 // failure rate before this guard).
+//
+// The poll MUST inspect the model field's selected `value`, not the whole
+// serialized field: `template.model` embeds an `options` list of every
+// enabled model (~59 on a multi-provider nightly), so a substring check over
+// the stringified field matched `expectedModel` in `options` regardless of
+// what was actually selected — returning "flow-ready" on the FIRST GET even
+// when `value` was still the template default. That let a pre-autosave GET
+// through, and the PATCH wrote the default (the leader/default provider's
+// model, e.g. "claude-sonnet-5") back over the selection (#724).
 async function patchStructuredOutputSetup(
   request: APIRequestContext,
   bearer: string,
@@ -225,11 +234,20 @@ async function patchStructuredOutputSetup(
           (n: any) => n.data?.type === "Agent",
         );
         if (!agentNode) return "no Agent node";
-        if (
-          expectedModel &&
-          !JSON.stringify(agentNode.data.node?.template?.model ?? "").includes(expectedModel)
-        ) {
-          return "model selection not autosaved yet";
+        if (expectedModel) {
+          // The model field's `value` is the array of SELECTED model objects
+          // ({ name, provider, ... }); `options` (all enabled models) is
+          // deliberately excluded from this check — see the note above.
+          // Exact-match on `name`: expectedModel comes from models.json (the
+          // model id) and equals the option's `name`; a divergence there would
+          // burn the full poll timeout rather than pass on a stale value.
+          const selected = agentNode.data.node?.template?.model?.value;
+          const selectedNames = Array.isArray(selected)
+            ? selected.map((m: any) => m?.name)
+            : [selected];
+          if (!selectedNames.includes(expectedModel)) {
+            return "model selection not autosaved yet";
+          }
         }
         return "flow-ready";
       },
@@ -285,14 +303,15 @@ async function setChatInputText(page: Page, text: string): Promise<void> {
 // slices the dialog text from the first "{" to the last "}".
 //
 // The node run builds from the FRONTEND's in-memory graph (the v2 workflows
-// payload embeds data.nodes), and the canvas's custom_component/update storm
-// intermittently drops the Agent's model selection from that state — the
-// build then silently falls back to the legacy default model of an inactive
-// provider and hangs the success toast (observed ~1/5 pre-guard; product-bug
-// candidate flagged on the PR). The gate below re-checks the node's model
-// widget right before running and reloads (bounded) until the selection is
-// present — setup stabilization only; the structured-output asserts are
-// untouched.
+// payload embeds data.nodes). #724 traced the "reverts to leader" flake to the
+// test's own write-clobber (see patchStructuredOutputSetup) — NOT a product
+// bug: selecting a non-leader model, autosaving, and reloading persists the
+// selection correctly live. When the persisted model.value is empty/stale the
+// product legitimately auto-picks the first enabled model (the leader). With
+// the poll fixed the correct value is written back, so this gate below is now
+// a defensive safety net: it re-reads the node's model widget right before
+// running and reloads (bounded) until the selection is present. Setup
+// stabilization only — the structured-output asserts are untouched.
 async function runAgentAndParseStructuredOutput(
   page: Page,
   expectedModel: string | undefined,
@@ -306,7 +325,7 @@ async function runAgentAndParseStructuredOutput(
       if (widget.includes(expectedModel)) break;
       expect(
         attempt,
-        `Agent model widget lost the selection (shows "${widget}", expected "${expectedModel}") after 3 reloads`,
+        `Agent model widget lost the selection (shows "${widget}", expected "${expectedModel}") after 2 reloads`,
       ).toBeLessThan(3);
       await page.reload();
       await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', { timeout: 30000 });
