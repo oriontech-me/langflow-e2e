@@ -26,9 +26,9 @@ The test creates its 3 flows directly via the REST API (`POST /api/v1/flows/`, e
 
 ## Step by step *(required)*
 
-1. Bootstrap the test session (`awaitBootstrapTest(page, { skipModal: true })` — no templates modal is needed since flows are created via the API).
-2. Create 3 flows via `POST /api/v1/flows/` (`createFlow` helper) with unique names (`bulk-actions-<suffix>-1..3`) and empty `data`; capture each returned ID.
-3. Navigate to the home listing (`page.goto("/")`); the 3 just-created flows sort to the top by recency. **Guard:** assert the top 3 list cards' names are exactly the 3 created names — selection is positional (shift/ctrl-click by index) and bulk-delete is destructive, so a sibling worker's flow interleaving at the top must fail fast rather than risk a cross-worker delete.
+1. Create 3 flows via `POST /api/v1/flows/` (`createFlow` helper) with unique names (`bulk-actions-<suffix>-1..3`) and empty `data`; capture each returned ID. This runs **before** bootstrap so the instance is non-empty.
+2. Bootstrap the test session onto the home listing (`awaitBootstrapTest(page, { skipModal: true })`). `skipModal` skips opening the templates modal; seeding the flows first also skips the empty-page branch (`addFlowToTestOnEmptyLangflow`, which drives the same templates-modal helper), so no part of the historically flaky modal path is exercised. The 3 just-created flows sort to the top by recency.
+3. **Guard:** assert the top 3 list cards' names are exactly the 3 created names — selection is positional (shift/ctrl-click by index) and bulk-delete is destructive, so a sibling worker's flow interleaving at the top must fail fast rather than risk a cross-worker delete.
 4. Shift-click list card 1 then list card 3; assert all 3 checkboxes are checked.
 5. Click `download-bulk-btn`; assert the "downloaded successfully" notification.
 6. Shift-click list card 1 again; assert all 3 checkboxes are unchecked.

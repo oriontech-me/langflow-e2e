@@ -8,12 +8,6 @@ test(
   "user should be able to select flows with different methods and perform bulk actions",
   { tag: ["@stable", "@release", "@workspace", "@mainpage", "@regression"] },
   async ({ page, request }) => {
-    // Land on the home listing without opening the templates modal — flows are
-    // created via the API below, so the (historically flaky) modal path is not
-    // needed. skipModal avoids `openNewFlowTemplatesModal`, which was the sole
-    // source of this spec's CI flake (#723).
-    await awaitBootstrapTest(page, { skipModal: true });
-
     // Track the IDs of the 3 flows we create so cleanup can delete ONLY those
     // via the API, not sibling specs' flows. Under `fullyParallel`, a positional
     // bulk-delete on the shared listing would otherwise be able to hit a flow
@@ -31,6 +25,12 @@ test(
       // assertions under test. `createFlow` retries the transient concurrent
       // 500 (#588); empty `data` is enough — the test only selects/downloads/
       // deletes the cards, it never runs the flows.
+      //
+      // Seed via the API BEFORE bootstrapping the browser: this leaves the
+      // instance non-empty, so `awaitBootstrapTest`'s empty-page seeding branch
+      // (`addFlowToTestOnEmptyLangflow`, which itself drives the flaky templates
+      // modal via `dismissWelcomeOverlayAndWaitForModal`) is never taken. Getting
+      // the token uses `request` and is independent of the browser session.
       const headers = { Authorization: await getAuthToken(request) };
       for (const name of createdNames) {
         const id = await createFlow(
@@ -41,10 +41,13 @@ test(
         createdFlowIds.push(id);
       }
 
-      // Load the home listing; the 3 just-created flows sort to the top by
-      // recency (verified live — API-created empty flows select via shift/ctrl
-      // click exactly like template-created ones).
-      await page.goto("/");
+      // Bootstrap onto the home listing. `skipModal` skips opening the templates
+      // modal, and because the 3 flows above already exist the empty-page
+      // seeding branch is skipped too — so no part of the historically flaky
+      // modal path (#723) is exercised. The 3 flows sort to the top by recency
+      // (verified live — API-created empty flows select via shift/ctrl click
+      // exactly like template-created ones).
+      await awaitBootstrapTest(page, { skipModal: true });
       await expect(page.getByTestId("list-card").first()).toBeVisible({ timeout: 30000 });
 
       // Safety + determinism guard: the top 3 cards must be exactly the flows we
