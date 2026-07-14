@@ -752,7 +752,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
-| `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
+| `core-components/` — Component Config | 24 | 6 | 17 | 0 | 1 |
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 4 | 1 | 0 | 3 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **288 (64%)** | **136 (30%)** | **8 (2%)** | **19 (4%)** |
+| **TOTAL** | **451** | **289 (64%)** | **135 (30%)** | **8 (2%)** | **19 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 294 `test()` calls carrying the `@stable` tag, distributed across 117 spec
+> 295 `test()` calls carrying the `@stable` tag, distributed across 118 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -871,6 +871,7 @@
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
+- [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
 - [x] If-Else operator=contains routes a substring match through the True branch → `if-else-component-regression.spec.ts`
@@ -1116,7 +1117,7 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
-| `core-components/` — Component Config | 18 | 1 |
+| `core-components/` — Component Config | 17 | 1 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 6 |
