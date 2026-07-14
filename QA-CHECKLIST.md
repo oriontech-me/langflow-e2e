@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 319 `test()` calls carrying the `@stable` tag, distributed across 128 spec
+> 294 `test()` calls carrying the `@stable` tag, distributed across 117 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -871,10 +871,6 @@
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
-- [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
-- [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
-- [x] user should be able to edit name and description of a node with inspect panel disabled → `edit-name-description-node.spec.ts`
-- [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
 - [x] If-Else operator=contains routes a substring match through the True branch → `if-else-component-regression.spec.ts`
@@ -919,7 +915,6 @@
 - [x] should not allow adding a Chat Input while a Webhook is on the canvas → `singleton-components.spec.ts`
 - [x] should not allow duplicating a Webhook → `singleton-components.spec.ts`
 - [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
-- [x] User should be able to use components as tool → `tool-mode.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
@@ -973,7 +968,6 @@
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
-- [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
@@ -1014,23 +1008,10 @@
 
 #### core-functionality/observability-monitoring/
 - [x] a misconfigured flow surfaces an appropriate build-error message → `flow-error-message.spec.ts`
-- [x] Clearing traces for a flow whose trace has spans succeeds (cascade), leaving no traces behind → `traces-delete-cascade.spec.ts`
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
-- [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
-- [x] GET /api/v1/monitor/traces/{trace_id} returns a populated tokenUsage + modelName on the LLM span → `traces-detail-llm-span-populated.spec.ts`
 - [x] GET /api/v1/monitor/traces/{trace_id} returns 404 for an unknown but well-formed UUID → `traces-detail-single.spec.ts`
-- [x] GET /api/v1/monitor/traces/{trace_id} returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
 - [x] GET /api/v1/monitor/transactions returns 200 with paginated result → `traces-detail.spec.ts`
 - [x] GET /api/v1/monitor/transactions filters by flow_id (UUID) → `traces-detail.spec.ts`
-- [x] transaction records contain required fields when not empty → `traces-detail.spec.ts`
-- [x] GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run → `traces-latency-tokens.spec.ts`
-- [x] Flow Activity page shows latency and token columns for the run → `traces-latency-tokens.spec.ts`
-- [x] Trace Details modal shows span tree and per-span latency → `traces-latency-tokens.spec.ts`
-- [x] GET /api/v1/monitor/traces?status=error returns only the failing trace; rejects unknown values → `traces-list-filters.spec.ts`
-- [x] GET /api/v1/monitor/traces?status=ok returns only the successful trace → `traces-list-filters.spec.ts`
-- [x] GET /api/v1/monitor/traces?start_time pins the >= lower bound → `traces-list-filters.spec.ts`
-- [x] GET /api/v1/monitor/traces?query=<substring> filters by trace name (incl. 50-char sanitize cap) → `traces-list-filters.spec.ts`
-- [x] GET /api/v1/monitor/traces?session_id filters by the session passed at run time → `traces-list-filters.spec.ts`
 - [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
@@ -1050,9 +1031,6 @@
 - [x] playground opens in fullscreen with chat input visible → `playground-fullscreen.spec.ts`
 - [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
 - [x] messages sent in playground must persist after closing and reopening → `playground-history-persist.spec.ts`
-- [x] playground opens with chat textarea pre-filled from ChatInput Input Text → `playground-input-text-prefill.spec.ts`
-- [x] creating a new session re-applies the Input Text pre-fill → `playground-input-text-prefill.spec.ts`
-- [x] pre-filled value is sent as the first message of the session → `playground-input-text-prefill.spec.ts`
 - [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
 - [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
@@ -1072,7 +1050,6 @@
 - [x] user message must appear instantly in playground before AI responds → `playground-ux.spec.ts`
 - [x] playground must scroll to latest message after sending → `playground-ux.spec.ts`
 - [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
-- [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
 #### core-functionality/project-management/
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
@@ -1105,11 +1082,9 @@
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
-- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
-- [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
