@@ -22,7 +22,7 @@
 //   "duration_ms": 0,
 //   "totals": { "passed": 0, "failed": 0, "flaky": 0, "skipped": 0 },
 //   "failures": [ { test, file, line, tags, attempts, error_signature } ],
-//   "flaky":    [ { test, file, line, tags, attempts } ]
+//   "flaky":    [ { test, file, line, tags, attempts, error_signature } ]
 // }
 
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
@@ -82,7 +82,20 @@ function visit(node) {
       }
       if (status === "flaky") {
         totals.flaky++;
-        flaky.push({ test: title, file, line, tags, attempts });
+        // A flaky test failed on an earlier attempt and passed on a retry.
+        // Surface that first failed attempt's message through the same
+        // normaliser used for hard failures, so the flake-recurrence criterion
+        // in CONTRIBUTING.md (same signature within 30 days) can be applied
+        // mechanically to `.flaky[]` rows too.
+        const firstFailed = (test.results || []).find((r) => r.status !== "passed");
+        flaky.push({
+          test: title,
+          file,
+          line,
+          tags,
+          attempts,
+          error_signature: firstErrorMessage(firstFailed) || "unknown",
+        });
         continue;
       }
       // unexpected (or anything else) → failure

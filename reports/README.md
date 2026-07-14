@@ -58,7 +58,8 @@ The series is **not continuous**. Document any missing weeks here rather than ba
       "file": "...",
       "line": 78,
       "tags": [...],
-      "attempts": 2                          // result entries; >1 means at least one retry happened
+      "attempts": 2,                         // result entries; >1 means at least one retry happened
+      "error_signature": "..."               // first line of the FIRST failed attempt (before the passing retry)
     }
   ]
 }
@@ -67,8 +68,8 @@ The series is **not continuous**. Document any missing weeks here rather than ba
 ### Field semantics
 
 - `tags` reflects the **state at the moment of the run**, not the current state in the repo. A test that was `@stable` at run time and has since had `@stable` removed will still show `@stable` in its historical entries.
-- `error_signature` is the first non-empty line of the last failed result's error message, truncated to 240 chars. Stack frames and locator details are stripped — enough to cluster recurring failures, not enough to debug from history alone.
-- `failures` are tests where Playwright's final `test.status === "unexpected"`. `flaky` are tests where final status is `"flaky"` (failed and then passed on retry).
+- `error_signature` is the first non-empty line of a failed result's error message, truncated to 240 chars. Stack frames and locator details are stripped — enough to cluster recurring failures, not enough to debug from history alone. For `failures[]` it is taken from the **last** failed result (the one that made the test fail for good); for `flaky[]` it is taken from the **first** failed attempt (the one that triggered the retry that later passed). Falls back to `"unknown"` when no message is available.
+- `failures` are tests where Playwright's final `test.status === "unexpected"`. `flaky` are tests where final status is `"flaky"` (failed and then passed on retry). Both carry `error_signature`, so the 30-day same-signature flake-recurrence criterion in `CONTRIBUTING.md` applies mechanically to either array.
 
 ---
 
