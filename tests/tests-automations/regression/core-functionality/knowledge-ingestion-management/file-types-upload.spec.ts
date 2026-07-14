@@ -1,5 +1,5 @@
 import fs from "fs";
-import type { APIRequestContext, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { resolveAssetPath } from "../../../../helpers/filesystem/resolve-asset-path";
