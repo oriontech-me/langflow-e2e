@@ -154,7 +154,7 @@
 
 #### 2.4 Code Editing
 - [x] Edit Python code of custom component — Check & Save clears the pulse-pink indicator → `core-components/customComponentAdd.spec.ts`
-- [-] Full custom component
+- [x] Full custom component → `core-components/full-custom-component.spec.ts`
 
 ---
 
