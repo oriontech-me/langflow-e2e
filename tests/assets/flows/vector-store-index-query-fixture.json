@@ -1771,7 +1771,7 @@
      "showNode": true,
      "type": "Knowledge",
      "id": "Knowledge-retrieve",
-     "selected_output": "dataframe_output"
+     "selected_output": "retrieve_data"
     },
     "selected": false,
     "measured": {
