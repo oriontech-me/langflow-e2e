@@ -1,78 +1,63 @@
 import { expect, test } from "../../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { openNewFlowTemplatesModal } from "../../../../helpers/flows/open-new-flow-templates-modal";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 test(
   "user should be able to select flows with different methods and perform bulk actions",
   { tag: ["@stable", "@release", "@workspace", "@mainpage", "@regression"] },
   async ({ page, request }) => {
-    await awaitBootstrapTest(page);
+    // Land on the home listing without opening the templates modal — flows are
+    // created via the API below, so the (historically flaky) modal path is not
+    // needed. skipModal avoids `openNewFlowTemplatesModal`, which was the sole
+    // source of this spec's CI flake (#723).
+    await awaitBootstrapTest(page, { skipModal: true });
 
-    // Track the IDs of the 3 flows we create so cleanup can delete ONLY
-    // those via the API, not sibling specs' flows. Bulk-delete via UI on
-    // first→last list-card would nuke any flow created by another worker
-    // under `fullyParallel`.
+    // Track the IDs of the 3 flows we create so cleanup can delete ONLY those
+    // via the API, not sibling specs' flows. Under `fullyParallel`, a positional
+    // bulk-delete on the shared listing would otherwise be able to hit a flow
+    // created by another worker (guarded against below).
     const createdFlowIds: string[] = [];
-    const captureFlowIdFromUrl = async () => {
-      // `waitForURL` enforces the URL matches the regex — once it returns,
-      // the subsequent `match()` is guaranteed to succeed, so the non-null
-      // assertion is safe and lets the rule against test-side conditionals
-      // stay clean.
-      await page.waitForURL(/\/flow\/[0-9a-f-]+/i, { timeout: 15000 });
-      const id = page.url().match(/\/flow\/([0-9a-f-]+)/i)![1];
-      createdFlowIds.push(id);
-    };
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const createdNames = [1, 2, 3].map((n) => `bulk-actions-${suffix}-${n}`);
 
     try {
-      // Add some flows to test with
-      await page.getByTestId("side_nav_options_all-templates").click();
-      await page.getByRole("heading", { name: "Basic Prompting" }).click();
-      await captureFlowIdFromUrl();
-      await adjustScreenView(page);
+      // Create the 3 flows directly via the REST API instead of clicking through
+      // the templates modal three times. The UI path (open modal → pick template
+      // → navigate editor↔home, ×3) was heavy and load-sensitive; both recurring
+      // daily failures (#723: modal never opened / home-return waitForSelector
+      // timeout) lived entirely in that scaffolding, never in the bulk-action
+      // assertions under test. `createFlow` retries the transient concurrent
+      // 500 (#588); empty `data` is enough — the test only selects/downloads/
+      // deletes the cards, it never runs the flows.
+      const headers = { Authorization: await getAuthToken(request) };
+      for (const name of createdNames) {
+        const id = await createFlow(
+          request,
+          { name, description: "", data: { nodes: [], edges: [] }, is_component: false },
+          { headers },
+        );
+        createdFlowIds.push(id);
+      }
 
-      // Go back to main page
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 30000,
-      });
-      await page.getByTestId("icon-ChevronLeft").first().click();
+      // Load the home listing; the 3 just-created flows sort to the top by
+      // recency (verified live — API-created empty flows select via shift/ctrl
+      // click exactly like template-created ones).
+      await page.goto("/");
+      await expect(page.getByTestId("list-card").first()).toBeVisible({ timeout: 30000 });
 
-      // 30s (not 10s): returning from the editor to home under `fullyParallel`
-      // CI load can take longer than 10s to render the home listing. The 10s
-      // wait was the outlier that flaked here (see weekly run on 1.10.1rc3).
-      await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 30000 });
-      await openNewFlowTemplatesModal(page);
-      await page.getByTestId("side_nav_options_all-templates").click();
-      await page.getByRole("heading", { name: "Document Q&A" }).click();
-      await captureFlowIdFromUrl();
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 30000,
-      });
-      await page.getByTestId("icon-ChevronLeft").first().click();
-
-      // 30s (not 10s): returning from the editor to home under `fullyParallel`
-      // CI load can take longer than 10s to render the home listing. The 10s
-      // wait was the outlier that flaked here (see weekly run on 1.10.1rc3).
-      await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 30000 });
-      await openNewFlowTemplatesModal(page);
-      await page.getByTestId("side_nav_options_all-templates").click();
-      await page.getByRole("heading", { name: "Basic Prompting" }).click();
-      await captureFlowIdFromUrl();
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 30000,
-      });
-      await page.getByTestId("icon-ChevronLeft").first().click();
-
-      // 30s (not 10s): returning from the editor to home under `fullyParallel`
-      // CI load can take longer than 10s to render the home listing. The 10s
-      // wait was the outlier that flaked here (see weekly run on 1.10.1rc3).
-      await expect(page.getByText("Projects").first()).toBeVisible({ timeout: 30000 });
-      await page.waitForSelector('[data-testid="home-dropdown-menu"]', {
-        timeout: 30000,
-      });
-      await expect(page.getByTestId("list-card").first()).toBeVisible({ timeout: 10000 });
+      // Safety + determinism guard: the top 3 cards must be exactly the flows we
+      // created. Selection below is positional (shift/ctrl-click by card index)
+      // and bulk-delete is destructive, so if a sibling worker's flow interleaved
+      // at the top of the recency-sorted listing under `fullyParallel`, fail fast
+      // here rather than risk deleting someone else's flow.
+      const topThreeNames = await page
+        .locator("[data-testid='flow-name-div'] span")
+        .evaluateAll((els) =>
+          els.slice(0, 3).map((e) => e.textContent?.trim() ?? ""),
+        );
+      expect([...topThreeNames].sort()).toEqual([...createdNames].sort());
 
       // Test shift selection
       await page.keyboard.down("Shift");
