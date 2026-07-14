@@ -156,7 +156,7 @@ test.describe("Clear traces with a populated span tree (regression #13955)", () 
 
   test(
     "Clearing traces for a flow whose trace has spans succeeds (cascade), leaving no traces behind",
-    { tag: ["@stable", "@release", "@regression", "@api", "@observability"] },
+    { tag: ["@release", "@regression", "@api", "@observability"] },
     async ({ request }) => {
       // Anchor: the seeded trace MUST have spans before DELETE. This is what
       // distinguishes the cascade path from the plain bulk-delete contract test.

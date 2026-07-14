@@ -4,7 +4,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 
 test(
   "User must be able to stop building from inside Playground",
-  { tag: ["@stable", "@release", "@api", "@playground"] },
+  { tag: ["@release", "@api", "@playground"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
