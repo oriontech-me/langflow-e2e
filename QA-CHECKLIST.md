@@ -302,7 +302,7 @@
 - [-] File management page
 
 #### 5.2 Processing and Vectorization
-- [ ] Document ingestion via Split Text + Embeddings component
+- [x] Split Text chunking of an ingested document → `core-functionality/knowledge-ingestion-management/split-text-chunking.spec.ts`
 - [ ] Indexing in Vector Store — document available for query
 - [ ] Vector Store query returns relevant chunks for the prompt
 - [ ] Complete RAG pipeline (ingest → embed → store → retrieve → answer)
