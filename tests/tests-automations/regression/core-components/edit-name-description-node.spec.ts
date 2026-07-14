@@ -1,16 +1,53 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import {
   disableInspectPanel,
   enableInspectPanel,
 } from "../../../helpers/ui/open-advanced-options";
-import { unselectNodes } from "../../../helpers/ui/unselect-nodes";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+
+// Capture every flow THIS page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach. awaitBootstrapTest runs
+// first, so a bare page.url() capture races the bootstrap flow's stale id
+// (#490/#681); the response ids are authoritative and worker-safe. Without this
+// each test leaked a "New Flow".
+const createdFlowIds: string[] = [];
+
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
+  }
+});
 
 test(
   "user should be able to edit name and description of a node",
-  { tag: ["@release", "@workspace"] },
+  { tag: ["@stable", "@release", "@workspace", "@components"] },
 
   async ({ page }) => {
+    trackCreatedFlows(page);
     const randomName = Math.random().toString(36).substring(2, 15);
     const randomDescription = Math.random().toString(36).substring(2, 15);
 
@@ -125,9 +162,10 @@ test(
 
 test(
   "user should be able to edit name and description of a node with inspect panel disabled",
-  { tag: ["@release", "@workspace"] },
+  { tag: ["@stable", "@release", "@workspace", "@components"] },
 
   async ({ page }) => {
+    trackCreatedFlows(page);
     const randomName = Math.random().toString(36).substring(2, 15);
     const randomDescription = Math.random().toString(36).substring(2, 15);
 
@@ -158,82 +196,86 @@ test(
 
     await disableInspectPanel(page);
 
-    await page.getByTestId("sidebar-custom-component-button").click();
+    // Restore the global inspect-panel setting even if an assertion below
+    // fails, so a mid-test failure cannot leave the inspector off for siblings.
+    try {
+      await page.getByTestId("sidebar-custom-component-button").click();
 
-    await page.getByTestId("div-generic-node").click();
+      await page.getByTestId("div-generic-node").click();
 
-    await page.getByTestId("node-edit-name-description-button").click();
+      await page.getByTestId("node-edit-name-description-button").click();
 
-    await page.getByTestId("input-title-Custom Component").fill(randomName);
+      await page.getByTestId("input-title-Custom Component").fill(randomName);
 
-    await page.getByTestId("textarea").fill(randomDescription);
+      await page.getByTestId("textarea").fill(randomDescription);
 
-    await page.getByTestId("publish-button").click();
+      await page.getByTestId("publish-button").click();
 
-    await page.keyboard.press("Escape");
+      await page.keyboard.press("Escape");
 
-    expect(await page.getByText(randomName).count()).toBe(1);
-    expect(await page.getByText(randomDescription).count()).toBe(1);
+      expect(await page.getByText(randomName).count()).toBe(1);
+      expect(await page.getByText(randomDescription).count()).toBe(1);
 
-    await page.getByTestId("div-generic-node").click();
+      await page.getByTestId("div-generic-node").click();
 
-    await page.getByTestId("node-edit-name-description-button").click();
+      await page.getByTestId("node-edit-name-description-button").click();
 
-    await page.getByTestId(`input-title-${randomName}`).fill(randomName_2);
+      await page.getByTestId(`input-title-${randomName}`).fill(randomName_2);
 
-    await page.getByTestId("textarea").fill(randomDescription_2);
+      await page.getByTestId("textarea").fill(randomDescription_2);
 
-    await page.getByTestId("node-save-name-description-button").click();
+      await page.getByTestId("node-save-name-description-button").click();
 
-    expect(await page.getByText(randomName_2).count()).toBe(1);
-    expect(await page.getByText(randomDescription_2).count()).toBe(1);
+      expect(await page.getByText(randomName_2).count()).toBe(1);
+      expect(await page.getByText(randomDescription_2).count()).toBe(1);
 
-    await page.getByTestId("div-generic-node").click();
+      await page.getByTestId("div-generic-node").click();
 
-    await page.getByTestId("node-edit-name-description-button").click();
+      await page.getByTestId("node-edit-name-description-button").click();
 
-    await page.getByTestId(`input-title-${randomName_2}`).fill(randomName_3);
+      await page.getByTestId(`input-title-${randomName_2}`).fill(randomName_3);
 
-    await page.keyboard.press("Enter");
+      await page.keyboard.press("Enter");
 
-    expect(await page.getByText(randomName_3).count()).toBe(1);
+      expect(await page.getByText(randomName_3).count()).toBe(1);
 
-    await page.getByTestId("div-generic-node").click();
+      await page.getByTestId("div-generic-node").click();
 
-    await page.getByTestId("node-edit-name-description-button").click();
+      await page.getByTestId("node-edit-name-description-button").click();
 
-    await page.getByTestId(`input-title-${randomName_3}`).fill(randomName_4);
+      await page.getByTestId(`input-title-${randomName_3}`).fill(randomName_4);
 
-    await page.getByTestId("textarea").fill(randomDescription_4);
+      await page.getByTestId("textarea").fill(randomDescription_4);
 
-    await page.keyboard.press("Escape");
+      await page.keyboard.press("Escape");
 
-    expect(await page.getByText(randomName_4).count()).toBe(1);
+      expect(await page.getByText(randomName_4).count()).toBe(1);
 
-    expect(await page.getByText(randomDescription_2).count()).toBe(1);
+      expect(await page.getByText(randomDescription_2).count()).toBe(1);
 
-    expect(await page.getByText(randomDescription_4).count()).toBe(0);
+      expect(await page.getByText(randomDescription_4).count()).toBe(0);
 
-    expect(await page.getByText(randomName_3).count()).toBe(0);
+      expect(await page.getByText(randomName_3).count()).toBe(0);
 
-    await page.getByTestId("div-generic-node").click();
+      await page.getByTestId("div-generic-node").click();
 
-    await page.getByTestId("node-edit-name-description-button").click();
+      await page.getByTestId("node-edit-name-description-button").click();
 
-    await page.getByTestId("textarea").fill(randomDescription_3);
+      await page.getByTestId("textarea").fill(randomDescription_3);
 
-    await page.getByTestId(`input-title-${randomName_4}`).fill(randomName_3);
+      await page.getByTestId(`input-title-${randomName_4}`).fill(randomName_3);
 
-    await page.keyboard.press("Escape");
+      await page.keyboard.press("Escape");
 
-    expect(await page.getByText(randomDescription_3).count()).toBe(1);
+      expect(await page.getByText(randomDescription_3).count()).toBe(1);
 
-    expect(await page.getByText(randomName_4).count()).toBe(1);
+      expect(await page.getByText(randomName_4).count()).toBe(1);
 
-    expect(await page.getByText(randomName_3).count()).toBe(0);
+      expect(await page.getByText(randomName_3).count()).toBe(0);
 
-    expect(await page.getByText(randomDescription_4).count()).toBe(0);
-
-    await enableInspectPanel(page);
+      expect(await page.getByText(randomDescription_4).count()).toBe(0);
+    } finally {
+      await enableInspectPanel(page);
+    }
   },
 );

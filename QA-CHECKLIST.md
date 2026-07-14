@@ -601,7 +601,7 @@
 #### 12.2 View and Edit Flow
 - [x] Rename flow via editor header → `flow-functionality/flow-rename-header.spec.ts`
 - [x] Rename flow and verify on main page listing → `core-functionality/project-management/edit-flow-name.spec.ts`
-- [-] Edit flow name and description
+- [x] Edit flow name and description → `core-components/edit-name-description-node.spec.ts`
 - [x] Flow auto-save on changes → `flow-functionality/auto-save-off.spec.ts`
 - [x] Flow settings → `core-functionality/project-management/flowSettings.spec.ts`
 
