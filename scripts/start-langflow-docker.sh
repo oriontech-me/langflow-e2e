@@ -22,6 +22,7 @@ docker run -d \
   -e LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
   -e LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
   -e LANGFLOW_DEACTIVATE_TRACING=true \
+  -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS="${LANGFLOW_ALLOW_CUSTOM_COMPONENTS:-true}" \
   "${IMAGE}"
 
 echo "Waiting for Langflow to be ready (up to 120s)..."

@@ -31,6 +31,10 @@ jobs:
           LANGFLOW_AUTO_LOGIN: "true"
           LANGFLOW_SUPERUSER: langflow
           LANGFLOW_SUPERUSER_PASSWORD: langflow123
+          # Nightly image defaults LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false
+          # (custom-component creation disabled → sidebar button hidden, API
+          # 403). Enable it so the custom-component specs exercise the feature.
+          LANGFLOW_ALLOW_CUSTOM_COMPONENTS: "true"
           LANGFLOW_DEACTIVATE_TRACING: "true"
           # Ollama runs as a sibling service; without the allowlist the
           # nightly's SSRF protection 400s the Ollama component's model-list
