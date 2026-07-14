@@ -339,6 +339,7 @@ Only when the user authorizes, follow `langflow-e2e/references/pr-guide.md`:
 - Handling a second issue on the same branch → one issue per branch.
 - Inventing a testid/selector → scout the live DOM with `playwright-cli`.
 - Editing the generated `QA-CHECKLIST.md` tables by hand → edit bullets / tags only.
+- Running `npm run coverage:summary` and committing its output in a PR → PRs edit the Part II bullet ONLY; the counts regenerate on merge, and committing them makes concurrent PRs collide (issue #741; the `pr-validation.yml` guard blocks it).
 - **Reporting on ANY spec that creates flows without flow cleanup verified**
   → every touched spec ships id-scoped `afterEach` cleanup
   (authoring-conventions → Flow cleanup), the orphan count is checked via
