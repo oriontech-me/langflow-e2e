@@ -617,7 +617,7 @@
 - [x] Exported JSON contains valid data.nodes structure → `flow-functionality/export-import-flow.spec.ts`
 - [x] Import flow via JSON file upload (drag-drop + upload button) → `flow-functionality/export-import-flow.spec.ts`
 - [~] Import flow with outdated components
-- [-] Import invalid JSON — should display error message
+- [x] Import invalid JSON — should display error message → `flow-functionality/import-invalid-json.spec.ts`
 
 #### 12.5 Flow Operations
 - [-] Lock flow — prevents editing
@@ -762,12 +762,12 @@
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 21 | 5 | 2 | 0 |
+| `flow-functionality/` | 28 | 22 | 4 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **286 (63%)** | **137 (30%)** | **8 (2%)** | **20 (4%)** |
+| **TOTAL** | **451** | **287 (64%)** | **136 (30%)** | **8 (2%)** | **20 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 315 `test()` calls carrying the `@stable` tag, distributed across 126 spec
+> 318 `test()` calls carrying the `@stable` tag, distributed across 127 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1101,6 +1101,9 @@
 - [x] 3 - the chat input and chat output are visible in the Playground → `flow-execution-canvas.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
+- [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
+- [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
+- [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
@@ -1157,7 +1160,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 4 | 0 |
 | `core-functionality/knowledge-ingestion/` | 1 | 4 |
-| `flow-functionality/` | 5 | 0 |
+| `flow-functionality/` | 4 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
