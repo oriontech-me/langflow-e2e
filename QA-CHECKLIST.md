@@ -755,7 +755,7 @@
 | `core-components/` — Component Config | 24 | 6 | 17 | 0 | 1 |
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
-| `core-functionality/knowledge-ingestion/` | 8 | 4 | 1 | 0 | 3 |
+| `core-functionality/knowledge-ingestion/` | 8 | 6 | 1 | 0 | 1 |
 | `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 20 | 4 | 0 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **289 (64%)** | **135 (30%)** | **8 (2%)** | **19 (4%)** |
+| **TOTAL** | **451** | **291 (65%)** | **135 (30%)** | **8 (2%)** | **17 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 295 `test()` calls carrying the `@stable` tag, distributed across 118 spec
+> 297 `test()` calls carrying the `@stable` tag, distributed across 119 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -936,6 +936,8 @@
 - [x] user should not be able to upload a file larger than the limit → `limit-file-size-upload.spec.ts`
 - [x] Split Text splits an ingested document into the expected number of chunks → `split-text-chunking.spec.ts`
 - [x] upload a file through the Read File component and read its content → `upload-via-component.spec.ts`
+- [x] Knowledge Base indexes the ingested document chunks (available for query) → `vector-store-index-query.spec.ts`
+- [x] Knowledge Base query returns the relevant chunk for the prompt → `vector-store-index-query.spec.ts`
 
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
@@ -1136,7 +1138,7 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 4 | 0 |
-| `core-functionality/knowledge-ingestion/` | 1 | 3 |
+| `core-functionality/knowledge-ingestion/` | 1 | 1 |
 | `flow-functionality/` | 4 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
