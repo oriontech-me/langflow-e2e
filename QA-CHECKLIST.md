@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-13
+> **Last updated:** 2026-07-14
 
 ---
 
@@ -762,12 +762,12 @@
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 20 | 6 | 2 | 0 |
+| `flow-functionality/` | 28 | 21 | 5 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **283 (63%)** | **140 (31%)** | **8 (2%)** | **20 (4%)** |
+| **TOTAL** | **451** | **284 (63%)** | **139 (31%)** | **8 (2%)** | **20 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 311 `test()` calls carrying the `@stable` tag, distributed across 123 spec
+> 313 `test()` calls carrying the `@stable` tag, distributed across 124 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -872,6 +872,8 @@
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
+- [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
+- [x] user should be able to edit name and description of a node with inspect panel disabled → `edit-name-description-node.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
@@ -1153,7 +1155,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 4 | 0 |
 | `core-functionality/knowledge-ingestion/` | 3 | 4 |
-| `flow-functionality/` | 6 | 0 |
+| `flow-functionality/` | 5 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
