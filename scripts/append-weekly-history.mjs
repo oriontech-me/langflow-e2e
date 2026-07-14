@@ -49,7 +49,10 @@ function firstErrorMessage(result) {
   const err = result?.error || result?.errors?.[0];
   if (!err) return null;
   const raw = err.message || err.value || "";
-  return raw.split("\n")[0].slice(0, 240);
+  // First *non-empty* line (some messages lead with a blank line), trimmed and
+  // capped so equal causes cluster to an equal signature.
+  const line = raw.split("\n").map((l) => l.trim()).find((l) => l.length > 0);
+  return line ? line.slice(0, 240) : null;
 }
 
 function specRelFile(spec) {
@@ -86,15 +89,19 @@ function visit(node) {
         // Surface that first failed attempt's message through the same
         // normaliser used for hard failures, so the flake-recurrence criterion
         // in CONTRIBUTING.md (same signature within 30 days) can be applied
-        // mechanically to `.flaky[]` rows too.
-        const firstFailed = (test.results || []).find((r) => r.status !== "passed");
+        // mechanically to `.flaky[]` rows too. Pick the first result that
+        // actually carries a message — skipping any interrupted/no-message
+        // attempt that may precede the real failure.
+        const firstFailedSignature = (test.results || [])
+          .map((r) => firstErrorMessage(r))
+          .find((m) => m);
         flaky.push({
           test: title,
           file,
           line,
           tags,
           attempts,
-          error_signature: firstErrorMessage(firstFailed) || "unknown",
+          error_signature: firstFailedSignature || "unknown",
         });
         continue;
       }
