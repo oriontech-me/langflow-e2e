@@ -4,7 +4,7 @@ import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 
 test(
   "User should be able to use components as tool",
-  { tag: ["@release", "@stable", "@components"] },
+  { tag: ["@release", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
     await page.getByTestId("blank-flow").click();

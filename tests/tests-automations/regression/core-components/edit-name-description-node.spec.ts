@@ -44,7 +44,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user should be able to edit name and description of a node",
-  { tag: ["@stable", "@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);
@@ -162,7 +162,7 @@ test(
 
 test(
   "user should be able to edit name and description of a node with inspect panel disabled",
-  { tag: ["@stable", "@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);

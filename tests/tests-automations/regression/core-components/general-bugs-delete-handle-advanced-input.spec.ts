@@ -10,7 +10,7 @@ import {
 
 test(
   "the system must delete the handles from advanced fields when the code is updated",
-  { tag: ["@stable", "@release", "@components"] },
+  { tag: ["@release", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

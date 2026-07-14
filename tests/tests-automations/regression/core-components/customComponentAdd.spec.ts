@@ -3,7 +3,7 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 
 test(
   "custom component code button should be pink when adding custom component",
-  { tag: ["@release", "@components", "@stable"] },
+  { tag: ["@release", "@components"] },
 
   async ({ page }) => {
     await awaitBootstrapTest(page);

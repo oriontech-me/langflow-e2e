@@ -142,7 +142,7 @@ test.describe("Bulk delete traces — seeded flow", () => {
 
   test(
     "DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204",
-    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
+    { tag: ["@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       // Anchor: the seeded flow MUST have traces before DELETE. Without this,
       // a post-DELETE empty envelope could come from a degraded GET (the

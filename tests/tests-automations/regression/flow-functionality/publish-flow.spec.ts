@@ -12,7 +12,7 @@ const FLOW_BASE = {
 
 test(
   "user can publish a flow and access it via shareable URL, then unpublish to revoke access",
-  { tag: ["@release", "@workspace", "@playground", "@stable"] },
+  { tag: ["@release", "@workspace", "@playground"] },
   async ({ page, browser, request }) => {
     await awaitBootstrapTest(page);
 

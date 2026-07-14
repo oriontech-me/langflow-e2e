@@ -21,7 +21,7 @@ test.afterEach(async ({ page }) => {
 });
 
 test("user must be able to stop a building from the canvas",
-  { tag: ["@stable", "@release", "@workspace", "@components"] },
+  { tag: ["@release", "@workspace", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
