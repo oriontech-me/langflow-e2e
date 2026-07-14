@@ -132,8 +132,9 @@ persisted output — never on the model's wording.
   model, e.g. `claude-sonnet-5`) back over the selection. Two guards: the API
   PATCH polls the flow until the POM's model selection is autosaved before
   writing (write-clobber race), and the run helper re-checks the node's model
-  widget right before running, reloading (bounded ×3) until the selection is
-  present. The structured-output asserts are untouched by both guards.
+  widget right before running, reloading (bounded — 3 checks, at most 2
+  reloads) until the selection is present. The structured-output asserts are
+  untouched by both guards.
   - **#724 fix — the poll must check the SELECTED value, not the serialized
     field.** `template.model` embeds an `options` list of every enabled model
     (~59 on a multi-provider nightly), so the original substring check over
