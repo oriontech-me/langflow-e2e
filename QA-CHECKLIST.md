@@ -447,7 +447,7 @@
 - [-] User flow state cleanup
 
 #### 8.4 Error Handling and Edge Cases
-- [-] Component that raises Python error
+- [x] Component that raises Python error → `core-components/validate-raise-errors-components.spec.ts`
 - [ ] Flow with error displays appropriate message
 - [-] Network error during execution
 - [-] Execution timeout — clear message to user

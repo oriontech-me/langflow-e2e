@@ -2,14 +2,36 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { addCustomComponent } from "../../../helpers/flows/add-custom-component";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
-import { zoomOut } from "../../../helpers/ui/zoom-out";
+/**
+ * §8.4 Error Handling — a Custom Component whose Python code raises an exception
+ * at build time must surface that exact message to the user. Validates the
+ * observability guarantee that a broken component tells the user WHY it broke,
+ * rather than swallowing the error or crashing the editor.
+ *
+ * Distinct from the tool-mode error path (agent-tool-error-handling.spec.ts,
+ * where exceptions become ToolMessage content) and the invalid-replace frontend
+ * crash (general-bugs-frontend-crashing-on-invalid-replace.spec.ts).
+ */
+test.describe("Core Components — Component That Raises a Python Error", () => {
+  let createdFlowId: string | null = null;
 
-test(
-  "user should be able to see errors on popups when raise an error",
-  { tag: ["@release", "@workspace", "@components"] },
-  async ({ page }) => {
-    const customComponentCodeWithRaiseErrorMessage = `
+  test.afterEach(async ({ page, request }) => {
+    if (createdFlowId) {
+      await page.goto("/");
+      await deleteFlow(request, createdFlowId, {
+        headers: { Authorization: await getAuthToken(request) },
+      });
+      createdFlowId = null;
+    }
+  });
+
+  test("user should be able to see errors on popups when raise an error",
+    { tag: ["@stable", "@release", "@regression", "@workspace", "@components"] },
+    async ({ page }) => {
+      const customComponentCodeWithRaiseErrorMessage = `
 # from langflow.field_typing import Data
 from langflow.custom import Component
 from langflow.io import MessageTextInput, Output
@@ -45,46 +67,53 @@ class CustomComponent(Component):
         return data
     `;
 
-    await awaitBootstrapTest(page);
-    await page.getByTestId("blank-flow").click();
+      await test.step("Create a blank flow and capture its id for cleanup", async () => {
+        await awaitBootstrapTest(page);
 
-    await page.waitForSelector(
-      '[data-testid="sidebar-custom-component-button"]',
-      {
-        timeout: 3000,
-      },
-    );
+        const creationResponsePromise = page.waitForResponse(
+          (resp) =>
+            resp.url().includes("/api/v1/flows") &&
+            resp.request().method() === "POST" &&
+            resp.status() === 201,
+          { timeout: 15000 },
+        );
+        await page.getByTestId("blank-flow").click();
+        const creationResponse = await creationResponsePromise;
+        createdFlowId = ((await creationResponse.json()) as { id: string }).id;
+        expect(createdFlowId).toBeTruthy();
+      });
 
-    await addCustomComponent(page);
-    await adjustScreenView(page, { numberOfZoomOut: 1 });
+      await test.step("Add a Custom Component to the canvas", async () => {
+        await expect(
+          page.getByTestId("sidebar-custom-component-button"),
+        ).toBeVisible({ timeout: 15000 });
+        await addCustomComponent(page);
+        await adjustScreenView(page, { numberOfZoomOut: 1 });
+        await expect(
+          page.getByTestId("title-Custom Component"),
+        ).toBeVisible({ timeout: 15000 });
+      });
 
-    await page.waitForTimeout(1000);
+      await test.step("Replace the component code with one that raises a ValueError", async () => {
+        await page.getByTestId("title-Custom Component").click();
+        await page.getByTestId("code-button-modal").last().click();
 
-    await page.waitForSelector('[data-testid="title-Custom Component"]', {
-      timeout: 3000,
-    });
-    await page.getByTestId("title-Custom Component").click();
+        await page.locator(".ace_content").click();
+        await page.keyboard.press(`ControlOrMeta+A`);
+        await page
+          .locator("textarea")
+          .fill(customComponentCodeWithRaiseErrorMessage);
 
-    await page.getByTestId("code-button-modal").last().click();
+        await page.getByText("Check & Save").last().click();
+      });
 
-    await page.locator(".ace_content").click();
-    await page.keyboard.press(`ControlOrMeta+A`);
-    await page
-      .locator("textarea")
-      .fill(customComponentCodeWithRaiseErrorMessage);
+      await test.step("Run the component and confirm the exact error message surfaces", async () => {
+        await page.getByTestId("button_run_custom component").click();
 
-    await page.getByText("Check & Save").last().click();
-
-    await page.getByTestId("button_run_custom component").click();
-
-    await page.waitForSelector("text=THIS IS A TEST ERROR MESSAGE", {
-      timeout: 3000,
-    });
-
-    const numberOfErrorMessages = await page
-      .getByText("THIS IS A TEST ERROR MESSAGE")
-      .count();
-
-    expect(numberOfErrorMessages).toBeGreaterThan(0);
-  },
-);
+        await expect(
+          page.getByText("THIS IS A TEST ERROR MESSAGE").first(),
+        ).toBeVisible({ timeout: 30000 });
+      });
+    },
+  );
+});
