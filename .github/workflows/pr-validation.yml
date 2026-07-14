@@ -43,6 +43,31 @@ jobs:
       - name: Lint
         run: npm run lint:ci
 
+  checklist-guard:
+    name: QA-CHECKLIST guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+
+      # Fail the PR if it edits the AUTO-GENERATED blocks of QA-CHECKLIST.md
+      # (Coverage Summary table + note, Phase 0 list, Phase 1/2 tables). Those
+      # regenerate on merge via update-coverage-summary.yml; PRs must edit only
+      # the manual Part II bullets, so concurrent PRs don't collide on the
+      # generated count lines (issue #741). No npm install needed — pure git+node.
+      - name: Guard QA-CHECKLIST.md generated blocks
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch origin "$BASE_REF" --quiet
+          node scripts/check-checklist-guard.mjs "origin/$BASE_REF"
+
   detect-specs:
     name: Detect changed specs
     runs-on: ubuntu-latest
