@@ -251,7 +251,10 @@ pending), and whether the umbrella was closed or intentionally left open.
 ## Relationship to sibling skills
 
 - **`langflow-e2e-triage`** (this skill) — **producer**: turns one red daily
-  run into dedicated follow-up issues. Stops there.
+  run into dedicated follow-up issues and, as prevention, retires `@stable`
+  from recurrent flakes (behind its own gate — see the hard gates). It never
+  investigates a root cause, fixes a test, or restores a tag — restoration is
+  the consumer's deliverable.
 - **`langflow-e2e-issues`** / **`langflow-e2e-issue-deterministic`** —
   **consumers**: pick up a dedicated issue this skill spawned and drive it to
   a fix PR (their `daily-failure triage` classify-row explicitly says
