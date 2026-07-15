@@ -1,31 +1,36 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { createFlowFromStarter } from "../../../helpers/flows/create-flow-from-starter";
 import { dismissOnboardingIfPresent } from "../../../helpers/ui/dismiss-onboarding";
 
-// Ids of the flows created by loading the "Basic Prompting" template, captured
-// from the POST /api/v1/flows 201 so afterEach deletes exactly those via the API
-// (id-scoped, #515). Without this the suite leaked one Basic Prompting flow per
-// run — the template load creates a real server-side flow with no teardown.
+// Ids of the flows this file creates, so afterEach deletes exactly those via the
+// API (id-scoped, #515).
 const createdFlowIds: string[] = [];
 
-test.beforeEach(async ({ page }) => {
-  page.on("response", (resp) => {
-    if (
-      resp.request().method() === "POST" &&
-      /\/api\/v1\/flows\/?$/.test(resp.url()) &&
-      resp.status() === 201
-    ) {
-      resp
-        .json()
-        .then((body) => {
-          if (body?.id) createdFlowIds.push(body.id);
-        })
-        .catch(() => {});
-    }
+// Open a fresh, uniquely-named Basic Prompting flow addressed by its own id.
+// The prior approach (Templates → click the shared "Basic Prompting" card) is
+// NOT parallel-safe: concurrent workers collide on the flow name/state (a lock
+// set by one worker was seen by another) and serialize on the SQLite writer,
+// which surfaced as cross-worker contamination + `POST /flows` 500s under the
+// parallel `@stable`/impacted jobs (#684). An id-addressed flow is isolated.
+async function openIsolatedBasicPrompting(page: Page): Promise<string> {
+  const flowId = await createFlowFromStarter(
+    page.request,
+    "Basic Prompting",
+    `flow-lock ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  );
+  createdFlowIds.push(flowId);
+  await page.goto(`/flow/${flowId}`);
+  await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
+    timeout: 30000,
   });
-});
+  // The getting-started onboarding popup (also role="dialog") intercepts clicks
+  // and stalls the settings-modal detached-wait — dismiss it up front (#684).
+  await dismissOnboardingIfPresent(page);
+  return flowId;
+}
 
 test.afterEach(async ({ page }) => {
   const ids = createdFlowIds.splice(0);
@@ -43,20 +48,15 @@ test.describe("Flow Lock Feature", () => {
     "should lock and unlock a flow and verify UI changes",
     { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
     async ({ page }) => {
-      await awaitBootstrapTest(page);
-
-      // Navigate to templates and select a flow to work with
-      await page.getByTestId("side_nav_options_all-templates").click();
-      await page.getByRole("heading", { name: "Basic Prompting" }).click();
-
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 5000,
-      });
-
-      // Dismiss the getting-started onboarding popup — its overlay (also
-      // role="dialog") intercepts clicks and blocks the settings-modal
-      // detached-wait below (#684).
-      await dismissOnboardingIfPresent(page);
+      const flowId = await openIsolatedBasicPrompting(page);
+      const auth = await getAuthToken(page.request);
+      const readLocked = async (): Promise<unknown> => {
+        const res = await page.request.get(`/api/v1/flows/${flowId}`, {
+          headers: auth ? { Authorization: auth } : {},
+        });
+        expect(res.ok()).toBe(true);
+        return (await res.json())?.locked;
+      };
 
       // Verify initially the flow is not locked. On 1.11 the locked-state
       // indicator is a per-node `icon-lock` (lowercase) badge — the old header
@@ -84,28 +84,29 @@ test.describe("Flow Lock Feature", () => {
       await expect(nameInput).toBeEnabled();
       await expect(descriptionInput).toBeEnabled();
 
-      await lockSwitch.click();
-      await page.waitForTimeout(1000);
-
-      const stateAfterClick = await lockSwitch.getAttribute("data-state");
-      if (stateAfterClick !== "checked") {
-        await lockSwitch.click();
-        await page.waitForTimeout(500);
-      }
-      await expect(lockSwitch).toHaveAttribute("data-state", "checked");
+      // Converge the switch to checked: a single click can be dropped while the
+      // modal is still binding under parallel load (#684), so retry the toggle
+      // — click only when not already on target, then confirm.
+      await expect(async () => {
+        if ((await lockSwitch.getAttribute("data-state")) !== "checked") {
+          await lockSwitch.click();
+        }
+        await expect(lockSwitch).toHaveAttribute("data-state", "checked", {
+          timeout: 2000,
+        });
+      }).toPass({ timeout: 15000, intervals: [300, 700, 1500] });
 
       // Verify that inputs become disabled when locked
       await expect(nameInput).toBeDisabled();
       await expect(descriptionInput).toBeDisabled();
 
-      // Save the settings by clicking the save button
+      // Save the settings — click only once the button is actually enabled (the
+      // enable lags the switch toggle under parallel load, #684).
       const saveButton = page.getByTestId("save-flow-settings");
-
-      if (await saveButton.isEnabled({ timeout: 3000 })) {
-        await saveButton.click();
-      }
+      await expect(saveButton).toBeEnabled({ timeout: 10000 });
+      await saveButton.click();
       await expect(saveButton).toBeHidden({
-        timeout: 5000 * 3,
+        timeout: 15000,
       });
 
       // Wait for the modal to close by waiting for the popover to be detached
@@ -113,6 +114,13 @@ test.describe("Flow Lock Feature", () => {
         state: "detached",
         timeout: 10000,
       });
+
+      // Confirm the lock PERSISTED to the backend before trusting any reopened
+      // UI — the save can lag under parallel load, and the reopened modal reads
+      // its switch state from the persisted flow (#684).
+      await expect(async () => {
+        expect(await readLocked()).toBe(true);
+      }).toPass({ timeout: 15000, intervals: [500, 1000, 2000] });
 
       // Verify the locked-state indicator now appears on the canvas (per-node
       // `icon-lock` badge on 1.11 — replaces the removed header icon, #684).
@@ -127,30 +135,38 @@ test.describe("Flow Lock Feature", () => {
         timeout: 30000,
       });
 
-      // Verify the switch is checked (locked state persisted)
-      await expect(lockSwitch).toHaveAttribute("data-state", "checked");
+      // Verify the switch is checked (locked state persisted). Generous timeout:
+      // the reopened modal loads its state from the persisted flow and can lag
+      // under parallel load before reflecting checked.
+      await expect(lockSwitch).toHaveAttribute("data-state", "checked", {
+        timeout: 15000,
+      });
 
       // Verify inputs are still disabled
       await expect(nameInput).toBeDisabled();
       await expect(descriptionInput).toBeDisabled();
 
-      // Unlock the flow
-      await lockSwitch.focus();
-      await lockSwitch.press("Space");
-
-      // Verify the switch is now unchecked
-      await expect(lockSwitch).toHaveAttribute("data-state", "unchecked");
+      // Unlock the flow — converge to unchecked with the same retry (a single
+      // toggle can drop under parallel load, #684).
+      await expect(async () => {
+        if ((await lockSwitch.getAttribute("data-state")) !== "unchecked") {
+          await lockSwitch.click();
+        }
+        await expect(lockSwitch).toHaveAttribute("data-state", "unchecked", {
+          timeout: 2000,
+        });
+      }).toPass({ timeout: 15000, intervals: [300, 700, 1500] });
 
       // Verify that inputs become enabled again when unlocked
       await expect(nameInput).toBeEnabled();
       await expect(descriptionInput).toBeEnabled();
 
-      // Save the unlocked state by clicking the save button
-      await page.getByTestId("save-flow-settings").isEnabled({ timeout: 3000 });
-      await page.getByTestId("save-flow-settings").click();
-
+      // Save the unlocked state — click only once the button is actually
+      // enabled (the enable lags the toggle under parallel load, #684).
+      await expect(saveButton).toBeEnabled({ timeout: 10000 });
+      await saveButton.click();
       await expect(saveButton).toBeHidden({
-        timeout: 5000,
+        timeout: 10000,
       });
 
       // Wait for the modal to close by waiting for the popover to be detached
@@ -164,14 +180,8 @@ test.describe("Flow Lock Feature", () => {
       // unlock without a reload (the frontend re-renders it away only on
       // reload; the backend is already unlocked). The persisted flow's
       // `locked` flag is the true, deterministic unlock signal (#684).
-      const flowId = page.url().split("/flow/")[1]?.split(/[/?#]/)[0];
-      const auth = await getAuthToken(page.request);
       await expect(async () => {
-        const res = await page.request.get(`/api/v1/flows/${flowId}`, {
-          headers: auth ? { Authorization: auth } : {},
-        });
-        expect(res.ok()).toBe(true);
-        expect((await res.json())?.locked).toBe(false);
+        expect(await readLocked()).toBe(false);
       }).toPass({ timeout: 15000, intervals: [500, 1000, 2000] });
     },
   );
@@ -180,19 +190,7 @@ test.describe("Flow Lock Feature", () => {
     "should show correct lock/unlock icon in settings based on state",
     { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
     async ({ page }) => {
-      await awaitBootstrapTest(page);
-
-      // Navigate to templates and select a flow
-      await page.getByTestId("side_nav_options_all-templates").click();
-      await page.getByRole("heading", { name: "Basic Prompting" }).click();
-
-      await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-        timeout: 5000,
-      });
-
-      // Dismiss the onboarding popup so the settings dialog is the only
-      // role="dialog" the scoped locators below resolve to (#684).
-      await dismissOnboardingIfPresent(page);
+      await openIsolatedBasicPrompting(page);
 
       // Open flow settings
       await page.getByTestId("flow_name").click();
@@ -205,9 +203,17 @@ test.describe("Flow Lock Feature", () => {
       const unlockIcon = dialog.locator('[data-testid="icon-Unlock"]');
       await expect(unlockIcon).toBeVisible();
 
-      // Lock the flow
+      // Lock the flow — converge to checked (a single click can drop under
+      // parallel load, #684).
       const lockSwitch = dialog.getByTestId("lock-flow-switch");
-      await lockSwitch.click();
+      await expect(async () => {
+        if ((await lockSwitch.getAttribute("data-state")) !== "checked") {
+          await lockSwitch.click();
+        }
+        await expect(lockSwitch).toHaveAttribute("data-state", "checked", {
+          timeout: 2000,
+        });
+      }).toPass({ timeout: 15000, intervals: [300, 700, 1500] });
 
       // Should now show lock icon
       const lockIcon = dialog.locator('[data-testid="icon-Lock"]');

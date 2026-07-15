@@ -12,15 +12,33 @@ async function setLockState(
   await page.getByTestId("flow_name").click();
   const lockSwitch = page.getByTestId("lock-flow-switch");
   await expect(lockSwitch).toBeVisible({ timeout: 30000 });
-  await lockSwitch.click();
-  await expect(lockSwitch).toHaveAttribute("data-state", state, {
-    timeout: 10000,
-  });
 
+  // Converge to the target state. A single click can be dropped when the modal
+  // is still binding under parallel load (the switch stayed on its old state,
+  // #684), so retry the whole toggle: click only when not already on target,
+  // then confirm. The `if` guard prevents a late-registering click from flipping
+  // an already-correct switch back.
+  await expect(async () => {
+    if ((await lockSwitch.getAttribute("data-state")) !== state) {
+      await lockSwitch.click();
+    }
+    await expect(lockSwitch).toHaveAttribute("data-state", state, {
+      timeout: 2000,
+    });
+  }).toPass({ timeout: 15000, intervals: [300, 700, 1500] });
+
+  // Save only when there is a pending change. If the switch already matched the
+  // persisted state (e.g. the reopened flow loaded already in the target state),
+  // the Save button stays disabled — there is nothing to persist, so just close
+  // the modal instead of waiting on a button that will never enable (#684).
   const save = page.getByTestId("save-flow-settings");
-  await expect(save).toBeEnabled({ timeout: 5000 });
-  await save.click();
-  await expect(save).toBeHidden({ timeout: 10000 });
+  if (await save.isEnabled({ timeout: 5000 }).catch(() => false)) {
+    await save.click();
+    await expect(save).toBeHidden({ timeout: 10000 });
+  } else {
+    await page.keyboard.press("Escape");
+    await expect(save).toBeHidden({ timeout: 10000 });
+  }
 }
 
 export async function lockFlow(page: Page): Promise<void> {

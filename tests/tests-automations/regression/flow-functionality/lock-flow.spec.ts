@@ -2,35 +2,32 @@ import type { Page } from "@playwright/test";
 import * as dotenv from "dotenv";
 import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { lockFlow, unlockFlow } from "../../../helpers/flows/lock-flow";
 import { unselectNodes } from "../../../helpers/ui/unselect-nodes";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { createFlowFromStarter } from "../../../helpers/flows/create-flow-from-starter";
 import { dismissOnboardingIfPresent } from "../../../helpers/ui/dismiss-onboarding";
 
-// Id of the flow created by loading the "Basic Prompting" template, captured
-// from the POST /api/v1/flows 201 so afterEach deletes exactly it via the API
-// (id-scoped, #515). Without this the template load leaked one flow per run.
+// Id of the flow this file creates, so afterEach deletes exactly it (#515).
 const createdFlowIds: string[] = [];
 
-test.beforeEach(async ({ page }) => {
-  page.on("response", (resp) => {
-    if (
-      resp.request().method() === "POST" &&
-      /\/api\/v1\/flows\/?$/.test(resp.url()) &&
-      resp.status() === 201
-    ) {
-      resp
-        .json()
-        .then((body) => {
-          if (body?.id) createdFlowIds.push(body.id);
-        })
-        .catch(() => {});
-    }
+// Open a flow (freshly created, or a reopen of the same one) addressed by id and
+// wait for the canvas. Reopening by id — not `list-card.first()` — is what makes
+// the persistence checks parallel-safe: `.first()` would open whichever card is
+// on top of the shared home grid, i.e. another worker's flow (#684).
+async function openFlowById(page: Page, flowId: string): Promise<void> {
+  await page.goto(`/flow/${flowId}`);
+  await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
+    timeout: 100000,
+    state: "visible",
   });
-});
+  await page.waitForTimeout(500);
+  // The onboarding popup overlays the canvas on entry and intercepts the
+  // settings clicks lockFlow/unlockFlow issue — dismiss it first (#684).
+  await dismissOnboardingIfPresent(page);
+}
 
 test.afterEach(async ({ page }) => {
   const ids = createdFlowIds.splice(0);
@@ -56,34 +53,19 @@ test(
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
     }
 
-    await awaitBootstrapTest(page);
-
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-
-    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-      timeout: 100000,
-      state: "visible",
-    });
-    await page.waitForTimeout(500);
-    // The onboarding popup overlays the canvas on flow entry and intercepts the
-    // settings clicks lockFlow/unlockFlow issue — dismiss it first (#684).
-    await dismissOnboardingIfPresent(page);
+    // Isolated, uniquely-named flow addressed by id — parallel-safe (#684).
+    const flowId = await createFlowFromStarter(
+      page.request,
+      "Basic Prompting",
+      `lock-flow ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    createdFlowIds.push(flowId);
+    await openFlowById(page, flowId);
 
     await lockFlow(page);
 
-    await page.getByTestId("icon-ChevronLeft").click();
-    await page.waitForSelector('[data-testid="mainpage_title"]', {
-      timeout: 3000,
-    });
-
-    await page.getByTestId("list-card").first().click();
-    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-      timeout: 100000,
-      state: "visible",
-    });
-    await page.waitForTimeout(500);
-    await dismissOnboardingIfPresent(page);
+    // Reopen the SAME flow by id to prove the lock persisted across a reload.
+    await openFlowById(page, flowId);
 
     //ensure the UI is updated — lock persisted across the reopen. On 1.11 the
     // locked-state indicator is the per-node `icon-lock` (lowercase) badge; the
@@ -94,19 +76,8 @@ test(
 
     await unlockFlow(page);
 
-    await page.getByTestId("icon-ChevronLeft").click();
-    await page.waitForSelector('[data-testid="mainpage_title"]', {
-      timeout: 3000,
-    });
-
-    await page.getByTestId("list-card").first().click();
-
-    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-      timeout: 100000,
-      state: "visible",
-    });
-    await page.waitForTimeout(500);
-    await dismissOnboardingIfPresent(page);
+    // Reopen again — now unlocked; editing must work below.
+    await openFlowById(page, flowId);
 
     await tryDeleteEdge(page);
     await page.waitForTimeout(500);
