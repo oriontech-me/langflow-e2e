@@ -145,7 +145,7 @@
 - [-] Edit tools (edit-tools)
 
 #### 2.3 Component Updates
-- [-] Outdated component notification
+- [x] Outdated component notification → `core-components/outdated-component-notification.spec.ts`
 - [-] Update component action
 - [x] Update with breaking change — should alert user → `core-components/component-breaking-change-alert.spec.ts`
 - [x] Legacy component visible via configuration → `core-components/legacy-components-toggle-regression.spec.ts`
@@ -440,7 +440,7 @@
 #### 8.2 Notifications
 - [x] System notifications — build-success entry shows in the notifications tab → `notifications.spec.ts`
 - [x] Execution error notification → `ui-ux/execution-error-notification.spec.ts`
-- [-] Outdated component notification
+- [x] Outdated component notification → `core-components/outdated-component-notification.spec.ts`
 
 #### 8.3 User State
 - [x] Track user progress → `core-functionality/project-management/user-progress-track.spec.ts`
