@@ -752,7 +752,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
-| `core-components/` — Component Config | 24 | 7 | 17 | 0 | 0 |
+| `core-components/` — Component Config | 24 | 8 | 16 | 0 | 0 |
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 6 | 1 | 0 | 1 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **293 (65%)** | **134 (30%)** | **8 (2%)** | **16 (4%)** |
+| **TOTAL** | **451** | **294 (65%)** | **133 (29%)** | **8 (2%)** | **16 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 310 `test()` calls carrying the `@stable` tag, distributed across 127 spec
+> 311 `test()` calls carrying the `@stable` tag, distributed across 128 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -923,6 +923,7 @@
 - [x] should not allow adding a Chat Input while a Webhook is on the canvas → `singleton-components.spec.ts`
 - [x] should not allow duplicating a Webhook → `singleton-components.spec.ts`
 - [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
+- [x] a component in Tool Mode can be grouped with its Agent consumer → `tool-mode-group.spec.ts`
 - [x] User should be able to use components as tool → `tool-mode.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
@@ -1132,7 +1133,7 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
-| `core-components/` — Component Config | 17 | 0 |
+| `core-components/` — Component Config | 16 | 0 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 6 |
