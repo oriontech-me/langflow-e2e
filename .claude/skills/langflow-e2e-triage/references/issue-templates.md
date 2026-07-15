@@ -161,13 +161,12 @@ Apply exactly two labels to every dedicated issue:
 | `core-functionality/model-provider/` | `area:model-providers` |
 | `core-functionality/observability-monitoring/` | `area:observability` |
 | `core-functionality/playground/` | `area:playground` |
-| `core-functionality/knowledge-ingestion-management/` | `area:files` |
-| `core-functionality/project-management/` | `area:workspace` |
-| `core-functionality/templates/` | `area:templates` |
-| `flow-functionality/` | `area:flow-ops` |
+| `core-functionality/knowledge-ingestion-management/` | `area:knowledge` |
 | `mcp/` | `area:mcp` |
 | `ui-ux/` | `area:ui-ux` |
-| `smoke/` | `area:smoke` |
+| `tests/pages/`, `tests/helpers/` | `area:pages-helpers` |
+
+**Directories with no matching area label:** For spec directories without a corresponding `area:` label (e.g., `flow-functionality/`, `core-functionality/project-management/`, `core-functionality/templates/`, `smoke/`), apply `daily-failure` alone rather than creating a new area label. If the analyst judges one of the existing area labels a close fit, add that one in addition to `daily-failure`.
 
 **No assignee** — leave blank. The issue is assigned to the wave/triage queue, not an individual.
 
