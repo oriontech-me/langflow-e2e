@@ -2,6 +2,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { addCustomComponent } from "../../../helpers/flows/add-custom-component";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { ensureCustomComponentButton } from "../../../helpers/ui/ensure-custom-component-button";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
@@ -84,9 +85,7 @@ class CustomComponent(Component):
       });
 
       await test.step("Add a Custom Component to the canvas", async () => {
-        await expect(
-          page.getByTestId("sidebar-custom-component-button"),
-        ).toBeVisible({ timeout: 15000 });
+        await ensureCustomComponentButton(page);
         await addCustomComponent(page);
         await adjustScreenView(page, { numberOfZoomOut: 1 });
         await expect(
