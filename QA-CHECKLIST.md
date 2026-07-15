@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 298 `test()` calls carrying the `@stable` tag, distributed across 119 spec
+> 307 `test()` calls carrying the `@stable` tag, distributed across 126 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -871,7 +871,11 @@
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
+- [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
+- [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
+- [x] user should be able to edit name and description of a node with inspect panel disabled → `edit-name-description-node.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
+- [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
 - [x] If-Else operator=contains routes a substring match through the True branch → `if-else-component-regression.spec.ts`
@@ -916,6 +920,7 @@
 - [x] should not allow adding a Chat Input while a Webhook is on the canvas → `singleton-components.spec.ts`
 - [x] should not allow duplicating a Webhook → `singleton-components.spec.ts`
 - [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
+- [x] User should be able to use components as tool → `tool-mode.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
@@ -1035,6 +1040,7 @@
 - [x] playground opens in fullscreen with chat input visible → `playground-fullscreen.spec.ts`
 - [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
 - [x] messages sent in playground must persist after closing and reopening → `playground-history-persist.spec.ts`
+- [x] playground opens with chat textarea pre-filled from ChatInput Input Text → `playground-input-text-prefill.spec.ts`
 - [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
 - [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
@@ -1054,6 +1060,7 @@
 - [x] user message must appear instantly in playground before AI responds → `playground-ux.spec.ts`
 - [x] playground must scroll to latest message after sending → `playground-ux.spec.ts`
 - [x] playground input field must be ready after flow responds → `playground-ux.spec.ts`
+- [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
 #### core-functionality/project-management/
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
@@ -1086,9 +1093,11 @@
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
+- [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
+- [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
