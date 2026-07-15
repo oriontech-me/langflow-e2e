@@ -3,6 +3,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { ensureCustomComponentButton } from "../../../helpers/ui/ensure-custom-component-button";
 
 // Capture every flow THIS page creates from its POST /api/v1/flows → 201
 // responses and delete them id-scoped in afterEach. awaitBootstrapTest runs
@@ -40,7 +41,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "custom component code button should be pink when adding custom component",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@stable"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);
@@ -55,6 +56,7 @@ test(
       timeout: 10000,
     });
 
+    await ensureCustomComponentButton(page);
     await page.getByTestId("sidebar-custom-component-button").click();
 
     const codeButton = page.getByTestId("code-button-modal").last();

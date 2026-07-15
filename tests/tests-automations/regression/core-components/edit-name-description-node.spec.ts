@@ -7,6 +7,7 @@ import {
 } from "../../../helpers/ui/open-advanced-options";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { ensureCustomComponentButton } from "../../../helpers/ui/ensure-custom-component-button";
 
 // Capture every flow THIS page creates from its POST /api/v1/flows → 201
 // responses and delete them id-scoped in afterEach. awaitBootstrapTest runs
@@ -44,7 +45,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user should be able to edit name and description of a node",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@stable", "@release", "@workspace", "@components"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);
@@ -67,15 +68,7 @@ test(
     });
     await page.getByTestId("blank-flow").click();
 
-    await page.waitForSelector(
-      '[data-testid="sidebar-custom-component-button"]',
-      {
-        timeout: 30000,
-      },
-    );
-
-    await page.waitForTimeout(500);
-
+    await ensureCustomComponentButton(page);
     await page.getByTestId("sidebar-custom-component-button").click();
 
     await page.getByTestId("div-generic-node").click();
@@ -162,7 +155,7 @@ test(
 
 test(
   "user should be able to edit name and description of a node with inspect panel disabled",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@stable", "@release", "@workspace", "@components"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);
@@ -185,20 +178,14 @@ test(
     });
     await page.getByTestId("blank-flow").click();
 
-    await page.waitForSelector(
-      '[data-testid="sidebar-custom-component-button"]',
-      {
-        timeout: 30000,
-      },
-    );
-
-    await page.waitForTimeout(500);
+    await ensureCustomComponentButton(page);
 
     await disableInspectPanel(page);
 
     // Restore the global inspect-panel setting even if an assertion below
     // fails, so a mid-test failure cannot leave the inspector off for siblings.
     try {
+      await ensureCustomComponentButton(page);
       await page.getByTestId("sidebar-custom-component-button").click();
 
       await page.getByTestId("div-generic-node").click();
