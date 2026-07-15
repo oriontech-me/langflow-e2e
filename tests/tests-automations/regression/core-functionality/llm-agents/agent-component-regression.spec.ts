@@ -11,6 +11,8 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -114,14 +116,35 @@ function getTestTargets(): TestTarget[] {
   }));
 }
 
+// Ids of the flows created by loadAgent(), so afterEach can delete exactly
+// those via the API (id-scoped, #515) — never a global cleanAllFlows.
+// SimpleAgentTemplatePage.load() no longer clears flows (#553), so without this
+// the suite leaked one Simple Agent flow per run.
+const createdFlowIds: string[] = [];
+
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
   try {
-    await new SimpleAgentTemplatePage(page).load(options);
+    const flowId = await new SimpleAgentTemplatePage(page).load(options);
+    if (flowId) createdFlowIds.push(flowId);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
   }
 }
+
+test.afterEach(async ({ page }) => {
+  const ids = createdFlowIds.splice(0);
+  if (ids.length === 0) return;
+  // Navigate off the editor first so the unmounted flow page stops polling a
+  // flow we are about to delete, then pass an explicit bearer — page.request is
+  // unauthenticated under AUTO_LOGIN and would 401 otherwise.
+  await page.goto("/");
+  const auth = await getAuthToken(page.request);
+  const opts = auth ? { headers: { Authorization: auth } } : undefined;
+  for (const id of ids) {
+    await deleteFlow(page.request, id, opts);
+  }
+});
 
 async function waitForAgentToFinish(page: Page): Promise<void> {
   const stopButton = page.getByRole("button", { name: "Stop" });
@@ -133,8 +156,8 @@ async function waitForAgentToFinish(page: Page): Promise<void> {
 
 const targets = getTestTargets();
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template.
-// File-level serial mode prevents parallel provider blocks from wiping each other's flows.
+// File-level serial mode: each provider block creates a named Simple Agent flow;
+// serial execution avoids "flow must be unique" collisions across blocks.
 test.describe.configure({ mode: "serial" });
 
 for (const { label, options, skipReason } of targets) {

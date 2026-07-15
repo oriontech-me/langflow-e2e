@@ -54,8 +54,22 @@ export async function setupOpenAI(
     .catch(() => false);
 
   if (apiKeyInputVisible) {
-    await apiKeyInput.fill(process.env.OPENAI_API_KEY ?? "");
-    await page.getByRole("button", { name: /Save|Replace|Retry/i }).click();
+    // Configure the key only when the provider is NOT already set up. A fresh
+    // instance (CI) shows a "Save" button; an already-configured provider (a
+    // persisted credential from a prior local run or the instance boot env)
+    // shows "Replace". Clicking "Replace" re-saves the credential, which returns
+    // 400 Bad Request on PATCH /api/v1/variables/{id} — harmless (the existing
+    // valid key is reused) but it trips the fixture's backend-error monitor and
+    // fails the determinism gate on repeat local runs (#751). Skip the re-save
+    // when the provider is already configured.
+    const alreadyConfigured = await page
+      .getByRole("button", { name: /^Replace$/i })
+      .isVisible({ timeout: 2000 })
+      .catch(() => false);
+    if (!alreadyConfigured) {
+      await apiKeyInput.fill(process.env.OPENAI_API_KEY ?? "");
+      await page.getByRole("button", { name: /^(Save|Retry)$/i }).click();
+    }
   }
 
   // Step 5: Enable all available OpenAI models.
