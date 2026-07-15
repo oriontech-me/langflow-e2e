@@ -1,20 +1,24 @@
 import { type Page, expect } from "@playwright/test";
 
-// Cheap, fast chat models in priority order. `gpt-4o-mini` is kept first so older
-// Langflow builds still match; the `gpt-5.x` entries cover newer builds (1.11.0+)
-// where `gpt-4o-mini` was dropped from the OpenAI bundle. Reasoning-/image-/audio-heavy
-// models are deliberately excluded so the memory test stays fast and deterministic
-// (a slow model would reintroduce the 120s-response timeout flake from issue #354).
+// Cheap, fast OpenAI chat models in priority order. `gpt-4o-mini` stays first so
+// older Langflow builds (and the full Settings provider bundle) still match; the
+// `gpt-5.6` family covers the 1.11 unified `ModelInput` widget (dev38+), whose
+// curated dropdown lists only the latest model per provider — none of the older
+// `gpt-4*` names appear there, so without a current entry the fallback used to
+// land on the Anthropic default `claude-sonnet-5` (root cause of #722, see the
+// OpenAI-preferring fallback in `selectPreferredChatModel`). The gpt-5.x
+// *nano/mini* tier is deliberately omitted: the current nightly classifies it as
+// *reasoning* (see `isReasoningOption`), and its latency variance reintroduces the
+// 120s-response timeout flake (#354/#569). Image-/audio-/realtime-only models are
+// excluded via `NON_CHAT_MODEL`.
 const PREFERRED_CHAT_MODELS = [
   "gpt-4o-mini",
-  "gpt-5.4-nano",
-  "gpt-5-nano",
-  "gpt-5.4-mini",
-  "gpt-5-mini",
   "gpt-4.1-mini",
   "gpt-4o",
-  "gpt-5.4",
-  "gpt-5.5",
+  "gpt-5.6",
+  "gpt-5.6-luna",
+  "gpt-5.6-terra",
+  "gpt-5.6-sol",
 ];
 
 // Substrings marking a non-chat model (image, embeddings, audio, …) — never select these.
@@ -37,7 +41,7 @@ function escapeRegExp(value: string): string {
 // Throws with the observed options if none fit. After selecting, verifies the trigger
 // actually reflects the choice — a silently-intercepted click (the api_key popover can
 // steal the click) would otherwise leave the node on its default (`gpt-5.5-pro`).
-async function selectPreferredChatModel(page: Page): Promise<void> {
+async function selectPreferredChatModel(page: Page): Promise<string> {
   const options = page.locator('[data-testid$="-option"]');
   await options.first().waitFor({ state: "visible", timeout: 15000 });
 
@@ -49,6 +53,20 @@ async function selectPreferredChatModel(page: Page): Promise<void> {
   const chosen =
     (envModel && labels.find((label) => label === envModel)) ||
     PREFERRED_CHAT_MODELS.find((model) => labels.includes(model)) ||
+    // Prefer any OpenAI (`gpt-*`) chat model before falling back to the first
+    // usable option: the 1.11 unified ModelInput dropdown mixes providers and
+    // lists the Anthropic default (`claude-sonnet-5`) first. That default is a
+    // reasoning model that rejects the `temperature` param this component sends
+    // ("temperature is deprecated for this model" → HTTP 400 → empty response),
+    // so the provider-agnostic fallback silently picked a broken model (#722).
+    // This keeps the helper true to its name (OpenAI) and degrades gracefully to
+    // whatever `gpt-*` the build exposes when PREFERRED_CHAT_MODELS drifts.
+    labels.find(
+      (label) =>
+        /^gpt-/i.test(label) &&
+        !NON_CHAT_MODEL.test(label) &&
+        !AVOID_MODEL.test(label),
+    ) ||
     labels.find((label) => !NON_CHAT_MODEL.test(label) && !AVOID_MODEL.test(label));
 
   if (!chosen) {
@@ -64,6 +82,7 @@ async function selectPreferredChatModel(page: Page): Promise<void> {
     .click();
 
   await expect(page.getByTestId("model_model")).toContainText(chosen, { timeout: 10000 });
+  return chosen;
 }
 
 // Enables a single chat model toggle inside the provider modal so the model
@@ -106,7 +125,9 @@ async function enablePreferredModelToggle(page: Page): Promise<void> {
 }
 
 // Requires the Language Model node to be clicked before calling so its fields are in the viewport.
-export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
+// Returns the model name selected in the dropdown, so callers that must gate on the
+// selection persisting (waitForLanguageModelPersisted) reuse the exact live choice.
+export async function setupLanguageModelOpenAI(page: Page): Promise<string> {
   const modelDropdown = page.getByTestId("model_model");
   const hasModelDropdown = await modelDropdown.isVisible({ timeout: 5000 }).catch(() => false);
 
@@ -164,7 +185,7 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
   // pointer events, timing the click out (issue #580). dispatchEvent bypasses
   // hit-testing and still opens the dropdown.
   await modelDropdown.dispatchEvent("click");
-  await selectPreferredChatModel(page);
+  return selectPreferredChatModel(page);
 }
 
 // Cheap, non-reasoning OpenAI chat models, in priority order. Unlike the gpt-5.x
@@ -270,4 +291,48 @@ export async function setAgentModelViaApi(page: Page, flowId: string): Promise<s
   }
 
   return nameOf(chosenOption);
+}
+
+// Reads the standalone **LanguageModel** node's persisted model name from the flows
+// API. Used to gate on autosave completion — see waitForLanguageModelPersisted.
+async function readPersistedLanguageModel(
+  page: Page,
+  flowId: string,
+): Promise<string | undefined> {
+  const flow = await (await page.request.get(`/api/v1/flows/${flowId}`)).json();
+  const nodes = flow?.data?.nodes ?? [];
+  const lm = nodes.find(
+    (n: any) =>
+      n?.data?.type === "LanguageModelComponent" ||
+      String(n?.id ?? "").includes("LanguageModel"),
+  );
+  const value = lm?.data?.node?.template?.model?.value;
+  return Array.isArray(value) ? value?.[0]?.name : undefined;
+}
+
+// Blocks until the LanguageModel model selection made in the UI
+// (setupLanguageModelOpenAI) has been persisted to the flow as `modelName`, then the
+// caller reloads so the Playground build picks up the saved graph.
+//
+// Why this exists — the #722 failure mode: on 1.11 the LanguageModel node uses the
+// unified `model` ModelInput widget whose curated dropdown defaults to the Anthropic
+// reasoning model `claude-sonnet-5`. That default rejects the `temperature` param the
+// component sends (HTTP 400 "temperature is deprecated for this model" → the Playground
+// AI message never resolves — the exact `toContainText(/title/i)` timeout in the daily).
+// The UI selection writes the correct value object (with `metadata.model_class`, which
+// the backend needs to instantiate the model) and autosaves it, but the Playground build
+// races that autosave — build first and it executes the stale `claude-sonnet-5`. The
+// same in-canvas-widget lag setAgentModelViaApi guards for the Agent; unlike the Agent
+// we do NOT synthesize the value here (the persisted `model.options` are empty right
+// after setup, so there is no option object to copy, and a hand-built value missing
+// `model_class` fails to instantiate) — we let the UI write the correct object and only
+// gate on its persistence. Caller must reload the flow afterwards.
+export async function waitForLanguageModelPersisted(
+  page: Page,
+  flowId: string,
+  modelName: string,
+): Promise<void> {
+  await expect
+    .poll(() => readPersistedLanguageModel(page, flowId), { timeout: 30000 })
+    .toBe(modelName);
 }

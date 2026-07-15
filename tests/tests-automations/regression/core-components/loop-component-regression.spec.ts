@@ -6,7 +6,10 @@ import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
-import { setupLanguageModelOpenAI } from "../../../helpers/provider-setup/setup-language-model-openai";
+import {
+  setupLanguageModelOpenAI,
+  waitForLanguageModelPersisted,
+} from "../../../helpers/provider-setup/setup-language-model-openai";
 
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
@@ -223,7 +226,19 @@ test(
     // auto-build; if the provider is not yet configured that build fails with
     // "A model selection is required" and the fixture would abort the test.
     await page.getByTestId("title-Language Model").click();
-    await setupLanguageModelOpenAI(page);
+    const chosenModel = await setupLanguageModelOpenAI(page);
+
+    // The template's LanguageModel ships defaulting to the Anthropic reasoning model
+    // `claude-sonnet-5`, which rejects the `temperature` param the component sends
+    // (HTTP 400 "temperature is deprecated for this model" → the Playground AI message
+    // never resolves — root cause of #722). The UI selection above writes the correct
+    // OpenAI model object but the Playground build races its autosave and would execute
+    // the stale default. Gate on the selection persisting, then reload so the build
+    // uses the saved graph — mirrors the Agent's setAgentModelViaApi + reload pattern.
+    await waitForLanguageModelPersisted(page, createdTemplate.id, chosenModel);
+    await page.reload();
+    await page.waitForSelector('[data-testid="title-Loop"]', { timeout: 30000 });
+    await adjustScreenView(page);
 
     // --- Iteration execution ---
     // Limit ArXiv to 2 results so the loop runs exactly 2 iterations.
