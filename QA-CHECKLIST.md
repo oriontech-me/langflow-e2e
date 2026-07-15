@@ -762,12 +762,12 @@
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 22 | 4 | 2 | 0 |
+| `flow-functionality/` | 28 | 23 | 3 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **295 (65%)** | **133 (29%)** | **8 (2%)** | **15 (3%)** |
+| **TOTAL** | **451** | **296 (66%)** | **132 (29%)** | **8 (2%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 312 `test()` calls carrying the `@stable` tag, distributed across 129 spec
+> 316 `test()` calls carrying the `@stable` tag, distributed across 130 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -807,6 +807,10 @@
 - [x] GET non-existent flow returns 404 → `api-flows-crud.spec.ts`
 - [x] POST with missing name returns 422 → `api-flows-crud.spec.ts`
 - [x] deleted flow does not appear in flows listing → `api-flows-crud.spec.ts`
+- [x] POST creates folder and returns ID and name → `api-folders-crud.spec.ts`
+- [x] GET lists folders and includes the created one → `api-folders-crud.spec.ts`
+- [x] DELETE removes folder and it no longer appears in listing → `api-folders-crud.spec.ts`
+- [x] moving flow between folders via PATCH folder_id updates association → `api-folders-crud.spec.ts`
 - [x] GET /health_check returns 200 with status ok → `api-health-check.spec.ts`
 - [x] GET /health_check returns db ok → `api-health-check.spec.ts`
 - [x] GET /health_check responds within 5 seconds → `api-health-check.spec.ts`
@@ -1154,7 +1158,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 3 | 0 |
 | `core-functionality/knowledge-ingestion/` | 1 | 0 |
-| `flow-functionality/` | 4 | 0 |
+| `flow-functionality/` | 3 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
