@@ -305,7 +305,7 @@
 - [x] Split Text chunking of an ingested document → `core-functionality/knowledge-ingestion-management/split-text-chunking.spec.ts`
 - [x] Indexing in Vector Store — document available for query → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 - [x] Vector Store query returns relevant chunks for the prompt → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
-- [ ] Complete RAG pipeline (ingest → embed → store → retrieve → answer)
+- [x] Complete RAG pipeline (ingest → embed → store → retrieve → answer) → `core-functionality/knowledge-ingestion-management/rag-pipeline.spec.ts`
 
 ---
 

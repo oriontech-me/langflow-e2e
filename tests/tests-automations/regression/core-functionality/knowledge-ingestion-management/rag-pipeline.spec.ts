@@ -1,0 +1,218 @@
+import { readFileSync } from "fs";
+import type { Page } from "@playwright/test";
+import { expect, test } from "../../../../fixtures/fixtures";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { createFlow } from "../../../../helpers/flows/create-flow";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import {
+  createKnowledgeBase,
+  deleteKnowledgeBase,
+  getKnowledgeBase,
+} from "../../../../helpers/knowledge/knowledge-base";
+
+// §5.2.4 — the *complete RAG pipeline* end-to-end. Builds on #673 (Split Text
+// chunking) and #674 (vector-store index + query) and adds the final "answer"
+// step: the chunk retrieved from a native (core, Chroma-backed) Knowledge Base is
+// fed through Parser -> Prompt -> Language Model, and the model's answer is proven
+// to be grounded on that retrieved chunk. Uses only core components (no
+// vector-store bundle), so it never yields a false failure on a packaging change.
+// Spec doc: docs/core-functionality/knowledge-ingestion-management/rag-pipeline.md
+
+// Pre-wired fixture flow, built + configured live on the canvas and validated
+// end-to-end on 1.11.0.dev38:
+//   Chat Input(the 5-line document) -> Split Text(chunk_size=100, overlap=0) ->
+//   Knowledge[Ingest]; and Knowledge[Retrieve](top_k=1, static query) -> Parser ->
+//   Prompt{context} -> Language Model(Google gemini-2.5-flash, temperature=0) ->
+//   Chat Output. The KB name is a placeholder the spec replaces per run.
+const FIXTURE_PATH = "tests/assets/flows/rag-pipeline-fixture.json";
+
+// The Knowledge component indexes one chunk per input row; Split Text turns the
+// 5-sentence document into exactly 5 rows -> 5 indexed chunks. Asserted after
+// ingest as a precondition so a later answer failure is unambiguously answer-side.
+const EXPECTED_CHUNKS = 5;
+
+// A fabricated, unguessable token that lives in exactly one chunk (sentence 3:
+// "...by the internal ZEPHYR-42 codec."). The static query + prompt ask for that
+// codec name. Because ZEPHYR-42 exists only inside the ingested document, the
+// answer can contain it ONLY if retrieval fed the chunk into the prompt — proving
+// the answer is grounded on the retrieved context, not the model's own knowledge.
+const GROUNDING_SENTINEL = "ZEPHYR-42";
+
+// The KB embeds with Google out-of-the-box; GOOGLE_API_KEY is auto-imported as a
+// credential and injected in the daily-stable CI. The same key backs the answer
+// model (gemini-2.5-flash), so the whole spec depends on one provider key.
+const EMBEDDING_PROVIDER = "Google Generative AI";
+const EMBEDDING_MODEL = "gemini-embedding-001";
+
+// Stable node ids baked into the fixture, so the shared run/duration/inspection
+// testids can be scoped to the right node.
+const INGEST_NODE = "Knowledge-ingest";
+const ANSWER_OUTPUT_NODE = "ChatOutput-answer";
+
+// Ids of the resources each test creates; teardown deletes only these via the API
+// (scoped) — never a global wipe, which would remove flows/KBs other parallel
+// workers are actively using (#515).
+const createdFlowIds: string[] = [];
+const createdKbNames: string[] = [];
+
+// Named flows created via the API race on unique-name suffixing under
+// parallelism; run the file serially (same rationale as the sibling
+// knowledge-ingestion specs).
+test.describe.configure({ mode: "serial" });
+
+test.skip(
+  !process?.env?.GOOGLE_API_KEY,
+  "GOOGLE_API_KEY required to embed the document and answer with gemini-2.5-flash",
+);
+
+async function authHeaders(page: Page): Promise<Record<string, string>> {
+  const authHeader = await getAuthToken(page.request);
+  return authHeader ? { Authorization: authHeader } : {};
+}
+
+/**
+ * Creates a fresh, uniquely-named Knowledge Base, imports the RAG fixture flow
+ * with both Knowledge nodes pointed at that KB, and opens it on the canvas ready
+ * for node runs. Records the created KB name and flow id for scoped teardown.
+ */
+async function openRagFlow(page: Page): Promise<void> {
+  const headers = await authHeaders(page);
+
+  const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  const kbName = await createKnowledgeBase(
+    page.request,
+    {
+      name: `kb_rag_${uniqueSuffix}`,
+      embeddingProvider: EMBEDDING_PROVIDER,
+      embeddingModel: EMBEDDING_MODEL,
+    },
+    { headers },
+  );
+  createdKbNames.push(kbName);
+
+  const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf-8"));
+  // Point both Knowledge nodes at the freshly-created KB. The DropdownInput only
+  // treats a value as a valid selection when it is also present in `options`, so
+  // set both — value alone leaves the node showing "Select an option" and it
+  // will not run.
+  for (const node of fixture.data.nodes) {
+    if (node.data?.type === "Knowledge") {
+      const kb = node.data.node.template.knowledge_base;
+      kb.value = kbName;
+      kb.options = [kbName];
+    }
+  }
+
+  const flowId = await createFlow(
+    page.request,
+    {
+      name: `RAG Pipeline ${uniqueSuffix}`,
+      description: fixture.description,
+      data: fixture.data,
+      is_component: false,
+    },
+    { headers },
+  );
+  createdFlowIds.push(flowId);
+
+  await page.goto(`/flow/${flowId}`);
+  await expect(
+    page.locator(`[data-id="${INGEST_NODE}"]`).getByTestId("title-knowledge"),
+  ).toBeVisible({ timeout: 30000 });
+
+  // Rely on Langflow's auto fit-on-load: it frames all 8 nodes within the viewport
+  // so every node run control is rendered and clickable. We deliberately do NOT
+  // call adjustScreenView here — its extra zoom-out shifts nodes under the
+  // right-hand react-flow panel, which then intercepts the run-button click.
+}
+
+/** Runs a node (scoped by id) via its run button and waits for the success badge. */
+async function runNode(
+  page: Page,
+  nodeId: string,
+  runButtonTestId: string,
+): Promise<void> {
+  const node = page.locator(`[data-id="${nodeId}"]`);
+  await node.getByTestId(runButtonTestId).click({ timeout: 15000 });
+  await expect(node.locator('[data-testid^="node_duration"]')).toBeVisible({
+    timeout: 90000,
+  });
+}
+
+test.afterEach(async ({ page }) => {
+  const flowIds = createdFlowIds.splice(0);
+  const kbNames = createdKbNames.splice(0);
+  if (flowIds.length === 0 && kbNames.length === 0) return;
+  // Navigate off the editor first so the unmounted flow page stops polling a flow
+  // we are about to delete, then pass an explicit auth header — page.request is
+  // unauthenticated under AUTO_LOGIN and would 401 otherwise.
+  await page.goto("/");
+  const headers = await authHeaders(page);
+  // Delete every resource independently and collect failures, so a throw while
+  // deleting one can never skip the rest — otherwise the KB, a persistent
+  // instance resource that MUST be deleted to avoid orphans, would leak.
+  const failures: string[] = [];
+  for (const id of flowIds) {
+    try {
+      await deleteFlow(page.request, id, { headers });
+    } catch (e) {
+      failures.push(String(e));
+    }
+  }
+  for (const name of kbNames) {
+    try {
+      await deleteKnowledgeBase(page.request, name, { headers });
+    } catch (e) {
+      failures.push(String(e));
+    }
+  }
+  if (failures.length > 0) {
+    throw new Error(`Teardown cleanup failed: ${failures.join("; ")}`);
+  }
+});
+
+test(
+  "Full RAG pipeline grounds the model answer on the retrieved chunk",
+  { tag: ["@stable", "@release", "@components", "@files"] },
+  async ({ page }) => {
+    await test.step("open the pre-wired RAG pipeline fixture flow", async () => {
+      await openRagFlow(page);
+    });
+
+    await test.step("run the Knowledge (Ingest) node", async () => {
+      await runNode(page, INGEST_NODE, "button_run_knowledge");
+    });
+
+    await test.step("the Knowledge Base holds exactly the expected chunks", async () => {
+      // Precondition proof the ingest embedded + indexed the document, so a later
+      // answer failure is unambiguously answer-side rather than a broken ingest.
+      const kbName = createdKbNames[createdKbNames.length - 1];
+      const headers = await authHeaders(page);
+      const kb = await getKnowledgeBase(page.request, kbName, { headers });
+      expect(kb.chunks).toBe(EXPECTED_CHUNKS);
+    });
+
+    await test.step("run the answer path via the Chat Output node", async () => {
+      // Running Chat Output builds only its upstream (Retrieve -> Parser -> Prompt
+      // -> Language Model -> Chat Output); the ingest branch is not upstream, so
+      // it does not re-run. Retrieve reads the KB just populated by the ingest.
+      await runNode(page, ANSWER_OUTPUT_NODE, "button_run_chat output");
+    });
+
+    await test.step("the answer is grounded on the retrieved chunk", async () => {
+      await page
+        .locator(`[data-id="${ANSWER_OUTPUT_NODE}"]`)
+        .getByTestId("output-inspection-output message-chatoutput")
+        .click();
+      // The Component Output dialog shows the answer in a textarea. The verbatim
+      // fabricated token can only be present if retrieval fed the chunk into the
+      // prompt — proving the end-to-end RAG grounding (a model answering from its
+      // own knowledge, or an empty/wrong retrieval, cannot produce ZEPHYR-42).
+      const answer = page.getByRole("dialog").locator("textarea");
+      await expect(answer).toBeVisible({ timeout: 15000 });
+      await expect(answer).toHaveValue(new RegExp(GROUNDING_SENTINEL), {
+        timeout: 15000,
+      });
+    });
+  },
+);
