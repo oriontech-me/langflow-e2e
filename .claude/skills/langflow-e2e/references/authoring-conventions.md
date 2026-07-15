@@ -64,6 +64,25 @@ bullets** — the Coverage Summary table and Phase 0 block auto-regenerate.
 
 ## Behavioral conventions
 
+- **Entering the flow editor — gate on the editor, not just the POST.** After a
+  `blank-flow`/template click, `page.waitForResponse(POST /api/v1/flows → 201)`
+  confirms the flow exists server-side but NOT that the SPA finished routing into
+  the editor. An occasional navigation race leaves the app on the flows list, and
+  a wait for an editor-only element (`sidebar-search-input`, `canvas_controls_dropdown`)
+  then times out with a misleading message. Gate on the destination state:
+  `await page.waitForURL(/\/flow\/[^/?#]+/)` + `expect(canvas_controls_dropdown).toBeVisible()`
+  before touching editor elements (fixed in `helpers/flows/setup-playground.ts`, #746).
+- **Custom components are OFF by default on the nightly image.** The nightly ships
+  `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false` (from ~1.11.0.dev42): the sidebar
+  **"New Custom Component"** button (`sidebar-custom-component-button`) is not
+  rendered (footer shows "Discover more components"/Bundles) and
+  `POST /api/v1/custom_component` returns 403. The E2E instance must set the flag
+  `true` (SKILL.md docker run, `scripts/start-langflow-docker.sh`, all CI service
+  containers — #668/#746). Even with the flag on, that button lives in the
+  Components sidebar section and is occasionally hidden on flow entry (~9% flake);
+  use `helpers/ui/ensure-custom-component-button.ts` (`ensureCustomComponentButton(page)`)
+  — it waits for the button, re-activating the Components nav only if still hidden,
+  before you click it.
 - **Flow cleanup is id-scoped — never a pre-test wipe.** Create your flow,
   keep the id from the creation `POST /api/v1/flows/` 201 response
   (`loadTemplateByName` returns it; the canvas URL id is transient on 1.11),
@@ -412,6 +431,18 @@ deployment-attachment prune) degrade the UI (element timeouts, then raw
 i18n keys in the DOM — the symptom MUTATES with degradation depth). Restart
 the container fresh and re-baseline before debugging the spec; and check
 `docker logs` for the lock signature when element waits time out en masse.
+
+That `database is locked` 500 on the bulk `DELETE /api/v1/flows/` (the frontend
+prunes a temp flow on blank-flow entry) trips the fixture's backend-error
+monitor as LOGGED noise (~9%) — it does NOT fail the test (only flowErrors
+throw). The `@stable` bar is **per-spec determinism** (a `--retries=0` burst of
+that one spec, which the pipeline VALIDATE runs), NOT a clean back-to-back run of
+many heavy specs at `--retries=0` on one stressed instance — that surfaces a
+DIFFERENT ambient flake per run (nav race, build-stop timing, the lock) that all
+pass in isolation and that the daily's parallel + `retries=2` execution absorbs.
+Don't chase per-run cluster flakes as test defects; harden only the ones with a
+concrete, reproducible mechanism (e.g. the hidden custom-component button, the
+editor-nav race above).
 
 ## `.env.example` convention for new providers
 

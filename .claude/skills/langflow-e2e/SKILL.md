@@ -220,10 +220,21 @@ An instance must be up (default `http://localhost:7860`) before running.
 > docker run -d --name langflow-e2e-runner -p 7860:7860 \
 >   -e LANGFLOW_AUTO_LOGIN=true -e LANGFLOW_SUPERUSER=langflow \
 >   -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 -e LANGFLOW_DEACTIVATE_TRACING=true \
+>   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true \
 >   langflowai/langflow-nightly:latest
 > ```
 > Always confirm with `curl -s localhost:7860/api/v1/version` — the nightly package
 > reports `"package":"Langflow Nightly"` and a `.devNN` version.
+>
+> **Trap — the nightly image ships `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false`.** With
+> the flag off (the image default, seen from ~1.11.0.dev42), custom-component
+> creation is disabled: the sidebar **"New Custom Component"** button
+> (`sidebar-custom-component-button`) does not render (the footer shows "Discover
+> more components"/Bundles) and `POST /api/v1/custom_component` returns `403`. That
+> silently breaks EVERY spec that adds a custom component. The `-e
+> LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true` above is REQUIRED; the CI service
+> containers and `scripts/start-langflow-docker.sh` set it too (#668/#746).
+> Verify: `docker exec langflow-e2e-runner sh -c "env | grep CUSTOM_COMPONENTS"`.
 
 ### Daily — confirm the instance is on the latest nightly (before testing)
 
@@ -247,8 +258,13 @@ docker rm -f langflow-e2e-runner
 docker run -d --name langflow-e2e-runner -p 7860:7860 \
   -e LANGFLOW_AUTO_LOGIN=true -e LANGFLOW_SUPERUSER=langflow \
   -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 -e LANGFLOW_DEACTIVATE_TRACING=true \
+  -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true \
   langflowai/langflow-nightly:latest
 ```
+
+`-e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true` is required — the nightly image
+defaults it to `false`, which hides `sidebar-custom-component-button` and makes
+`POST /api/v1/custom_component` return 403 (see the trap above).
 
 Then re-run `tests/collect-models.spec.ts` if provider/model data may have moved.
 Record the resolved version in the PR **Validation** block (the CI does this
