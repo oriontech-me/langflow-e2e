@@ -141,7 +141,7 @@
 
 #### 2.2 Tool Mode
 - [x] Enable Tool Mode on a component
-- [-] Group components in Tool Mode
+- [x] Group components in Tool Mode → `core-components/tool-mode-group.spec.ts`
 - [-] Edit tools (edit-tools)
 
 #### 2.3 Component Updates
