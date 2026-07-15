@@ -2,7 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { parseHistory, findLatestRedRun } from './triage-core.mjs';
+import {
+  parseHistory,
+  findLatestRedRun,
+  stripAnsi,
+  normalizeSignature,
+  computeRecurrence,
+  rowsWithinDays,
+} from './triage-core.mjs';
 
 const fixture = (name) =>
   readFileSync(fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url)), 'utf8');
@@ -25,4 +32,36 @@ test('findLatestRedRun returns the last row with failures or flakes', () => {
 test('findLatestRedRun returns null when every run is green', () => {
   const green = [{ totals: { failed: 0, flaky: 0 } }];
   assert.equal(findLatestRedRun(green), null);
+});
+
+test('stripAnsi removes escape codes', () => {
+  assert.equal(stripAnsi('[2mError: x[22m'), 'Error: x');
+});
+
+test('normalizeSignature makes ANSI and plain signatures compare equal', () => {
+  assert.equal(
+    normalizeSignature('[2mError: toBe equality[22m'),
+    normalizeSignature('Error:   toBe equality'),
+  );
+});
+
+test('rowsWithinDays keeps only rows inside the window', () => {
+  const rows = parseHistory(fixture('history-sample.jsonl'));
+  const kept = rowsWithinDays(rows, '2026-07-14', 30);
+  assert.deepEqual(kept.map((r) => r.run_id), ['222', '333']); // 06-20 is >30d out
+});
+
+test('computeRecurrence flags a same-signature recurring flake', () => {
+  const rows = rowsWithinDays(parseHistory(fixture('history-sample.jsonl')), '2026-07-14', 30);
+  const r = computeRecurrence({ test: 'widget B toggles', error_signature: 'Error: toBe equality' }, rows);
+  assert.equal(r.count, 2);
+  assert.deepEqual(r.dates, ['2026-07-10', '2026-07-14']);
+  assert.equal(r.same_signature, true);
+});
+
+test('computeRecurrence returns count 1 for a first-seen failure', () => {
+  const rows = rowsWithinDays(parseHistory(fixture('history-sample.jsonl')), '2026-07-14', 30);
+  const r = computeRecurrence({ test: 'flow C builds', error_signature: 'Error: 500 internal' }, rows);
+  assert.equal(r.count, 1);
+  assert.equal(r.same_signature, false);
 });

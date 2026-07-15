@@ -18,3 +18,47 @@ export function findLatestRedRun(rows) {
   }
   return null;
 }
+
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\[[0-9;]*m/g;
+
+/** Strip ANSI SGR escape sequences. */
+export function stripAnsi(s) {
+  return String(s || '').replace(ANSI_RE, '');
+}
+
+/** Canonical form for comparing error signatures across runs. */
+export function normalizeSignature(sig) {
+  return stripAnsi(sig).replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+/** Days between two YYYY-MM-DD dates (a - b), UTC, calendar days. */
+function daysBetween(a, b) {
+  const ms = Date.parse(a + 'T00:00:00Z') - Date.parse(b + 'T00:00:00Z');
+  return Math.round(ms / 86400000);
+}
+
+/** Rows whose date falls in [asOfDate - windowDays, asOfDate]. */
+export function rowsWithinDays(rows, asOfDate, windowDays) {
+  return rows.filter((r) => {
+    const d = daysBetween(asOfDate, r.date);
+    return d >= 0 && d <= windowDays;
+  });
+}
+
+/** Occurrences of `item.test` across rowsInWindow (failures + flaky), with
+ *  same-signature detection. rowsInWindow must already include the latest run. */
+export function computeRecurrence(item, rowsInWindow) {
+  const target = normalizeSignature(item.error_signature);
+  const dates = [];
+  let sameSig = 0;
+  for (const row of rowsInWindow) {
+    const entries = [...(row.failures || []), ...(row.flaky || [])];
+    const hit = entries.find((e) => e.test === item.test);
+    if (!hit) continue;
+    dates.push(row.date);
+    if (normalizeSignature(hit.error_signature) === target) sameSig++;
+  }
+  dates.sort();
+  return { count: dates.length, dates, same_signature: sameSig >= 2 };
+}
