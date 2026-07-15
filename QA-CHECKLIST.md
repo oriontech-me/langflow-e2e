@@ -758,7 +758,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
-| `core-functionality/observability-monitoring/` | 24 | 22 | 2 | 0 | 0 |
+| `core-functionality/observability-monitoring/` | 24 | 23 | 1 | 0 | 0 |
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **300 (67%)** | **128 (28%)** | **8 (2%)** | **15 (3%)** |
+| **TOTAL** | **451** | **301 (67%)** | **127 (28%)** | **8 (2%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 336 `test()` calls carrying the `@stable` tag, distributed across 136 spec
+> 337 `test()` calls carrying the `@stable` tag, distributed across 137 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -929,6 +929,7 @@
 - [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
 - [x] a component in Tool Mode can be grouped with its Agent consumer → `tool-mode-group.spec.ts`
 - [x] User should be able to use components as tool → `tool-mode.spec.ts`
+- [x] user should be able to see errors on popups when raise an error → `validate-raise-errors-components.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
@@ -1176,7 +1177,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 2 | 0 |
+| `core-functionality/observability-monitoring/` | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
 | `flow-functionality/` | 1 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
