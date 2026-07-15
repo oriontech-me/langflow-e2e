@@ -77,10 +77,14 @@ async function importOutdatedFlowAndOpen(page: Page): Promise<void> {
   await card.waitFor({ state: "visible", timeout: 30000 });
   await card.click();
 
-  // The outdated banner is the frontend's signal that the diff finished computing.
-  await expect(page.getByText("5 components need updates")).toBeVisible({
-    timeout: 30000,
-  });
+  // The outdated banner is the frontend's signal that the diff finished
+  // computing. Gate on the count-agnostic regex (not a pinned literal) so the
+  // shared helper does not silently re-pin the component count the tests
+  // deliberately relaxed — matches both the _one ("component needs updates")
+  // and _other ("components need updates") i18n plurals.
+  await expect(
+    page.getByText(/\d+ components? needs? updates?/i),
+  ).toBeVisible({ timeout: 30000 });
 }
 
 test(
@@ -108,7 +112,7 @@ test(
 
       // The banner reports the outdated total to the user.
       await expect(
-        page.getByText(/\d+ components? need updates?/i),
+        page.getByText(/\d+ components? needs? updates?/i),
       ).toBeVisible();
     });
 
@@ -164,13 +168,15 @@ test(
     trackCreatedFlows(page);
 
     let breakingCount = 0;
+    let nonBreakingCount = 0;
 
     await test.step("Import the outdated fixture and open it", async () => {
       await importOutdatedFlowAndOpen(page);
-      // Breaking components on the canvas = Review buttons. Capture the count
-      // (emergent from the frozen fixture vs the nightly) so the dialog
-      // assertions track it instead of a pinned literal.
+      // Breaking components on the canvas = Review buttons; non-breaking =
+      // Update buttons. Capture both (emergent from the frozen fixture vs the
+      // nightly) so the dialog assertions track them instead of a pinned literal.
       breakingCount = await page.getByTestId("review-button").count();
+      nonBreakingCount = await page.getByTestId("update-button").count();
       expect(breakingCount).toBeGreaterThan(0);
     });
 
@@ -191,10 +197,18 @@ test(
       await expect(page.getByTestId("backup-flow-checkbox")).toBeChecked();
     });
 
-    await test.step("The update cannot be applied until the user opts a breaking component in", async () => {
-      // Breaking components start unselected, so the submit is disabled — the
-      // user must explicitly opt each one in. This is the strongest form of the
-      // alert: the system refuses to auto-apply a breaking update.
+    await test.step("A breaking component is never pre-selected — the user must opt in", async () => {
+      // The dialog seeds its selection with the NON-breaking components only
+      // (updateComponentModal seeds `components.filter(c => !c.breakingChange)`),
+      // so the submit is disabled *exactly when* nothing is pre-selected — the
+      // all-breaking case, which forces an explicit opt-in for every update.
+      //
+      // This assertion is the one place the spec relies on the fixture being
+      // ALL breaking; we make that precondition explicit rather than silent, so
+      // a future drift to a mixed fixture fails HERE with a clear signal (refresh
+      // the fixture — see the frozen-fixture caveat) instead of confusingly at
+      // the disabled check.
+      expect(nonBreakingCount).toBe(0);
       await expect(
         page.getByRole("button", { name: "Update Components" }),
       ).toBeDisabled();

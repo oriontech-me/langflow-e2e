@@ -35,7 +35,7 @@ same event an OS drag-and-drop fires — the same import mechanism used by the
    silent Update.** Import the fixture, open it, and assert that **at least one
    `review-button`** is present (a breaking update is surfaced for Review rather
    than via the one-click silent `update-button`), that the canvas banner reports
-   the outdated total (`/\d+ components? need updates?/`), and that the toolbar
+   the outdated total (`/\d+ components? needs? updates?/`), and that the toolbar
    action reads **"Review All"** (which renders only when a breaking update is
    present). The count is asserted as `> 0`, not a pinned literal — see the
    *frozen-fixture* caveat below.
@@ -51,11 +51,16 @@ same event an OS drag-and-drop fires — the same import mechanism used by the
 3. **"Review All" flags every outdated component as breaking and pre-selects
    none.** Capture the breaking count from the canvas (`review-button` count),
    click the "Review All" toolbar button; the multi-component dialog must show
-   that many **"Breaking"** update-type tags (one per breaking component), the
-   `backup-flow-checkbox` checked by default, and the submit button **"Update
-   Components" disabled** — because breaking components are intentionally *not*
-   pre-selected, the user must explicitly opt each one in before the update can
-   be applied. The dialog is cancelled without applying.
+   that many **"Breaking"** update-type tags (one per breaking component) and the
+   `backup-flow-checkbox` checked by default. Because breaking components are
+   intentionally *not* pre-selected (the dialog seeds its selection with the
+   non-breaking components only), the user must explicitly opt each breaking one
+   in before it can be applied — with the current all-breaking fixture nothing is
+   pre-selected, so the submit **"Update Components"** button is **disabled**.
+   This is the one assertion that relies on the fixture being all-breaking, so
+   the precondition is asserted explicitly (`nonBreakingCount === 0`, captured
+   from the canvas): a future drift to a mixed fixture fails there with a clear
+   refresh cue rather than silently. The dialog is cancelled without applying.
 
 No test applies the update (no "Update Component(s)" click), so the imported flow
 is never mutated and no `(Backup)` flow is created. Each imported flow is tracked
@@ -74,13 +79,14 @@ by id (from `POST /api/v1/flows/ → 201`) and deleted id-scoped in `afterEach`.
 | # | State | Locator | Expected |
 |---|---|---|---|
 | 1 | After import + open | `getByTestId("review-button")` | `≥ 1` (breaking surfaced for Review) |
-| 1 | After import + open | `getByText(/\d+ components? need updates?/i)` | `toBeVisible()` |
+| 1 | After import + open | `getByText(/\d+ components? needs? updates?/i)` | `toBeVisible()` (also the shared import gate) |
 | 1 | After import + open | `getByTestId("update-all-button")` | text `Review All` |
 | 2 | Single review dialog | warning copy `/disconnect this component .* review or reconnect/i` | `toBeVisible()` |
 | 2 | Single review dialog | `getByTestId("backup-flow-checkbox")` | visible and `toBeChecked()` |
 | 3 | Review All dialog | `getByText("Breaking", { exact: true })` | `toHaveCount(breakingCount)` (== canvas `review-button` count) |
 | 3 | Review All dialog | `getByTestId("backup-flow-checkbox")` | `toBeChecked()` |
-| 3 | Review All dialog | `getByRole("button", { name: "Update Components" })` | `toBeDisabled()` |
+| 3 | Review All dialog | `nonBreakingCount` (canvas `update-button` count) | `toBe(0)` — explicit all-breaking precondition |
+| 3 | Review All dialog | `getByRole("button", { name: "Update Components" })` | `toBeDisabled()` — nothing pre-selected, opt-in required |
 
 Each assertion fails if the breaking-change alert regresses: e.g. every breaking
 component routed to a silent `update-button` (no `review-button` left, toolbar
@@ -92,13 +98,19 @@ off, or a breaking component pre-selected (submit enabled).
 `outdated_flow.json` carries no per-node version — only a top-level
 `last_tested_version: "1.4.0"`. "Outdated" and "breaking" are therefore
 **emergent** from diffing that 1.4.0-era snapshot against whatever the running
-nightly ships, not pinned by the fixture. The assertions deliberately avoid a
-literal component count (they use `≥ 1` and the live `review-button` count) so a
-benign, unrelated version bump of one of the five components does **not**
-false-fail this `@stable` test as a product regression. If a future Langflow
-release ever makes *every* one of these components up-to-date or non-breaking,
-the durable signals (`review-button ≥ 1`, `Review All`) will legitimately fail —
-that is the cue to refresh the fixture to an older snapshot, not a product bug.
+nightly ships, not pinned by the fixture. **Every** count-dependent check avoids
+a literal — including the shared import gate (a count-agnostic banner regex, not
+`"5 components need updates"`), the `≥ 1` / live `review-button` count, the
+`"Breaking"`-tag count (tracks the live `review-button` count), and the
+submit enabled/disabled branch (a function of the captured non-breaking count).
+So a benign, unrelated version bump of one of the five components — whether it
+becomes up-to-date (fewer outdated) or non-breaking (a mix) — does **not**
+false-fail this `@stable` test as a product regression.
+
+If a future Langflow release ever makes *every* one of these components
+up-to-date or non-breaking, the durable signals (`review-button ≥ 1`,
+`Review All`, the banner) will legitimately fail — that is the cue to refresh the
+fixture to an older snapshot, not a product bug.
 
 ---
 
