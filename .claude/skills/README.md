@@ -11,9 +11,11 @@ git-ignored — only the skills below are tracked.
 | **langflow-e2e** | Foundation. Langflow domain expert + Spec-Driven (SDD) test-authoring engine. Owns all conventions (see its `references/`). Every test-authoring detail lives here. |
 | **langflow-e2e-issues** | Prose orchestrator — wraps `langflow-e2e` to drive one GitHub issue → PR (intake, classify, 6 issue types, PR authorization). Best for family-clone specs and daily-failure triage. |
 | **langflow-e2e-issue-deterministic** | Deterministic orchestrator — a TypeScript state machine (`pipeline/cli.ts`) owns phase order, gates, and evidence. **Default for wave issues.** Same lifecycle as the prose variant, enforced in code. |
+| **langflow-e2e-triage** | Daily-run triage dispatcher — reads the latest red `daily-stable.yml` run, groups failures by root cause, dedups against open issues, and opens dedicated follow-up issues behind a propose-confirm gate. **Producer** of the issues the two orchestrators above **consume**. |
 
 The two orchestrators intentionally coexist (benchmark). Each SKILL.md opens with a
 "which orchestrator to use" note. Both delegate test authoring to `langflow-e2e`.
+`langflow-e2e-triage` sits upstream of both: it dispatches issues, it never fixes them.
 
 ## Prerequisites — external skills these invoke
 
