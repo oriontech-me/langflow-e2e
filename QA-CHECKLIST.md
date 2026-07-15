@@ -762,12 +762,12 @@
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 23 | 3 | 2 | 0 |
+| `flow-functionality/` | 28 | 25 | 1 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **297 (66%)** | **131 (29%)** | **8 (2%)** | **15 (3%)** |
+| **TOTAL** | **451** | **299 (66%)** | **129 (29%)** | **8 (2%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 319 `test()` calls carrying the `@stable` tag, distributed across 130 spec
+> 322 `test()` calls carrying the `@stable` tag, distributed across 132 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1100,11 +1100,14 @@
 - [x] 1 - runs the flow from the canvas terminal node → `flow-execution-canvas.spec.ts`
 - [x] 2 - the flow ran correctly: every node reached build success → `flow-execution-canvas.spec.ts`
 - [x] 3 - the chat input and chat output are visible in the Playground → `flow-execution-canvas.spec.ts`
+- [x] should lock and unlock a flow and verify UI changes → `flow-lock.spec.ts`
+- [x] should show correct lock/unlock icon in settings based on state → `flow-lock.spec.ts`
 - [x] flow can be renamed via the header edit → `flow-rename-header.spec.ts`
 - [x] flow name persists after rename via API PATCH and GET → `flow-rename-header.spec.ts`
 - [x] import invalid JSON must show error message → `import-invalid-json.spec.ts`
 - [x] import non-JSON file must show error message → `import-invalid-json.spec.ts`
 - [x] import JSON with missing data field must show error → `import-invalid-json.spec.ts`
+- [x] user must be able to lock a flow and it must be saved → `lock-flow.spec.ts`
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
@@ -1161,7 +1164,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 3 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 3 | 0 |
+| `flow-functionality/` | 1 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
