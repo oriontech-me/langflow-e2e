@@ -20,9 +20,14 @@ follow-up issues** — then closes the umbrella triage issue.
 This skill is the **producer** of the dedicated issues that the sibling
 `langflow-e2e-issues` / `langflow-e2e-issue-deterministic` skills later
 **consume** to drive to a fix PR. No overlap: **triage dispatches, resolution
-fixes.** This skill never investigates a failure's root cause and never
-touches test code — it reads a run, groups symptoms, and opens issues that
-direct someone else to investigate.
+fixes.** This skill never investigates a failure's root cause — it reads a
+run, groups symptoms, and opens issues that direct someone else to
+investigate. It is **non-mutating by default**: it never edits test code as a
+side effect of opening issues. The single exception is retiring `@stable` as
+prevention (recurrent flakes; hard failures are already auto-removed by the
+workflow), and that happens **only behind its own explicit authorization**
+(see the hard gate) — never bundled into issue creation, and it never restores
+a tag.
 
 Repo: `oriontech-me/langflow-e2e`.
 
@@ -40,12 +45,21 @@ Talk to the user in **Portuguese (PT-BR)**; produce every GitHub artifact
   abrir"). Do all analysis and grouping first; the gate is the only thing
   standing between plan and execution — don't erode it by creating "just the
   obvious one" early.
-- **Issue-dispatch only.** This skill never removes or restores `@stable`,
-  and never edits test code, spec docs, or `QA-CHECKLIST.md`. When a
-  recurrent flake needs manual `@stable` removal, the skill only **signals**
-  it in the dedicated issue's body (spec path, line, ready-to-run command) —
-  it never runs that removal itself. That PR belongs to a human or a
-  resolution skill.
+- **`@stable` removal: separate gate, never inadvertent.** Retiring `@stable`
+  is **prevention** — a broken test must stop running in the daily until it is
+  worked — so it is a **mandatory part of the triage**. But it is a
+  code-mutating action, so it is **never a side effect of opening issues**: it
+  requires its **own explicit authorization**, distinct from the issue-dispatch
+  approval, and the **exact diff (`spec:line`) is shown before** anything is
+  edited. Hard failures are already auto-removed by the workflow; only
+  **recurrent flakes** need a removal here (flake removal is never automatic).
+  The skill **never restores** a tag and never edits test *logic*, spec docs,
+  or `QA-CHECKLIST.md` — restoration is a deliverable of the dedicated issue.
+- **The triage does not close until the tags are gone.** The umbrella is closed
+  only after every criterion-required removal is **verified done** (tag absent
+  on `main` / its removal PR open and linked). If a removal was not authorized
+  or not completed, leave the umbrella **open** and report exactly what is
+  pending — never close on a half-done triage.
 - **Report faithfully.** Everything reported — panorama counts, recurrence,
   guard state, dedup matches — comes from the dataset the CLI emits or from
   live `gh` output. Never invent a count, a recurrence, or a signature; if the
@@ -167,11 +181,13 @@ each time) is **only noted** in the panorama — the retry budget absorbs
 single-run noise, and opening an issue for it would be triage noise of its
 own.
 
-For each actionable flake: the dedicated issue **signals** that `@stable`
-must be removed manually (list the exact spec path + line + a ready-to-run
-command) — **never remove it yourself**. Manual `@stable` removal for flakes
-is explicitly out of scope for this skill; it belongs to a follow-up PR from
-a human or a resolution skill.
+For each actionable flake, `@stable` must be retired **as prevention** (so the
+flake stops running in the daily until it is worked) — part of the triage, not
+a deferred follow-up. But the removal is a code change: **record the exact spec
+path + line here** and carry it into the plan (Phase 6) as its own row; it is
+executed only in Phase 7, behind its **own authorization** with the diff shown
+(never restore it here). The dedicated issue then carries **restoring
+`@stable`** as an explicit deliverable.
 
 ### Phase 5 — SKIPS
 
@@ -188,10 +204,16 @@ it to the user in PT-BR:
 |---|---|---|---|---|
 | 1 | ... | hard-failure / flake / skip | create / enrich / note | new issue title, or existing #NNN |
 
-Then **wait for explicit approval** ("pode abrir" or equivalent). Do not
-create, comment, or close anything until the user responds. If the user asks
-for changes to the grouping or wording, revise the plan and present it again
-— the gate re-applies to the revised plan too.
+Below the table, list the **`@stable` removals the triage requires** as a
+separate block — one line per recurrent flake (`spec/path.spec.ts:line`). Hard
+failures are already auto-removed by the workflow, so do **not** list them.
+
+Then **wait for explicit approval of the issue plan** ("pode abrir" or
+equivalent). This approval covers issue create/enrich/close **only** — it does
+**not** authorize any `@stable` removal; each removal gets its own confirmation
+in Phase 7. Do not create, comment, close, or edit anything until the user
+responds. If the user asks for changes to the grouping or wording, revise the
+plan and present it again — the gate re-applies to the revised plan too.
 
 ### Phase 7 — EXECUTE (post-approval only)
 
@@ -202,12 +224,29 @@ Only after the user approves the plan:
    `references/issue-templates.md`.
 2. For each **enrich** row: `gh issue comment` on the matched existing issue,
    per the same reference's *Enrich vs Create Rule*.
-3. Comment on the umbrella issue linking every dedicated issue just
+3. **`@stable` removals — separate authorization, one at a time.** For each
+   recurrent flake in the removals block: show the **exact diff** (the
+   `@stable` tag to drop, at `spec:line`) and ask for a **distinct**
+   confirmation (e.g. "pode remover a tag do teste X?"). Only on an explicit
+   yes, open the removal PR (branch off `main`, drop the tag, reference the
+   dedicated issue in the body — restoration is that issue's deliverable, never
+   done here). If the user declines or defers, **do not edit** — record the
+   removal as still pending. (Hard failures were already auto-removed by the
+   workflow; on a guard-tripped mass-failure day the tag is **kept** — no
+   removal in either case.)
+4. Comment on the umbrella issue linking every dedicated issue just
    created/enriched (so the umbrella's history stays a readable index).
-4. Close the umbrella: `gh issue close <umbrella_issue>`.
+5. **Close the umbrella only when the triage is truly complete:** every needed
+   dedicated issue created/enriched **and** every criterion-required `@stable`
+   removal **verified done** (tag absent on `main`, or its removal PR open and
+   linked). If any required removal is still pending (not authorized, not
+   opened), **leave the umbrella open** and tell the user exactly what remains
+   — never close on a half-done triage. Only when all are satisfied:
+   `gh issue close <umbrella_issue>`.
 
 Report back to the user in PT-BR with the final list of issue numbers/URLs
-created or enriched, and confirm the umbrella was closed.
+created or enriched, each `@stable`-removal PR opened (and any removal left
+pending), and whether the umbrella was closed or intentionally left open.
 
 ## Relationship to sibling skills
 

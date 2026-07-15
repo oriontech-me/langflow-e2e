@@ -556,7 +556,7 @@ On a red scheduled `daily-stable.yml` run, the workflow does two things **automa
 1. Removes `@stable` from **every hard failure** (a test that failed all retries), regenerates `QA-CHECKLIST.md`, and commits it to `main` with `[skip ci]` — no PR, no approval. If the mass-failure guard trips (too many at once → treated as infra), nothing is removed.
 2. Opens a single **triage issue** for the run, listing what was removed.
 
-The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. Its only deliverable is the **triage itself**: read the run, route each occurrence into a dedicated issue (or enrich an existing one), and then **close the triage issue**. It never carries an investigation or a fix. When the mass-failure guard trips (see below), the triage gains one extra deliverable: **decide whether the day was environmental** and, if not, **manually remove `@stable`** from the real hard failures. The human steps are the fan-out, the manual removal for recurrent flakes, and the restoration.
+The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. Its only deliverable is the **triage itself**: read the run, route each occurrence into a dedicated issue (or enrich an existing one), and then **close the triage issue**. It never carries an investigation or a fix. The triage issue is closed **only once the triage is complete** — every needed dedicated issue created or enriched (hard failure / flake / skip, per the criteria below) **and** `@stable` removed from every test the criteria require (hard failures: auto-removed by the workflow; recurrent flakes: removed via PR at this point, as prevention). When the mass-failure guard trips (see below), the triage gains one extra deliverable: **decide whether the day was environmental** and, if not, **manually remove `@stable`** from the real hard failures. The human steps are the fan-out, the manual removal for recurrent flakes, and the restoration.
 
 The runbook — order, dedup, analysis depth, and how the follow-up issue must be written — is in **[Triage protocol — working the triage issue](#triage-protocol--working-the-triage-issue)** below.
 
@@ -602,7 +602,7 @@ The triage is **dispatch, not solution**. Its analysis is **preliminary and desc
 
 **2. Flakes (second).** Consult `reports/daily-history.jsonl`.
 - Open an issue **only for a recurrent flake**. A first occurrence is **only noted** in the triage — the retry budget absorbs single-run noise.
-- **Recurrence window: 30 days.** The criterion is the **cause, not the count**: it is not enough that the test flaked 2+ times in the window — the occurrences must share the **same `error_signature`** (the cheap, descriptive proxy for "same cause" at triage time). Same signature within the window → recurrent → open a **dedicated issue and remove `@stable` via PR** (flake removal is always manual; the workflow never auto-removes flakes). *(30 days is a revisable convention, not an absolute.)*
+- **Recurrence window: 30 days.** The criterion is the **cause, not the count**: it is not enough that the test flaked 2+ times in the window — the occurrences must share the **same `error_signature`** (the cheap, descriptive proxy for "same cause" at triage time). Same signature within the window → recurrent → open a **dedicated issue and remove `@stable` via PR as prevention** (flake removal is always manual; the workflow never auto-removes flakes) — so the flaky test stops running in the daily until it is worked. Restoring the tag is a **deliverable of that issue**, done after the fix. *(30 days is a revisable convention, not an absolute.)*
 
 **3. Skips (third).**
 - Analyse the **reason** for each skip.
@@ -632,10 +632,12 @@ The dedicated issue spun out of the triage must be **clear and agnostic**:
 | Assertion fails but the UI works correctly in manual testing | Test wrong — fix assertion logic |
 | Assertion fails and manual testing confirms the same failure | Product broke — flag upstream |
 
-**Restoration (upon fixing the problem):**
+**Restoration is a deliverable of the dedicated issue (upon fixing the problem):**
 1. Fix the test following the validation guide (all 5 steps), or confirm the Langflow regression is resolved.
-2. **Re-add the `@stable` tag** in the correction PR — restoration is always manual, for both hard failures and flakes.
+2. **Re-add the `@stable` tag** in the correction PR — restoration is always manual, for both hard failures and flakes. The tag was removed as prevention (so the broken test stopped running in the daily); putting it back is an **explicit deliverable** of the dedicated issue, not an optional follow-up.
 3. Reference the dedicated issue in the PR body; close it upon merge.
+
+**When the root cause is a product (Langflow) regression:** record it explicitly in the dedicated issue and **do not close the issue on a test-side workaround**. The issue stays **open** until the upstream fix has landed in the `langflowai/langflow-nightly:latest` image (or the corresponding `release-1.x.x` branch), the behavior is re-validated against it, and `@stable` is restored. A product regression is only "done" when the product is fixed where the suite runs — not when the test is muted.
 
 The spec doc is **not updated** during this cycle — the auto-removal commit, the dedicated issue, and the restoration PR are the traceability record.
 
@@ -655,7 +657,7 @@ Then compare the signatures — the action depends on **what** recurred (same ca
 |---|---|---|
 | Hard failure (all retries failed) | any | `@stable` was already auto-removed (or the mass-failure guard tripped and left it in place). No manual removal — classify on the dedicated issue and restore the tag when the test is fixed. |
 | Flake (passed on retry) | No matching signature in the last 30 days | Note in the triage; **do not** open an issue yet. The retry budget absorbs single-run noise. |
-| Flake (recurrent) | **Same `error_signature`** seen before within 30 days | Open a **dedicated issue** (`bug` + `area:<...>`, cite the run ids) **and remove `@stable` via PR**. Flake removal is manual — the workflow never auto-removes flakes. Restore the tag once the flakiness is fixed. |
+| Flake (recurrent) | **Same `error_signature`** seen before within 30 days | Open a **dedicated issue** (`daily-failure` + `area:<...>`, cite the run ids) **and remove `@stable` via PR as prevention**. Flake removal is manual — the workflow never auto-removes flakes. Restoring the tag is a **deliverable of that dedicated issue**. |
 | Flake with a **different** signature | Prior flake on the same test, but a different signature | Treat as a first occurrence of a **new cause** — note it; the raw count alone does not trigger an issue. |
 | Mix (hard-failed one day, flaky later) | 2+ days | The hard-fail day already auto-removed `@stable`; once restored, apply the flake rows above if the flakiness persists. |
 
