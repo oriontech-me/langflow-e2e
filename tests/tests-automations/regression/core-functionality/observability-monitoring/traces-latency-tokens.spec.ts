@@ -95,7 +95,7 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
   test(
     "GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run",
     {
-      tag: ["@release", "@api", "@regression", "@observability"],
+      tag: ["@stable", "@release", "@api", "@regression", "@observability"],
     },
     async ({ request }) => {
       const res = await request.get(
@@ -125,6 +125,7 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
     "Flow Activity page shows latency and token columns for the run",
     {
       tag: [
+        "@stable",
         "@release",
         "@workspace",
         "@regression",
@@ -169,6 +170,7 @@ test.describe("Flow Activity / Traces — latency and tokens", () => {
     "Trace Details modal shows span tree and per-span latency",
     {
       tag: [
+        "@stable",
         "@release",
         "@workspace",
         "@regression",

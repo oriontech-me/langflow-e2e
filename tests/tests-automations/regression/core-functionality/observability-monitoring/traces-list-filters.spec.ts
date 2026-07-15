@@ -184,7 +184,7 @@ test.describe("Trace list filters — status / start_time / query / session_id",
 
   test(
     "GET /api/v1/monitor/traces?status=error returns only the failing trace; rejects unknown values",
-    { tag: ["@release", "@api", "@regression", "@observability"] },
+    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       const matchRes = await request.get(
         `/api/v1/monitor/traces?flow_id=${errorFlowId}&status=error`,
@@ -219,7 +219,7 @@ test.describe("Trace list filters — status / start_time / query / session_id",
 
   test(
     "GET /api/v1/monitor/traces?status=ok returns only the successful trace",
-    { tag: ["@release", "@api", "@regression", "@observability"] },
+    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       const matchRes = await request.get(
         `/api/v1/monitor/traces?flow_id=${okFlowId}&status=ok`,
@@ -245,7 +245,7 @@ test.describe("Trace list filters — status / start_time / query / session_id",
 
   test(
     "GET /api/v1/monitor/traces?start_time pins the >= lower bound",
-    { tag: ["@release", "@api", "@regression", "@observability"] },
+    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       // Past cutoff: every seeded trace satisfies start_time >= past, so a
       // handler that flipped the comparator to <= would return 0 here. This
@@ -277,7 +277,7 @@ test.describe("Trace list filters — status / start_time / query / session_id",
 
   test(
     "GET /api/v1/monitor/traces?query=<substring> filters by trace name (incl. 50-char sanitize cap)",
-    { tag: ["@release", "@api", "@regression", "@observability"] },
+    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       // The handler ILIKEs on TraceTable.{name, id, session_id} (capped at
       // 50 chars by sanitize_query_string). In this setup the flow UUID is
@@ -327,7 +327,7 @@ test.describe("Trace list filters — status / start_time / query / session_id",
 
   test(
     "GET /api/v1/monitor/traces?session_id filters by the session passed at run time",
-    { tag: ["@release", "@api", "@regression", "@observability"] },
+    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       const hitRes = await request.get(
         `/api/v1/monitor/traces?flow_id=${okFlowId}&session_id=${encodeURIComponent(okSessionId)}`,
