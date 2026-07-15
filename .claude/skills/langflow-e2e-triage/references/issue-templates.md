@@ -85,16 +85,18 @@ A checkbox list of concrete acceptance criteria. Format:
 ```markdown
 ## Deliverables (Done when)
 
-- [ ] Root cause confirmed per spec (regression vs. provider/latency vs. wait-strategy) with evidence on the current nightly.
+- [ ] Root cause confirmed per spec (product regression vs. test/wait-strategy vs. environment) with evidence on the current nightly.
 - [ ] Each spec passes reliably (multiple clean `--retries=0` runs), fixing waits/flow as needed.
-- [ ] `@stable` was **left in place** (not confirmed a durable break; likely wave collateral) — if any is later fixed with a code change, re-validate per `CONTRIBUTING.md`.
+- [ ] **`@stable` restored** in the fix PR — the tag was removed at triage as prevention (hard failures and recurrent flakes); re-validate per `CONTRIBUTING.md` before restoring. *(On a guard-tripped mass-failure day the tag is instead **kept** — then there is nothing to restore unless the cluster later reproduces on a clean daily and the tag is removed.)*
+- [ ] If the root cause is a **product (Langflow) regression**: recorded as such here, and this issue stays **open** until the upstream fix lands in `langflowai/langflow-nightly:latest` (or the `release-1.x.x` branch), is re-validated there, and `@stable` is restored — not on a test-side mute.
 ```
 
 Rules:
 - Boxes are checkable (`- [ ]`)
 - Each item is a single, verifiable outcome
 - Include validation steps from `CONTRIBUTING.md` if the fix touches product code
-- Explicitly state the `@stable` decision (leave in place, quarantine, or restore)
+- **Restoring `@stable` is always a deliverable** whenever the tag was removed at triage (the normal case) — "done" includes putting it back after the fix. Only a guard-tripped day, where the tag was kept, has nothing to restore.
+- A **product regression** closes only when the product is fixed where the suite runs (nightly / release branch), not on a test-side workaround
 
 ---
 
@@ -181,18 +183,18 @@ When an issue is opened to track a **recurrent flake** (a test failing on multip
 ```markdown
 ## Flake signal
 
-This test is confirmed recurrent (failed on dailies 2026-07-08, 2026-07-09, 2026-07-13). To prevent recurring false triage, `@stable` must be manually removed from:
+This test is confirmed recurrent (failed on dailies 2026-07-08, 2026-07-09, 2026-07-13). As prevention, `@stable` was removed at triage (PR #NNN) so it stops running in the daily until this issue is worked:
 
 - `tests/tests-automations/regression/core-functionality/playground/playground-input-text-prefill.spec.ts` (test at line 97)
 
-Removal should occur in a separate PR after root cause is confirmed and the fix is verified.
+Restoring `@stable` after the fix is a deliverable of this issue.
 ```
 
 Rules:
 - Include only when the failure appears across multiple independent daily runs
 - List **exact spec file paths** and test line numbers
-- State that `@stable` removal is manual and **out of scope** for the triage skill (it requires a code PR)
-- Do not suggest what to remove from — let the investigator decide based on the root cause
+- `@stable` removal is manual (the workflow never auto-removes flakes) and happens **at triage as prevention** — it is not deferred until after the fix; link the removal PR (`#NNN`)
+- Restoring `@stable` after the fix is an explicit **deliverable** of this issue
 
 ---
 
@@ -255,6 +257,6 @@ Every dedicated issue embodies this philosophy:
 - **Description before diagnosis:** symptom table + preliminary observations, no verdict
 - **Investigation as independent branches:** test the product first, then environment, then test design
 - **Deliverables as checkboxes:** done when all items are ticked
-- **`@stable` decisions are explicit:** leave in place, restore, or quarantine — always documented
+- **`@stable` decisions are explicit:** removed at triage as prevention (or kept on a guard-tripped day), and **restored as a deliverable** after the fix — always documented
 
 This ensures investigators inherit not just a failure, but the context and constraints needed to fix it efficiently.
