@@ -76,9 +76,13 @@ The spec generates **2 tests per active model** via `getTestTargets()` (default:
    (`What is the capital of France?`); wait for the agent to finish
    (`waitForAgentToFinish`).
 4. **Validation:**
-   - **hard** — the last `div-chat-message` (AI bubble) **contains**
-     `REFUSE-<marker>`: proves the model actually produced the induced refusal
-     (not a helpful answer), so a pass is not coincidental.
+   - **hard** — the **persisted** reply (polled from `GET
+     /api/v1/monitor/messages`, not the live bubble) contains `REFUSE-<marker>`:
+     proves the model actually produced the induced refusal (not a helpful
+     answer), so a pass is not coincidental. The marker is unique per run, so a
+     Machine message carrying it can only be this run's refusal. Asserting on the
+     persisted state (not the live `div-chat-message`) avoids the streaming
+     placeholder race (#757 — see Notes).
    - **hard (via fixture)** — zero `🚨 Backend Error` (4xx/5xx) and zero flow
      execution errors: the component processed the refusal without crashing. A
      component crash on the refusal path would raise a backend error the fixture
@@ -123,9 +127,12 @@ The spec generates **2 tests per active model** via `getTestTargets()` (default:
 
 ## Guarding against false positives *(how)*
 
-- **Test 1** asserts the reply **contains the per-run refusal marker**, so it
-  cannot pass on a normal helpful answer or on stale/coincidental text — a pass
-  means the model actually refused and the component handled it.
+- **Test 1** asserts the **persisted** reply (monitor API) **contains the
+  per-run refusal marker**, so it cannot pass on a normal helpful answer or on
+  stale/coincidental text — a pass means the model actually refused and the
+  component handled it. Asserting on the settled persisted state (not the live
+  bubble) removes the streaming-placeholder false failure (#757) without
+  weakening the check.
 - **Test 2**'s completion is asserted structurally (bubble visible + Stop gone +
   no error), not from the presence of text, so it holds whether the reply is
   empty or not; the emptiness itself is only logged (never a hard/soft assertion)
@@ -195,8 +202,19 @@ The spec generates **2 tests per active model** via `getTestTargets()` (default:
   hardened `agent-system-prompt.spec.ts` helper (#635). This fix is only about
   the autosave wait; the separate live-bubble "Message empty." read race (Test 1
   hard-asserts the marker on the live bubble, which can render the streaming
-  placeholder before the final text lands — the #634 class) is tracked
-  separately.
+  placeholder before the final text lands — the #634 class) is tracked in #757.
+- **#757 live-bubble race (fixed 2026-07-14):** Test 1 originally hard-asserted
+  the marker on the live `div-chat-message` bubble read right after
+  `waitForAgentToFinish`. The bubble can still show the streaming placeholder
+  `Message empty.` when the finish signal fires before the final text lands, so
+  the assertion intermittently read the placeholder and failed (flaky on the
+  daily 07-13/07-14; the #634 class). Fix: assert the marker on the **persisted**
+  reply (`expectMarkerInPersistedReply`, polling `GET /api/v1/monitor/messages`),
+  which is the settled state and cannot see the transient placeholder. Confirmed
+  the race (not model non-adherence): with the old live-bubble assert the google
+  run failed on `Message empty.`, and with the persisted-reply assert the same
+  model passed 3/3 `--retries=0`. Only Test 1 changed — Test 2 already treats the
+  placeholder as a soft signal. Same pattern as `openai-provider.spec.ts`.
 - **Empty renders as a placeholder (observed on 1.11.0.dev30):** when the model
   actually returns an empty completion, Langflow does **not** crash — the
   Playground bubble shows the friendly placeholder `Message empty.`. That

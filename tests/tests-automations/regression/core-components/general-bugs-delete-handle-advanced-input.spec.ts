@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
@@ -7,11 +8,45 @@ import {
   enableInspectPanel,
   openAdvancedOptions,
 } from "../../../helpers/ui/open-advanced-options";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+
+// Capture every flow THIS page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach (repo convention, #490/#681).
+const createdFlowIds: string[] = [];
+
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
+  }
+});
 
 test(
   "the system must delete the handles from advanced fields when the code is updated",
-  { tag: ["@release", "@components"] },
+  { tag: ["@stable", "@release", "@components"] },
   async ({ page }) => {
+    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
     await page.getByTestId("blank-flow").click();

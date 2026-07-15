@@ -2,6 +2,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { ensureCustomComponentButton } from "../../../helpers/ui/ensure-custom-component-button";
 
 // Flow created by the test (blank-flow → /flow/{id}); captured so afterEach can
 // delete only this one via the API. Targeted (not cleanAllFlows) so the teardown
@@ -21,7 +22,7 @@ test.afterEach(async ({ page }) => {
 });
 
 test("user must be able to stop a building from the canvas",
-  { tag: ["@release", "@workspace", "@components"] },
+  { tag: ["@stable", "@release", "@workspace", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -45,6 +46,7 @@ test("user must be able to stop a building from the canvas",
       await page.waitForURL(/\/flow\/[^/?#]+/, { timeout: 10000 });
       createdFlowId = page.url().split("/flow/")[1]?.split(/[/?#]/)[0];
 
+      await ensureCustomComponentButton(page);
       await page.getByTestId("sidebar-custom-component-button").click();
       await adjustScreenView(page);
     });

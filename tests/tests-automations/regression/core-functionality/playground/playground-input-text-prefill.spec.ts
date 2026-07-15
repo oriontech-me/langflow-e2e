@@ -96,7 +96,7 @@ test.describe("Playground – Input Text Pre-fill Behavior", () => {
 
   test(
     "playground opens with chat textarea pre-filled from ChatInput Input Text",
-    { tag: ["@regression", "@playground"] },
+    { tag: ["@stable", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up flow with Input Text and open playground", async () => {
         createdFlowId = await setupFlowWithPrefill(page);

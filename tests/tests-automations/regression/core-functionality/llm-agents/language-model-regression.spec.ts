@@ -129,7 +129,7 @@ test.describe("Language Model Component Regression", () => {
 
   test(
     "language model must respond with Google provider",
-    { tag: ["@release", "@components", "@model-provider"] },
+    { tag: ["@stable", "@release", "@components", "@model-provider"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.GOOGLE_API_KEY,
@@ -170,7 +170,20 @@ test.describe("Language Model Component Regression", () => {
       await expect(modelWidget).toContainText(/gemini/i, { timeout: 10000 });
 
       await page.getByTestId("button_run_chat output").click();
-      await page.waitForSelector("text=built successfully", { timeout: 30000 });
+      // Build completion is observed on the Chat Output node's persistent
+      // `node_duration_` badge, NOT the "built successfully" toast (#750). The
+      // toast auto-dismisses after ~2s (FlowBuildingComponent), so a 30s wait
+      // that only fires once the whole Gemini build finishes has to catch a
+      // 2s window at an unknown time — under CI saturation the build tips past
+      // 30s and the toast is missed, producing the recurrent flake. The
+      // per-node duration badge renders on build success and stays, so it is a
+      // deterministic completion signal; the 60s budget matches this file's
+      // playground wait and the repo's node_duration convention (this is not
+      // masking latency — the widget gate above already guarantees the correct
+      // Gemini model built; the build genuinely completes, it is only slow).
+      await expect(page.getByTestId("node_duration_chat output")).toBeVisible({
+        timeout: 60000,
+      });
 
       await page.getByRole("button", { name: "Playground", exact: true }).click();
       await page.getByTestId("new-chat").click();
