@@ -62,3 +62,55 @@ export function computeRecurrence(item, rowsInWindow) {
   dates.sort();
   return { count: dates.length, dates, same_signature: sameSig >= 2 };
 }
+
+/** True when the run had more hard failures than the auto-remove guard allows. */
+export function detectGuard(row, maxAutoRemove = 5) {
+  return (row.totals?.failed || 0) > maxAutoRemove;
+}
+
+/** Find the umbrella [Daily Failure] issue for a run id (matched in the body). */
+export function matchUmbrella(issues, runId) {
+  const hit = (issues || []).find(
+    (i) => i.title?.startsWith('[Daily Failure]') && String(i.body || '').includes(runId),
+  );
+  return hit ? hit.number : null;
+}
+
+/** Assemble the normalized triage dataset from the latest red run. */
+export function buildDataset(rows, issues, opts = {}) {
+  const { windowDays = 30, maxAutoRemove = 5 } = opts;
+  const run = findLatestRedRun(rows);
+  if (!run) return null;
+  const window = rowsWithinDays(rows, run.date, windowDays);
+
+  const withRecurrence = (e) => ({
+    test: e.test,
+    file: e.file,
+    line: e.line,
+    tags: e.tags,
+    error_signature: stripAnsi(e.error_signature),
+    recurrence: computeRecurrence(e, window),
+  });
+
+  const hard_failures = (run.failures || []).map(withRecurrence);
+  const flakes = (run.flaky || []).map(withRecurrence).map((f) => ({
+    ...f,
+    actionable: f.recurrence.same_signature,
+  }));
+
+  return {
+    run: {
+      run_id: run.run_id,
+      run_url: run.run_url,
+      date: run.date,
+      langflow_image: run.langflow_image,
+      duration_ms: run.duration_ms,
+    },
+    umbrella_issue: matchUmbrella(issues, run.run_id),
+    guard_tripped: detectGuard(run, maxAutoRemove),
+    totals: run.totals,
+    hard_failures,
+    flakes,
+    skips: [],
+  };
+}

@@ -9,6 +9,9 @@ import {
   normalizeSignature,
   computeRecurrence,
   rowsWithinDays,
+  detectGuard,
+  matchUmbrella,
+  buildDataset,
 } from './triage-core.mjs';
 
 const fixture = (name) =>
@@ -48,7 +51,7 @@ test('normalizeSignature makes ANSI and plain signatures compare equal', () => {
 test('rowsWithinDays keeps only rows inside the window', () => {
   const rows = parseHistory(fixture('history-sample.jsonl'));
   const kept = rowsWithinDays(rows, '2026-07-14', 30);
-  assert.deepEqual(kept.map((r) => r.run_id), ['222', '333']); // 06-20 is >30d out
+  assert.deepEqual(kept.map((r) => r.run_id), ['222', '333']); // 06-13 is >30d out (outside 30-day window)
 });
 
 test('computeRecurrence flags a same-signature recurring flake', () => {
@@ -64,4 +67,30 @@ test('computeRecurrence returns count 1 for a first-seen failure', () => {
   const r = computeRecurrence({ test: 'flow C builds', error_signature: 'Error: 500 internal' }, rows);
   assert.equal(r.count, 1);
   assert.equal(r.same_signature, false);
+});
+
+test('detectGuard trips above the threshold', () => {
+  assert.equal(detectGuard({ totals: { failed: 6 } }, 5), true);
+  assert.equal(detectGuard({ totals: { failed: 5 } }, 5), false);
+});
+
+test('matchUmbrella finds the daily-failure issue by run id in the body', () => {
+  const issues = JSON.parse(fixture('issues-sample.json'));
+  assert.equal(matchUmbrella(issues, '333'), 900);
+  assert.equal(matchUmbrella(issues, '777'), null);
+});
+
+test('buildDataset assembles run, flags actionable flake, marks umbrella', () => {
+  const rows = parseHistory(fixture('history-sample.jsonl'));
+  const issues = JSON.parse(fixture('issues-sample.json'));
+  const ds = buildDataset(rows, issues);
+  assert.equal(ds.run.run_id, '333');
+  assert.equal(ds.umbrella_issue, 900);
+  assert.equal(ds.guard_tripped, false);
+  assert.equal(ds.hard_failures.length, 2);
+  assert.equal(ds.flakes.length, 1);
+  assert.equal(ds.flakes[0].actionable, true); // widget B recurs same-sig on 07-10 + 07-14
+  const flowA = ds.hard_failures.find((f) => f.test === 'flow A executes');
+  assert.equal(flowA.recurrence.count, 1);
+  assert.equal(flowA.recurrence.same_signature, false);
 });
