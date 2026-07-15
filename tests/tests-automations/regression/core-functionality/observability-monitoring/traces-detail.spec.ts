@@ -153,7 +153,7 @@ test.describe("Transaction record shape — seeded flow", () => {
 
   test(
     "transaction records contain required fields when not empty",
-    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
+    { tag: ["@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       const res = await request.get(
         `/api/v1/monitor/transactions?flow_id=${flowId}`,

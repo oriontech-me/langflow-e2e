@@ -1,5 +1,54 @@
+import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import {
+  SUPERUSER_PASSWORD,
+  SUPERUSER_USERNAME,
+} from "../../../../helpers/auth/credentials";
+
+/**
+ * Fail-fast Bearer acquisition for the authenticated tests below.
+ *
+ * The daily failure in issue #748 was an intermittent 403: the shared
+ * get-auth-token helper swallowed a transient /auto_login failure and returned
+ * an empty string, so the spec sent `Authorization: ""` and the endpoint
+ * answered `403 {"detail":"No authentication credentials provided"}`.
+ *
+ * This helper NEVER returns an empty token. It tries /auto_login first, then
+ * falls back to a deterministic credential login (independent of
+ * LANGFLOW_AUTO_LOGIN); if neither yields a token it throws, so the test fails
+ * fast instead of issuing an unauthenticated request.
+ */
+async function getBearerToken(request: APIRequestContext): Promise<string> {
+  // 1) auto_login (works when LANGFLOW_AUTO_LOGIN=true, the default).
+  const autoRes = await request.get("/api/v1/auto_login");
+  if (autoRes.ok()) {
+    const body = await autoRes.json().catch(() => null);
+    if (body?.access_token) {
+      return `Bearer ${body.access_token}`;
+    }
+  }
+
+  // 2) Fallback: credential login (does not depend on auto_login).
+  const formData = new URLSearchParams();
+  formData.append("username", SUPERUSER_USERNAME);
+  formData.append("password", SUPERUSER_PASSWORD);
+  const loginRes = await request.post("/api/v1/login", {
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    data: formData.toString(),
+  });
+  if (loginRes.ok()) {
+    const body = await loginRes.json().catch(() => null);
+    if (body?.access_token) {
+      return `Bearer ${body.access_token}`;
+    }
+  }
+
+  // 3) Fail fast — never send an unauthenticated request.
+  throw new Error(
+    `Failed to acquire a Bearer token: /api/v1/auto_login → ${autoRes.status()}, ` +
+      `/api/v1/login → ${loginRes.status()}. Refusing to send an unauthenticated request.`,
+  );
+}
 
 const VALID_COMPONENT_CODE = `
 from langflow.custom import Component
@@ -27,7 +76,7 @@ test.describe("Custom Component Creation API", () => {
     "POST /api/v1/custom_component returns valid component structure",
     { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
-      const authToken = await getAuthToken(request);
+      const authToken = await getBearerToken(request);
 
       const res = await request.post("/api/v1/custom_component", {
         headers: { Authorization: authToken },
@@ -71,7 +120,7 @@ test.describe("Custom Component Creation API", () => {
     "POST /api/v1/custom_component with invalid code returns error",
     { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
-      const authToken = await getAuthToken(request);
+      const authToken = await getBearerToken(request);
 
       const res = await request.post("/api/v1/custom_component", {
         headers: { Authorization: authToken },
@@ -92,7 +141,7 @@ test.describe("Custom Component Creation API", () => {
     "GET /api/v1/all includes component types",
     { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
-      const authToken = await getAuthToken(request);
+      const authToken = await getBearerToken(request);
 
       const res = await request.get("/api/v1/all", {
         headers: { Authorization: authToken },

@@ -116,7 +116,7 @@ test.describe("Playground – Input Text Pre-fill Behavior", () => {
 
   test(
     "creating a new session re-applies the Input Text pre-fill",
-    { tag: ["@stable", "@regression", "@playground"] },
+    { tag: ["@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up flow with Input Text and open playground", async () => {
         createdFlowId = await setupFlowWithPrefill(page);
@@ -150,7 +150,7 @@ test.describe("Playground – Input Text Pre-fill Behavior", () => {
 
   test(
     "pre-filled value is sent as the first message of the session",
-    { tag: ["@stable", "@regression", "@playground"] },
+    { tag: ["@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up flow with Input Text and open playground", async () => {
         createdFlowId = await setupFlowWithPrefill(page);

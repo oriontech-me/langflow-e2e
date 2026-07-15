@@ -154,6 +154,10 @@ jobs:
           LANGFLOW_AUTO_LOGIN: "true"
           LANGFLOW_SUPERUSER: langflow
           LANGFLOW_SUPERUSER_PASSWORD: langflow123
+          # Nightly image defaults LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false
+          # (custom-component creation disabled → sidebar button hidden, API
+          # 403). Enable it so the custom-component specs exercise the feature.
+          LANGFLOW_ALLOW_CUSTOM_COMPONENTS: "true"
           # Tracing is OFF by default (cuts startup time / backend noise for the
           # majority of specs). Turn it ON when the full suite runs or when
           # observability/traces specs are impacted — they need the SUT to emit

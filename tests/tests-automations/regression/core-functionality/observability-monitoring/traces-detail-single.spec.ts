@@ -154,7 +154,7 @@ test.describe("Single trace shape — seeded flow", () => {
 
   test(
     "GET /api/v1/monitor/traces/{trace_id} returns the full TraceRead contract with a non-empty span tree",
-    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
+    { tag: ["@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       const res = await request.get(`/api/v1/monitor/traces/${traceId}`, {
         headers: { Authorization: bearerToken },

@@ -51,6 +51,14 @@ jobs:
           LANGFLOW_AUTO_LOGIN: "true"
           LANGFLOW_SUPERUSER: langflow
           LANGFLOW_SUPERUSER_PASSWORD: langflow123
+          # The nightly image ships LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false (a
+          # security default): custom-component creation is disabled, which
+          # hides the sidebar "New Custom Component" button and makes
+          # POST /api/v1/custom_component return 403. Enable it so the
+          # custom-component @stable specs (full-custom-component,
+          # customComponentAdd, api-custom-component-creation) exercise the
+          # feature instead of failing on the disabled surface.
+          LANGFLOW_ALLOW_CUSTOM_COMPONENTS: "true"
           # Keep tracing ON: the @stable observability/traces specs probe
           # /api/v1/monitor/traces, which is populated by the internal native
           # tracer. That tracer's worker never starts when tracing is

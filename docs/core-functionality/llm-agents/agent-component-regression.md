@@ -1,6 +1,6 @@
 # Agent Component Regression
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -115,3 +115,5 @@ Kept separate from the suite because it interrupts the execution state.
 - **"Finished in Xs" in the Playground**: conditional check — the text appears in `BotMessage` based on the `isBuilding` cycle of `useFlowStore`; not guaranteed in multi-message sessions or with models that respond very quickly. The canonical duration assertion is `node_duration_agent` on the canvas.
 - The Stop button in the stop test is checked with `isVisible({ timeout: 30000 }).catch(() => false)` — fast models may respond before the button appears, and that is valid behavior.
 - `dispatchEvent("click")` on the Stop button bypasses Playwright actionability checks — the button may be transitioning during stream teardown.
+- **Credential-settle gate (#751)**: on the 1.11 unified model selector, opening the Agent model dropdown auto-binds the node's `api_key` to the *default* credential (e.g. `ANTHROPIC_API_KEY`); selecting the target provider's model rebinds it to that provider's credential (`OPENAI_API_KEY`, …) **asynchronously**. `SimpleAgentTemplatePage.load()` now blocks until the persisted `Agent.api_key.value` equals the provider's credential (`providerConfigMap[provider].envKeys[0]`) before returning, so a spec that opens the Playground and sends a message cannot race the rebind and run the selected model with the wrong provider's key (which surfaced as `Flow build failed: Incorrect API key provided` and a `div-chat-message` that never rendered — the daily-#744 signature).
+- **Flow cleanup**: an `afterEach` deletes the flow each test created via the API (id-scoped, `getAuthToken` bearer). The suite previously relied on the removed `load()`-time global clear (#553) and leaked one Simple Agent flow per run.

@@ -183,3 +183,14 @@ A per-run token `SENTINEL_<Date.now()>` is generated so a match is unambiguous.
   model) took long enough for the save to land. `waitForFlowSaveSettled` before
   the run removes the race deterministically — the same guard
   `agent-system-prompt.spec.ts` uses.
+- **Credential-settle gate (#751):** the same async-model-selection race has a
+  second symptom on the 1.11 unified model selector. Opening the model dropdown
+  first binds the node's `api_key` to the *default* credential
+  (`ANTHROPIC_API_KEY`); selecting the provider's model rebinds it to that
+  provider's credential (`OPENAI_API_KEY`, …) asynchronously. If Test 1 opens the
+  Playground and sends before the rebind settles, the OpenAI model runs with the
+  Anthropic key → `Flow build failed: Incorrect API key provided: sk-ant…` and
+  `div-chat-message` never renders (the daily-#744 signature). `SimpleAgentTemplatePage.load()`
+  now blocks until the persisted `Agent.api_key.value` equals
+  `providerConfigMap[provider].envKeys[0]`, so every agent spec starts from a
+  settled, provider-matched credential.

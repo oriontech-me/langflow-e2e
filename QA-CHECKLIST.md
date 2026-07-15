@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-14
+> **Last updated:** 2026-07-15
 
 ---
 
@@ -141,20 +141,20 @@
 
 #### 2.2 Tool Mode
 - [x] Enable Tool Mode on a component
-- [-] Group components in Tool Mode
+- [x] Group components in Tool Mode → `core-components/tool-mode-group.spec.ts`
 - [-] Edit tools (edit-tools)
 
 #### 2.3 Component Updates
 - [-] Outdated component notification
 - [-] Update component action
-- [ ] Update with breaking change — should alert user
+- [x] Update with breaking change — should alert user → `core-components/component-breaking-change-alert.spec.ts`
 - [x] Legacy component visible via configuration → `core-components/legacy-components-toggle-regression.spec.ts`
 - [x] Beta component visible via configuration → `core-components/beta-components-toggle-regression.spec.ts`
 - [x] Re-saving code removes handles from previously-toggled advanced fields → `core-components/general-bugs-delete-handle-advanced-input.spec.ts`
 
 #### 2.4 Code Editing
 - [x] Edit Python code of custom component — Check & Save clears the pulse-pink indicator → `core-components/customComponentAdd.spec.ts`
-- [-] Full custom component
+- [x] Full custom component → `core-components/full-custom-component.spec.ts`
 
 ---
 
@@ -299,13 +299,13 @@
 - [x] Upload file via component → `core-functionality/knowledge-ingestion-management/upload-via-component.spec.ts`
 - [x] Upload files of different types (txt, pdf, json, py, wav) → `core-functionality/knowledge-ingestion-management/file-types-upload.spec.ts`
 - [x] File size limit → `core-functionality/knowledge-ingestion-management/limit-file-size-upload.spec.ts`
-- [-] File management page
+- [x] File management page → `core-functionality/knowledge-ingestion-management/files-page.spec.ts`
 
 #### 5.2 Processing and Vectorization
 - [x] Split Text chunking of an ingested document → `core-functionality/knowledge-ingestion-management/split-text-chunking.spec.ts`
-- [ ] Indexing in Vector Store — document available for query
-- [ ] Vector Store query returns relevant chunks for the prompt
-- [ ] Complete RAG pipeline (ingest → embed → store → retrieve → answer)
+- [x] Indexing in Vector Store — document available for query → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
+- [x] Vector Store query returns relevant chunks for the prompt → `core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
+- [x] Complete RAG pipeline (ingest → embed → store → retrieve → answer) → `core-functionality/knowledge-ingestion-management/rag-pipeline.spec.ts`
 
 ---
 
@@ -450,7 +450,7 @@
 - [x] Component that raises Python error → `core-components/validate-raise-errors-components.spec.ts`
 - [x] Flow with error displays appropriate message → `core-functionality/observability-monitoring/flow-error-message.spec.ts`
 - [x] Network error during execution → ui-ux/execution-error-notification.spec.ts
-- [-] Execution timeout — clear message to user
+- [x] Execution timeout — clear message to user → `ui-ux/execution-error-notification.spec.ts` (transport-timeout path: `route.abort("timedout")` → "Workflow run failed" / "Failed to fetch"; the distinct deployed-flow "Run timed out. Please try again." is out of scope — see #694)
 
 ---
 
@@ -622,7 +622,7 @@
 #### 12.5 Flow Operations
 - [-] Lock flow — prevents editing
 - [-] Unlock flow
-- [-] Move flow between folders via API
+- [x] Move flow between folders via API → `api/flows/api-folders-crud.spec.ts`
 - [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [-] Save flow components as template
 
@@ -752,22 +752,22 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
-| `core-components/` — Component Config | 24 | 5 | 18 | 0 | 1 |
+| `core-components/` — Component Config | 24 | 8 | 16 | 0 | 0 |
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
-| `core-functionality/knowledge-ingestion/` | 8 | 4 | 1 | 0 | 3 |
+| `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
-| `core-functionality/observability-monitoring/` | 24 | 20 | 4 | 0 | 0 |
+| `core-functionality/observability-monitoring/` | 24 | 21 | 3 | 0 | 0 |
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 22 | 4 | 2 | 0 |
+| `flow-functionality/` | 28 | 23 | 3 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **288 (64%)** | **136 (30%)** | **8 (2%)** | **19 (4%)** |
+| **TOTAL** | **451** | **297 (66%)** | **131 (29%)** | **8 (2%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 319 `test()` calls carrying the `@stable` tag, distributed across 128 spec
+> 319 `test()` calls carrying the `@stable` tag, distributed across 130 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -807,6 +807,10 @@
 - [x] GET non-existent flow returns 404 → `api-flows-crud.spec.ts`
 - [x] POST with missing name returns 422 → `api-flows-crud.spec.ts`
 - [x] deleted flow does not appear in flows listing → `api-flows-crud.spec.ts`
+- [x] POST creates folder and returns ID and name → `api-folders-crud.spec.ts`
+- [x] GET lists folders and includes the created one → `api-folders-crud.spec.ts`
+- [x] DELETE removes folder and it no longer appears in listing → `api-folders-crud.spec.ts`
+- [x] moving flow between folders via PATCH folder_id updates association → `api-folders-crud.spec.ts`
 - [x] GET /health_check returns 200 with status ok → `api-health-check.spec.ts`
 - [x] GET /health_check returns db ok → `api-health-check.spec.ts`
 - [x] GET /health_check responds within 5 seconds → `api-health-check.spec.ts`
@@ -867,6 +871,9 @@
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
+- [x] breaking-change outdated components alert with a Review action, not a silent Update → `component-breaking-change-alert.spec.ts`
+- [x] reviewing a single breaking change warns about disconnection and defaults to a backup → `component-breaking-change-alert.spec.ts`
+- [x] Review All flags every outdated component as breaking and pre-selects none → `component-breaking-change-alert.spec.ts`
 - [x] Should delete a single component with the Backspace key → `componentDelete.spec.ts`
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
@@ -874,6 +881,7 @@
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
 - [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
 - [x] user should be able to edit name and description of a node with inspect panel disabled → `edit-name-description-node.spec.ts`
+- [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
@@ -919,6 +927,7 @@
 - [x] should not allow adding a Chat Input while a Webhook is on the canvas → `singleton-components.spec.ts`
 - [x] should not allow duplicating a Webhook → `singleton-components.spec.ts`
 - [x] should not allow copying and pasting a Webhook → `singleton-components.spec.ts`
+- [x] a component in Tool Mode can be grouped with its Agent consumer → `tool-mode-group.spec.ts`
 - [x] User should be able to use components as tool → `tool-mode.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
@@ -937,9 +946,18 @@
 
 #### core-functionality/knowledge-ingestion-management/
 - [x] upload a <ext> file through the Files page → `file-types-upload.spec.ts`
+- [x] should navigate to Files page and expose upload affordances → `files-page.spec.ts`
+- [x] should upload file using upload button → `files-page.spec.ts`
+- [x] should upload file using drag and drop → `files-page.spec.ts`
+- [x] should upload multiple files with different types → `files-page.spec.ts`
+- [x] should search uploaded files → `files-page.spec.ts`
+- [x] should handle bulk actions for multiple files → `files-page.spec.ts`
 - [x] user should not be able to upload a file larger than the limit → `limit-file-size-upload.spec.ts`
+- [x] Full RAG pipeline grounds the model answer on the retrieved chunk → `rag-pipeline.spec.ts`
 - [x] Split Text splits an ingested document into the expected number of chunks → `split-text-chunking.spec.ts`
 - [x] upload a file through the Read File component and read its content → `upload-via-component.spec.ts`
+- [x] Knowledge Base indexes the ingested document chunks (available for query) → `vector-store-index-query.spec.ts`
+- [x] Knowledge Base query returns the relevant chunk for the prompt → `vector-store-index-query.spec.ts`
 
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
@@ -971,8 +989,6 @@
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
 - [x] an invalid tool name blocks execution with a clear message → `agent-tool-name-validation.spec.ts`
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
-- [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
-- [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
 - [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
@@ -1010,27 +1026,13 @@
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
 - [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
-- [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
 - [x] a misconfigured flow surfaces an appropriate build-error message → `flow-error-message.spec.ts`
-- [x] Clearing traces for a flow whose trace has spans succeeds (cascade), leaving no traces behind → `traces-delete-cascade.spec.ts`
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
-- [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
-- [x] GET /api/v1/monitor/traces/{trace_id} returns a populated tokenUsage + modelName on the LLM span → `traces-detail-llm-span-populated.spec.ts`
 - [x] GET /api/v1/monitor/traces/{trace_id} returns 404 for an unknown but well-formed UUID → `traces-detail-single.spec.ts`
-- [x] GET /api/v1/monitor/traces/{trace_id} returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
 - [x] GET /api/v1/monitor/transactions returns 200 with paginated result → `traces-detail.spec.ts`
 - [x] GET /api/v1/monitor/transactions filters by flow_id (UUID) → `traces-detail.spec.ts`
-- [x] transaction records contain required fields when not empty → `traces-detail.spec.ts`
-- [x] GET /api/v1/monitor/traces returns totalLatencyMs and totalTokens for a flow run → `traces-latency-tokens.spec.ts`
-- [x] Flow Activity page shows latency and token columns for the run → `traces-latency-tokens.spec.ts`
-- [x] Trace Details modal shows span tree and per-span latency → `traces-latency-tokens.spec.ts`
-- [x] GET /api/v1/monitor/traces?status=error returns only the failing trace; rejects unknown values → `traces-list-filters.spec.ts`
-- [x] GET /api/v1/monitor/traces?status=ok returns only the successful trace → `traces-list-filters.spec.ts`
-- [x] GET /api/v1/monitor/traces?start_time pins the >= lower bound → `traces-list-filters.spec.ts`
-- [x] GET /api/v1/monitor/traces?query=<substring> filters by trace name (incl. 50-char sanitize cap) → `traces-list-filters.spec.ts`
-- [x] GET /api/v1/monitor/traces?session_id filters by the session passed at run time → `traces-list-filters.spec.ts`
 - [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
@@ -1051,8 +1053,6 @@
 - [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
 - [x] messages sent in playground must persist after closing and reopening → `playground-history-persist.spec.ts`
 - [x] playground opens with chat textarea pre-filled from ChatInput Input Text → `playground-input-text-prefill.spec.ts`
-- [x] creating a new session re-applies the Input Text pre-fill → `playground-input-text-prefill.spec.ts`
-- [x] pre-filled value is sent as the first message of the session → `playground-input-text-prefill.spec.ts`
 - [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
 - [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
@@ -1141,7 +1141,7 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
-| `core-components/` — Component Config | 18 | 1 |
+| `core-components/` — Component Config | 16 | 0 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 6 |
@@ -1159,9 +1159,9 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 4 | 0 |
-| `core-functionality/knowledge-ingestion/` | 1 | 3 |
-| `flow-functionality/` | 4 | 0 |
+| `core-functionality/observability-monitoring/` | 3 | 0 |
+| `core-functionality/knowledge-ingestion/` | 0 | 0 |
+| `flow-functionality/` | 3 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |

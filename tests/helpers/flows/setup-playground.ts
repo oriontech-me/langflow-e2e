@@ -28,6 +28,16 @@ export async function setupPlayground(page: Page): Promise<string> {
   }
 
   try {
+    // POST /api/v1/flows → 201 only confirms the flow exists server-side — it
+    // does NOT confirm the SPA finished routing into the flow editor. Gate on
+    // the destination state (editor URL + canvas) before reaching for
+    // editor-only elements; otherwise an occasional navigation race leaves the
+    // app on the flows list and the sidebar wait times out (flaky).
+    await page.waitForURL(/\/flow\/[^/?#]+/, { timeout: 30000 });
+    await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
+      timeout: 30000,
+    });
+
     // The flow editor sidebar mounts after the POST /api/v1/flows response
     // resolves; wait for sidebar-search-input before interacting (see #278).
     await expect(page.getByTestId("sidebar-search-input")).toBeVisible({

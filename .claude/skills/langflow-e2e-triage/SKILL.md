@@ -1,0 +1,234 @@
+---
+name: langflow-e2e-triage
+description: >-
+  Use when the task is to triage a daily E2E run and dispatch follow-up issues
+  from oriontech-me/langflow-e2e — "triaga o daily", "faz a triagem da última
+  run vermelha", "trabalha a umbrella #744", "abre as issues do daily-failure".
+  Reads the latest red daily-stable run, groups failures by root cause, dedups
+  against open issues, and orchestrates dedicated issue creation behind a
+  propose-confirm gate.
+---
+
+# Langflow E2E — Daily Triage Dispatcher
+
+Automates the **daily-run triage dispatcher** role a human analyst performs
+today (`CONTRIBUTING.md` → *Triage protocol*): reads the latest red
+`daily-stable.yml` run, groups failures by root cause, deduplicates against
+open issues, and orchestrates creation/enrichment of the **dedicated
+follow-up issues** — then closes the umbrella triage issue.
+
+This skill is the **producer** of the dedicated issues that the sibling
+`langflow-e2e-issues` / `langflow-e2e-issue-deterministic` skills later
+**consume** to drive to a fix PR. No overlap: **triage dispatches, resolution
+fixes.** This skill never investigates a failure's root cause and never
+touches test code — it reads a run, groups symptoms, and opens issues that
+direct someone else to investigate.
+
+Repo: `oriontech-me/langflow-e2e`.
+
+## Language rule (always)
+
+Talk to the user in **Portuguese (PT-BR)**; produce every GitHub artifact
+(issue titles, bodies, comments, labels) in **English**. Repo rule — see
+`CLAUDE.md`.
+
+## Hard gates (non-negotiable)
+
+- **Propose → confirm → create.** Never run `gh issue create`, `gh issue
+  edit`, `gh issue comment`, or `gh issue close` before the user has seen the
+  consolidated plan (Phase 6) and explicitly said to proceed (e.g. "pode
+  abrir"). Do all analysis and grouping first; the gate is the only thing
+  standing between plan and execution — don't erode it by creating "just the
+  obvious one" early.
+- **Issue-dispatch only.** This skill never removes or restores `@stable`,
+  and never edits test code, spec docs, or `QA-CHECKLIST.md`. When a
+  recurrent flake needs manual `@stable` removal, the skill only **signals**
+  it in the dedicated issue's body (spec path, line, ready-to-run command) —
+  it never runs that removal itself. That PR belongs to a human or a
+  resolution skill.
+- **Report faithfully.** Everything reported — panorama counts, recurrence,
+  guard state, dedup matches — comes from the dataset the CLI emits or from
+  live `gh` output. Never invent a count, a recurrence, or a signature; if the
+  dataset is silent on something (e.g. no `results.json` was supplied so
+  per-skip detail is thin), say so instead of guessing.
+
+## Companion skills — invoke when needed
+
+- **`playwright-cli`** — drive a **live browser** to disambiguate grouping
+  when the failure signature alone doesn't make it clear whether two failures
+  share a root cause (e.g. confirm both specs hang on the same locator on the
+  current nightly before folding them into one issue).
+- **`superpowers:systematic-debugging`** — **not used here.** Triage stays
+  **shallow and descriptive** by design; root-causing a failure is the job of
+  the dedicated issue's future assignee (via `langflow-e2e-issues` /
+  `-deterministic`), not this skill. Reaching for systematic-debugging inside
+  a triage session is a sign you've crossed from dispatching into resolving —
+  stop and hand off instead.
+
+## Workflow
+
+Track every phase with TodoWrite. Protocol order is **HARD FAILURES → FLAKES
+→ SKIPS**, per `CONTRIBUTING.md` → *Triage protocol*, which this skill
+mirrors and never overrides.
+
+### Phase 0 — REFRESH
+
+`reports/daily-history.jsonl` is committed to `main` **at the end** of the
+`daily-stable.yml` run. If you triage the same day the run finished, the
+latest line may not be on your local `main` yet.
+
+```bash
+git checkout main && git pull
+```
+
+Do this before running the CLI, every time — a stale checkout silently
+triages yesterday's run.
+
+### Phase 1 — INTAKE
+
+Run the deterministic dataset builder:
+
+```bash
+node .claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs
+```
+
+It auto-discovers the latest red daily-stable run from
+`reports/daily-history.jsonl`, cross-references 30-day flake recurrence,
+detects the mass-failure guard, matches the umbrella `[Daily Failure]` issue
+via `gh issue list --label daily-failure`, and prints a normalized `Dataset`
+JSON: `run{run_id,run_url,date,langflow_image,duration_ms}`,
+`umbrella_issue`, `guard_tripped`, `totals`, `hard_failures[]`, `flakes[]`
+(each carrying `recurrence` and an `actionable` flag), `skips[]`.
+
+If a local Playwright report exists for that run (downloaded or already on
+disk), pass it for richer per-skip detail — the history file only carries
+skip totals, not the per-test reason:
+
+```bash
+node .claude/skills/langflow-e2e-triage/scripts/build-triage-dataset.mjs --results results.json
+```
+
+Other flags: `--history <path>` (default `reports/daily-history.jsonl`),
+`--window <days>` (default `30`, the recurrence window).
+
+Read the full dataset before doing anything else. Then report the panorama
+to the user in PT-BR: run id/date/image, **X hard failures / Y actionable
+flakes (of Z total flakes) / W skips**, and whether the **guard tripped**
+(and if so, at what count). This is the shared frame of reference for every
+phase below — don't start grouping before this is on the table.
+
+### Phase 2 — DEDUP
+
+Before proposing any new issue, check what's already open:
+
+```bash
+gh issue list --repo oriontech-me/langflow-e2e --state open --label daily-failure
+```
+
+For each candidate cluster (a hard-failure group, an actionable flake, an
+unexpected skip), match its subject (symptom + area) against this list:
+
+- **Match found** → mark the cluster **enrich** — it will get a comment on
+  the existing issue, not a new one.
+- **No match** → mark the cluster **create**.
+
+This dedup pass happens before Phase 3–5 lock in the grouping, since knowing
+"this already has a home" can change how aggressively you group new
+occurrences under it.
+
+### Phase 3 — GROUP (hard failures)
+
+Cluster `hard_failures[]` by root cause: **same normalized error signature +
+same area + same failure symptom → one issue.** Don't open one issue per
+failing spec by default — the point of grouping is that a shared root cause
+is one problem, not N. Worked example: issue **#751** covers three specs
+(`agent-component-regression.spec.ts`, `agent-input-sources.spec.ts`,
+`loop-component-regression.spec.ts`) under a single "execution never
+completes" issue because all three shared the same
+timeout-waiting-for-completion shape, even though the literal locator
+differed (`div-chat-message` vs `text=built successfully`).
+
+When `guard_tripped` is true, group **more** aggressively, not less — a
+guard trip means the day is a mass-failure day, most likely environment-wide
+(instance didn't boot, provider outage, saturation), so many unrelated-looking
+timeouts are plausibly one environmental event. Note the environmental
+signal **descriptively** in the issue body (count, guard threshold crossed,
+plausible cause) — **never as a verdict**. State explicitly that `@stable`
+was left in place (the workflow doesn't auto-remove on a guard trip) and that
+quarantine is only warranted if the same cluster reproduces on a clean,
+non-guarded day.
+
+### Phase 4 — FLAKES
+
+Only flakes with `actionable: true` (same `error_signature` recurring within
+the window — the dataset already computed this) become dedicated issues. A
+flake with `actionable: false` (a first occurrence, or a different signature
+each time) is **only noted** in the panorama — the retry budget absorbs
+single-run noise, and opening an issue for it would be triage noise of its
+own.
+
+For each actionable flake: the dedicated issue **signals** that `@stable`
+must be removed manually (list the exact spec path + line + a ready-to-run
+command) — **never remove it yourself**. Manual `@stable` removal for flakes
+is explicitly out of scope for this skill; it belongs to a follow-up PR from
+a human or a resolution skill.
+
+### Phase 5 — SKIPS
+
+Only an **unexpected skip**, or one whose reason isn't already tracked by an
+open issue, gets a dedicated issue. A known/intentional skip already linked
+to an open issue is just noted in the panorama, not re-opened.
+
+### Phase 6 — PLAN + GATE
+
+Assemble everything from Phases 2–5 into one consolidated table and present
+it to the user in PT-BR:
+
+| # | Cluster (symptom/area) | Kind | Action | Target |
+|---|---|---|---|---|
+| 1 | ... | hard-failure / flake / skip | create / enrich / note | new issue title, or existing #NNN |
+
+Then **wait for explicit approval** ("pode abrir" or equivalent). Do not
+create, comment, or close anything until the user responds. If the user asks
+for changes to the grouping or wording, revise the plan and present it again
+— the gate re-applies to the revised plan too.
+
+### Phase 7 — EXECUTE (post-approval only)
+
+Only after the user approves the plan:
+
+1. For each **create** row: `gh issue create` using the dedicated-issue
+   template and area-label mapping in
+   `references/issue-templates.md`.
+2. For each **enrich** row: `gh issue comment` on the matched existing issue,
+   per the same reference's *Enrich vs Create Rule*.
+3. Comment on the umbrella issue linking every dedicated issue just
+   created/enriched (so the umbrella's history stays a readable index).
+4. Close the umbrella: `gh issue close <umbrella_issue>`.
+
+Report back to the user in PT-BR with the final list of issue numbers/URLs
+created or enriched, and confirm the umbrella was closed.
+
+## Relationship to sibling skills
+
+- **`langflow-e2e-triage`** (this skill) — **producer**: turns one red daily
+  run into dedicated follow-up issues. Stops there.
+- **`langflow-e2e-issues`** / **`langflow-e2e-issue-deterministic`** —
+  **consumers**: pick up a dedicated issue this skill spawned and drive it to
+  a fix PR (their `daily-failure triage` classify-row explicitly says
+  dispatch-only issues route back here; a **dedicated** `fix` issue is what
+  they resolve).
+- Neither this skill nor its output ever asserts a verdict on cause — that
+  classification happens on the dedicated issue, during resolution, per
+  `references/triage-verdicts.md` in the sibling skills.
+
+## Pointers
+
+- **`references/issue-templates.md`** — the canonical dedicated-issue
+  template (title format, sections, worked example from #751), the
+  directory→`area:` label map, the flake-signal block, the enrich-vs-create
+  rule, and the guard-tripped rule. Read it before drafting any issue body —
+  don't freehand the structure.
+- **`CONTRIBUTING.md` → *Triage protocol — working the triage issue*** — the
+  canonical human protocol this skill automates. On any conflict between this
+  SKILL.md and `CONTRIBUTING.md`, follow `CONTRIBUTING.md` and fix the skill.
