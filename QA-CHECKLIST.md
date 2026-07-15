@@ -447,7 +447,7 @@
 - [x] User flow state cleanup → `flow-functionality/user-flow-state-cleanup.spec.ts`
 
 #### 8.4 Error Handling and Edge Cases
-- [-] Component that raises Python error
+- [x] Component that raises Python error → `core-components/validate-raise-errors-components.spec.ts`
 - [x] Flow with error displays appropriate message → `core-functionality/observability-monitoring/flow-error-message.spec.ts`
 - [x] Network error during execution → ui-ux/execution-error-notification.spec.ts
 - [x] Execution timeout — clear message to user → `ui-ux/execution-error-notification.spec.ts` (transport-timeout path: `route.abort("timedout")` → "Workflow run failed" / "Failed to fetch"; the distinct deployed-flow "Run timed out. Please try again." is out of scope — see #694)
