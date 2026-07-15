@@ -200,7 +200,7 @@ test.describe("OpenAI Provider", () => {
 
   test(
     "configured OpenAI selects a GPT model in the Agent and executes the flow",
-    { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
+    { tag: ["@model-provider", "@agents", "@playground"] },
     async ({ page, request }) => {
       test.skip(
         !hasProviderEnvKeys(PROVIDER),

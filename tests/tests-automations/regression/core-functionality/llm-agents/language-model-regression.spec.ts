@@ -67,7 +67,7 @@ test.describe("Language Model Component Regression", () => {
 
   test(
     "language model must respond with OpenAI provider",
-    { tag: ["@stable", "@release", "@components", "@model-provider"] },
+    { tag: ["@release", "@components", "@model-provider"] },
     async ({ page }) => {
       test.skip(
         !process?.env?.OPENAI_API_KEY,
