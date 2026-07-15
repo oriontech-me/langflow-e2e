@@ -173,7 +173,7 @@ test.describe("Single trace — populated LLM span (OpenAI)", () => {
 
   test(
     "GET /api/v1/monitor/traces/{trace_id} returns a populated tokenUsage + modelName on the LLM span",
-    { tag: ["@release", "@api", "@regression", "@observability"] },
+    { tag: ["@stable", "@release", "@api", "@regression", "@observability"] },
     async ({ request }) => {
       const res = await request.get(`/api/v1/monitor/traces/${traceId}`, {
         headers: { Authorization: bearerToken },
