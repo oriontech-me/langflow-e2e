@@ -752,7 +752,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
-| `core-components/` — Component Config | 24 | 6 | 17 | 0 | 1 |
+| `core-components/` — Component Config | 24 | 7 | 17 | 0 | 0 |
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 6 | 1 | 0 | 1 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **292 (65%)** | **134 (30%)** | **8 (2%)** | **17 (4%)** |
+| **TOTAL** | **451** | **293 (65%)** | **134 (30%)** | **8 (2%)** | **16 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 307 `test()` calls carrying the `@stable` tag, distributed across 126 spec
+> 310 `test()` calls carrying the `@stable` tag, distributed across 127 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -867,6 +867,9 @@
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
+- [x] breaking-change outdated components alert with a Review action, not a silent Update → `component-breaking-change-alert.spec.ts`
+- [x] reviewing a single breaking change warns about disconnection and defaults to a backup → `component-breaking-change-alert.spec.ts`
+- [x] Review All flags every outdated component as breaking and pre-selects none → `component-breaking-change-alert.spec.ts`
 - [x] Should delete a single component with the Backspace key → `componentDelete.spec.ts`
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
@@ -1129,7 +1132,7 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
-| `core-components/` — Component Config | 17 | 1 |
+| `core-components/` — Component Config | 17 | 0 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 6 |
