@@ -1,6 +1,6 @@
 # API Custom Component Creation
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
@@ -21,10 +21,12 @@ If either endpoint regresses on shape, status code, or auth contract, both the C
 
 ## Step by step *(required)*
 
-The spec runs **4 independent tests** via Playwright's `request` fixture. Tests 1–3 mint a Bearer token via `getAuthToken(request)`; Test 4 deliberately sends no `Authorization` header. No shared `beforeAll`/`afterAll` state.
+The spec runs **4 independent tests** via Playwright's `request` fixture. Tests 1–3 mint a Bearer token via a local **fail-fast** helper `getBearerToken(request)`; Test 4 deliberately sends no `Authorization` header. No shared `beforeAll`/`afterAll` state.
+
+**Token acquisition (`getBearerToken`) — fail-fast, resilient.** Tests 1–3 must never send an unauthenticated request. The helper first tries `GET /api/v1/auto_login`; if that yields no `access_token` (a transient 5xx / timing hiccup during container startup), it falls back to a deterministic credential login (`POST /api/v1/login` with the superuser from `credentials.ts`), which does not depend on `LANGFLOW_AUTO_LOGIN`. If **neither** path returns a token, the helper **throws** with a clear message, so the test fails fast instead of silently sending `Authorization: ""` (an empty header) — which the endpoint answers with `403 {"detail":"No authentication credentials provided"}`. This is the exact failure mode that produced the intermittent daily `403` (issue #748): the previous shared `get-auth-token.ts` helper swallowed a transient auto_login failure and returned an empty string.
 
 **Test 1 — `POST /api/v1/custom_component` returns valid component structure**
-1. Obtain a Bearer token via `getAuthToken(request)`.
+1. Obtain a Bearer token via `getBearerToken(request)`.
 2. `POST /api/v1/custom_component` with `Authorization: Bearer …` and a body containing the source of a minimal valid component (`MessageTextInput` input, single `Output`, `build_output` method returning `Data`).
 3. Accept `200` or `201` for a parsed component, and tolerate `422` for environments that reject the snippet at the validation layer — the test logs the rejection body and exits without failing, documenting the looser contract.
 4. On `200`/`201`: parse JSON and assert that at least one of `display_name`, `name`, `type`, or `template` is present.
@@ -71,12 +73,13 @@ Test 4 was migrated from the now-deleted `api-custom-component.spec.ts` to conso
 
 ## Preconditions *(optional)*
 - Langflow running and reachable at `PLAYWRIGHT_BASE_URL`.
-- Backend running with auto-login enabled (`LANGFLOW_AUTO_LOGIN=true`, the default in the supplied Docker/pip scripts) — `getAuthToken` mints the Bearer via `GET /api/v1/auto_login`. The test fixture does not read `LANGFLOW_SUPERUSER` / `LANGFLOW_SUPERUSER_PASSWORD` directly.
+- A reachable auth surface: either `LANGFLOW_AUTO_LOGIN=true` (the default in the supplied Docker/pip scripts, so `GET /api/v1/auto_login` mints the Bearer) **or** valid superuser credentials (`LANGFLOW_SUPERUSER` / `LANGFLOW_SUPERUSER_PASSWORD`) for the credential-login fallback. `getBearerToken` needs only one of the two to succeed.
 - Backend has the standard component catalog loaded (default install satisfies this).
 
 ---
 
 ## External dependencies *(required)*
-- `tests/helpers/auth/get-auth-token.ts` — issues a valid `Bearer` via `/api/v1/auto_login`; if its contract changes, every test in this spec breaks.
+- `tests/helpers/auth/credentials.ts` — supplies the superuser username/password used by the credential-login fallback in `getBearerToken`; it reads `LANGFLOW_SUPERUSER` / `LANGFLOW_SUPERUSER_PASSWORD` (non-legacy defaults).
+- `GET /api/v1/auto_login` and `POST /api/v1/login` — the two token sources `getBearerToken` tries, in that order. The test tolerates either being unavailable individually; it fails fast only if **both** fail to yield a token.
 - `src/backend/base/langflow/api/v1/endpoints.py` — implementation of `POST /api/v1/custom_component` and `GET /api/v1/all`. Dropping `template`/`display_name`/`name`/`type` on the POST response breaks Test 1's shape check. For the GET, the test only enforces "non-empty object" — a list response would currently still pass the JSON-object check (`typeof === "object"`) if it carried entries, so a switch to list would degrade coverage silently rather than fail the test.
 - `src/backend/base/langflow/custom/custom_component/component.py` — the `Component` base class consumed by the inline test source. If its public surface (`MessageTextInput`, `Output`, `Data`) changes name or import path, Test 1's snippet stops parsing and the test flips to the `422` documentation branch.
