@@ -63,4 +63,10 @@ if (!dataset) {
   process.exit(2);
 }
 dataset.skips = readSkips(resultsPath);
+if (dataset.stale_history) {
+  const s = dataset.stale_history;
+  process.stderr.write(
+    `warning: history may be stale — umbrella #${s.newest_umbrella} for ${s.newest_umbrella_date} is newer than the latest history run (${s.history_latest_date}). Run 'git pull' on main to refresh reports/daily-history.jsonl.\n`,
+  );
+}
 process.stdout.write(JSON.stringify(dataset, null, 2) + '\n');
