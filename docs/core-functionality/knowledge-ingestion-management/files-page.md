@@ -12,13 +12,14 @@ filtering, and bulk selection with delete. If these break, users cannot manage
 the files that Read File / File components consume.
 
 1. **should navigate to Files page and expose upload affordances** — the Files
-   page renders its title and the durable upload affordances (Upload button,
-   search input and the drag-and-drop wrapper) that are present regardless of
-   how many files the account holds.
+   page renders its title and the Upload button, the two affordances present in
+   both of the page's render trees regardless of how many files the account
+   holds (see Notes).
 2. **should upload file using upload button** — a `.txt` fixture uploaded via
    the upload button shows a success toast and appears in the list.
-3. **should upload file using drag and drop** — the same fixture uploaded via
-   a synthesized DataTransfer drop appears in the list.
+3. **should upload file using drag and drop** — after seeding one file so the
+   drag-wrap drop surface renders, a fixture uploaded via a synthesized
+   DataTransfer drop appears in the list.
 4. **should upload multiple files with different types** — `.txt`, `.json`
    and `.py` fixtures all appear in the list after upload.
 5. **should search uploaded files** — typing a file's name filters the list
@@ -45,11 +46,14 @@ id-scoped so the specs are safe under the parallel daily-stable run.
 ## Validation criterion *(required)*
 
 - Navigation asserts the Files page chrome **deterministically**: title
-  `Files`, the Upload button, the search input and the drag-and-drop wrapper
-  are all visible. The literal empty-state ("No files") message is **not**
-  asserted — it only renders when the account holds zero files, which the
-  shared-account parallel daily run cannot guarantee (other `@files` specs
-  upload concurrently), so it is a non-deterministic observable.
+  `Files` and the Upload button, which render in **both** page trees. The
+  search input, the drag-and-drop wrapper and the literal empty-state
+  ("No files") message are **not** asserted here — each renders in only one of
+  the two trees, and the shared-account parallel daily run cannot guarantee
+  which tree is showing (other `@files` specs upload concurrently), so they are
+  non-deterministic observables for this test. The search input and drag-wrap
+  are instead covered by the search and drag-drop tests, which each upload a
+  file first to force the files-exist tree.
 - Upload paths assert the success toast **and** the uploaded file name
   rendered in the list, both via retrying `toBeVisible` (never a one-shot
   `.isVisible()`, which raced the row render — the pre-promotion flake).
@@ -98,3 +102,11 @@ deletion (never a global wipe) keeps the specs safe under parallel workers
 - Fixture paths resolve through `tests/helpers/filesystem/resolve-asset-path.ts`
   (probes `tests/assets/{media,files,flows}`), so future asset reorganizations
   fail with a clear error instead of a silent ENOENT (#613).
+- **Two render trees.** `FilesTab.tsx` renders a completely different tree by
+  file count: with files it shows the search input + a `drag-wrap-component`
+  wrapped grid; empty, it shows a `CardsWrapComponent` "No files" card with no
+  search input and no `drag-wrap-component`. Adding id-scoped cleanup made each
+  test start from a potentially empty account, exposing that the drag-drop test
+  (and any drag-wrap assertion) only worked before because earlier no-cleanup
+  tests left files behind. Tests that need the files-exist tree upload a file
+  first; the navigation test only asserts the tree-independent chrome.

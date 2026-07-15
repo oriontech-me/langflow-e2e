@@ -51,6 +51,7 @@ function trackCreatedArtifacts(page: Page): void {
 }
 
 test.afterEach(async ({ request }) => {
+  if (createdFileIds.length === 0 && createdFlowIds.length === 0) return;
   const bearer = await getAuthToken(request);
   for (const id of createdFileIds.splice(0)) {
     await request
@@ -96,13 +97,14 @@ test(
 
     await openMyFiles(page);
 
-    // Deterministic page chrome — present regardless of how many files the
-    // (shared) account holds. The literal "No files" empty-state message is
-    // intentionally NOT asserted: it only renders on a zero-file account,
-    // which the parallel daily run cannot guarantee.
+    // Assert only chrome present in BOTH of the Files page render trees. The
+    // page swaps between a "files exist" tree (search input + a drag-wrap
+    // wrapped grid) and an empty-account tree (a "No files" card), and the
+    // shared parallel account makes which one renders non-deterministic. The
+    // title (asserted in openMyFiles) and the Upload button are the affordances
+    // present regardless of file count; search-store-input / drag-wrap-component
+    // are files-exist-only and are covered by the search / drag-drop tests.
     await expect(page.getByTestId("upload-file-btn")).toBeVisible();
-    await expect(page.getByTestId("search-store-input")).toBeVisible();
-    await expect(page.getByTestId("drag-wrap-component")).toBeVisible();
   },
 );
 
@@ -141,20 +143,38 @@ test(
   { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
     trackCreatedArtifacts(page);
-    const fileName = generateRandomFilename();
+    const seedName = generateRandomFilename();
+    const dropName = generateRandomFilename();
+    const seedContent = fs.readFileSync(resolveAssetPath("test-file.txt"));
 
     await openMyFiles(page);
 
-    const uploadDone = waitForUpload(page);
+    // The drag-wrap drop surface only renders once the account holds at least
+    // one file (an empty account shows a different "No files" tree with no
+    // drag-wrap-component). Seed a file via the Upload button first so the
+    // surface is reliably present, then exercise the real drag-and-drop path.
+    const seedDone = waitForUpload(page);
+    const seedChooserPromise = page.waitForEvent("filechooser");
+    await page.getByTestId("upload-file-btn").click();
+    const seedChooser = await seedChooserPromise;
+    await seedChooser.setFiles([
+      { name: `${seedName}.txt`, mimeType: "text/plain", buffer: seedContent },
+    ]);
+    await seedDone;
+    await expect(page.getByTestId("drag-wrap-component")).toBeVisible({
+      timeout: 15000,
+    });
+
+    const dropDone = waitForUpload(page);
     // Create DataTransfer object and file
-    const dataTransfer = await page.evaluateHandle((fileName) => {
+    const dataTransfer = await page.evaluateHandle((dropName) => {
       const data = new DataTransfer();
-      const file = new File(["test content"], `${fileName}.txt`, {
+      const file = new File(["test content"], `${dropName}.txt`, {
         type: "text/plain",
       });
       data.items.add(file);
       return data;
-    }, fileName);
+    }, dropName);
 
     await page.dispatchEvent(
       '[data-testid="drag-wrap-component"]',
@@ -164,12 +184,12 @@ test(
     await page.dispatchEvent('[data-testid="drag-wrap-component"]', "drop", {
       dataTransfer,
     });
-    await uploadDone;
+    await dropDone;
 
     await expect(page.getByText("File uploaded successfully")).toBeVisible({
       timeout: 15000,
     });
-    await expect(page.getByText(`${fileName}.txt`).last()).toBeVisible({
+    await expect(page.getByText(`${dropName}.txt`).last()).toBeVisible({
       timeout: 15000,
     });
   },
@@ -219,7 +239,9 @@ test(
     await expect(page.getByText("Files uploaded successfully")).toBeVisible({
       timeout: 15000,
     });
-    // Verify all files appear in the list
+    // Verify all files appear in the list. `.last()` because the grid renders
+    // the upload-progress prefix ("0% <stem>.txt") as a sibling text node, so
+    // the stem can match more than once mid-upload — take the settled row.
     for (const name of Object.values(fileNames)) {
       await expect(page.getByText(name).last()).toBeVisible({ timeout: 15000 });
     }
