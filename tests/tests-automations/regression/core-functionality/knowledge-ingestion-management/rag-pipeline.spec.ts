@@ -124,6 +124,13 @@ async function openRagFlow(page: Page): Promise<void> {
   // so every node run control is rendered and clickable. We deliberately do NOT
   // call adjustScreenView here — its extra zoom-out shifts nodes under the
   // right-hand react-flow panel, which then intercepts the run-button click.
+  // Gate on the far answer terminal being rendered too, so the fit-on-load has
+  // framed the whole flow before any node run (both ends must be clickable).
+  await expect(
+    page
+      .locator(`[data-id="${ANSWER_OUTPUT_NODE}"]`)
+      .getByTestId("button_run_chat output"),
+  ).toBeVisible({ timeout: 30000 });
 }
 
 /** Runs a node (scoped by id) via its run button and waits for the success badge. */
@@ -208,7 +215,10 @@ test(
       // fabricated token can only be present if retrieval fed the chunk into the
       // prompt — proving the end-to-end RAG grounding (a model answering from its
       // own knowledge, or an empty/wrong retrieval, cannot produce ZEPHYR-42).
-      const answer = page.getByRole("dialog").locator("textarea");
+      // Scope past the onboarding tooltip, which also carries role="dialog".
+      const answer = page
+        .locator('[role="dialog"]:not([data-testid="assistant-onboarding-tooltip"])')
+        .locator("textarea");
       await expect(answer).toBeVisible({ timeout: 15000 });
       await expect(answer).toHaveValue(new RegExp(GROUNDING_SENTINEL), {
         timeout: 15000,

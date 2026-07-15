@@ -1036,12 +1036,6 @@
         "type": "int",
         "_input_type": "IntInput"
        },
-       "_frontend_node_flow_id": {
-        "value": "31dfa8d2-d42f-4bd0-b04a-a3bbb96fc544"
-       },
-       "_frontend_node_folder_id": {
-        "value": "50c46771-d71e-47f4-b62a-068e2fe5ef85"
-       },
        "is_refresh": false
       },
       "description": "Ingest into or retrieve from a Langflow knowledge base.",
@@ -1650,12 +1644,6 @@
         "track_in_telemetry": true,
         "type": "int",
         "_input_type": "IntInput"
-       },
-       "_frontend_node_flow_id": {
-        "value": "31dfa8d2-d42f-4bd0-b04a-a3bbb96fc544"
-       },
-       "_frontend_node_folder_id": {
-        "value": "50c46771-d71e-47f4-b62a-068e2fe5ef85"
        },
        "is_refresh": false
       },
@@ -3034,12 +3022,6 @@
         "track_in_telemetry": false,
         "type": "slider",
         "_input_type": "SliderInput"
-       },
-       "_frontend_node_flow_id": {
-        "value": "5d00c69b-a893-44ab-80e8-fda8ae96188b"
-       },
-       "_frontend_node_folder_id": {
-        "value": "50c46771-d71e-47f4-b62a-068e2fe5ef85"
        },
        "is_refresh": false
       },
