@@ -27,7 +27,10 @@ dialog test).
 
 `@stable` was removed from the Google test by the daily-failure triage for
 #596 (flaky 07-07/07-08 → hard fail 07-09) and **restored by the #596 fix**
-(explicit model + pre-run widget gate — see Step by step and Notes).
+(explicit model + pre-run widget gate — see Step by step and Notes). It was
+removed again in the 2026-07-14 quarantine PR #749 (recurrent flake) and
+**restored by the #750 fix** (deterministic build-completion observable —
+see Notes).
 
 ---
 
@@ -63,9 +66,10 @@ dropdown") → save-settle guard → **pre-run widget gate (#596/#491 class):**
 if the node's `model_model` widget does not show `/gemini/i`, the selection
 was silently reverted to the workspace-default model by a
 `custom_component/update` race — re-apply the selection (bounded, 3
-attempts), then hard-assert the widget shows a Gemini model → run → wait
-`built successfully` (30s, untouched) → Playground → send `Say hello.` →
-last AI bubble non-empty.
+attempts), then hard-assert the widget shows a Gemini model → run → wait for
+build completion on the Chat Output node's persistent `node_duration_chat
+output` badge (60s, #750 — replaces the transient `built successfully` toast)
+→ Playground → send `Say hello.` → last AI bubble non-empty.
 
 **Switch test:** `initialGPTsetup` + `setupGoogle` → save settle → the
 page-level `model_model` trigger shows `/gemini/i`.
@@ -78,9 +82,10 @@ visible → Escape.
 
 ## Validation criterion *(required)*
 
-- Build completion is observed via the `built successfully` toast within
-  30s; the Playground reply is the end-to-end proof the selected provider
-  executed.
+- Build completion is observed via the Chat Output node's persistent
+  `node_duration_` badge within 60s (OpenAI test still uses the `built
+  successfully` toast — #750 hardened only the flaking Google test); the
+  Playground reply is the end-to-end proof the selected provider executed.
 - **Fix #596 exit criterion:** the Google test's root cause is identified
   with evidence (test defect vs product vs environment — triage verdicts),
   the fix does NOT weaken asserts (no timeout inflation to mask latency),
@@ -122,6 +127,24 @@ visible → Escape.
   the fix PR; per the user's decision the resolution is test-side only
   (explicit model + re-apply gate), no upstream ask — the race is not
   reproducible at manual UI speed.
+- **#750 root cause (2026-07-14):** recurrent flake (flaky 07-07/07-08,
+  hard-fail 07-09, flaky again 07-14) on `waitForSelector("text=built
+  successfully", 30s)` at line 173. Evidence: the 07-14 daily JSON artifact
+  pins the timeout to that exact selector, and the retry passed (the build
+  DOES complete — not a product hang). Frontend source
+  (`FlowBuildingComponent`) shows the success toast auto-dismisses ~2s after
+  `buildInfo.success`, so the 30s wait only starts catching a 2s window once
+  the whole Gemini build finishes; under CI saturation the build tips past
+  30s and the toast is missed. This is NOT the #596 model-drop bug — the
+  pre-run widget gate already guarantees the correct Gemini model built.
+  Verdict: **test defect** (fragile transient observable + tight budget), not
+  a Langflow regression. **Fix:** wait on the Chat Output node's persistent
+  `node_duration_chat output` badge (deterministic build-completion signal,
+  the repo's established convention — used by agent/knowledge/flow specs) with
+  a 60s budget matching this file's playground wait. Not timeout inflation to
+  mask latency: the observable is a real completion signal, not a bigger
+  gamble on the toast window. Locally 5/5 clean `--retries=0` on
+  1.11.0.dev38.
 - **Latent sibling — resolved (#606):** the OpenAI tests went through
   `initialGPTsetup` → `setupOpenAI(page)` with no explicit model.
   `initialGPTsetup` now defaults the model to `resolveGptModel()`
