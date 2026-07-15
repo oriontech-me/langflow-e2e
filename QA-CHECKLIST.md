@@ -758,7 +758,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
-| `core-functionality/observability-monitoring/` | 24 | 21 | 3 | 0 | 0 |
+| `core-functionality/observability-monitoring/` | 24 | 22 | 2 | 0 | 0 |
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **299 (66%)** | **129 (29%)** | **8 (2%)** | **15 (3%)** |
+| **TOTAL** | **451** | **300 (67%)** | **128 (28%)** | **8 (2%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 322 `test()` calls carrying the `@stable` tag, distributed across 132 spec
+> 323 `test()` calls carrying the `@stable` tag, distributed across 132 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1127,6 +1127,7 @@
 - [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
 - [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
 - [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
+- [x] executing flow with server error shows error feedback → `execution-error-notification.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
@@ -1162,7 +1163,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 3 | 0 |
+| `core-functionality/observability-monitoring/` | 2 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
 | `flow-functionality/` | 1 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
