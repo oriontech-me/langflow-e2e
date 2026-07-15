@@ -11,6 +11,7 @@ import {
   type Provider,
 } from "../../../../helpers/provider-setup";
 import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
+import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 
 /**
  * Agent robustness on a degenerate model output (QA-CHECKLIST §6.5,
@@ -152,24 +153,26 @@ async function waitForAgentToFinish(page: Page): Promise<void> {
   }
 }
 
-// Fill the Agent Instructions (system prompt) and wait for the autosave PATCH so
-// the build runs the prompt we set, not the template default.
+// Fill the Agent Instructions (system prompt) and make sure the debounced
+// autosave has settled before the build, so the run uses the prompt we set, not
+// the template default.
 async function setAgentInstructions(page: Page, prompt: string): Promise<void> {
   const promptField = page.getByTestId("textarea_str_system_prompt");
   await expect(promptField).toBeVisible({ timeout: 15000 });
 
-  const patchPromise = page.waitForResponse(
-    (resp) =>
-      resp.url().includes("/api/v1/flows/") &&
-      resp.request().method() === "PATCH" &&
-      resp.ok(),
-    { timeout: 15000 },
-  );
-
   await promptField.click();
   await promptField.fill(prompt);
   await promptField.blur();
-  await patchPromise;
+  // Drain ALL debounced autosave PATCHes instead of racing a single
+  // `waitForResponse(PATCH && ok(), 15s)` (#608). The old waiter flaked three
+  // ways on the google run: (a) the autosave debounce could exceed 15s under
+  // load; (b) a stale PATCH still in flight from load() (model selection) could
+  // resolve it BEFORE the instruction's own save landed; (c) a transient
+  // non-ok PATCH never matched `resp.ok()`, so it waited out the full timeout.
+  // `waitForFlowSaveSettled` waits for a quiet period after the last flow-save
+  // PATCH (any status), which is robust to all three. Matches the hardened
+  // `agent-system-prompt.spec.ts` helper (#635).
+  await waitForFlowSaveSettled(page);
 }
 
 // Open the Playground, send a message, wait for the run to finish, return the
