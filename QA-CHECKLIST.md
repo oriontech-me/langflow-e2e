@@ -450,7 +450,7 @@
 - [-] Component that raises Python error
 - [x] Flow with error displays appropriate message → `core-functionality/observability-monitoring/flow-error-message.spec.ts`
 - [x] Network error during execution → ui-ux/execution-error-notification.spec.ts
-- [-] Execution timeout — clear message to user
+- [x] Execution timeout — clear message to user → `ui-ux/execution-error-notification.spec.ts` (transport-timeout path: `route.abort("timedout")` → "Workflow run failed" / "Failed to fetch"; the distinct deployed-flow "Run timed out. Please try again." is out of scope — see #694)
 
 ---
 
