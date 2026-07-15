@@ -168,10 +168,19 @@ test.describe("OpenAI Provider", () => {
             r.request().method() === "POST",
           { timeout: 30000 },
         );
+        // Persist is a CREATE (POST /variables/ 201) when the global key does
+        // not yet exist and an UPDATE (PATCH /variables/{id} 200) when it does
+        // — the frontend branches on existence (#636). Match BOTH: a fresh
+        // instance, or a run where no earlier test configured the provider
+        // first, takes the POST path, so a PATCH-only predicate waits forever
+        // on a request that never fires — the confirmed flake (POST 201
+        // observed live on a deleted-var repro; validate-provider itself
+        // returns 200, so the backend is healthy — a test defect, not a
+        // product hang).
         const persistPromise = page.waitForResponse(
           (r) =>
             r.url().includes("/api/v1/variables/") &&
-            r.request().method() === "PATCH",
+            (r.request().method() === "POST" || r.request().method() === "PATCH"),
           { timeout: 30000 },
         );
 
@@ -182,7 +191,7 @@ test.describe("OpenAI Provider", () => {
           persistPromise,
         ]);
         // validate-provider 2xx = the key authenticates against OpenAI live;
-        // PATCH /variables 2xx = the key is persisted globally.
+        // POST/PATCH /variables 2xx = the key is persisted globally.
         expect(validateResp.ok()).toBe(true);
         expect(persistResp.ok()).toBe(true);
       });
