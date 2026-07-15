@@ -1,45 +1,50 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
-export async function lockFlow(page: Page) {
+// Open Flow Settings, toggle the lock switch to the target state, and save.
+// The switch can take well over a second to settle into its new `data-state`
+// on a loaded canvas — the prior fixed `waitForSelector(..., { timeout: 1000 })`
+// flaked (~1/3 runs, #684). `expect(...).toHaveAttribute` auto-retries up to the
+// timeout, removing the race without a magic sleep.
+async function setLockState(
+  page: Page,
+  state: "checked" | "unchecked",
+): Promise<void> {
   await page.getByTestId("flow_name").click();
-  await page.getByTestId("lock-flow-switch").click();
-  await page.getByTestId("icon-Lock").isVisible({ timeout: 5000 });
-  await page.waitForSelector(
-    '[data-testid="lock-flow-switch"][data-state="checked"]',
-    {
-      timeout: 1000,
-    },
-  );
+  const lockSwitch = page.getByTestId("lock-flow-switch");
+  await expect(lockSwitch).toBeVisible({ timeout: 30000 });
 
-  await page.waitForTimeout(500);
-  await page.getByTestId("save-flow-settings").isEnabled({ timeout: 3000 });
-  await page.getByTestId("save-flow-settings").click();
+  // Converge to the target state. A single click can be dropped when the modal
+  // is still binding under parallel load (the switch stayed on its old state,
+  // #684), so retry the whole toggle: click only when not already on target,
+  // then confirm. The `if` guard prevents a late-registering click from flipping
+  // an already-correct switch back.
+  await expect(async () => {
+    if ((await lockSwitch.getAttribute("data-state")) !== state) {
+      await lockSwitch.click();
+    }
+    await expect(lockSwitch).toHaveAttribute("data-state", state, {
+      timeout: 2000,
+    });
+  }).toPass({ timeout: 15000, intervals: [300, 700, 1500] });
 
-  await page.waitForSelector('[data-testid="save-flow-settings"]', {
-    state: "hidden",
-    timeout: 10000,
-  });
-  //ensure the UI is updated
-  await page.getByTestId("icon-Lock").isVisible({ timeout: 5000 });
+  // Save only when there is a pending change. If the switch already matched the
+  // persisted state (e.g. the reopened flow loaded already in the target state),
+  // the Save button stays disabled — there is nothing to persist, so just close
+  // the modal instead of waiting on a button that will never enable (#684).
+  const save = page.getByTestId("save-flow-settings");
+  if (await save.isEnabled({ timeout: 5000 }).catch(() => false)) {
+    await save.click();
+    await expect(save).toBeHidden({ timeout: 10000 });
+  } else {
+    await page.keyboard.press("Escape");
+    await expect(save).toBeHidden({ timeout: 10000 });
+  }
 }
 
-export async function unlockFlow(page: Page) {
-  await page.getByTestId("flow_name").click();
-  await page.getByTestId("lock-flow-switch").click();
-  await page.getByTestId("icon-Lock").isVisible({ timeout: 5000 });
-  await page.waitForSelector(
-    '[data-testid="lock-flow-switch"][data-state="unchecked"]',
-    {
-      timeout: 1000,
-    },
-  );
-  //ensure the UI is updated
-  await page.waitForTimeout(500);
+export async function lockFlow(page: Page): Promise<void> {
+  await setLockState(page, "checked");
+}
 
-  await page.getByTestId("save-flow-settings").isEnabled({ timeout: 3000 });
-  await page.getByTestId("save-flow-settings").click();
-  await page.waitForSelector('[data-testid="save-flow-settings"]', {
-    state: "hidden",
-    timeout: 5000,
-  });
+export async function unlockFlow(page: Page): Promise<void> {
+  await setLockState(page, "unchecked");
 }
