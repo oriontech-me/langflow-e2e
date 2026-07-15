@@ -53,8 +53,11 @@ management; `@ui-ux` — settings-modal interaction + locked-state indicators.
 
 **Test 1 — lock and unlock a flow and verify UI changes**
 
-1. Bootstrap, open Templates, select "Basic Prompting" (creates the subject
-   flow; its id is captured for id-scoped teardown).
+1. Create a uniquely-named Basic Prompting flow via the API
+   (`createFlowFromStarter`) and open it by id (`/flow/{id}`); its id is kept for
+   id-scoped teardown. This id-addressed open (rather than clicking the shared
+   "Basic Prompting" template card) is what keeps the spec parallel-safe — see
+   Notes.
 2. Assert the flow is initially unlocked — no `icon-lock` badge on the canvas.
 3. Open Flow Settings (`flow_name`); wait for `lock-flow-switch`.
 4. Assert the switch is `unchecked` and both `input-flow-name` /
@@ -69,7 +72,8 @@ management; `@ui-ux` — settings-modal interaction + locked-state indicators.
 
 **Test 2 — settings-modal shows the correct lock/unlock icon per state**
 
-1. Bootstrap, load "Basic Prompting", open Flow Settings.
+1. Create + open an isolated Basic Prompting flow by id (as in Test 1), open
+   Flow Settings.
 2. Assert the modal shows `icon-Unlock` (dialog-scoped) while unlocked.
 3. Toggle the lock switch; assert the modal now shows `icon-Lock` and hides
    `icon-Unlock`.
@@ -131,3 +135,14 @@ management; `@ui-ux` — settings-modal interaction + locked-state indicators.
 - **Flow cleanup:** an `afterEach` deletes the subject flow via the API
   (id-scoped, `getAuthToken` bearer). The spec previously left one "Basic
   Prompting" flow per run on the instance.
+- **Parallel-safety (#684):** `@stable` specs run fully parallel (the daily
+  suite and the PR "impacted" job pass no `--workers=1`). Two changes make this
+  spec safe under that: (a) each test creates a uniquely-named flow via
+  `createFlowFromStarter` and opens it by id, so concurrent workers never share
+  a "Basic Prompting" flow's lock state (a `--workers=1`-only validation missed
+  this — a shared-template click let one worker see another's locked flow); (b)
+  the lock switch is converged to its target `data-state` with a retry loop and
+  Save is clicked only once enabled, because a single toggle/click is dropped
+  while the modal is still binding under load. The lock-persisted assertions read
+  the authoritative `GET /api/v1/flows/{id}` `locked` flag before trusting the
+  reopened modal.

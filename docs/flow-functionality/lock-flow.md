@@ -52,8 +52,11 @@ on the fresh nightly. `@components` — node/edge canvas manipulation; `@workspa
 
 **Test — user must be able to lock a flow and it must be saved**
 
-1. Bootstrap, open Templates, select "Basic Prompting" (creates the subject
-   flow; id captured for teardown). Wait for `canvas_controls_dropdown`.
+1. Create a uniquely-named Basic Prompting flow via the API
+   (`createFlowFromStarter`) and open it by id (`/flow/{id}`); id captured for
+   teardown. Wait for `canvas_controls_dropdown`. Reopens later in the test also
+   go by id (not `list-card.first()`) so parallel workers never open each
+   other's flow — see Notes.
 2. `lockFlow(page)` — open settings, toggle `lock-flow-switch`, save.
 3. Navigate to the flows list (`icon-ChevronLeft`) and reopen the flow via its
    card; assert the `icon-lock` badge is present (lock persisted).
@@ -124,3 +127,10 @@ on the fresh nightly. `@components` — node/edge canvas manipulation; `@workspa
 - **`OPENAI_API_KEY` skip:** the key gates the test only so the Basic Prompting
   graph renders with its Language Model node as authored; the flow is never run,
   so no tokens are spent.
+- **Parallel-safety (#684):** promoting to `@stable` means running under the
+  fully-parallel daily/impacted jobs. The spec creates a uniquely-named flow via
+  `createFlowFromStarter` and only ever opens it by id — reopening via
+  `list-card.first()` would grab whichever card tops the shared home grid, i.e.
+  another worker's flow. The shared `lock-flow.ts` helper converges the switch to
+  its target state with a retry (a single click drops under load) and saves only
+  when a change is pending.
