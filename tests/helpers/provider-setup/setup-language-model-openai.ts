@@ -185,7 +185,66 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<string> {
   // pointer events, timing the click out (issue #580). dispatchEvent bypasses
   // hit-testing and still opens the dropdown.
   await modelDropdown.dispatchEvent("click");
+
+  // The unified ModelInput dropdown lists models ONLY from CONFIGURED providers. When
+  // OpenAI is not configured in the instance (no prior "Collect models" step — e.g. the
+  // adaptive-impacted E2E check runs without it, #722), no `gpt-*` option is offered and
+  // selectPreferredChatModel's fallback would land on the Anthropic default
+  // `claude-sonnet-5` (a reasoning model that rejects `temperature` → HTTP 400 → empty
+  // Playground response). Configure OpenAI first via the dropdown's "Manage Model
+  // Providers" panel so the test is self-sufficient, then reopen the dropdown. Skipped
+  // when `gpt-*` is already offered (daily-stable configures OpenAI via collect-models;
+  // a prior local run persisted the credential).
+  const openAIOffered = await page
+    .locator('[data-testid$="-option"]')
+    .filter({ hasText: /^gpt-/i })
+    .first()
+    .isVisible({ timeout: 5000 })
+    .catch(() => false);
+  if (!openAIOffered) {
+    await configureOpenAIProviderFromDropdown(page);
+    await modelDropdown.dispatchEvent("click");
+  }
+
   return selectPreferredChatModel(page);
+}
+
+// Opens the model dropdown's "Manage Model Providers" panel, configures the OpenAI
+// credential from `OPENAI_API_KEY`, enables an OpenAI model and closes the panel — so
+// the ModelInput dropdown then offers `gpt-*` options. Assumes the dropdown is already
+// open. Idempotent: when the provider is already configured ("Replace" shown) the
+// re-save is skipped (it 400s on PATCH /variables and trips the backend-error monitor,
+// #751). This restores the self-sufficiency the pre-ModelInput node had via its
+// "Setup Provider" form (#722).
+async function configureOpenAIProviderFromDropdown(page: Page): Promise<void> {
+  await page.getByTestId("manage-model-providers").click();
+  await page.getByTestId("provider-item-OpenAI").click();
+
+  const apiKeyInput = page.getByPlaceholder("sk-...");
+  const keyVisible = await apiKeyInput
+    .waitFor({ state: "visible", timeout: 10000 })
+    .then(() => true)
+    .catch(() => false);
+  if (keyVisible && process.env.OPENAI_API_KEY) {
+    const alreadyConfigured = await page
+      .getByRole("button", { name: /^Replace$/i })
+      .isVisible({ timeout: 2000 })
+      .catch(() => false);
+    if (!alreadyConfigured) {
+      await apiKeyInput.fill(process.env.OPENAI_API_KEY);
+      await page.getByRole("button", { name: /^(Save|Retry)$/i }).click();
+      // Saving validates the key and loads the model list — wait for the toggles.
+      await page
+        .locator('[data-testid^="llm-toggle"]')
+        .first()
+        .waitFor({ state: "visible", timeout: 30000 })
+        .catch(() => {});
+    }
+  }
+
+  // Enable one preferred chat model so the provider is active.
+  await enablePreferredModelToggle(page);
+  await page.getByRole("button", { name: "Close" }).click();
 }
 
 // Cheap, non-reasoning OpenAI chat models, in priority order. Unlike the gpt-5.x
