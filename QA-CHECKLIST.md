@@ -622,7 +622,7 @@
 #### 12.5 Flow Operations
 - [-] Lock flow — prevents editing
 - [-] Unlock flow
-- [-] Move flow between folders via API
+- [x] Move flow between folders via API → `api/flows/api-folders-crud.spec.ts`
 - [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [-] Save flow components as template
 
