@@ -4,35 +4,56 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 // Folders use the /api/v1/projects/ endpoint (legacy alias kept for compatibility)
 test.describe("Folder (Projects) CRUD via API", () => {
+  // Id-scoped cleanup: each test pushes the ids it creates from the POST 201
+  // response, and afterEach deletes exactly those. Inline cleanup at the end of
+  // a test never runs when an assertion throws first, leaking folders/flows —
+  // afterEach always runs. Targeted delete only (never a global wipe), which
+  // under the suite's parallelism would nuke concurrent workers' data.
+  const createdFolderIds: string[] = [];
+  const createdFlowIds: string[] = [];
+
+  test.afterEach(async ({ request }) => {
+    const authToken = await getAuthToken(request);
+    // Flows first — a folder holding flows may refuse deletion otherwise.
+    for (const id of createdFlowIds) {
+      await deleteFlow(request, id, { headers: { Authorization: authToken } });
+    }
+    for (const id of createdFolderIds) {
+      // request.delete resolves on any status and 404 (already gone) is the
+      // desired idempotent end state, so no throw/catch is needed here.
+      await request.delete(`/api/v1/projects/${id}`, {
+        headers: { Authorization: authToken },
+      });
+    }
+    createdFlowIds.length = 0;
+    createdFolderIds.length = 0;
+  });
+
   test(
     "POST creates folder and returns ID and name",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const folderName = `Test Folder ${Date.now()}`;
 
       const createRes = await request.post("/api/v1/projects/", {
         headers: { Authorization: authToken },
-        data: { name: folderName, description: "Folder criado pelo teste" },
+        data: { name: folderName, description: "Folder created by the test" },
       });
 
       expect(createRes.status()).toBe(201);
 
       const folder = await createRes.json();
+      createdFolderIds.push(folder.id);
       expect(folder).toHaveProperty("id");
       expect(typeof folder.id).toBe("string");
       expect(folder.name).toBe(folderName);
-
-      // Cleanup
-      await request.delete(`/api/v1/projects/${folder.id}`, {
-        headers: { Authorization: authToken },
-      });
     },
   );
 
   test(
     "GET lists folders and includes the created one",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const folderName = `List Folder ${Date.now()}`;
@@ -43,6 +64,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
       });
       expect(createRes.status()).toBe(201);
       const { id } = await createRes.json();
+      createdFolderIds.push(id);
 
       const listRes = await request.get("/api/v1/projects/", {
         headers: { Authorization: authToken },
@@ -54,17 +76,12 @@ test.describe("Folder (Projects) CRUD via API", () => {
       const found = folderList.find((f: any) => f.id === id);
       expect(found).toBeDefined();
       expect(found.name).toBe(folderName);
-
-      // Cleanup
-      await request.delete(`/api/v1/projects/${id}`, {
-        headers: { Authorization: authToken },
-      });
     },
   );
 
   test(
     "DELETE removes folder and it no longer appears in listing",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const folderName = `Delete Folder ${Date.now()}`;
@@ -75,6 +92,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
       });
       expect(createRes.status()).toBe(201);
       const { id } = await createRes.json();
+      createdFolderIds.push(id);
 
       const deleteRes = await request.delete(`/api/v1/projects/${id}`, {
         headers: { Authorization: authToken },
@@ -96,7 +114,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
 
   test(
     "moving flow between folders via PATCH folder_id updates association",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
@@ -107,6 +125,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
       });
       expect(folder1Res.status()).toBe(201);
       const folder1 = await folder1Res.json();
+      createdFolderIds.push(folder1.id);
 
       const folder2Res = await request.post("/api/v1/projects/", {
         headers: { Authorization: authToken },
@@ -114,6 +133,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
       });
       expect(folder2Res.status()).toBe(201);
       const folder2 = await folder2Res.json();
+      createdFolderIds.push(folder2.id);
 
       // Create a flow in folder 1
       const flowRes = await request.post("/api/v1/flows/", {
@@ -127,6 +147,7 @@ test.describe("Folder (Projects) CRUD via API", () => {
       });
       expect(flowRes.status()).toBe(201);
       const flow = await flowRes.json();
+      createdFlowIds.push(flow.id);
 
       // Verify flow is in folder 1
       expect(flow.folder_id).toBe(folder1.id);
@@ -145,17 +166,6 @@ test.describe("Folder (Projects) CRUD via API", () => {
       expect(getRes.status()).toBe(200);
       const updatedFlow = await getRes.json();
       expect(updatedFlow.folder_id).toBe(folder2.id);
-
-      // Cleanup
-      await deleteFlow(request, flow.id, {
-        headers: { Authorization: authToken },
-      });
-      await request.delete(`/api/v1/projects/${folder1.id}`, {
-        headers: { Authorization: authToken },
-      });
-      await request.delete(`/api/v1/projects/${folder2.id}`, {
-        headers: { Authorization: authToken },
-      });
     },
   );
 });
