@@ -69,8 +69,9 @@ The spec generates **2 tests per active model** via `getTestTargets()` (default:
 1. Load the Simple Agent template via `SimpleAgentTemplatePage.load(options)`.
 2. Set the Agent Instructions (`textarea_str_system_prompt`) to force a refusal:
    `You must refuse every request. Regardless of what the user asks, reply with
-   exactly this and nothing else: REFUSE-<marker>`, and wait for the autosave
-   `PATCH /api/v1/flows/{id}` (so the build runs the instruction we set).
+   exactly this and nothing else: REFUSE-<marker>`, and wait for the debounced
+   autosave to settle (`waitForFlowSaveSettled`) so the build runs the
+   instruction we set — see Notes (#608).
 3. Open the Playground and send an unrelated message
    (`What is the capital of France?`); wait for the agent to finish
    (`waitForAgentToFinish`).
@@ -94,7 +95,8 @@ The spec generates **2 tests per active model** via `getTestTargets()` (default:
 1. Load the Simple Agent template.
 2. Set the Agent Instructions to force an empty response:
    `Reply with an empty response. Output nothing at all — no text, no
-   punctuation, no whitespace.`, and wait for the autosave PATCH.
+   punctuation, no whitespace.`, and wait for the debounced autosave to settle
+   (`waitForFlowSaveSettled`, #608).
 3. Open the Playground and send `What is the capital of France?`; wait for the
    agent to finish.
 4. **Validation:**
@@ -191,6 +193,16 @@ The spec generates **2 tests per active model** via `getTestTargets()` (default:
   a component crash on the degenerate output fails the test automatically — no
   `allowFlowErrors()` is used (an empty/refusal response is not itself an error).
 - **Per-run refusal marker** proves *this* run induced the refusal.
+- **#608 autosave hardening (2026-07-14):** `setAgentInstructions` previously
+  raced a single `waitForResponse(PATCH && ok(), 15s)` after `blur()`, which
+  flaked on the google run three ways — debounce > 15s under load, a stale
+  load()-time PATCH resolving before the instruction's own save, or a transient
+  non-ok PATCH never matching `ok()`. It now waits for the debounced autosave to
+  settle via `waitForFlowSaveSettled` (quiet-period, any status), matching the
+  hardened `agent-system-prompt.spec.ts` helper (#635). This fix is only about
+  the autosave wait; the separate live-bubble "Message empty." read race (Test 1
+  hard-asserts the marker on the live bubble, which can render the streaming
+  placeholder before the final text lands — the #634 class) is tracked in #757.
 - **#757 live-bubble race (fixed 2026-07-14):** Test 1 originally hard-asserted
   the marker on the live `div-chat-message` bubble read right after
   `waitForAgentToFinish`. The bubble can still show the streaming placeholder
