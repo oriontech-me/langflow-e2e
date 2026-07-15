@@ -758,7 +758,7 @@
 | `core-functionality/knowledge-ingestion/` | 8 | 6 | 1 | 0 | 1 |
 | `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
-| `core-functionality/observability-monitoring/` | 24 | 20 | 4 | 0 | 0 |
+| `core-functionality/observability-monitoring/` | 24 | 21 | 3 | 0 | 0 |
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **291 (65%)** | **135 (30%)** | **8 (2%)** | **17 (4%)** |
+| **TOTAL** | **451** | **292 (65%)** | **134 (30%)** | **8 (2%)** | **17 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1147,7 +1147,7 @@
 
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
-| `core-functionality/observability-monitoring/` | 4 | 0 |
+| `core-functionality/observability-monitoring/` | 3 | 0 |
 | `core-functionality/knowledge-ingestion/` | 1 | 1 |
 | `flow-functionality/` | 4 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
