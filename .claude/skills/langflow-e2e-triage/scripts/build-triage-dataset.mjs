@@ -13,7 +13,8 @@ function arg(name, fallback) {
 
 const historyPath = arg('--history', 'reports/daily-history.jsonl');
 const resultsPath = arg('--results', null);
-const windowDays = Number(arg('--window', '30'));
+const windowRaw = Number(arg('--window', '30'));
+const windowDays = Number.isFinite(windowRaw) ? windowRaw : 30;
 
 // Daily-failure issues (open + closed) — the umbrella may already be closed.
 function fetchIssues() {

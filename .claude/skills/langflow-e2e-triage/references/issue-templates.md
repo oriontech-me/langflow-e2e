@@ -8,8 +8,10 @@ When opening a new issue to track a daily-failure cluster, use this structure:
 
 ### Title
 ```
-[Daily #<run_id>] <symptom>
+[Daily #<umbrella>] <symptom>
 ```
+
+The `#` number is the **umbrella issue number**, not the run_id.
 
 Example: `[Daily #744] agent/flow execution does not complete — div-chat-message / 'built successfully' never render (3 specs)`
 
