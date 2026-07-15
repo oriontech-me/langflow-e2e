@@ -147,7 +147,7 @@
 #### 2.3 Component Updates
 - [-] Outdated component notification
 - [-] Update component action
-- [ ] Update with breaking change — should alert user
+- [x] Update with breaking change — should alert user → `core-components/component-breaking-change-alert.spec.ts`
 - [x] Legacy component visible via configuration → `core-components/legacy-components-toggle-regression.spec.ts`
 - [x] Beta component visible via configuration → `core-components/beta-components-toggle-regression.spec.ts`
 - [x] Re-saving code removes handles from previously-toggled advanced fields → `core-components/general-bugs-delete-handle-advanced-input.spec.ts`
