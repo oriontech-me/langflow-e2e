@@ -299,7 +299,7 @@
 - [x] Upload file via component → `core-functionality/knowledge-ingestion-management/upload-via-component.spec.ts`
 - [x] Upload files of different types (txt, pdf, json, py, wav) → `core-functionality/knowledge-ingestion-management/file-types-upload.spec.ts`
 - [x] File size limit → `core-functionality/knowledge-ingestion-management/limit-file-size-upload.spec.ts`
-- [-] File management page
+- [x] File management page → `core-functionality/knowledge-ingestion-management/files-page.spec.ts`
 
 #### 5.2 Processing and Vectorization
 - [x] Split Text chunking of an ingested document → `core-functionality/knowledge-ingestion-management/split-text-chunking.spec.ts`
