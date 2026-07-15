@@ -1,11 +1,47 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { ensureCustomComponentButton } from "../../../helpers/ui/ensure-custom-component-button";
+
+// Capture every flow THIS page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach (repo convention, #490/#681).
+const createdFlowIds: string[] = [];
+
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
+  }
+});
 
 test(
   "User should be able to use components as tool",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@stable", "@components"] },
   async ({ page }) => {
+    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
     await page.getByTestId("blank-flow").click();
     await page.waitForSelector('[data-testid="disclosure-data sources"]', {
@@ -154,6 +190,7 @@ test(
     expect(await page.getByTestId("tool_tags").count()).toBeGreaterThan(0);
     await page.getByText("Close").last().click();
 
+    await ensureCustomComponentButton(page);
     await page.getByTestId("sidebar-custom-component-button").click();
 
     await page.getByTestId("title-Custom Component").click();
