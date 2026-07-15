@@ -6,10 +6,46 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 import { lockFlow, unlockFlow } from "../../../helpers/flows/lock-flow";
 import { unselectNodes } from "../../../helpers/ui/unselect-nodes";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { dismissOnboardingIfPresent } from "../../../helpers/ui/dismiss-onboarding";
+
+// Id of the flow created by loading the "Basic Prompting" template, captured
+// from the POST /api/v1/flows 201 so afterEach deletes exactly it via the API
+// (id-scoped, #515). Without this the template load leaked one flow per run.
+const createdFlowIds: string[] = [];
+
+test.beforeEach(async ({ page }) => {
+  page.on("response", (resp) => {
+    if (
+      resp.request().method() === "POST" &&
+      /\/api\/v1\/flows\/?$/.test(resp.url()) &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+});
+
+test.afterEach(async ({ page }) => {
+  const ids = createdFlowIds.splice(0);
+  if (ids.length === 0) return;
+  await page.goto("/");
+  const auth = await getAuthToken(page.request);
+  const opts = auth ? { headers: { Authorization: auth } } : undefined;
+  for (const id of ids) {
+    await deleteFlow(page.request, id, opts);
+  }
+});
 
 test(
   "user must be able to lock a flow and it must be saved",
-  { tag: ["@release", "@components"] },
+  { tag: ["@stable", "@release", "@components", "@workspace"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.OPENAI_API_KEY,
@@ -30,6 +66,9 @@ test(
       state: "visible",
     });
     await page.waitForTimeout(500);
+    // The onboarding popup overlays the canvas on flow entry and intercepts the
+    // settings clicks lockFlow/unlockFlow issue — dismiss it first (#684).
+    await dismissOnboardingIfPresent(page);
 
     await lockFlow(page);
 
@@ -44,10 +83,12 @@ test(
       state: "visible",
     });
     await page.waitForTimeout(500);
+    await dismissOnboardingIfPresent(page);
 
-    //ensure the UI is updated
-
-    await page.waitForSelector('[data-testid="icon-Lock"]', {
+    //ensure the UI is updated — lock persisted across the reopen. On 1.11 the
+    // locked-state indicator is the per-node `icon-lock` (lowercase) badge; the
+    // old header `icon-Lock` (capital) no longer renders (#684).
+    await page.waitForSelector('[data-testid="icon-lock"]', {
       timeout: 3000,
     });
 
@@ -65,6 +106,7 @@ test(
       state: "visible",
     });
     await page.waitForTimeout(500);
+    await dismissOnboardingIfPresent(page);
 
     await tryDeleteEdge(page);
     await page.waitForTimeout(500);

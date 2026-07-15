@@ -1,10 +1,47 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { dismissOnboardingIfPresent } from "../../../helpers/ui/dismiss-onboarding";
+
+// Ids of the flows created by loading the "Basic Prompting" template, captured
+// from the POST /api/v1/flows 201 so afterEach deletes exactly those via the API
+// (id-scoped, #515). Without this the suite leaked one Basic Prompting flow per
+// run — the template load creates a real server-side flow with no teardown.
+const createdFlowIds: string[] = [];
+
+test.beforeEach(async ({ page }) => {
+  page.on("response", (resp) => {
+    if (
+      resp.request().method() === "POST" &&
+      /\/api\/v1\/flows\/?$/.test(resp.url()) &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+});
+
+test.afterEach(async ({ page }) => {
+  const ids = createdFlowIds.splice(0);
+  if (ids.length === 0) return;
+  await page.goto("/");
+  const auth = await getAuthToken(page.request);
+  const opts = auth ? { headers: { Authorization: auth } } : undefined;
+  for (const id of ids) {
+    await deleteFlow(page.request, id, opts);
+  }
+});
 
 test.describe("Flow Lock Feature", () => {
   test(
     "should lock and unlock a flow and verify UI changes",
-    { tag: ["@release", "@api"] },
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -16,8 +53,15 @@ test.describe("Flow Lock Feature", () => {
         timeout: 5000,
       });
 
-      // Verify initially the flow is not locked (no lock icon should be visible)
-      const initialLockIcon = page.getByTestId("icon-Lock");
+      // Dismiss the getting-started onboarding popup — its overlay (also
+      // role="dialog") intercepts clicks and blocks the settings-modal
+      // detached-wait below (#684).
+      await dismissOnboardingIfPresent(page);
+
+      // Verify initially the flow is not locked. On 1.11 the locked-state
+      // indicator is a per-node `icon-lock` (lowercase) badge — the old header
+      // `icon-Lock` (capital) no longer renders (#684). No badge ⇒ unlocked.
+      const initialLockIcon = page.getByTestId("icon-lock");
       await expect(initialLockIcon).toHaveCount(0);
 
       // Open flow settings by clicking on the flow name
@@ -70,9 +114,10 @@ test.describe("Flow Lock Feature", () => {
         timeout: 10000,
       });
 
-      // Verify lock icon now appears in the flow header
-      const lockIconInHeader = page.getByTestId("icon-Lock");
-      await expect(lockIconInHeader).toBeVisible();
+      // Verify the locked-state indicator now appears on the canvas (per-node
+      // `icon-lock` badge on 1.11 — replaces the removed header icon, #684).
+      const lockedIndicator = page.getByTestId("icon-lock").first();
+      await expect(lockedIndicator).toBeVisible();
 
       // Try to open settings again to unlock
       await page.getByTestId("flow_name").click();
@@ -114,15 +159,26 @@ test.describe("Flow Lock Feature", () => {
         timeout: 10000,
       });
 
-      await expect(page.getByTestId("icon-Lock")).toBeHidden({
-        timeout: 5000,
-      });
+      // Assert unlock PERSISTED via the authoritative backend state, not the
+      // canvas badge: on 1.11 the per-node `icon-lock` badge does NOT clear on
+      // unlock without a reload (the frontend re-renders it away only on
+      // reload; the backend is already unlocked). The persisted flow's
+      // `locked` flag is the true, deterministic unlock signal (#684).
+      const flowId = page.url().split("/flow/")[1]?.split(/[/?#]/)[0];
+      const auth = await getAuthToken(page.request);
+      await expect(async () => {
+        const res = await page.request.get(`/api/v1/flows/${flowId}`, {
+          headers: auth ? { Authorization: auth } : {},
+        });
+        expect(res.ok()).toBe(true);
+        expect((await res.json())?.locked).toBe(false);
+      }).toPass({ timeout: 15000, intervals: [500, 1000, 2000] });
     },
   );
 
   test(
     "should show correct lock/unlock icon in settings based on state",
-    { tag: ["@release", "@api"] },
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -133,6 +189,10 @@ test.describe("Flow Lock Feature", () => {
       await page.waitForSelector('[data-testid="sidebar-search-input"]', {
         timeout: 5000,
       });
+
+      // Dismiss the onboarding popup so the settings dialog is the only
+      // role="dialog" the scoped locators below resolve to (#684).
+      await dismissOnboardingIfPresent(page);
 
       // Open flow settings
       await page.getByTestId("flow_name").click();

@@ -620,8 +620,8 @@
 - [x] Import invalid JSON — should display error message → `flow-functionality/import-invalid-json.spec.ts`
 
 #### 12.5 Flow Operations
-- [-] Lock flow — prevents editing
-- [-] Unlock flow
+- [x] Lock flow — prevents editing → `flow-functionality/lock-flow.spec.ts`
+- [x] Unlock flow → `flow-functionality/flow-lock.spec.ts`
 - [x] Move flow between folders via API → `api/flows/api-folders-crud.spec.ts`
 - [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [-] Save flow components as template
