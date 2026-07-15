@@ -18,9 +18,12 @@ silent hang. Three failure modes, each against the real execution endpoint
    failed"** with detail **"Failed to fetch"** (the browser's transport-error
    message — the distinctive signal that separates a network failure from a
    server-side failure).
-2. **Server error (5xx)** — the execution request returns an HTTP 5xx (503). The
-   UI must report **"Workflow run failed"** (server-detail path, distinct from
-   the transport "Failed to fetch" message).
+2. **Server error (5xx) (`@stable`, §8.2 "Execution error notification")** — the
+   execution request returns an HTTP 5xx (503). The UI must report **"Workflow
+   run failed"** in the persistent notification center (server-detail path,
+   distinct from the transport "Failed to fetch" message). This is the §8.2
+   execution-error notification: a genuine run failure produces a notification
+   entry.
 3. **Loading state** — while a delayed execution is in flight, the UI must show
    an in-progress affordance (stop button / disabled send / spinner) so the user
    knows work is happening.
@@ -34,12 +37,21 @@ one.
 ## Tags *(required)*
 
 - **Network-error test:** `@stable` `@release` `@workspace` `@observability`
-- **Server-error & loading-state tests:** `@release` `@workspace` `@observability`
+- **Server-error test:** `@stable` `@release` `@workspace` `@observability`
+- **Loading-state test:** `@release` `@workspace` `@observability`
 
-Only the network-error test is promoted to `@stable` under #693 (its §8.4
-bullet). The two sibling tests share the same file and the same
-endpoint-migration fix (see Notes) but remain `@release` — they map to separate
-§8.4 bullets not in this issue's scope.
+Two tests are `@stable`, promoted under separate checklist bullets:
+- The **network-error** test maps to §8.4 "Network error during execution"
+  (promoted under #693).
+- The **server-error** test maps to §8.2 Notifications → "Execution error
+  notification" (promoted under #688): a genuine server-side execution failure
+  (5xx) surfaces a persistent notification entry. This is the distinctive
+  §8.2 observable — the error notification itself, independent of the transport
+  layer.
+
+The **loading-state** test remains `@release`: it validates the in-progress
+affordance, not an error notification, so it maps to neither §8.2 nor a
+promotion bullet in scope.
 
 ---
 

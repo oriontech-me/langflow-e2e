@@ -439,7 +439,7 @@
 
 #### 8.2 Notifications
 - [x] System notifications — build-success entry shows in the notifications tab → `notifications.spec.ts`
-- [-] Execution error notification
+- [x] Execution error notification → `ui-ux/execution-error-notification.spec.ts`
 - [-] Outdated component notification
 
 #### 8.3 User State
