@@ -150,3 +150,17 @@ test('buildDataset de-duplicates flakes by test+line', () => {
   const ds = buildDataset([dupRow], []);
   assert.equal(ds.flakes.length, 1);
 });
+
+test('buildDataset de-duplicates hard failures by test+line', () => {
+  const dupRow = {
+    date: '2026-07-14', run_id: '501', run_url: 'x', langflow_image: 'i', duration_ms: 1,
+    totals: { passed: 1, failed: 2, flaky: 0, skipped: 0 },
+    failures: [
+      { test: 'dup fail', file: 'e.spec.ts', line: 7, tags: ['stable'], attempts: 3, error_signature: 'Error: y' },
+      { test: 'dup fail', file: 'e.spec.ts', line: 7, tags: ['stable'], attempts: 3, error_signature: 'Error: y' },
+    ],
+    flaky: [],
+  };
+  const ds = buildDataset([dupRow], []);
+  assert.equal(ds.hard_failures.length, 1);
+});

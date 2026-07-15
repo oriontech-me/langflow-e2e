@@ -81,7 +81,7 @@ export function dedupeEntries(entries) {
   const seen = new Set();
   const out = [];
   for (const e of entries || []) {
-    const key = `${e.test} ${e.line}`;
+    const key = `${e.test}\0${e.line}`;
     if (seen.has(key)) continue;
     seen.add(key);
     out.push(e);
