@@ -136,7 +136,7 @@ test.describe("Execution Error Notifications", () => {
 
   test(
     "executing flow with server error shows error feedback",
-    { tag: ["@release", "@workspace", "@observability"] },
+    { tag: ["@stable", "@release", "@workspace", "@observability"] },
     async ({ page }) => {
       (page as any).allowFlowErrors();
       trackCreatedFlows(page);
