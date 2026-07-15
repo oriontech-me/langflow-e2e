@@ -60,12 +60,15 @@ Settings) · `@agents` + `@playground` (Test 2 executes an agent).
    unconfigured, `Replace` when a key is already stored — match `/Save|Replace/`).
 5. **Validation (causal — no pre-existing-state false positive):** the save click
    must produce **both** a `POST /api/v1/models/validate-provider` → **2xx** (the
-   key authenticates against OpenAI live) **and** a `PATCH /api/v1/variables/{id}`
-   → **2xx** (the key is persisted). Asserting the request outcomes — not the
-   "Replace" button, which is already present when the global key was configured
-   by an earlier test — ties the pass to *this* save action. Idempotent: re-saving
-   the same valid key is a success; the shared global key is deliberately not
-   wiped.
+   key authenticates against OpenAI live) **and** a persist to
+   `/api/v1/variables/` → **2xx**. The persist is a **`POST` (create, 201)** when
+   the `OPENAI_API_KEY` global variable does not yet exist and a **`PATCH`
+   (update, 200)** when it does — the frontend branches on existence — so the
+   waiter matches **either method** (#636). Asserting the request outcomes — not
+   the "Replace" button, which is already present when the global key was
+   configured by an earlier test — ties the pass to *this* save action.
+   Idempotent across states: the first save on a fresh instance creates, later
+   saves update.
 
 ---
 
@@ -106,17 +109,18 @@ Settings) · `@agents` + `@playground` (Test 2 executes an agent).
 ## Validation criterion *(required)*
 
 - **Configure:** clicking Save on the OpenAI key produces a 2xx
-  `validate-provider` (key authenticates against OpenAI) and a 2xx
-  `PATCH /variables/{id}` (key persisted) — the pass is caused by this save, not
-  a pre-existing configured state.
+  `validate-provider` (key authenticates against OpenAI) and a 2xx persist to
+  `/variables/` (key persisted) — `POST` create or `PATCH` update depending on
+  whether the global key already exists (#636) — the pass is caused by this save,
+  not a pre-existing configured state.
 - **Select + execute:** the Agent's model dropdown shows a GPT model, and running
   the flow returns the per-run sentinel in the AI response.
 
 ## Guarding against false positives *(how)*
 
 - **Test 1** asserts the *save requests succeed* (`validate-provider` +
-  `PATCH /variables` both 2xx), not a UI state that pre-exists from an earlier
-  test's global key — so a no-op save cannot pass.
+  `POST`/`PATCH /variables` both 2xx), not a UI state that pre-exists from an
+  earlier test's global key — so a no-op save cannot pass.
 - **Test 2** asserts a **GPT** model is selected (`value-dropdown-model_model`
   ~ `/gpt/i`) and round-trips a **per-run sentinel**, so the response can't be
   stale, cached, or produced by a different provider.
@@ -177,6 +181,16 @@ Settings) · `@agents` + `@playground` (Test 2 executes an agent).
   runs (not deleted by `cleanAllFlows`). Test 1 is therefore idempotent — it
   re-saves the same key and asserts the configured state rather than assuming a
   fresh, unconfigured start.
+- **#636 flake (fixed 2026-07-14):** the persist waiter matched `PATCH` only, but
+  the frontend fires `POST /variables/` (create, 201) when the key does not yet
+  exist and `PATCH /variables/{id}` (update, 200) when it does. On a fresh CI
+  container — or a run where no earlier test configured the provider first — the
+  save takes the create path, so the PATCH-only waiter timed out on a request that
+  never fired (intermittent because prior test order decides which path runs;
+  openai flaked 07-09/07-10). Network repro (deleted-var, live): `validate-provider`
+  → **200**, persist → **POST 201**, PATCH-only waiter → timeout. Backend healthy:
+  a **test defect**, not a product bug. Fix: match `POST` **or** `PATCH`. Same fix
+  in `google-provider.spec.ts`.
 - **Per-run sentinel** over a generic non-empty check: proves *this* execution
   produced the output, so the "execute with OpenAI" bullet can't pass on stale
   text.

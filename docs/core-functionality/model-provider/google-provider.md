@@ -60,11 +60,14 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
    unconfigured, `Replace` when a key is already stored — match `/Save|Replace/`).
 5. **Validation (causal — no pre-existing-state false positive):** the save click
    must produce **both** a `POST /api/v1/models/validate-provider` → **2xx** (the
-   key authenticates against Google live) **and** a `PATCH /api/v1/variables/{id}`
-   → **2xx** (the key is persisted). Asserting the request outcomes — not the
-   "Disconnect"/"Replace" state, which pre-exists when the global key was already
-   configured — ties the pass to *this* save. Idempotent: re-saving the same valid
-   key is a success; the shared global key is deliberately not wiped. (Google
+   key authenticates against Google live) **and** a persist to
+   `/api/v1/variables/` → **2xx**. The persist is a **`POST` (create, 201)** when
+   the `GOOGLE_API_KEY` global variable does not yet exist and a **`PATCH`
+   (update, 200)** when it does — the frontend branches on existence — so the
+   waiter matches **either method** (#636). Asserting the request outcomes — not
+   the "Disconnect"/"Replace" state, which pre-exists when the global key was
+   already configured — ties the pass to *this* save. Idempotent across states:
+   the first save on a fresh instance creates, later saves update. (Google
    validation can be slow on a cold provider — the waiters use a 60 s timeout.)
 
 ---
@@ -101,9 +104,10 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 ## Validation criterion *(required)*
 
 - **Configure:** clicking Save on the Google key produces a 2xx
-  `validate-provider` (key authenticates against Google) and a 2xx
-  `PATCH /variables/{id}` (key persisted) — the pass is caused by this save, not
-  a pre-existing configured state.
+  `validate-provider` (key authenticates against Google) and a 2xx persist to
+  `/variables/` (key persisted) — `POST` create or `PATCH` update depending on
+  whether the global key already exists (#636) — the pass is caused by this save,
+  not a pre-existing configured state.
 - **Select + execute:** the Agent's model dropdown shows a Gemini model, and
   running the flow returns a non-empty AI response (the per-run sentinel is a soft
   signal — Gemini doesn't always echo it verbatim).
@@ -111,8 +115,8 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 ## Guarding against false positives *(how)*
 
 - **Test 1** asserts the *save requests succeed* (`validate-provider` +
-  `PATCH /variables` both 2xx), not a UI state that pre-exists from an earlier
-  configuration — so a no-op save cannot pass.
+  `POST`/`PATCH /variables` both 2xx), not a UI state that pre-exists from an
+  earlier configuration — so a no-op save cannot pass.
 - **Test 2** asserts a **Gemini** model is selected
   (`value-dropdown-model_model` ~ `/gemini|gemma/i`, causal) and that execution
   returns a non-empty response; the per-run sentinel is a soft signal (Gemini
@@ -182,3 +186,13 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 - **Per-run sentinel** proves *this* execution produced the output.
 - **Shared global key:** the Google key is global and persists across runs. Test 1
   is idempotent — it re-saves and asserts the request outcomes, not a fresh start.
+- **#636 flake (fixed 2026-07-14):** the persist waiter matched `PATCH` only, but
+  the frontend fires `POST /variables/` (create, 201) when the key does not yet
+  exist and `PATCH /variables/{id}` (update, 200) when it does. On a fresh CI
+  container — or a run where no earlier test configured the provider first — the
+  save takes the create path, so the PATCH-only waiter timed out on a request that
+  never fired (intermittent because prior test order decides which path runs).
+  Network repro (deleted-var, live): `validate-provider` → **200**, persist →
+  **POST 201**, PATCH-only waiter → timeout. Backend healthy (no hang/5xx): a
+  **test defect**, not a product bug. Fix: match `POST` **or** `PATCH`. Same fix
+  in `openai-provider.spec.ts`.
