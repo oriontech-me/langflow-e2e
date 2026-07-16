@@ -279,7 +279,7 @@ jobs:
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-test',
+              labels: 'migration-test-api',
               state: 'open',
             });
             if (existing.length > 0) {
@@ -320,7 +320,7 @@ jobs:
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-test',
+              labels: 'migration-test-api',
               state: 'open',
             });
 
@@ -345,9 +345,9 @@ jobs:
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: `Langflow Migration Test Failed (latest → nightly)`,
+                title: `Langflow Migration Test Failed — API script (latest → nightly)`,
                 body,
-                labels: ['migration-test', 'automated'],
+                labels: ['migration-test-api', 'migration-test', 'automated'],
               });
             }
 
@@ -696,7 +696,7 @@ jobs:
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-test',
+              labels: 'migration-test-compose',
               state: 'open',
             });
             if (existing.length > 0) {
@@ -729,7 +729,7 @@ jobs:
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-test',
+              labels: 'migration-test-compose',
               state: 'open',
             });
             const body = [
@@ -754,8 +754,8 @@ jobs:
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: 'Langflow Migration Test Failed (latest → nightly)',
+                title: 'Langflow Migration Test Failed — docker-compose (latest → nightly)',
                 body,
-                labels: ['migration-test', 'automated'],
+                labels: ['migration-test-compose', 'migration-test', 'automated'],
               });
             }
