@@ -15,9 +15,10 @@ import { addLegacyComponents } from "../../../helpers/flows/add-legacy-component
 // toggle). Phase 2 (#795): float + slider. Phase 3 (#798, below): the four
 // modal/complex types — code (ACE editor), table (modal), key-pair (NestedDict
 // editor) and input list (SortableList). Two phase-3 components (Python Function,
-// Alter Metadata) are `legacy` and need the sidebar Legacy toggle enabled; Read
-// File's `storage_location` is an `advanced` field revealed via the parameters
-// panel. See docs/core-components/parameters-panel-field-types.md.
+// Alter Metadata) are `legacy` and need the sidebar Legacy toggle enabled;
+// `headers` and `storage_location` are `advanced` fields — shown by default on
+// some nightly builds, hidden on others, so the tests reveal them when hidden
+// (ensureAdvancedFieldVisible). See docs/core-components/parameters-panel-field-types.md.
 
 // Ids of flows created by each test — deleted id-scoped in afterEach (repo
 // convention #490/#681).
@@ -123,6 +124,31 @@ async function fillTableTextCell(
       cellLocator.getByRole("button", { name: value, exact: true }),
     ).toBeVisible({ timeout: 5000 });
   }).toPass({ timeout: 40000 });
+}
+
+// Advanced fields render on the node by default on some nightly builds and are
+// hidden (opt-in via the component-parameters panel) on others — the nightly
+// flip-flops this. Make the field present regardless: use it directly when
+// already shown, otherwise reveal it via the panel's "Add <field>" control.
+async function ensureAdvancedFieldVisible(
+  page: Page,
+  checkTestId: string,
+  fieldName: string,
+): Promise<void> {
+  try {
+    await page
+      .getByTestId(checkTestId)
+      .waitFor({ state: "visible", timeout: 4000 });
+    return; // already shown on this build
+  } catch {
+    // hidden on this build — reveal it below
+  }
+  await page.getByTestId("parameters-button").click();
+  await page.getByTestId(`inspector-add-${fieldName}`).click();
+  await page.getByTestId("parameters-button").click(); // close the panel
+  await page
+    .getByTestId(checkTestId)
+    .waitFor({ state: "visible", timeout: 10000 });
 }
 
 // Read a field's persisted value from the saved flow (single-node flows, so
@@ -389,11 +415,9 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
         "add-component-button-api-request",
         "title-API Request",
       );
-      // `headers` is an advanced TableInput — reveal it on the node via the
-      // component-parameters panel.
-      await page.getByTestId("parameters-button").click();
-      await page.getByTestId("inspector-add-headers").click();
-      await page.getByTestId("parameters-button").click(); // close the panel
+      // `headers` is an advanced TableInput — ensure it is shown (reveal it if
+      // this build hides advanced fields).
+      await ensureAdvancedFieldVisible(page, "div-table_headers", "headers");
 
       // Settle the node's TableNodeComponent `[value]` effects before touching
       // the grid: switch method to POST and wait for the component-refresh POST.
@@ -510,14 +534,15 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
         "title-Read File",
       );
       // storage_location is an advanced SortableList (limit 1, default "Local").
-      // Reveal it via the component-parameters panel.
-      await page.getByTestId("parameters-button").click();
-      await page.getByTestId("inspector-add-storage_location").click();
-      await page.getByTestId("parameters-button").click(); // close the panel
-
-      // With one item selected the open-selection button is hidden — remove the
-      // pre-selected "Local" chip (its x button has no dedicated testid; scope it
-      // to the node) to reveal the selection dialog, then pick AWS.
+      // Ensure the field is shown (reveal it if this build hides advanced
+      // fields). With one item selected the open-selection button is hidden —
+      // remove the pre-selected "Local" chip (its x button has no dedicated
+      // testid; scope it to the node) to reveal the selection dialog, then AWS.
+      await ensureAdvancedFieldVisible(
+        page,
+        "title-storage location",
+        "storage_location",
+      );
       const node = page.locator('[data-testid^="rf__node-File"]');
       await node.getByTestId("icon-x").click();
       await page
