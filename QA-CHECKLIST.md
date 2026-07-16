@@ -126,18 +126,18 @@
 
 #### 2.1 Parameters Panel
 - [-] Open component advanced options
-- [-] Edit text field (input)
-- [-] Edit dropdown
-- [-] Edit text area (textarea)
+- [x] Edit text field (input) → `core-components/parameters-panel-field-types.spec.ts`
+- [x] Edit dropdown → `core-components/parameters-panel-field-types.spec.ts`
+- [x] Edit text area (textarea) → `core-components/parameters-panel-field-types.spec.ts`
 - [-] Edit code field
 - [-] Edit float field
-- [-] Edit int field
-- [-] Edit toggle field
+- [x] Edit int field → `core-components/parameters-panel-field-types.spec.ts`
+- [x] Edit toggle field → `core-components/parameters-panel-field-types.spec.ts`
 - [-] Edit key-pair list
 - [-] Edit input list
 - [-] Edit table input
 - [-] Edit slider
-- [-] Edit tab component
+- [x] Edit tab component → `core-components/parameters-panel-field-types.spec.ts`
 
 #### 2.2 Tool Mode
 - [x] Enable Tool Mode on a component
