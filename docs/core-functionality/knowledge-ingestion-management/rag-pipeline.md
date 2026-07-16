@@ -75,10 +75,10 @@ bundle-free and never yields a false failure on a packaging change.
 
 ### Embedding + answer model (single-key: Google)
 
-- **Embedding:** the KB is created with Google `gemini-embedding-001` (the
+- **Embedding:** the KB is created with Google `models/gemini-embedding-001` (the
   embedding model enabled out-of-the-box; `GOOGLE_API_KEY` is auto-imported as a
   credential and injected in the daily-stable CI).
-- **Answer:** the Language Model uses Google **`gemini-2.5-flash`** at
+- **Answer:** the Language Model uses Google **`gemini-flash-latest`** at
   `temperature = 0`. Its `api_key` resolves from the same `GOOGLE_API_KEY` global
   variable (`load_from_db`), so the entire spec depends on **one** provider key —
   one skip guard, aligned with the daily-stable CI. The unified model selector's
@@ -152,7 +152,7 @@ per run.
 **Setup:**
 1. Create a fresh KB via `POST /api/v1/knowledge_bases` — unique name per run,
    `embedding_provider = "Google Generative AI"`, `embedding_model =
-   "gemini-embedding-001"`, `backend_type = "chroma"`. Record the KB `dir_name`
+   "models/gemini-embedding-001"`, `backend_type = "chroma"`. Record the KB `dir_name`
    for teardown.
 2. Load the fixture JSON and set `knowledge_base.value` **and**
    `knowledge_base.options = [dir_name]` on **both** Knowledge nodes (both are
@@ -181,13 +181,13 @@ per run.
   `ZEPHYR-42` codec fact) → Split Text (`chunk_size = 100`, `chunk_overlap = 0`,
   `separator = "\n"`) → Knowledge (`mode = Ingest`); plus Knowledge
   (`mode = Retrieve`, `top_k = 1`, `search_query` = the codec question) → Parser →
-  Prompt (`{context}` + baked question) → Language Model (Google `gemini-2.5-flash`,
+  Prompt (`{context}` + baked question) → Language Model (Google `gemini-flash-latest`,
   `temperature = 0`, `api_key` from the `GOOGLE_API_KEY` global variable) → Chat
   Output. Both Knowledge nodes' `knowledge_base` is a placeholder (`__KB_NAME__`)
   the spec replaces per run. Built + configured live on the canvas and validated
   end-to-end on 1.11.0.dev38.
-- `GOOGLE_API_KEY` — required (embeds each chunk with `gemini-embedding-001` and
-  answers with `gemini-2.5-flash`).
+- `GOOGLE_API_KEY` — required (embeds each chunk with `models/gemini-embedding-001` and
+  answers with `gemini-flash-latest`).
 - Knowledge Base API: `POST /api/v1/knowledge_bases` (create),
   `GET /api/v1/knowledge_bases/{name}` (chunk count),
   `DELETE /api/v1/knowledge_bases/{name}` (scoped cleanup).

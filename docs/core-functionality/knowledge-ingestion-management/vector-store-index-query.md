@@ -53,7 +53,7 @@ a packaging change.
 - **Knowledge (Ingest)** — embeds + indexes the chunks into the KB.
 - **Knowledge (Retrieve)** — a second Knowledge node in the same flow, over the
   same KB, `mode = Retrieve`, `top_k = 1`, static `search_query`.
-- **Embedding**: the KB is created with Google `gemini-embedding-001` (the
+- **Embedding**: the KB is created with Google `models/gemini-embedding-001` (the
   embedding model enabled out-of-the-box on the instance; `GOOGLE_API_KEY` is
   auto-imported as a credential and is injected in the daily-stable CI). No
   bundle, no per-user model enablement needed — the KB create API takes just the
@@ -122,7 +122,7 @@ Two tests, one shared fixture flow (`Chat Input → Split Text → Knowledge[Ing
 **Setup (each test):**
 1. Create a fresh KB via `POST /api/v1/knowledge_bases` — unique name per run,
    `embedding_provider = "Google Generative AI"`, `embedding_model =
-   "gemini-embedding-001"`, `backend_type = "chroma"` (no `model_selection`
+   "models/gemini-embedding-001"`, `backend_type = "chroma"` (no `model_selection`
    needed — the KB resolves the embedding from provider + model at ingest time).
    Record the KB `dir_name` for teardown.
 2. Load the fixture JSON and set `knowledge_base.value` **and**
@@ -162,7 +162,7 @@ Two tests, one shared fixture flow (`Chat Input → Split Text → Knowledge[Ing
   `top_k = 1`, `search_query` = the embedding-topic query). Both Knowledge nodes'
   `knowledge_base` is a placeholder (`__KB_NAME__`) the spec replaces per run.
   Built live on the canvas and exported on 1.11.0.dev38.
-- `GOOGLE_API_KEY` — required (the KB embeds each chunk with `gemini-embedding-001`).
+- `GOOGLE_API_KEY` — required (the KB embeds each chunk with `models/gemini-embedding-001`).
 - Knowledge Base API: `POST /api/v1/knowledge_bases` (create),
   `GET /api/v1/knowledge_bases/{name}` (chunk count),
   `DELETE /api/v1/knowledge_bases/{name}` (scoped cleanup).

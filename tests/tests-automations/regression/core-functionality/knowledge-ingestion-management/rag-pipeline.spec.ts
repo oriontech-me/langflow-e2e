@@ -22,7 +22,7 @@ import {
 // end-to-end on 1.11.0.dev38:
 //   Chat Input(the 5-line document) -> Split Text(chunk_size=100, overlap=0) ->
 //   Knowledge[Ingest]; and Knowledge[Retrieve](top_k=1, static query) -> Parser ->
-//   Prompt{context} -> Language Model(Google gemini-2.5-flash, temperature=0) ->
+//   Prompt{context} -> Language Model(Google gemini-flash-latest, temperature=0) ->
 //   Chat Output. The KB name is a placeholder the spec replaces per run.
 const FIXTURE_PATH = "tests/assets/flows/rag-pipeline-fixture.json";
 
@@ -40,9 +40,15 @@ const GROUNDING_SENTINEL = "ZEPHYR-42";
 
 // The KB embeds with Google out-of-the-box; GOOGLE_API_KEY is auto-imported as a
 // credential and injected in the daily-stable CI. The same key backs the answer
-// model (gemini-2.5-flash), so the whole spec depends on one provider key.
+// model (gemini-flash-latest), so the whole spec depends on one provider key.
 const EMBEDDING_PROVIDER = "Google Generative AI";
-const EMBEDDING_MODEL = "gemini-embedding-001";
+const EMBEDDING_MODEL = "models/gemini-embedding-001";
+
+// The answer model. An alias (not a dated/pinned id) so the spec tracks Google's
+// current flash model: pinned ids like `gemini-2.5-flash` return 404 ("no longer
+// available to new users") on newer keys as Google retires them, while
+// `gemini-flash-latest` always resolves to the live flash model.
+const ANSWER_MODEL = "gemini-flash-latest";
 
 // Stable node ids baked into the fixture, so the shared run/duration/inspection
 // testids can be scoped to the right node.
@@ -62,7 +68,7 @@ test.describe.configure({ mode: "serial" });
 
 test.skip(
   !process?.env?.GOOGLE_API_KEY,
-  "GOOGLE_API_KEY required to embed the document and answer with gemini-2.5-flash",
+  "GOOGLE_API_KEY required to embed the document and answer with gemini-flash-latest",
 );
 
 async function authHeaders(page: Page): Promise<Record<string, string>> {
@@ -101,6 +107,23 @@ async function openRagFlow(page: Page): Promise<void> {
       kb.value = kbName;
       kb.options = [kbName];
     }
+    // Point the answer Language Model at ANSWER_MODEL (an alias). The fixture was
+    // captured pinned to a dated model that Google is retiring — pinned ids 404
+    // ("no longer available") on newer keys. The alias always resolves to the
+    // current flash model, so the spec follows Google's model lifecycle instead
+    // of false-failing on a retirement. Set the structured `model` selection
+    // (from the node's own options) AND the `model_name` string override.
+    if (node.data?.type === "LanguageModelComponent") {
+      const tmpl = node.data.node.template;
+      const modelOption = (tmpl.model?.options ?? []).find(
+        (o: { name?: string }) => o?.name === ANSWER_MODEL,
+      );
+      if (modelOption) tmpl.model.value = [modelOption];
+      if (tmpl.model_name) {
+        tmpl.model_name.value = ANSWER_MODEL;
+        tmpl.model_name.options = [ANSWER_MODEL];
+      }
+    }
   }
 
   const flowId = await createFlow(
@@ -131,6 +154,29 @@ async function openRagFlow(page: Page): Promise<void> {
       .locator(`[data-id="${ANSWER_OUTPUT_NODE}"]`)
       .getByTestId("button_run_chat output"),
   ).toBeVisible({ timeout: 30000 });
+
+  // Dismiss the outdated-update banner up front (present on load, persists once
+  // dismissed) so it never overlays a later node-output click.
+  await dismissUpdateBannerIfPresent(page);
+}
+
+// The fixture was captured on an older nightly, so on a newer build its
+// components resolve to outdated updates and a bottom-centered "N components need
+// updates" banner overlays the node output controls, intercepting the
+// output-inspection click. It is noise for this spec (outdated notifications are
+// covered by outdated-component-notification.spec.ts), so dismiss it before
+// reading a node's output.
+async function dismissUpdateBannerIfPresent(page: Page): Promise<void> {
+  // The outdated diff resolves asynchronously after the flow loads, so the banner
+  // can appear a beat late; wait briefly for it (the fixture is deliberately
+  // behind the nightly, so it always appears within this window) before
+  // dismissing. If a future fixture refresh removes the outdated state, this
+  // just times out and no-ops — the test still runs in full, never skips.
+  const dismissAll = page.getByRole("button", { name: "Dismiss All" });
+  if (await dismissAll.isVisible({ timeout: 6000 }).catch(() => false)) {
+    await dismissAll.click();
+    await expect(dismissAll).toBeHidden({ timeout: 5000 });
+  }
 }
 
 /** Runs a node (scoped by id) via its run button and waits for the success badge. */
