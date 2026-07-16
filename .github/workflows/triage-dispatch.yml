@@ -34,6 +34,10 @@ permissions:
   issues: write
   contents: read
   id-token: write
+  # actions: read lets the propose job download the triggering daily run's
+  # results.json artifact (playwright-json-daily-<run_id>) so Phase 5 can read
+  # per-skip reasons instead of only the history file's skip total (#791).
+  actions: read
 
 jobs:
   propose:
@@ -47,6 +51,23 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      # Best-effort: pull the triggering daily's results.json so the skill's
+      # INTAKE can pass --results and Phase 5 (SKIPS) reads real per-skip
+      # reasons. Only the workflow_run path has a source run; a manual
+      # workflow_dispatch has none, so it runs history-only (as before). Never
+      # fails the job — if the artifact is missing/expired, propose degrades to
+      # history-only and says so in the proposal.
+      - name: Download triggering daily results.json (best-effort)
+        if: github.event_name == 'workflow_run'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DAILY_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          gh run download "$DAILY_RUN_ID" --repo "$GITHUB_REPOSITORY" \
+            -n "playwright-json-daily-$DAILY_RUN_ID" -D . \
+            || echo "::warning::results.json artifact unavailable for run $DAILY_RUN_ID — propose runs history-only."
+          if [ -f results.json ]; then echo "results.json present ($(wc -c < results.json) bytes)."; else echo "no results.json — history-only."; fi
       - uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ github.token }}
