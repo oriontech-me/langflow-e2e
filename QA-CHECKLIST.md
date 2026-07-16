@@ -146,7 +146,7 @@
 
 #### 2.3 Component Updates
 - [x] Outdated component notification → `core-components/outdated-component-notification.spec.ts`
-- [-] Update component action
+- [x] Update component action → `core-components/update-component-action.spec.ts`
 - [x] Update with breaking change — should alert user → `core-components/component-breaking-change-alert.spec.ts`
 - [x] Legacy component visible via configuration → `core-components/legacy-components-toggle-regression.spec.ts`
 - [x] Beta component visible via configuration → `core-components/beta-components-toggle-regression.spec.ts`
