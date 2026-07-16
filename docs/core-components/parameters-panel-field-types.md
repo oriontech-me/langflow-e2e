@@ -45,18 +45,18 @@ matches what a reload would load.
 
 | # | Field type (checklist) | Input type | Component | Field | Edit mechanism | Phase |
 |---|---|---|---|---|---|---|
-| 1 | Edit text field (input) | `MessageTextInput` | API Request | `url_input` | fill `popover-anchor-input-url_input` | **this PR** |
-| 2 | Edit dropdown | `DropdownInput` | API Request | `method` | click `dropdown_str_method` → `POST-1-option` | **this PR** |
-| 3 | Edit text area (textarea) | `MultilineInput` | API Request | `curl_input` | fill `textarea_str_curl_input` (cURL tab) | **this PR** |
-| 4 | Edit int field | `IntInput` | API Request | `timeout` | fill `int_int_timeout` | **this PR** |
-| 5 | Edit tab component | `TabInput` | API Request | `mode` | click `tab_1_curl` | **this PR** |
-| 6 | Edit toggle field | `BoolInput` | Save File | `append_mode` | click `toggle_bool_append_mode` | **this PR** |
-| 7 | Edit slider | `SliderInput` | Language Model | `temperature` | drag `slider_thumb` | follow-up |
-| 8 | Edit code field | `CodeInput` | Python Function | `function_code` | code editor modal | follow-up |
-| 9 | Edit table input | `TableInput` | API Request | `headers` | table modal → cell | follow-up |
-| 10 | Edit key-pair list | `NestedDictInput` | Alter Metadata | `metadata` | key/value row | follow-up |
-| 11 | Edit input list | `SortableListInput` | Read File | `storage_location` | list item | follow-up |
-| 12 | Edit float field | `FloatInput` | Semantic Text Splitter | `breakpoint_threshold_amount` | numeric input | follow-up |
+| 1 | Edit text field (input) | `MessageTextInput` | API Request | `url_input` | fill `popover-anchor-input-url_input` | phase 1 ✓ |
+| 2 | Edit dropdown | `DropdownInput` | API Request | `method` | click `dropdown_str_method` → `POST-1-option` | phase 1 ✓ |
+| 3 | Edit text area (textarea) | `MultilineInput` | API Request | `curl_input` | fill `textarea_str_curl_input` (cURL tab) | phase 1 ✓ |
+| 4 | Edit int field | `IntInput` | API Request | `timeout` | fill `int_int_timeout` | phase 1 ✓ |
+| 5 | Edit tab component | `TabInput` | API Request | `mode` | click `tab_1_curl` | phase 1 ✓ |
+| 6 | Edit toggle field | `BoolInput` | Save File | `append_mode` | click `toggle_bool_append_mode` | phase 1 ✓ |
+| 7 | Edit slider | `SliderInput` | Language Model | `temperature` | click `slider_thumb` + `ArrowRight` | **phase 2 (this PR)** |
+| 8 | Edit code field | `CodeInput` | Python Function | `function_code` | ace code editor modal | deferred (frágil) |
+| 9 | Edit table input | `TableInput` | API Request | `headers` | table modal → cell | deferred |
+| 10 | Edit key-pair list | `NestedDictInput` | Alter Metadata | `metadata` | key/value row | deferred |
+| 11 | Edit input list | `SortableListInput` | Read File | `storage_location` | list item | deferred |
+| 12 | Edit float field | `FloatInput` | Semantic Text Splitter | `breakpoint_threshold_amount` | fill `float_float_breakpoint_threshold_amount` | **phase 2 (this PR)** |
 
 > The checklist's *key-pair list* and *input list* correspond to the checklist-era
 > `KeypairInput` / `ListInput`, which no longer exist in the current registry;
