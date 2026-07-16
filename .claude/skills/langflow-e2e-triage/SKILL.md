@@ -248,6 +248,67 @@ Report back to the user in PT-BR with the final list of issue numbers/URLs
 created or enriched, each `@stable`-removal PR opened (and any removal left
 pending), and whether the umbrella was closed or intentionally left open.
 
+## Headless / CI mode
+
+When invoked with a `--phase` argument (from
+`.github/workflows/triage-dispatch.yml`, running via
+`anthropics/claude-code-action@v1`), the skill runs **non-interactively**. The
+human gate here is **not** an `AskUserQuestion` — it is a GitHub issue comment.
+Two rules override the interactive flow:
+
+- **Never call `AskUserQuestion`** and never block on human input. The CI job
+  has no interactive channel; a prompt would hang the run.
+- **Never edit code.** The CI job runs with `--allowedTools "Read,Bash"` (no
+  `Edit`/`Write`) and `contents: read`. `@stable` removal is therefore **out of
+  the automated path** — it stays a manual/local PR (list it, never do it here).
+
+The invocation may carry the umbrella issue number as `--issue <n>` (manual
+`workflow_dispatch`). When `--issue` is absent (the `workflow_run` auto-trigger),
+**self-discover** the umbrella: use the umbrella the Phase-1 dataset already
+matched (`gh issue list --repo oriontech-me/langflow-e2e --state open --label
+daily-failure`). If no open umbrella is found, post nothing and stop with a
+logged note.
+
+### `--phase propose` (scheduled, unattended)
+
+Run **Phase 0–6** exactly as documented, with one substitution at Phase 6:
+instead of presenting the plan and waiting for "pode abrir", **post the plan as
+a comment on the umbrella issue** and stop.
+
+- Build the same Phase-6 table plus the `@stable`-removal block.
+- Post it with `gh issue comment <n>`, whose **first line is the exact marker**
+  `<!-- triage-proposal -->` so Phase execute finds it deterministically.
+- End the comment with: *"A triage-team member: reply `pode abrir` on this
+  issue to create/enrich the dedicated issues. `@stable` removals listed above
+  are manual/local TODOs — they are NOT performed by the automation."*
+- Then **STOP**. Create nothing, enrich nothing, close nothing, edit nothing.
+- If Phase 0–1 find no red run or the history is stale, post a one-line
+  "nothing to triage / history stale" comment instead, and stop.
+
+### `--phase execute` (triggered by an approved "pode abrir" comment)
+
+The workflow's `if:` gate already verified the approval (open umbrella,
+`daily-failure` label, phrase present, whitelisted commenter) — treat the
+trigger itself as the authorization; do not re-ask.
+
+- Read the **latest** `<!-- triage-proposal -->` comment on the umbrella
+  (`gh issue view <n> --json comments`). Act on that reviewed plan — do not
+  silently re-derive a different one. If **no** `<!-- triage-proposal -->`
+  comment exists on the umbrella, do **not** re-derive a plan — post a short
+  comment ("No triage proposal found on this issue — run `--phase propose`
+  first.") and stop.
+- Re-run the **Phase 2 dedup** pass before creating, so a re-approval enriches
+  instead of duplicating.
+- Run **Phase 7 steps 1, 2, 4, 5** (create / enrich / link-on-umbrella /
+  close-if-complete). **Skip step 3** (`@stable` removal — manual/local).
+- **Umbrella closure:** close only if the triage is complete **and** no
+  criterion-required `@stable` removal is pending. If a recurrent-flake removal
+  is required, leave the umbrella **open** and post a checklist comment listing
+  the pending manual/local removals (`spec/path.spec.ts:line` + a ready-to-run
+  command), so a human finishes them locally.
+- Post a final comment summarizing the issues created/enriched and the umbrella
+  state (closed, or left open with N pending removals).
+
 ## Relationship to sibling skills
 
 - **`langflow-e2e-triage`** (this skill) — **producer**: turns one red daily
