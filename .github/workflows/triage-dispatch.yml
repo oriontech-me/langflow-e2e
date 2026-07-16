@@ -1,0 +1,66 @@
+# Human-gated GitHub automation for the daily triage.
+# Phase 1 (propose): when the daily-stable umbrella issue opens, run the
+# triage skill non-interactively and post the plan as a comment. Creates
+# nothing on its own.
+# Phase 2 (execute): when a triage-team member replies "pode abrir" on that
+# umbrella, run the skill again to create/enrich the dedicated issues.
+# No code is mutated from CI: allowedTools is Read,Bash only and contents is
+# read-only, so @stable removal stays a manual/local PR (the skill's 2nd gate).
+# NOTE: issues / issue_comment triggers only fire from the workflow file on the
+# DEFAULT branch — the auto-triggers are live only after this merges to main.
+# Pre-merge, use the workflow_dispatch entry to test `propose` on the branch.
+name: Triage Dispatch
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Umbrella issue number to (re)propose against"
+        required: true
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  propose:
+    name: Propose triage plan
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' &&
+       contains(github.event.issue.labels.*.name, 'daily-failure'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "/langflow-e2e-triage --phase propose --issue ${{ github.event.issue.number || inputs.issue }}"
+          claude_args: '--allowedTools "Read,Bash" --max-turns 30'
+
+  execute:
+    name: Execute approved triage
+    if: >-
+      github.event_name == 'issue_comment' &&
+      github.event.issue.state == 'open' &&
+      contains(github.event.issue.labels.*.name, 'daily-failure') &&
+      contains(github.event.comment.body, 'pode abrir') &&
+      contains(fromJSON('["rafaelgiln","Victor-w-Madeira","daniellicnerski1"]'), github.event.comment.user.login)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anthropics/claude-code-action@v1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "/langflow-e2e-triage --phase execute --issue ${{ github.event.issue.number }}"
+          claude_args: '--allowedTools "Read,Bash" --max-turns 40'
