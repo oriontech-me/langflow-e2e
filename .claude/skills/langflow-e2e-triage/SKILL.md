@@ -275,6 +275,12 @@ Run **Phase 0–6** exactly as documented, with one substitution at Phase 6:
 instead of presenting the plan and waiting for "pode abrir", **post the plan as
 a comment on the umbrella issue** and stop.
 
+- **Per-skip reasons:** the `workflow_run` job downloads the triggering daily's
+  `results.json` to the repo root (best-effort). In Phase 1, if `results.json`
+  is present, run the dataset builder with `--results results.json` so Phase 5
+  (SKIPS) sees real per-skip reasons; if it is absent (manual dispatch, or the
+  artifact expired), run history-only and **say so** in the proposal ("per-skip
+  detail unavailable — skips reported by total only").
 - Build the same Phase-6 table plus the `@stable`-removal block.
 - Post it with `gh issue comment <n>`, whose **first line is the exact marker**
   `<!-- triage-proposal -->` so Phase execute finds it deterministically.
