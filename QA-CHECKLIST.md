@@ -142,7 +142,7 @@
 #### 2.2 Tool Mode
 - [x] Enable Tool Mode on a component
 - [x] Group components in Tool Mode → `core-components/tool-mode-group.spec.ts`
-- [-] Edit tools (edit-tools)
+- [x] Edit tools (slug, description, requires-approval persistence) → core-components/edit-tools.spec.ts
 
 #### 2.3 Component Updates
 - [x] Outdated component notification → `core-components/outdated-component-notification.spec.ts`
