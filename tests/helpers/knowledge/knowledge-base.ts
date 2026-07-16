@@ -26,7 +26,7 @@ export interface CreateKnowledgeBaseInput {
   name: string;
   /** Embedding provider, e.g. `"Google Generative AI"`. */
   embeddingProvider: string;
-  /** Embedding model id, e.g. `"gemini-embedding-001"`. */
+  /** Embedding model id, e.g. `"models/gemini-embedding-001"`. */
   embeddingModel: string;
 }
 

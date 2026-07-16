@@ -40,7 +40,7 @@ const CHUNK_SENTINEL = "embedding vector";
 // the daily-stable CI. The KB API resolves the embedding at ingest time from
 // this provider/model + that credential.
 const EMBEDDING_PROVIDER = "Google Generative AI";
-const EMBEDDING_MODEL = "gemini-embedding-001";
+const EMBEDDING_MODEL = "models/gemini-embedding-001";
 
 // Stable node ids baked into the fixture, so the shared `button_run_knowledge` /
 // `node_duration_knowledge` / `output-inspection-results-knowledge` testids can
@@ -123,6 +123,29 @@ async function openVectorStoreFlow(page: Page): Promise<void> {
   // side/bottom react-flow panels (the right Inspector Panel intercepts the
   // run-button click on nodes near the right edge otherwise).
   await adjustScreenView(page, { numberOfZoomOut: 2 });
+
+  // Dismiss the outdated-update banner up front (present on load, persists once
+  // dismissed) so it never overlays a later node-output click.
+  await dismissUpdateBannerIfPresent(page);
+}
+
+// The fixture flow was captured on an older nightly, so on a newer build its
+// components resolve to outdated updates and the canvas shows a bottom-centered
+// "N components need updates" banner. That banner overlays the node output
+// controls and intercepts the output-inspection click. It is pure noise for this
+// spec (outdated notifications are covered by outdated-component-notification.spec.ts),
+// so dismiss it before interacting with a node's output.
+async function dismissUpdateBannerIfPresent(page: Page): Promise<void> {
+  // The outdated diff resolves asynchronously after the flow loads, so the banner
+  // can appear a beat late; wait briefly for it (the fixture is deliberately
+  // behind the nightly, so it always appears within this window) before
+  // dismissing. If a future fixture refresh removes the outdated state, this
+  // just times out and no-ops — the test still runs in full, never skips.
+  const dismissAll = page.getByRole("button", { name: "Dismiss All" });
+  if (await dismissAll.isVisible({ timeout: 6000 }).catch(() => false)) {
+    await dismissAll.click();
+    await expect(dismissAll).toBeHidden({ timeout: 5000 });
+  }
 }
 
 /** Runs a Knowledge node (scoped by id) and waits for its success-build badge. */
