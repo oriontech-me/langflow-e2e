@@ -26,9 +26,14 @@ on:
         description: "Umbrella issue number to (re)propose against"
         required: true
 
+# id-token: write is REQUIRED by anthropics/claude-code-action@v1 — it mints an
+# OIDC token to authenticate; without it the action fails fast with
+# "Could not fetch an OIDC token". It grants no repo write: contents stays read,
+# so @stable removal remains a manual/local PR.
 permissions:
   issues: write
   contents: read
+  id-token: write
 
 jobs:
   propose:
