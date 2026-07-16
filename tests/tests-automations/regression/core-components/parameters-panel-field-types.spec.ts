@@ -209,4 +209,60 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
       await expectPersisted(request, bearer, flowId, "append_mode", true);
     },
   );
+
+  // ---- Phase 2 (#795): float + slider ----
+
+  test(
+    "float field edit persists",
+    { tag: ["@stable", "@components", "@regression"] },
+    async ({ page, request }) => {
+      const bearer = await getAuthToken(request);
+      const flowId = await openFlowWithComponent(
+        page,
+        request,
+        bearer,
+        "Semantic Text Splitter",
+        "add-component-button-semantic-text-splitter",
+        "title-breakpoint threshold amount",
+      );
+      await page
+        .getByTestId("float_float_breakpoint_threshold_amount")
+        .fill("0.42");
+      await page.getByTestId("float_float_breakpoint_threshold_amount").blur();
+      await expectPersisted(
+        request,
+        bearer,
+        flowId,
+        "breakpoint_threshold_amount",
+        0.42,
+      );
+    },
+  );
+
+  test(
+    "slider field edit persists",
+    { tag: ["@stable", "@components", "@regression"] },
+    async ({ page, request }) => {
+      const bearer = await getAuthToken(request);
+      const flowId = await openFlowWithComponent(
+        page,
+        request,
+        bearer,
+        "Language Model",
+        "add-component-button-language-model",
+        "title-temperature",
+      );
+      // temperature defaults to 0.1; focus the thumb and step it up with the
+      // keyboard (deterministic, unlike a pixel drag). Assert it increased —
+      // step-agnostic so a future step change does not false-fail.
+      await page.getByTestId("slider_thumb").click();
+      for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
+      await expect
+        .poll(
+          () => readFieldValue(request, bearer, flowId, "temperature"),
+          { timeout: 15000 },
+        )
+        .toBeGreaterThan(0.1);
+    },
+  );
 });

@@ -130,13 +130,13 @@
 - [x] Edit dropdown → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit text area (textarea) → `core-components/parameters-panel-field-types.spec.ts`
 - [-] Edit code field
-- [-] Edit float field
+- [x] Edit float field → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit int field → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit toggle field → `core-components/parameters-panel-field-types.spec.ts`
 - [-] Edit key-pair list
 - [-] Edit input list
 - [-] Edit table input
-- [-] Edit slider
+- [x] Edit slider → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit tab component → `core-components/parameters-panel-field-types.spec.ts`
 
 #### 2.2 Tool Mode
