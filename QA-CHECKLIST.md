@@ -624,7 +624,7 @@
 - [x] Unlock flow → `flow-functionality/flow-lock.spec.ts`
 - [x] Move flow between folders via API → `api/flows/api-folders-crud.spec.ts`
 - [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
-- [-] Save flow components as template
+- [x] Save flow components as template → `core-components/saveComponents.spec.ts`
 
 #### 12.6 Flow Execution
 - [x] Run Flow component executes another flow → `flow-functionality/run-flow.spec.ts`
