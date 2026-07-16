@@ -262,7 +262,12 @@ Two rules override the interactive flow:
   `Edit`/`Write`) and `contents: read`. `@stable` removal is therefore **out of
   the automated path** — it stays a manual/local PR (list it, never do it here).
 
-The invocation carries the umbrella issue number as `--issue <n>`.
+The invocation may carry the umbrella issue number as `--issue <n>` (manual
+`workflow_dispatch`). When `--issue` is absent (the `workflow_run` auto-trigger),
+**self-discover** the umbrella: use the umbrella the Phase-1 dataset already
+matched (`gh issue list --repo oriontech-me/langflow-e2e --state open --label
+daily-failure`). If no open umbrella is found, post nothing and stop with a
+logged note.
 
 ### `--phase propose` (scheduled, unattended)
 
@@ -288,7 +293,10 @@ trigger itself as the authorization; do not re-ask.
 
 - Read the **latest** `<!-- triage-proposal -->` comment on the umbrella
   (`gh issue view <n> --json comments`). Act on that reviewed plan — do not
-  silently re-derive a different one.
+  silently re-derive a different one. If **no** `<!-- triage-proposal -->`
+  comment exists on the umbrella, do **not** re-derive a plan — post a short
+  comment ("No triage proposal found on this issue — run `--phase propose`
+  first.") and stop.
 - Re-run the **Phase 2 dedup** pass before creating, so a re-approval enriches
   instead of duplicating.
 - Run **Phase 7 steps 1, 2, 4, 5** (create / enrich / link-on-umbrella /
