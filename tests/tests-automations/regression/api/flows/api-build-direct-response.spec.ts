@@ -2,6 +2,7 @@ import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+import { parseNdjson } from "../../../../helpers/other/parse-ndjson";
 
 // Validates the `direct` event-delivery path of POST /api/v1/build/{flow_id}/flow —
 // the transport the Playground uses to receive a flow run's results
@@ -18,22 +19,6 @@ import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-r
 // single response" cannot pass on a structurally valid but empty shell.
 // The /build endpoint authenticates with Bearer (CurrentActiveUser), so the flow
 // is created with the same Bearer identity that builds it.
-
-interface BuildEvent {
-  event?: string;
-  data?: { text?: string; sender?: string; sender_name?: string };
-  /** Present only on the two-step job path's shell response, never on a direct event. */
-  job_id?: string;
-}
-
-/** Parses an NDJSON body into one object per non-empty line. */
-function parseNdjson(body: string): BuildEvent[] {
-  return body
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line));
-}
 
 test.describe("POST /api/v1/build/{flow_id}/flow — direct response delivery", () => {
   let flowId: string;
