@@ -762,12 +762,12 @@
 | `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 25 | 1 | 2 | 0 |
+| `flow-functionality/` | 28 | 26 | 0 | 2 | 0 |
 | `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **303 (67%)** | **125 (28%)** | **8 (2%)** | **15 (3%)** |
+| **TOTAL** | **451** | **304 (67%)** | **124 (27%)** | **8 (2%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 339 `test()` calls carrying the `@stable` tag, distributed across 138 spec
+> 340 `test()` calls carrying the `@stable` tag, distributed across 139 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -921,6 +921,7 @@
 - [x] Prompt Template — `{1var}` (leading digit) is rejected with an error toast and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] Prompt Template — `{}` (empty braces) is accepted by the parser and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] Prompt Template — repeating the same variable produces exactly one handle (deduplication contract) → `prompt-template-invalid-patterns-regression.spec.ts`
+- [x] saving a canvas component as a template makes it reusable from the sidebar → `saveComponents.spec.ts`
 - [x] should allow only one Chat Input on the canvas → `singleton-components.spec.ts`
 - [x] should not allow adding a Webhook while a Chat Input is on the canvas → `singleton-components.spec.ts`
 - [x] should not allow duplicating a Chat Input → `singleton-components.spec.ts`
@@ -1181,7 +1182,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 1 | 0 |
+| `flow-functionality/` | 0 | 0 |
 | `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 3 | 0 |
