@@ -2,6 +2,10 @@ import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
+import {
+  parseNdjson,
+  type BuildEvent,
+} from "../../../../helpers/other/parse-ndjson";
 
 // Validates the `polling` event-delivery path of the flow build API — the
 // transport the Playground uses to receive a flow run's results when
@@ -22,20 +26,6 @@ import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-r
 // through the poll loop" cannot pass on a structurally valid but empty shell.
 // The /build endpoint authenticates with Bearer (CurrentActiveUser), so the flow
 // is created with the same Bearer identity that builds it.
-
-interface BuildEvent {
-  event?: string;
-  data?: { text?: string; sender?: string; sender_name?: string };
-}
-
-/** Parses an NDJSON body into one object per non-empty line. */
-function parseNdjson(body: string): BuildEvent[] {
-  return body
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line));
-}
 
 const POLL_MAX_ITERATIONS = 40;
 const POLL_EMPTY_DELAY_MS = 250;
