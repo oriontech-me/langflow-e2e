@@ -282,8 +282,22 @@ a comment on the umbrella issue** and stop.
   issue to create/enrich the dedicated issues. `@stable` removals listed above
   are manual/local TODOs — they are NOT performed by the automation."*
 - Then **STOP**. Create nothing, enrich nothing, close nothing, edit nothing.
-- If Phase 0–1 find no red run or the history is stale, post a one-line
-  "nothing to triage / history stale" comment instead, and stop.
+
+**Always leave an observable trace — never a silent no-op.** Propose must end
+by posting exactly one comment on the umbrella, whatever the outcome. A silent
+run is indistinguishable from a broken post, so every terminal path posts:
+
+- **Actionable clusters found** → post the full plan comment (the marker
+  `<!-- triage-proposal -->` case above).
+- **Nothing new to triage** (Phase-2 dedup shows every cluster already has a
+  dedicated issue, or the run's umbrella is already closed/triaged) → post a
+  one-line note `<!-- triage-proposal -->` + "Nothing new to triage — every
+  cluster from run `<run_id>` is already dispatched." and stop.
+- **No red run found, or the history is stale** → post a one-line
+  "Nothing to triage — no red run found / history stale." note and stop.
+- **Guard-tripped mass-failure day** → still post the plan, but state
+  descriptively in the comment that the guard tripped (count + threshold) and
+  that `@stable` was left in place (see the guard rule in `references/issue-templates.md`).
 
 ### `--phase execute` (triggered by an approved "pode abrir" comment)
 
