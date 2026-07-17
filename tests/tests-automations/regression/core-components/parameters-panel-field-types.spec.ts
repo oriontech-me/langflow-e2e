@@ -257,8 +257,11 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
         bearer,
         "API Request",
         "add-component-button-api-request",
-        "title-timeout",
+        "title-API Request",
       );
+      // `timeout` is advanced — shown by default on some nightly builds, hidden
+      // on others; reveal it when hidden.
+      await ensureAdvancedFieldVisible(page, "int_int_timeout", "timeout");
       await page.getByTestId("int_int_timeout").fill("77");
       await page.getByTestId("int_int_timeout").blur();
       await expectPersisted(request, bearer, flowId, "timeout", 77);
@@ -343,11 +346,13 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
         bearer,
         "Language Model",
         "add-component-button-language-model",
-        "title-temperature",
+        "title-Language Model",
       );
-      // temperature defaults to 0.1; focus the thumb and step it up with the
-      // keyboard (deterministic, unlike a pixel drag). Assert it increased —
-      // step-agnostic so a future step change does not false-fail.
+      // temperature is advanced — shown by default on some nightly builds, hidden
+      // on others; reveal it when hidden. It defaults to 0.1; focus the thumb and
+      // step it up with the keyboard (deterministic, unlike a pixel drag). Assert
+      // it increased — step-agnostic so a future step change does not false-fail.
+      await ensureAdvancedFieldVisible(page, "slider_thumb", "temperature");
       await page.getByTestId("slider_thumb").click();
       for (let i = 0; i < 3; i++) await page.keyboard.press("ArrowRight");
       await expect
