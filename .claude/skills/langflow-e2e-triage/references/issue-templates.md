@@ -229,7 +229,15 @@ Then:
 
 ## Guard-Tripped Rule
 
-When a daily run trips the mass-failure guard (`guard_tripped: true` in the daily report), dedicated issues opened for clusters in that run must follow these rules:
+When a daily run trips the mass-failure guard (`guard_tripped: true` in the daily report), the day is a mass-failure day — most likely environment-wide — so most failures are **collateral**, not independent regressions.
+
+**0. Decide which clusters get a dedicated issue at all — this is the guard-day split:**
+
+   - **Cross-day-recurrent clusters** (the same test + error signature also failed on other, *non-adjacent* dailies — `recurrence.same_signature` true with dates beyond today) reproduce on days that were **not** mass-failure days, so they are **durable** signals, not pure collateral. These **do** get a dedicated issue (create) or enrich their existing tracker — following rules 1–3 below.
+   - **Today-only collateral** (failed only on this run, no cross-day recurrence) does **not** get a dedicated issue. Filing one is a throwaway tracker for what most likely vanishes when the instance recovers — the same reason a first-occurrence flake is noted, not filed. Instead, **note** it in the triage proposal (aggregated, with counts) and leave it under the umbrella.
+   - **Keep the umbrella open.** On a guard-tripped run the umbrella issue is **not** closed at the end of triage — it is the standing record of that day's noted-not-filed collateral. It stays open, with a comment to recheck on the next clean, non-guarded daily; that later triage closes it once it confirms recovery, or promotes any cluster that persists into a durable dedicated issue.
+
+Dedicated issues you **do** open on a guard day (the cross-day-recurrent ones) must follow these rules:
 
 1. **Prefer aggressive grouping** — fold related failures (e.g., all sidebar-entry timeouts, all agent-execution timeouts) into a single issue rather than splitting by spec. A shared environmental signal is more parsimonious than many independent regressions on the same day.
 
