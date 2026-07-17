@@ -22,7 +22,11 @@ manual investigation) — see `CONTRIBUTING.md`. After editing the table, run
 Never hand-edit the block between the markers.
 
 <!-- REGRESSIONS:START -->
-<!-- Run `npm run regressions:summary` to generate this block. -->
+**Regressions caught:** 1 — **Open:** 1 · **Fixed:** 0
+
+**By severity:** High 1 · Medium 0 · Low 0
+
+**By area:** auth 1
 <!-- REGRESSIONS:END -->
 
 ## Ledger
