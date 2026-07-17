@@ -75,6 +75,8 @@ This spec used to create its 3 flows through the UI (opening the templates modal
 
 Both modes lived entirely in the incidental UI scaffolding, never in the bulk-action assertions under test. #723 **eliminated the whole class** by creating the 3 flows via `POST /api/v1/flows/` and loading the listing with a single `page.goto("/")` — no templates modal, no editor↔home round-trips. The remaining positional risk (a sibling worker's flow interleaving at the top of the recency-sorted listing) is caught by the top-3 name guard before any destructive selection.
 
+**#790 (load-collateral, top-3 guard hardened).** On load-degraded / guard-tripped dailies (2026-07-09/13/15/16, all recurring on saturated days) the top-3 name guard failed with `expect(received).toEqual(expected) // deep equality`. Root cause is not a product regression — the spec passes 5/5 clean at `--retries=0` on the current nightly (`1.11.0.dev45`); under CI saturation the recency-sorted listing simply had not yet floated the 3 freshly-created flows to the top when the guard read the card names **once** (`evaluateAll` → `toEqual`). Hardened by wrapping that read in `expect.poll(...).toEqual(...)`, so the guard retries until the listing settles instead of asserting on the first (stale) snapshot. `@stable` kept.
+
 ---
 
 ## Preconditions *(optional)*

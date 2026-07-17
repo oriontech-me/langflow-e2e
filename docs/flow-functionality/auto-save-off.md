@@ -116,6 +116,18 @@ fails if either save did not persist (see Notes on the hardening).
 
 ## Notes *(optional)*
 
+- **#790 (load-collateral, critical clicks hardened).** On load-degraded /
+  guard-tripped dailies (2026-07-15/16) the spec failed with
+  `locator.click: Timeout 20000ms exceeded` on a manual-save click target. Not a
+  product regression — the spec passes 5/5 clean at `--retries=0` on the current
+  nightly (`1.11.0.dev45`) and manual save resolves correctly with
+  `auto_saving=false`. This is the suite's heaviest workspace test (two full
+  bootstraps + repeated exit/re-open cycles, ~54s cold), so under CI saturation a
+  20s default action timeout (`playwright.config.ts` `actionTimeout`) is the first
+  thing to blow. Hardened by giving the load-sensitive clicks (the on-canvas
+  `save-flow-button` and the card `list-card-open-button` re-open) an explicit
+  longer timeout, so transient saturation no longer trips the default. `@stable`
+  kept.
 - **Hardening for promotion.** The pre-promotion spec left `New Flow` behind
   (no cleanup — confirmed 4 leaked flows on the instance) and used silent
   bypasses: a `try/catch` that logged "skipping dialog confirmation" and

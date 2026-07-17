@@ -42,6 +42,10 @@ test.afterEach(async ({ request }) => {
 // The /flows a11y refactor (Langflow #13891) makes `flow-name-div`
 // `pointer-events-none`; open the flow via the card's overlay button.
 async function reopenNewFlow(page: Page): Promise<void> {
+  // Explicit timeout above the 20s default actionTimeout: this heavy spec (two
+  // bootstraps + repeated exit/re-open cycles) blew the default card-open click
+  // under CI saturation on load-degraded dailies (#790). The extra headroom
+  // absorbs transient load without masking a real regression.
   await page
     .getByTestId("list-card")
     .filter({
@@ -49,7 +53,7 @@ async function reopenNewFlow(page: Page): Promise<void> {
     })
     .getByTestId("list-card-open-button")
     .first()
-    .click();
+    .click({ timeout: 45000 });
 }
 
 test(
@@ -201,7 +205,9 @@ test(
     // otherwise the unsaved-changes dialog appears and "Save And Exit" persists.
     // Either path is fine — the node count === 2 below is the gate that proves
     // both nodes persisted server-side, regardless of which path ran.
-    await page.getByTestId("save-flow-button").click();
+    // Explicit timeout above the 20s default: the manual-save click was the
+    // signature that blew the default action timeout under CI saturation (#790).
+    await page.getByTestId("save-flow-button").click({ timeout: 45000 });
     await page.getByTestId("icon-ChevronLeft").last().click();
     const saveAndExit2 = page.getByText("Save And Exit", { exact: true }).last();
     if (
