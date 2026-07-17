@@ -4,6 +4,16 @@ import {
   SUPERUSER_USERNAME,
 } from "../../../../helpers/auth/credentials";
 
+// QUARANTINE (#808 / LE-1850): @stable removed from all three tests. These
+// assertions are intentionally UNCHANGED and correctly fail — they catch a real
+// Langflow regression: on 1.11.0.dev46 clicking Logout does not terminate the
+// session (no POST /api/v1/logout fires; POST /api/v1/refresh re-authenticates),
+// so the post-logout redirect to /login never happens. The backend
+// POST /api/v1/logout endpoint itself returns 200. Tracked upstream as LE-1850.
+// @stable is removed to stop the daily-stable noise until the upstream fix lands;
+// RESTORING @stable is a deliverable of #808 once LE-1850 is fixed and re-validated
+// on langflowai/langflow-nightly:latest. Do NOT weaken these tests to go green.
+
 function setupAutoLoginMock(page: any) {
   return Promise.all([
     page.route("**/api/v1/auto_login", (route: any) => {
@@ -30,7 +40,7 @@ function setupAutoLoginMock(page: any) {
 
 test(
   "logout must redirect user to login page",
-  { tag: ["@release", "@api", "@regression", "@auth", "@stable"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
@@ -81,7 +91,7 @@ test(
 
 test(
   "after logout, navigating to root must redirect to login",
-  { tag: ["@release", "@api", "@regression", "@auth", "@stable"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
@@ -125,7 +135,7 @@ test(
 
 test(
   "after logout, reload must stay on login page",
-  { tag: ["@release", "@api", "@regression", "@auth", "@stable"] },
+  { tag: ["@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await setupAutoLoginMock(page);
 
