@@ -46,21 +46,37 @@ export function rowsWithinDays(rows, asOfDate, windowDays) {
   });
 }
 
-/** Occurrences of `item.test` across rowsInWindow (failures + flaky), with
- *  same-signature detection. rowsInWindow must already include the latest run. */
+/** Occurrences of `item.test` across rowsInWindow (failures + flaky).
+ *  rowsInWindow must already include the latest run.
+ *
+ *  Recurrence is about the *same cause*, so `count`/`dates` report only the
+ *  occurrences whose normalized error signature matches the item's — this is
+ *  what the proposal should cite. A test can recur under the same title for
+ *  different causes (different signatures); those inflate a raw title tally
+ *  without being same-cause recurrence, so they are excluded from count/dates
+ *  and surfaced separately as `total_count`/`total_dates` for context only.
+ *  `same_signature` (>= 2 same-signature hits) is unchanged and still drives
+ *  the actionable decision. */
 export function computeRecurrence(item, rowsInWindow) {
   const target = normalizeSignature(item.error_signature);
-  const dates = [];
-  let sameSig = 0;
+  const allDates = [];
+  const sameDates = [];
   for (const row of rowsInWindow) {
     const entries = [...(row.failures || []), ...(row.flaky || [])];
     const hit = entries.find((e) => e.test === item.test);
     if (!hit) continue;
-    dates.push(row.date);
-    if (normalizeSignature(hit.error_signature) === target) sameSig++;
+    allDates.push(row.date);
+    if (normalizeSignature(hit.error_signature) === target) sameDates.push(row.date);
   }
-  dates.sort();
-  return { count: dates.length, dates, same_signature: sameSig >= 2 };
+  allDates.sort();
+  sameDates.sort();
+  return {
+    count: sameDates.length,
+    dates: sameDates,
+    same_signature: sameDates.length >= 2,
+    total_count: allDates.length,
+    total_dates: allDates,
+  };
 }
 
 /** True when the run had more hard failures than the auto-remove guard allows. */
