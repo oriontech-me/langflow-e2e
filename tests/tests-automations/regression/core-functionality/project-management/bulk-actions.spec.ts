@@ -55,12 +55,27 @@ test(
       // and bulk-delete is destructive, so if a sibling worker's flow interleaved
       // at the top of the recency-sorted listing under `fullyParallel`, fail fast
       // here rather than risk deleting someone else's flow.
-      const topThreeNames = await page
-        .locator("[data-testid='flow-name-div'] span")
-        .evaluateAll((els) =>
-          els.slice(0, 3).map((e) => e.textContent?.trim() ?? ""),
-        );
-      expect([...topThreeNames].sort()).toEqual([...createdNames].sort());
+      // Poll rather than read once: on load-degraded dailies the recency-sorted
+      // listing has not yet floated the 3 freshly-created flows to the top when a
+      // single snapshot is taken, so a one-shot `evaluateAll → toEqual` flaked
+      // with a deep-equality mismatch (#790). Polling retries until the listing
+      // settles; it still fails fast if a sibling worker's flow genuinely sits in
+      // the top 3.
+      await expect
+        .poll(
+          async () =>
+            (
+              await page
+                .locator("[data-testid='flow-name-div'] span")
+                .evaluateAll((els) =>
+                  els.slice(0, 3).map((e) => e.textContent?.trim() ?? ""),
+                )
+            )
+              .slice()
+              .sort(),
+          { timeout: 30000 },
+        )
+        .toEqual([...createdNames].sort());
 
       // Test shift selection
       await page.keyboard.down("Shift");
