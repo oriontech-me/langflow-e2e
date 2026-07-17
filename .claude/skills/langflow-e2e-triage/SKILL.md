@@ -114,6 +114,16 @@ JSON: `run{run_id,run_url,date,langflow_image,duration_ms}`,
 `umbrella_issue`, `guard_tripped`, `totals`, `hard_failures[]`, `flakes[]`
 (each carrying `recurrence` and an `actionable` flag), `skips[]`.
 
+**Citing recurrence faithfully:** `recurrence.count` / `recurrence.dates`
+report only the **same-signature** (same-cause) occurrences — this is the
+recurrence to cite in the proposal ("recurrent 3× on 07-13/15/16"). The same
+test can also appear under its title for a *different* cause; those are
+excluded from `count`/`dates` and surfaced separately as
+`recurrence.total_count` / `total_dates` for context only. Never quote the raw
+`total_count` as the recurrence figure — it overstates same-cause recurrence
+(the report-faithfully gate). `actionable` is driven by `same_signature`
+(≥ 2 same-signature hits), unchanged.
+
 If a local Playwright report exists for that run (downloaded or already on
 disk), pass it for richer per-skip detail — the history file only carries
 skip totals, not the per-test reason:

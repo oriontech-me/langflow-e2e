@@ -71,6 +71,26 @@ test('computeRecurrence returns count 1 for a first-seen failure', () => {
   assert.equal(r.same_signature, false);
 });
 
+test('computeRecurrence count/dates cover only same-signature occurrences (mixed signatures)', () => {
+  // Same test title recurs 4x, but the first two flaked with an empty (different)
+  // signature and only the last two share today's signature. count/dates must
+  // report same-cause recurrence (2x), not the all-signature tally — that raw
+  // tally lives in total_count/total_dates for context. (Models the
+  // global-variables 4x->2x case from run #802 / issue #803.)
+  const rows = [
+    { date: '2026-07-02', flaky: [{ test: 'cred hidden', error_signature: '' }] },
+    { date: '2026-07-09', flaky: [{ test: 'cred hidden', error_signature: '' }] },
+    { date: '2026-07-15', failures: [{ test: 'cred hidden', error_signature: 'Error: toBe' }] },
+    { date: '2026-07-17', failures: [{ test: 'cred hidden', error_signature: 'Error: toBe' }] },
+  ];
+  const r = computeRecurrence({ test: 'cred hidden', error_signature: 'Error: toBe' }, rows);
+  assert.equal(r.count, 2);
+  assert.deepEqual(r.dates, ['2026-07-15', '2026-07-17']);
+  assert.equal(r.same_signature, true);
+  assert.equal(r.total_count, 4);
+  assert.deepEqual(r.total_dates, ['2026-07-02', '2026-07-09', '2026-07-15', '2026-07-17']);
+});
+
 test('detectGuard trips above the threshold', () => {
   assert.equal(detectGuard({ totals: { failed: 6 } }, 5), true);
   assert.equal(detectGuard({ totals: { failed: 5 } }, 5), false);
