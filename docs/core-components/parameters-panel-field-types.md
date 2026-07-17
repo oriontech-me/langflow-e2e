@@ -17,24 +17,26 @@ A **parametrized matrix** — one `test()` per field type — sharing a common
 setup/verify shape, so a regression in any single input type is isolated to its
 own test.
 
-> **Phased delivery (complete).** The matrix is delivered in three phases, all
-> sharing the same setup/verify shape:
+> **Phased delivery.** The matrix is delivered in phases, all sharing the same
+> setup/verify shape:
 > - **Phase 1 (#662):** the 6 simple-mechanic types (text, dropdown, textarea,
 >   int, tab, toggle) — plain click/fill edits, scalar/string persisted values.
 > - **Phase 2 (#795):** float and slider — a numeric fill and a keyboard-stepped
 >   slider.
-> - **Phase 3 (#798, this PR):** the 4 modal/complex types (code editor, table
->   modal, key-pair NestedDict, input-list SortableList). Each needs its own
->   modal/reveal mechanic, and two (`KeypairInput`/`ListInput` from the checklist
->   era) no longer exist as those input types — they map to today's
->   `NestedDictInput` / `SortableListInput`.
+> - **Phase 3 (#798, this PR):** 3 modal/complex types — code editor, table
+>   modal, key-pair NestedDict. (`KeypairInput` from the checklist era no longer
+>   exists as that input type — it maps to today's `NestedDictInput`.)
 >
-> With phase 3 the matrix covers all **12 live input types**. Two phase-3
-> components (**Python Function**, **Alter Metadata**) are `legacy` and hidden
-> from the sidebar by default, and **Read File**'s `storage_location` is an
-> `advanced` field — the tests enable legacy and reveal the advanced field
-> explicitly (see the matrix and External dependencies). The matrix below marks
-> each type's phase.
+> With phase 3 the matrix covers **11 of the 12 live input types**. The 12th —
+> **input list** (`SortableListInput`, Read File `storage_location`) — is
+> deferred to a follow-up: its remove-chip → open-selection → pick mechanic
+> renders differently across nightly builds (the remove control is `icon-x` on
+> some, absent on others) and could not be validated on the build the daily runs.
+> Two phase-3 components (**Python Function**, **Alter Metadata**) are `legacy`
+> and hidden from the sidebar by default, and API Request's `headers` is an
+> `advanced` field — the tests enable legacy and show-or-reveal the advanced
+> field (see the matrix and External dependencies). The matrix below marks each
+> type's phase.
 
 ### Verification model (uniform across types)
 
@@ -65,7 +67,7 @@ matches what a reload would load.
 | 8 | Edit code field | `CodeInput` | Python Function *(legacy)* | `function_code` | open `codearea_code_function_code` → set ACE value → `checkAndSaveBtn` | **phase 3 (this PR)** |
 | 9 | Edit table input | `TableInput` | API Request | `headers` *(advanced)* | show-or-reveal `div-table_headers` → settle (method→POST refresh) → Open table → `add-row-button` → fill key/value cells | **phase 3 (this PR)** |
 | 10 | Edit key-pair list | `NestedDictInput` | Alter Metadata *(legacy)* | `metadata` | `dict_nesteddict_metadata` → Edit Dictionary (text mode) → fill JSON → Save | **phase 3 (this PR)** |
-| 11 | Edit input list | `SortableListInput` | Read File | `storage_location` *(advanced)* | show-or-reveal the field → remove Local → `button_open_list_selection_…` → `list_item_aws` | **phase 3 (this PR)** |
+| 11 | Edit input list | `SortableListInput` | Read File | `storage_location` *(advanced)* | show-or-reveal the field → remove Local → `button_open_list_selection_…` → `list_item_aws` | deferred (build-divergent) |
 | 12 | Edit float field | `FloatInput` | Semantic Text Splitter | `breakpoint_threshold_amount` | fill `float_float_breakpoint_threshold_amount` | **phase 2 (this PR)** |
 
 > The checklist's *key-pair list* and *input list* correspond to the checklist-era
