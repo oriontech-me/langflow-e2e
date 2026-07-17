@@ -1,10 +1,46 @@
 import * as dotenv from "dotenv";
 import path from "path";
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { clearApiKeyBadges } from "../../../helpers/ui/clear-api-key-badges";
 import { initialGPTsetup } from "../../../helpers/other/initialGPTsetup";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+
+// Capture every flow THIS page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach — the legacy spec built a
+// flow via the blank-flow UI and leaked it every run (#490/#681 pattern; the
+// response ids are authoritative and worker-safe).
+const createdFlowIds: string[] = [];
+
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
+  }
+});
 
 test(
   "should copy code from playground modal",
@@ -12,6 +48,8 @@ test(
     tag: ["@release"],
   },
   async ({ page }) => {
+    trackCreatedFlows(page);
+
     test.skip(
       !process?.env?.OPENAI_API_KEY,
       "OPENAI_API_KEY required to run this test",
@@ -75,10 +113,12 @@ test(
     await page
       .getByTestId("handle-chatinput-noshownode-chat message-source")
       .click();
-    await page.getByTestId("handle-openaimodel-shownode-input-left").click();
+    await page
+      .getByTestId("handle-openaimodelcomponent-shownode-input-left")
+      .click();
 
     await page
-      .getByTestId("handle-openaimodel-shownode-model response-right")
+      .getByTestId("handle-openaimodelcomponent-shownode-model response-right")
       .click();
     await page
       .getByTestId("handle-chatoutput-noshownode-inputs-target")
