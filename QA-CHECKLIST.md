@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-16
+> **Last updated:** 2026-07-17
 
 ---
 
@@ -752,7 +752,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
-| `core-components/` — Component Config | 24 | 19 | 5 | 0 | 0 |
+| `core-components/` — Component Config | 24 | 22 | 2 | 0 | 0 |
 | `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
@@ -767,7 +767,7 @@
 | `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **314 (70%)** | **114 (25%)** | **8 (2%)** | **15 (3%)** |
+| **TOTAL** | **451** | **317 (70%)** | **111 (25%)** | **8 (2%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +783,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 350 `test()` calls carrying the `@stable` tag, distributed across 142 spec
+> 353 `test()` calls carrying the `@stable` tag, distributed across 142 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -909,6 +909,9 @@
 - [x] toggle field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] float field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] slider field edit persists → `parameters-panel-field-types.spec.ts`
+- [x] code field edit persists → `parameters-panel-field-types.spec.ts`
+- [x] table field edit persists → `parameters-panel-field-types.spec.ts`
+- [x] key-pair field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] Prompt Template component — renders on canvas with output handle → `prompt-template-component-regression.spec.ts`
 - [x] Prompt Template component — variables in curly braces generate dynamic input handles → `prompt-template-component-regression.spec.ts`
 - [x] Prompt Template component — removing a variable removes its input handle → `prompt-template-component-regression.spec.ts`
@@ -1172,7 +1175,7 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
-| `core-components/` — Component Config | 5 | 0 |
+| `core-components/` — Component Config | 2 | 0 |
 | `core-components/` — Core Components | 0 | 2 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 2 | 6 |
