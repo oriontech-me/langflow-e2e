@@ -172,15 +172,16 @@ completes" issue because all three shared the same
 timeout-waiting-for-completion shape, even though the literal locator
 differed (`div-chat-message` vs `text=built successfully`).
 
-When `guard_tripped` is true, group **more** aggressively, not less — a
-guard trip means the day is a mass-failure day, most likely environment-wide
-(instance didn't boot, provider outage, saturation), so many unrelated-looking
-timeouts are plausibly one environmental event. Note the environmental
-signal **descriptively** in the issue body (count, guard threshold crossed,
-plausible cause) — **never as a verdict**. State explicitly that `@stable`
-was left in place (the workflow doesn't auto-remove on a guard trip) and that
-quarantine is only warranted if the same cluster reproduces on a clean,
-non-guarded day.
+When `guard_tripped` is true the day is a mass-failure day, most likely
+environment-wide, so most failures are collateral. **Split the clusters:**
+**cross-day-recurrent** ones (same test+signature on other non-adjacent
+dailies — durable, not pure collateral) are **created/enriched** as usual,
+grouped aggressively, environmental context noted descriptively (never a
+verdict). **Today-only collateral** (no cross-day recurrence) is **not** filed
+as a dedicated issue — that is a throwaway tracker for what vanishes when the
+instance recovers; **note** it (aggregated, with counts) and leave it under the
+umbrella, which **stays open** (Phase 7). `@stable` is **kept** on everything.
+Full rule + issue-body wording: `references/issue-templates.md` → *Guard-Tripped Rule*.
 
 ### Phase 4 — FLAKES
 
@@ -253,6 +254,11 @@ Only after the user approves the plan:
    opened), **leave the umbrella open** and tell the user exactly what remains
    — never close on a half-done triage. Only when all are satisfied:
    `gh issue close <umbrella_issue>`.
+   **Exception — guard-tripped run:** do **not** close the umbrella; it is the
+   standing record of the day's noted-not-filed collateral (Phase 3). Leave it
+   **open** with a comment to recheck on the next clean daily (which closes it
+   or promotes a persistent cluster). Durable clusters created/enriched this
+   run are still linked here.
 
 Report back to the user in PT-BR with the final list of issue numbers/URLs
 created or enriched, each `@stable`-removal PR opened (and any removal left
@@ -311,9 +317,11 @@ run is indistinguishable from a broken post, so every terminal path posts:
   cluster from run `<run_id>` is already dispatched." and stop.
 - **No red run found, or the history is stale** → post a one-line
   "Nothing to triage — no red run found / history stale." note and stop.
-- **Guard-tripped mass-failure day** → still post the plan, but state
-  descriptively in the comment that the guard tripped (count + threshold) and
-  that `@stable` was left in place (see the guard rule in `references/issue-templates.md`).
+- **Guard-tripped mass-failure day** → still post the plan (durable cross-day
+  clusters as create/enrich rows; today-only collateral as **note** rows), and
+  state descriptively that the guard tripped (count + threshold), that
+  `@stable` was left in place, and that the umbrella will stay **open** as the
+  collateral record (Phase 3 + Phase 7; guard rule in `references/issue-templates.md`).
 
 ### `--phase execute` (triggered by an approved "pode abrir" comment)
 
