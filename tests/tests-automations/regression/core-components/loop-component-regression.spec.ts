@@ -256,9 +256,13 @@ test(
     // Loop done). We match >= 1 occurrence (not >= 2) because the LLM response is
     // free-form and may echo "title" in only one of the N responses — the
     // deterministic per-iteration count is covered by the exit-condition test below.
+    // 360s (not the former 240s): under parallel CI saturation the two sequential
+    // LLM calls + live ArXiv fetches can exceed a 240s message-resolution budget,
+    // which is what recurred as a hard failure on load-degraded dailies (#722).
+    // Still well within the 8-min test.setTimeout above.
     const botMessage = page.locator('[data-testid^="chat-message-AI-"]').last();
-    await expect(botMessage).toBeVisible({ timeout: 240000 });
-    await expect(botMessage).toContainText(/title/i, { timeout: 240000 });
+    await expect(botMessage).toBeVisible({ timeout: 360000 });
+    await expect(botMessage).toContainText(/title/i, { timeout: 360000 });
   },
 );
 
