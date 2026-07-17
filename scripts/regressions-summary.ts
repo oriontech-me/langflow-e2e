@@ -68,8 +68,10 @@ function parseLedger(md: string): Row[] {
     // Header row: | Found | Area / Test | ... | — skip until after the separator.
     if (!seenSeparator) continue;
     // Schema: [Found, Area/Test, Regression, Severity, Detected by, Upstream, Status, Fixed in, Report]
-    if (c.length < 9) {
-      throw new Error(`Malformed ledger row (expected 9 columns, got ${c.length}): ${line}`);
+    // Exact 9 columns — a stray pipe in any cell (even trailing ones) must fail
+    // loudly rather than pass with a shifted row.
+    if (c.length !== 9) {
+      throw new Error(`Malformed ledger row (expected exactly 9 columns, got ${c.length}): ${line}`);
     }
     const [, areaTest, , severity, , , status] = c;
     if (!SEVERITIES.includes(severity as Severity)) {
