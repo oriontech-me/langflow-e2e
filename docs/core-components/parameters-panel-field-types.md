@@ -17,14 +17,26 @@ A **parametrized matrix** — one `test()` per field type — sharing a common
 setup/verify shape, so a regression in any single input type is isolated to its
 own test.
 
-> **Phased delivery.** This spec ships the **6 simple-mechanic types** first
-> (text, int, dropdown, tab, textarea, toggle) — all with a plain click/fill edit
-> and a scalar/string persisted value. The **6 complex/modal types** (slider drag,
-> code editor, table modal, key-pair NestedDict, input-list SortableList, float)
-> are deferred to a follow-up because each needs a distinct modal/drag mechanic
-> and two (`KeypairInput`/`ListInput` from the checklist era) no longer exist as
-> those input types — mapping them is tracked separately. The matrix below marks
-> each type's phase.
+> **Phased delivery.** The matrix is delivered in phases, all sharing the same
+> setup/verify shape:
+> - **Phase 1 (#662):** the 6 simple-mechanic types (text, dropdown, textarea,
+>   int, tab, toggle) — plain click/fill edits, scalar/string persisted values.
+> - **Phase 2 (#795):** float and slider — a numeric fill and a keyboard-stepped
+>   slider.
+> - **Phase 3 (#798, this PR):** 3 modal/complex types — code editor, table
+>   modal, key-pair NestedDict. (`KeypairInput` from the checklist era no longer
+>   exists as that input type — it maps to today's `NestedDictInput`.)
+>
+> With phase 3 the matrix covers **11 of the 12 live input types**. The 12th —
+> **input list** (`SortableListInput`, Read File `storage_location`) — is
+> deferred to a follow-up: its remove-chip → open-selection → pick mechanic
+> renders differently across nightly builds (the remove control is `icon-x` on
+> some, absent on others) and could not be validated on the build the daily runs.
+> Two phase-3 components (**Python Function**, **Alter Metadata**) are `legacy`
+> and hidden from the sidebar by default, and API Request's `headers` is an
+> `advanced` field — the tests enable legacy and show-or-reveal the advanced
+> field (see the matrix and External dependencies). The matrix below marks each
+> type's phase.
 
 ### Verification model (uniform across types)
 
@@ -52,10 +64,10 @@ matches what a reload would load.
 | 5 | Edit tab component | `TabInput` | API Request | `mode` | click `tab_1_curl` | phase 1 ✓ |
 | 6 | Edit toggle field | `BoolInput` | Save File | `append_mode` | click `toggle_bool_append_mode` | phase 1 ✓ |
 | 7 | Edit slider | `SliderInput` | Language Model | `temperature` | click `slider_thumb` + `ArrowRight` | **phase 2 (this PR)** |
-| 8 | Edit code field | `CodeInput` | Python Function | `function_code` | ace code editor modal | deferred (frágil) |
-| 9 | Edit table input | `TableInput` | API Request | `headers` | table modal → cell | deferred |
-| 10 | Edit key-pair list | `NestedDictInput` | Alter Metadata | `metadata` | key/value row | deferred |
-| 11 | Edit input list | `SortableListInput` | Read File | `storage_location` | list item | deferred |
+| 8 | Edit code field | `CodeInput` | Python Function *(legacy)* | `function_code` | open `codearea_code_function_code` → set ACE value → `checkAndSaveBtn` | **phase 3 (this PR)** |
+| 9 | Edit table input | `TableInput` | API Request | `headers` *(advanced)* | show-or-reveal `div-table_headers` → settle (method→POST refresh) → Open table → `add-row-button` → fill key/value cells | **phase 3 (this PR)** |
+| 10 | Edit key-pair list | `NestedDictInput` | Alter Metadata *(legacy)* | `metadata` | `dict_nesteddict_metadata` → Edit Dictionary (text mode) → fill JSON → Save | **phase 3 (this PR)** |
+| 11 | Edit input list | `SortableListInput` | Read File | `storage_location` *(advanced)* | show-or-reveal the field → remove Local → `button_open_list_selection_…` → `list_item_aws` | deferred (build-divergent) |
 | 12 | Edit float field | `FloatInput` | Semantic Text Splitter | `breakpoint_threshold_amount` | fill `float_float_breakpoint_threshold_amount` | **phase 2 (this PR)** |
 
 > The checklist's *key-pair list* and *input list* correspond to the checklist-era
@@ -91,24 +103,33 @@ the panel's handling of that specific field type.
 - dropdown / tab: the selected string in `value`.
 - toggle: boolean `value` flipped from its default.
 - slider: numeric `value` within the field's range.
-- table: `value` is an array of row objects; the edited cell is asserted.
-- key-pair (NestedDict): `value` is an object; the edited key→value asserted.
-- input list (SortableList): `value` is a list; the edited item asserted.
+- code (`function_code`): scalar string `value` — the saved Python source, asserted to contain a unique sentinel. Save runs a Python syntax check, so the edited code must be valid.
+- table (`headers`): `value` is an array of `{key, value}` row objects; the edited row is found and asserted.
+- key-pair (NestedDict `metadata`): `value` is an object; the edited `{key: value}` pair is asserted.
+- input list (SortableList `storage_location`): `value` is a list of `{name, icon, …}` objects (`limit=1`); after switching from the default `Local` to `AWS`, `value[0].name === "AWS"` is asserted (the react-sortablejs `chosen`/`selected` keys are ignored).
 
 ---
 
 ## External dependencies
 
-- `tests/helpers/flows/create-flow.ts`, `delete-flow.ts`, `auth/get-auth-token.ts`.
-- Representative components (all core, non-bundle): API Request, Python Function,
-  Semantic Text Splitter, Alter Metadata, Read File, Language Model.
+- `tests/helpers/flows/create-flow.ts`, `delete-flow.ts`, `auth/get-auth-token.ts`,
+  `add-component-from-sidebar.ts`.
+- `tests/helpers/flows/add-legacy-components.ts` — phase 3's code and key-pair
+  tests add `legacy` components (Python Function, Alter Metadata), hidden from the
+  sidebar unless the **Legacy** feature toggle is on; this helper flips it.
+- Representative components (all core, non-bundle): API Request, Python Function
+  *(legacy)*, Semantic Text Splitter, Alter Metadata *(legacy)*, Read File,
+  Language Model.
 - **No model-provider credentials required** — no flow is executed; edits are
   read back via the flows API.
 
-Field testids confirmed live on `langflow-nightly 1.11.0.dev45` during authoring
+Field testids confirmed live on `langflow 1.11.0` during authoring — phase 1/2
 (`popover-anchor-input-url_input`, `dropdown_str_method`, `int_int_timeout`,
-`title-mode` + `tab_0_url`/`tab_1_curl`, `div-table_headers` + `icon-Table`, …);
-the remaining per-type testids are harvested in the PLAN/IMPLEMENT scout.
+`tab_1_curl`, `float_float_breakpoint_threshold_amount`, `slider_thumb`) and
+phase 3 (`codearea_code_function_code` + `checkAndSaveBtn`, `div-table_headers` +
+`add-row-button`, `dict_nesteddict_metadata`, `inspector-add-storage_location` +
+`button_open_list_selection_sortablelist_sortablelist_storage_location` +
+`list_item_aws`).
 
 ---
 
@@ -124,8 +145,12 @@ the remaining per-type testids are harvested in the PLAN/IMPLEMENT scout.
 - Field **validation** (rejecting out-of-range/invalid input) — this matrix
   asserts accepted edits persist, not the rejection path.
 - Executing the components — persistence is asserted via the flows API, not a run.
-- Advanced-field visibility toggling and connection handles — covered elsewhere
-  (§2.1 "open advanced", handle specs).
+- Advanced-field visibility toggling and connection handles as behaviors —
+  covered elsewhere (§2.1 "open advanced", handle specs). Phase 3's input-list
+  test reveals `storage_location` only as a setup step to reach the field; it
+  asserts the edited value, not the visibility toggle itself.
+- The Python syntax validation on code save — the code test uses valid code so
+  the save succeeds; the rejection path is not asserted here.
 
 ---
 
