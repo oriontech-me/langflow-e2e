@@ -52,8 +52,8 @@ and the per-wave convergence target.** Everything else is a pointer.
 
 - **RAG / knowledge ingestion** — full pipeline uncovered (0 validated of 8 bullets). *(Wave 2 target.)*
 - **Templates** — 41 bullets, 2 validated; the product showcase is almost untested.
-- **MCP** (client + server) — files exist but almost entirely `[-]` (unvalidated). *(Wave 3 target.)*
-- **Inherited `ui-ux` canvas specs** — ~36 `[-]` carried from upstream, never validated. *(Wave 3 target.)*
+- **MCP** (client + server) — files exist but almost entirely `[-]` (unvalidated). *(Wave 4 target.)*
+- **Inherited `ui-ux` canvas specs** — ~36 `[-]` carried from upstream, never validated. *(Wave 4 target.)*
 - **Component-configuration & flow-lifecycle** — large `[-]` backlogs awaiting `@stable`. *(Wave 2 target.)*
 - **Spec-doc debt** — ~100+ specs without a matching doc (worst in `flow-functionality` and `ui-ux`).
 
@@ -87,23 +87,24 @@ and the per-wave convergence target.** Everything else is a pointer.
 
 ## The full horizon — how many waves total?
 
-`QA-CHECKLIST.md` holds **186 non-validated bullets** (25 `[ ]` to create, 154 `[-]`
-to validate, 7 `[~]`/`[!]`). That backlog is the fuel for every wave. At 50–60 bullets
-per wave, the two remaining dated waves (2–3) absorb the ~116 bullets that are
-**decided and ready to schedule now**; the rest stay in the pool because they need a
-scoping pass before they can become concrete wave items.
+`QA-CHECKLIST.md` holds a backlog of non-validated bullets (`[ ]` to create, `[-]` to
+validate) that is the fuel for every coverage wave. Waves 1–2 are done. The near
+horizon is one **off-band stabilization wave** (Wave 3 — infra + a small pulled-forward
+test batch; not a coverage-band wave) followed by one remaining **dated coverage wave**
+(Wave 4 — canvas & MCP validation). *(Bullet totals below are directional `~` and
+refreshed at each review, not hand-maintained.)*
 
-| Source | Nature | Bullets | Dated? |
-|---|---|---|---|
-| **Dated waves 2–3** | Blend of net-new specs (`[ ]`→`[x]`) and validation promotions (`[-]`→`[x]`), by product axis | ~116 | ✅ Waves 2–3 |
-| **Pool — needs scoping** | Templates (§11, 39 bullets — depth per category undecided) + auth & project-management tail (~20) | ~59 | ⬜ pool |
-| **Continuous** | Spec-doc backfill (~100+ missing) — runs alongside, not a wave | — | ⬜ track |
+| Source | Nature | Dated? |
+|---|---|---|
+| **Wave 3** | Off-band stabilization: CI infra + a small safe/pulled-forward `[ ]`→`[x]` batch | ✅ Wave 3 (07-24) |
+| **Wave 4** | Validation-heavy: canvas `ui-ux` §15 + MCP §13–14 remainder (`[-]`→`[x]`) | ✅ Wave 4 (08-11) |
+| **Pool — needs scoping** | Templates (§11, 39 bullets — depth per category undecided) + auth & project-management tail (~20) | ⬜ pool |
+| **Continuous** | Spec-doc backfill (~100+ missing) — runs alongside, not a wave | ⬜ track |
 
-So the realistic horizon is **~2 more dated waves (~1 month)** to converge the
-schedulable backlog, then the pool tail (auth, project-management) and templates once
-a scoping session turns §11 into a concrete list. Wave 1 (agents & providers) is done;
-the remaining dated waves are validation-heavy (component, flow, canvas & MCP specs
-promoted to `@stable`).
+So the realistic horizon is **one stabilization wave then ~1 more dated coverage wave**
+(~1 month), then the pool tail (auth, project-management) and templates once a scoping
+session turns §11 into a concrete list. Wave 3 must land a clean baseline first —
+without it the Wave 4 promotions would land in a red daily.
 
 ---
 
@@ -126,12 +127,17 @@ promoted to `@stable`).
 | Wave | Axis (focus) | Bullets (planned) | Sources in `QA-CHECKLIST.md` | Coverage target | Delivery date |
 |---|---|---|---|---|---|
 | ~~**1**~~ ✅ | Agents & providers | ~53 | llm-agents §6.2–6.5 & §7.7 (26) + model-provider §7.1–7.6 (27) | ~61% | ✅ 2026-07-14 (**59%**) |
-| **2** ◀ current | Components, RAG, flows & observability | ~58 | core-components §2 (22) + knowledge-ingestion §5 (8) + flow-functionality §12 (15) + observability §8 (8) + playground §9 (5) | ~74% | 2026-07-17 |
-| **3** | Canvas UI/UX & MCP | ~58 | ui-ux §15 (42) + mcp §13–14 (16) | ~87% | 2026-08-11 |
+| ~~**2**~~ ✅ | Components, RAG, flows & observability | ~58 | core-components §2 (22) + knowledge-ingestion §5 (8) + flow-functionality §12 (15) + observability §8 (8) + playground §9 (5) | ~74% | ✅ 2026-07-17 |
+| **3** ◀ current | Infra stabilization & test coverage | off-band | infra (not a coverage axis) + new-test batch: §Pages, §3.8, §6.2–6.4, §9.1, §13–14 | n/a (stabilization) | 2026-07-24 |
+| **4** | Canvas UI/UX & MCP | ~46 | ui-ux §15 (42) + mcp §13–14 remainder | ~87% | 2026-08-11 |
 
 > Bullet counts and `%` are planned targets (`~`), not contracts — see **Cadence & review**.
 > Each wave mixes creation (`[ ]`→`[x]`) and validation (`[-]`→`[x]`): Wave 1 is
-> creation-heavy (agent backlog), Wave 3 is validation-heavy (inherited specs).
+> creation-heavy (agent backlog), Wave 4 is validation-heavy (inherited specs).
+> **Wave 3 is the exception** — an off-band *stabilization* wave (see its section):
+> a 5-day mass-failure/guard-trip streak on the daily blocked coverage work, so this
+> short wave spends on CI infra + a small safe-coverage batch, then Wave 4 resumes the
+> validation-heavy track once a clean baseline exists.
 
 ### ✅ Wave 1 — Agents & providers  ·  2026-06-30 → 2026-07-14 · **DONE**
 
@@ -144,28 +150,40 @@ promoted to `@stable`).
 > collect-models, OpenAI/Anthropic/Google configure/select/execute, provider modal &
 > keys) to `@stable`.
 
-### Wave 2 — Components, RAG, flows & observability  ·  2026-07-13 → 2026-07-17 ◀ **CURRENT**
+### ✅ Wave 2 — Components, RAG, flows & observability  ·  2026-07-13 → 2026-07-17 · **DONE**
 
-Bundles the component-configuration backlog with the highest product-value gap
-(RAG, 0% covered) plus the flow-lifecycle and observability tails.
+> Delivered 2026-07-17. GitHub milestone *Wave 2 — Components, RAG, flows & observability*
+> closed with **39** issues. Delivered the RAG/knowledge-ingestion creation backlog
+> (§5) and promoted the component-configuration (§2), flow-lifecycle (§12),
+> observability (§8) and playground (§9) surfaces to `@stable`. Final coverage per the
+> auto-generated Coverage Summary in `QA-CHECKLIST.md` (not hand-maintained here).
+
+### Wave 3 — Infra stabilization & test coverage  ·  2026-07-17 → 2026-07-24 ◀ **CURRENT**
+
+> **Off-band stabilization wave — the exception to the coverage-bullet model.** Infra
+> is not a coverage axis, so this wave does **not** target the 50–60 band. It was
+> coined because a 5-day mass-failure/guard-trip streak on the daily-stable run
+> (07-13→07-17: 12·27·15·6·34 hard failures, duration ~2×) left **no clean baseline** —
+> which blocks validation work and makes any new `@stable` spec land in a red daily.
+> Stabilize first, then Wave 4 resumes the validation-heavy track.
+
+Two tracks (16 issues, GitHub milestone *Wave 3 — Infra stabilization & test coverage*):
+- **Infra (evaluate & stabilize):** diagnose the 07-13 slowdown → isolate product-vs-infra (pinned pre-07-13 nightly) → evaluate runner sizing / parallelism → **achieve one clean non-guarded baseline** (the entry gate #773 waits on) + triage-dispatch hardening.
+- **New tests (QA-CHECKLIST):** the *safe* batch runs now — §Pages navigation, §3.8 If-Else operators + Loop, §9.1 playground-in-progress; the *flaky-area* batch (§6.2–6.4 agent behaviors, §13–14 MCP resources/server) is **authored but promoted to `@stable` only after the clean baseline**, since those areas are the current flaky cluster (#773) / broken MCP surface (#809/#643).
+
+Convergence: not a target this wave (stabilization). The `[ ]`→`[x]` bullets it does land are pulled forward from Wave 4's MCP §13–14 and the §Pages/agent gaps.
+Exit: a clean non-guarded daily exists; the safe new-test batch is validated; the gated batch is authored and ready to promote.
+Review (2026-07-24): reassess; confirm the baseline holds; hand the gated specs to Wave 4.
+
+### Wave 4 — Canvas UI/UX & MCP  ·  2026-07-28 → 2026-08-11
+
+Validation-heavy: the ~36 inherited `ui-ux` canvas specs already have code — this wave
+promotes them to `@stable`. The MCP §13–14 items and the few named `[ ]` gaps that
+Wave 3 pulled forward are excluded here (tracked in Wave 3); this wave finishes any
+MCP remainder plus the canvas surface.
 
 Requires:
-- **Create**: `knowledge-ingestion-management/` §5.1–5.2 — upload via component; file types (txt, pdf, json, py, wav); size limit; file management page; ingestion via Split Text + Embeddings; Vector Store index + query; full RAG pipeline (ingest → embed → store → retrieve → answer).
-- **Validate** (`[-]` → `@stable`): `core-components/` §2.1–2.4 — Parameters Panel field-type matrix (text, dropdown, textarea, code, float, int, toggle, key-pair, input list, table, slider, tab), Tool Mode grouping + edit-tools, component-update notification/action, full custom component; `flow-functionality/` §12 — create blank/from-template/import, edit name & description, auto-save, settings, lock/unlock, move-between-folders, save-as-template; `observability-monitoring/` §8.2–8.4 — execution-error & outdated notifications, user-state tracking, Python-error/network-error/timeout handling; `playground/` §9 — streaming/polling/direct-response paths.
-
-Convergence: ~59% → **~74%**
-Exit: a RAG flow is validated end-to-end; the component-configuration, flow-lifecycle and observability surfaces are promoted.
-Review (2026-07-17): reassess delivered vs. target; promote the next pool item into a dated wave.
-
-### Wave 3 — Canvas UI/UX & MCP  ·  2026-07-28 → 2026-08-11
-
-Validation-heavy: the ~36 inherited `ui-ux` canvas specs and the 8 existing MCP
-specs already have code — this wave promotes them to `@stable` and fills the few
-named `[ ]` gaps.
-
-Requires:
-- **Validate** (`[-]` → `@stable`): `ui-ux/` §15.1–15.10 — component sidebar (search, tooltip, filter), add-to-canvas, connections (compatible/incompatible, delete, reconnect), node manipulation (move, minimize, box-select, deselect), zoom & navigation, grouping, freeze/state, sticky notes, right-click menus, settings/shortcuts; `mcp/` §13–14 — client (configure stdio/HTTP, list tools, execute, error handling, agent-uses-MCP) and server (tab, add via modal, starter project).
-- **Create** (`[ ]`): MCP resources — list/consume resource URI; server-exposed resource & prompt via URI/template.
+- **Validate** (`[-]` → `@stable`): `ui-ux/` §15.1–15.10 — component sidebar (search, tooltip, filter), add-to-canvas, connections (compatible/incompatible, delete, reconnect), node manipulation (move, minimize, box-select, deselect), zoom & navigation, grouping, freeze/state, sticky notes, right-click menus, settings/shortcuts; `mcp/` §13–14 remainder — client (configure stdio/HTTP, list tools, execute, error handling, agent-uses-MCP) and server (tab, add via modal, starter project) not already promoted in Wave 3.
 
 Convergence: ~74% → **~87%**
 Exit: the inherited canvas surface and MCP client/server are validated under `@stable`.
