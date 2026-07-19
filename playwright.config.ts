@@ -12,7 +12,10 @@ const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:7860";
 
 export default defineConfig({
   testDir: "./tests",
-  fullyParallel: true,
+  // File-level sharding for the daily's sharded run keeps every test() of a spec
+  // file in one shard (so @database state-sharing holds). The sharded job sets
+  // PW_SHARD_FILE_LEVEL=1; local dev / nightly / manual keep test-level parallelism.
+  fullyParallel: process.env.PW_SHARD_FILE_LEVEL ? false : true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 3,
   workers: process.env.CI ? 2 : undefined,
