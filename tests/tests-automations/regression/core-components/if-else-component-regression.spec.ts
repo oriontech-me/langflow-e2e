@@ -2,31 +2,12 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
 import {
   closeAdvancedOptions,
   openAdvancedOptions,
 } from "../../../helpers/ui/open-advanced-options";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
-
-// Expand the currently focused node from minimized to full view. Chat Output
-// defaults to `minimized = True` (see lfx/components/input_output/chat_output.py);
-// without expanding, the run button and the `shownode` input handle rendered on
-// the node body are not present in the DOM. Idempotent: if the node is already
-// expanded (no `hide-node-content` in the DOM) the helper is a no-op.
-async function expandFocusedNode(page: Page): Promise<void> {
-  if ((await page.getByTestId("hide-node-content").count()) === 0) return;
-  await page.getByTestId("more-options-modal").click();
-  await expect(page.getByTestId("expand-button-modal")).toBeVisible({
-    timeout: 10000,
-  });
-  await page.getByTestId("expand-button-modal").click();
-  // Settle: confirm the node finished expanding before callers interact with the
-  // freshly-mounted body (rename inspector, `shownode` handles) — guards against
-  // a mid-transition return flaking under CI parallelism.
-  await expect(page.getByTestId("hide-node-content")).toHaveCount(0, {
-    timeout: 5000,
-  });
-}
 
 async function selectOperator(
   page: Page,
@@ -49,8 +30,10 @@ async function selectOperator(
 }
 
 async function exposeCaseSensitive(page: Page): Promise<void> {
+  // In the dev46 inspector panel the per-field "add to node" toggle is
+  // `inspector-add-<field>` (was `show<field>` — here `showcase_sensitive`).
   await openAdvancedOptions(page);
-  await page.getByTestId("showcase_sensitive").click();
+  await page.getByTestId("inspector-add-case_sensitive").click();
   await closeAdvancedOptions(page);
 }
 
@@ -123,18 +106,15 @@ async function buildIfElseRoutingFlow(page: Page): Promise<void> {
   await page.getByTestId("title-Chat Output").last().click();
   await expandFocusedNode(page);
 
-  // Rename the second Chat Output to `chatoutputfalse`
+  // Rename the second Chat Output to `chatoutputfalse`. The node-title edit flow
+  // was restructured in the nightly (~dev46): the `panel-description` hover
+  // wrapper is gone; the edit/save controls gained a `node-` prefix and the
+  // title field is now a dynamic `input-title-<currentName>` (still "Chat Output"
+  // here, since the fill hasn't landed when the testid is resolved).
   await page.getByTestId("generic-node-title-arrangement").last().click();
-  await page.getByTestId("panel-description").hover();
-  await page
-    .getByTestId("panel-description")
-    .getByTestId("edit-name-description-button")
-    .click();
-  await page.getByTestId("inspection-panel-name").fill("chatoutputfalse");
-  await page
-    .getByTestId("panel-description")
-    .getByTestId("save-name-description-button")
-    .click();
+  await page.getByTestId("node-edit-name-description-button").click();
+  await page.getByTestId("input-title-Chat Output").fill("chatoutputfalse");
+  await page.getByTestId("node-save-name-description-button").click();
 
   // Connect True → first Chat Output
   await page
@@ -301,18 +281,25 @@ test(
       await page.getByTestId("title-If-Else").click();
 
       await openAdvancedOptions(page);
-      await expect(page.getByTestId("showcase_sensitive")).toHaveCount(1);
+      // In the inspector panel each input is a `inspector-param-<field>` row;
+      // its presence is the modern signal that the field exists in the build
+      // config (was the `showcase_sensitive` show-toggle count).
+      await expect(
+        page.getByTestId("inspector-param-case_sensitive"),
+      ).toHaveCount(1);
       await closeAdvancedOptions(page);
     });
 
     await test.step("Switch to regex and assert case_sensitive toggle disappears", async () => {
       // After switching to regex, `update_build_config` removes case_sensitive
-      // from the build config — the toggle should disappear.
+      // from the build config — the inspector row should disappear.
       await selectOperator(page, "regex");
 
       await page.getByTestId("title-If-Else").click();
       await openAdvancedOptions(page);
-      await expect(page.getByTestId("showcase_sensitive")).toHaveCount(0);
+      await expect(
+        page.getByTestId("inspector-param-case_sensitive"),
+      ).toHaveCount(0);
       await closeAdvancedOptions(page);
     });
   },
