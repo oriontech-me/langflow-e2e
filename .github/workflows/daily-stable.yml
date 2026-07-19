@@ -44,7 +44,7 @@ jobs:
         id: mk
         shell: bash
         run: |
-          N="${{ github.event.inputs.shards || '4' }}"
+          N="${{ inputs.shards || '4' }}"
           case "$N" in ''|*[!0-9]*) N=4 ;; esac      # non-numeric → default 4
           if [ "$N" -lt 1 ]; then N=4; fi
           LIST="$(seq -s, 1 "$N")"                    # 1,2,3,4
@@ -372,8 +372,8 @@ jobs:
           path: playwright-report/index.html
           retention-days: 90
 
-      # Raw Playwright JSON report (the --reporter=json output already produced
-      # by the "Run @stable tests" step above). Uploaded UNMODIFIED — no
+      # Raw Playwright JSON report (the --reporter=json output produced by the
+      # "Merge blob reports" step above). Uploaded UNMODIFIED — no
       # transform, no enrichment — as the machine-readable source of truth for
       # downstream per-test import/analysis: each test's status, duration,
       # retries (results[]), error, annotations and projectName plus the run's

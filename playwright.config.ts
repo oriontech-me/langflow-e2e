@@ -18,7 +18,11 @@ export default defineConfig({
   fullyParallel: process.env.PW_SHARD_FILE_LEVEL ? false : true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 3,
-  workers: process.env.CI ? 2 : undefined,
+  // One worker per shard when sharding: each shard has its OWN dedicated langflow,
+  // so a second worker would just reintroduce the 2-workers→1-backend contention
+  // #817 diagnosed. Parallelism comes from the shard count, not the worker count.
+  // Non-sharded CI keeps 2 workers; local dev stays auto.
+  workers: process.env.PW_SHARD_FILE_LEVEL ? 1 : process.env.CI ? 2 : undefined,
   timeout: 5 * 60 * 1000, // 5 minutes per test
   reporter: process.env.CI ? "blob" : "html",
 
