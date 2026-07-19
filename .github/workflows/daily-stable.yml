@@ -303,3 +303,230 @@ jobs:
           path: blob-report/
           retention-days: 7
           if-no-files-found: error
+
+  merge:
+    name: Merge shard reports & report
+    needs: [prep, test]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      issues: write
+      contents: write
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Download all shard blobs
+        uses: actions/download-artifact@v7
+        with:
+          pattern: blob-*
+          path: all-blobs
+
+      - name: Guard — every expected shard produced a blob
+        shell: bash
+        run: |
+          EXPECTED="${{ needs.prep.outputs.shard_total }}"
+          FOUND="$(find all-blobs -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+          echo "Expected $EXPECTED shard blobs, found $FOUND."
+          if [ "$FOUND" -lt "$EXPECTED" ]; then
+            echo "::warning::Only $FOUND/$EXPECTED shard blobs present — the merged report is INCOMPLETE (a shard died before producing a blob). Failures may be under-counted."
+          fi
+
+      - name: Merge blob reports
+        run: npx playwright merge-reports --reporter=html,github,json ./all-blobs > /dev/null
+        env:
+          PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
+          PLAYWRIGHT_HTML_REPORT: playwright-report
+
+      - name: Upload Playwright report (full, heavy)
+        id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-daily-${{ github.run_id }}
+          path: playwright-report/
+          retention-days: 7
+
+      # Lightweight, self-contained report: index.html embeds the whole test tree,
+      # statuses, errors and steps inline (playwrightReportBase64), so it opens
+      # standalone without the heavy data/ + trace/ attachments (~1.5 MB vs ~380 MB).
+      # This is the artifact linked from the QA Platform (one-click, small download),
+      # and it gets the longest retention GitHub allows (90 days) since it's small.
+      - name: Upload report index (lightweight, long-lived)
+        id: upload_index                      # ← artifact-url fed to the QA Platform payload below
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-report-index-daily-${{ github.run_id }}
+          path: playwright-report/index.html
+          retention-days: 90
+
+      # Raw Playwright JSON report (the --reporter=json output already produced
+      # by the "Run @stable tests" step above). Uploaded UNMODIFIED — no
+      # transform, no enrichment — as the machine-readable source of truth for
+      # downstream per-test import/analysis: each test's status, duration,
+      # retries (results[]), error, annotations and projectName plus the run's
+      # stats.startTime. 90-day retention (matching the lightweight index) so a
+      # late/backfill import can still reach it long after the run; the JSON is
+      # small, so the long window costs ~nothing.
+      - name: Upload Playwright JSON report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: playwright-json-daily-${{ github.run_id }}
+          path: results.json
+          retention-days: 90
+
+      # ── Record in the QA Platform DB: EVERY run (scheduled + manual dispatch).
+      # Not gated on `schedule`, so manual runs are recorded too. Coverage is
+      # best-effort; the POST is warning-only so a platform outage never fails
+      # the suite / artifact / issue. ──
+      - name: Compute coverage counts
+        if: always()
+        id: cov
+        continue-on-error: true
+        run: |
+          echo "stable=$(npx ts-node scripts/stable-tests.ts --count)" >> "$GITHUB_OUTPUT"
+          echo "total=$(grep -rE '^\s*test\s*\(' tests/tests-automations/regression --include='*.spec.ts' | wc -l | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - name: Build run payload
+        if: always()
+        env:
+          PLAYWRIGHT_JSON: results.json
+          WORKFLOW: ${{ github.event_name == 'schedule' && 'daily-stable' || 'daily-stable-manual' }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+          LANGFLOW_VERSION: ${{ needs.test.outputs.langflow_version }}
+          STABLE_COUNT: ${{ steps.cov.outputs.stable }}
+          TOTAL_COUNT:  ${{ steps.cov.outputs.total }}
+          # Point the QA Platform at the lightweight index (one-click, small
+          # download), not the heavy full report — and match its 90-day retention.
+          EVIDENCE_URL: ${{ steps.upload_index.outputs.artifact-url }}
+        run: |
+          export EVIDENCE_EXPIRES_AT="$(date -u -d '+90 days' +%Y-%m-%dT%H:%M:%SZ)"
+          node scripts/build-run-payload.mjs > payload.json
+          echo "Payload:"; cat payload.json
+
+      - name: POST run to QA Platform
+        if: always()
+        continue-on-error: true            # a platform failure must NOT bring down the suite / artifact / issue
+        env:
+          QA_PLATFORM_ENDPOINT: ${{ vars.QA_PLATFORM_ENDPOINT }}
+          QA_E2E_AUTOMATION_TOKEN: ${{ secrets.QA_E2E_AUTOMATION_TOKEN }}
+        run: |
+          if [ -z "$QA_PLATFORM_ENDPOINT" ] || [ -z "$QA_E2E_AUTOMATION_TOKEN" ]; then
+            echo "::warning::QA platform endpoint/token not configured — skipping POST."; exit 0; fi
+          code=$(curl -s -o /tmp/resp.json -w '%{http_code}' -X POST "$QA_PLATFORM_ENDPOINT" \
+            -H "Authorization: Bearer $QA_E2E_AUTOMATION_TOKEN" -H "Content-Type: application/json" \
+            --data @payload.json)
+          echo "HTTP $code"; cat /tmp/resp.json || true
+          case "$code" in 200|201) echo "Recorded.";; *) echo "::warning::QA platform POST failed ($code)";; esac
+
+      # Long-lived run history: append one JSON line per scheduled run to
+      # reports/daily-history.jsonl and commit it back to main. See
+      # reports/README.md for schema and queries. Runs even on failure so
+      # recurring breakage is recorded, not just clean runs.
+      # Gated on `schedule` only — manual dispatches (workflow_dispatch) do not
+      # write to the history file, to keep the series predictable for
+      # longitudinal analysis (one entry per scheduled run, same trigger, same cadence).
+      - name: Append daily history
+        if: always() && github.event_name == 'schedule'
+        # Reuses the shared appender unchanged; the HISTORY_FILE / WORKFLOW env
+        # overrides point it at the daily series, so weekly-stable.yml's script
+        # and history file stay untouched.
+        run: node scripts/append-weekly-history.mjs
+        env:
+          PLAYWRIGHT_JSON: results.json
+          HISTORY_FILE: reports/daily-history.jsonl
+          WORKFLOW: daily-stable
+          LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+
+      - name: Commit daily history
+        if: always() && github.event_name == 'schedule'
+        run: |
+          # The job runs inside the Playwright container as root, while the
+          # workspace is owned by the host runner uid. git 2.43 then refuses to
+          # operate on the repo ("dubious ownership"). actions/checkout works
+          # around this by writing safe.directory to a git global config under a
+          # temporary HOME, which is gone by the time this step runs — so we
+          # re-declare it here, or git reports "fatal: not in a git directory"
+          # and the commit/push back to main never happens (see issue #385).
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          if git diff --quiet reports/daily-history.jsonl 2>/dev/null; then
+            echo "No history change to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reports/daily-history.jsonl
+          git commit -m "chore(history): record daily run ${{ github.run_id }} [skip ci]"
+          git push
+
+      # Auto-remove @stable from hard-failing tests and commit it back to main
+      # (leadership decision — no human review; restoring the tag is manual). The
+      # mass-failure guard inside the action leaves everything untouched when too
+      # many tests fail at once (infra, not per-test rot). Scheduled runs only —
+      # a manual dispatch must never mutate the test source.
+      - name: Auto-remove @stable from hard failures
+        id: auto_remove
+        if: needs.test.result == 'failure' && github.event_name == 'schedule'
+        uses: ./.github/actions/auto-remove-stable
+        with:
+          playwright_json: results.json
+          max_auto_remove: "5"
+          run_label: "daily #${{ github.run_id }}"
+
+      # Open the umbrella triage issue on failure — scheduled runs ONLY, aligned
+      # with the history / auto-remove steps above. A manual dispatch is itself a
+      # triage/experiment run: if it surfaces something real we open a specific
+      # issue by hand following the triage rule (a hard failure, or a flaky that
+      # recurs 2+ times), so an auto-umbrella on manual runs would just be noise.
+      - name: Create issue on failure
+        if: needs.test.result == 'failure' && github.event_name == 'schedule'
+        uses: actions/github-script@v9
+        env:
+          IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+          # Set by the (schedule-only) auto-remove step above; empty only if that
+          # step errored or its mass-failure guard left everything untouched.
+          AUTO_REMOVE_STATUS: ${{ steps.auto_remove.outputs.status }}
+          AUTO_REMOVE_SUMMARY: ${{ steps.auto_remove.outputs.summary_md }}
+        with:
+          script: |
+            const today = new Date().toISOString().split('T')[0];
+            const image = process.env.IMAGE;
+            const arStatus = process.env.AUTO_REMOVE_STATUS || '';
+            const arSummary = process.env.AUTO_REMOVE_SUMMARY || '';
+            // The auto-remove step above normally already acted; show what it
+            // did. If it produced no status (it errored, or its mass-failure
+            // guard left everything untouched), fall back to manual triage.
+            const section = arStatus
+              ? ['### `@stable` auto-removal', '', arSummary]
+              : [
+                  '### Next steps',
+                  '1. Open the Playwright report in the artifact from the run above',
+                  '2. Determine if the failure is a test bug or a Langflow regression',
+                  '3. If the test is incorrect or outdated: remove the `@stable` tag from the test and open a fix PR',
+                  '4. If it is a Langflow regression: flag it to the team and monitor upstream',
+                ];
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `[Daily Failure] @stable tests failed on ${today} (${image})`,
+              body: [
+                '## Daily @stable E2E Failure',
+                '',
+                `- **Date:** ${today}`,
+                `- **Langflow version:** \`${image}\``,
+                `- **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
+                '',
+                ...section,
+                '',
+                '/cc @Victor-w-Madeira @daniellicnerski1 @rafaelgiln',
+              ].join('\n'),
+              labels: ['daily-failure', 'needs-triage'],
+            });
