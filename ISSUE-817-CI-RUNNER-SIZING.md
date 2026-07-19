@@ -10,31 +10,37 @@ regression.* Acting (changing the runner / sharding) is a separate follow-up.
 
 ## TL;DR
 
-The daily `@stable` suite runs on a **standard `ubuntu-latest` runner (2 vCPU / 7 GB)**
-with **`workers=2`**, sharing that single 2-core VM with the `langflow` backend, a
-CPU-inference `ollama`, and `go-httpbin`. That is heavy CPU oversubscription. The run
-history shows failures are **timeout-dominated** and their volume **scales with run
-duration / suite load** — the signature of CPU contention, not (mostly) product bugs.
+> **The issue's premise is outdated, and a direct measurement disproves the CPU-contention
+> theory.** The daily does **not** run on a 2 vCPU / 7 GB VM — GitHub has upgraded the free
+> public-repo standard `ubuntu-latest` to **4 vCPU / 16 GB**. A resource sampler run
+> (§3, run [29658914382]) shows the VM is **not resource-starved**: load1 mean 2.80 / max
+> 5.42 on 4 cores, memory peak 47 %. Crucially, **the timeout failures do not correlate
+> with CPU saturation** — during the 107 failing test-results the load averaged 2.57/4
+> and only 16 of them were anywhere near saturation. So raw VM CPU/mem is **not** the root
+> cause.
 
-**Recommendation:**
-1. **Durable, cost-free fix — shard the `@stable` suite across N standard runners**
-   (each shard with its own dedicated `langflow`/`ollama`/`go-httpbin` stack). Standard
-   Linux runners are **free and unlimited on this public repo**; larger runners are
-   **paid even on public repos**. Sharding both removes per-worker backend contention
-   *and* keeps pace with suite growth. It needs real workflow rework (blob-report merge
-   + aggregation of history/auto-remove/QA-POST across shards) → **track as its own Wave
-   implementation issue.**
-2. **Immediate stopgap (optional, paid) — bump `runs-on` to a 4-core larger runner.**
-   One-line change, instant relief, keeps the single-`langflow` semantics that
-   state-sharing `@database` tests depend on. Billed per-minute; only worth it if relief
-   is needed before sharding lands.
-3. **Reject** raising timeouts or dropping to `workers=1` as the primary lever — the
-   first masks the root cause (repo rule: never add waits to go green), the second
-   roughly doubles wall-clock (already up to 67 min against a 90 min job timeout).
+The real bottleneck is the **single shared `langflow` backend**: `workers=2` sends two
+concurrent streams of requests to one Python backend, which serializes on graph
+execution / model calls. The browser then waits past the 20 s `actionTimeout` even though
+the VM has spare cores — which is exactly why the failures are timeout-dominated yet
+uncorrelated with VM load. A share of the 34 hard failures is also genuine nightly
+product slowness/regressions, not infra at all.
 
-The one gap: this analysis proves contention from **indirect** evidence (the run
-history). A **direct** CPU/mem measurement (Done-when #1) requires instrumenting the
-workflow and triggering one real run — proposed in §4, not yet executed.
+**Recommendation (revised after measurement):**
+1. **Cheapest lever first — raise the `langflow` *service's* own backend concurrency.**
+   If the service container runs a single backend worker, every request from both
+   Playwright workers serializes through it. Investigate the langflow worker/thread
+   setting and bump it. No matrix rework, no cost — targets the actual bottleneck.
+2. **If insufficient — shard the `@stable` suite across N standard runners**, each with
+   its **own dedicated `langflow`** stack. Standard runners are **free/unlimited on this
+   public repo**. Its value here is *one backend per shard* (kills the serialization),
+   not more CPU. Needs blob-merge + downstream-aggregation rework → own Wave impl issue
+   (#833).
+3. **Reject the "larger runner" option** — the runner is **already 4-core**, memory is at
+   47 %, and failures don't track CPU saturation, so more cores/RAM won't help.
+4. **Reject** raising timeouts / dropping to `workers=1` as the primary lever (masks the
+   root cause / doubles wall-clock).
+5. Keep triaging genuine product-finding failures separately (§2.3).
 
 ---
 
@@ -44,7 +50,7 @@ Source: `.github/workflows/daily-stable.yml`, `playwright.config.ts`.
 
 | Dimension | Value | Source |
 |---|---|---|
-| Runner | `ubuntu-latest` — standard hosted Linux, **2 vCPU / 7 GB / 14 GB SSD** | `daily-stable.yml:34` |
+| Runner | `ubuntu-latest` — **actually 4 vCPU / 16 GB** (measured `nproc`=4, mem total 15988 MB; GitHub upgraded the free public-repo standard runner. The issue's "2 vCPU / 7 GB" premise is outdated.) | `daily-stable.yml:34` + §3 |
 | Test container | `mcr.microsoft.com/playwright:v1.58.2-noble` | `daily-stable.yml:43` |
 | Workers | **2** in CI (`process.env.CI ? 2 : undefined`) | `playwright.config.ts:18` |
 | Per-test timeout | 5 min; `actionTimeout` 20 s | `playwright.config.ts:19,28` |
@@ -52,19 +58,15 @@ Source: `.github/workflows/daily-stable.yml`, `playwright.config.ts`.
 | Co-tenant services | `langflow` (single instance), `ollama` (llama3.2:1b, CPU inference), `go-httpbin` | `daily-stable.yml:45-128` |
 | `@stable` tests | **353** (`scripts/stable-tests.ts --count`) | live |
 
-**The core problem — CPU oversubscription on 2 vCPUs.** A single run concurrently loads:
-
-- 2 Playwright **worker processes** (Node) + 2 **Chromium** browsers (each browser is
-  several processes),
-- **1 shared `langflow`** backend (Python/uvicorn) serving *both* workers' requests —
-  graph execution, model calls, DB writes,
-- **`ollama`** running `llama3.2:1b` **inference on CPU** (pegs a core whenever an
-  agent/model spec fires),
-- **`go-httpbin`**.
-
-That is ~6–8 CPU-hungry processes contending for **2 cores**. When `ollama` infers or
-`langflow` executes a heavy graph, the browser's event loop starves; UI actions miss the
-20 s `actionTimeout` and `waitForSelector` windows → timeout failures.
+**The core problem — a single shared `langflow` backend, NOT VM CPU.** A run concurrently
+loads 2 Playwright workers + 2 Chromium browsers, **1 shared `langflow`** backend serving
+*both* workers, `ollama` (CPU inference), and `go-httpbin`. The original theory was that
+these oversubscribe the CPU. **The §3 measurement refutes that** — on 4 cores the VM runs
+at ~70 % mean load with spare headroom, and the timeout failures do not line up with the
+load peaks. The real serialization point is the **single `langflow` backend**: two workers
+issue concurrent graph-execution / model-call requests to one Python process, which
+handles them serially, so a worker's UI action can wait past the 20 s `actionTimeout`
+while the CPU sits idle. That is the timeout-dominated-yet-uncorrelated pattern §2/§3 show.
 
 ---
 
@@ -121,65 +123,81 @@ of the failures is contention/transient, not a standing product regression.
 
 Not every timeout is contention: some entries are genuine product findings (MCP 4xx
 mismatches, provider-probe failures, "agent answered without invoking any tool"). Those
-must keep failing and be triaged on their own dedicated issues — they are **not** what a
-bigger runner fixes. The recommendation targets the ~60% contention-shaped bucket only.
+must keep failing and be triaged on their own dedicated issues — they are **not** what an
+infra fix addresses. The recommendation targets the ~60% timeout/serialization bucket only.
 
 ---
 
-## 3. What is NOT yet measured (Done-when #1, direct numbers)
+## 3. Direct measurement (Done-when #1, DONE)
 
-The history gives **indirect** evidence. It does **not** contain per-run CPU/mem
-samples, so we cannot yet state "langflow used X% CPU while a worker timed out." §4
-proposes the instrumentation to capture that directly.
+A temporary resource sampler (loadavg + mem at ~1 Hz → CSV artifact) was added to
+`daily-stable.yml` and a manual `workflow_dispatch` run executed against
+`langflowai/langflow-nightly:latest`: **run 29658914382** (2026-07-18, 55 min, 324
+expected / **34 unexpected** / 7 flaky / 46 skipped — a normal heavy day). 3312 samples.
 
----
+### 3.1 The VM is NOT resource-starved
 
-## 4. Proposed instrumentation to close Done-when #1 (direct CPU/mem)
+| Metric | Value (4 cores / 16 GB) | Reading |
+|---|---|---|
+| `nproc` | **4** | runner is 4-core, not 2 |
+| load1 mean | **2.80** | ~70 % of 4 cores |
+| load1 max | **5.42** | brief 135 % bursts |
+| samples load1 > 4 (saturated) | **16 %** | saturation is the exception |
+| samples load1 > 6 | **0 %** | never severely pegged |
+| memory peak | **7.5 GB / 16 GB (47 %)** | never a constraint |
 
-Add a **background resource sampler** step to the daily (or a manual dispatch), writing
-a CSV artifact, then correlate spikes against the failure timestamps in `results.json`.
-Sketch (no product/test change; artifact-only):
+### 3.2 Failures do NOT correlate with CPU saturation
 
-```yaml
-# Before "Run @stable tests": start a detached sampler.
-- name: Start resource sampler
-  shell: bash
-  run: |
-    ( while true; do
-        echo "$(date -u +%FT%TZ),$(cat /proc/loadavg | cut -d' ' -f1-3 | tr ' ' ';'),\
-$(free -m | awk '/Mem:/{print $3"/"$2}')"
-      done ) >/tmp/resource-samples.csv 2>&1 &   # ~1 Hz loadavg + mem
-    disown
-# After the test step: upload /tmp/resource-samples.csv as an artifact.
-```
+Correlating the 107 failing test-*results'* `startTime`+`duration` windows against the
+sampler:
 
-Load average > number of cores (2) sustained during the test window = CPU saturation.
-This is cheap (a few KB) and fail-soft. **Cost: one manual `workflow_dispatch` run
-(~60 min of runner time).** Only run it if the team wants the direct number before
-acting — the indirect evidence in §2 is already conclusive for the *direction*.
+| Metric during failing tests | Value | vs overall |
+|---|---|---|
+| load1 mean while failing | **2.57** | ≈ overall 2.80 — no elevation |
+| failing-window samples > 4 cores | **12 %** | ≈ overall 16 % |
+| failures with any peak > 4 cores | **16 / 107** | most failed at normal load |
+
+If CPU contention drove the timeouts, the failing windows would sit at saturation. They
+don't — they sit at the *same* load as the passing ones. **Conclusion: raw VM CPU/mem is
+not the cause.** The single shared `langflow` backend (serialization) + genuine nightly
+product slowness explain the timeout-dominated failures, consistent with §1 and §2.3.
+
+*(The sampler step is temporary instrumentation — see PR #832; remove after the decision.)*
 
 ---
 
 ## 5. Options & trade-offs
 
-### Option A — Larger runner (4+ vCPU)
+### Option 0 — Raise the `langflow` service's own backend concurrency (NEW, cheapest)
 
-Change `runs-on: ubuntu-latest` → a 4-core larger runner (single line).
+The §3 data points at the shared backend, not the VM. If the `langflow` service container
+runs a single backend worker, both Playwright workers' requests serialize through it.
+Investigate the langflow worker/thread setting (e.g. a `LANGFLOW_WORKERS`-style env or the
+container's uvicorn/gunicorn worker count) and raise it — the 4-core / 47 %-mem headroom
+measured in §3 can absorb it.
 
 | | |
 |---|---|
-| ✅ Pro | Trivial one-line change; instant 2× CPU headroom; directly relieves oversubscription; **keeps the single shared `langflow`**, so `@database`/state-sharing tests are unaffected; no aggregation rework. |
-| ❌ Con | **Paid per-minute even on a public repo** (standard 2-core is the only free tier). Doesn't stop the growth curve — at ~4× the current suite it will contend again. A stopgap, not a ceiling. |
+| ✅ Pro | **Free, no matrix rework, no test change**; targets the actual serialization point; keeps one runner + one report (all downstream steps untouched). |
+| ❌ Con | Needs verification that the nightly image exposes a worker knob and that concurrent requests are safe against the single SQLite DB (WAL is on). Must be proven with a repeat sampler + failure-count run, not assumed. |
+
+### Option A — Larger runner — **REJECTED by §3**
+
+Was: bump `runs-on` to a bigger runner for more CPU.
+
+| | |
+|---|---|
+| ❌ Reject | The runner is **already 4-core / 16 GB**, memory peaks at 47 %, and failures do **not** correlate with CPU saturation (§3.2). More cores/RAM would not move the timeout rate — and larger runners are **paid** even on this public repo. No reason to pursue. |
 
 ### Option B — Shard the `@stable` suite across N standard runners
 
 Matrix of N jobs (`--shard=i/N`), each on a standard `ubuntu-latest` with its **own**
-`langflow`/`ollama`/`go-httpbin` services; merge the N blob reports at the end.
+`langflow`/`ollama`/`go-httpbin` services; merge the N blob reports at the end. (#833)
 
 | | |
 |---|---|
-| ✅ Pro | **Free** — standard runners are unlimited on this public repo; wall-clock drops ~N×; each shard gets a **dedicated `langflow`** (kills cross-worker backend contention, the actual root cause); scales with suite growth by raising N. |
-| ❌ Con | Real engineering: (1) merge N blob reports into one `results.json` before the downstream steps; (2) the **auto-remove-`@stable`**, **history append**, **QA-Platform POST**, and **failure-issue** steps all assume a single `results.json` → must run post-merge; (3) N× langflow boots (~90 s each) + N service stacks; (4) `@database` state-sharing tests must stay **within one shard** (shard by file with affinity, never split a dependent pair). → Deserves its own Wave implementation issue. |
+| ✅ Pro | **Free** — standard runners are unlimited on this public repo; wall-clock drops ~N×; each shard gets a **dedicated `langflow`** (removes the single-backend serialization, the actual root cause per §1/§3); scales with suite growth by raising N. |
+| ❌ Con | Real engineering: (1) merge N blob reports into one `results.json` before the downstream steps; (2) the **auto-remove-`@stable`**, **history append**, **QA-Platform POST**, and **failure-issue** steps all assume a single `results.json` → must run post-merge; (3) N× langflow boots (~90 s each) + N service stacks; (4) `@database` state-sharing tests must stay **within one shard** (shard by file with affinity, never split a dependent pair). → Own Wave implementation issue (#833). |
 
 ### Option C — Reduce per-instance load
 
@@ -203,17 +221,23 @@ Matrix of N jobs (`--shard=i/N`), each on a standard `ubuntu-latest` with its **
 
 ## 6. Recommendation
 
-1. **Adopt sharding (Option B) as the durable fix** — it is the only option that is both
-   *free on this public repo* and *removes the real root cause* (one `langflow` serving
-   two contending workers). Open a dedicated Wave implementation issue covering the
-   blob-merge + downstream-aggregation rework and the `@database` shard-affinity rule.
-2. **If relief is needed before B lands, apply Option A (4-core) as a paid stopgap** —
-   one line, reversible, keeps single-`langflow` semantics. Decommission once B is live.
-3. **Do not** raise timeouts or drop to `workers=1` as the primary lever.
-4. **Optionally run the §4 sampler once** (manual dispatch) to attach direct CPU/mem
-   numbers to this issue before committing budget to A.
-5. Keep triaging the genuine-product-finding failures (§2.3) on their own issues — they
-   are out of scope for runner sizing.
+Direct measurement (§3) reframed the whole issue: the runner is **already 4-core / 16 GB
+and not resource-starved**, and the timeout failures **do not correlate with CPU load**.
+The bottleneck is the **single shared `langflow` backend**, not runner sizing.
 
-**This issue delivers the diagnosis + recommendation only. No workflow file is changed
-here.**
+1. **Try Option 0 first — raise the `langflow` service backend concurrency.** Cheapest,
+   free, no rework; targets the serialization point directly. Verify with a repeat
+   sampler + failure-count run.
+2. **If Option 0 is insufficient, implement sharding (Option B, #833)** — one dedicated
+   `langflow` per shard removes the serialization *and* cuts wall-clock; free on this
+   public repo. It carries the blob-merge + downstream-aggregation rework and the
+   `@database` shard-affinity rule.
+3. **Reject the larger runner (Option A)** — §3 shows more CPU/RAM won't help, and it is
+   paid.
+4. **Do not** raise timeouts or drop to `workers=1` as the primary lever.
+5. Keep triaging the genuine-product-finding failures (§2.3, e.g. the nightly MCP 4xx /
+   provider-probe / tool-indicator failures) on their own issues — out of scope for
+   runner sizing.
+
+**This issue delivers the diagnosis + recommendation only. The only workflow change is
+the temporary §3 sampler (PR #832), to be removed once the fix path is chosen.**
