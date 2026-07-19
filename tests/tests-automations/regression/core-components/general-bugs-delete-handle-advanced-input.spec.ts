@@ -4,8 +4,6 @@ import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import {
   closeAdvancedOptions,
-  disableInspectPanel,
-  enableInspectPanel,
   openAdvancedOptions,
 } from "../../../helpers/ui/open-advanced-options";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
@@ -66,11 +64,14 @@ test(
 
     await adjustScreenView(page, { numberOfZoomOut: 3 });
 
-    await disableInspectPanel(page);
-
+    // dev46 node-inspector model: select the node, open the inspector panel
+    // (parameters-button), and add the advanced `true_case_message` field to the
+    // node body via `inspector-add-<field>` (the modern equivalent of the old
+    // `show<field>` toggle). The inspect-panel on/off feature was removed
+    // upstream, so there is nothing to disable/re-enable anymore.
+    await page.getByTestId("title-If-Else").click();
     await openAdvancedOptions(page);
-
-    await page.getByTestId("showtrue_case_message").click();
+    await page.getByTestId("inspector-add-true_case_message").click();
     await closeAdvancedOptions(page);
 
     await page.getByTestId("sidebar-search-input").click();
@@ -97,27 +98,29 @@ test(
       .getByTestId("handle-conditionalrouter-shownode-case true-left")
       .click();
 
-    await page.getByTestId("title-If-Else").click();
+    // Connected state, read directly off the node body (the dev46 inspector
+    // panel does not duplicate field widgets): the case-true handle exists, its
+    // field widget shows one read-only "Receiving input" placeholder, and one
+    // lock icon decorates the connected edge.
+    await expect(
+      page.getByTestId("handle-conditionalrouter-shownode-case true-left"),
+    ).toHaveCount(1);
+    await expect(page.getByPlaceholder("Receiving input")).toHaveCount(1);
+    await expect(page.getByTestId("icon-lock")).toHaveCount(1);
 
-    await openAdvancedOptions(page);
-
-    await expect(page.getByPlaceholder("Receiving input")).toHaveCount(2);
-
-    await closeAdvancedOptions(page);
-
+    // Re-save the component's default code; the advanced field config is
+    // re-evaluated and the now-orphaned handle (with its edge, placeholder, and
+    // lock icon) is dropped.
     await page.getByTestId("title-If-Else").click();
 
     await page.getByTestId("code-button-modal").last().click();
 
     await page.getByTestId("checkAndSaveBtn").last().click();
 
-    await openAdvancedOptions(page);
-
+    await expect(
+      page.getByTestId("handle-conditionalrouter-shownode-case true-left"),
+    ).toHaveCount(0);
     await expect(page.getByPlaceholder("Receiving input")).toHaveCount(0);
     await expect(page.getByTestId("icon-lock")).toHaveCount(0);
-
-    await closeAdvancedOptions(page);
-
-    await enableInspectPanel(page);
   },
 );
