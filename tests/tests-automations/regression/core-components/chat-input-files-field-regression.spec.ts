@@ -3,6 +3,7 @@ import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
 import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
 import {
@@ -18,23 +19,6 @@ const IMAGE_PATH = path.resolve(
   __dirname,
   "../../../assets/media/chain.png",
 );
-
-// Helper: expand the currently focused node from minimized to full view.
-// ChatInput defaults to `minimized = True` (src/lfx/src/lfx/components/input_output/chat.py);
-// without expanding, the inspector fields rendered on the node body are not in
-// the DOM. Idempotent: no-op if the node is already expanded — that future-proofs
-// the spec against an upstream change to the `minimized` default.
-async function expandFocusedNode(page: Page) {
-  if ((await page.getByTestId("hide-node-content").count()) === 0) return;
-  await page.getByTestId("more-options-modal").click();
-  await expect(page.getByTestId("expand-button-modal")).toBeVisible({
-    timeout: 10000,
-  });
-  await page.getByTestId("expand-button-modal").click();
-  await expect(page.getByTestId("hide-node-content")).toHaveCount(0, {
-    timeout: 5000,
-  });
-}
 
 // Helper: create a blank flow and add the Chat Input component to the canvas
 // in expanded (non-minimized) state.
@@ -103,7 +87,7 @@ async function connectChatInputToChatOutput(page: Page) {
 // Mirrors the `showsender_name` toggle pattern in chat-input-output-component-regression.
 async function toggleFilesFieldVisible(page: Page) {
   await openAdvancedOptions(page);
-  await page.getByTestId("showfiles").click();
+  await page.getByTestId("inspector-add-files").click();
   await closeAdvancedOptions(page);
 }
 
