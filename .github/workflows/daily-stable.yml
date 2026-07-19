@@ -233,22 +233,6 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
-      # TEMP instrumentation for issue #817 (CI runner sizing). Samples host
-      # load average + memory at ~1 Hz for the whole test window into a CSV
-      # artifact, so we can correlate CPU saturation (loadavg > 2 cores) against
-      # the timeout failures in results.json. Detached + fail-soft; remove once
-      # the sizing decision is made.
-      - name: Start resource sampler (#817)
-        shell: bash
-        run: |
-          nproc || true
-          ( while true; do
-              echo "$(date -u +%FT%TZ),load=$(cut -d' ' -f1-3 /proc/loadavg | tr ' ' ';'),mem_used_total_mb=$(free -m | awk '/Mem:/{print $3"/"$2}')"
-              sleep 1
-            done ) >/tmp/resource-samples.csv 2>&1 &
-          disown
-          echo "Resource sampler started (cores: $(nproc))."
-
       - name: Run @stable tests
         run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=html,github,json
         env:
@@ -260,16 +244,6 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-
-      # TEMP (#817): upload the resource sampler CSV for CPU/mem correlation.
-      - name: Upload resource samples (#817)
-        uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: resource-samples-daily-${{ github.run_id }}
-          path: /tmp/resource-samples.csv
-          retention-days: 30
-          if-no-files-found: warn
 
       - name: Upload Playwright report (full, heavy)
         id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)
