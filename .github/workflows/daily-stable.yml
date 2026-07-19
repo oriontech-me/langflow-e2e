@@ -19,6 +19,10 @@ on:
         description: "Image tag (e.g. latest, 1.5.1.dev36, 1.10.1rc3). Use a multi-arch tag — runners are amd64, so do NOT pick an -arm64 variant."
         required: false
         default: "latest"
+      shards:
+        description: "Number of parallel shards for the @stable run (default 4)."
+        required: false
+        default: "4"
 
 permissions:
   issues: write
@@ -29,6 +33,25 @@ permissions:
   packages: read
 
 jobs:
+  prep:
+    name: Prepare shard matrix
+    runs-on: ubuntu-latest
+    outputs:
+      shard_list: ${{ steps.mk.outputs.shard_list }}
+      shard_total: ${{ steps.mk.outputs.shard_total }}
+    steps:
+      - name: Compute shard matrix
+        id: mk
+        shell: bash
+        run: |
+          N="${{ github.event.inputs.shards || '4' }}"
+          case "$N" in ''|*[!0-9]*) N=4 ;; esac      # non-numeric → default 4
+          if [ "$N" -lt 1 ]; then N=4; fi
+          LIST="$(seq -s, 1 "$N")"                    # 1,2,3,4
+          echo "shard_list=[$LIST]" >> "$GITHUB_OUTPUT"
+          echo "shard_total=$N"    >> "$GITHUB_OUTPUT"
+          echo "shards=$N list=[$LIST]"
+
   e2e-daily-stable:
     name: Daily Stable E2E (${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }})
     runs-on: ubuntu-latest
