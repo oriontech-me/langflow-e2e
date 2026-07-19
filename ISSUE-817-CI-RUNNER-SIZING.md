@@ -26,16 +26,16 @@ the VM has spare cores — which is exactly why the failures are timeout-dominat
 uncorrelated with VM load. A share of the 34 hard failures is also genuine nightly
 product slowness/regressions, not infra at all.
 
-**Recommendation (revised after measurement):**
-1. **Cheapest lever first — raise the `langflow` *service's* own backend concurrency.**
-   If the service container runs a single backend worker, every request from both
-   Playwright workers serializes through it. Investigate the langflow worker/thread
-   setting and bump it. No matrix rework, no cost — targets the actual bottleneck.
-2. **If insufficient — shard the `@stable` suite across N standard runners**, each with
-   its **own dedicated `langflow`** stack. Standard runners are **free/unlimited on this
-   public repo**. Its value here is *one backend per shard* (kills the serialization),
-   not more CPU. Needs blob-merge + downstream-aggregation rework → own Wave impl issue
-   (#833).
+**Recommendation (revised after measurement + Option-0 investigation):**
+1. **Shard the `@stable` suite across N standard runners (#833) — primary fix.** Each
+   shard keeps the *known-good single-worker `langflow` + SQLite* config, so it removes
+   the single-backend serialization **without** Redis/Postgres, and cuts wall-clock ~N×.
+   Standard runners are **free/unlimited on this public repo**. Needs blob-merge +
+   downstream-aggregation rework → own Wave impl issue (#833).
+2. **Reject raising `LANGFLOW_WORKERS`** — investigated: multi-worker langflow needs a
+   Redis job queue (build path is per-process in-memory) **and** Postgres (SQLite locks
+   under concurrency). That is *more* new services/failure modes than sharding, and it
+   abandons the single-worker/SQLite config the suite was validated on.
 3. **Reject the "larger runner" option** — the runner is **already 4-core**, memory is at
    47 %, and failures don't track CPU saturation, so more cores/RAM won't help.
 4. **Reject** raising timeouts / dropping to `workers=1` as the primary lever (masks the
@@ -168,18 +168,25 @@ product slowness explain the timeout-dominated failures, consistent with §1 and
 
 ## 5. Options & trade-offs
 
-### Option 0 — Raise the `langflow` service's own backend concurrency (NEW, cheapest)
+### Option 0 — Raise the `langflow` service's own backend concurrency — **INVESTIGATED, NOT cheap**
 
-The §3 data points at the shared backend, not the VM. If the `langflow` service container
-runs a single backend worker, both Playwright workers' requests serialize through it.
-Investigate the langflow worker/thread setting (e.g. a `LANGFLOW_WORKERS`-style env or the
-container's uvicorn/gunicorn worker count) and raise it — the 4-core / 47 %-mem headroom
-measured in §3 can absorb it.
+The §3 data points at the shared backend, so the first idea was: bump the langflow service's
+own worker count so it stops serializing both Playwright workers' requests. The knob exists
+(**`LANGFLOW_WORKERS`**, default **1**; on Unix langflow runs Gunicorn pre-fork). **But
+multi-worker langflow is not a one-line env bump — it requires new stateful services:**
+
+- **Redis job queue is mandatory.** The build job queue is **in-memory per-process**: "a
+  flow build started on worker A cannot be polled or streamed from worker B." Multi-worker
+  requires `LANGFLOW_JOB_QUEUE_TYPE=redis` + `LANGFLOW_REDIS_QUEUE_URL` (a new Redis
+  service). The E2E suite is **playground/flow-build heavy** — exactly the pollable build
+  path that breaks across workers.
+- **SQLite locks under concurrent workers.** Docs recommend **Postgres**; we have already
+  hit a SQLite lock bug on concurrent writes (`LANGFLOW-BUG-bulk-flow-delete-sqlite-lock.md`).
 
 | | |
 |---|---|
-| ✅ Pro | **Free, no matrix rework, no test change**; targets the actual serialization point; keeps one runner + one report (all downstream steps untouched). |
-| ❌ Con | Needs verification that the nightly image exposes a worker knob and that concurrent requests are safe against the single SQLite DB (WAL is on). Must be proven with a repeat sampler + failure-count run, not assumed. |
+| ✅ Pro | Would relieve the serialization within a single instance. |
+| ❌ Con | **Not free / not one-line** — needs a Redis service *and* (realistically) Postgres, plus the `JOB_QUEUE_TYPE`/`REDIS_QUEUE_URL`/`WORKER_TIMEOUT` config. That is **more** new services + failure modes than Option B, and it abandons the known-good single-worker+SQLite config the whole suite was validated against. **Rejected as the cheap win.** |
 
 ### Option A — Larger runner — **REJECTED by §3**
 
@@ -196,7 +203,7 @@ Matrix of N jobs (`--shard=i/N`), each on a standard `ubuntu-latest` with its **
 
 | | |
 |---|---|
-| ✅ Pro | **Free** — standard runners are unlimited on this public repo; wall-clock drops ~N×; each shard gets a **dedicated `langflow`** (removes the single-backend serialization, the actual root cause per §1/§3); scales with suite growth by raising N. |
+| ✅ Pro | **Free** — standard runners are unlimited on this public repo; wall-clock drops ~N×; each shard gets a **dedicated single-worker `langflow` + SQLite** — the known-good config, so it removes the serialization **without** needing Redis/Postgres (unlike Option 0); scales with suite growth by raising N. |
 | ❌ Con | Real engineering: (1) merge N blob reports into one `results.json` before the downstream steps; (2) the **auto-remove-`@stable`**, **history append**, **QA-Platform POST**, and **failure-issue** steps all assume a single `results.json` → must run post-merge; (3) N× langflow boots (~90 s each) + N service stacks; (4) `@database` state-sharing tests must stay **within one shard** (shard by file with affinity, never split a dependent pair). → Own Wave implementation issue (#833). |
 
 ### Option C — Reduce per-instance load
@@ -204,13 +211,12 @@ Matrix of N jobs (`--shard=i/N`), each on a standard `ubuntu-latest` with its **
 - **`workers=1`**: ✅ removes the 2-workers-vs-1-backend contention, free, one line. ❌
   roughly doubles wall-clock — 67 min → ~2 h, breaching the 90 min job timeout. Wrong
   direction on the current single-runner setup.
-  **Note — `workers` is not an independent lever; it is coupled to the runner/shard
-  decision:** dropping to `workers=1` on today's single 2-core runner is the wrong
-  trade (doubles wall-clock). The clean design is **`workers=1` *per shard*** under
-  Option B — each shard gets one dedicated `langflow` and one worker, so cross-worker
-  backend contention disappears and parallelism comes from the shard count, not the
-  worker count. Under the Option A stopgap, `workers=2` stays fine (the 4-core doubles
-  the CPU headroom). Do not tune `workers` in isolation.
+  **Note — `workers` is not an independent lever; it is coupled to the shard decision:**
+  dropping to `workers=1` on today's single runner is the wrong trade (doubles
+  wall-clock). The clean design is **`workers=1` *per shard*** under Option B — each shard
+  gets one dedicated single-worker `langflow`, so the backend serialization disappears and
+  parallelism comes from the shard count, not the worker count. Do not tune `workers` in
+  isolation.
 - **Raise `actionTimeout`/test timeout**: ✅ trivial. ❌ masks the root cause, slows
   every test, and violates the repo rule *never add waits/retries to go green*. Reject
   as a primary lever.
@@ -223,15 +229,19 @@ Matrix of N jobs (`--shard=i/N`), each on a standard `ubuntu-latest` with its **
 
 Direct measurement (§3) reframed the whole issue: the runner is **already 4-core / 16 GB
 and not resource-starved**, and the timeout failures **do not correlate with CPU load**.
-The bottleneck is the **single shared `langflow` backend**, not runner sizing.
+The bottleneck is the **single shared `langflow` backend**, not runner sizing. Raising the
+backend's own worker count (Option 0) was investigated and is **not** the cheap lever it
+looked like — multi-worker langflow needs Redis + Postgres and abandons the known-good
+single-worker/SQLite config.
 
-1. **Try Option 0 first — raise the `langflow` service backend concurrency.** Cheapest,
-   free, no rework; targets the serialization point directly. Verify with a repeat
-   sampler + failure-count run.
-2. **If Option 0 is insufficient, implement sharding (Option B, #833)** — one dedicated
-   `langflow` per shard removes the serialization *and* cuts wall-clock; free on this
-   public repo. It carries the blob-merge + downstream-aggregation rework and the
-   `@database` shard-affinity rule.
+1. **Implement sharding (Option B, #833) as the primary fix.** It is the only option that
+   removes the single-backend serialization while keeping each shard on the *known-good
+   single-worker `langflow` + SQLite* config — no Redis, no Postgres, no new stateful
+   services. Free on this public repo; also cuts wall-clock ~N×. Carries the blob-merge +
+   downstream-aggregation rework and the `@database` shard-affinity rule.
+2. **Reject Option 0** (raise `LANGFLOW_WORKERS`) — it mandates a Redis job queue (the
+   build path is per-process in-memory) + Postgres (SQLite locks under concurrency), i.e.
+   *more* new services/failure modes than sharding.
 3. **Reject the larger runner (Option A)** — §3 shows more CPU/RAM won't help, and it is
    paid.
 4. **Do not** raise timeouts or drop to `workers=1` as the primary lever.
