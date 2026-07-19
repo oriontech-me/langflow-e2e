@@ -18,11 +18,12 @@ export default defineConfig({
   fullyParallel: process.env.PW_SHARD_FILE_LEVEL ? false : true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 3,
-  // One worker per shard when sharding: each shard has its OWN dedicated langflow,
-  // so a second worker would just reintroduce the 2-workers→1-backend contention
-  // #817 diagnosed. Parallelism comes from the shard count, not the worker count.
-  // Non-sharded CI keeps 2 workers; local dev stays auto.
-  workers: process.env.PW_SHARD_FILE_LEVEL ? 1 : process.env.CI ? 2 : undefined,
+  // 2 workers in CI (sharded or not). The #817 contention was 2 workers hitting
+  // ONE langflow that served the whole 353-test suite; with a dedicated langflow
+  // per shard (~90 tests each) the 2nd worker is a net win — benchmarked at ~28min
+  // (workers=2) vs ~39min (workers=1) at N=4, correctness identical. See
+  // ISSUE-833-SHARDING-DESIGN.md §"workers per shard".
+  workers: process.env.CI ? 2 : undefined,
   timeout: 5 * 60 * 1000, // 5 minutes per test
   reporter: process.env.CI ? "blob" : "html",
 

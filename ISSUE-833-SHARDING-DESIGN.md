@@ -13,7 +13,7 @@ requests**, and wall-clock has grown to ~56 min (07-17: 67 min) as the suite gre
 (353 `@stable` tests). Left alone it will breach the 90 min job timeout as the suite
 keeps growing.
 
-Sharding across N independent runners gives each shard its **own dedicated single-worker
+Sharding across N independent runners gives each shard its **own dedicated
 `langflow` + SQLite** (the known-good config), removing the serialization **without**
 Redis/Postgres (which raising `LANGFLOW_WORKERS` would require — see #817 Option 0), and
 cuts wall-clock ~N×. Standard runners are **free/unlimited on this public repo** — zero
@@ -92,12 +92,22 @@ files** across shards, so every `test()` in a file lands in the same shard. This
   `fullyParallel: process.env.PW_SHARD_FILE_LEVEL ? false : true`.
 - Only the sharded `test` job sets `PW_SHARD_FILE_LEVEL=1`. Local dev, `nightly.yml`,
   `manual.yml` keep `fullyParallel: true` — unchanged.
-- **No parallelism lost:** each shard runs `workers=1` (avoids re-introducing the
-  2-workers→1-backend serialization from #817). With one worker, `fullyParallel` does not
-  affect within-shard execution (already serial); parallelism comes from the N shards.
-- **Balance:** file-level split can skew if one file has many more tests. Playwright
-  balances by per-file test count, so it stays reasonable; the empirical test run decides
-  whether to adjust N or split a heavy file.
+- **Workers per shard — `workers=2` (revised after benchmark).** The initial design
+  called for `workers=1` per shard, reasoning that a 2nd worker would re-introduce the
+  #817 contention. The N=4 benchmark disproved that: #817's contention was 2 workers
+  hitting ONE langflow serving the whole 353-test suite; with a **dedicated langflow per
+  shard** (~90 tests each) the 2nd worker is a net win. Measured at N=4: **workers=2 →
+  ~28 min (2×)** vs **workers=1 → ~39 min (1.4×)**, with identical correctness (32 vs 33
+  failing specs; the workers=2 run's single extra flake was a UI-timeout, not
+  contention). So the daily keeps `workers=2` (`process.env.CI ? 2 : undefined`); only
+  `fullyParallel` is toggled by `PW_SHARD_FILE_LEVEL`. With `fullyParallel:false` +
+  `workers=2`, a shard runs two whole *files* concurrently (file-level parallelism) while
+  keeping each file's tests together — affinity holds.
+- **Balance:** file-level split skews (benchmark: slowest shard ~2× the fastest). Playwright
+  balances by per-file test count, not per-file *duration*, so shards holding the slow
+  agent/playground specs run longer. This — not N — is what caps the speedup at ~2×.
+  Tuning levers (empirical, "not carved"): raise N so each shard holds fewer heavy files,
+  or split the heaviest spec files. Revisit with real timings.
 
 ## Error handling & edge cases
 
