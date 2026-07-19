@@ -42,8 +42,13 @@ permissions:
 jobs:
   propose:
     name: Propose triage plan
+    # workflow_dispatch is gated on a trusted actor: without this, any collaborator
+    # who can dispatch a workflow could run the triage skill against an arbitrary
+    # issue number. The workflow_run path needs no actor guard — it only fires from
+    # the real Daily Stable E2E run and is already narrowed to schedule + failure.
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' &&
+       contains(fromJSON('["rafaelgiln","Victor-w-Madeira","daniellicnerski1"]'), github.actor)) ||
       (github.event_name == 'workflow_run' &&
        github.event.workflow_run.conclusion == 'failure' &&
        github.event.workflow_run.event == 'schedule')
@@ -83,7 +88,7 @@ jobs:
       github.event.issue.pull_request == null &&
       github.event.issue.state == 'open' &&
       contains(github.event.issue.labels.*.name, 'daily-failure') &&
-      contains(github.event.comment.body, 'pode abrir') &&
+      startsWith(github.event.comment.body, 'pode abrir') &&
       contains(fromJSON('["rafaelgiln","Victor-w-Madeira","daniellicnerski1"]'), github.event.comment.user.login)
     runs-on: ubuntu-latest
     timeout-minutes: 20
