@@ -325,12 +325,19 @@ jobs:
         with:
           pattern: blob-*
           path: all-blobs
+          # Flatten every blob-<shard> artifact into all-blobs/ directly.
+          # Without this, each artifact lands in its own all-blobs/blob-<shard>/
+          # subdir and `merge-reports ./all-blobs` finds no report files (it does
+          # not recurse). The per-shard blob zips are uniquely named
+          # (report-<hash>-<shard>.zip), so flattening cannot collide.
+          merge-multiple: true
 
       - name: Guard — every expected shard produced a blob
         shell: bash
         run: |
           EXPECTED="${{ needs.prep.outputs.shard_total }}"
-          FOUND="$(find all-blobs -mindepth 1 -maxdepth 1 -type d | wc -l | tr -d ' ')"
+          # After merge-multiple, blobs are flat *.zip files (one per shard), not subdirs.
+          FOUND="$(find all-blobs -maxdepth 1 -name '*.zip' | wc -l | tr -d ' ')"
           echo "Expected $EXPECTED shard blobs, found $FOUND."
           if [ "$FOUND" -lt "$EXPECTED" ]; then
             echo "::warning::Only $FOUND/$EXPECTED shard blobs present — the merged report is INCOMPLETE (a shard died before producing a blob). Failures may be under-counted."
