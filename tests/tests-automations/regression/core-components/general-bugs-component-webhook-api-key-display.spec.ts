@@ -1,18 +1,51 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { loginLangflow } from "../../../helpers/auth/login-langflow";
 import {
   closeAdvancedOptions,
-  disableInspectPanel,
-  enableInspectPanel,
   openAdvancedOptions,
 } from "../../../helpers/ui/open-advanced-options";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+
+// Capture every flow THIS page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach (repo convention, #490/#681).
+const createdFlowIds: string[] = [];
+
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
+  }
+});
 
 test(
   "user must be able to see api key in webhook component when auto login is disabled",
   { tag: ["@release"] },
   async ({ page }) => {
+    trackCreatedFlows(page);
     await page.route("**/api/v1/auto_login", (route) => {
       route.fulfill({
         status: 500,
@@ -65,23 +98,19 @@ test(
 
     await page.getByTestId("title-Webhook").click();
 
-    await disableInspectPanel(page);
-
+    // dev46: the generated cURL command is an advanced field — add it to the
+    // node body via the inspector, then open its text-area modal from the body.
     await openAdvancedOptions(page);
+    await page.getByTestId("inspector-add-curl").click();
+    await closeAdvancedOptions(page);
 
-    await page
-      .getByTestId("button_open_text_area_modal_str_edit_curl_advanced")
-      .click();
+    await page.getByTestId("button_open_text_area_modal_str_curl").click();
 
     const curl = await page.getByTestId("text-area-modal").inputValue();
 
     expect(curl).toContain("x-api-key");
 
     await page.getByText("Close", { exact: true }).last().click();
-
-    await closeAdvancedOptions(page);
-
-    await enableInspectPanel(page);
   },
 );
 
@@ -89,6 +118,7 @@ test(
   "user must be able to not see api key in webhook component when auto login is enabled",
   { tag: ["@release"] },
   async ({ page }) => {
+    trackCreatedFlows(page);
     await page.route("**/api/v1/config", (route) => {
       route.fulfill({
         status: 200,
@@ -129,22 +159,18 @@ test(
 
     await page.getByTestId("title-Webhook").click();
 
-    await disableInspectPanel(page);
-
+    // dev46: the generated cURL command is an advanced field — add it to the
+    // node body via the inspector, then open its text-area modal from the body.
     await openAdvancedOptions(page);
+    await page.getByTestId("inspector-add-curl").click();
+    await closeAdvancedOptions(page);
 
-    await page
-      .getByTestId("button_open_text_area_modal_str_edit_curl_advanced")
-      .click();
+    await page.getByTestId("button_open_text_area_modal_str_curl").click();
 
     const curl = await page.getByTestId("text-area-modal").inputValue();
 
     expect(curl).not.toContain("x-api-key");
 
     await page.getByText("Close", { exact: true }).last().click();
-
-    await closeAdvancedOptions(page);
-
-    await enableInspectPanel(page);
   },
 );
