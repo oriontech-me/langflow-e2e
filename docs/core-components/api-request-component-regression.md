@@ -1,6 +1,6 @@
 # API Request Component — Rendering, Inspector, HTTP Methods, cURL Mode and Error Paths
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev46`)
 
 ---
 
@@ -61,6 +61,10 @@ For each of GET, POST, PUT, PATCH, DELETE:
 - Fills `https://postman-echo.com/get?e2e_param=functional_test_value`, runs, asserts the parameter key/value appear in the parsed response and the response status is `200`.
 
 ### 11. `inspector headers table accepts key + value cell entries`
+- dev46: `headers` is an advanced field, so it is added to the node body first
+  via the inspector (`addTableFieldToBody(page, "headers")`: select node →
+  `parameters-button` → `inspector-add-headers` → `inspection-panel-close`). The
+  `div-table_headers` widget then renders on the node body.
 - Opens `div-table_headers` → `Open table` button → table dialog opens.
 - Adds a row, then fills BOTH the `[col-id="key"]` cell with `X-E2E-Header` and the `[col-id="value"]` cell with `test-header-value` via the `fillViewTextCell` helper. The helper asserts each cell value renders as a button inside the table dialog after Save (this is the in-session validation; the test does not assert table-modal-level persistence — see "What this test does not cover").
 - Closes the dialog with `btn-cancel-modal` and asserts canvas integrity.
@@ -75,7 +79,7 @@ For each of GET, POST, PUT, PATCH, DELETE:
 - Runs the component and asserts the output Data contains `200`, the echoed URL, and the structural keys.
 
 ### 14. `body table accepts key + value cell entries when method is POST`
-- The body field is marked `advanced=True` AND the InspectionPanel has a hardcoded filter that hides `body` whenever `method.value === "GET"` (see `InspectionPanelFields.tsx` lines 58-60 and 92-94 — the filter is keyed off `data.type === "APIRequest"` + field name `"body"`). The test switches the method dropdown to `POST` first so the body table renders in the inspector. **Note:** there is no "Show Advanced" or `edit-button-modal` step — the inspector exposes the body table directly once method is POST.
+- The body field is marked `advanced=True` AND is hidden whenever `method.value === "GET"`. The test switches the method dropdown to `POST` first so `body` becomes available in the inspector. dev46: `body` is then added to the node body via `addTableFieldToBody(page, "body")` (select node → `parameters-button` → `inspector-add-body` → `inspection-panel-close`), which makes the `div-table_body` widget render on the node body.
 - The method switch triggers a `real_time_refresh` round-trip (`POST /api/v1/custom_component/update`). The test waits for that response BEFORE opening the body table so the `[value]` useEffect in `TableNodeComponent` finishes resetting `tempValue`. Without this wait, a click on `add-row-button` can land during the reset window and the new row is immediately wiped.
 - Finds `div-table_body`, clicks `Open table`, adds a row, then fills BOTH the `[col-id="key"]` cell with `payload` and the `[col-id="value"]` cell with `e2e-body-value` via the `fillViewTextCell` helper. The helper asserts each cell value renders as a button INSIDE that specific cell after Save (cell-scoped — not dialog-wide).
 - Closes the dialog with `btn-cancel-modal` — this test asserts in-session edit behavior only. End-to-end body persistence through reload is intentionally NOT covered (see "What this test does not cover").
@@ -85,7 +89,7 @@ For each of GET, POST, PUT, PATCH, DELETE:
 - Like test 14, waits for the `POST /api/v1/custom_component/update` response after the method switch so the headers `[value]` useEffect settles before adding a new row.
 - Clicks the dialog-level **Save** button (not Cancel, which discards `tempValue` via `handleCancel` in `TableNodeComponent`) so the row commits before autosave fires.
 - Polls `GET /api/v1/flows/{id}` (using `page.request` which inherits the session cookie) until the autosave has written the URL, method and matching header row into the saved flow JSON. Polling the API directly proves the autosave reached the database — not just in-memory React state. The match key is `node.data.type === "APIRequest"` (Python class name, not the `"API Request"` display name).
-- Reloads the page and re-asserts: URL field still holds the saved URL, method dropdown still reads `POST`, and reopening the headers table (after clicking the canvas node and toggling `canvas_controls_toggle_inspector` if needed) still shows the saved key/value buttons. The reload check covers UI rehydration end-to-end.
+- Reloads the page and re-asserts: URL field still holds the saved URL, method dropdown still reads `POST`, and reopening the headers table still shows the saved key/value buttons. dev46: the headers field added to the node body in step 1 persists across the reload, so `div-table_headers` renders directly (no inspector re-open needed); the test just clicks the canvas node to focus it. The reload check covers UI rehydration end-to-end.
 
 ---
 
@@ -100,7 +104,7 @@ The suite must:
 - For each verb test, hit an endpoint that returns a non-2xx for any other verb (postman-echo returns `404`; httpbin returned `405`) — this guarantees the test fails if the wrong verb is sent (e.g. POST sent as GET), because the assertion requires `200`.
 - For the cURL execution test, switch to the cURL tab *before* configuring the URL — and assert the parser auto-populates `url_input`. Asserting only the run output would let the test pass even if cURL parsing was broken.
 - For the headers and body table tests, fill both KEY and VALUE cells (not key only) — filling only the key cell would still pass even if the value column was non-functional or rejected entries.
-- For the body table test, switch method to POST before searching for `div-table_body` — the `InspectionPanelFields` filter hides `body` while method is GET. (There is no Controls-modal / `edit-button-modal` step — the field renders directly in the inspector once method is POST.)
+- For the body table test, switch method to POST before searching for `div-table_body` — `body` is hidden while method is GET. dev46: after the switch, add `body` to the node body via the inspector (`inspector-add-body`) so the `div-table_body` widget renders — an advanced field is not on the node body until added.
 - For tests 14 and 15, wait for the `POST /api/v1/custom_component/update` response after the method switch so the `[value]` useEffect in `TableNodeComponent` settles before adding a row. Without the wait, `add-row-button` can race the refresh that re-pushes the table's `value` (the freshly-added row is wiped by the useEffect reset).
 - `fillViewTextCell`'s post-Save assertion is **cell-scoped** (`cellLocator.getByRole("button", { name: value })`) — a dialog-wide match would pass even if the value landed on the wrong row.
 - For the persistence test, poll `GET /api/v1/flows/{id}` directly through `page.request` and *also* reload the page to verify the UI rehydrates URL, method AND the saved header row via the reopened table. Verifying only the in-memory state would let the test pass even if autosave was broken.
@@ -156,6 +160,16 @@ The suite must:
 
 ## Notes *(optional)*
 
+- **dev46 inspector migration (issue #818).** The nightly removed the always-on
+  inspect-panel toggle (`canvas_controls_dropdown_toggle_inspector`) and made the
+  `headers` / `body` table fields **advanced** — their `div-table_<field>` widget
+  is no longer on the node body by default. The `addTableFieldToBody` helper now
+  adds the field via the inspector (select node → `parameters-button` →
+  `inspector-add-<field>` → `inspection-panel-close`) before tests 11, 14 and 15
+  touch the table; the add persists across the reload in test 15, so the old
+  `enableInspectPanel` re-open step there was dropped. Also added id-scoped
+  `afterEach` flow cleanup (the 15-test serial file previously had none).
+  Re-validated on `1.11.0.dev46`.
 - **Duplicate coverage with legacy specs.** `tests/tests-automations/regression/api/flows/api-request-component-ui.spec.ts` (4 tests: canvas render, URL field, method dropdown, headers field) is fully superseded by tests 1, 2, and 11 of this spec — its 4th test uses anti-patterns (`.catch(() => false)`, conditional advanced-button click) that this consolidated spec replaces with deterministic locators. `tests/tests-automations/regression/api/flows/api-component-regression.spec.ts` (5 tests: GET, cURL POST + JSON body with auto-fill URL, `include_httpx_metadata`, timeout 500, URL-mode POST via dropdown) is partially duplicated by tests 4, 5, and 13 here, but contains 3 unique tests (`include_httpx_metadata`, timeout, cURL POST + body). A follow-up PR should migrate those 3 unique tests here and retire both legacy specs.
 - **`(page as any).allowFlowErrors()` cast.** The fixture injects `allowFlowErrors` onto the page object via `(page as any).allowFlowErrors = () => {...}`, without extending the `Page` type. Removing the cast at the call site requires extending the type signature in `fixtures.ts`. The pattern is project-wide (`loop-component-regression.spec.ts` uses the same cast).
 - **Why one verb per endpoint.** `/get`, `/post`, `/put`, `/patch`, `/delete` each reject any other verb with a non-2xx (`404` on postman-echo, `405` on httpbin/go-httpbin). Since the verb tests assert the output contains `200`, the test fails if the component sends the wrong method — there's no way to silently pass with a misconfigured verb.
