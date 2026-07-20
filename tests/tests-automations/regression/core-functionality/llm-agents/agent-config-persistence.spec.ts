@@ -2,7 +2,11 @@ import type { Page } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { loadTemplateByName } from "../../../../helpers/flows/load-template-by-name";
-import { hideInspectorPanel } from "../../../../helpers/ui/hide-inspector-panel";
+import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../../helpers/ui/open-advanced-options";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
@@ -19,35 +23,31 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
  *            asserted, so the flip is a proven write, not a default).
  *
  * Both persistence halves are asserted: the flows API after save settles
- * (saved), and the Controls dialog after a full home-navigation reopen
+ * (saved), and the node body after a full home-navigation reopen
  * (re-rendered). See the spec doc for the false-positive guards.
+ *
+ * dev49: the old Controls dialog (edit-button-modal) is gone. max_iterations
+ * and add_current_date_tool are advanced fields exposed on the node body via
+ * the inspector side-panel (select node → parameters-button → inspector-add
+ * → inspection-panel-close); system_prompt is on the body by default. Body
+ * inputs accept fill() (the controlled-dialog typing quirk left with the
+ * modal). The inspector-added fields persist on the body across reload, so
+ * the reopened assert reads them directly.
  */
 
 const MAX_ITERATIONS_SENTINEL = "7";
 
-// The Controls dialog trigger (edit-button-modal) only renders with the node
-// selected AND the Inspector Panel hidden.
-async function openAgentControls(page: Page): Promise<void> {
-  await hideInspectorPanel(page);
+// Expose the given advanced Agent fields on the node body in ONE inspector
+// session, then close. Doing all the adds before touching any value keeps the
+// add-autosave (debounced PATCH) from re-rendering the node mid-edit and
+// detaching a field being filled (waitForFlowSaveSettled's documented race).
+async function addAgentFieldsToBody(page: Page, fields: string[]): Promise<void> {
   await page.locator('[data-testid^="rf__node-Agent"]').first().click();
-  const trigger = page.getByTestId("edit-button-modal");
-  await expect(trigger).toBeVisible({ timeout: 15000 });
-  await trigger.click();
-  await expect(page.getByTestId("int_int_edit_max_iterations")).toBeVisible({
-    timeout: 15000,
-  });
-}
-
-// Int fields reject fill() and swallow fast keystrokes (see
-// agent-max-tokens.md): click, settle, clear, slow-type, verify the DOM.
-async function setIntField(page: Page, testId: string, value: string): Promise<void> {
-  const field = page.getByTestId(testId);
-  await field.click();
-  await page.waitForTimeout(600);
-  await page.keyboard.press("ControlOrMeta+a");
-  await page.keyboard.press("Backspace");
-  await field.pressSequentially(value, { delay: 150 });
-  await expect(field).toHaveValue(value, { timeout: 5000 });
+  await openAdvancedOptions(page);
+  for (const field of fields) {
+    await page.getByTestId(`inspector-add-${field}`).click();
+  }
+  await closeAdvancedOptions(page);
 }
 
 // Fetch the flow by the id captured at template instantiation (the canvas URL
@@ -94,45 +94,62 @@ test(
     await test.step("load the Simple Agent template (no provider setup — model-free)", async () => {
       flowId = await loadTemplateByName(page, "Simple Agent");
       createdFlowId = flowId;
+      // Fit the canvas so the Agent node (loaded outside the initial viewport)
+      // mounts its body fields — SimpleAgentTemplatePage does this for the
+      // sibling agent specs; this model-free spec must do it itself.
+      await adjustScreenView(page);
+      // The template load + fit-view schedule a debounced autosave PATCH.
+      // Editing before it lands lets its response re-render the node from
+      // server state and revert the edit — settle it FIRST (the sibling specs
+      // get this settle from provider setup, which this spec skips).
+      await waitForFlowSaveSettled(page);
     });
 
-    await test.step("set string, int and bool sentinels in the Controls dialog", async () => {
-      await openAgentControls(page);
+    await test.step("expose the two advanced fields on the node body", async () => {
+      // Add both advanced fields in one inspector session, then let the
+      // add-autosave settle BEFORE editing any value — otherwise the PATCH
+      // response detaches the just-filled field mid-edit.
+      await addAgentFieldsToBody(page, ["max_iterations", "add_current_date_tool"]);
+      await waitForFlowSaveSettled(page);
+    });
 
-      // The dialog's fields are controlled inputs that only register REAL
-      // keystrokes: fill() sets the DOM value but the edit is silently
-      // dropped on close (node-level fill+blur doesn't trigger autosave at
-      // all on 1.11 — 0/5 runs persisted). Clear + type is the only path
-      // that reliably commits the textarea.
-      const prompt = page.getByTestId("textarea_str_edit_system_prompt");
-      // Select-all fired before focus settles selects nothing and the typed
-      // nonce lands IN FRONT of the default text — clear+type is retried
-      // with a DOM verification between attempts (same family as the int
-      // field's swallowed-first-event quirk).
-      for (let attempt = 0; attempt < 3; attempt++) {
-        await prompt.click();
-        await page.waitForTimeout(600);
-        await page.keyboard.press("ControlOrMeta+a");
-        await page.keyboard.press("Backspace");
-        await prompt.pressSequentially(nonce, { delay: 20 });
-        if ((await prompt.inputValue()) === nonce) break;
-      }
+    await test.step("set string, int and bool sentinels on the node body", async () => {
+      // system_prompt is on the body by default. Clear + type (never fill()):
+      // the node-level textarea is a controlled input that fill() sets in the
+      // DOM without marking the node dirty, so the edit never autosaves and is
+      // reverted on the next re-render (0/5 persisted historically). Real
+      // keystrokes commit it.
+      const prompt = page.locator(
+        '[data-testid^="rf__node-Agent"] [data-testid="textarea_str_system_prompt"]',
+      );
+      await expect(prompt).toBeVisible({ timeout: 15000 });
+      await prompt.scrollIntoViewIfNeeded();
+      await prompt.click();
+      await page.keyboard.press("ControlOrMeta+a");
+      await page.keyboard.press("Backspace");
+      await prompt.pressSequentially(nonce, { delay: 20 });
       await expect(prompt).toHaveValue(nonce, { timeout: 5000 });
-      await page.keyboard.press("Tab");
-      await page.waitForTimeout(800);
+      await prompt.blur();
+      await waitForFlowSaveSettled(page);
 
-      await setIntField(page, "int_int_edit_max_iterations", MAX_ITERATIONS_SENTINEL);
+      // max_iterations (int) — body int fields accept fill() + blur.
+      const maxIter = page.getByTestId("int_int_max_iterations");
+      await expect(maxIter).toBeVisible({ timeout: 15000 });
+      await maxIter.scrollIntoViewIfNeeded();
+      await maxIter.fill(MAX_ITERATIONS_SENTINEL);
+      await expect(maxIter).toHaveValue(MAX_ITERATIONS_SENTINEL, { timeout: 5000 });
+      await maxIter.blur();
+      await waitForFlowSaveSettled(page);
 
-      // Assert the pre-flip default so the flip below is a proven WRITE — a
-      // changed template default fails loudly here instead of silently
-      // inverting the sentinel's meaning.
-      const toggle = page.getByTestId("toggle_bool_edit_add_current_date_tool");
+      // add_current_date_tool (bool) — assert the pre-flip default so the flip
+      // is a proven WRITE (a changed template default fails loudly instead of
+      // silently inverting the sentinel).
+      const toggle = page.getByTestId("toggle_bool_add_current_date_tool");
+      await expect(toggle).toBeVisible({ timeout: 15000 });
+      await toggle.scrollIntoViewIfNeeded();
       await expect(toggle).toHaveAttribute("aria-checked", "true");
       await toggle.click();
       await expect(toggle).toHaveAttribute("aria-checked", "false");
-
-      await page.waitForTimeout(800);
-      await page.getByTestId("edit-button-close").click();
       await waitForFlowSaveSettled(page);
     });
 
@@ -170,20 +187,22 @@ test(
       await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
         timeout: 30000,
       });
+      await adjustScreenView(page);
     });
 
-    await test.step("reopened: node and Controls dialog render the exact sentinels", async () => {
-      await openAgentControls(page);
-
-      await expect(page.getByTestId("textarea_str_edit_system_prompt")).toHaveValue(
-        nonce,
-        { timeout: 10000 },
-      );
-      await expect(page.getByTestId("int_int_edit_max_iterations")).toHaveValue(
+    await test.step("reopened: node body renders the exact sentinels", async () => {
+      // The inspector-added fields persist on the body across reload — read
+      // them directly (no inspector re-open needed).
+      await expect(
+        page.locator(
+          '[data-testid^="rf__node-Agent"] [data-testid="textarea_str_system_prompt"]',
+        ),
+      ).toHaveValue(nonce, { timeout: 10000 });
+      await expect(page.getByTestId("int_int_max_iterations")).toHaveValue(
         MAX_ITERATIONS_SENTINEL,
       );
       await expect(
-        page.getByTestId("toggle_bool_edit_add_current_date_tool"),
+        page.getByTestId("toggle_bool_add_current_date_tool"),
       ).toHaveAttribute("aria-checked", "false");
     });
   },
