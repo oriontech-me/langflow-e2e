@@ -67,7 +67,11 @@ If any of these tests fails, the Webhook component is broken in one of its core 
 **Test 3 — cURL command in inspector shows valid POST URL with flow ID**
 1. Run `addWebhookComponent`
 2. Extract `flowId` from the URL
-3. Wait for the textbox with `placeholder="Type something..."` and read its value
+3. dev49: the generated cURL command is an advanced field. Select the node
+   (`title-Webhook`), expose it on the body via the inspector
+   (`openAdvancedOptions` → `inspector-add-curl` → `closeAdvancedOptions`),
+   open its text-area modal (`button_open_text_area_modal_str_curl`) and read
+   `text-area-modal`'s value (same path as `general-bugs-component-webhook-api-key-display`)
 4. Assert the value contains `-X POST`, `/api/v1/webhook/{flowId}`, `Content-Type: application/json`, and `-d`
 
 **Test 4 — empty data field returns empty Data object**
@@ -145,7 +149,7 @@ If any of these tests fails, the Webhook component is broken in one of its core 
 - `src/backend/base/langflow/components/inputs/webhook.py` — `WebhookComponent.build_data()`: JSON parsing, fallback wrapping, and empty-data short-circuit; changes here break tests 4, 8, and 9
 - `src/backend/base/langflow/api/v1/endpoints.py` — `POST /api/v1/webhook/{flow_id_or_name}` and `GET /api/v1/monitor/messages` endpoints; status codes and response shape affect tests 1, 7, and 10
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeOutputParameter/` — renders `output-inspection-{name}-{component}` buttons; the `output-inspection-json-webhook` testid depends on the output `display_name` being `"JSON"` (updated in langflow-ai/langflow#11554); breaks tests 4, 8, and 9
-- `src/frontend/src/components/core/parameterRenderComponent/components/webhookFieldComponent/` — renders the cURL field inline as a textbox with `placeholder="Type something..."`; changes to the rendering break test 3
+- `src/frontend/src/components/core/parameterRenderComponent/components/webhookFieldComponent/` — renders the cURL field (an advanced field on dev49, exposed via the inspector and read from its `text-area-modal`); changes to the rendering break test 3
 - `src/frontend/src/components/core/parameterRenderComponent/components/copyFieldAreaComponent/` — renders `btn_copy_{id}` and the "Endpoint URL copied" toast; breaks test 6
 - `src/frontend/src/CustomNodes/GenericNode/` — resolves the `BACKEND_URL` placeholder for `str_endpoint` and `curl_webhook` fields; breaks tests 2, 3, and 5
 
