@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import * as dotenv from "dotenv";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
@@ -5,10 +6,41 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
 import {
   closeAdvancedOptions,
-  disableInspectPanel,
-  enableInspectPanel,
   openAdvancedOptions,
 } from "../../../../helpers/ui/open-advanced-options";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+
+// Capture every flow THIS page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach (repo convention, #490/#681).
+const createdFlowIds: string[] = [];
+
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
+  }
+});
 
 test(
   "user must interact with chat with Input/Output",
@@ -23,6 +55,7 @@ test(
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
     }
 
+    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
     await page.getByTestId("side_nav_options_all-templates").click();
@@ -66,15 +99,16 @@ test(
     // close the playground (fullscreen covers the toolbar, use the close button)
     await page.getByTestId("playground-close-button").click();
 
-    await disableInspectPanel(page);
+    // dev46: expose the advanced sender_name field on each node body via the
+    // inspector (replaces the old show<field> toggle).
     await page.getByText("Chat Input", { exact: true }).click();
     await openAdvancedOptions(page);
-    await page.getByTestId("showsender_name").click();
+    await page.getByTestId("inspector-add-sender_name").click();
     await closeAdvancedOptions(page);
 
     await page.getByText("Chat Output", { exact: true }).click();
     await openAdvancedOptions(page);
-    await page.getByTestId("showsender_name").click();
+    await page.getByTestId("inspector-add-sender_name").click();
     await closeAdvancedOptions(page);
 
     await page
@@ -115,6 +149,5 @@ test(
     ).not.toBeEmpty();
 
     await page.getByTestId("playground-close-button").click();
-    await enableInspectPanel(page);
   },
 );
