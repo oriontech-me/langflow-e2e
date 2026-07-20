@@ -1,6 +1,6 @@
 # Prompt Template Component — `use_double_brackets` Toggle Regression
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev49`)
 
 ---
 
@@ -8,7 +8,7 @@
 
 Validates the **Prompt Template** component's `use_double_brackets` toggle and the mustache code path it activates, end-to-end via 5 scenarios:
 
-1. **Toggle is exposed in the InspectionPanel with its upstream display name** — the upstream field carries `advanced=True`, which only filters it from the on-canvas node body; the right-hand InspectionPanel still renders the bool control directly (`toggle_bool_use_double_brackets`) along with the literal display name "Use Double Brackets", confirming the upstream `BoolInput(display_name=...)` wiring is intact. (The `info` string is rendered as a hover-tooltip icon when the panel is narrow, so it is not asserted directly.)
+1. **Field is exposed in the InspectionPanel with its upstream display name** — the upstream field carries `advanced=True`. dev49: it no longer renders on the on-canvas node body by default and the auto-opening InspectionPanel is gone; the field is listed in the on-demand inspector side-panel (open via `parameters-button`) as `inspector-param-use_double_brackets`, carrying the literal display name "Use Double Brackets" — confirming the upstream `BoolInput(display_name=...)` wiring is intact. (Its actual `toggle_bool_use_double_brackets` control renders on the node body once exposed via `inspector-add-use_double_brackets`; the mode-switch tests drive it through the `setUseDoubleBrackets` helper, which handles that exposure.)
 2. **Default toggle state is `False` (f-string mode)** — saving `Hello {single} and {{double}}!` extracts only `single` and treats `{{double}}` as a literal `{double}` per f-string escape semantics; exactly one dynamic handle is rendered.
 3. **Enabling the toggle switches the parser to mustache mode** — after flipping the toggle ON, saving `Hello {single} and {{double}}!` extracts only `double`; `{single}` is ignored by the mustache parser.
 4. **Disabling the toggle reverts to f-string mode and variables are re-extracted under the new parser** — a template saved in mustache mode (`Hello {{name}}!`) keeps its `name` handle past the toggle alone (the rendered handle set is only fully reconciled after the next save), but re-saving the same template after switching back to f-string drops the now-literal `{{name}}` handle, and a fresh `{var}` template then recreates a handle.
@@ -38,9 +38,9 @@ Every test starts with `addPromptComponent(page)` which:
 5. Calls `adjustScreenView(page)`
 6. Asserts exactly one node is on the canvas
 
-Tests 3–5 use the helper `flipDoubleBrackets(page, expectMustache)` which:
-1. Clicks `toggle_bool_use_double_brackets` in the InspectionPanel
-2. Waits for `button_open_mustache_prompt_modal` (when `expectMustache=true`) or `button_open_prompt_modal` (when `expectMustache=false`) — the type swap in `update_build_config` re-renders the modal-open button under the matching testid, which is a reliable signal that the field-type switch has landed
+Tests 3–5 use the helper `setUseDoubleBrackets(page, enabled)` which:
+1. dev49: ensures the `toggle_bool_use_double_brackets` control is on the node body — the advanced field is exposed via the inspector (`title-Prompt Template` → `parameters-button` → `inspector-add-use_double_brackets` → close) on first use, then the on-body toggle is clicked
+2. Waits for `button_open_mustache_prompt_modal` (when `enabled=true`) or `button_open_prompt_modal` (when `enabled=false`) — the type swap in `update_build_config` re-renders the modal-open button under the matching testid, which is a reliable signal that the field-type switch has landed
 
 Tests 2–4 use the helper `setPromptTemplate(page, value, mode)` which is parameterised on `mode`:
 - `"fstring"` → opens `button_open_prompt_modal` and fills `modal-promptarea_prompt_template`
@@ -49,7 +49,7 @@ Tests 2–4 use the helper `setPromptTemplate(page, value, mode)` which is param
 Both modes share the post-save preview (`edit-prompt-sanitized`) and the save button (`genericModalBtnSave`). The helper detects the preview state and re-enters edit mode automatically, so it is safe to call multiple times in a row.
 
 ### 1. `toggle is exposed in the InspectionPanel with its upstream display name`
-- Asserts `toggle_bool_use_double_brackets` is visible after the node is added to the canvas — the InspectionPanel renders advanced fields directly (`isCanvasVisible()` only filters the canvas node body, not the side panel).
+- dev49: opens the on-demand inspector (`title-Prompt Template` → `parameters-button`) and asserts `inspector-param-use_double_brackets` is visible — the advanced field is listed in the side-panel (the old auto-opening panel that rendered the bool control directly on canvas is gone).
 - Asserts the display name `"Use Double Brackets"` is visible — this string is the upstream `BoolInput(display_name=...)` value, so the assertion catches an accidental rename at the source. The `info` string ("Use `{{variable}}` syntax instead of `{variable}`.") is rendered as a hover-tooltip icon when the panel is narrow, so the visible rendering depends on layout state and is intentionally not asserted.
 
 ### 2. `default toggle state is OFF; f-string mode extracts {var} and treats {{var}} as literal`
@@ -81,7 +81,7 @@ Both modes share the post-save preview (`edit-prompt-sanitized`) and the save bu
 
 ## Validation criterion *(required)*
 
-- `toggle_bool_use_double_brackets` is visible in the InspectionPanel after the Prompt Template is added to a blank flow, alongside the display name "Use Double Brackets"
+- `inspector-param-use_double_brackets` is visible in the on-demand inspector (opened via `parameters-button`) after the Prompt Template is added to a blank flow, alongside the display name "Use Double Brackets"
 - In default (OFF) state, `{var}` produces a dynamic handle and `{{var}}` is treated as a literal escape
 - In ON state, `{{var}}` produces a dynamic handle and `{var}` is ignored by the parser
 - Flipping the toggle swaps the modal-open button (and underlying parser) between the f-string and mustache variants; saving the template under the new mode reconciles the rendered handle set to the new parser's output
@@ -132,7 +132,7 @@ Both modes share the post-save preview (`edit-prompt-sanitized`) and the save bu
 
 ## Notes *(optional)*
 
-- The InspectionPanel renders advanced fields directly: although `use_double_brackets` is `advanced=True`, the toggle is interactable without first opening any "show advanced options" UI. The upstream `isCanvasVisible()` filter only hides the field from the on-canvas node body, not from the side panel.
+- dev49: `use_double_brackets` is `advanced=True`, so its `toggle_bool_use_double_brackets` control is NOT on the node body by default and the old auto-opening InspectionPanel (which rendered advanced fields directly) is gone. The field must be exposed via the on-demand inspector (`parameters-button` → `inspector-add-use_double_brackets`) before the toggle can be driven — the shared `setUseDoubleBrackets` helper does this. The field is still listed in the inspector side-panel as `inspector-param-use_double_brackets`.
 - `flipDoubleBrackets` waits for the modal-open button to re-render under the testid that matches the target mode (`button_open_prompt_modal` ↔ `button_open_mustache_prompt_modal`). This is more robust than waiting for an arbitrary timeout — the testid swap is driven by `template.type` flipping between PROMPT and MUSTACHE_PROMPT in `update_build_config`, which is exactly the contract we want to verify is wired through.
 - Test 4 verifies the parser-switch contract end-to-end: toggling OFF swaps the modal-open button (proving the field-type change landed) and the subsequent f-string save reconciles the rendered handle set. We do **not** assert that handles disappear from the toggle alone, because empirically the rendered handle set lingers past `update_build_config` until the next save in the active mode.
 - All assertions use the literal node-type slug `"prompt template"` (with space) in the testid, matching how the frontend renders the type. The leading space inside `handle-prompt template-...` is intentional and not a typo.

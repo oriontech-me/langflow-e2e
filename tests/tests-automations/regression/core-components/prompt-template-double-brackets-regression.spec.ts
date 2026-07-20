@@ -8,6 +8,10 @@ import {
 } from "../../../helpers/ui/prompt-template";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../helpers/ui/open-advanced-options";
 
 // Flows are created via the REST API (setupBlankFlow) and deleted in afterEach
 // (issue #545). Kept serial so the per-file flow lifecycle stays deterministic
@@ -44,11 +48,18 @@ test(
   "Prompt Template — use_double_brackets toggle is exposed in the InspectionPanel with its upstream display name",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
+    // dev49: `use_double_brackets` is an advanced field, so it no longer
+    // renders on the node body by default and the auto-opening InspectionPanel
+    // is gone. Open the on-demand inspector (parameters-button) where the
+    // advanced field is listed as `inspector-param-use_double_brackets`.
+    await page.getByTestId("title-Prompt Template").click();
+    await openAdvancedOptions(page);
+
     await test.step(
-      "Toggle is visible in the InspectionPanel by default",
+      "Field is exposed in the InspectionPanel",
       async () => {
         await expect(
-          page.getByTestId("toggle_bool_use_double_brackets"),
+          page.getByTestId("inspector-param-use_double_brackets"),
         ).toBeVisible({ timeout: 10000 });
       },
     );
@@ -60,26 +71,24 @@ test(
         // `BoolInput(..., display_name="Use Double Brackets", ...)` declaration —
         // asserting it catches an accidental rename at the source.
         //
-        // The assertion is anchored on the toggle: XPath climbs the ancestor
-        // axis from the toggle and picks the closest ancestor whose subtree
-        // contains the label string. If the label is renamed and no ancestor
-        // of the toggle has the text anymore, the locator resolves to zero
-        // elements and `toBeVisible()` fails — proving the label-toggle
-        // wiring regressed. A bare `getByText(...).first()` would match the
-        // string anywhere on the page and could be satisfied by an unrelated
-        // tooltip elsewhere, masking the same regression.
-        //
-        // The `info` text ("Use {{variable}} syntax …") is intentionally not
-        // asserted — the InspectionPanel collapses it into a hover-tooltip
-        // icon when the panel is narrow.
+        // The assertion is anchored on the field row: XPath climbs the
+        // ancestor-or-self axis from `inspector-param-use_double_brackets` and
+        // picks the closest node whose subtree contains the label string. If
+        // the label is renamed and the field row no longer carries the text,
+        // the locator resolves to zero elements and `toBeVisible()` fails —
+        // proving the label-field wiring regressed. A bare `getByText(...)`
+        // would match the string anywhere on the page and could be satisfied
+        // by an unrelated tooltip, masking the same regression.
         const labelOwner = page
-          .getByTestId("toggle_bool_use_double_brackets")
+          .getByTestId("inspector-param-use_double_brackets")
           .locator(
-            "xpath=ancestor::*[contains(., 'Use Double Brackets')][1]",
+            "xpath=ancestor-or-self::*[contains(., 'Use Double Brackets')][1]",
           );
         await expect(labelOwner).toBeVisible();
       },
     );
+
+    await closeAdvancedOptions(page);
   },
 );
 
