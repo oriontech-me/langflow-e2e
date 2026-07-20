@@ -651,6 +651,7 @@
 - [x] Duplicate MCP server registration returns 409 Conflict → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
+- [-] Gemini × MCP tool-calling regression — agent runs but invokes no echo MCP tool (guards upstream #440) → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
 - [ ] List available resources via MCP protocol
 - [ ] Consume resource URI and inject content into flow
 
