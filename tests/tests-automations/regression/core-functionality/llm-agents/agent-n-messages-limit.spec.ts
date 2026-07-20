@@ -4,6 +4,10 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../../helpers/ui/open-advanced-options";
 
 /**
  * n_messages limits the number of retained messages (QA-CHECKLIST §6.3).
@@ -128,13 +132,13 @@ async function retrieveViaMessageHistory(
   const node = page.locator('[data-testid^="rf__node-Memory"]').first();
   await expect(node).toBeVisible({ timeout: 15000 });
 
-  // n_messages and session_id are hidden by default — expose them through the
-  // node's edit-fields panel, then fill them on the node.
+  // n_messages and session_id are hidden by default — expose them on the node
+  // body via the inspector (dev46 replaced the edit-fields modal + show<field>).
   await page.getByTestId("title-Message History").click();
-  await page.getByTestId("edit-fields-button").click();
-  await page.getByTestId("shown_messages").click();
-  await page.getByTestId("showsession_id").click();
-  await page.keyboard.press("Escape");
+  await openAdvancedOptions(page);
+  await page.getByTestId("inspector-add-n_messages").click();
+  await page.getByTestId("inspector-add-session_id").click();
+  await closeAdvancedOptions(page);
 
   await page.getByTestId("int_int_n_messages").fill(nMessages);
   await page.getByTestId("popover-anchor-input-session_id").fill(session);

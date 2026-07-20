@@ -88,10 +88,11 @@ Shared setup per test (all data is per-run unique):
    node renders as `rf__node-Memory-*`). Retrieval is **flow-scoped**
    (issue #13059 / PR #13087), so the component must live in the same flow that
    seeded the session.
-6. Expose the hidden fields via the node's **edit-fields** panel
-   (`edit-fields-button` → toggles `shown_messages`, `showsession_id`), then
-   fill `int_int_n_messages` and `popover-anchor-input-session_id`; wait for
-   the flow save to settle.
+6. Expose the hidden fields via the node **inspector** (dev46: `openAdvancedOptions`
+   → `inspector-add-n_messages`, `inspector-add-session_id` → `closeAdvancedOptions`;
+   replaces the old `edit-fields-button` + `show<field>` toggles), then fill
+   `int_int_n_messages` and `popover-anchor-input-session_id`; wait for the flow
+   save to settle.
 7. Run the node (`button_run_message history`, mode tab *Retrieve* is the
    default), wait for **built successfully**.
 8. Open the output inspector (`output-inspection-messages-memory`) and read the
@@ -164,8 +165,9 @@ Shared setup per test (all data is per-run unique):
   through the same helper.
 - `src/backend/base/langflow/api/v1/endpoints.py` — `POST /api/v1/run`
   (seeding) and `GET /api/v1/monitor/messages` (seed verification).
-- `src/frontend/src/CustomNodes/GenericNode/` — the node's edit-fields panel
-  (`edit-fields-button`, `shown_messages`, `showsession_id`) and field inputs.
+- `src/frontend/src/CustomNodes/GenericNode/` — the node inspector
+  (`parameters-button`, `inspector-add-n_messages`, `inspector-add-session_id`)
+  and field inputs.
 - `src/frontend/src/modals/` — the component output inspector
   (`output-inspection-*`, `textarea`).
 
