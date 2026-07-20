@@ -97,11 +97,11 @@ machinery (family standard). Per model, a serial describe with two tests:
 **Test 2 — toggle OFF: the date tool is removed from the toolkit (§6.5)**
 
 1–2. Same template load and Instructions (fresh load; new nonce).
-3. Open the Agent controls dialog (`edit-button-modal`), assert the
-   pre-flip default is ON (`toggle_bool_edit_add_current_date_tool` has
+3. Open the Agent node inspector (`parameters-button`), assert the
+   pre-flip default is ON (`toggle_bool_add_current_date_tool` has
    `aria-checked="true"` — a changed template default fails loudly instead
    of silently inverting the test), click it, assert `aria-checked="false"`,
-   close (`edit-button-close`), wait for the flow save to settle.
+   close (`inspection-panel-close`), wait for the flow save to settle.
 4. Seed the same task (new nonce); open the Playground, send, wait.
 5. **Absence assert (API):** the session's AI message(s) must contain
    **zero** `get_current_date` `tool_use` blocks. The final AI bubble must

@@ -66,8 +66,8 @@ The spec generates **2 tests per active model** via `getTestTargets()`
 
 Shared setup per test:
 1. Load the Simple Agent template.
-2. Set **Max Tokens** in the Agent **Controls** dialog
-   (`edit-button-modal` → `int_int_edit_max_tokens` → `edit-button-close`).
+2. Set **Max Tokens** in the Agent node inspector
+   (`parameters-button` → `int_int_max_tokens` → `inspection-panel-close`).
    **The int field rejects Playwright's `fill()`** (the controlled input keeps
    an empty DOM value) and swallows the first keystroke of an immediate
    `pressSequentially` (a typed "50" becomes a clamped "1") — the setter must
@@ -149,8 +149,8 @@ Shared setup per test:
   `_get_max_tokens_value()` (empty/`0` ⇒ `None` ⇒ unlimited).
 - `src/lfx/base/models/unified_models/instantiation.py` — provider-specific
   mapping via `max_tokens_field_name` (Google ⇒ `max_output_tokens`).
-- `src/frontend/src/CustomNodes/GenericNode/` — the Agent Controls dialog
-  (`int_int_edit_max_tokens`) and its int-field input handling.
+- `src/frontend/src/CustomNodes/GenericNode/` — the Agent node inspector
+  (`int_int_max_tokens`) and its int-field input handling.
 - `src/frontend/src/components/core/playgroundComponent/` — the
   `chat-message-token-usage` badge and its Input/Output tooltip.
 - Provider LLM API — a live key; real model calls.
@@ -159,7 +159,7 @@ Shared setup per test:
 
 ## When to review this test *(optional)*
 
-- If the Controls field testid changes from `int_int_edit_max_tokens`.
+- If the node field testid changes from `int_int_max_tokens`.
 - If the token-usage tooltip format changes (`Output:` label, `N.NK`
   abbreviation).
 - If the Agent regains a temperature/reasoning parameter (re-scope the §7.7
@@ -169,7 +169,7 @@ Shared setup per test:
 
 ## Notes *(optional)*
 
-- **Int fields in the Controls dialog reject `fill()`** — Playwright's
+- **Int fields in the node inspector reject `fill()`** — Playwright's
   programmatic set never reaches the controlled component (DOM value stays
   `""`), and fast typing loses the first keystroke to a re-render, after which
   the remainder is clamped to the field's `range_spec` min (typed "50" →
