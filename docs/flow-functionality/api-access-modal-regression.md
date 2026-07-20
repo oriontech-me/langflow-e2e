@@ -8,7 +8,7 @@
 
 Validates the **API access modal** itself — the surface that exposes a flow's integration snippets — rather than the contents of any single generated snippet (those are covered by `curlApiGeneration.spec.ts` and `pythonApiGeneration.spec.ts`). Four `test()` cases, all opening the **Basic Prompting** template and the modal from the Publish dropdown:
 
-1. **Opens and renders** — the modal opens from `publish-button` → `api-access-item`, shows the `API access` title, the Input Schema (`tweaks-button`) entry point, all three language tabs (`api_tab_python`, `api_tab_javascript`, `api_tab_curl`), and a copyable snippet (`btn-copy-code`).
+1. **Opens and renders** — the modal opens from `publish-button` → `api-access-item`, shows the `API access` title, the Endpoint Name (`endpoint-name-button`) header entry point (dev49 — replaces the removed Input Schema / `tweaks-button`), all three language tabs (`api_tab_python`, `api_tab_javascript`, `api_tab_curl`), and a copyable snippet (`btn-copy-code`).
 2. **Tab switching** — clicking each language tab swaps the rendered snippet (Python `import requests` vs. cURL `curl --request POST`), and the two snippets differ — proving `setSelectedTab` re-renders the code block.
 3. **Flow ID coherence** — the generated cURL command targets `/api/v1/run/{currentFlowId}` where `currentFlowId` is the ID parsed from the editor URL. This is stricter than the sibling specs, which only match any `[0-9a-f-]{36}` UUID; it proves the modal reflects *the open flow*, not a stale or hard-coded ID.
 4. **Close behavior** — the modal dismisses cleanly via `Escape` and via the `Close` (X) button.
@@ -39,7 +39,7 @@ Cleanup tracks the ids returned by this page's own flow-creating responses (`POS
 
 ### Test 1 — `API access modal opens from the Publish dropdown exposing the Python, JavaScript and cURL tabs`
 
-6. Assert `API access` title (scoped to the open `dialog`, since the Publish dropdown's force-mounted menu item carries the same exact text) and `tweaks-button` are visible
+6. Assert `API access` title (scoped to the open `dialog`, since the Publish dropdown's force-mounted menu item carries the same exact text) and `endpoint-name-button` are visible
 7. Assert `api_tab_python`, `api_tab_javascript`, `api_tab_curl` are visible
 8. Assert `btn-copy-code` is visible
 
@@ -79,7 +79,7 @@ Cleanup tracks the ids returned by this page's own flow-creating responses (`POS
 - `tests/helpers/auth/get-auth-token.ts` — Bearer token for the cleanup `DELETE`
 - `src/frontend/src/components/core/flowToolbarComponent/components/deploy-dropdown.tsx` — registers `publish-button` and `api-access-item`; mounts `ApiModal`
 - `src/frontend/src/modals/apiModal/codeTabs/code-tabs.tsx` — renders the `api_tab_${title}` language tabs and `btn-copy-code`; owns the `setSelectedTab` switch
-- `src/frontend/src/modals/apiModal/index.tsx` — modal shell; renders the `API access` title (`modal.api.title`) and the `tweaks-button`
+- `src/frontend/src/modals/apiModal/index.tsx` — modal shell; renders the `API access` title (`modal.api.title`) and the `endpoint-name-button` header entry point
 - `src/frontend/src/components/ui/dialog.tsx` — the `Close` (X) button with the `Close` accessible name
 - `src/frontend/src/modals/apiModal/utils/get-curl-code.tsx` / `get-python-api-code.tsx` — build the snippets whose `/api/v1/run/{flowId}` URL the flow-ID test asserts
 - `src/backend/base/langflow/api/v1/endpoints.py` — owns `/api/v1/run/{flow_id}`; the URL shape encoded in the snippet must keep matching this route
@@ -90,7 +90,7 @@ Cleanup tracks the ids returned by this page's own flow-creating responses (`POS
 
 - The full structural shape of each snippet (headers, payload, session_id) — owned by `curlApiGeneration.spec.ts` and `pythonApiGeneration.spec.ts`
 - The macOS/Linux ↔ Windows cURL platform sub-tabs (covered by `curlApiGeneration.spec.ts`)
-- The Input Schema (tweaks) modal behind `tweaks-button` — only its presence is asserted, not its tweak-editing flow
+- The behavior behind the `endpoint-name-button` header entry point — only its presence is asserted, not its editing flow
 - Outside-click dismissal — `Escape` and the `Close` button are the two close paths exercised
 - Actually executing the generated snippet against the backend (covered by API tests under `api/flows/`)
 - The JavaScript snippet's structural shape — only that selecting its tab produces a snippet distinct from Python/cURL

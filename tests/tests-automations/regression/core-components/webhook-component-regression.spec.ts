@@ -1,5 +1,9 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../helpers/ui/open-advanced-options";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
@@ -194,21 +198,21 @@ test(
   async ({ page }) => {
     await addWebhookComponent(page);
 
-    // The inspector renders the cURL field (via WebhookFieldComponent → TextAreaComponent)
-    // as a textbox containing the actual curl command with the real backend URL and flow ID.
-    // This verifies that the CURL_WEBHOOK placeholder is correctly substituted.
+    // The cURL field holds the actual curl command with the real backend URL and
+    // flow ID — this verifies the CURL_WEBHOOK placeholder is correctly substituted.
     const flowId = page.url().split("/").slice(-1)[0];
     expect(flowId).toMatch(/^[0-9a-f-]{36}$/);
 
-    // Read the cURL textbox value directly from the inspector (no modal needed).
-    // The textbox is rendered inline in the inspector panel with placeholder "Type something..."
-    await page.waitForSelector('[placeholder="Type something..."]', {
-      timeout: 10000,
-    });
-    const curlValue = await page
-      .locator('[placeholder="Type something..."]')
-      .first()
-      .inputValue();
+    // dev49: the generated cURL command is an advanced field — expose it on the
+    // node body via the inspector, then open its text-area modal from the body
+    // and read the value there (same path as the webhook api-key spec).
+    await page.getByTestId("title-Webhook").click();
+    await openAdvancedOptions(page);
+    await page.getByTestId("inspector-add-curl").click();
+    await closeAdvancedOptions(page);
+
+    await page.getByTestId("button_open_text_area_modal_str_curl").click();
+    const curlValue = await page.getByTestId("text-area-modal").inputValue();
 
     // Verify the cURL command structure — these are the key regression points:
     // 1. Uses POST method (not GET)
