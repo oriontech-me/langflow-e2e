@@ -53,4 +53,29 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add QA-CHECKLIST.md
           git commit -m "chore(checklist): auto-update coverage summary [skip ci]"
-          git push
+          # Push with regenerate-retry. A bare push loses the fast-forward race
+          # when another commit lands on main first (concurrent merge, or a
+          # parallel run of this same workflow), dying "! [rejected] (fetch
+          # first)" and dropping the regenerated table. Because the Coverage
+          # Summary is a DETERMINISTIC function of source, the safe retry is to
+          # re-sync onto the newest main and regenerate on top of it (a plain
+          # rebase could conflict inside the generated block). Same
+          # concurrent-push class as the daily-history fix (#818).
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Coverage summary pushed (attempt $attempt)."
+              exit 0
+            fi
+            echo "::warning::push rejected (attempt $attempt) — re-syncing onto origin/main, regenerating, retrying."
+            git fetch origin main
+            git reset --hard origin/main
+            npm run coverage:summary
+            if git diff --quiet QA-CHECKLIST.md; then
+              echo "Coverage Summary already up to date on the new main — nothing to commit."
+              exit 0
+            fi
+            git add QA-CHECKLIST.md
+            git commit -m "chore(checklist): auto-update coverage summary [skip ci]"
+          done
+          echo "::error::Could not push coverage summary after 5 attempts."
+          exit 1
