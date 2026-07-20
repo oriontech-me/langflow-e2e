@@ -67,8 +67,8 @@ Shared setup per test (identical except `max_iterations`):
 - Set the Agent Instructions (`textarea_str_system_prompt`) to force use of the
   URL fetch tool for any URL question, so the agent **attempts a tool call** —
   which needs more than one model call — instead of answering in one shot.
-- Open the Agent **Controls** dialog (`edit-button-modal`); set
-  `int_int_edit_max_iterations`; close (`edit-button-close`).
+- Open the Agent node inspector (`parameters-button`); set
+  `int_int_max_iterations`; close (`inspection-panel-close`).
 - Set the task on the **ChatInput node** (`textarea_str_input_value`) and
   `waitForFlowSaveSettled` (the Playground prompt pre-fills from the node —
   typing into the Playground races an async default re-injection; see
@@ -143,8 +143,8 @@ flaky). The fetch is SSRF-blocked backend-side, but that is irrelevant — the
 
 - `src/backend/base/langflow/components/agents/` — the Agent executor and its
   `max_iterations` enforcement; the fix this spec guards lives here.
-- `src/frontend/src/CustomNodes/GenericNode/` — the Agent **Controls** dialog
-  (`int_int_edit_max_iterations`).
+- `src/frontend/src/CustomNodes/GenericNode/` — the Agent node inspector
+  (`int_int_max_iterations`).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O and
   the AI message bubble carrying the `Model call limits exceeded` message.
 - The Simple Agent template's **URL fetch tool** — the forcer that makes the
@@ -158,8 +158,8 @@ flaky). The fetch is SSRF-blocked backend-side, but that is irrelevant — the
 
 - If the terminal message wording changes from `Model call limits exceeded: run
   limit (N/N)`.
-- If the Agent Controls field testids change
-  (`int_int_edit_max_iterations`, `toggle_bool_edit_add_calculator_tool`).
+- If the Agent node field testids change
+  (`int_int_max_iterations`, `toggle_bool_edit_add_calculator_tool`).
 - If the Simple Agent template or the calculator tool is renamed/rewired.
 
 ---

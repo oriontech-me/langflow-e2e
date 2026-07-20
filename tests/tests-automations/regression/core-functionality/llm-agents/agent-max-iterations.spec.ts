@@ -6,6 +6,10 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../../helpers/ui/open-advanced-options";
+import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
   providerConfigMap,
@@ -168,12 +172,18 @@ async function setSystemPrompt(page: Page, prompt: string): Promise<void> {
 // Open the Agent Controls dialog, set max_iterations, and close. The template's
 // URL tool (default) is the forcer — no extra tool needs enabling.
 async function setMaxIterations(page: Page, maxIterations: string): Promise<void> {
-  await page.getByTestId("edit-button-modal").click();
-  const maxIter = page.getByTestId("int_int_edit_max_iterations");
+  // dev49: max_iterations is an advanced field — expose it on the node body via
+  // the inspector (replaces the old Controls dialog / edit-button-modal), then
+  // fill it on the body.
+  await page.locator('[data-testid^="rf__node-Agent"]').first().click();
+  await openAdvancedOptions(page);
+  await page.getByTestId("inspector-add-max_iterations").click();
+  await closeAdvancedOptions(page);
+  const maxIter = page.getByTestId("int_int_max_iterations");
   await expect(maxIter).toBeVisible({ timeout: 15000 });
   await maxIter.scrollIntoViewIfNeeded();
   await maxIter.fill(maxIterations);
-  await page.getByTestId("edit-button-close").click();
+  await maxIter.blur();
 }
 
 // Set the task on the ChatInput node (the Playground prompt pre-fills from it;

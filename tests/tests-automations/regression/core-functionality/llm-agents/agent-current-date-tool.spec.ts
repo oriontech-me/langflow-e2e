@@ -6,6 +6,10 @@ import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../../helpers/ui/open-advanced-options";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
@@ -217,14 +221,19 @@ async function setChatInputText(page: Page, text: string): Promise<void> {
 // fails loudly instead of silently inverting the test's meaning (pattern
 // from agent-config-persistence.spec.ts).
 async function setCurrentDateToggleOff(page: Page): Promise<void> {
-  await page.getByTestId("edit-button-modal").click();
-  const toggle = page.getByTestId("toggle_bool_edit_add_current_date_tool");
+  // dev49: add_current_date_tool is an advanced field — expose it on the node
+  // body via the inspector (replaces the old Controls dialog / edit-button-modal),
+  // then flip its toggle on the body.
+  await page.locator('[data-testid^="rf__node-Agent"]').first().click();
+  await openAdvancedOptions(page);
+  await page.getByTestId("inspector-add-add_current_date_tool").click();
+  await closeAdvancedOptions(page);
+  const toggle = page.getByTestId("toggle_bool_add_current_date_tool");
   await expect(toggle).toBeVisible({ timeout: 15000 });
   await toggle.scrollIntoViewIfNeeded();
   await expect(toggle).toHaveAttribute("aria-checked", "true");
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", "false");
-  await page.getByTestId("edit-button-close").click();
 }
 
 async function waitForAgentToFinish(page: Page): Promise<void> {
