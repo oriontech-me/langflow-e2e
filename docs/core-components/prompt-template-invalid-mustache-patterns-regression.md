@@ -1,6 +1,6 @@
 # Prompt Template — Invalid Mustache Patterns Regression
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev49`)
 
 ---
 
@@ -36,7 +36,7 @@ None carry `@release` — these are defensive contract assertions, not happy-pat
 
 ## Step by step *(required)*
 
-Every test starts with the same `addPromptComponent(page)` helper used in the sibling specs (blank flow → sidebar search → add → adjust view → assert 1 node), followed by `enableMustacheMode(page)`, which clicks the `toggle_bool_use_double_brackets` toggle and waits for `button_open_mustache_prompt_modal` to mount (the re-render is the reliable signal that the validator switch has landed).
+Every test starts with the same `addPromptComponent(page)` helper used in the sibling specs (blank flow → sidebar search → add → adjust view → assert 1 node), followed by `setUseDoubleBrackets(page, true)`. dev49: `use_double_brackets` is an advanced field, so the helper first exposes its `toggle_bool_use_double_brackets` control on the node body via the inspector (`parameters-button` → `inspector-add-use_double_brackets` → close), then clicks the toggle and waits for `button_open_mustache_prompt_modal` to mount (the re-render is the reliable signal that the validator switch has landed).
 
 All four rejection cases then run the same step sequence via the `runMustacheRejectionContract` helper:
 
