@@ -388,7 +388,26 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add reports/daily-history.jsonl
           git commit -m "chore(history): record daily run ${{ github.run_id }} [skip ci]"
-          git push
+          # Push with rebase-retry. The suite runs ~35 min, and main routinely
+          # advances during that window (merged PRs, the coverage-bot [skip ci]
+          # commit). A bare `git push` then dies with "! [rejected] (fetch
+          # first)" and the day's history line is silently LOST — which blinds
+          # the triage-dispatch automation, since its dataset builder
+          # auto-discovers the run to triage from this very file (a missing line
+          # makes it triage the previous run). daily-history.jsonl is
+          # append-only (one line per day), so rebasing our single commit onto
+          # the advanced main never conflicts. Same concurrent-push class as #741.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              echo "Daily history pushed (attempt $attempt)."
+              exit 0
+            fi
+            echo "::warning::push rejected (attempt $attempt) — rebasing onto origin/main and retrying."
+            git fetch origin main
+            git rebase origin/main || { echo "::error::rebase of daily history onto origin/main failed"; git rebase --abort || true; exit 1; }
+          done
+          echo "::error::Could not push daily history after 5 attempts."
+          exit 1
 
       # Auto-remove @stable from hard-failing tests and commit it back to main
       # (leadership decision — no human review; restoring the tag is manual). The
