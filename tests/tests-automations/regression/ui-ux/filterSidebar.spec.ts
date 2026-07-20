@@ -1,3 +1,4 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
@@ -5,12 +6,46 @@ import {
   closeAdvancedOptions,
   openAdvancedOptions,
 } from "../../../helpers/ui/open-advanced-options";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+
+// Capture every flow THIS page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach (repo convention, #490/#681).
+const createdFlowIds: string[] = [];
+
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+}
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
+  }
+});
 
 test(
   "user must see on handle click the possibility connections",
   { tag: ["@release", "@components", "@api"] },
 
   async ({ page }) => {
+    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
     await page.waitForSelector('[data-testid="blank-flow"]', {
@@ -115,7 +150,9 @@ test(
 
     await openAdvancedOptions(page);
 
-    await page.getByTestId("showheaders").click();
+    // dev46: add the advanced `headers` field to the node body via the inspector
+    // (replaces the old show<field> toggle), then connect from its input handle.
+    await page.getByTestId("inspector-add-headers").click();
     await closeAdvancedOptions(page);
     await page.getByTestId("handle-apirequest-shownode-headers-left").click();
 
@@ -135,7 +172,10 @@ test(
 
     await expect(page.getByTestId("flow_controlsSub Flow")).toBeVisible();
 
-    await expect(page.getByTestId("processingData Operations")).toBeVisible();
+    // dev46 split the monolithic "Data Operations" component into granular ops;
+    // assert a processing component that is compatible with the Data-typed
+    // `headers` input and present under the beta filter.
+    await expect(page.getByTestId("processingCreate Data")).toBeVisible();
 
     await page.getByTestId("icon-X").first().click();
 
