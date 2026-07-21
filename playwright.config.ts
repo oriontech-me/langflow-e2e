@@ -17,7 +17,10 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 3,
   workers: process.env.CI ? 2 : undefined,
   timeout: 5 * 60 * 1000, // 5 minutes per test
-  reporter: process.env.CI ? "blob" : "html",
+  reporter: [
+    [process.env.CI ? "blob" : "html"],
+    ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
+  ],
 
   use: {
     baseURL: BASE_URL,

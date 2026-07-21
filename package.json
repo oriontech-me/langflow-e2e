@@ -25,6 +25,7 @@
     "dotenv": "^16.4.5"
   },
   "devDependencies": {
+    "@flakiness/playwright": "^1.18.0",
     "@playwright/test": "1.58.2",
     "@types/node": "^25.5.0",
     "eslint": "^10.1.0",
