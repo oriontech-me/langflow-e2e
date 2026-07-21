@@ -15,9 +15,10 @@ token-usage tooltip as the observable:
 1. **Limit enforced** — `max_tokens = 50` with a prompt requesting a ~500-word
    essay: the response's **Output** token count is **≤ 50**.
 2. **Causal control** — same prompt with `max_tokens` unset (saved as `0` =
-   unlimited): the response is a real essay (hundreds of words) and its Output
-   token count is **> 50**. Only `max_tokens` differs, so Test 1's cap is
-   attributable to the parameter.
+   unlimited): the response's Output token count is **> 50**. Only `max_tokens`
+   differs, so Test 1's cap is attributable to the parameter. The proof is
+   **token-level only** — the visible reply text is deliberately not asserted
+   (see the causal-control note below).
 
 > **Scope note — §7.7 "Temperature parameter (verify via network payload)" is
 > NOT covered.** On nightly 1.11.0.dev33 the Agent has **no temperature
@@ -103,18 +104,23 @@ Shared setup per test:
 **Test 2 — causal control: unset max_tokens generates freely** (§6.2, §7.7)
 
 - `max_tokens` cleared (saved as `0` = no limit), identical prompt.
-- **Validation:** tooltip **Output > 50** and the reply contains a real essay
-  (> 200 words). Only `max_tokens` differs from Test 1, so Test 1's cap is
-  caused by the parameter, not by the model choosing to answer briefly.
+- **Validation:** tooltip **Output > 50**. Only `max_tokens` differs from Test 1,
+  so Test 1's cap is caused by the parameter, not by the model choosing to
+  answer briefly. **The visible reply text is NOT asserted** (no word-count
+  floor): a thinking model spends the unbounded budget on reasoning and can
+  legitimately return a terse visible reply while its Output token count is
+  well above 50 — exactly Test 1's rationale, applied symmetrically here. The
+  token count is the observable of the `max_tokens` contract; visible verbosity
+  is a model trait, not part of it.
 
 ---
 
 ## Validation criterion *(required)*
 
 - **Limit enforced (Test 1):** `max_tokens=50` → response Output tokens ≤ 50.
-- **Causal control (Test 2):** `max_tokens` unset → Output tokens > 50 and a
-  multi-hundred-word reply. The pair proves generation is bounded by
-  `max_tokens` and causally so.
+- **Causal control (Test 2):** `max_tokens` unset → Output tokens > 50 (no
+  reply-text assertion). The pair proves generation is bounded by `max_tokens`
+  and causally so at the token level.
 
 ## Guarding against false positives *(how)*
 
@@ -126,8 +132,12 @@ Shared setup per test:
 - **Token-level assertion, not text-length:** reply text length varies with
   model verbosity; the provider-enforced output-token cap does not.
 - **Causal pair:** identical prompt, only `max_tokens` differs.
-- **Test 2 lower bound (> 50 tokens, > 200 words):** an aborted/empty run
-  cannot pass the control.
+- **Test 2 lower bound (> 50 Output tokens):** an aborted/empty run yields
+  Output `0` (≤ 50) and cannot pass the control — the token floor subsumes the
+  anti-empty guard, so no reply-word-count floor is needed. A word-count floor
+  was intentionally **removed** (see the model-agnostic note below): it
+  measured model verbosity, not the `max_tokens` contract, and produced a
+  false negative on thinking models.
 - **Force-failure check** (CONTRIBUTING §2) run during VERIFY on each hard
   assertion before `@stable`.
 
@@ -184,6 +194,20 @@ Shared setup per test:
 - **Tooltip Output may be empty** when the whole budget is consumed by
   reasoning before any visible token (observed with `max_tokens=1`); the
   parser treats missing/empty as `0`, which still satisfies `≤ 50`.
+- **Model-agnostic by design — no reply-word-count floor (#866).** Test 2
+  originally asserted the reply had `> 200` words on top of `Output > 50`. That
+  word-count floor measured **model verbosity**, not the `max_tokens` contract,
+  and was a latent false negative for thinking models. It stayed dormant from
+  the spec's creation (#483, 2026-07-06) because the collected `google` model
+  was `gemini-omni-flash-preview` (Interactions-API-only → the variant
+  **skipped**); when `collect-models` began selecting the available
+  `gemini-2.5-flash` (~2026-07-14) the variant executed and the model — a
+  thinking model — spent the unbounded budget on reasoning (Output `> 50` ✓)
+  yet returned a terse visible reply (8–36 words), failing the floor on 4
+  dailies (07-14/15/16/21) while `openai`/`anthropic` passed under identical
+  load. The floor was removed so the causal proof is token-level and holds for
+  any collected model. `openai`/`anthropic` remain a real essay; that is a
+  model trait, not a contract the suite pins.
 - **Runtime honors the parameter** (verified two ways on dev33: an API run
   with a `max_tokens: 50` tweak returned an empty reply, and the UI-saved
   value produced Output = 46 ≤ 50), so unlike #481/#482 there is no
