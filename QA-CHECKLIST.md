@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 346 `test()` calls carrying the `@stable` tag, distributed across 140 spec
+> 347 `test()` calls carrying the `@stable` tag, distributed across 140 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -989,6 +989,7 @@
 - [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
 - [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
+- [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
 - [x] agent selects the Web Search tool for a search prompt → `agent-multi-tool-selection.spec.ts`
