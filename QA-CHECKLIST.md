@@ -57,8 +57,8 @@
 
 ### To implement
 
-- [ ] Configure an MCP
-- [ ] Configure a Custom Component
+- [-] Configure an MCP → `helpers/mcp/configure-mcp-server.ts`
+- [-] Configure a Custom Component → `helpers/flows/configure-custom-component.ts`
 - [x] Delete a component → `helpers/flows/delete-component.ts`
 - [x] Run a flow → `helpers/flows/run-flow.ts`
 - [-] Pause a flow → `flow-functionality/stop-building.spec.ts`
