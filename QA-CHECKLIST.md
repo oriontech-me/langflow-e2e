@@ -465,7 +465,7 @@
 - [x] Direct response → `api/flows/api-build-direct-response.spec.ts`
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
 - [x] Send empty message — send button stays enabled by design (only disabled while a file upload is in progress) → `playground/playground-empty-message-send.spec.ts`
-- [ ] Send message while response is in progress — should wait or queue
+- [-] Send message while response is in progress — should wait or queue → `playground/playground-send-while-in-progress.spec.ts`
 - [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Attach non-image file (.txt) in chat — preview tile renders (delete button visible, no `<img>`) → `core-functionality/playground/playground-non-image-attachment.spec.ts`
