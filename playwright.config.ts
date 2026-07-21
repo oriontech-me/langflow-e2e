@@ -17,10 +17,24 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 3,
   workers: process.env.CI ? 2 : undefined,
   timeout: 5 * 60 * 1000, // 5 minutes per test
-  reporter: [
-    [process.env.CI ? "blob" : "html"],
-    ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
-  ],
+  // Reporters run side by side: the standard Playwright HTML report (kept as
+  // the CI artifact / local view) PLUS the Flakiness.io reporter, which uploads
+  // to the dashboard. In CI we also keep `github` (annotations) and `json`
+  // (results.json — consumed by the QA Platform payload and run history). The
+  // Flakiness.io reporter MUST live here, not on the CLI `--reporter` flag,
+  // because its `flakinessProject` option (required for GitHub OIDC upload)
+  // cannot be passed via the command line.
+  reporter: process.env.CI
+    ? [
+        ["html"],
+        ["github"],
+        ["json"],
+        ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
+      ]
+    : [
+        ["html"],
+        ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
+      ],
 
   use: {
     baseURL: BASE_URL,
