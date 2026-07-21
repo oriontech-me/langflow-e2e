@@ -6,25 +6,34 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 test(
   "user should be able to select flows with different methods and perform bulk actions",
-  { tag: ["@release", "@workspace", "@mainpage", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@mainpage", "@regression"] },
   async ({ page, request }) => {
-    // Track the IDs of the 3 flows we create so cleanup can delete ONLY those
-    // via the API, not sibling specs' flows. Under `fullyParallel`, a positional
-    // bulk-delete on the shared listing would otherwise be able to hit a flow
-    // created by another worker (guarded against below).
+    // Track the IDs of the 3 flows + the dedicated folder we create so cleanup
+    // deletes ONLY those via the API, never sibling specs' flows.
     const createdFlowIds: string[] = [];
+    let folderId: string | null = null;
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const folderName = `bulk-actions-folder-${suffix}`;
     const createdNames = [1, 2, 3].map((n) => `bulk-actions-${suffix}-${n}`);
 
     try {
-      // Create the 3 flows directly via the REST API instead of clicking through
-      // the templates modal three times. The UI path (open modal → pick template
-      // → navigate editor↔home, ×3) was heavy and load-sensitive; both recurring
-      // daily failures (#723: modal never opened / home-return waitForSelector
+      // Create the 3 flows directly via the REST API, inside a DEDICATED
+      // project/folder. The UI path (open modal → pick template → navigate
+      // editor↔home, ×3) was heavy and load-sensitive; both recurring daily
+      // failures (#723: modal never opened / home-return waitForSelector
       // timeout) lived entirely in that scaffolding, never in the bulk-action
       // assertions under test. `createFlow` retries the transient concurrent
       // 500 (#588); empty `data` is enough — the test only selects/downloads/
       // deletes the cards, it never runs the flows.
+      //
+      // The dedicated folder is the fix for #869: the positional selection
+      // (shift/ctrl-click by card index) and destructive bulk-delete below
+      // require the listing to hold EXACTLY these 3 flows. On the shared home
+      // listing under `fullyParallel`, a sibling worker's freshly-created flow
+      // floats into the recency-sorted top 3 and lingers past any poll window
+      // (#790/#869 deep-equality flake). Scoping the whole flow to this folder's
+      // listing — where a sibling's default-project flow can never appear —
+      // removes that interference at the source.
       //
       // Seed via the API BEFORE bootstrapping the browser: this leaves the
       // instance non-empty, so `awaitBootstrapTest`'s empty-page seeding branch
@@ -32,50 +41,52 @@ test(
       // modal via `dismissWelcomeOverlayAndWaitForModal`) is never taken. Getting
       // the token uses `request` and is independent of the browser session.
       const headers = { Authorization: await getAuthToken(request) };
+      const folderRes = await request.post("/api/v1/projects/", {
+        headers,
+        data: { name: folderName },
+      });
+      expect(folderRes.status()).toBe(201);
+      folderId = ((await folderRes.json()) as { id: string }).id;
       for (const name of createdNames) {
         const id = await createFlow(
           request,
-          { name, description: "", data: { nodes: [], edges: [] }, is_component: false },
+          {
+            name,
+            description: "",
+            data: { nodes: [], edges: [] },
+            is_component: false,
+            folder_id: folderId,
+          },
           { headers },
         );
         createdFlowIds.push(id);
       }
 
-      // Bootstrap onto the home listing. `skipModal` skips opening the templates
-      // modal, and because the 3 flows above already exist the empty-page
-      // seeding branch is skipped too — so no part of the historically flaky
-      // modal path (#723) is exercised. The 3 flows sort to the top by recency
-      // (verified live — API-created empty flows select via shift/ctrl click
-      // exactly like template-created ones).
+      // Bootstrap, then navigate to the dedicated folder's listing via its
+      // sidebar entry. `skipModal` skips opening the templates modal, and because
+      // the 3 flows above already exist the empty-page seeding branch is skipped
+      // too — so no part of the historically flaky modal path (#723) is
+      // exercised. The folder view (`/all/folder/<id>`) shows ONLY these 3 flows.
       await awaitBootstrapTest(page, { skipModal: true });
-      await expect(page.getByTestId("list-card").first()).toBeVisible({ timeout: 30000 });
+      await page.getByTestId(`sidebar-nav-${folderName}`).click();
 
-      // Safety + determinism guard: the top 3 cards must be exactly the flows we
-      // created. Selection below is positional (shift/ctrl-click by card index)
-      // and bulk-delete is destructive, so if a sibling worker's flow interleaved
-      // at the top of the recency-sorted listing under `fullyParallel`, fail fast
-      // here rather than risk deleting someone else's flow.
-      // Poll rather than read once: on load-degraded dailies the recency-sorted
-      // listing has not yet floated the 3 freshly-created flows to the top when a
-      // single snapshot is taken, so a one-shot `evaluateAll → toEqual` flaked
-      // with a deep-equality mismatch (#790). Polling retries until the listing
-      // settles; it still fails fast if a sibling worker's flow genuinely sits in
-      // the top 3.
+      // Determinism guard: the folder listing must hold exactly the 3 flows we
+      // created — nothing else can be here, so this confirms isolation before any
+      // destructive selection. Poll to absorb the listing's initial render/settle.
       await expect
         .poll(
           async () =>
             (
               await page
                 .locator("[data-testid='flow-name-div'] span")
-                .evaluateAll((els) =>
-                  els.slice(0, 3).map((e) => e.textContent?.trim() ?? ""),
-                )
+                .evaluateAll((els) => els.map((e) => e.textContent?.trim() ?? ""))
             )
               .slice()
               .sort(),
           { timeout: 30000 },
         )
         .toEqual([...createdNames].sort());
+      await expect(page.getByTestId("list-card")).toHaveCount(3);
 
       // Test shift selection
       await page.keyboard.down("Shift");
@@ -177,6 +188,12 @@ test(
           } catch {
             // Best-effort per-flow — do not mask the original test failure.
           }
+        }
+        // Delete the dedicated folder last (its flows are already gone above).
+        if (folderId) {
+          await request
+            .delete(`/api/v1/projects/${folderId}`, { headers })
+            .catch(() => {});
         }
       } catch {
         // Cleanup is best-effort — do not mask the original test failure.
