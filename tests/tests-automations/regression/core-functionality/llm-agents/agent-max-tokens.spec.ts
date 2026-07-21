@@ -5,6 +5,8 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
   closeAdvancedOptions,
   openAdvancedOptions,
@@ -134,9 +136,23 @@ function getTestTargets(): TestTarget[] {
   }));
 }
 
+// Ids of flows created by loadAgent — deleted id-scoped in afterEach.
+// SimpleAgentTemplatePage.load() no longer wipes existing flows (the cross-worker
+// wipe was removed in #553), so each loaded template persists until cleaned up.
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, { headers: { Authorization: bearer } });
+  }
+});
+
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
   try {
-    await new SimpleAgentTemplatePage(page).load(options);
+    const flowId = await new SimpleAgentTemplatePage(page).load(options);
+    createdFlowIds.push(flowId);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
@@ -248,8 +264,10 @@ async function readOutputTokens(page: Page): Promise<number> {
 
 const targets = getTestTargets();
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template;
-// serial mode + --workers=1 keeps the shared instance state deterministic.
+// Each test loads the Simple Agent template (creating a flow) and runs it in the
+// shared Playground; serial mode + --workers=1 keeps that shared instance state
+// deterministic and avoids named-flow collisions. Flows are deleted id-scoped in
+// afterEach (load() no longer wipes them — see #553).
 test.describe.configure({ mode: "serial" });
 
 for (const { label, options, skipReason } of targets) {
@@ -286,7 +304,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "causal control — unset max_tokens generates freely",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -304,12 +322,17 @@ for (const { label, options, skipReason } of targets) {
         });
 
         await test.step("run the essay prompt and assert unbounded output", async () => {
-          const reply = await runPrompt(page);
+          await runPrompt(page);
           const outputTokens = await readOutputTokens(page);
           // Only max_tokens differs from Test 1, so its cap is attributable to
-          // the parameter, not to the model choosing to answer briefly.
+          // the parameter, not to the model choosing to answer briefly. The
+          // proof is token-level only: a thinking model spends the unbounded
+          // budget on reasoning (Output > 50) yet may return a terse visible
+          // reply, so the reply TEXT is deliberately NOT asserted — a word-count
+          // floor measured model verbosity, not the max_tokens contract, and
+          // was a false negative on gemini-2.5-flash (#866). The token floor
+          // also subsumes the anti-empty guard: an aborted run yields Output 0.
           expect(outputTokens).toBeGreaterThan(TOKEN_LIMIT);
-          expect(reply.split(/\s+/).length).toBeGreaterThan(200);
         });
       },
     );
