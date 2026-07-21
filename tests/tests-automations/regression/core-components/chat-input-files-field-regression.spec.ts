@@ -172,7 +172,7 @@ test(
 
 test(
   "Chat Input — uploading via the inspector populates the Files field",
-  { tag: ["@stable", "@regression", "@components"] },
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     const chatInputNode = chatInputNodeScope(page);
     const fileInput = chatInputNode.getByTestId("input-file-component");

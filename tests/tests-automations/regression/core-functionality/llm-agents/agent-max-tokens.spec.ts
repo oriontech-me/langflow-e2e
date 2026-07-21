@@ -286,7 +286,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "causal control — unset max_tokens generates freely",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
