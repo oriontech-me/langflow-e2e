@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-20
+> **Last updated:** 2026-07-21
 
 ---
 
@@ -765,10 +765,10 @@
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 26 | 0 | 2 | 0 |
 | `mcp/client/` | 12 | 2 | 8 | 0 | 2 |
-| `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
+| `mcp/server/` | 7 | 0 | 5 | 0 | 2 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **452** | **317 (70%)** | **113 (25%)** | **8 (2%)** | **14 (3%)** |
+| **TOTAL** | **452** | **317 (70%)** | **115 (25%)** | **8 (2%)** | **12 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1182,7 +1182,7 @@
 | `core-functionality/model-provider/` | 0 | 0 |
 | `core-functionality/playground/` | 0 | 1 |
 | `mcp/client/` | 8 | 2 |
-| `mcp/server/` | 3 | 4 |
+| `mcp/server/` | 5 | 2 |
 | `ui-ux/` — Canvas | 36 | 0 |
 
 ---
