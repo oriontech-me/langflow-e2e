@@ -27,6 +27,8 @@ permissions:
   # An explicit permissions block defaults every unlisted scope to `none`,
   # so without this the container pull is denied (see #594).
   packages: read
+  # Authenticate the Flakiness.io Playwright reporter via GitHub OIDC.
+  id-token: write
 
 jobs:
   e2e-daily-stable:
