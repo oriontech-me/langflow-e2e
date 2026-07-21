@@ -663,10 +663,10 @@
 - [-] MCP Server tab in flow
 - [-] Add MCP server via modal
 - [-] Starter project with MCP
-- [ ] Flow exposed as MCP server — verify generated endpoint
-- [ ] Execute MCP server tool via MCP protocol
-- [ ] Resource exposed by server is accessible via URI
-- [ ] Prompt exposed by server returns correct template
+- [-] Flow exposed as MCP server — verify generated endpoint → `mcp/server/mcp-server-protocol.spec.ts`
+- [-] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
+- [ ] Resource exposed by server is accessible via URI (no product surface on 1.11.x — MCP server `resources/list` returns `[]`; #829)
+- [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
 ---
 
