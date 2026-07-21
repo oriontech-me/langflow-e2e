@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 347 `test()` calls carrying the `@stable` tag, distributed across 140 spec
+> 348 `test()` calls carrying the `@stable` tag, distributed across 141 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1102,6 +1102,7 @@
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
 #### core-functionality/project-management/
+- [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
 - [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
 - [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
 - [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
