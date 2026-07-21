@@ -6,7 +6,7 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 test(
   "user should be able to select flows with different methods and perform bulk actions",
-  { tag: ["@stable", "@release", "@workspace", "@mainpage", "@regression"] },
+  { tag: ["@release", "@workspace", "@mainpage", "@regression"] },
   async ({ page, request }) => {
     // Track the IDs of the 3 flows we create so cleanup can delete ONLY those
     // via the API, not sibling specs' flows. Under `fullyParallel`, a positional

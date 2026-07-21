@@ -100,7 +100,7 @@ async function runFlowAndOpenChatOutputInspection(page: Page): Promise<string> {
 
 test(
   "Chat Input component — renders on canvas with Message output handle and Input Text field",
-  { tag: ["@stable", "@regression", "@components"] },
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await addChatInputComponent(page);
 
