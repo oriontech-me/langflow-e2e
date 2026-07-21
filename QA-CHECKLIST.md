@@ -652,8 +652,8 @@
 - [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
 - [-] Gemini × MCP tool-calling regression — agent runs but invokes no echo MCP tool (guards upstream #440) → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
-- [ ] List available resources via MCP protocol
-- [ ] Consume resource URI and inject content into flow
+- [ ] List available resources via MCP protocol (client not-implementable on 1.11.x — MCPTools component and v2 client API expose tools only; server-side resources covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
+- [ ] Consume resource URI and inject content into flow (client not-implementable on 1.11.x — no client resource surface; server-side read covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
 
 ---
 
@@ -665,7 +665,7 @@
 - [-] Starter project with MCP
 - [-] Flow exposed as MCP server — verify generated endpoint → `mcp/server/mcp-server-protocol.spec.ts`
 - [-] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
-- [ ] Resource exposed by server is accessible via URI (no product surface on 1.11.x — MCP server `resources/list` returns `[]`; #829)
+- [-] Resource exposed by server is accessible via URI — flow files are exposed as MCP resources (`resources/list` is `[]` only for a file-less flow; an uploaded flow file appears and is readable via `resources/read`) → `mcp/server/mcp-server-resources.spec.ts`
 - [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
 ---
