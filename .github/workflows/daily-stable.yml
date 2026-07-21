@@ -236,7 +236,11 @@ jobs:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
       - name: Run @stable tests
-        run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=html,github,json
+        # No --reporter override here: the reporter list (html + github + json +
+        # the Flakiness.io uploader) is defined in playwright.config.ts. A CLI
+        # --reporter flag would replace the config list entirely and drop the
+        # Flakiness.io reporter (whose flakinessProject option can't be set via CLI).
+        run: npx playwright test --grep "@stable" --pass-with-no-tests
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
