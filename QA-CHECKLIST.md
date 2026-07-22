@@ -754,7 +754,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
 | `core-components/` — Component Config | 24 | 22 | 2 | 0 | 0 |
-| `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
+| `core-components/` — Core Components | 82 | 80 | 0 | 1 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 39 | 30 | 3 | 1 | 5 |
@@ -768,7 +768,7 @@
 | `mcp/server/` | 7 | 0 | 5 | 0 | 2 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **452** | **317 (70%)** | **116 (26%)** | **8 (2%)** | **11 (2%)** |
+| **TOTAL** | **452** | **318 (70%)** | **116 (26%)** | **8 (2%)** | **10 (2%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 348 `test()` calls carrying the `@stable` tag, distributed across 141 spec
+> 351 `test()` calls carrying the `@stable` tag, distributed across 141 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -890,6 +890,9 @@
 - [x] If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch) → `if-else-component-regression.spec.ts`
 - [x] If-Else operator=greater than routes a numeric match (10 > 5) through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=less than routes a numeric match (2.5 < 10) through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=less than or equal routes an equal-operands match (5 <= 5) through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=greater than or equal routes an equal-operands match (5 >= 5) through the True branch → `if-else-component-regression.spec.ts`
 - [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
@@ -1172,7 +1175,7 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 2 | 0 |
-| `core-components/` — Core Components | 0 | 2 |
+| `core-components/` — Core Components | 0 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 3 | 5 |
 | `core-functionality/model-provider/` | 0 | 0 |
