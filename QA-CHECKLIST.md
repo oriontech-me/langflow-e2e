@@ -329,7 +329,7 @@
 - [-] Composio (tool integration for Agent) → `composio.spec.ts`
 - [x] Playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
 - [x] Playground input remains usable after API error (mocked) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
-- [ ] Agent stops when configured stop condition is reached
+- [x] Agent stops when configured stop condition is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts` (`max_iterations` is the Agent's only configurable stop mechanism — no dedicated stop-condition field exists; see #824)
 - [x] Agent stops when maximum number of iterations is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
 - [x] Agent with multiple configured tools executes correctly → `agent-multi-tool-selection.spec.ts`
 - [ ] Agent with configured timeout respects the limit
