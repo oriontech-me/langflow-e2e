@@ -23,7 +23,18 @@ docker run -d \
   -e LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
   -e LANGFLOW_DEACTIVATE_TRACING=true \
   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS="${LANGFLOW_ALLOW_CUSTOM_COMPONENTS:-true}" \
+  -e LANGFLOW_WORKERS="${LANGFLOW_WORKERS:-1}" \
   "${IMAGE}"
+
+# LANGFLOW_WORKERS defaults to 1 here on purpose. Langflow's own default is
+# (2 * cpu_count) + 1 gunicorn workers, each inheriting the full in-memory
+# state (graphs, model catalog, chroma). On a small local Docker Desktop VM
+# (commonly ~4 GB with no per-container limit), several heavy workers — each
+# growing unbounded across requests with no recycling — exhaust the VM and the
+# kernel SIGKILLs a worker mid-build, surfacing as ERR_EMPTY_RESPONSE / a
+# node run that never completes (observed running the knowledge/agent specs
+# locally; see #773). One worker is plenty locally, where the heavy specs run
+# --workers=1 anyway. Override for a beefier box: LANGFLOW_WORKERS=4 ./scripts/...
 
 echo "Waiting for Langflow to be ready (up to 120s)..."
 for i in $(seq 1 24); do

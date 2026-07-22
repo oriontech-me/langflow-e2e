@@ -220,9 +220,16 @@ An instance must be up (default `http://localhost:7860`) before running.
 > docker run -d --name langflow-e2e-runner -p 7860:7860 \
 >   -e LANGFLOW_AUTO_LOGIN=true -e LANGFLOW_SUPERUSER=langflow \
 >   -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 -e LANGFLOW_DEACTIVATE_TRACING=true \
->   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true \
+>   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true -e LANGFLOW_WORKERS=1 \
 >   langflowai/langflow-nightly:latest
 > ```
+> `-e LANGFLOW_WORKERS=1` caps the backend to one worker. Langflow defaults to
+> `(2*cpu)+1` workers, each inheriting the full in-memory state; on a small local
+> Docker VM (~4 GB, no per-container limit) several heavy workers exhaust memory
+> and the kernel SIGKILLs one mid-build — surfacing as `ERR_EMPTY_RESPONSE` / a
+> node run that never completes when running the knowledge/agent specs (#773).
+> One worker is plenty locally (heavy specs run `--workers=1`); drop the flag /
+> raise it on a beefier box.
 > Always confirm with `curl -s localhost:7860/api/v1/version` — the nightly package
 > reports `"package":"Langflow Nightly"` and a `.devNN` version.
 >
@@ -258,7 +265,7 @@ docker rm -f langflow-e2e-runner
 docker run -d --name langflow-e2e-runner -p 7860:7860 \
   -e LANGFLOW_AUTO_LOGIN=true -e LANGFLOW_SUPERUSER=langflow \
   -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 -e LANGFLOW_DEACTIVATE_TRACING=true \
-  -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true \
+  -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true -e LANGFLOW_WORKERS=1 \
   langflowai/langflow-nightly:latest
 ```
 
