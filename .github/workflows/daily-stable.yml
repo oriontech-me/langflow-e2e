@@ -229,6 +229,10 @@ jobs:
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          # This run is what IMPORTS the provider credentials into Langflow, so
+          # the pre-flight credential check (globalSetup, #884) must not fire
+          # here — it would fail on the very keys this step is about to set.
+          PREFLIGHT_SKIP_CREDENTIALS: "1"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

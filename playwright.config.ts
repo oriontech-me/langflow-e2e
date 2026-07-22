@@ -48,6 +48,7 @@ export default defineConfig({
     video: process.env.CI ? "on-first-retry" : "off",
   },
 
+  globalSetup: require.resolve("./tests/globalSetup.ts"),
   globalTeardown: require.resolve("./tests/globalTeardown.ts"),
 
   projects: [
