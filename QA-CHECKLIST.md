@@ -255,7 +255,7 @@
 - [x] `case_sensitive` ON (default) treats mixed case as no-match → `core-components/if-else-component-regression.spec.ts`
 - [x] `case_sensitive` OFF treats mixed case as a match → `core-components/if-else-component-regression.spec.ts`
 - [x] `operator=greater than` numeric routing → `core-components/if-else-component-regression.spec.ts`
-- [ ] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than`, not separately covered
+- [x] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than` → `core-components/if-else-component-regression.spec.ts`
 - [ ] `max_iterations` + `default_route` cycle break
 
 ---
