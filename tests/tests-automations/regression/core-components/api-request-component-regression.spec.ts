@@ -2,10 +2,46 @@ import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { enableInspectPanel } from "../../../helpers/ui/open-advanced-options";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../helpers/ui/open-advanced-options";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
+
+// Capture every flow each test's page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach (repo convention, #490/#681).
+const createdFlowIds: string[] = [];
+
+test.beforeEach(({ page }) => {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+});
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
+  }
+});
 
 // Echo endpoint base for the HTTP-execution tests. Defaults to postman-echo.com.
 //
@@ -43,8 +79,21 @@ const ECHO_BASE = (
 ).replace(/\/$/, "");
 const ECHO_HOST = new URL(ECHO_BASE).host;
 
+// dev46: headers / body are advanced fields, so their table widget
+// (`div-table_<field>`) is not on the node body by default. Select the node,
+// open the inspector (parameters-button), toggle `inspector-add-<field>` to add
+// the field to the node body, then close the inspector — the table then renders
+// on the node body. `body` only appears in the inspector once the method is a
+// verb that carries a payload (e.g. POST), so switch the method first for it.
+async function addTableFieldToBody(page: Page, field: "headers" | "body") {
+  await page.getByTestId("title-API Request").click();
+  await openAdvancedOptions(page);
+  await page.getByTestId(`inspector-add-${field}`).click();
+  await closeAdvancedOptions(page);
+}
+
 // Helper: create a blank flow and add the API Request component to the canvas.
-// After this call the component node is visible and its inspector is open.
+// After this call the component node is visible on the canvas.
 async function addApiRequestComponent(page: Page) {
   await awaitBootstrapTest(page);
   await page.getByTestId("blank-flow").click();
@@ -564,6 +613,8 @@ test(
   async ({ page }) => {
     await addApiRequestComponent(page);
 
+    await addTableFieldToBody(page, "headers");
+
     const headersDiv = page.getByTestId("div-table_headers");
     await expect(headersDiv).toBeVisible({ timeout: 10000 });
     await headersDiv.getByRole("button", { name: "Open table" }).click();
@@ -648,13 +699,28 @@ test(
     const curlTextarea = page.getByTestId("textarea_str_curl_input");
     await expect(curlTextarea).toBeVisible({ timeout: 10000 });
 
+    // Filling the cURL command triggers the parser, which re-renders the
+    // component template via `POST /api/v1/custom_component/update`. Wait for that
+    // round-trip so the parsed URL has been written into the field state before we
+    // read it — otherwise switching tabs races the parse and the URL input mounts
+    // empty.
+    const curlRefresh = page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/v1/custom_component/update") &&
+        r.request().method() === "POST",
+      { timeout: 15000 },
+    );
     await curlTextarea.fill(
       `curl -X GET ${ECHO_BASE}/get -H 'Accept: application/json'`,
     );
+    await curlRefresh;
 
-    // The cURL parser must auto-populate url_input with the URL extracted from the command.
-    // Asserting this directly proves the parser ran and is the precondition the run relies on
-    // (without it the backend would receive an empty URL and validation would fail).
+    // The cURL parser must auto-populate url_input with the URL extracted from the
+    // command. dev46 unmounts the URL-tab input while the cURL tab is active, so
+    // switch to the URL tab to observe the parsed value — this still proves the
+    // parser ran (the cURL fill above is what populated it). Asserting it directly
+    // is the precondition the run relies on (an empty URL would fail validation).
+    await page.getByTestId("tab_0_url").click();
     await page.waitForFunction(
       (expectedUrl) => {
         const el = document.getElementById(
@@ -665,6 +731,9 @@ test(
       `${ECHO_BASE}/get`,
       { timeout: 10000 },
     );
+
+    // Switch back to the cURL tab so the run exercises the cURL-mode path.
+    await page.getByTestId("tab_1_curl").click();
 
     const output = await runAndOpenOutput(page);
 
@@ -704,6 +773,10 @@ test(
     await expect(
       page.getByTestId("value-dropdown-dropdown_str_method"),
     ).toHaveText("POST");
+
+    // Body only appears in the inspector once the method is POST — add it to the
+    // node body now so its table widget renders.
+    await addTableFieldToBody(page, "body");
 
     const bodyDiv = page.getByTestId("div-table_body");
     await expect(bodyDiv).toBeVisible({ timeout: 10000 });
@@ -791,6 +864,10 @@ test(
       await expect(
         page.getByTestId("value-dropdown-dropdown_str_method"),
       ).toHaveText("POST");
+
+      // dev46: headers is an advanced field — add it to the node body so its
+      // table widget renders (it also persists across the reload in step 3).
+      await addTableFieldToBody(page, "headers");
 
       const headersDiv = page.getByTestId("div-table_headers");
       await expect(headersDiv).toBeVisible({ timeout: 10000 });
@@ -903,12 +980,11 @@ test(
           page.getByTestId("value-dropdown-dropdown_str_method"),
         ).toHaveText("POST");
 
-        // After reload, the InspectionPanel may not be auto-open and the node
-        // is not selected. Select the node, then use the existing helper to
-        // open the panel idempotently (the helper no-ops if already open),
-        // so `div-table_headers` renders.
+        // After reload the headers field stays on the node body (it was added
+        // there in step 1 and the add persisted), so `div-table_headers` renders
+        // directly — no inspector action needed. Select the node first so the
+        // canvas is focused on it.
         await page.locator(".react-flow__node").first().click();
-        await enableInspectPanel(page);
 
         // Reopen the headers table — same locator pattern as test 11. Asserting
         // the saved key + value render as buttons inside the dialog confirms

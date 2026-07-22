@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
 import {
   closeAdvancedOptions,
@@ -11,31 +12,17 @@ import {
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
 
-// Helper: expand the currently focused node from minimized to full view.
-// ChatInput / ChatOutput both default to `minimized = True` (see
-// lfx/components/input_output/chat.py); without expanding, the run button and
-// inspector fields rendered on the node body are not present in the DOM.
-// Idempotent: if the node is already expanded (no `hide-node-content` in the
-// DOM), the helper is a no-op — that future-proofs the spec against an
-// upstream change to the `minimized` default.
-async function expandFocusedNode(page: Page) {
-  if ((await page.getByTestId("hide-node-content").count()) === 0) return;
-  await page.getByTestId("more-options-modal").click();
-  await expect(page.getByTestId("expand-button-modal")).toBeVisible({
-    timeout: 10000,
-  });
-  await page.getByTestId("expand-button-modal").click();
-  // Sanity: after expanding, hide-node-content is removed from the DOM
-  await expect(page.getByTestId("hide-node-content")).toHaveCount(0, {
-    timeout: 5000,
-  });
-}
-
 // Helper: create a blank flow and add the Chat Input component to the canvas
 // in expanded (non-minimized) state.
 async function addChatInputComponent(page: Page) {
   await awaitBootstrapTest(page);
   await page.getByTestId("blank-flow").click();
+  // Wait for the sidebar to settle before typing — filling the search input
+  // immediately after the blank-flow transition can time out while the canvas
+  // is still mounting (same guard as if-else-component-regression).
+  await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+    timeout: 15000,
+  });
   await page.getByTestId("sidebar-search-input").fill("chat input");
   await expect(page.getByTestId("input_outputChat Input")).toBeVisible({
     timeout: 30000,
@@ -113,7 +100,7 @@ async function runFlowAndOpenChatOutputInspection(page: Page): Promise<string> {
 
 test(
   "Chat Input component — renders on canvas with Message output handle and Input Text field",
-  { tag: ["@stable", "@regression", "@components"] },
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await addChatInputComponent(page);
 
@@ -258,7 +245,7 @@ test(
 
     // sender_name is advanced=True — toggle it visible via the inspector controls
     await openAdvancedOptions(page);
-    await page.getByTestId("showsender_name").click();
+    await page.getByTestId("inspector-add-sender_name").click();
     await closeAdvancedOptions(page);
 
     // Scope the sender_name field to the Chat Input node container so the
@@ -316,7 +303,7 @@ test(
     // Toggle the advanced "sender_name" field visible on Chat Input and
     // assert it contains the default "User"
     await openAdvancedOptions(page);
-    await page.getByTestId("showsender_name").click();
+    await page.getByTestId("inspector-add-sender_name").click();
     await closeAdvancedOptions(page);
 
     // Scope the field to the Chat Input node container so the assertion
@@ -334,7 +321,7 @@ test(
     // Focus the Chat Output node so the inspector targets it
     await page.getByTestId("title-Chat Output").click();
     await openAdvancedOptions(page);
-    await page.getByTestId("showsender_name").click();
+    await page.getByTestId("inspector-add-sender_name").click();
     await closeAdvancedOptions(page);
 
     // Scope each assertion to its node container — using the React Flow

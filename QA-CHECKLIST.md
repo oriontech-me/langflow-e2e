@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-17
+> **Last updated:** 2026-07-22
 
 ---
 
@@ -57,8 +57,8 @@
 
 ### To implement
 
-- [ ] Configure an MCP
-- [ ] Configure a Custom Component
+- [-] Configure an MCP → `helpers/mcp/configure-mcp-server.ts`
+- [-] Configure a Custom Component → `helpers/flows/configure-custom-component.ts`
 - [x] Delete a component → `helpers/flows/delete-component.ts`
 - [x] Run a flow → `helpers/flows/run-flow.ts`
 - [-] Pause a flow → `flow-functionality/stop-building.spec.ts`
@@ -255,7 +255,7 @@
 - [x] `case_sensitive` ON (default) treats mixed case as no-match → `core-components/if-else-component-regression.spec.ts`
 - [x] `case_sensitive` OFF treats mixed case as a match → `core-components/if-else-component-regression.spec.ts`
 - [x] `operator=greater than` numeric routing → `core-components/if-else-component-regression.spec.ts`
-- [ ] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than`, not separately covered
+- [x] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than` → `core-components/if-else-component-regression.spec.ts`
 - [ ] `max_iterations` + `default_route` cycle break
 
 ---
@@ -356,7 +356,7 @@
 #### 6.5 Output and Reasoning
 - [ ] Inspect tools used by Agent in Playground
 - [x] Agent returns output in structured JSON format (output_schema) → `agent-structured-output.spec.ts`
-- [ ] Agent returns output in correctly rendered Markdown
+- [-] Agent returns output in correctly rendered Markdown → `llm-agents/agent-markdown-output.spec.ts`
 - [x] Agent Instructions (system prompt) is respected in the model response → `agent-system-prompt.spec.ts`
 - [x] Input via direct field vs handle (ChatInput) — both work → `core-functionality/llm-agents/agent-input-sources.spec.ts`
 - [x] Empty response or model refusal — component does not crash → `core-functionality/llm-agents/agent-empty-refusal-response.spec.ts`
@@ -465,7 +465,7 @@
 - [x] Direct response → `api/flows/api-build-direct-response.spec.ts`
 - [x] Playground UX (playground-ux) → `playground/playground-ux.spec.ts`
 - [x] Send empty message — send button stays enabled by design (only disabled while a file upload is in progress) → `playground/playground-empty-message-send.spec.ts`
-- [ ] Send message while response is in progress — should wait or queue
+- [-] Send message while response is in progress — should wait or queue → `playground/playground-send-while-in-progress.spec.ts`
 - [x] Attach image in chat — compact preview appears in input before sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Image rendered in user message bubble after sending → `core-functionality/playground/playground-output-image.spec.ts`
 - [x] Attach non-image file (.txt) in chat — preview tile renders (delete button visible, no `<img>`) → `core-functionality/playground/playground-non-image-attachment.spec.ts`
@@ -651,6 +651,7 @@
 - [x] Duplicate MCP server registration returns 409 Conflict → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
+- [-] Gemini × MCP tool-calling regression — agent runs but invokes no echo MCP tool (guards upstream #440) → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
 - [ ] List available resources via MCP protocol
 - [ ] Consume resource URI and inject content into flow
 
@@ -662,10 +663,10 @@
 - [-] MCP Server tab in flow
 - [-] Add MCP server via modal
 - [-] Starter project with MCP
-- [ ] Flow exposed as MCP server — verify generated endpoint
-- [ ] Execute MCP server tool via MCP protocol
-- [ ] Resource exposed by server is accessible via URI
-- [ ] Prompt exposed by server returns correct template
+- [-] Flow exposed as MCP server — verify generated endpoint → `mcp/server/mcp-server-protocol.spec.ts`
+- [-] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
+- [ ] Resource exposed by server is accessible via URI (no product surface on 1.11.x — MCP server `resources/list` returns `[]`; #829)
+- [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
 ---
 
@@ -753,21 +754,21 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
 | `core-components/` — Component Config | 24 | 22 | 2 | 0 | 0 |
-| `core-components/` — Core Components | 82 | 79 | 0 | 1 | 2 |
+| `core-components/` — Core Components | 82 | 80 | 0 | 1 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 39 | 30 | 2 | 1 | 6 |
+| `core-functionality/llm-agents/` | 39 | 30 | 3 | 1 | 5 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 48 | 46 | 0 | 1 | 1 |
+| `core-functionality/playground/` | 48 | 46 | 1 | 1 | 0 |
 | `core-functionality/project-management/` | 11 | 4 | 6 | 1 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 26 | 0 | 2 | 0 |
-| `mcp/client/` | 11 | 2 | 7 | 0 | 2 |
-| `mcp/server/` | 7 | 0 | 3 | 0 | 4 |
+| `mcp/client/` | 12 | 2 | 8 | 0 | 2 |
+| `mcp/server/` | 7 | 0 | 5 | 0 | 2 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **451** | **317 (70%)** | **111 (25%)** | **8 (2%)** | **15 (3%)** |
+| **TOTAL** | **452** | **318 (70%)** | **116 (26%)** | **8 (2%)** | **10 (2%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -783,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 353 `test()` calls carrying the `@stable` tag, distributed across 142 spec
+> 351 `test()` calls carrying the `@stable` tag, distributed across 141 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -862,10 +863,8 @@
 - [x] API Request component — flow state persists in database after autosave (URL, method, headers) → `api-request-component-regression.spec.ts`
 - [x] Show Beta Components toggle controls visibility of beta components in the sidebar → `beta-components-toggle-regression.spec.ts`
 - [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
-- [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input → Chat Output — inspector-attached file is rendered in the Playground message → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input — clicking the dismiss button on the Files field clears the value → `chat-input-files-field-regression.spec.ts`
-- [x] Chat Input component — renders on canvas with Message output handle and Input Text field → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Output component — renders on canvas with Inputs handle and run button → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input → Chat Output connection is accepted on canvas (Message ↔ Message) → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
@@ -880,7 +879,6 @@
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
 - [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
-- [x] user should be able to edit name and description of a node with inspect panel disabled → `edit-name-description-node.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
@@ -892,6 +890,9 @@
 - [x] If-Else case_sensitive defaults to ON — mixed-case inputs route to the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else with case_sensitive=OFF treats mixed-case inputs as a match (True branch) → `if-else-component-regression.spec.ts`
 - [x] If-Else operator=greater than routes a numeric match (10 > 5) through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=less than routes a numeric match (2.5 < 10) through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=less than or equal routes an equal-operands match (5 <= 5) through the True branch → `if-else-component-regression.spec.ts`
+- [x] If-Else operator=greater than or equal routes an equal-operands match (5 >= 5) through the True branch → `if-else-component-regression.spec.ts`
 - [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
 - [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
@@ -910,7 +911,6 @@
 - [x] float field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] slider field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] code field edit persists → `parameters-panel-field-types.spec.ts`
-- [x] table field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] key-pair field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] Prompt Template component — renders on canvas with output handle → `prompt-template-component-regression.spec.ts`
 - [x] Prompt Template component — variables in curly braces generate dynamic input handles → `prompt-template-component-regression.spec.ts`
@@ -1146,7 +1146,6 @@
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
-- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
@@ -1176,13 +1175,13 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 2 | 0 |
-| `core-components/` — Core Components | 0 | 2 |
+| `core-components/` — Core Components | 0 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 2 | 6 |
+| `core-functionality/llm-agents/` | 3 | 5 |
 | `core-functionality/model-provider/` | 0 | 0 |
-| `core-functionality/playground/` | 0 | 1 |
-| `mcp/client/` | 7 | 2 |
-| `mcp/server/` | 3 | 4 |
+| `core-functionality/playground/` | 1 | 0 |
+| `mcp/client/` | 8 | 2 |
+| `mcp/server/` | 5 | 2 |
 | `ui-ux/` — Canvas | 36 | 0 |
 
 ---

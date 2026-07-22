@@ -141,11 +141,42 @@ jobs:
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
 
+      # Collect provider/model data BEFORE the impacted specs, mirroring
+      # daily-stable.yml. Without this, `models.json` is absent (it is
+      # git-ignored) and an agent/LLM spec's `getTestTargets` falls back to
+      # picking a model straight from the live agent dropdown by name — without
+      # validating that the key can access it. On some nightly builds that
+      # resolves to a model the CI OPENAI_API_KEY's project cannot use (e.g.
+      # `gpt-4.1-nano`), so the Agent build 403s and the spec dies on setup,
+      # unrelated to the PR (#873). `collect-models` probes each key with a real
+      # ~1-token completion and writes only ACCESSIBLE models, so agent specs
+      # resolve a usable model — matching what the daily validates (no
+      # divergence). Same provider keys as daily-stable.yml.
+      - name: Collect models
+        env:
+          CI: "true"
+          # This run is what IMPORTS the provider credentials into Langflow, so
+          # the pre-flight credential check (globalSetup, #884) must not fire
+          # here — it would fail on the very keys this step is about to set
+          # (chicken-and-egg). Matches daily-stable.yml's Collect models step.
+          PREFLIGHT_SKIP_CREDENTIALS: "1"
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+        run: npx playwright test tests/collect-models.spec.ts --reporter=line
+
       - name: Run impacted specs
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           SPECS: ${{ needs.detect-specs.outputs.specs }}
         run: |
           echo "Running specs: $SPECS"

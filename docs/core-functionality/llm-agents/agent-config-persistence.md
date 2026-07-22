@@ -7,9 +7,10 @@
 ## What this test validates *(required)*
 
 QA-CHECKLIST §6.2 "Flow with Agent saved and reopened → settings preserved".
-Agent settings edited through the node's **Controls** dialog must survive the
-full persistence round-trip: autosave writes them to the flow document, and
-reopening the flow from the home page renders them back.
+Agent settings edited on the node (advanced fields exposed via the node
+**inspector** side-panel) must survive the full persistence round-trip:
+autosave writes them to the flow document, and reopening the flow from the
+home page renders them back.
 
 One test drives three sentinels covering the template's three field
 serializations:
@@ -26,7 +27,8 @@ Both persistence halves are asserted:
 1. **Saved** — after `waitForFlowSaveSettled`, the flows API shows the three
    sentinel values in the Agent node's template.
 2. **Reopened preserved** — navigating home and reopening the flow from its
-   card, the Controls dialog renders the exact sentinels.
+   card, the node body renders the exact sentinels (the inspector-added
+   fields persist on the body across reload).
 
 If this fails, agent configuration silently reverts on reload — users lose
 prompt/limit/tool settings without any error.
@@ -65,33 +67,44 @@ Agent configuration surface; `@workspace` — flow save/reopen lifecycle.
    of existing flows (a wipe kills parallel workers' in-flight flows, #553;
    duplicate names auto-suffix) — the spec deletes its own flow by id in
    `afterEach`. No provider setup (model-free).
-2. Open the Agent's **Controls** dialog. The `edit-button-modal` toolbar
-   button only renders with the node selected AND the Inspector Panel hidden
-   (`hideInspectorPanel` first, then click the Agent node).
-3. Set the sentinels:
-   - `textarea_str_edit_system_prompt` → `PERSIST_PROBE_<nonce>` — **typed,
-     never `fill()`**: the dialog textarea is a controlled input that only
-     registers real keystrokes — a `fill()`ed edit passes the DOM check but
-     is silently dropped on close (~50% of runs), and the node-level
-     textarea + `fill()`/blur does not trigger autosave at all on 1.11
-     (0/5 runs persisted). Clear + `pressSequentially` in a retry loop with
-     a DOM verification between attempts (select-all fired before focus
-     settles selects nothing and the nonce lands in front of the default);
-   - `int_int_edit_max_iterations` → `7` — int fields reject `fill()` and
-     swallow fast keystrokes (see `agent-max-tokens.md`): click, settle,
-     clear, slow `pressSequentially`, verify the DOM value;
-   - `toggle_bool_edit_add_current_date_tool` — assert `aria-checked="true"`
+2. `adjustScreenView` to render the Agent node (the template loads with the
+   node outside the initial viewport, so its body fields do not mount until
+   the canvas is fit — the sibling agent specs get this for free from
+   `SimpleAgentTemplatePage.load`, which this model-free spec does not use),
+   then `waitForFlowSaveSettled` — the load + fit-view schedule an autosave
+   whose response would otherwise revert the first edit.
+3. Expose the advanced fields. dev49 replaced the old **Controls** dialog
+   (`edit-button-modal`) with the node **inspector** side-panel: select the
+   Agent node → `parameters-button` (`openAdvancedOptions`) → toggle
+   `inspector-add-max_iterations` and `inspector-add-add_current_date_tool`
+   to expose both on the node body → `inspection-panel-close`
+   (`closeAdvancedOptions`). Add both in ONE inspector session, then
+   `waitForFlowSaveSettled` — the add-autosave (debounced PATCH) must land
+   before any value is edited, or its response re-renders the node and
+   detaches the field mid-edit (the documented autosave race).
+4. Set the sentinels on the node body, `waitForFlowSaveSettled` after each so
+   the serialized edits never race one another's PATCH. On the body the field
+   testids drop the `_edit_` infix:
+   - `textarea_str_system_prompt` → `PERSIST_PROBE_<nonce>` — on the body by
+     default (no inspector-add). **Clear + typed, never `fill()`**: the
+     node-level textarea is a controlled input that `fill()` sets in the DOM
+     without marking the node dirty, so the edit never autosaves and is
+     reverted on the next re-render (0/5 persisted historically). Real
+     keystrokes (`pressSequentially`) commit it;
+   - `int_int_max_iterations` → `7` — body int field: `fill()` + blur (verify
+     the DOM value);
+   - `toggle_bool_add_current_date_tool` — assert `aria-checked="true"`
      (template default), click, assert `"false"`.
-4. Close (`edit-button-close`) and `waitForFlowSaveSettled`.
 5. **Saved assert (API):** fetch the flow by the id captured at creation
    (`GET /api/v1/flows/{id}` — the canvas URL id is transient on 1.11, so
    the id comes from the template-instantiation `POST` response, not the
    URL) and poll until the Agent template shows all three sentinel values.
 6. Navigate home (`page.goto("/")`), reopen the flow via its
-   `flow-name-<id>` card, wait for the canvas.
-7. Reopen the Controls dialog (same hide-inspector + select-node dance).
-8. **Reopened assert (UI):** the three dialog fields render the exact
-   sentinels (nonce string, `7`, `aria-checked="false"`).
+   `flow-name-<id>` card, wait for the canvas, `adjustScreenView`.
+7. **Reopened assert (UI):** the inspector-added fields persist on the body
+   across reload, so the three body fields render the exact sentinels
+   directly (nonce string, `7`, `aria-checked="false"`) — no re-open of the
+   inspector needed.
 
 ---
 
@@ -108,9 +121,9 @@ after a full home-navigation reopen. Any missing/reverted field fails.
 - **Pre-flip assertion** on the bool — proves the test wrote the value; a
   changed template default fails loudly instead of silently inverting the
   sentinel's meaning.
-- **Int-field write verified in the DOM** before closing the dialog (the
-  known fill/keystroke quirks would otherwise save a clamped value — which
-  the API assert would also catch, a double guard).
+- **Int-field write verified in the DOM** (`toHaveValue("7")`) before the
+  save assert — a clamped or dropped value fails here as well as in the API
+  assert, a double guard.
 - **API assert before the reload** — separates "was never saved" from "saved
   but not re-rendered", so a failure pinpoints the broken half.
 - **Force-failure checks** (CONTRIBUTING §2): M1 — expect a different int via

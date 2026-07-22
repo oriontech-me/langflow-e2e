@@ -102,8 +102,9 @@ test(
       await expect(
         page.getByRole("dialog").getByText("API access", { exact: true }),
       ).toBeVisible({ timeout: 10000 });
-      // The Input Schema (tweaks) entry point is part of the modal header
-      await expect(page.getByTestId("tweaks-button")).toBeVisible();
+      // dev49: the modal header entry point is the Endpoint Name button
+      // (replaces the removed Input Schema / tweaks button).
+      await expect(page.getByTestId("endpoint-name-button")).toBeVisible();
     });
 
     await test.step("All three language tabs are present", async () => {

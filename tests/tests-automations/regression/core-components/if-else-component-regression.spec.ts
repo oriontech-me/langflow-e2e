@@ -1,32 +1,38 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
 import {
   closeAdvancedOptions,
   openAdvancedOptions,
 } from "../../../helpers/ui/open-advanced-options";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
 
-// Expand the currently focused node from minimized to full view. Chat Output
-// defaults to `minimized = True` (see lfx/components/input_output/chat_output.py);
-// without expanding, the run button and the `shownode` input handle rendered on
-// the node body are not present in the DOM. Idempotent: if the node is already
-// expanded (no `hide-node-content` in the DOM) the helper is a no-op.
-async function expandFocusedNode(page: Page): Promise<void> {
-  if ((await page.getByTestId("hide-node-content").count()) === 0) return;
-  await page.getByTestId("more-options-modal").click();
-  await expect(page.getByTestId("expand-button-modal")).toBeVisible({
-    timeout: 10000,
-  });
-  await page.getByTestId("expand-button-modal").click();
-  // Settle: confirm the node finished expanding before callers interact with the
-  // freshly-mounted body (rename inspector, `shownode` handles) — guards against
-  // a mid-transition return flaking under CI parallelism.
-  await expect(page.getByTestId("hide-node-content")).toHaveCount(0, {
-    timeout: 5000,
-  });
-}
+// Ids of the flows each test creates on the blank canvas (Langflow autosaves
+// them). Teardown deletes ONLY these via the API (scoped, #515/#553) — never a
+// global cleanAllFlows / name-scoped / diff-based wipe, which races flows other
+// parallel workers are actively driving.
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ page }) => {
+  const ids = createdFlowIds.splice(0);
+  if (ids.length === 0) return;
+  // Navigate off the editor first so the unmounted flow page stops polling a
+  // flow we are about to delete, then pass an explicit auth header — page.request
+  // is unauthenticated under AUTO_LOGIN and would 401 otherwise. Not swallowed:
+  // a failed cleanup surfaces instead of silently leaking the flow (#547).
+  await page.goto("/");
+  const authHeader = await getAuthToken(page.request);
+  const opts = authHeader
+    ? { headers: { Authorization: authHeader } }
+    : undefined;
+  for (const id of ids) {
+    await deleteFlow(page.request, id, opts);
+  }
+});
 
 async function selectOperator(
   page: Page,
@@ -49,8 +55,10 @@ async function selectOperator(
 }
 
 async function exposeCaseSensitive(page: Page): Promise<void> {
+  // In the dev46 inspector panel the per-field "add to node" toggle is
+  // `inspector-add-<field>` (was `show<field>` — here `showcase_sensitive`).
   await openAdvancedOptions(page);
-  await page.getByTestId("showcase_sensitive").click();
+  await page.getByTestId("inspector-add-case_sensitive").click();
   await closeAdvancedOptions(page);
 }
 
@@ -65,7 +73,22 @@ async function exposeCaseSensitive(page: Page): Promise<void> {
 async function buildIfElseRoutingFlow(page: Page): Promise<void> {
   await awaitBootstrapTest(page);
   await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
+  // Capture the id from the flow-creation POST (NOT the transient canvas-URL id,
+  // which does not match the persisted flow on this Langflow version) so the
+  // afterEach can delete exactly this flow (scoped teardown, #515).
+  const flowCreation = page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 30000 },
+  );
   await page.getByTestId("blank-flow").click();
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
+  createdFlowIds.push(created.id);
 
   // Wait for the canvas/sidebar to settle before interacting — clicking the
   // search input immediately after the blank-flow transition can resolve a
@@ -123,18 +146,15 @@ async function buildIfElseRoutingFlow(page: Page): Promise<void> {
   await page.getByTestId("title-Chat Output").last().click();
   await expandFocusedNode(page);
 
-  // Rename the second Chat Output to `chatoutputfalse`
+  // Rename the second Chat Output to `chatoutputfalse`. The node-title edit flow
+  // was restructured in the nightly (~dev46): the `panel-description` hover
+  // wrapper is gone; the edit/save controls gained a `node-` prefix and the
+  // title field is now a dynamic `input-title-<currentName>` (still "Chat Output"
+  // here, since the fill hasn't landed when the testid is resolved).
   await page.getByTestId("generic-node-title-arrangement").last().click();
-  await page.getByTestId("panel-description").hover();
-  await page
-    .getByTestId("panel-description")
-    .getByTestId("edit-name-description-button")
-    .click();
-  await page.getByTestId("inspection-panel-name").fill("chatoutputfalse");
-  await page
-    .getByTestId("panel-description")
-    .getByTestId("save-name-description-button")
-    .click();
+  await page.getByTestId("node-edit-name-description-button").click();
+  await page.getByTestId("input-title-Chat Output").fill("chatoutputfalse");
+  await page.getByTestId("node-save-name-description-button").click();
 
   // Connect True → first Chat Output
   await page
@@ -301,18 +321,25 @@ test(
       await page.getByTestId("title-If-Else").click();
 
       await openAdvancedOptions(page);
-      await expect(page.getByTestId("showcase_sensitive")).toHaveCount(1);
+      // In the inspector panel each input is a `inspector-param-<field>` row;
+      // its presence is the modern signal that the field exists in the build
+      // config (was the `showcase_sensitive` show-toggle count).
+      await expect(
+        page.getByTestId("inspector-param-case_sensitive"),
+      ).toHaveCount(1);
       await closeAdvancedOptions(page);
     });
 
     await test.step("Switch to regex and assert case_sensitive toggle disappears", async () => {
       // After switching to regex, `update_build_config` removes case_sensitive
-      // from the build config — the toggle should disappear.
+      // from the build config — the inspector row should disappear.
       await selectOperator(page, "regex");
 
       await page.getByTestId("title-If-Else").click();
       await openAdvancedOptions(page);
-      await expect(page.getByTestId("showcase_sensitive")).toHaveCount(0);
+      await expect(
+        page.getByTestId("inspector-param-case_sensitive"),
+      ).toHaveCount(0);
       await closeAdvancedOptions(page);
     });
   },
@@ -400,6 +427,110 @@ test(
 
       // Numeric: 10 > 5 → True.
       await page.getByTestId("popover-anchor-input-input_text").fill("10");
+      await page.getByTestId("popover-anchor-input-match_text").fill("5");
+
+      await page.getByTestId("button_run_chat output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_chat output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
+  },
+);
+
+test(
+  "If-Else operator=less than routes a numeric match (2.5 < 10) through the True branch",
+  { tag: ["@stable", "@regression", "@components"] },
+  async ({ page }) => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
+    });
+
+    await test.step("Switch to 'less than', set a decimal numeric input, and run", async () => {
+      await selectOperator(page, "less than");
+
+      // Numeric (decimal): 2.5 < 10 → True. The decimal operand exercises the
+      // shared `float(...)` cast on a non-integer, distinct from `greater than`
+      // (integer inputs). If the operator were `greater than`, 2.5 > 10 is
+      // False, so the True-branch assertion would fail.
+      await page.getByTestId("popover-anchor-input-input_text").fill("2.5");
+      await page.getByTestId("popover-anchor-input-match_text").fill("10");
+
+      await page.getByTestId("button_run_chat output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_chat output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
+  },
+);
+
+test(
+  "If-Else operator=less than or equal routes an equal-operands match (5 <= 5) through the True branch",
+  { tag: ["@stable", "@regression", "@components"] },
+  async ({ page }) => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
+    });
+
+    await test.step("Switch to 'less than or equal', set equal operands, and run", async () => {
+      await selectOperator(page, "less than or equal");
+
+      // Equality boundary: 5 <= 5 → True. This is the distinctive case that
+      // separates `<=` from the strict `<` (5 < 5 is False → would route
+      // False), so a regression swapping the inclusive operator for the strict
+      // one flips the routed branch and fails this assertion.
+      await page.getByTestId("popover-anchor-input-input_text").fill("5");
+      await page.getByTestId("popover-anchor-input-match_text").fill("5");
+
+      await page.getByTestId("button_run_chat output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_chat output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
+  },
+);
+
+test(
+  "If-Else operator=greater than or equal routes an equal-operands match (5 >= 5) through the True branch",
+  { tag: ["@stable", "@regression", "@components"] },
+  async ({ page }) => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
+    });
+
+    await test.step("Switch to 'greater than or equal', set equal operands, and run", async () => {
+      await selectOperator(page, "greater than or equal");
+
+      // Equality boundary: 5 >= 5 → True. Distinctive vs the strict `>`
+      // (5 > 5 is False → would route False); catches a regression swapping
+      // the inclusive operator for the strict one.
+      await page.getByTestId("popover-anchor-input-input_text").fill("5");
       await page.getByTestId("popover-anchor-input-match_text").fill("5");
 
       await page.getByTestId("button_run_chat output").click();

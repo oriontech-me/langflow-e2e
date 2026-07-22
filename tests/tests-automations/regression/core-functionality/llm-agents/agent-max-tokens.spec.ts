@@ -5,6 +5,12 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../../helpers/ui/open-advanced-options";
 import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
@@ -130,9 +136,23 @@ function getTestTargets(): TestTarget[] {
   }));
 }
 
+// Ids of flows created by loadAgent — deleted id-scoped in afterEach.
+// SimpleAgentTemplatePage.load() no longer wipes existing flows (the cross-worker
+// wipe was removed in #553), so each loaded template persists until cleaned up.
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, { headers: { Authorization: bearer } });
+  }
+});
+
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
   try {
-    await new SimpleAgentTemplatePage(page).load(options);
+    const flowId = await new SimpleAgentTemplatePage(page).load(options);
+    createdFlowIds.push(flowId);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
@@ -148,9 +168,16 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
 // actually PERSISTED via the flows API — reopening the dialog and retrying the
 // whole cycle when it did not.
 async function setMaxTokens(page: Page, value: string): Promise<void> {
+  // dev49: max_tokens is an advanced field — expose it on the node body via the
+  // inspector once (replaces the old Controls dialog / edit-button-modal), then
+  // fill it on the body. The int field still rejects fill() and swallows a fast
+  // first keystroke, so keep the slow-type + DOM-verify + persistence retry.
+  await page.locator('[data-testid^="rf__node-Agent"]').first().click();
+  await openAdvancedOptions(page);
+  await page.getByTestId("inspector-add-max_tokens").click();
+  await closeAdvancedOptions(page);
+  const field = page.getByTestId("int_int_max_tokens");
   for (let attempt = 1; attempt <= 3; attempt++) {
-    await page.getByTestId("edit-button-modal").click();
-    const field = page.getByTestId("int_int_edit_max_tokens");
     await expect(field).toBeVisible({ timeout: 15000 });
     await field.scrollIntoViewIfNeeded();
     for (let typeTry = 0; typeTry < 3; typeTry++) {
@@ -164,7 +191,6 @@ async function setMaxTokens(page: Page, value: string): Promise<void> {
     await expect(field).toHaveValue(value);
     await field.press("Tab");
     await page.waitForTimeout(800);
-    await page.getByTestId("edit-button-close").click();
     await waitForFlowSaveSettled(page);
     if ((await getSavedMaxTokens(page)) === Number(value)) return;
     console.warn(`setMaxTokens: value did not persist (attempt ${attempt}) — retrying`);
@@ -238,8 +264,10 @@ async function readOutputTokens(page: Page): Promise<number> {
 
 const targets = getTestTargets();
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template;
-// serial mode + --workers=1 keeps the shared instance state deterministic.
+// Each test loads the Simple Agent template (creating a flow) and runs it in the
+// shared Playground; serial mode + --workers=1 keeps that shared instance state
+// deterministic and avoids named-flow collisions. Flows are deleted id-scoped in
+// afterEach (load() no longer wipes them — see #553).
 test.describe.configure({ mode: "serial" });
 
 for (const { label, options, skipReason } of targets) {
@@ -294,12 +322,17 @@ for (const { label, options, skipReason } of targets) {
         });
 
         await test.step("run the essay prompt and assert unbounded output", async () => {
-          const reply = await runPrompt(page);
+          await runPrompt(page);
           const outputTokens = await readOutputTokens(page);
           // Only max_tokens differs from Test 1, so its cap is attributable to
-          // the parameter, not to the model choosing to answer briefly.
+          // the parameter, not to the model choosing to answer briefly. The
+          // proof is token-level only: a thinking model spends the unbounded
+          // budget on reasoning (Output > 50) yet may return a terse visible
+          // reply, so the reply TEXT is deliberately NOT asserted — a word-count
+          // floor measured model verbosity, not the max_tokens contract, and
+          // was a false negative on gemini-2.5-flash (#866). The token floor
+          // also subsumes the anti-empty guard: an aborted run yields Output 0.
           expect(outputTokens).toBeGreaterThan(TOKEN_LIMIT);
-          expect(reply.split(/\s+/).length).toBeGreaterThan(200);
         });
       },
     );

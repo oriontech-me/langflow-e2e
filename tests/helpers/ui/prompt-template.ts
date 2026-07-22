@@ -2,6 +2,10 @@ import { type Locator, type Page, expect } from "@playwright/test";
 import { waitForFlowSaveSettled } from "../flows/wait-for-flow-save-settled";
 import { addComponentFromSidebar } from "../flows/add-component-from-sidebar";
 import { adjustScreenView } from "./adjust-screen-view";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "./open-advanced-options";
 
 // `waitForFlowSaveSettled` now lives in the flows domain (autosave is a flow
 // concern) and is shared with the rename helper (issues #358, #357). Re-export
@@ -87,6 +91,27 @@ export function dynamicHandlesLocator(page: Page): Locator {
 }
 
 /**
+ * Ensure the `use_double_brackets` toggle is present on the node body.
+ *
+ * dev49: `use_double_brackets` carries `advanced=True`, so it no longer renders
+ * on the node body by default and the auto-opening right-hand InspectionPanel
+ * (which used to surface advanced fields directly) is gone — the inspector is
+ * now the on-demand `parameters-button` side-panel. Expose the field on the
+ * body via `inspector-add-use_double_brackets` so its `toggle_bool_use_double_brackets`
+ * can be driven. Idempotent: if the toggle is already on the body (a prior
+ * call added it), this is a no-op.
+ */
+async function ensureDoubleBracketsToggleOnBody(page: Page): Promise<void> {
+  const toggle = page.getByTestId("toggle_bool_use_double_brackets");
+  if (await toggle.isVisible({ timeout: 500 }).catch(() => false)) return;
+  await page.getByTestId("title-Prompt Template").click();
+  await openAdvancedOptions(page);
+  await page.getByTestId("inspector-add-use_double_brackets").click();
+  await closeAdvancedOptions(page);
+  await expect(toggle).toBeVisible({ timeout: 10000 });
+}
+
+/**
  * Drive the `use_double_brackets` toggle to the given state. Idempotent — if
  * the UI is already in the requested mode the toggle is left alone; otherwise
  * the toggle is clicked once. Either way, the post-condition is that the
@@ -105,6 +130,7 @@ export async function setUseDoubleBrackets(
   page: Page,
   enabled: boolean,
 ): Promise<void> {
+  await ensureDoubleBracketsToggleOnBody(page);
   const expectedOpenButton = enabled
     ? MUSTACHE_OPEN_BUTTON
     : FSTRING_OPEN_BUTTON;

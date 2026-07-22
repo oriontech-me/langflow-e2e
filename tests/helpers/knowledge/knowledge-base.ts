@@ -122,3 +122,47 @@ export async function deleteKnowledgeBase(
     }
   }
 }
+
+/**
+ * Asserts the embedding provider's API key is configured as a Langflow global
+ * variable — not merely present in the process environment.
+ *
+ * KB ingestion resolves its embedding function from the Langflow credential:
+ * `get_embedding_model_options(user_id)` is credential-gated, so with no global
+ * variable for the provider the embedding model is absent from the registry and
+ * ingest raises a misleading `ComponentBuildError` ("embedding model '<name>' is
+ * no longer recognized"). At the UI that surfaces only as the run's
+ * `node_duration` badge never rendering — a 90s `toBeVisible` timeout whose true
+ * cause (a missing credential) is invisible. The env-var-only `test.skip` guard
+ * does not catch this: the var can be set in `.env` while the Langflow credential
+ * was never imported (e.g. `collect-models` never ran, or its provider setup
+ * flaked). This precondition converts that opaque timeout into an immediate,
+ * actionable failure, without masking a genuine ingest regression (if the
+ * credential IS present and ingest still fails, the real assertions still fire).
+ */
+export async function assertEmbeddingCredentialConfigured(
+  request: APIRequestContext,
+  variableName: string,
+  options?: { headers?: Record<string, string> },
+): Promise<void> {
+  const url = "/api/v1/variables/";
+  const res = await request.get(url, { headers: options?.headers ?? {} });
+  if (!res.ok()) {
+    throw new Error(
+      `GET ${url} failed: ${res.status()} — ${(await res.text()).slice(0, 200)}`,
+    );
+  }
+  const variables = (await res.json()) as Array<{ name?: string }>;
+  const names = variables.map((v) => v.name).filter(Boolean);
+  if (!names.includes(variableName)) {
+    throw new Error(
+      `Embedding credential '${variableName}' is set in the environment but is NOT ` +
+        `configured as a Langflow global variable (present: ${names.join(", ") || "none"}). ` +
+        `Knowledge Base ingestion resolves embeddings from the Langflow credential, not the ` +
+        `env var, so ingest would fail with a misleading "embedding model no longer recognized" ` +
+        `error (a 90s node_duration timeout at the UI). Run ` +
+        `\`npx playwright test tests/collect-models.spec.ts\` first to import the credential ` +
+        `(the daily-stable CI does this automatically).`,
+    );
+  }
+}

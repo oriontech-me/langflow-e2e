@@ -2,13 +2,15 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/if-else-component-regression.spec.ts`
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.11.x
 
 ---
 
 ## What this test validates
 
-Covers the routing contract of the **If-Else** (ConditionalRouter) component across the operator surface: every text operator (equals, contains, regex), the `case_sensitive` toggle (default ON / explicit OFF), and one representative numeric operator (`greater than`). Each scenario is a separate `test()` so a failure pinpoints the exact behavior that regressed.
+Covers the routing contract of the **If-Else** (ConditionalRouter) component across the operator surface: every text operator (equals, contains, regex), the `case_sensitive` toggle (default ON / explicit OFF), and all four numeric operators (`greater than`, `less than`, `less than or equal`, `greater than or equal`) — which share the same `float(...)` cast in `evaluate_condition`. Each scenario is a separate `test()` so a failure pinpoints the exact behavior that regressed.
+
+The two "or equal" numeric scenarios deliberately use **equal operands** (`5` vs `5`): that boundary is the distinctive case that separates `<=`/`>=` from their strict counterparts (`5 < 5` and `5 > 5` are both `False`), so a regression that swaps an inclusive operator for a strict one flips the routed branch and fails the assertion. The `less than` scenario uses a decimal operand (`2.5`) to exercise the `float(...)` parse on a non-integer, distinct from `greater than`'s integer inputs (scenario 8).
 
 For every scenario except the regex side-effect test, the assertion surface is the canvas node status: `node_duration_<name>` testid for the branch that built (active) and `node_status_icon_<name>_inactive` testid for the branch that was skipped. This is the same surface used by `flow-functionality/general-bugs-reset-flow-run.spec.ts` and is more reliable than message-content assertions because the component returns an empty Message on the inactive branch (so message presence alone cannot distinguish the routes).
 
@@ -38,8 +40,11 @@ The one exception is the regex side-effect test: when `operator=regex`, the comp
 | 6 | `case_sensitive` ON (default) → no-match on mixed case | equals | HELLO | hello | ON (default) | False | True |
 | 7 | `case_sensitive` OFF → match on mixed case | equals | HELLO | hello | OFF (toggled) | True | False |
 | 8 | `greater than` (numeric) match | greater than | 10 | 5 | default | True | False |
+| 9 | `less than` (numeric, decimal) match | less than | 2.5 | 10 | default | True | False |
+| 10 | `less than or equal` equality boundary | less than or equal | 5 | 5 | default | True | False |
+| 11 | `greater than or equal` equality boundary | greater than or equal | 5 | 5 | default | True | False |
 
-All eight scenarios are introduced in this spec; there is no pre-existing implementation elsewhere.
+All eleven scenarios are introduced in this spec; there is no pre-existing implementation elsewhere. Scenarios 9–11 were added under issue #822 (Wave 3 coverage) to close the "other numeric operators" gap in `QA-CHECKLIST.md` §3.8.
 
 ---
 
@@ -47,7 +52,7 @@ All eight scenarios are introduced in this spec; there is no pre-existing implem
 
 `buildIfElseRoutingFlow(page)` (defined in the spec):
 
-1. Bootstrap and open a blank flow.
+1. Bootstrap and open a blank flow, **capturing the created flow id** from the `POST /api/v1/flows` 201 response (not the transient canvas-URL id) so each test's flow can be deleted id-scoped in `afterEach`.
 2. Add the **If-Else** component from the sidebar.
 3. Zoom out so two more components fit.
 4. Drop two **Chat Output** components onto the canvas (positions: `{100, 100}` and `{200, 400}`), expanding each one after it is added (Chat Output is added minimized).
@@ -82,6 +87,9 @@ Test #7 (case_sensitive OFF) does not use a dedicated helper to flip the switch 
 | 6 | `node_duration_chatoutputfalse` | `node_status_icon_chat output_inactive` | — |
 | 7 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | — |
 | 8 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | — |
+| 9 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | `2.5 < 10` → True branch builds |
+| 10 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | `5 <= 5` → True branch builds (strict `<` would route False) |
+| 11 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | `5 >= 5` → True branch builds (strict `>` would route False) |
 
 ---
 
@@ -97,9 +105,9 @@ Test #7 (case_sensitive OFF) does not use a dedicated helper to flip the switch 
 
 ## What this test does not cover
 
-- Operators `not equals`, `starts with`, `ends with`, `less than`, `less than or equal`, `greater than or equal`. The text operators all share `evaluate_condition` plumbing covered by tests 1–4 + 6–7; the remaining numeric operators are skipped because they all use the same `float(...)` cast covered by test 8.
+- Operators `not equals`, `starts with`, `ends with`. These text operators all share the `evaluate_condition` plumbing already covered by tests 1–4 + 6–7. (The numeric operators `less than`, `less than or equal`, `greater than or equal` ARE now covered — scenarios 9–11.)
 - Non-numeric input to a numeric operator (the Python `ValueError` fallback returning `False`). Documented in the source but not exposed in the public docs; tracked as `[ ]` in QA-CHECKLIST.md §3.8.
-- `max_iterations` and `default_route` cycle-handling behavior. Requires a flow with a cycle which is out of scope for a single-step regression.
+- `max_iterations` and `default_route` cycle-break behavior. This lives on the **If-Else** component (not the Loop — confirmed against `conditional_router.py` on nightly `1.11.0.dev50`) and only fires when the router sits inside a **graph cycle**. Deferred to a dedicated follow-up issue after an #822 scout established it is not exercisable by a hand-built flow asset on the current nightly: three cyclic topologies (self-loop, field-seeded, and external-seed-plus-feedback mirroring the Loop's `data`/`item` port split) all failed to iterate the router across every run path tried — `POST /api/v1/build/{id}/flow`, `POST /api/v2/workflows` (playground), and `POST /api/v1/run` each ran only the seed vertex and finished, with no `"You must specify a max_iterations if the graph is cyclic"` error, i.e. the graph was not treated as cyclic (`find_cycle_vertices` did not detect the SCC). Building the cycle entirely in the UI (the only guaranteed-valid path, which also settles whether this is a product limitation) is tracked in the follow-up. This is why the original author flagged the behavior as "out of scope for a single-step regression".
 - Playground end-to-end (`ChatInput → If-Else → ChatOutput`). The routing assertion does not depend on which input source feeds `input_text`, and tests 1–8 already prove the routing logic.
 - Advanced field `true_case_message` / `false_case_message`: left empty for every scenario. Their custom-message routing is a separate behavior tested elsewhere.
 
@@ -119,6 +127,10 @@ Test #7 (case_sensitive OFF) does not use a dedicated helper to flip the switch 
 - The two Chat Output components are dragged via `dragTo` to avoid the default-stack issue noted in the project memory (two sidebar `+` clicks land in the same position).
 - Operator dropdown options are selected via `getByRole("option", { name: operatorName, exact: true })` — the dropdown is Radix Select, which exposes stable accessible names. Selecting by `role` instead of testid avoids depending on the option's index suffix in the DOM, which historically drifts as new operators are added.
 - The `case_sensitive` BoolInput uses testid `toggle_bool_case_sensitive` with `role="switch"`; toggling once flips from ON to OFF.
+
+### Flow cleanup (added under #822)
+
+Every test builds a flow on a blank canvas, which Langflow autosaves. The spec now captures each flow's id from its creation `POST /api/v1/flows` 201 response and deletes ONLY that id in an `afterEach` (scoped teardown), navigating to `/` first and passing an explicit `Authorization` header via `getAuthToken(page.request)` — `page.request` is unauthenticated under AUTO_LOGIN and would 401 otherwise. Never `cleanAllFlows` / name-scoped / diff-based wipes: they kill flows other parallel workers are actively driving (#553). Reference implementation: `loop-component-regression.spec.ts`.
 
 ### Reliability decisions (independent review, @stable promotion)
 

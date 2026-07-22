@@ -5,6 +5,7 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
+  assertEmbeddingCredentialConfigured,
   createKnowledgeBase,
   deleteKnowledgeBase,
   getKnowledgeBase,
@@ -83,6 +84,14 @@ async function authHeaders(page: Page): Promise<Record<string, string>> {
  */
 async function openRagFlow(page: Page): Promise<void> {
   const headers = await authHeaders(page);
+
+  // The embedding provider key must be a Langflow global variable (not just an
+  // env var) or the KB ingest fails with a misleading "embedding model no longer
+  // recognized" error surfacing as a 90s node_duration timeout — fail fast and
+  // actionably instead. The same GOOGLE_API_KEY also backs the answer model.
+  await assertEmbeddingCredentialConfigured(page.request, "GOOGLE_API_KEY", {
+    headers,
+  });
 
   const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
   const kbName = await createKnowledgeBase(

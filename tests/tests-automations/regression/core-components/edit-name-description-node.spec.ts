@@ -1,10 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import {
-  disableInspectPanel,
-  enableInspectPanel,
-} from "../../../helpers/ui/open-advanced-options";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { ensureCustomComponentButton } from "../../../helpers/ui/ensure-custom-component-button";
@@ -73,196 +69,76 @@ test(
 
     await page.getByTestId("div-generic-node").click();
 
-    await page.getByTestId("edit-name-description-button").click();
+    await page.getByTestId("node-edit-name-description-button").click();
 
-    await page.getByTestId("inspection-panel-name").fill(randomName);
+    await page.getByTestId("input-title-Custom Component").fill(randomName);
 
-    await page
-      .getByTestId("inspection-panel-description")
-      .fill(randomDescription);
+    await page.getByTestId("textarea").fill(randomDescription);
 
-    await page.getByTestId("save-name-description-button").click();
-
-    expect(await page.getByText(randomName).count()).toBe(2);
-    expect(await page.getByText(randomDescription).count()).toBe(2);
-
-    await page.getByTestId("div-generic-node").click();
-
-    await page.getByTestId("edit-name-description-button").click();
-
-    await page.getByTestId(`inspection-panel-name`).fill(randomName_2);
-
-    await page
-      .getByTestId("inspection-panel-description")
-      .fill(randomDescription_2);
-
-    await page.getByTestId("save-name-description-button").click();
-
-    expect(await page.getByText(randomName_2).count()).toBe(2);
-    expect(await page.getByText(randomDescription_2).count()).toBe(2);
-
-    await page.getByTestId("div-generic-node").click();
-
-    await page.getByTestId("edit-name-description-button").click();
-
-    await page.getByTestId(`inspection-panel-name`).fill(randomName_3);
-
-    await page.keyboard.press("Enter");
-
-    expect(await page.getByText(randomName_3).count()).toBe(2);
-
-    await page.getByTestId("div-generic-node").click();
-
-    await page.getByTestId("edit-name-description-button").click();
-
-    await page.getByTestId(`inspection-panel-name`).fill(randomName_4);
-
-    await page
-      .getByTestId("inspection-panel-description")
-      .fill(randomDescription_4);
+    await page.getByTestId("publish-button").click();
 
     await page.keyboard.press("Escape");
 
-    expect(await page.getByText(randomName_4).count()).toBe(0);
-
-    expect(await page.getByText(randomDescription_2).count()).toBe(2);
-
-    expect(await page.getByText(randomDescription_4).count()).toBe(0);
-
-    expect(await page.getByText(randomName_3).count()).toBe(2);
+    expect(await page.getByText(randomName).count()).toBe(1);
+    expect(await page.getByText(randomDescription).count()).toBe(1);
 
     await page.getByTestId("div-generic-node").click();
 
-    await page.getByTestId("edit-name-description-button").click();
+    await page.getByTestId("node-edit-name-description-button").click();
 
-    await page
-      .getByTestId("inspection-panel-description")
-      .fill(randomDescription_3);
+    await page.getByTestId(`input-title-${randomName}`).fill(randomName_2);
 
-    await page.getByTestId(`inspection-panel-name`).fill(randomName_3);
+    await page.getByTestId("textarea").fill(randomDescription_2);
+
+    await page.getByTestId("node-save-name-description-button").click();
+
+    expect(await page.getByText(randomName_2).count()).toBe(1);
+    expect(await page.getByText(randomDescription_2).count()).toBe(1);
+
+    await page.getByTestId("div-generic-node").click();
+
+    await page.getByTestId("node-edit-name-description-button").click();
+
+    await page.getByTestId(`input-title-${randomName_2}`).fill(randomName_3);
 
     await page.keyboard.press("Enter");
 
-    expect(await page.getByText(randomDescription_3).count()).toBe(2);
+    expect(await page.getByText(randomName_3).count()).toBe(1);
 
-    expect(await page.getByText(randomName_4).count()).toBe(0);
+    await page.getByTestId("div-generic-node").click();
 
-    expect(await page.getByText(randomName_3).count()).toBe(2);
+    await page.getByTestId("node-edit-name-description-button").click();
+
+    await page.getByTestId(`input-title-${randomName_3}`).fill(randomName_4);
+
+    await page.getByTestId("textarea").fill(randomDescription_4);
+
+    await page.keyboard.press("Escape");
+
+    expect(await page.getByText(randomName_4).count()).toBe(1);
+
+    expect(await page.getByText(randomDescription_2).count()).toBe(1);
 
     expect(await page.getByText(randomDescription_4).count()).toBe(0);
-  },
-);
 
-test(
-  "user should be able to edit name and description of a node with inspect panel disabled",
-  { tag: ["@stable", "@release", "@workspace", "@components"] },
+    expect(await page.getByText(randomName_3).count()).toBe(0);
 
-  async ({ page }) => {
-    trackCreatedFlows(page);
-    const randomName = Math.random().toString(36).substring(2, 15);
-    const randomDescription = Math.random().toString(36).substring(2, 15);
+    await page.getByTestId("div-generic-node").click();
 
-    const randomName_2 = Math.random().toString(36).substring(2, 15);
-    const randomDescription_2 = Math.random().toString(36).substring(2, 15);
+    await page.getByTestId("node-edit-name-description-button").click();
 
-    const randomName_3 = Math.random().toString(36).substring(2, 15);
-    const randomDescription_3 = Math.random().toString(36).substring(2, 15);
+    await page.getByTestId("textarea").fill(randomDescription_3);
 
-    const randomName_4 = Math.random().toString(36).substring(2, 15);
-    const randomDescription_4 = Math.random().toString(36).substring(2, 15);
+    await page.getByTestId(`input-title-${randomName_4}`).fill(randomName_3);
 
-    await awaitBootstrapTest(page);
+    await page.keyboard.press("Escape");
 
-    await page.waitForSelector('[data-testid="blank-flow"]', {
-      timeout: 30000,
-    });
-    await page.getByTestId("blank-flow").click();
+    expect(await page.getByText(randomDescription_3).count()).toBe(1);
 
-    await ensureCustomComponentButton(page);
+    expect(await page.getByText(randomName_4).count()).toBe(1);
 
-    await disableInspectPanel(page);
+    expect(await page.getByText(randomName_3).count()).toBe(0);
 
-    // Restore the global inspect-panel setting even if an assertion below
-    // fails, so a mid-test failure cannot leave the inspector off for siblings.
-    try {
-      await ensureCustomComponentButton(page);
-      await page.getByTestId("sidebar-custom-component-button").click();
-
-      await page.getByTestId("div-generic-node").click();
-
-      await page.getByTestId("node-edit-name-description-button").click();
-
-      await page.getByTestId("input-title-Custom Component").fill(randomName);
-
-      await page.getByTestId("textarea").fill(randomDescription);
-
-      await page.getByTestId("publish-button").click();
-
-      await page.keyboard.press("Escape");
-
-      expect(await page.getByText(randomName).count()).toBe(1);
-      expect(await page.getByText(randomDescription).count()).toBe(1);
-
-      await page.getByTestId("div-generic-node").click();
-
-      await page.getByTestId("node-edit-name-description-button").click();
-
-      await page.getByTestId(`input-title-${randomName}`).fill(randomName_2);
-
-      await page.getByTestId("textarea").fill(randomDescription_2);
-
-      await page.getByTestId("node-save-name-description-button").click();
-
-      expect(await page.getByText(randomName_2).count()).toBe(1);
-      expect(await page.getByText(randomDescription_2).count()).toBe(1);
-
-      await page.getByTestId("div-generic-node").click();
-
-      await page.getByTestId("node-edit-name-description-button").click();
-
-      await page.getByTestId(`input-title-${randomName_2}`).fill(randomName_3);
-
-      await page.keyboard.press("Enter");
-
-      expect(await page.getByText(randomName_3).count()).toBe(1);
-
-      await page.getByTestId("div-generic-node").click();
-
-      await page.getByTestId("node-edit-name-description-button").click();
-
-      await page.getByTestId(`input-title-${randomName_3}`).fill(randomName_4);
-
-      await page.getByTestId("textarea").fill(randomDescription_4);
-
-      await page.keyboard.press("Escape");
-
-      expect(await page.getByText(randomName_4).count()).toBe(1);
-
-      expect(await page.getByText(randomDescription_2).count()).toBe(1);
-
-      expect(await page.getByText(randomDescription_4).count()).toBe(0);
-
-      expect(await page.getByText(randomName_3).count()).toBe(0);
-
-      await page.getByTestId("div-generic-node").click();
-
-      await page.getByTestId("node-edit-name-description-button").click();
-
-      await page.getByTestId("textarea").fill(randomDescription_3);
-
-      await page.getByTestId(`input-title-${randomName_4}`).fill(randomName_3);
-
-      await page.keyboard.press("Escape");
-
-      expect(await page.getByText(randomDescription_3).count()).toBe(1);
-
-      expect(await page.getByText(randomName_4).count()).toBe(1);
-
-      expect(await page.getByText(randomName_3).count()).toBe(0);
-
-      expect(await page.getByText(randomDescription_4).count()).toBe(0);
-    } finally {
-      await enableInspectPanel(page);
-    }
+    expect(await page.getByText(randomDescription_4).count()).toBe(0);
   },
 );

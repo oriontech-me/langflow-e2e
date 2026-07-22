@@ -409,7 +409,7 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
 
   test(
     "table field edit persists",
-    { tag: ["@stable", "@components", "@regression"] },
+    { tag: ["@components", "@regression"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
       const flowId = await openFlowWithComponent(

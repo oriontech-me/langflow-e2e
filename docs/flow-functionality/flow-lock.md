@@ -15,9 +15,13 @@ between unlocked and locked, and the UI reflects each state:
 2. **Field disable while locked** — the flow's name/description inputs
    (`input-flow-name`, `input-flow-description`) are enabled when unlocked and
    **disabled** when locked, so a locked flow cannot be renamed/re-described.
-3. **Locked-state indicator** — once the lock is saved, the canvas shows the
-   locked indicator (`icon-lock`, per-node badge on 1.11) and it disappears
-   after unlocking.
+3. **Authoritative lock state** — the persisted flow's `locked` flag
+   (`GET /api/v1/flows/{id}`) is `false` initially, `true` after locking, and
+   `false` again after unlocking. dev49 note: the canvas `icon-lock` testid is
+   NO LONGER a reliable indicator — it is now also used by unrelated
+   input-placeholder icons (present, count ≥ 2, on an UNLOCKED flow), so the
+   spec asserts lock state via the `locked` flag and the settings switch, not a
+   canvas badge.
 4. **Settings-modal icon state** — the modal itself shows `icon-Unlock` when
    unlocked and `icon-Lock` when locked (dialog-scoped icons, distinct from the
    per-node canvas badge).
