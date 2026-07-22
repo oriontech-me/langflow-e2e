@@ -24,7 +24,12 @@ LANGFLOW_AUTO_LOGIN=true \
 LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
 LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
 LANGFLOW_DEACTIVATE_TRACING=true \
-  langflow run --host 0.0.0.0 --port "${PORT}" --no-open-browser &
+  langflow run --host 0.0.0.0 --port "${PORT}" --no-open-browser \
+    --workers "${LANGFLOW_WORKERS:-1}" &
+# --workers defaults to 1: Langflow's own default is (2*cpu)+1 workers, each
+# holding the full in-memory state, which exhausts memory on a constrained dev
+# box and gets a worker SIGKILLed mid-build (ERR_EMPTY_RESPONSE / node run never
+# completes — see #773). Override with LANGFLOW_WORKERS on a beefier machine.
 echo $! > "${PID_FILE}"
 
 echo "Waiting for Langflow to be ready (up to 120s)..."
