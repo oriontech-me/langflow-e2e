@@ -78,6 +78,7 @@ test failure.
 - Does not assert that specific models are returned — only that the collection and file-write succeed
 - Does not validate provider responses in detail — only checks HTTP status 2xx vs non-2xx
 - Does not configure providers that lack an API key in the environment
+- **Does not verify Langflow can BUILD a provider's model — only that the raw API key works.** The status probe calls the provider's own API directly, upstream of Langflow, so it cannot detect a missing server-side integration package. A nightly that ships without `langchain-google-genai` still records google `active` here, yet every Google chat/embedding build inside Langflow raises an `ImportError` and the affected `@stable` specs fail downstream as a misleading node-build timeout (root cause + impact: [#898]; upstream: LE-1974). A faithful check would have to build a Language Model flow per provider and inspect the error — no standalone endpoint triggers the class import (`/api/v1/models/*` return static metadata only) — so that build-probe hardening was deferred to [#900].
 
 ---
 

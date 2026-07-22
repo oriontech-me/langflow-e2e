@@ -133,6 +133,20 @@ function modelsFor(models: ModelRecord[], provider: string): string[] {
 // resolveGptModel / resolveGeminiModel, the models the agent suite already
 // runs green on; the catalog order stays as the tail so a provider with
 // none of the preferred models still validates on whatever it exposes.
+//
+// KNOWN GAP — "active" means the key works, NOT that Langflow can BUILD the
+// model. The probe calls the provider's own API directly, upstream of
+// Langflow, so it cannot see a missing server-side integration package. On a
+// nightly that shipped without `langchain-google-genai`, google probed
+// `active` here while every Google chat/embedding build inside Langflow raised
+// `ImportError: Could not import '...google_generative_ai_model' ... Install
+// the missing package`, surfacing downstream only as a misleading node-build
+// timeout across ~17 @stable specs (agents + Google-embedding KB). Root cause
+// + impact map: #898; upstream ticket: LE-1974. A faithful check would have to
+// BUILD a Language Model flow per provider and inspect the error — there is no
+// standalone endpoint that triggers the class import (`/api/v1/models/*`
+// return static metadata only). That build-probe hardening was deferred to
+// #900; this note is the trap marker for the next triager.
 const CANDIDATE_PREFS: Record<string, RegExp[]> = {
   openai: [/^gpt-4o-mini$/, /^gpt-4o$/, /^gpt-4\.1(-mini|-nano)?$/, /^gpt-4/],
   google: [
