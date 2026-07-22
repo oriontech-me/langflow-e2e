@@ -349,38 +349,36 @@ for (const { label, options, skipReason } of targets) {
             }
           });
 
-          // Proof #1: the Playground rendered at least one "Called tool" indicator.
-          // Each AccordionTrigger contains a "Called tool " + formatToolTitle(rawTitle) row.
-          // This DOM only exists after the agent invoked a tool — if the LLM hallucinated
-          // a response without using any tool, the row is absent.
-          //
-          // NOTE: Langflow's `AccordionTrigger` markup has flipped between a
-          // <div className="cursor-pointer ..."> (pre-1.11 nightlies) and a real
-          // <button className="... cursor-pointer ..."> (1.11.0.dev38+). Selector
-          // must therefore not constrain by tag name — match the class only.
+          // Proof #1: the Playground rendered a tool-invocation block.
+          // On 1.12 the tool call surfaces as a `tool_<name>` testid inside a
+          // `div-tools_tools_metadata` block (under an "Agent Steps" header) — this
+          // DOM only exists after the agent invoked a tool, so if the LLM
+          // hallucinated a text-only answer the block is absent. (Through ~1.11 the
+          // same signal was a `.cursor-pointer` accordion row reading "Called tool
+          // ECHO"; that text-based selector was stale drift, not a product change —
+          // the tool round-trip is verified healthy via GET /api/v1/monitor/messages,
+          // `content_blocks: ["tool_use|text|text"]`, `tool_use name=echo`. #894.)
           // Ref: src/frontend/src/components/core/chatComponents/ContentBlockDisplay.tsx
-          const calledToolTrigger = page
-            .locator(".cursor-pointer")
-            .filter({ hasText: "Called tool" });
           await expect(
-            calledToolTrigger.last(),
-            "Playground must show a 'Called tool' indicator — agent answered without invoking any tool",
+            page.getByTestId("div-tools_tools_metadata").last(),
+            "Playground must show a tool-invocation block — agent answered without invoking any tool",
           ).toBeVisible({ timeout: 120000 });
 
-          // Proof #2: the tool called was 'echo'.
-          // formatToolTitle uppercases the raw tool name — for the echo MCP tool the
-          // trigger reads "Called tool ECHO". Case-insensitive match tolerates backend
-          // rawTitle variants ("echo" | "Executed **echo**" | namespaced toolset variants).
-          // Ref: formatToolTitle in src/frontend/src/components/core/playgroundComponent/chat-view/chat-messages/utils/format.ts
+          // Proof #2: the tool called was 'echo' — the per-tool testid is
+          // `tool_<rawToolName>` (lowercase; the visible label uppercases to "ECHO").
           await expect(
-            calledToolTrigger.filter({ hasText: /echo/i }).last(),
+            page.getByTestId("tool_echo").last(),
             "The MCP tool invoked must be 'echo' — agent picked a different tool from the everything server",
           ).toBeVisible({ timeout: 5000 });
 
           // Proof #3: the echoed payload appears in the agent's final response,
           // confirming the round-trip through the MCP echo tool returned the
           // expected text (and the agent surfaced it instead of dropping it).
-          const lastAiMessage = page.getByTestId("div-chat-message").last();
+          // The AI message container is `chat-message-AI-<text>` on 1.12 (was the
+          // now-removed `div-chat-message`).
+          const lastAiMessage = page
+            .locator('[data-testid^="chat-message-AI-"]')
+            .last();
           await expect(lastAiMessage).toBeVisible({ timeout: 30000 });
           await expect(
             lastAiMessage,

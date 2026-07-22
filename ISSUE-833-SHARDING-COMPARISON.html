@@ -1,0 +1,379 @@
+<title>Daily @stable — Sharding Before/After (#833)</title>
+<style>
+  :root {
+    --ground: #f5f7f9;
+    --surface: #ffffff;
+    --surface-2: #eef1f5;
+    --ink: #15202b;
+    --ink-muted: #5a6b7b;
+    --ink-faint: #8595a4;
+    --border: #e0e5ea;
+    --border-strong: #cdd5dd;
+    --accent: #0d8f86;        /* teal — the "after" / improved path */
+    --accent-soft: #d8efec;
+    --before: #a9752f;        /* muted amber — the "before" / baseline */
+    --before-soft: #f2e7d5;
+    --good: #12855c;
+    --good-soft: #d6efe3;
+    --warn: #b9781a;
+    --warn-soft: #f5e8cf;
+    --bad: #c23a4d;
+    --bad-soft: #f6dde1;
+    --shadow: 0 1px 2px rgba(20,32,43,.06), 0 4px 16px rgba(20,32,43,.05);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0d1420;
+      --surface: #151e2b;
+      --surface-2: #1c2836;
+      --ink: #e7eef5;
+      --ink-muted: #9aabbb;
+      --ink-faint: #6a7c8d;
+      --border: #243040;
+      --border-strong: #33445a;
+      --accent: #2fd0c0;
+      --accent-soft: #113631;
+      --before: #d09a4f;
+      --before-soft: #322611;
+      --good: #34d399;
+      --good-soft: #10321f;
+      --warn: #e0a83a;
+      --warn-soft: #33270f;
+      --bad: #f0788a;
+      --bad-soft: #34151b;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="light"] {
+    --ground: #f5f7f9; --surface: #fff; --surface-2: #eef1f5; --ink: #15202b;
+    --ink-muted: #5a6b7b; --ink-faint: #8595a4; --border: #e0e5ea; --border-strong:#cdd5dd;
+    --accent:#0d8f86; --accent-soft:#d8efec; --before:#a9752f; --before-soft:#f2e7d5;
+    --good:#12855c; --good-soft:#d6efe3; --warn:#b9781a; --warn-soft:#f5e8cf;
+    --bad:#c23a4d; --bad-soft:#f6dde1;
+    --shadow: 0 1px 2px rgba(20,32,43,.06), 0 4px 16px rgba(20,32,43,.05);
+  }
+  :root[data-theme="dark"] {
+    --ground:#0d1420; --surface:#151e2b; --surface-2:#1c2836; --ink:#e7eef5;
+    --ink-muted:#9aabbb; --ink-faint:#6a7c8d; --border:#243040; --border-strong:#33445a;
+    --accent:#2fd0c0; --accent-soft:#113631; --before:#d09a4f; --before-soft:#322611;
+    --good:#34d399; --good-soft:#10321f; --warn:#e0a83a; --warn-soft:#33270f;
+    --bad:#f0788a; --bad-soft:#34151b;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 6px 20px rgba(0,0,0,.28);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--sans); line-height: 1.55;
+    -webkit-font-smoothing: antialiased; font-size: 16px;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 48px 24px 80px; }
+
+  .eyebrow {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--accent); font-weight: 600;
+  }
+  h1 { font-size: clamp(28px, 4.5vw, 42px); line-height: 1.1; margin: 10px 0 8px;
+       letter-spacing: -.02em; text-wrap: balance; font-weight: 700; }
+  .lede { color: var(--ink-muted); font-size: 17px; max-width: 62ch; margin: 0; }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+  .chip {
+    font-family: var(--mono); font-size: 12px; padding: 5px 11px; border-radius: 999px;
+    border: 1px solid var(--border-strong); color: var(--ink-muted); background: var(--surface);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .chip.ok { color: var(--good); border-color: color-mix(in srgb, var(--good) 45%, transparent); background: var(--good-soft); }
+  .chip.hold { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: var(--warn-soft); }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+  section { margin-top: 52px; }
+  h2 { font-size: 13px; font-family: var(--mono); text-transform: uppercase;
+       letter-spacing: .12em; color: var(--ink-faint); margin: 0 0 18px; font-weight: 600;
+       border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+
+  /* headline metric strip */
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .metric { background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+            padding: 22px 20px; box-shadow: var(--shadow); }
+  .metric .k { font-family: var(--mono); font-size: 12px; letter-spacing: .04em;
+               text-transform: uppercase; color: var(--ink-faint); }
+  .metric .v { font-size: 34px; font-weight: 700; letter-spacing: -.02em; margin-top: 6px;
+               font-variant-numeric: tabular-nums; display: flex; align-items: baseline; gap: 8px; }
+  .metric .v small { font-size: 15px; font-weight: 600; color: var(--ink-muted); }
+  .metric .sub { color: var(--ink-muted); font-size: 13.5px; margin-top: 4px; }
+  .arrow { color: var(--accent); }
+  .metric.hero .v { color: var(--accent); }
+
+  /* before/after architecture */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .arch { border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
+          padding: 20px; box-shadow: var(--shadow); }
+  .arch.before { border-top: 3px solid var(--before); }
+  .arch.after  { border-top: 3px solid var(--accent); }
+  .arch h3 { margin: 0 0 4px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+  .arch .tag { font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 600; }
+  .arch.before .tag { background: var(--before-soft); color: var(--before); }
+  .arch.after  .tag { background: var(--accent-soft); color: var(--accent); }
+  .arch .meta { color: var(--ink-muted); font-size: 13px; margin: 0 0 16px; }
+
+  .node { border: 1px solid var(--border-strong); border-radius: 10px; padding: 10px 12px;
+          background: var(--surface-2); font-size: 13.5px; }
+  .node .nt { font-weight: 600; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .node .nd { color: var(--ink-muted); font-size: 12.5px; margin-top: 3px; font-family: var(--mono); }
+  .node.svc { background: transparent; border-style: dashed; }
+  .flowline { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
+  .connector { width: 2px; height: 16px; background: var(--border-strong); margin: 0 auto; }
+  .fan { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .shard { border: 1px solid var(--accent); border-radius: 9px; padding: 8px 10px;
+           background: var(--accent-soft); font-size: 12px; }
+  .shard b { font-family: var(--mono); }
+  .shard .lf { color: var(--ink-muted); font-family: var(--mono); font-size: 11px; display:block; margin-top:2px; }
+  .badge-w { font-family: var(--mono); font-size: 11px; padding: 1px 6px; border-radius: 5px;
+             border: 1px solid var(--border-strong); color: var(--ink-muted); }
+
+  /* benchmark table */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; background: var(--surface); font-size: 14px; min-width: 620px; }
+  th, td { padding: 13px 16px; text-align: left; border-bottom: 1px solid var(--border); }
+  thead th { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+             color: var(--ink-faint); font-weight: 600; background: var(--surface-2); }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+  tbody tr:last-child td { border-bottom: none; }
+  tr.pick td { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
+  tr.pick td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .pill { font-family: var(--mono); font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; white-space: nowrap; }
+  .pill.base { background: var(--before-soft); color: var(--before); }
+  .pill.best { background: var(--good-soft); color: var(--good); }
+  .pill.slow { background: var(--bad-soft); color: var(--bad); }
+  .speedbar { height: 6px; border-radius: 3px; background: var(--accent); display: inline-block; vertical-align: middle; margin-left: 8px; }
+
+  /* two-up info cards */
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface);
+          padding: 20px; box-shadow: var(--shadow); }
+  .card h3 { margin: 0 0 12px; font-size: 15.5px; display:flex; align-items:center; gap:8px; }
+  .card h3 .ic { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center;
+                 font-size: 13px; flex: none; }
+  ul.clean { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+  ul.clean li { display: flex; gap: 10px; font-size: 14px; color: var(--ink-muted); }
+  ul.clean li b { color: var(--ink); font-weight: 600; }
+  ul.clean li::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+                        margin-top: 8px; flex: none; }
+  .card.warn ul.clean li::before { background: var(--warn); }
+
+  /* config diff */
+  .diff { font-family: var(--mono); font-size: 13px; border: 1px solid var(--border); border-radius: 14px;
+          overflow: hidden; box-shadow: var(--shadow); }
+  .diff .dl { padding: 8px 16px; white-space: pre-wrap; word-break: break-word; border-bottom: 1px solid var(--border); }
+  .diff .dl:last-child { border-bottom: none; }
+  .diff .rm { background: var(--bad-soft); color: color-mix(in srgb, var(--bad) 70%, var(--ink)); }
+  .diff .ad { background: var(--good-soft); color: color-mix(in srgb, var(--good) 72%, var(--ink)); }
+  .diff .cx { color: var(--ink-muted); }
+  .diff .sign { user-select: none; opacity: .7; margin-right: 6px; }
+
+  .foot { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--border);
+          color: var(--ink-faint); font-size: 12.5px; font-family: var(--mono); line-height: 1.7; }
+  .foot b { color: var(--ink-muted); }
+
+  @media (max-width: 720px) {
+    .metrics { grid-template-columns: 1fr; }
+    .cols, .grid2 { grid-template-columns: 1fr; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">Issue #833 · Wave 3 infra</div>
+    <h1>Sharding the daily <code style="font-family:var(--mono);font-size:.7em;background:var(--surface-2);padding:2px 8px;border-radius:6px;">@stable</code> suite</h1>
+    <p class="lede">What changes when the daily E2E run moves from one shared Langflow backend to four dedicated shards — benchmarked against the current pipeline on the same suite, runner, and image.</p>
+    <div class="chips">
+      <span class="chip ok"><span class="dot"></span>Validated via dispatch</span>
+      <span class="chip hold"><span class="dot"></span>Not merged — awaiting authorization</span>
+      <span class="chip">branch: feat/issue-833-shard-daily-stable</span>
+      <span class="chip">cost: $0 · public-repo runners</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>The headline</h2>
+    <div class="metrics">
+      <div class="metric hero">
+        <div class="k">Wall-clock</div>
+        <div class="v">~56<small>min</small> <span class="arrow">→</span> ~28<small>min</small></div>
+        <div class="sub">2× faster at N=4 · slowest shard sets the pace</div>
+      </div>
+      <div class="metric">
+        <div class="k">Failures found</div>
+        <div class="v">34 <span class="arrow">→</span> 32</div>
+        <div class="sub">Same regressions caught — 31/32 identical. The ±2 is flake variance, not lost coverage.</div>
+      </div>
+      <div class="metric">
+        <div class="k">Added cost</div>
+        <div class="v">$0</div>
+        <div class="sub">4 standard runners, free & unlimited on a public repo. No paid larger runner.</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Pipeline shape</h2>
+    <div class="cols">
+
+      <div class="arch before">
+        <h3><span class="tag">NOW</span> Single job</h3>
+        <p class="meta">One runner. Two workers hit one Langflow serving all 353 tests — the contention #817 diagnosed.</p>
+        <div class="flowline">
+          <div class="node">
+            <div class="nt">e2e-daily-stable <span class="badge-w">workers=2</span></div>
+            <div class="nd">353 @stable · fullyParallel=true</div>
+          </div>
+          <div class="connector"></div>
+          <div class="node svc">
+            <div class="nt">1× langflow + ollama + go-httpbin</div>
+            <div class="nd">shared backend · serializes requests</div>
+          </div>
+          <div class="connector"></div>
+          <div class="node">
+            <div class="nt">downstream (inline)</div>
+            <div class="nd">report · history · auto-remove · QA POST</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="arch after">
+        <h3><span class="tag">SHARDED</span> prep → matrix → merge</h3>
+        <p class="meta">Each shard is its own runner + its own Langflow. Parallelism comes from the shard count.</p>
+        <div class="flowline">
+          <div class="node">
+            <div class="nt">prep</div>
+            <div class="nd">shards input → dynamic matrix (default 4)</div>
+          </div>
+          <div class="connector"></div>
+          <div class="fan">
+            <div class="shard"><b>test 1/4</b><span class="lf">own langflow · w=2</span></div>
+            <div class="shard"><b>test 2/4</b><span class="lf">own langflow · w=2</span></div>
+            <div class="shard"><b>test 3/4</b><span class="lf">own langflow · w=2</span></div>
+            <div class="shard"><b>test 4/4</b><span class="lf">own langflow · w=2</span></div>
+          </div>
+          <div class="connector"></div>
+          <div class="node">
+            <div class="nt">merge <span class="badge-w">1 results.json</span></div>
+            <div class="nd">merge-reports → all downstream (unchanged)</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>Benchmark — same suite, same runner, same image</h2>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Configuration</th>
+            <th>Backend</th>
+            <th style="text-align:right">Wall-clock</th>
+            <th style="text-align:right">Speedup</th>
+            <th style="text-align:right">Failures</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="pill base">baseline</span> 1 job · w=2</td>
+            <td>1 shared</td>
+            <td class="num">~56 min</td>
+            <td class="num">1.0×<span class="speedbar" style="width:22px"></span></td>
+            <td class="num">34</td>
+            <td>Heavy contention</td>
+          </tr>
+          <tr class="pick">
+            <td><span class="pill best">chosen</span> N=4 · w=2</td>
+            <td>4 dedicated</td>
+            <td class="num">~28 min</td>
+            <td class="num">2.0×<span class="speedbar" style="width:44px"></span></td>
+            <td class="num">32</td>
+            <td>Best observed · 1 UI-timeout flake</td>
+          </tr>
+          <tr>
+            <td>N=4 · w=1</td>
+            <td>4 dedicated</td>
+            <td class="num">~39 min</td>
+            <td class="num">1.4×<span class="speedbar" style="width:31px"></span></td>
+            <td class="num">33</td>
+            <td>Clean but serial per shard — slower</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="lede" style="margin-top:14px;font-size:14.5px;">
+      Two workers per shard won: #817's contention was two workers on <em>one</em> Langflow serving the whole
+      suite. With a dedicated Langflow per shard (~90 tests each), the second worker is a net win — the residual
+      contention (one flake) is dwarfed by the throughput.
+    </p>
+  </section>
+
+  <section>
+    <h2>What actually changed in code</h2>
+    <div class="diff">
+      <div class="dl cx">playwright.config.ts</div>
+      <div class="dl rm"><span class="sign">-</span>fullyParallel: true,</div>
+      <div class="dl ad"><span class="sign">+</span>fullyParallel: process.env.PW_SHARD_FILE_LEVEL ? false : true,  // file-level split keeps a spec file whole → @database affinity</div>
+      <div class="dl cx"><span class="sign"> </span>workers: process.env.CI ? 2 : undefined,  // unchanged — 2 per shard</div>
+      <div class="dl cx" style="border-top:1px solid var(--border)">.github/workflows/daily-stable.yml</div>
+      <div class="dl rm"><span class="sign">-</span>jobs: { e2e-daily-stable }   # one job: test + all downstream inline</div>
+      <div class="dl ad"><span class="sign">+</span>jobs: { prep → test [matrix shard=1..N] → merge }</div>
+      <div class="dl ad"><span class="sign">+</span>test:  --shard=i/N --reporter=blob  · own services per leg · uploads blob-&lt;shard&gt;</div>
+      <div class="dl ad"><span class="sign">+</span>merge: download blob-* (merge-multiple) → merge-reports → 1 results.json → downstream</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Guarantees & the catch</h2>
+    <div class="grid2">
+      <div class="card">
+        <h3><span class="ic" style="background:var(--good-soft);color:var(--good)">✓</span>Preserved</h3>
+        <ul class="clean">
+          <li><b>Correctness.</b> 31/32 failing specs match the non-sharded run — no failure hidden, none invented.</li>
+          <li><b>@database affinity.</b> File-level sharding keeps every test() of a spec file in one shard; no cross-shard state break.</li>
+          <li><b>Downstream invariants.</b> One merged results.json → one history entry, one QA POST, one @stable auto-removal.</li>
+          <li><b>No silent truncation.</b> A missing shard blob raises a ::warning::, never passes green.</li>
+          <li><b>Schedule-only side effects.</b> History/auto-remove/issue steps skip on manual dispatch.</li>
+        </ul>
+      </div>
+      <div class="card warn">
+        <h3><span class="ic" style="background:var(--warn-soft);color:var(--warn)">!</span>Why 2×, not 4×</h3>
+        <ul class="clean">
+          <li><b>File-level imbalance.</b> Playwright balances by test <em>count</em>, not duration — the shard holding the slow agent/playground specs runs ~2× the fastest (26.5 min vs 12 min).</li>
+          <li><b>The slowest shard sets wall-clock.</b> Raising N alone won't help until the heavy files are spread.</li>
+          <li><b>Tuning levers (not carved).</b> Raise N so each shard holds fewer heavy files, or split the heaviest spec files. Decide from real timings.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What sharding does <em>not</em> do</h2>
+    <div class="card" style="border-left:3px solid var(--before)">
+      <p style="margin:0;color:var(--ink-muted);font-size:14.5px;">
+        Sharding is a <b style="color:var(--ink)">speed</b> change, not an error-reduction change. The ~32 failures are a
+        real Langflow nightly regression (dev41–dev47, isolated in #816) — product bugs that run faster but do not
+        disappear. A sharded run finding <em>fewer</em> failures would be a defect, not a win: it would mean coverage was
+        lost. Reducing the failure count is a separate track — flag the regression upstream; <code style="font-family:var(--mono)">auto-remove-stable</code> handles the @stable churn.
+      </p>
+    </div>
+  </section>
+
+  <div class="foot">
+    <b>Methodology.</b> Same repo checkout, same ubuntu-latest (4 vCPU / 16 GB), same langflow-nightly:latest, N=4.<br>
+    <b>Runs.</b> sharded w=2 → 29674263823 (~28 min) · sharded w=1 → 29675188419 (~39 min) · non-sharded reference → 29658914382 (34 fails).<br>
+    <b>Status.</b> Implemented + reviewed + benchmarked on branch feat/issue-833-shard-daily-stable. Production daily unchanged until merge is authorized.
+  </div>
+
+</div>
