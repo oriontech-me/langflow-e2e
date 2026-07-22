@@ -19,6 +19,7 @@ dist/
 !.claude/skills/langflow-e2e-issues/
 !.claude/skills/langflow-e2e-issue-deterministic/
 !.claude/skills/langflow-e2e-triage/
+!.claude/skills/langflow-e2e-infra/
 docs/superpowers/
 .playwright-mcp/
 .worktrees/
