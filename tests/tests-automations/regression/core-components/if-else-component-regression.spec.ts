@@ -1,5 +1,7 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
@@ -8,6 +10,29 @@ import {
   openAdvancedOptions,
 } from "../../../helpers/ui/open-advanced-options";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
+
+// Ids of the flows each test creates on the blank canvas (Langflow autosaves
+// them). Teardown deletes ONLY these via the API (scoped, #515/#553) — never a
+// global cleanAllFlows / name-scoped / diff-based wipe, which races flows other
+// parallel workers are actively driving.
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ page }) => {
+  const ids = createdFlowIds.splice(0);
+  if (ids.length === 0) return;
+  // Navigate off the editor first so the unmounted flow page stops polling a
+  // flow we are about to delete, then pass an explicit auth header — page.request
+  // is unauthenticated under AUTO_LOGIN and would 401 otherwise. Not swallowed:
+  // a failed cleanup surfaces instead of silently leaking the flow (#547).
+  await page.goto("/");
+  const authHeader = await getAuthToken(page.request);
+  const opts = authHeader
+    ? { headers: { Authorization: authHeader } }
+    : undefined;
+  for (const id of ids) {
+    await deleteFlow(page.request, id, opts);
+  }
+});
 
 async function selectOperator(
   page: Page,
@@ -48,7 +73,22 @@ async function exposeCaseSensitive(page: Page): Promise<void> {
 async function buildIfElseRoutingFlow(page: Page): Promise<void> {
   await awaitBootstrapTest(page);
   await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
+  // Capture the id from the flow-creation POST (NOT the transient canvas-URL id,
+  // which does not match the persisted flow on this Langflow version) so the
+  // afterEach can delete exactly this flow (scoped teardown, #515).
+  const flowCreation = page.waitForResponse(
+    (resp) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 30000 },
+  );
   await page.getByTestId("blank-flow").click();
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (!created.id) {
+    throw new Error("blank-flow creation returned no flow id");
+  }
+  createdFlowIds.push(created.id);
 
   // Wait for the canvas/sidebar to settle before interacting — clicking the
   // search input immediately after the blank-flow transition can resolve a
@@ -387,6 +427,110 @@ test(
 
       // Numeric: 10 > 5 → True.
       await page.getByTestId("popover-anchor-input-input_text").fill("10");
+      await page.getByTestId("popover-anchor-input-match_text").fill("5");
+
+      await page.getByTestId("button_run_chat output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_chat output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
+  },
+);
+
+test(
+  "If-Else operator=less than routes a numeric match (2.5 < 10) through the True branch",
+  { tag: ["@stable", "@regression", "@components"] },
+  async ({ page }) => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
+    });
+
+    await test.step("Switch to 'less than', set a decimal numeric input, and run", async () => {
+      await selectOperator(page, "less than");
+
+      // Numeric (decimal): 2.5 < 10 → True. The decimal operand exercises the
+      // shared `float(...)` cast on a non-integer, distinct from `greater than`
+      // (integer inputs). If the operator were `greater than`, 2.5 > 10 is
+      // False, so the True-branch assertion would fail.
+      await page.getByTestId("popover-anchor-input-input_text").fill("2.5");
+      await page.getByTestId("popover-anchor-input-match_text").fill("10");
+
+      await page.getByTestId("button_run_chat output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_chat output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
+  },
+);
+
+test(
+  "If-Else operator=less than or equal routes an equal-operands match (5 <= 5) through the True branch",
+  { tag: ["@stable", "@regression", "@components"] },
+  async ({ page }) => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
+    });
+
+    await test.step("Switch to 'less than or equal', set equal operands, and run", async () => {
+      await selectOperator(page, "less than or equal");
+
+      // Equality boundary: 5 <= 5 → True. This is the distinctive case that
+      // separates `<=` from the strict `<` (5 < 5 is False → would route
+      // False), so a regression swapping the inclusive operator for the strict
+      // one flips the routed branch and fails this assertion.
+      await page.getByTestId("popover-anchor-input-input_text").fill("5");
+      await page.getByTestId("popover-anchor-input-match_text").fill("5");
+
+      await page.getByTestId("button_run_chat output").click();
+      await expect(page.locator("text=built successfully")).toBeVisible({
+        timeout: 30000,
+      });
+    });
+
+    await test.step("Assert True branch built and False branch stayed inactive", async () => {
+      await expect(
+        page.getByTestId("node_duration_chat output"),
+      ).toHaveCount(1, { timeout: 30000 });
+      await expect(
+        page.getByTestId("node_status_icon_chatoutputfalse_inactive"),
+      ).toHaveCount(1, { timeout: 30000 });
+    });
+  },
+);
+
+test(
+  "If-Else operator=greater than or equal routes an equal-operands match (5 >= 5) through the True branch",
+  { tag: ["@stable", "@regression", "@components"] },
+  async ({ page }) => {
+    await test.step("Build If-Else flow with True/False Chat Output branches", async () => {
+      await buildIfElseRoutingFlow(page);
+    });
+
+    await test.step("Switch to 'greater than or equal', set equal operands, and run", async () => {
+      await selectOperator(page, "greater than or equal");
+
+      // Equality boundary: 5 >= 5 → True. Distinctive vs the strict `>`
+      // (5 > 5 is False → would route False); catches a regression swapping
+      // the inclusive operator for the strict one.
+      await page.getByTestId("popover-anchor-input-input_text").fill("5");
       await page.getByTestId("popover-anchor-input-match_text").fill("5");
 
       await page.getByTestId("button_run_chat output").click();
