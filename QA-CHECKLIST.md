@@ -332,7 +332,7 @@
 - [x] Agent stops when configured stop condition is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts` (`max_iterations` is the Agent's only configurable stop mechanism — no dedicated stop-condition field exists; see #824)
 - [x] Agent stops when maximum number of iterations is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
 - [x] Agent with multiple configured tools executes correctly → `agent-multi-tool-selection.spec.ts`
-- [ ] Agent with configured timeout respects the limit
+- [ ] Agent with configured timeout respects the limit (no product surface on 1.12.x — the Agent component exposes no timeout field: its inputs are `max_iterations`, `max_tokens`, `n_messages`, `system_prompt`, `context_id`, `stream`, and tools; Langflow's only configurable per-component timeouts live on the A2A Agent (`timeout`) and MCP tools (`tool_execution_timeout`), not the Agent, and the Language Model / chat models expose none either. The client/transport execution timeout that bounds any run is covered by `ui-ux/execution-error-notification.spec.ts`. Not automatable as written; #825, same class as #824)
 - [x] Connecting an external model in Agent drops the prior model selection (connection-mode isolation, prevents stale provider config) → `llm-agents/agent-model-connection-isolation.spec.ts`
 - [x] Flow with Agent saved and reopened → settings preserved → `core-functionality/llm-agents/agent-config-persistence.spec.ts`
 - [x] max_tokens truncates response as configured → `llm-agents/agent-max-tokens.spec.ts` (validated at token level via the Playground token-usage tooltip)
