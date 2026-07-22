@@ -23,6 +23,10 @@ on:
         description: "Number of parallel shards for the @stable run (default 4)."
         required: false
         default: "4"
+      retries:
+        description: "Override Playwright retries for this run (e.g. 0 for a fast, unamplified validation signal). Empty = config default (2 in CI)."
+        required: false
+        default: ""
 
 permissions:
   issues: write
@@ -280,6 +284,8 @@ jobs:
         env:
           CI: "true"
           PW_SHARD_FILE_LEVEL: "1"
+          # Manual-dispatch retries override (empty on schedule → config default).
+          PLAYWRIGHT_RETRIES: ${{ inputs.retries }}
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}

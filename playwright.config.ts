@@ -17,7 +17,16 @@ export default defineConfig({
   // PW_SHARD_FILE_LEVEL=1; local dev / nightly / manual keep test-level parallelism.
   fullyParallel: process.env.PW_SHARD_FILE_LEVEL ? false : true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 3,
+  // PLAYWRIGHT_RETRIES overrides the retry count when set (e.g. a manual
+  // validation dispatch passing 0 for a fast, unamplified signal); empty/unset
+  // falls back to the default (2 in CI, 3 locally).
+  retries:
+    process.env.PLAYWRIGHT_RETRIES !== undefined &&
+    process.env.PLAYWRIGHT_RETRIES !== ""
+      ? Number(process.env.PLAYWRIGHT_RETRIES)
+      : process.env.CI
+        ? 2
+        : 3,
   // 2 workers in CI (sharded or not). The #817 contention was 2 workers hitting
   // ONE langflow that served the whole 353-test suite; with a dedicated langflow
   // per shard (~90 tests each) the 2nd worker is a net win — benchmarked at ~28min
