@@ -192,6 +192,31 @@ jobs:
           cat /tmp/socat.log || true
           exit 1
 
+      # Tag the Flakiness.io upload with the ACTUAL Langflow version under test.
+      # We test against nightly:latest, whose tag never changes but whose real
+      # version bumps every night (1.11.0.devN, devN+1, ...). The
+      # @flakiness/playwright reporter reads FK_ENV_* env vars (prefix stripped,
+      # key lowercased) as the run's "environment", so exporting
+      # FK_ENV_langflow_version HERE — before the test step — makes the dashboard
+      # keep a separate history per resolved version and lets us pinpoint which
+      # nightly introduced a regression. Runs after the port-forward health check
+      # (localhost:7860 is up) and writes to $GITHUB_ENV so the test step inherits
+      # it. Fail-soft: if the version can't be read, the run still uploads, just
+      # without the tag. (Mirrors the parser in the post-run "Resolve Langflow
+      # version" step, which feeds the run summary.)
+      - name: Tag Flakiness environment with Langflow version
+        shell: bash
+        run: |
+          V="$(curl -sf --connect-timeout 5 --max-time 15 http://localhost:7860/api/v1/version \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write((JSON.parse(d).version||"").toString())}catch{process.stdout.write("")}})' \
+            2>/dev/null || true)"
+          if [ -n "$V" ]; then
+            echo "FK_ENV_langflow_version=$V" >> "$GITHUB_ENV"
+            echo "Tagged Flakiness environment: langflow_version=$V"
+          else
+            echo "::warning::Could not resolve Langflow version; Flakiness upload will be untagged."
+          fi
+
       # Resolve the go-httpbin service to the IP Langflow must call. The API
       # Request component runs validators.url() on the URL and REJECTS a
       # single-label host (http://go-httpbin:8080 fails), but ACCEPTS a raw IP —
