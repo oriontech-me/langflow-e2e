@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 351 `test()` calls carrying the `@stable` tag, distributed across 141 spec
+> 352 `test()` calls carrying the `@stable` tag, distributed across 141 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -911,6 +911,7 @@
 - [x] float field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] slider field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] code field edit persists → `parameters-panel-field-types.spec.ts`
+- [x] table field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] key-pair field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] Prompt Template component — renders on canvas with output handle → `prompt-template-component-regression.spec.ts`
 - [x] Prompt Template component — variables in curly braces generate dynamic input handles → `prompt-template-component-regression.spec.ts`
