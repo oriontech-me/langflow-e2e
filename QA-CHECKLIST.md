@@ -529,7 +529,7 @@
 - [-] Move flow to another folder
 
 #### 10.2 Folder Navigation
-- [~] Navigate between folders
+- [-] Navigate between folders → `core-functionality/project-management/flow-navigation-between-folders.spec.ts`
 - [-] Search flow by name filters results correctly
 - [-] Folders in navigation sidebar
 
