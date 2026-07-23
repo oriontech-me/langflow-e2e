@@ -348,13 +348,13 @@
 
 #### 6.4 Tools and Integrations
 - [ ] Agent with integrated external MCP tool executes action and returns result
-- [ ] Agent executes multiple tools in sequence
+- [-] Agent executes multiple tools in sequence → `llm-agents/agent-multi-tool-selection.spec.ts` (Test 3 — chained fetch→search, ordered `tool_use` assert; `@stable` gated on the clean baseline #818, per #827)
 - [x] Tool returns error — agent handles it and continues execution → `core-functionality/llm-agents/agent-tool-error-handling.spec.ts`
 - [x] Multiple connected tools — agent selects the correct one for each prompt → `agent-multi-tool-selection.spec.ts`
 - [x] Tool with invalid name — validation prevents execution with clear message → `core-functionality/llm-agents/agent-tool-name-validation.spec.ts`
 
 #### 6.5 Output and Reasoning
-- [ ] Inspect tools used by Agent in Playground
+- [-] Inspect tools used by Agent in Playground → `llm-agents/agent-tool-inspection.spec.ts` (UI chip names the tool + persisted `tool_use` input/output; `@stable` gated on the clean baseline #818, per #827)
 - [x] Agent returns output in structured JSON format (output_schema) → `agent-structured-output.spec.ts`
 - [-] Agent returns output in correctly rendered Markdown → `llm-agents/agent-markdown-output.spec.ts`
 - [x] Agent Instructions (system prompt) is respected in the model response → `agent-system-prompt.spec.ts`
