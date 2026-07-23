@@ -27,13 +27,13 @@
 
 - [-] `SimpleAgentTemplatePage` — loads Simple Agent template with configurable provider and model → `pages/SimpleAgentTemplatePage.ts`
 - [-] `SettingsPage` — navigation to the settings page via user menu → `pages/SettingsPage.ts`
-- [ ] Component sidebar — component navigation bar with searchable parameter support
-- [ ] Model Provider — navigation to the model provider management tab
-- [ ] API Keys — navigation to the API keys / global variables tab
-- [ ] Templates — navigation to the template selection tab (Starter Projects)
-- [ ] Import Flow — navigation to import a flow via JSON
-- [ ] Delete Flow — navigation to delete a flow
-- [ ] MCP Config — navigation to configure MCP Server
+- [-] Component sidebar — component navigation bar with searchable parameter support → covered by `ui-ux/sidebar-provider-count.spec.ts`, `ui-ux/keyboardComponentSearch.spec.ts`, `ui-ux/sidebar-add-component.spec.ts`, `ui-ux/sidebar-category-filter.spec.ts` (#820: no dedicated nav spec needed — exercised across the sidebar suite)
+- [-] Model Provider — navigation to the model provider management tab → covered by `ui-ux/settings-navigation.spec.ts` ("Settings Model Providers section loads") (#820)
+- [-] API Keys — navigation to the API keys / global variables tab → covered by `ui-ux/userSettings.spec.ts` (API Keys), `ui-ux/global-variable-edit.spec.ts` + `ui-ux/global-variables-crud.spec.ts` (global variables) (#820)
+- [-] Templates — navigation to the template selection tab (Starter Projects) → covered by `core-functionality/templates/starter-projects.spec.ts`, `flow-functionality/create-flow-from-template.spec.ts` (#820)
+- [x] Import Flow — navigation to import a flow via JSON → `flow-functionality/export-import-flow.spec.ts` (also `flow-functionality/import-invalid-json.spec.ts`; see §12.4) (#820)
+- [x] Delete Flow — navigation to delete a flow → `ui-ux/actionsMainPage-shard-1.spec.ts` ("select and delete a flow"); bulk via `core-functionality/project-management/bulk-actions.spec.ts` (#820)
+- [-] MCP Config — navigation to configure MCP Server → covered by `mcp/server/mcp-server-tab.spec.ts`, `mcp/server/mcp-server.spec.ts`, `core-components/configure-mcp-and-custom-component.spec.ts` (#820)
 
 ---
 
