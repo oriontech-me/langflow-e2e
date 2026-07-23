@@ -120,7 +120,7 @@ function chatInputNodeScope(page: Page) {
 
 test(
   "Chat Input — toggling `showfiles` exposes the Files inspector field",
-  { tag: ["@stable", "@regression", "@components"] },
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     // Scope to the Chat Input node body. The `input-file-component` testid is also
     // mounted by the advanced-options side panel even before the toggle, so an
