@@ -49,36 +49,109 @@ def get_starter_projects(token: str) -> list:
     return r.json()
 
 
-def find_agent_template(starter_projects: list) -> dict | None:
-    """Find 'Simple Agent' or similar agent template.
+# Node types that need an external input (a file, a vector store, a URL, …) to
+# build — a witness flow containing any of these cannot execute headlessly from a
+# plain chat message, so it is unusable as a migration baseline (it fails with
+# "No files to process" / a missing connection rather than proving the migration).
+_DATA_SOURCE_TYPES = {
+    "File",
+    "AstraDB",
+    "SplitText",
+    "URLComponent",
+    "OpenAIEmbeddings",
+    "AstraDBToolComponent",
+}
 
-    Tries top-level name first; falls back to inspecting node display_names
-    (Langflow latest returns starter projects with name=null at top level).
+# Model components whose model must be selected for the flow to build.
+_MODEL_TYPES = {"OpenAIModel", "LanguageModelComponent"}
+
+
+def _node_types(project: dict) -> list:
+    return [
+        n.get("data", {}).get("type", "")
+        for n in (project.get("data") or {}).get("nodes", [])
+    ]
+
+
+def find_agent_template(starter_projects: list) -> dict | None:
+    """Pick an executable witness flow for the migration baseline.
+
+    Historically this looked for a 'Simple Agent' starter, but Langflow latest
+    (1.10.x) ships no agent starter and returns projects with name=null, so the
+    old fallback ("first project with data") non-deterministically landed on a
+    flow that cannot execute headlessly — a RAG flow whose `Read File` has no
+    file, or a `Language Model` flow with no model selected — failing the
+    baseline (#905). The witness only needs to be a simple, executable chat flow
+    that survives migration, so prefer that shape explicitly.
     """
-    # Pass 1: top-level name match
+    def is_simple_chat_flow(project: dict) -> bool:
+        types = _node_types(project)
+        if not types:
+            return False
+        # Must have a model component and NO external-input data source.
+        has_model = any(t in _MODEL_TYPES for t in types)
+        has_data_source = any(t in _DATA_SOURCE_TYPES for t in types)
+        return has_model and not has_data_source
+
+    # Pass 0: an agent starter by name (kept for builds that ship one).
     for project in starter_projects:
         name = (project.get("name") or "").lower()
         if "simple agent" in name or "basic agent" in name:
             return project
+
+    # Pass 1: a simple, executable chat flow (model + no external data source).
+    for project in starter_projects:
+        if is_simple_chat_flow(project):
+            return project
+
+    # Pass 2: any agent-named starter.
     for project in starter_projects:
         name = (project.get("name") or "").lower()
         if "agent" in name:
             return project
 
-    # Pass 2: inspect node display_names inside data
-    for project in starter_projects:
-        nodes = (project.get("data") or {}).get("nodes", [])
-        for node in nodes:
-            display = (node.get("data", {}).get("node", {}).get("display_name") or "").lower()
-            if "agent" in display:
-                return project
-
-    # Pass 3: any project that has flow data
+    # Pass 3: any project that has flow data (last resort).
     for project in starter_projects:
         if project.get("data"):
             return project
 
     return None
+
+
+def ensure_model_selected(
+    template: dict,
+    model: str = "gpt-4o-mini",
+    provider: str = "OpenAI",
+    api_key_var: str = "OPENAI_API_KEY",
+) -> list:
+    """Patch model components so the witness flow can build.
+
+    A starter's model component may ship with an empty `model_name` / `provider`
+    (the unified `LanguageModelComponent` on latest requires an explicit
+    selection — otherwise the build fails with "A model selection is required",
+    #905). Fill any empty model field in place so the flow is executable. Returns
+    the list of node types that were patched (for reporting). Non-empty fields
+    (e.g. `OpenAIModel` shipping `gpt-4o-mini`) are left untouched.
+    """
+    patched = []
+    for node in (template.get("data") or {}).get("nodes", []):
+        data = node.get("data", {})
+        if data.get("type") not in _MODEL_TYPES:
+            continue
+        tmpl = data.get("node", {}).get("template", {})
+        changed = False
+        if "provider" in tmpl and not tmpl["provider"].get("value"):
+            tmpl["provider"]["value"] = provider
+            changed = True
+        if "model_name" in tmpl and not tmpl["model_name"].get("value"):
+            tmpl["model_name"]["value"] = model
+            changed = True
+        if "api_key" in tmpl and not tmpl["api_key"].get("value"):
+            tmpl["api_key"]["value"] = api_key_var
+            changed = True
+        if changed:
+            patched.append(data.get("type"))
+    return patched
 
 
 def create_flow(token: str, template: dict) -> dict:
