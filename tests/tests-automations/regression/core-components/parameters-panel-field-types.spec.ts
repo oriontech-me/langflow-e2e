@@ -409,7 +409,7 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
 
   test(
     "table field edit persists",
-    { tag: ["@components", "@regression"] },
+    { tag: ["@stable", "@components", "@regression"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
       const flowId = await openFlowWithComponent(
@@ -446,8 +446,16 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
       await expect(dialog).toBeVisible({ timeout: 10000 });
       const dataRows = dialog.locator('[role="treegrid"] [role="row"][row-id]');
       await expect(dataRows).toHaveCount(1, { timeout: 10000 });
-      await dialog.getByTestId("add-row-button").click();
-      await expect(dataRows).toHaveCount(2, { timeout: 5000 });
+      // The grid can drop the add-row click while its TableNodeComponent effects
+      // are still settling (#868), so the row count stays 1. Retry the click only
+      // while the row has not appeared (the count<2 guard prevents a late-
+      // registering click from adding a second, overshooting row).
+      await expect(async () => {
+        if ((await dataRows.count()) < 2) {
+          await dialog.getByTestId("add-row-button").click();
+        }
+        await expect(dataRows).toHaveCount(2, { timeout: 3000 });
+      }).toPass({ timeout: 15000 });
 
       const newRow = dataRows.last();
       await fillTableTextCell(

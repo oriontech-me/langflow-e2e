@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/parameters-panel-field-types.spec.ts`
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -65,7 +65,7 @@ matches what a reload would load.
 | 6 | Edit toggle field | `BoolInput` | Save File | `append_mode` | click `toggle_bool_append_mode` | phase 1 ✓ |
 | 7 | Edit slider | `SliderInput` | Language Model | `temperature` | click `slider_thumb` + `ArrowRight` | **phase 2 (this PR)** |
 | 8 | Edit code field | `CodeInput` | Python Function *(legacy)* | `function_code` | open `codearea_code_function_code` → set ACE value → `checkAndSaveBtn` | **phase 3 (this PR)** |
-| 9 | Edit table input | `TableInput` | API Request | `headers` *(advanced)* | show-or-reveal `div-table_headers` → settle (method→POST refresh) → Open table → `add-row-button` → fill key/value cells | **phase 3 (this PR)** |
+| 9 | Edit table input | `TableInput` | API Request | `headers` *(advanced)* | show-or-reveal `div-table_headers` → settle (method→POST refresh) → Open table → `add-row-button` (retried until the row lands) → fill key/value cells | **phase 3**; flake-hardened #868 |
 | 10 | Edit key-pair list | `NestedDictInput` | Alter Metadata *(legacy)* | `metadata` | `dict_nesteddict_metadata` → Edit Dictionary (text mode) → fill JSON → Save | **phase 3 (this PR)** |
 | 11 | Edit input list | `SortableListInput` | Read File | `storage_location` *(advanced)* | show-or-reveal the field → remove Local → `button_open_list_selection_…` → `list_item_aws` | deferred (build-divergent) |
 | 12 | Edit float field | `FloatInput` | Semantic Text Splitter | `breakpoint_threshold_amount` | fill `float_float_breakpoint_threshold_amount` | **phase 2 (this PR)** |
