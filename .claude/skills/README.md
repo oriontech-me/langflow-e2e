@@ -12,6 +12,7 @@ git-ignored — only the skills below are tracked.
 | **langflow-e2e-issues** | Prose orchestrator — wraps `langflow-e2e` to drive one GitHub issue → PR (intake, classify, 6 issue types, PR authorization). Best for family-clone specs and daily-failure triage. |
 | **langflow-e2e-issue-deterministic** | Deterministic orchestrator — a TypeScript state machine (`pipeline/cli.ts`) owns phase order, gates, and evidence. **Default for wave issues.** Same lifecycle as the prose variant, enforced in code. |
 | **langflow-e2e-triage** | Daily-run triage dispatcher — reads the latest red `daily-stable.yml` run, groups failures by root cause, dedups against open issues, and opens dedicated follow-up issues behind a propose-confirm gate. **Producer** of the issues the two orchestrators above **consume**. |
+| **langflow-e2e-infra** | Infrastructure layer. Owns CI workflows, `scripts/`, `playwright.config.ts`, and run-history/reporting; two modes — **audit** (continuous-improvement scan → propose `qa-infra` issues) and **resolve** (`qa-infra` issue → PR). Both behind a propose-confirm gate. Delegates any `tests/` edit to `langflow-e2e`; consumes the `qa-infra` issues `langflow-e2e-triage` produces. |
 
 The two orchestrators intentionally coexist (benchmark). Each SKILL.md opens with a
 "which orchestrator to use" note. Both delegate test authoring to `langflow-e2e`.

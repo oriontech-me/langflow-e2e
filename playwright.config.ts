@@ -34,20 +34,32 @@ export default defineConfig({
   // ISSUE-833-SHARDING-DESIGN.md §"workers per shard".
   workers: process.env.CI ? 2 : undefined,
   timeout: 5 * 60 * 1000, // 5 minutes per test
-  // Reporters run side by side: the standard Playwright HTML report (kept as
-  // the CI artifact / local view) PLUS the Flakiness.io reporter, which uploads
-  // to the dashboard. In CI we also keep `github` (annotations) and `json`
-  // (results.json — consumed by the QA Platform payload and run history). The
-  // Flakiness.io reporter MUST live here, not on the CLI `--reporter` flag,
-  // because its `flakinessProject` option (required for GitHub OIDC upload)
-  // cannot be passed via the command line.
+  // Reporters run side by side. The Flakiness.io reporter MUST live here, not on
+  // the CLI `--reporter` flag, because its `flakinessProject` option (required for
+  // GitHub OIDC upload) cannot be passed via the command line. It uploads per-run
+  // in its onExit() hook, so under sharding each shard uploads its own slice — no
+  // merge of Flakiness reports is needed (the merge job only recombines Playwright
+  // blobs).
+  //
+  // Three reporter shapes:
+  // - Sharded CI (PW_SHARD_FILE_LEVEL set by the daily's shard step): `blob` (the
+  //   merge job rebuilds html/github/json from the combined blobs) + Flakiness.io.
+  //   `blob` MUST be configured here rather than via `--reporter=blob` on the CLI,
+  //   which would replace the whole list and drop the Flakiness reporter.
+  // - Non-sharded CI (nightly / manual): html + github + json + Flakiness.io.
+  // - Local: html + Flakiness.io.
   reporter: process.env.CI
-    ? [
-        ["html"],
-        ["github"],
-        ["json"],
-        ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
-      ]
+    ? process.env.PW_SHARD_FILE_LEVEL
+      ? [
+          ["blob"],
+          ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
+        ]
+      : [
+          ["html"],
+          ["github"],
+          ["json"],
+          ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
+        ]
     : [
         ["html"],
         ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],

@@ -226,6 +226,31 @@ jobs:
           cat /tmp/socat.log || true
           exit 1
 
+      # Tag the Flakiness.io upload with the ACTUAL Langflow version under test.
+      # We test against nightly:latest, whose tag never changes but whose real
+      # version bumps every night (1.11.0.devN, devN+1, ...). The
+      # @flakiness/playwright reporter reads FK_ENV_* env vars (prefix stripped,
+      # key lowercased) as the run's "environment", so exporting
+      # FK_ENV_langflow_version HERE — before the test step — makes the dashboard
+      # keep a separate history per resolved version and lets us pinpoint which
+      # nightly introduced a regression. Runs after the port-forward health check
+      # (localhost:7860 is up) and writes to $GITHUB_ENV so the test step inherits
+      # it. Fail-soft: if the version can't be read, the run still uploads, just
+      # without the tag. (Mirrors the parser in the post-run "Resolve Langflow
+      # version" step, which feeds the run summary.)
+      - name: Tag Flakiness environment with Langflow version
+        shell: bash
+        run: |
+          V="$(curl -sf --connect-timeout 5 --max-time 15 http://localhost:7860/api/v1/version \
+            | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{try{process.stdout.write((JSON.parse(d).version||"").toString())}catch{process.stdout.write("")}})' \
+            2>/dev/null || true)"
+          if [ -n "$V" ]; then
+            echo "FK_ENV_langflow_version=$V" >> "$GITHUB_ENV"
+            echo "Tagged Flakiness environment: langflow_version=$V"
+          else
+            echo "::warning::Could not resolve Langflow version; Flakiness upload will be untagged."
+          fi
+
       # Resolve the go-httpbin service to the IP Langflow must call. The API
       # Request component runs validators.url() on the URL and REJECTS a
       # single-label host (http://go-httpbin:8080 fails), but ACCEPTS a raw IP —
@@ -274,16 +299,22 @@ jobs:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
       - name: Run @stable tests (shard ${{ matrix.shard }})
-        # Sharded: each leg runs its slice with the blob reporter; the merge job
-        # re-emits html/github/json from the combined blobs. --reporter=blob here
-        # deliberately overrides the config reporter list per shard (blob captures
-        # everything for the merge). NOTE: the Flakiness.io uploader in the config
-        # reporter list is therefore not emitted per shard; if flakiness upload is
-        # wanted from the sharded daily, add it to the merge job's merge-reports.
-        run: npx playwright test --grep "@stable" --pass-with-no-tests --shard=${{ matrix.shard }}/${{ needs.prep.outputs.shard_total }} --reporter=blob
+        # Sharded run. The reporter list is NOT overridden on the CLI: setting
+        # PW_SHARD_FILE_LEVEL selects the sharded reporter shape in
+        # playwright.config.ts — `blob` (the merge job rebuilds html/github/json
+        # from the combined blobs) PLUS the Flakiness.io reporter. A CLI
+        # `--reporter=blob` would replace the whole config list and drop the
+        # Flakiness uploader; keeping it in config lets each shard upload its own
+        # slice in the reporter's onExit() (per-run upload — no Flakiness merge
+        # needed). OIDC auth for the upload comes from the workflow-level
+        # `id-token: write` permission, inherited by this job.
+        run: npx playwright test --grep "@stable" --pass-with-no-tests --shard=${{ matrix.shard }}/${{ needs.prep.outputs.shard_total }}
         env:
           CI: "true"
           PW_SHARD_FILE_LEVEL: "1"
+          # Name each shard's Flakiness.io upload so the dashboard can tell the
+          # slices apart (per-test history still aggregates across shards by test).
+          FLAKINESS_TITLE: "Shard ${{ matrix.shard }}/${{ needs.prep.outputs.shard_total }}"
           # Manual-dispatch retries override (empty on schedule → config default).
           PLAYWRIGHT_RETRIES: ${{ inputs.retries }}
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
@@ -351,6 +382,7 @@ jobs:
           merge-multiple: true
 
       - name: Guard — every expected shard produced a blob
+        id: shardguard
         shell: bash
         run: |
           EXPECTED="${{ needs.prep.outputs.shard_total }}"
@@ -359,6 +391,9 @@ jobs:
           echo "Expected $EXPECTED shard blobs, found $FOUND."
           if [ "$FOUND" -lt "$EXPECTED" ]; then
             echo "::warning::Only $FOUND/$EXPECTED shard blobs present — the merged report is INCOMPLETE (a shard died before producing a blob). Failures may be under-counted."
+            echo "complete=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "complete=true" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Merge blob reports
@@ -516,9 +551,11 @@ jobs:
       # mass-failure guard inside the action leaves everything untouched when too
       # many tests fail at once (infra, not per-test rot). Scheduled runs only —
       # a manual dispatch must never mutate the test source.
+      # Gated on shardguard.complete: an incomplete merge (a dead shard) yields an
+      # under-counted results.json, so never mutate the @stable tag on partial data.
       - name: Auto-remove @stable from hard failures
         id: auto_remove
-        if: needs.test.result == 'failure' && github.event_name == 'schedule'
+        if: needs.test.result == 'failure' && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'true'
         uses: ./.github/actions/auto-remove-stable
         with:
           playwright_json: results.json
@@ -574,3 +611,13 @@ jobs:
               ].join('\n'),
               labels: ['daily-failure', 'needs-triage'],
             });
+
+      # Runs LAST, after history / QA POST / umbrella issue have all recorded the
+      # (flagged) partial run: fail a scheduled run whose merge was incomplete so
+      # it shows RED instead of a silent green built on under-counted results.
+      # Manual dispatches keep the warning only — they never gate on completeness.
+      - name: Fail scheduled run if shard blobs were incomplete
+        if: always() && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'false'
+        run: |
+          echo "::error::Merge was incomplete (a shard produced no blob); results are under-counted. Failing the scheduled run so it is not mistaken for a clean pass."
+          exit 1

@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-22
+> **Last updated:** 2026-07-23
 
 ---
 
@@ -329,10 +329,10 @@
 - [-] Composio (tool integration for Agent) → `composio.spec.ts`
 - [x] Playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
 - [x] Playground input remains usable after API error (mocked) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
-- [ ] Agent stops when configured stop condition is reached
+- [x] Agent stops when configured stop condition is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts` (`max_iterations` is the Agent's only configurable stop mechanism — no dedicated stop-condition field exists; see #824)
 - [x] Agent stops when maximum number of iterations is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
 - [x] Agent with multiple configured tools executes correctly → `agent-multi-tool-selection.spec.ts`
-- [ ] Agent with configured timeout respects the limit
+- [ ] Agent with configured timeout respects the limit (no product surface on 1.12.x — the Agent component exposes no timeout field: its inputs are `max_iterations`, `max_tokens`, `n_messages`, `system_prompt`, `context_id`, `stream`, and tools; Langflow's only configurable per-component timeouts live on the A2A Agent (`timeout`) and MCP tools (`tool_execution_timeout`), not the Agent, and the Language Model / chat models expose none either. The client/transport execution timeout that bounds any run is covered by `ui-ux/execution-error-notification.spec.ts`. Not automatable as written; #825, same class as #824)
 - [x] Connecting an external model in Agent drops the prior model selection (connection-mode isolation, prevents stale provider config) → `llm-agents/agent-model-connection-isolation.spec.ts`
 - [x] Flow with Agent saved and reopened → settings preserved → `core-functionality/llm-agents/agent-config-persistence.spec.ts`
 - [x] max_tokens truncates response as configured → `llm-agents/agent-max-tokens.spec.ts` (validated at token level via the Playground token-usage tooltip)
@@ -348,13 +348,13 @@
 
 #### 6.4 Tools and Integrations
 - [ ] Agent with integrated external MCP tool executes action and returns result
-- [ ] Agent executes multiple tools in sequence
+- [-] Agent executes multiple tools in sequence → `llm-agents/agent-multi-tool-selection.spec.ts` (Test 3 — chained fetch→search, ordered `tool_use` assert; `@stable` gated on the clean baseline #818, per #827)
 - [x] Tool returns error — agent handles it and continues execution → `core-functionality/llm-agents/agent-tool-error-handling.spec.ts`
 - [x] Multiple connected tools — agent selects the correct one for each prompt → `agent-multi-tool-selection.spec.ts`
 - [x] Tool with invalid name — validation prevents execution with clear message → `core-functionality/llm-agents/agent-tool-name-validation.spec.ts`
 
 #### 6.5 Output and Reasoning
-- [ ] Inspect tools used by Agent in Playground
+- [-] Inspect tools used by Agent in Playground → `llm-agents/agent-tool-inspection.spec.ts` (UI chip names the tool + persisted `tool_use` input/output; `@stable` gated on the clean baseline #818, per #827)
 - [x] Agent returns output in structured JSON format (output_schema) → `agent-structured-output.spec.ts`
 - [-] Agent returns output in correctly rendered Markdown → `llm-agents/agent-markdown-output.spec.ts`
 - [x] Agent Instructions (system prompt) is respected in the model response → `agent-system-prompt.spec.ts`
@@ -652,8 +652,8 @@
 - [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
 - [-] Gemini × MCP tool-calling regression — agent runs but invokes no echo MCP tool (guards upstream #440) → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
-- [ ] List available resources via MCP protocol
-- [ ] Consume resource URI and inject content into flow
+- [ ] List available resources via MCP protocol (client not-implementable on 1.11.x — MCPTools component and v2 client API expose tools only; server-side resources covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
+- [ ] Consume resource URI and inject content into flow (client not-implementable on 1.11.x — no client resource surface; server-side read covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
 
 ---
 
@@ -665,7 +665,7 @@
 - [-] Starter project with MCP
 - [-] Flow exposed as MCP server — verify generated endpoint → `mcp/server/mcp-server-protocol.spec.ts`
 - [-] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
-- [ ] Resource exposed by server is accessible via URI (no product surface on 1.11.x — MCP server `resources/list` returns `[]`; #829)
+- [-] Resource exposed by server is accessible via URI — flow files are exposed as MCP resources (`resources/list` is `[]` only for a file-less flow; an uploaded flow file appears and is readable via `resources/read`) → `mcp/server/mcp-server-resources.spec.ts`
 - [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
 ---
@@ -757,7 +757,7 @@
 | `core-components/` — Core Components | 82 | 80 | 0 | 1 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 39 | 30 | 3 | 1 | 5 |
+| `core-functionality/llm-agents/` | 39 | 31 | 5 | 1 | 2 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 48 | 46 | 1 | 1 | 0 |
@@ -765,10 +765,10 @@
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 26 | 0 | 2 | 0 |
 | `mcp/client/` | 12 | 2 | 8 | 0 | 2 |
-| `mcp/server/` | 7 | 0 | 5 | 0 | 2 |
+| `mcp/server/` | 7 | 0 | 6 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **452** | **318 (70%)** | **116 (26%)** | **8 (2%)** | **10 (2%)** |
+| **TOTAL** | **452** | **319 (71%)** | **119 (26%)** | **8 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1177,11 +1177,11 @@
 | `core-components/` — Component Config | 2 | 0 |
 | `core-components/` — Core Components | 0 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 3 | 5 |
+| `core-functionality/llm-agents/` | 5 | 2 |
 | `core-functionality/model-provider/` | 0 | 0 |
 | `core-functionality/playground/` | 1 | 0 |
 | `mcp/client/` | 8 | 2 |
-| `mcp/server/` | 5 | 2 |
+| `mcp/server/` | 6 | 1 |
 | `ui-ux/` — Canvas | 36 | 0 |
 
 ---
