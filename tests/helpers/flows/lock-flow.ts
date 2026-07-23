@@ -48,3 +48,24 @@ export async function lockFlow(page: Page): Promise<void> {
 export async function unlockFlow(page: Page): Promise<void> {
   await setLockState(page, "unchecked");
 }
+
+// Assert the flow's persisted lock state by reading the Flow Settings lock
+// switch — the authoritative, has-teeth indicator. The per-node `icon-lock`
+// affordance is rendered regardless of lock state, so it cannot prove that a
+// lock persisted across a reopen (#909). Opens the settings modal, asserts the
+// switch `data-state`, then closes without saving (read-only check).
+export async function expectLockState(
+  page: Page,
+  state: "checked" | "unchecked",
+): Promise<void> {
+  await page.getByTestId("flow_name").click();
+  const lockSwitch = page.getByTestId("lock-flow-switch");
+  await expect(lockSwitch).toBeVisible({ timeout: 30000 });
+  await expect(lockSwitch).toHaveAttribute("data-state", state, {
+    timeout: 15000,
+  });
+  await page.keyboard.press("Escape");
+  await expect(page.getByTestId("save-flow-settings")).toBeHidden({
+    timeout: 10000,
+  });
+}
