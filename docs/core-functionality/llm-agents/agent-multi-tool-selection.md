@@ -1,22 +1,23 @@
 # Agent multi-tool selection — correct tool per prompt
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
 ## What this test validates *(required)*
 
-QA-CHECKLIST §6.2 "Agent with multiple configured tools executes correctly"
-and §6.4 "Multiple connected tools — agent selects the correct one for each
-prompt". The Simple Agent template ships with **two tools already connected**
-to the Agent — URL (`URLComponent`, tool `fetch_content`) and Web Search
-(`UnifiedWebSearch`, tool `perform_search`), confirmed in the nightly's
-`starter_projects/Simple Agent.json` — making it the canonical multi-tool
-surface.
+QA-CHECKLIST §6.2 "Agent with multiple configured tools executes correctly",
+§6.4 "Multiple connected tools — agent selects the correct one for each
+prompt", and §6.4 "Agent executes multiple tools **in sequence**". The Simple
+Agent template ships with **two tools already connected** to the Agent — URL
+(`URLComponent`, tool `fetch_content`) and Web Search (`UnifiedWebSearch`, tool
+`perform_search`), confirmed in the nightly's `starter_projects/Simple
+Agent.json` — making it the canonical multi-tool surface.
 
 The contract: given a prompt that unambiguously calls for one capability,
 the agent's **first tool call** must be that tool — the first call IS the
-selection decision. Two prompts, two tests:
+selection decision. A third prompt chains the two tools to prove the agent
+**runs multiple tools in sequence**. Three prompts, three tests:
 
 1. **Fetch prompt → URL tool first.** "Fetch https://httpbin.org/json …"
    must produce a persisted AI message whose FIRST `tool_use` block is
@@ -24,6 +25,12 @@ selection decision. Two prompts, two tests:
    that endpoint (`Sample Slide Show`).
 2. **Search prompt → Web Search tool first.** "Search the web for …" must
    produce a FIRST `tool_use` block of `perform_search`.
+3. **Chained prompt → both tools, in order (§6.4 sequence).** "First fetch
+   `<URL>` to read the slideshow title, THEN web-search that title …" must
+   produce a persisted run whose ordered `tool_use` blocks include BOTH tools
+   with `fetch_content` **before** `perform_search` — the agent executed a
+   dependent two-tool sequence, not a single call. Only the tool **names and
+   their order** are asserted (search result content is non-deterministic).
 
 > **Why first-call, not exclusive-call (drift event, 2026-07-08).** The
 > original design asserted the sibling tool was NEVER called. Overnight —
@@ -149,6 +156,26 @@ describe with two tests:
    assert in step 5 is the concrete observable; see false-positive notes).
 7. No `allowFlowErrors`.
 
+**Test 3 — chained prompt runs both tools in sequence (§6.4 sequence)**
+
+1. Load the Simple Agent template (fresh load; new nonce).
+2. Set Agent Instructions that PERMIT a multi-step sequence (distinct from the
+   single-tool instruction of tests 1–2): *"Use the connected tools to
+   complete the task. You may call multiple tools in sequence as the task
+   requires; never answer from memory."*
+3. Seed a task that makes the second tool depend on the first's result:
+   *"First fetch `${FETCH_URL}` and read its exact slideshow title. Then search
+   the web for that title and summarize one result. (probe `<nonce>`)"*.
+4. Open the Playground, send, wait for the run to finish (Stop button hidden).
+5. **Sequence assert (API):** poll `GET /api/v1/monitor/messages` — nonce-keyed
+   session lookup (same as tests 1–2); collect the **ordered** list of
+   `tool_use` block names across the session's AI message(s). Assert the list
+   contains both `fetch_content` and `perform_search`, with
+   `indexOf(fetch_content) < indexOf(perform_search)` — the agent ran the two
+   tools one after another in the required order. Only names/order are
+   asserted (search content is non-deterministic).
+6. No `allowFlowErrors`.
+
 ---
 
 ## Validation criterion *(required)*
@@ -163,6 +190,12 @@ fetch). First-call is the distinctive observable: a wrong-tool run fails on
 its very first block even when the model salvages a correct-looking answer
 later; extra follow-up calls (provider-side style drift) do not pass a
 wrong first choice.
+
+For the chained prompt (test 3), the run's **ordered** `tool_use` list
+contains both `fetch_content` and `perform_search` with the fetch call
+appearing **before** the search call — the distinctive observable that the
+agent executed a dependent two-tool sequence (a single-tool run, or the
+tools in the wrong order, fails).
 
 ## Guarding against false positives *(how)*
 
@@ -183,13 +216,20 @@ wrong first choice.
   search tool errors at runtime (rate limit), `handle_tool_error=True` turns
   it into tool output — the selection evidence still persists and the run
   produces no flow error, so the test still measures what it claims.
+- **Sequence, not just presence (test 3)** — asserting both tools appear
+  anywhere would pass a run that searched then fetched (or fetched twice);
+  anchoring on `indexOf(fetch) < indexOf(search)` is what proves ordered
+  *sequence*. The instruction permits multiple calls but the ORDER is the
+  agent's, driven by the prompt's data dependency (it cannot search for the
+  title before fetching it).
 - **Force-failure checks** (CONTRIBUTING §2): M1 — expect the sibling tool
   as first call in test 1 ⇒ selection assert must fail; M2 — assert an
   impossible title (e.g. `Sample Slide Show XYZ`) ⇒ the `fetch_content`
   tool-output execution assert must fail (verified against go-httpbin: the assert
   surfaced the real tool output containing *"title": "Sample Slide Show"* and
   failed the impossible pattern); M3 — same first-call swap in test 2 ⇒ must
-  fail.
+  fail; M4 — invert the sequence assert (require `perform_search` before
+  `fetch_content`) in test 3 ⇒ must fail against the real ordered tool list.
 
 ---
 

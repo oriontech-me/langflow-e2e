@@ -66,6 +66,12 @@ const EXPECTED_TITLE = /Sample Slide Show/i;
 const SYSTEM_PROMPT =
   "For every user question you MUST call exactly one tool to obtain the answer - " +
   "never answer from memory and never refuse. Choose the tool that fits the question.";
+// Sequence test (Test 3) — must PERMIT multiple tool calls, unlike the
+// single-tool selection prompt above; the chained task's data dependency
+// (search the title only obtainable by fetching first) drives the order.
+const SYSTEM_PROMPT_SEQUENCE =
+  "Use the connected tools to complete the task. You may call multiple tools in " +
+  "sequence as the task requires; never answer from memory and never refuse.";
 
 interface ModelRecord {
   provider: string;
@@ -361,6 +367,64 @@ async function expectFetchToolReturned(
     .toBe("fetch-tool-returned-expected");
 }
 
+// Sequence check (§6.4 "Agent executes multiple tools in sequence"): the run's
+// persisted tool_use blocks, in call order, must include every tool in
+// `expectedOrder` with earlier tools appearing strictly before later ones.
+// Only names and relative order are asserted — tool output content (web search)
+// is non-deterministic. Same nonce-keyed monitor lookup as the selection assert;
+// AI messages are sorted by timestamp so the flattened tool_use list preserves
+// the true call order across any multi-message split.
+async function expectToolSequencePersisted(
+  request: APIRequestContext,
+  nonce: string,
+  expectedOrder: string[],
+): Promise<void> {
+  const bearer = await getAuthToken(request);
+  await expect
+    .poll(
+      async () => {
+        const res = await request.get("/api/v1/monitor/messages", {
+          headers: { Authorization: bearer },
+        });
+        if (res.status() !== 200) return `GET monitor -> ${res.status()}`;
+        const messages = await res.json();
+        if (!Array.isArray(messages)) return "monitor payload not a list";
+
+        const userMsg = messages.find(
+          (m: any) => m.sender !== "Machine" && (m.text ?? "").includes(nonce),
+        );
+        if (!userMsg) return "user message with nonce not persisted yet";
+
+        const aiMsgs = messages
+          .filter(
+            (m: any) => m.sender === "Machine" && m.session_id === userMsg.session_id,
+          )
+          .sort((a: any, b: any) =>
+            String(a.timestamp ?? "").localeCompare(String(b.timestamp ?? "")),
+          );
+        if (aiMsgs.length === 0) return "AI message for the session not persisted yet";
+
+        const toolNames = aiMsgs
+          .flatMap((m: any) => (m.content_blocks ?? []) as any[])
+          .flatMap((b: any) => (b.contents ?? []) as any[])
+          .filter((c: any) => c.type === "tool_use")
+          .map((c: any) => c.name as string);
+        if (toolNames.length < expectedOrder.length)
+          return `only ${toolNames.length} tool_use block(s) so far: ${JSON.stringify(toolNames)}`;
+
+        const indices = expectedOrder.map((t) => toolNames.indexOf(t));
+        if (indices.some((i) => i < 0))
+          return `not all expected tools called; got ${JSON.stringify(toolNames)}, expected ${JSON.stringify(expectedOrder)}`;
+        const inOrder = indices.every((v, i) => i === 0 || indices[i - 1] < v);
+        return inOrder
+          ? "tool-sequence-in-order"
+          : `tools out of order: ${JSON.stringify(toolNames)} (indices ${JSON.stringify(indices)}), expected ${JSON.stringify(expectedOrder)}`;
+      },
+      { timeout: 90000 },
+    )
+    .toBe("tool-sequence-in-order");
+}
+
 const targets = getTestTargets();
 
 // Serial mode + --workers=1 keeps the shared instance state deterministic
@@ -449,6 +513,48 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("selection: the FIRST tool call is perform_search", async () => {
           await expectToolSelectionPersisted(request, nonce, SEARCH_TOOL);
+        });
+      },
+    );
+
+    test(
+      "agent runs the URL then Web Search tools in sequence for a chained prompt",
+      { tag: ["@regression", "@agents", "@playground"] },
+      async ({ page, request }) => {
+        test.skip(!!skipReason, skipReason ?? "");
+        test.skip(
+          !hasProviderEnvKeys(provider),
+          `Missing env vars for provider "${provider}": ${missingProviderEnvKeys(provider).join(", ")}`,
+        );
+
+        const nonce = `probe-${Date.now()}`;
+        // The second step (search the title) can only run after the first
+        // (fetch the title) — the data dependency forces fetch_content BEFORE
+        // perform_search, making the ordered sequence deterministic without
+        // asserting any non-deterministic content.
+        const task =
+          `First fetch ${FETCH_URL} and read its exact slideshow title. ` +
+          `Then search the web for that title and summarize one result. (${nonce})`;
+
+        await loadAgent(page, options);
+
+        await test.step("permit a multi-tool sequence, seed the chained task", async () => {
+          await setSystemPrompt(page, SYSTEM_PROMPT_SEQUENCE);
+          await setChatInputText(page, task);
+          await waitForFlowSaveSettled(page);
+        });
+
+        await test.step("run — no allowFlowErrors: a crashed run fails via the fixture", async () => {
+          await openPlaygroundAndSend(page, task);
+        });
+
+        await test.step("execution: a reply bubble renders in the Playground", async () => {
+          const bubble = page.getByTestId("div-chat-message").last();
+          await expect(bubble).toBeVisible({ timeout: 30000 });
+        });
+
+        await test.step("sequence: fetch_content is called before perform_search", async () => {
+          await expectToolSequencePersisted(request, nonce, [URL_TOOL, SEARCH_TOOL]);
         });
       },
     );
