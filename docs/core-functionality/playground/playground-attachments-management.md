@@ -1,6 +1,6 @@
 # Playground — Chat Input Attachments Management
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -37,7 +37,7 @@ All five tests share the same setup: create a ChatInput → ChatOutput echo flow
 **Test 2 — remove one of two attachments leaves the other**
 
 1. Attach both images (as in Test 1).
-2. Click the delete button scoped to `chain.png` via `div:has(> img[alt="chain.png"]) button[aria-label="Delete file"]` (filename-targeted, no DOM-order assumption).
+2. Click the delete button scoped to `chain.png`, anchored on the image and walking up to the nearest ancestor tile that contains a `Delete file` button (`img[alt="chain.png"]` → `xpath=ancestor::div[.//button[@aria-label="Delete file"]][1]` → `getByLabel("Delete file")`), filename-targeted with no DOM-order assumption. **Drift note (#908):** the previous locator `div:has(> img[alt="chain.png"]) button[aria-label="Delete file"]` assumed the Delete button was a descendant of the image's *direct* parent; on 1.12 the preview markup moved the button up to the tile (2 levels above the image), so that selector matched nothing and the click timed out (20s). The image-anchored ancestor locator is class-independent, so a further Tailwind restyle of the tile will not re-break it.
 3. Assert `img[alt="chain.png"]` count is 0; `img[alt="chain-2.png"]` is visible; delete button count is 1.
 
 **Test 3 — send with two attachments renders both in the user message**
