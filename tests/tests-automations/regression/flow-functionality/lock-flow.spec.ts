@@ -42,7 +42,7 @@ test.afterEach(async ({ page }) => {
 
 test(
   "user must be able to lock a flow and it must be saved",
-  { tag: ["@stable", "@release", "@components", "@workspace"] },
+  { tag: ["@release", "@components", "@workspace"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.OPENAI_API_KEY,
