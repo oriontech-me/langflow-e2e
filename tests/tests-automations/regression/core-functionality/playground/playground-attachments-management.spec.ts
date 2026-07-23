@@ -24,6 +24,18 @@ const previewDeleteButton = (page: Page) =>
     '[data-testid="input-wrapper"] button[aria-label="Delete file"]',
   );
 
+// The Delete button for a SPECIFIC image's preview. On 1.12 the preview markup
+// changed: the "Delete file" button is no longer a descendant of the img's
+// direct parent (the old `div:has(> img[alt="…"]) button` matched nothing and
+// the click timed out — #908). Anchor on the img and walk up to the nearest
+// ancestor tile that actually contains a Delete button, then that button —
+// class-independent, so a Tailwind restyle of the tile cannot re-break it.
+const previewDeleteButtonFor = (page: Page, fileName: string) =>
+  page
+    .locator(`[data-testid="input-wrapper"] img[alt="${fileName}"]`)
+    .locator('xpath=ancestor::div[.//button[@aria-label="Delete file"]][1]')
+    .getByLabel("Delete file");
+
 test.describe("Playground — Chat Input Attachments Management", () => {
   test.describe.configure({ mode: "serial" });
 
@@ -91,11 +103,7 @@ test.describe("Playground — Chat Input Attachments Management", () => {
       await test.step(
         "Remove the chain.png preview via its X button",
         async () => {
-          await page
-            .locator(
-              '[data-testid="input-wrapper"] div:has(> img[alt="chain.png"]) button[aria-label="Delete file"]',
-            )
-            .click();
+          await previewDeleteButtonFor(page, "chain.png").click();
         },
       );
 
