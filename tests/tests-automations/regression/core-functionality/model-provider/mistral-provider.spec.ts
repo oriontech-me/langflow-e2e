@@ -8,6 +8,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
 
 /**
  * Mistral provider path (QA-CHECKLIST §7.6 "Configure and execute flow with
@@ -93,6 +94,21 @@ test.describe("Mistral Provider", () => {
     "the MistralAI component configures the API key and executes the flow",
     { tag: ["@stable", "@components", "@model-provider", "@playground"] },
     async ({ page, request }) => {
+      // Build-side pre-flight (#907 / LE-1987): when the nightly ships without
+      // `langchain-mistralai`, Langflow hides the MistralAI component entirely,
+      // so the sidebar `waitForSelector('[data-testid="mistralMistralAI"]')`
+      // would hard-fail after 30s. Skip explicitly instead — the component
+      // genuinely is not in this build. Runs BEFORE the cloud-API probe: no
+      // point checking the key when the component cannot be placed at all.
+      const componentAvailable = await isProviderComponentAvailable(
+        request,
+        "mistral",
+      );
+      test.skip(
+        !componentAvailable,
+        "MistralAI component not available in this Langflow build — langchain-mistralai missing (#907, LE-1987)",
+      );
+
       const probe = await probeMistral(request);
       test.skip(!probe.reachable, probe.reason);
 

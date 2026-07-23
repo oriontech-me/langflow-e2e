@@ -1,6 +1,6 @@
 # Mistral Provider — configure key on the component, execute flow
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -48,6 +48,17 @@ No `@settings`: the Settings surface does not exist for Mistral.
 ---
 
 ## Step by step *(required)*
+
+**Component-availability pre-flight (#907 / LE-1987):** `GET /api/v1/all` and
+check the component registry (second-level component-type keys) for a `mistral`
+type. When the nightly ships without `langchain-mistralai`, Langflow hides the
+MistralAI component entirely (sidebar AND registry), so the later
+`waitForSelector('[data-testid="mistralMistralAI"]')` would hard-fail after 30s.
+This probe runs **first** and `test.skip`s with an explicit reason ("MistralAI
+component not available in this Langflow build") — an upstream packaging gap
+becomes an honest skip, not a misleading UI timeout, and auto-clears when the
+package returns. Distinct from the cloud-API probe below, which only validates
+the key.
 
 **Probe:** `GET https://api.mistral.ai/v1/models` with the key from the env.
 Missing key / non-200 / test model absent from the catalog → `test.skip`

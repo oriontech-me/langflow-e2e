@@ -8,6 +8,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
 
 /**
  * Groq provider path (QA-CHECKLIST §7.6 "Configure and execute flow with
@@ -93,6 +94,18 @@ test.describe("Groq Provider", () => {
     "the Groq component configures the API key and executes the flow",
     { tag: ["@stable", "@components", "@model-provider", "@playground"] },
     async ({ page, request }) => {
+      // Build-side pre-flight (#907 / LE-1987): when the nightly ships without
+      // `langchain-groq`, Langflow hides the Groq component entirely, so the
+      // sidebar `waitForSelector('[data-testid="groqGroq"]')` would hard-fail
+      // after 30s. Skip explicitly instead — the component genuinely is not in
+      // this build. Runs BEFORE the cloud-API probe: no point checking the key
+      // when the component cannot be placed at all.
+      const componentAvailable = await isProviderComponentAvailable(request, "groq");
+      test.skip(
+        !componentAvailable,
+        "Groq component not available in this Langflow build — langchain-groq missing (#907, LE-1987)",
+      );
+
       const probe = await probeGroq(request);
       test.skip(!probe.reachable, probe.reason);
 

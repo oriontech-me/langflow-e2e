@@ -1,6 +1,6 @@
 # Groq Provider — configure key on the component, execute flow
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -51,6 +51,18 @@ No `@settings`: the Settings surface does not exist for Groq (see above).
 ---
 
 ## Step by step *(required)*
+
+**Component-availability pre-flight (#907 / LE-1987):** `GET /api/v1/all` and
+check the component registry (second-level component-type keys) for a `groq`
+type. When the nightly ships without `langchain-groq`, Langflow hides the Groq
+component entirely (it drops out of the sidebar AND the registry), so the later
+`waitForSelector('[data-testid="groqGroq"]')` would hard-fail after 30s. This
+probe runs **first** and `test.skip`s with an explicit reason ("Groq component
+not available in this Langflow build") — turning an upstream packaging gap into
+an honest skip, not a misleading UI timeout. It auto-clears (the test runs
+again) the moment the package returns to the build. Distinct from the cloud-API
+probe below, which only validates the key, not Langflow's ability to expose the
+component.
 
 **Probe:** `GET https://api.groq.com/openai/v1/models` with the key from the
 env. Missing key / non-200 / test model absent from the catalog →
