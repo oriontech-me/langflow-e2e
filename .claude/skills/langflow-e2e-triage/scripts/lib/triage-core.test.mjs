@@ -14,6 +14,8 @@ import {
   buildDataset,
   dedupeEntries,
   findNewestUmbrella,
+  parseProviderModel,
+  computeProviderClusters,
 } from './triage-core.mjs';
 
 const fixture = (name) =>
@@ -183,4 +185,81 @@ test('buildDataset de-duplicates hard failures by test+line', () => {
   };
   const ds = buildDataset([dupRow], []);
   assert.equal(ds.hard_failures.length, 1);
+});
+
+test('parseProviderModel: parameterization label "<provider> / <model>"', () => {
+  assert.deepEqual(parseProviderModel({ param: 'google / gemini-2.5-flash' }), {
+    provider: 'google',
+    model: 'gemini-2.5-flash',
+  });
+});
+
+test('parseProviderModel: "model:<id>" infers provider from the model id', () => {
+  assert.deepEqual(parseProviderModel({ param: 'model:gpt-4o-mini' }), {
+    provider: 'openai',
+    model: 'gpt-4o-mini',
+  });
+});
+
+test('parseProviderModel: falls back to <provider>-provider.spec.ts filename', () => {
+  const r = parseProviderModel({ file: 'tests/.../model-provider/google-provider.spec.ts' });
+  assert.equal(r.provider, 'google');
+  assert.equal(r.model, null);
+});
+
+test('parseProviderModel: falls back to a provider token in the test title', () => {
+  const r = parseProviderModel({ test: 'language model must respond with Google provider' });
+  assert.equal(r.provider, 'google');
+});
+
+test('parseProviderModel: returns nulls when nothing matches', () => {
+  assert.deepEqual(parseProviderModel({ test: 'renders on canvas', file: 'x.spec.ts' }), {
+    provider: null,
+    model: null,
+  });
+});
+
+test('computeProviderClusters flags provider_wide across ≥2 files', () => {
+  const entries = [
+    { test: 'a', file: 'agent-x.spec.ts', line: 1, param: 'google / gemini-2.5-flash' },
+    { test: 'b', file: 'agent-y.spec.ts', line: 2, param: 'google / gemini-2.5-flash' },
+    { test: 'c', file: 'google-provider.spec.ts', line: 3 },
+    { test: 'd', file: 'agent-x.spec.ts', line: 4, param: 'anthropic / claude-sonnet-5' },
+  ];
+  const clusters = computeProviderClusters(entries);
+  const google = clusters.find((c) => c.provider === 'google');
+  assert.equal(google.count, 3);
+  assert.equal(google.provider_wide, true);
+  assert.equal(google.files.length, 3);
+  // anthropic has a single failure → not a cluster
+  assert.equal(clusters.find((c) => c.provider === 'anthropic'), undefined);
+});
+
+test('computeProviderClusters: single-file provider is not provider_wide', () => {
+  const entries = [
+    { test: 'a', file: 'groq-provider.spec.ts', line: 1 },
+    { test: 'b', file: 'groq-provider.spec.ts', line: 2, param: 'groq / llama-3' },
+  ];
+  const [c] = computeProviderClusters(entries);
+  assert.equal(c.provider, 'groq');
+  assert.equal(c.count, 2);
+  assert.equal(c.provider_wide, false);
+});
+
+test('buildDataset attaches provider/model and provider_wide_clusters', () => {
+  const row = {
+    date: '2026-07-14', run_id: '600', run_url: 'x', langflow_image: 'i', duration_ms: 1,
+    totals: { passed: 1, failed: 2, flaky: 0, skipped: 0 },
+    failures: [
+      { test: 'agent a', file: 'agent-x.spec.ts', line: 1, tags: [], attempts: 3, error_signature: 'E', param: 'google / gemini-2.5-flash' },
+      { test: 'cfg', file: 'google-provider.spec.ts', line: 2, tags: [], attempts: 3, error_signature: 'E' },
+    ],
+    flaky: [],
+  };
+  const ds = buildDataset([row], []);
+  assert.equal(ds.hard_failures[0].provider, 'google');
+  assert.equal(ds.hard_failures[0].model, 'gemini-2.5-flash');
+  const gw = ds.provider_wide_clusters.find((c) => c.provider === 'google');
+  assert.equal(gw.provider_wide, true);
+  assert.equal(gw.count, 2);
 });

@@ -49,7 +49,10 @@ The series is **not continuous**. Document any missing weeks here rather than ba
       "line": 369,                           // test() declaration line
       "tags": ["@stable", "@regression"],    // tags at the moment of the run
       "attempts": 3,                         // total result entries (initial + retries)
-      "error_signature": "..."               // first line of the last failed-result error
+      "error_signature": "...",              // first line of the last failed-result error
+      "param": "google / gemini-2.5-flash"   // OPTIONAL: parameterization label from
+                                             // the describe title, when the spec is
+                                             // model-parameterized (#899). Omitted otherwise.
     }
   ],
   "flaky": [
@@ -70,6 +73,7 @@ The series is **not continuous**. Document any missing weeks here rather than ba
 - `tags` reflects the **state at the moment of the run**, not the current state in the repo. A test that was `@stable` at run time and has since had `@stable` removed will still show `@stable` in its historical entries.
 - `error_signature` is the first non-empty line of a failed result's error message, truncated to 240 chars. Stack frames and locator details are stripped — enough to cluster recurring failures, not enough to debug from history alone. For `failures[]` it is taken from the **last** failed result (the one that made the test fail for good); for `flaky[]` it is taken from the **first** failed attempt (the one that triggered the retry that later passed). Falls back to `"unknown"` when no message is available.
 - `failures` are tests where Playwright's final `test.status === "unexpected"`. `flaky` are tests where final status is `"flaky"` (failed and then passed on retry). Both carry `error_signature`, so the 30-day same-signature flake-recurrence criterion in `CONTRIBUTING.md` applies mechanically to either array.
+- `param` (optional, additive to schema v1) is the parameterization label a model-parameterized spec carries on its `describe` title — e.g. `"google / gemini-2.5-flash"` or `"model:gpt-4o-mini"`. The triage dataset builder uses it to group failures by provider variant and surface **provider-wide** clusters (same provider failing across ≥2 spec files → likely an environment/package cause, not per-test rot; #899). Absent for non-parameterized specs and for history written before #899.
 
 ---
 

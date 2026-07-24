@@ -84,6 +84,88 @@ export function detectGuard(row, maxAutoRemove = 5) {
   return (row.totals?.failed || 0) > maxAutoRemove;
 }
 
+/** Provider tokens we recognise in labels, filenames, and titles. */
+const KNOWN_PROVIDERS = ['openai', 'anthropic', 'google', 'groq', 'mistral', 'ollama'];
+
+/** Best-effort provider from a bare model id (last-resort when only a model is known). */
+function providerFromModel(model) {
+  const m = String(model || '').toLowerCase();
+  if (/^(gpt|o1|o3|o4|text-|davinci|chatgpt)/.test(m)) return 'openai';
+  if (/^claude/.test(m)) return 'anthropic';
+  if (/^gemini/.test(m)) return 'google';
+  if (/^(mistral|mixtral|magistral|ministral|codestral|pixtral)/.test(m)) return 'mistral';
+  if (/(llama|qwen|phi|gemma|deepseek)/.test(m)) return 'ollama';
+  return null;
+}
+
+/**
+ * Derive `{ provider, model }` for a failure/flake entry. Model-parameterized
+ * specs run one `describe` per provider whose title carries the label
+ * (`[<provider> / <model>]` or `[model:<id>]`) — the appender records that bracket
+ * content as `entry.param`. When `param` is absent (older history, or a
+ * non-parameterized spec) fall back to two cheap, descriptive signals: a
+ * `<provider>-provider.spec.ts` filename, then a known provider token in the test
+ * title (e.g. "... with Google provider"). Returns nulls when nothing matches —
+ * this is a descriptive hint for grouping, never a verdict.
+ */
+export function parseProviderModel(entry) {
+  const param = String(entry?.param || '').trim();
+  // 1. Parameterization label: "<provider> / <model>"
+  let m = /^([a-z0-9.\-_]+)\s*\/\s*(.+)$/i.exec(param);
+  if (m) {
+    const provider = m[1].toLowerCase();
+    return { provider, model: m[2].trim() };
+  }
+  // 1b. "model:<id>" form (provider implicit → infer from the model id)
+  m = /^model:\s*(.+)$/i.exec(param);
+  if (m) {
+    const model = m[1].trim();
+    return { provider: providerFromModel(model), model };
+  }
+  // 2. Filename: "<provider>-provider.spec.ts"
+  m = /([a-z0-9]+)-provider\.spec\.ts$/i.exec(String(entry?.file || ''));
+  if (m && KNOWN_PROVIDERS.includes(m[1].toLowerCase())) {
+    return { provider: m[1].toLowerCase(), model: null };
+  }
+  // 3. Provider token in the test title
+  const title = String(entry?.test || '').toLowerCase();
+  const hit = KNOWN_PROVIDERS.find((p) => new RegExp(`\\b${p}\\b`).test(title));
+  return { provider: hit || null, model: null };
+}
+
+/**
+ * Group failures/flakes by provider variant and flag **provider-wide** clusters:
+ * the same provider failing across **≥2 distinct spec files** on one run. That is
+ * a descriptive signal that the cause is likely environment/package (e.g. a
+ * missing `langchain-<provider>` in the nightly, #898) rather than per-test rot or
+ * parallel-load flakiness — it does NOT root-cause, it only makes the shared
+ * provider dimension (already implicit in the labels) visible to grouping.
+ * Entries with no derivable provider are ignored.
+ */
+export function computeProviderClusters(entries) {
+  const byProvider = new Map();
+  for (const e of entries || []) {
+    const provider = e.provider || parseProviderModel(e).provider;
+    if (!provider) continue;
+    if (!byProvider.has(provider)) byProvider.set(provider, []);
+    byProvider.get(provider).push(e);
+  }
+  const clusters = [];
+  for (const [provider, items] of byProvider) {
+    if (items.length < 2) continue; // a single failure is not a cluster
+    const files = [...new Set(items.map((i) => i.file))];
+    clusters.push({
+      provider,
+      count: items.length,
+      files,
+      tests: items.map((i) => ({ test: i.test, file: i.file, line: i.line })),
+      provider_wide: files.length >= 2,
+    });
+  }
+  clusters.sort((a, b) => b.count - a.count);
+  return clusters;
+}
+
 /** Find the umbrella [Daily Failure] issue for a run id (matched in the body). */
 export function matchUmbrella(issues, runId) {
   const hit = (issues || []).find(
@@ -119,25 +201,35 @@ export function findNewestUmbrella(issues) {
 
 /** Assemble the normalized triage dataset from the latest red run. */
 export function buildDataset(rows, issues, opts = {}) {
-  const { windowDays = 30, maxAutoRemove = 5 } = opts;
-  const run = findLatestRedRun(rows);
+  const { windowDays = 30, maxAutoRemove = 5, runId = null } = opts;
+  // Target a specific run when asked (e.g. re-triaging a past artifact); default
+  // to the latest red run.
+  const run = runId ? rows.find((r) => r.run_id === runId) || null : findLatestRedRun(rows);
   if (!run) return null;
   const window = rowsWithinDays(rows, run.date, windowDays);
 
-  const withRecurrence = (e) => ({
-    test: e.test,
-    file: e.file,
-    line: e.line,
-    tags: e.tags,
-    error_signature: stripAnsi(e.error_signature),
-    recurrence: computeRecurrence(e, window),
-  });
+  const withRecurrence = (e) => {
+    const { provider, model } = parseProviderModel(e);
+    return {
+      test: e.test,
+      file: e.file,
+      line: e.line,
+      tags: e.tags,
+      provider,
+      model,
+      error_signature: stripAnsi(e.error_signature),
+      recurrence: computeRecurrence(e, window),
+    };
+  };
 
   const hard_failures = dedupeEntries(run.failures).map(withRecurrence);
   const flakes = dedupeEntries(run.flaky).map(withRecurrence).map((f) => ({
     ...f,
     actionable: f.recurrence.same_signature,
   }));
+
+  // Descriptive provider-wide signal: same provider failing across ≥2 spec files.
+  const provider_wide_clusters = computeProviderClusters([...hard_failures, ...flakes]);
 
   const newest = findNewestUmbrella(issues);
   const stale_history =
@@ -159,6 +251,7 @@ export function buildDataset(rows, issues, opts = {}) {
     totals: run.totals,
     hard_failures,
     flakes,
+    provider_wide_clusters,
     skips: [],
   };
 }
