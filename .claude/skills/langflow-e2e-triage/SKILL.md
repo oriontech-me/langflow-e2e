@@ -117,17 +117,16 @@ detects the mass-failure guard, matches the umbrella `[Daily Failure]` issue
 via `gh issue list --label daily-failure`, and prints a normalized `Dataset`
 JSON: `run{run_id,run_url,date,langflow_image,duration_ms}`,
 `umbrella_issue`, `guard_tripped`, `totals`, `hard_failures[]`, `flakes[]`
-(each carrying `recurrence` and an `actionable` flag), `skips[]`.
+(each carrying `provider`/`model`, `recurrence`, and an `actionable` flag),
+`provider_wide_clusters[]`, `skips[]`. Flags: `--run <id>` triages a specific
+past run; `--results <json>` backfills provider labels + per-skip reasons.
 
-**Citing recurrence faithfully:** `recurrence.count` / `recurrence.dates`
-report only the **same-signature** (same-cause) occurrences — this is the
-recurrence to cite in the proposal ("recurrent 3× on 07-13/15/16"). The same
-test can also appear under its title for a *different* cause; those are
-excluded from `count`/`dates` and surfaced separately as
-`recurrence.total_count` / `total_dates` for context only. Never quote the raw
-`total_count` as the recurrence figure — it overstates same-cause recurrence
-(the report-faithfully gate). `actionable` is driven by `same_signature`
-(≥ 2 same-signature hits), unchanged.
+**Citing recurrence faithfully:** cite `recurrence.count` / `recurrence.dates`
+— they count only **same-signature** (same-cause) occurrences ("recurrent 3× on
+07-13/15/16"). `recurrence.total_count` / `total_dates` also count the same
+test's *different*-cause hits — context only; never quote them as the recurrence
+figure (it overstates same-cause recurrence). `actionable` = `same_signature`
+(≥ 2 same-signature hits).
 
 If a local Playwright report exists for that run (downloaded or already on
 disk), pass it for richer per-skip detail — the history file only carries
@@ -142,9 +141,11 @@ Other flags: `--history <path>` (default `reports/daily-history.jsonl`),
 
 Read the full dataset before doing anything else. Then report the panorama
 to the user in PT-BR: run id/date/image, **X hard failures / Y actionable
-flakes (of Z total flakes) / W skips**, and whether the **guard tripped**
-(and if so, at what count). This is the shared frame of reference for every
-phase below — don't start grouping before this is on the table.
+flakes (of Z total flakes) / W skips**, whether the **guard tripped** (and at
+what count), and any **`provider_wide_clusters`** (same provider failing across
+≥2 spec files — a descriptive hint the cause is environment/package, e.g. a
+missing `langchain-<provider>`, not per-test rot; #899). This is the shared
+frame of reference for every phase below.
 
 ### Phase 2 — DEDUP
 
@@ -167,26 +168,26 @@ occurrences under it.
 
 ### Phase 3 — GROUP (hard failures)
 
-Cluster `hard_failures[]` by root cause: **same normalized error signature +
-same area + same failure symptom → one issue.** Don't open one issue per
-failing spec by default — the point of grouping is that a shared root cause
-is one problem, not N. Worked example: issue **#751** covers three specs
-(`agent-component-regression.spec.ts`, `agent-input-sources.spec.ts`,
-`loop-component-regression.spec.ts`) under a single "execution never
-completes" issue because all three shared the same
-timeout-waiting-for-completion shape, even though the literal locator
-differed (`div-chat-message` vs `text=built successfully`).
+**Check `provider_wide_clusters` first:** when a cluster is flagged
+`provider_wide`, treat that whole provider variant as **one** candidate cluster
+(the shared cause is likely a package/environment gap for that provider) rather
+than splitting it across per-symptom buckets — this is the #899 fix for the
+misgrouping that hid #898's `langchain-google-genai` cause.
 
-When `guard_tripped` is true the day is a mass-failure day, most likely
-environment-wide, so most failures are collateral. **Split the clusters:**
-**cross-day-recurrent** ones (same test+signature on other non-adjacent
-dailies — durable, not pure collateral) are **created/enriched** as usual,
-grouped aggressively, environmental context noted descriptively (never a
-verdict). **Today-only collateral** (no cross-day recurrence) is **not** filed
-as a dedicated issue — that is a throwaway tracker for what vanishes when the
-instance recovers; **note** it (aggregated, with counts) and leave it under the
-umbrella, which **stays open** (Phase 7). `@stable` is **kept** on everything.
-Full rule + issue-body wording: `references/issue-templates.md` → *Guard-Tripped Rule*.
+Then cluster the rest of `hard_failures[]` by root cause: **same normalized
+error signature + same area + same failure symptom → one issue.** Don't open one
+issue per failing spec by default — a shared root cause is one problem, not N.
+Worked example: **#751** covers three specs under one "execution never completes"
+issue because all shared the same timeout-waiting-for-completion shape, even
+though the literal locator differed.
+
+When `guard_tripped` is true the day is a mass-failure day (mostly collateral).
+**Split the clusters:** **cross-day-recurrent** ones (same test+signature on
+other non-adjacent dailies — durable) are created/enriched as usual;
+**today-only collateral** is **noted, not filed** (aggregated with counts) and
+left under the umbrella, which **stays open** (Phase 7). `@stable` is **kept**
+on everything. Full rule + wording: `references/issue-templates.md` →
+*Guard-Tripped Rule*.
 
 ### Phase 4 — FLAKES
 

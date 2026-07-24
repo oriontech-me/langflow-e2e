@@ -21,8 +21,12 @@
 //   "langflow_image": "...",
 //   "duration_ms": 0,
 //   "totals": { "passed": 0, "failed": 0, "flaky": 0, "skipped": 0 },
-//   "failures": [ { test, file, line, tags, attempts, error_signature } ],
-//   "flaky":    [ { test, file, line, tags, attempts, error_signature } ]
+//   "failures": [ { test, file, line, tags, attempts, error_signature, param? } ],
+//   "flaky":    [ { test, file, line, tags, attempts, error_signature, param? } ]
+//   `param` (optional, additive to schema v1) is the parameterization label a
+//   model-parameterized spec carries on its describe title (e.g.
+//   "google / gemini-2.5-flash" or "model:gpt-4o-mini"), used by the triage
+//   dataset to group failures by provider variant (#899).
 // }
 
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
@@ -64,7 +68,23 @@ function specRelFile(spec) {
   }
 }
 
-function visit(node) {
+// Extract the parameterization label a model-parameterized spec carries on its
+// `describe` title — e.g. `Agent max_tokens [google / gemini-2.5-flash]` →
+// `google / gemini-2.5-flash`, or `[model:gpt-4o-mini]` → `model:gpt-4o-mini`.
+// Scan the suite path innermost-first and return the first bracketed content;
+// null when nothing is parameterized. Recorded as `param` so the triage dataset
+// can group failures by provider variant (#899).
+function paramFromSuitePath(suitePath) {
+  for (let i = suitePath.length - 1; i >= 0; i--) {
+    const m = /\[([^\]]+)\]/.exec(suitePath[i] || "");
+    if (m) return m[1].trim();
+  }
+  return null;
+}
+
+function visit(node, suitePath = []) {
+  const path = node.title ? [...suitePath, node.title] : suitePath;
+  const param = paramFromSuitePath(path);
   for (const spec of node.specs || []) {
     const file = specRelFile(spec);
     const line = spec?.line || spec?.location?.line || 0;
@@ -102,6 +122,7 @@ function visit(node) {
           tags,
           attempts,
           error_signature: firstFailedSignature || "unknown",
+          ...(param ? { param } : {}),
         });
         continue;
       }
@@ -117,10 +138,11 @@ function visit(node) {
         tags,
         attempts,
         error_signature: firstErrorMessage(lastFailed) || "unknown",
+        ...(param ? { param } : {}),
       });
     }
   }
-  for (const child of node.suites || []) visit(child);
+  for (const child of node.suites || []) visit(child, path);
 }
 
 for (const suite of report.suites || []) visit(suite);
