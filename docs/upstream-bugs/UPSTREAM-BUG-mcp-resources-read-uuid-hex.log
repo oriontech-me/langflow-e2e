@@ -1,0 +1,136 @@
+================================================================================
+UPSTREAM BUG EVIDENCE LOG
+MCP server `resources/read` — AttributeError: 'str' object has no attribute 'hex'
+================================================================================
+
+Filed upstream : LE-2012 (https://datastax.jira.com/browse/LE-2012)
+Tracked in     : oriontech-me/langflow-e2e#948
+Component      : Langflow — backend, MCP project server
+Handler        : handle_read_resource
+Source         : langflow/api/v1/mcp_utils.py:224 (query build), :202 (namespace_id)
+Endpoint       : POST /api/v1/mcp/project/{project_id}/streamable  (JSON-RPC resources/read)
+Found on       : langflowai/langflow-nightly:latest
+                 version 1.12.0.dev4 (main_version 1.12.0, "Langflow Nightly")
+                 image sha256:c68f66adcaa1a686d57e14c4fefcd4ebc33b94adfeb795ce0c22a0e851c23f4f
+Last known good: 1.11.0 (spec doc "Last validated: 1.11.0")
+Determinism    : reproduced 3/3 runs; not flaky
+Captured       : 2026-07-24, single-worker local run against a fresh nightly
+
+--------------------------------------------------------------------------------
+1. WHAT HAPPENS
+--------------------------------------------------------------------------------
+A text file uploaded into a project flow is correctly advertised by
+`resources/list` (with URI .../api/v1/files/download/{flow_id}/{filename}), but
+calling `resources/read` on that exact URI returns a JSON-RPC error. The server
+advertises a resource it cannot itself read.
+
+resources/list  -> PASS (file surfaces with a URI)
+resources/read  -> FAIL (backend StatementError, see below)
+
+--------------------------------------------------------------------------------
+2. TEST RUNNER OUTPUT (Playwright, --workers=1 --retries=0)
+   tests/tests-automations/regression/mcp/server/mcp-server-resources.spec.ts
+--------------------------------------------------------------------------------
+Running 1 test using 1 worker
+
+  x  1 [chromium] > mcp-server-resources.spec.ts:160:7 > MCP Server — flow-file
+        resources protocol > resources/read returns the uploaded file content by
+        URI @regression @api @mcp (1.9s)
+
+  1) resources/read returns the uploaded file content by URI
+
+    Error (JSON-RPC error returned by the server):
+    {"code":0,"message":"(builtins.AttributeError) 'str' object has no attribute 'hex'
+    [SQL: SELECT flow.name, flow.description, flow.icon_bg_color, flow.gradient,
+     flow.is_component, flow.updated_at, flow.webhook, flow.endpoint_name,
+     flow.data, flow.mcp_enabled, flow.action_name, flow.action_description,
+     flow.access_type, flow.flow_type, flow.a2a_enabled, flow.a2a_card_overrides,
+     flow.id, flow.user_id, flow.icon, flow.tags, flow.locked, flow.folder_id,
+     flow.workspace_id, flow.fs_path
+     FROM flow
+     WHERE flow.id = ? AND flow.user_id = ? AND flow.folder_id = ?]
+    [parameters: [{}]]"}
+
+    expect(received).toBeUndefined()   // asserting resp.error is undefined
+      173 |       );
+      174 |
+    > 175 |       expect(resp.error, JSON.stringify(resp.error)).toBeUndefined();
+          |                                                      ^
+        at mcp-server-resources.spec.ts:175:54
+
+  1 failed
+
+--------------------------------------------------------------------------------
+3. BACKEND TRACEBACK (langflow-e2e-runner container logs; ANSI stripped)
+   Bottom frame — SQLAlchemy UUID type processor
+--------------------------------------------------------------------------------
+/app/.venv/lib64/python3.14/site-packages/sqlalchemy/engine/base.py:2365 in
+_handle_dbapi_exception
+    raise sqlalchemy_exception.with_traceback(exc_info[2] ...
+
+/app/.venv/lib64/python3.14/site-packages/sqlalchemy/engine/default.py:1496
+/app/.venv/lib64/python3.14/site-packages/sqlalchemy/sql/sqltypes.py:3734 in
+process
+
+   3731 │
+   3732 │   def process(value):
+   3733 │       if value is not None:
+ > 3734 │           value = value.hex          <-- str has no .hex; expects UUID
+   3735 │       return value
+
+   locals:
+     value = 'c52702b5-65ad-4510-82c8-583262d10d96'   <-- a valid UUID *string*
+
+StatementError: (builtins.AttributeError) 'str' object has no attribute 'hex'
+[SQL: SELECT ... FROM flow WHERE flow.id = ? AND flow.user_id = ? AND
+ flow.folder_id = ?]
+[parameters: [{}]]
+
+Note: `value` is a well-formed UUID string. The defect is the *type* (str vs
+uuid.UUID), not a malformed id. The SQLAlchemy UUID bind processor calls
+`value.hex`, which only exists on uuid.UUID objects.
+
+--------------------------------------------------------------------------------
+4. ROOT CAUSE  (langflow/api/v1/mcp_utils.py, handle_read_resource)
+--------------------------------------------------------------------------------
+    namespace_id = path_parts[-2]          # line 202: URI path segment -> a raw str
+    ...
+    flow_query = select(Flow).where(
+        Flow.id == namespace_id,           # line 224: Flow.id is a UUID column
+        Flow.user_id == current_user.id,
+    )
+    if project_id is not None:
+        flow_query = flow_query.where(Flow.folder_id == project_id)
+
+`namespace_id` is sliced out of the URI path as a string and never converted to
+UUID. On 1.12 the Flow.id UUID column no longer coerces a bare string, so the
+bind processor raises. `handle_list_resources` is unaffected: it filters on
+`Flow.folder_id == project_id` where `project_id` is already a real UUID passed
+from the route — hence list works while read crashes.
+
+--------------------------------------------------------------------------------
+5. PROPOSED FIX (one line; module already imports UUID)
+--------------------------------------------------------------------------------
+    flow_query = select(Flow).where(
+        Flow.id == UUID(str(namespace_id)),
+        Flow.user_id == current_user.id,
+    )
+
+Guard the coercion for the user-bucket branch (namespace may be the user's own
+id rather than a flow id): wrap in try/except ValueError and fall through to the
+existing user-level handling on a non-UUID segment.
+
+--------------------------------------------------------------------------------
+6. FIX VERIFIED IN-CONTAINER
+--------------------------------------------------------------------------------
+Applied the one-line change to mcp_utils.py inside the running 1.12.0.dev4
+container, restarted, re-ran the identical spec (no test/client change):
+
+  ✓  1 resources/list surfaces the uploaded flow file as a resource (133ms)
+  ✓  2 resources/read returns the uploaded file content by URI (40ms)
+  2 passed (2.0s)
+
+Changing only this product line flips read from FAIL to PASS, isolating the
+defect to line 224, server-side. The container was then recreated from the
+pristine image for the remainder of validation.
+================================================================================

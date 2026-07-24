@@ -1,6 +1,6 @@
 # MCP Server — flow-as-server endpoint & tool execution over the MCP protocol
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -30,34 +30,28 @@ counterpart: Langflow *is* the MCP server and a client speaks the protocol to it
 If this fails, Langflow no longer exposes project flows as MCP-server tools, or no
 longer executes them over the protocol — a core MCP-server regression.
 
-### Scope decision — §14.1 items 667/668 are NOT covered (no product surface)
+### Scope decision — resource-by-URI split out; prompt-template not covered
 
-Scouted live on **1.11.0.dev49**: the project MCP server **advertises**
-`resources` and `prompts` capabilities on `initialize`, but `resources/list` and
-`prompts/list` both return **`[]`** — Langflow's MCP server exposes flows only as
-**tools**; there is no UI or API to expose a resource-by-URI or a prompt template.
-Therefore:
-
-- §14.1 "Resource exposed by server is accessible via URI" — **no product surface**;
-  left `[ ]` with a note (not a hollow test).
-- §14.1 "Prompt exposed by server returns correct template" — **no product surface**;
-  left `[ ]` with a note.
-
-A comment recording this is posted on issue #829. Writing an assertion that these
-lists are empty was rejected: it would be a false regression the moment Langflow
-implements either primitive.
+- §14.1 **"Resource exposed by server is accessible via URI"** IS covered — a
+  later scout found that a flow's **uploaded files** are exposed as MCP
+  resources. That dimension lives in the sibling `mcp-server-resources.spec.ts`
+  (`resources/list` + `resources/read`). On 1.12.x `resources/read` hits a live
+  Langflow regression (LE-2012) and is kept as a guard, not promoted; see that
+  spec's doc.
+- §14.1 **"Prompt exposed by server returns correct template"** — **no product
+  surface**: the MCP server's `prompts/list` returns `[]`; left `[ ]` with a
+  note (asserting emptiness was rejected — it would be a false regression the
+  moment Langflow implements the primitive).
 
 ---
 
 ## Tags *(required)*
 
-`@regression` `@api` `@mcp`
+`@stable` `@regression` `@api` `@mcp`
 
-**`@stable` intentionally withheld (promotion gated — issue #829).** MCP is in the
-current flaky cluster (#773) and the issue also flags MCP surface-health
-dependencies (#809 / #643); promote only after the Wave 3 clean baseline.
-`@api` — the MCP protocol is exercised over HTTP JSON-RPC; `@mcp` — MCP server
-area; `@regression` — guards a server-exposure/execution regression.
+**`@stable` — promoted under #948** after repeated clean `--workers=1
+--retries=0` runs on nightly 1.12.0.dev4 and a per-assertion force-failure check. `@api` — the MCP protocol is exercised over HTTP JSON-RPC; `@mcp` — MCP
+server area; `@regression` — guards a server-exposure/execution regression.
 
 ---
 

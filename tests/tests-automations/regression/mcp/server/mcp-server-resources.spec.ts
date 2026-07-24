@@ -22,8 +22,14 @@ import { mcpCall, mcpHandshake } from "../../../../helpers/mcp/mcp-streamable-cl
  * The client side (§13.1) is NOT covered — the MCPTools component / v2 client
  * API expose tools only, no resource surface exists to test.
  *
- * `@stable` withheld — promotion gated (issue #828; MCP flaky cluster #773,
- * clean-baseline gate #818, surface deps #809/#643).
+ * Promotion (#948, nightly 1.12.0.dev4): T1 (resources/list) is `@stable` after
+ * repeated clean --retries=0 runs + a force-failure check. T2 (resources/read)
+ * is NOT promoted — it hits a live Langflow regression on 1.12.x: the server
+ * throws `AttributeError: 'str' object has no attribute 'hex'` because
+ * handle_read_resource compares the UUID `Flow.id` column to the raw string URI
+ * segment without converting it to UUID (mcp_utils.py). Filed upstream as
+ * LE-2012; see docs/upstream-bugs/UPSTREAM-BUG-mcp-resources-read-uuid-hex.log.
+ * T2 is kept as a live regression guard and will be promoted once LE-2012 lands.
  */
 
 // A resource read can arrive base64-encoded (blob), and on 1.11.0 the blob is
@@ -119,7 +125,7 @@ test.describe("MCP Server — flow-file resources protocol", () => {
 
   test(
     "resources/list surfaces the uploaded flow file as a resource",
-    { tag: ["@regression", "@api", "@mcp"] },
+    { tag: ["@stable", "@regression", "@api", "@mcp"] },
     async ({ request }) => {
       await mcpHandshake(request, streamableUrl, authorization);
 
@@ -157,6 +163,10 @@ test.describe("MCP Server — flow-file resources protocol", () => {
     },
   );
 
+  // NOT @stable — resources/read is broken on Langflow 1.12.x (LE-2012): the
+  // server raises AttributeError 'str' has no attribute 'hex' (UUID column vs
+  // raw string URI segment in handle_read_resource). Kept as a live regression
+  // guard; promote to @stable once the upstream fix lands.
   test(
     "resources/read returns the uploaded file content by URI",
     { tag: ["@regression", "@api", "@mcp"] },

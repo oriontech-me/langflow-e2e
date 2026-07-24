@@ -1,6 +1,6 @@
 # MCP Server – List and Read Flow-File Resources
 
-**Last validated:** Langflow 1.11.0
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -46,14 +46,21 @@ so this spec validates the surface that actually implements the behavior. The
 
 ## Tags *(required)*
 
-All tests: `@api` `@mcp` `@regression` — pure MCP-protocol (JSON-RPC over HTTP);
+Both tests: `@api` `@mcp` `@regression` — pure MCP-protocol (JSON-RPC over HTTP);
 no UI page, no LLM/agent. Mirrors the tag set of the direct sibling
 `mcp-server-protocol.spec.ts`.
 
-**`@stable` is intentionally withheld.** Per issue #828 the promotion is gated:
-this MCP area is in the current flaky cluster (#773) and the clean non-guarded
-daily baseline (#818) has not yet been achieved. Add `@stable` only after that
-gate is met and the spec has demonstrated repeated clean `--retries=0` runs.
+**Promotion (#948, nightly 1.12.0.dev4):**
+- **T1 `resources/list`** — `@stable`, after repeated clean `--workers=1
+  --retries=0` runs and a force-failure check.
+- **T2 `resources/read`** — **NOT `@stable`.** It hits a live Langflow
+  regression on 1.12.x: the server raises `AttributeError: 'str' object has no
+  attribute 'hex'` because `handle_read_resource` compares the UUID `Flow.id`
+  column to the raw string URI segment without a `UUID(...)` conversion
+  (`mcp_utils.py`). Reproduced 3/3 and proven product-side by a one-line
+  in-container patch. Filed upstream as **LE-2012**
+  (`docs/upstream-bugs/UPSTREAM-BUG-mcp-resources-read-uuid-hex.log`). T2 is kept
+  as a live regression guard and will be promoted once LE-2012 lands.
 
 ---
 
