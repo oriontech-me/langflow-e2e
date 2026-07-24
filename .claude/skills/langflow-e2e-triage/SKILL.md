@@ -23,11 +23,12 @@ This skill is the **producer** of the dedicated issues that the sibling
 fixes.** This skill never investigates a failure's root cause — it reads a
 run, groups symptoms, and opens issues that direct someone else to
 investigate. It is **non-mutating by default**: it never edits test code as a
-side effect of opening issues. The single exception is retiring `@stable` as
-prevention (recurrent flakes; hard failures are already auto-removed by the
+side effect of opening issues. The single exception is **quarantining** a
+recurrent flake as prevention (hard failures are already auto-removed by the
 workflow), and that happens **only behind its own explicit authorization**
 (see the hard gate) — never bundled into issue creation, and it never restores
-a tag.
+a tag. **Quarantine = remove `@stable` AND add `test.fixme(...)`** (not tag
+removal alone — see the hard gate for why).
 
 Repo: `oriontech-me/langflow-e2e`.
 
@@ -45,16 +46,20 @@ Talk to the user in **Portuguese (PT-BR)**; produce every GitHub artifact
   abrir"). Do all analysis and grouping first; the gate is the only thing
   standing between plan and execution — don't erode it by creating "just the
   obvious one" early.
-- **`@stable` removal: separate gate, never inadvertent.** Retiring `@stable`
-  is **prevention** — a broken test must stop running in the daily until it is
-  worked — so it is a **mandatory part of the triage**. But it is a
-  code-mutating action, so it is **never a side effect of opening issues**: it
-  requires its **own explicit authorization**, distinct from the issue-dispatch
-  approval, and the **exact diff (`spec:line`) is shown before** anything is
-  edited. Hard failures are already auto-removed by the workflow; only
-  **recurrent flakes** need a removal here (flake removal is never automatic).
-  The skill **never restores** a tag and never edits test *logic*, spec docs,
-  or `QA-CHECKLIST.md` — restoration is a deliverable of the dedicated issue.
+- **Quarantine: separate gate, never inadvertent.** Quarantining a broken test
+  is **prevention** — a **mandatory part of the triage**, but a code-mutating
+  action that is **never a side effect of opening issues**: it needs its **own
+  explicit authorization**, distinct from the issue-dispatch approval, with the
+  **exact diff (`spec:line`) shown first**. **Quarantine = remove `@stable` AND
+  add `test.fixme(<reason + issue #>)`, always together** — tag removal alone
+  only stops the daily, so the test keeps going red on the impacted-specs gate
+  (file-diff selected, not tag-filtered — #871); `test.fixme` skips it in every
+  context. Full mechanism + why: `references/issue-templates.md` →
+  *Quarantine mechanism*. Hard failures are already auto-removed by the workflow
+  (tag only); only **recurrent flakes** are quarantined here (never automatic).
+  The skill **never restores** either edit and never touches test *logic*, spec
+  docs, or `QA-CHECKLIST.md` — un-`fixme` + restore-`@stable` is the dedicated
+  issue's deliverable.
 - **The triage does not close until the tags are gone.** The umbrella is closed
   only after every criterion-required removal is **verified done** (tag absent
   on `main` / its removal PR open and linked). If a removal was not authorized
@@ -192,13 +197,15 @@ each time) is **only noted** in the panorama — the retry budget absorbs
 single-run noise, and opening an issue for it would be triage noise of its
 own.
 
-For each actionable flake, `@stable` must be retired **as prevention** (so the
-flake stops running in the daily until it is worked) — part of the triage, not
-a deferred follow-up. But the removal is a code change: **record the exact spec
-path + line here** and carry it into the plan (Phase 6) as its own row; it is
-executed only in Phase 7, behind its **own authorization** with the diff shown
-(never restore it here). The dedicated issue then carries **restoring
-`@stable`** as an explicit deliverable.
+For each actionable flake, the test must be **quarantined as prevention** (so it
+stops running everywhere until it is worked) — part of the triage, not a
+deferred follow-up. Quarantine = **remove `@stable` + add `test.fixme`**
+together (see the hard gate + `references/issue-templates.md` → *Quarantine
+mechanism*). But it is a code change: **record the exact spec path + line here**
+and carry it into the plan (Phase 6) as its own row; it is executed only in
+Phase 7, behind its **own authorization** with the diff shown (never restore it
+here). The dedicated issue then carries **un-`fixme` + restore `@stable`** as an
+explicit deliverable.
 
 ### Phase 5 — SKIPS
 
@@ -215,9 +222,10 @@ it to the user in PT-BR:
 |---|---|---|---|---|
 | 1 | ... | hard-failure / flake / skip | create / enrich / note | new issue title, or existing #NNN |
 
-Below the table, list the **`@stable` removals the triage requires** as a
-separate block — one line per recurrent flake (`spec/path.spec.ts:line`). Hard
-failures are already auto-removed by the workflow, so do **not** list them.
+Below the table, list the **quarantines the triage requires** (remove `@stable`
++ add `test.fixme`) as a separate block — one line per recurrent flake
+(`spec/path.spec.ts:line`). Hard failures are auto-removed by the workflow, so
+do **not** list them.
 
 Then **wait for explicit approval of the issue plan** ("pode abrir" or
 equivalent). This approval covers issue create/enrich/close **only** — it does
@@ -235,16 +243,16 @@ Only after the user approves the plan:
    `references/issue-templates.md`.
 2. For each **enrich** row: `gh issue comment` on the matched existing issue,
    per the same reference's *Enrich vs Create Rule*.
-3. **`@stable` removals — separate authorization, one at a time.** For each
-   recurrent flake in the removals block: show the **exact diff** (the
-   `@stable` tag to drop, at `spec:line`) and ask for a **distinct**
-   confirmation (e.g. "pode remover a tag do teste X?"). Only on an explicit
-   yes, open the removal PR (branch off `main`, drop the tag, reference the
-   dedicated issue in the body — restoration is that issue's deliverable, never
-   done here). If the user declines or defers, **do not edit** — record the
-   removal as still pending. (Hard failures were already auto-removed by the
-   workflow; on a guard-tripped mass-failure day the tag is **kept** — no
-   removal in either case.)
+3. **Quarantines — separate authorization, one at a time.** For each recurrent
+   flake in the removals block: show the **exact diff** (drop `@stable` **and**
+   wrap the test as `test.fixme(<reason + issue #>)`, at `spec:line`) and ask
+   for a **distinct** confirmation (e.g. "pode colocar o teste X em
+   quarentena?"). Only on an explicit yes, open the quarantine PR (branch off
+   `main`, apply both edits, reference the dedicated issue — un-`fixme` +
+   restore is that issue's deliverable, never done here). If the user declines
+   or defers, **do not edit** — record it as still pending. (Hard failures were
+   already auto-removed by the workflow; on a guard-tripped mass-failure day
+   nothing is quarantined here.)
 4. Comment on the umbrella issue linking every dedicated issue just
    created/enriched (so the umbrella's history stays a readable index).
 5. **Close the umbrella only when the triage is truly complete:** every needed
@@ -261,7 +269,7 @@ Only after the user approves the plan:
    run are still linked here.
 
 Report back to the user in PT-BR with the final list of issue numbers/URLs
-created or enriched, each `@stable`-removal PR opened (and any removal left
+created or enriched, each quarantine PR opened (and any quarantine left
 pending), and whether the umbrella was closed or intentionally left open.
 
 ## Headless / CI mode
@@ -275,8 +283,8 @@ Two rules override the interactive flow:
 - **Never call `AskUserQuestion`** and never block on human input. The CI job
   has no interactive channel; a prompt would hang the run.
 - **Never edit code.** The CI job runs with `--allowedTools "Read,Bash"` (no
-  `Edit`/`Write`) and `contents: read`. `@stable` removal is therefore **out of
-  the automated path** — it stays a manual/local PR (list it, never do it here).
+  `Edit`/`Write`) and `contents: read`. Quarantine is therefore **out of the
+  automated path** — it stays a manual/local PR (list it, never do it here).
 
 The invocation may carry the umbrella issue number as `--issue <n>` (manual
 `workflow_dispatch`). When `--issue` is absent (the `workflow_run` auto-trigger),
@@ -291,18 +299,16 @@ Run **Phase 0–6** exactly as documented, with one substitution at Phase 6:
 instead of presenting the plan and waiting for "pode abrir", **post the plan as
 a comment on the umbrella issue** and stop.
 
-- **Per-skip reasons:** the `workflow_run` job downloads the triggering daily's
-  `results.json` to the repo root (best-effort). In Phase 1, if `results.json`
-  is present, run the dataset builder with `--results results.json` so Phase 5
-  (SKIPS) sees real per-skip reasons; if it is absent (manual dispatch, or the
-  artifact expired), run history-only and **say so** in the proposal ("per-skip
-  detail unavailable — skips reported by total only").
-- Build the same Phase-6 table plus the `@stable`-removal block.
+- **Per-skip reasons:** the `workflow_run` job downloads the daily's
+  `results.json` (best-effort). In Phase 1, pass `--results results.json` when
+  present so Phase 5 sees real per-skip reasons; if absent, run history-only and
+  **say so** in the proposal ("per-skip detail unavailable — totals only").
+- Build the same Phase-6 table plus the quarantine block.
 - Post it with `gh issue comment <n>`, whose **first line is the exact marker**
   `<!-- triage-proposal -->` so Phase execute finds it deterministically.
 - End the comment with: *"A triage-team member: reply `pode abrir` on this
-  issue to create/enrich the dedicated issues. `@stable` removals listed above
-  are manual/local TODOs — they are NOT performed by the automation."*
+  issue to create/enrich the dedicated issues. Quarantines listed above are
+  manual/local TODOs — they are NOT performed by the automation."*
 - Then **STOP**. Create nothing, enrich nothing, close nothing, edit nothing.
 
 **Always leave an observable trace — never a silent no-op.** Propose must end
@@ -338,22 +344,21 @@ trigger itself as the authorization; do not re-ask.
 - Re-run the **Phase 2 dedup** pass before creating, so a re-approval enriches
   instead of duplicating.
 - Run **Phase 7 steps 1, 2, 4, 5** (create / enrich / link-on-umbrella /
-  close-if-complete). **Skip step 3** (`@stable` removal — manual/local).
+  close-if-complete). **Skip step 3** (quarantine — manual/local).
 - **Umbrella closure:** close only if the triage is complete **and** no
-  criterion-required `@stable` removal is pending. If a recurrent-flake removal
-  is required, leave the umbrella **open** and post a checklist comment listing
-  the pending manual/local removals (`spec/path.spec.ts:line` + a ready-to-run
-  command), so a human finishes them locally.
+  criterion-required quarantine is pending. If a recurrent-flake quarantine is
+  required, leave the umbrella **open** and post a checklist comment listing the
+  pending manual/local quarantines (`spec/path.spec.ts:line`), so a human
+  finishes them locally.
 - Post a final comment summarizing the issues created/enriched and the umbrella
   state (closed, or left open with N pending removals).
 
 ## Relationship to sibling skills
 
 - **`langflow-e2e-triage`** (this skill) — **producer**: turns one red daily
-  run into dedicated follow-up issues and, as prevention, retires `@stable`
-  from recurrent flakes (behind its own gate — see the hard gates). It never
-  investigates a root cause, fixes a test, or restores a tag — restoration is
-  the consumer's deliverable.
+  run into dedicated follow-up issues and, as prevention, quarantines recurrent
+  flakes (behind its own gate). It never investigates a root cause, fixes a
+  test, or restores a quarantine — restoration is the consumer's deliverable.
 - **`langflow-e2e-issues`** / **`langflow-e2e-issue-deterministic`** —
   **consumers**: pick up a dedicated issue this skill spawned and drive it to
   a fix PR (their `daily-failure triage` classify-row explicitly says

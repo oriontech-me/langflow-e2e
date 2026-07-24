@@ -556,7 +556,7 @@ On a red scheduled `daily-stable.yml` run, the workflow does two things **automa
 1. Removes `@stable` from **every hard failure** (a test that failed all retries), regenerates `QA-CHECKLIST.md`, and commits it to `main` with `[skip ci]` — no PR, no approval. If the mass-failure guard trips (too many at once → treated as infra), nothing is removed.
 2. Opens a single **triage issue** for the run, listing what was removed.
 
-The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. Its only deliverable is the **triage itself**: read the run, route each occurrence into a dedicated issue (or enrich an existing one), and then **close the triage issue**. It never carries an investigation or a fix. The triage issue is closed **only once the triage is complete** — every needed dedicated issue created or enriched (hard failure / flake / skip, per the criteria below) **and** `@stable` removed from every test the criteria require (hard failures: auto-removed by the workflow; recurrent flakes: removed via PR at this point, as prevention). When the mass-failure guard trips (see below), the triage gains one extra deliverable: **decide whether the day was environmental** and, if not, **manually remove `@stable`** from the real hard failures — and, because that day's today-only collateral is **noted rather than filed**, the triage issue **stays open** as the standing record until a clean, non-guarded daily rechecks it (only durable cross-day clusters get a dedicated issue on a guard day; see the Mass-failure guard note below). The human steps are the fan-out, the manual removal for recurrent flakes, and the restoration.
+The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. Its only deliverable is the **triage itself**: read the run, route each occurrence into a dedicated issue (or enrich an existing one), and then **close the triage issue**. It never carries an investigation or a fix. The triage issue is closed **only once the triage is complete** — every needed dedicated issue created or enriched (hard failure / flake / skip, per the criteria below) **and** every test the criteria require quarantined (hard failures: `@stable` auto-removed by the workflow; recurrent flakes: **quarantined via PR** at this point — remove `@stable` **and** add `test.fixme` — as prevention). When the mass-failure guard trips (see below), the triage gains one extra deliverable: **decide whether the day was environmental** and, if not, **manually quarantine** the real hard failures — and, because that day's today-only collateral is **noted rather than filed**, the triage issue **stays open** as the standing record until a clean, non-guarded daily rechecks it (only durable cross-day clusters get a dedicated issue on a guard day; see the Mass-failure guard note below). The human steps are the fan-out, the manual quarantine for recurrent flakes, and lifting it after the fix.
 
 The runbook — order, dedup, analysis depth, and how the follow-up issue must be written — is in **[Triage protocol — working the triage issue](#triage-protocol--working-the-triage-issue)** below.
 
@@ -576,7 +576,8 @@ Analyst works the triage issue (dispatcher) — order: HARD FAILURES → FLAKES 
       │
       ├─► per RECURRENT FLAKE  (same error_signature within a 30-day window,
       │        confirmed in reports/daily-history.jsonl)
-      │        → open a DEDICATED issue AND remove @stable via PR (manual)
+      │        → open a DEDICATED issue AND quarantine via PR (manual):
+      │          remove @stable AND add test.fixme (together)
       │
       └─► per UNEXPECTED SKIP  (reason not already tracked)
       │        → open a DEDICATED issue
@@ -584,10 +585,11 @@ Analyst works the triage issue (dispatcher) — order: HARD FAILURES → FLAKES 
 Before opening ANY issue: search for an OPEN issue on the same subject
       │        → if one exists, ENRICH it instead of duplicating
       ▼
-Problem resolved → @stable RESTORED via PR; the dedicated issue is closed
+Problem resolved → quarantine LIFTED via PR (remove test.fixme + restore
+      @stable); the dedicated issue is closed
 ```
 
-> **Mass-failure guard.** The threshold is the `max_auto_remove` input of the `auto-remove-stable` action (default `5`, so the guard trips at **6+** hard failures in a run). Above the threshold, the workflow assumes an environment-wide failure and removes nothing, so a bad infra day cannot strip `@stable` off the whole suite. When it trips, the triage issue says so and the tags are still in place — investigate the environment; if it turns out not to be environmental, remove `@stable` manually from the real hard failures. There is nothing to restore for tags never removed.
+> **Mass-failure guard.** The threshold is the `max_auto_remove` input of the `auto-remove-stable` action (default `5`, so the guard trips at **6+** hard failures in a run). Above the threshold, the workflow assumes an environment-wide failure and removes nothing, so a bad infra day cannot strip `@stable` off the whole suite. When it trips, the triage issue says so and the tags are still in place — investigate the environment; if it turns out not to be environmental, **manually quarantine** the real hard failures (remove `@stable` + add `test.fixme`). There is nothing to lift for tests never quarantined.
 >
 > On a guard-tripped day, split the clusters by durability: a cluster whose same test + error signature also failed on **other, non-adjacent** dailies is a **durable** signal (it reproduces off mass-failure days) and gets its own dedicated issue as usual; **today-only collateral** (no cross-day recurrence) is **noted, not filed** — a dedicated tracker for what most likely vanishes when the instance recovers is throwaway triage noise (same reason a first-occurrence flake is noted, not filed). Because the collateral has no dedicated issue, the **umbrella stays open** on a guard-tripped run as the standing record; the next clean, non-guarded daily's triage closes it once it confirms recovery, or promotes any cluster that persists into a durable issue.
 
@@ -604,7 +606,7 @@ The triage is **dispatch, not solution**. Its analysis is **preliminary and desc
 
 **2. Flakes (second).** Consult `reports/daily-history.jsonl`.
 - Open an issue **only for a recurrent flake**. A first occurrence is **only noted** in the triage — the retry budget absorbs single-run noise.
-- **Recurrence window: 30 days.** The criterion is the **cause, not the count**: it is not enough that the test flaked 2+ times in the window — the occurrences must share the **same `error_signature`** (the cheap, descriptive proxy for "same cause" at triage time). Same signature within the window → recurrent → open a **dedicated issue and remove `@stable` via PR as prevention** (flake removal is always manual; the workflow never auto-removes flakes) — so the flaky test stops running in the daily until it is worked. Restoring the tag is a **deliverable of that issue**, done after the fix. *(30 days is a revisable convention, not an absolute.)*
+- **Recurrence window: 30 days.** The criterion is the **cause, not the count**: it is not enough that the test flaked 2+ times in the window — the occurrences must share the **same `error_signature`** (the cheap, descriptive proxy for "same cause" at triage time). Same signature within the window → recurrent → open a **dedicated issue and quarantine the test via PR as prevention** (flake quarantine is always manual; the workflow never auto-removes flakes) — so the flaky test stops running until it is worked. **Quarantine = remove `@stable` AND wrap the test as `test.fixme(<reason + issue #>)`, together**: `@stable` removal alone only stops the daily, so the test keeps going red on the `pr-validation.yml` impacted-specs gate (which selects specs by file diff, not by tag — the quarantine PR itself would go red; #871). `test.fixme` skips it in every context so the quarantine PR merges green. Lifting the quarantine (remove `test.fixme` + restore `@stable`) is a **deliverable of that issue**, done after the fix. *(30 days is a revisable convention, not an absolute.)*
 
 **3. Skips (third).**
 - Analyse the **reason** for each skip.
@@ -659,7 +661,7 @@ Then compare the signatures — the action depends on **what** recurred (same ca
 |---|---|---|
 | Hard failure (all retries failed) | any | `@stable` was already auto-removed (or the mass-failure guard tripped and left it in place). No manual removal — classify on the dedicated issue and restore the tag when the test is fixed. |
 | Flake (passed on retry) | No matching signature in the last 30 days | Note in the triage; **do not** open an issue yet. The retry budget absorbs single-run noise. |
-| Flake (recurrent) | **Same `error_signature`** seen before within 30 days | Open a **dedicated issue** (`daily-failure` + `area:<...>`, cite the run ids) **and remove `@stable` via PR as prevention**. Flake removal is manual — the workflow never auto-removes flakes. Restoring the tag is a **deliverable of that dedicated issue**. |
+| Flake (recurrent) | **Same `error_signature`** seen before within 30 days | Open a **dedicated issue** (`daily-failure` + `area:<...>`, cite the run ids) **and quarantine via PR as prevention** — remove `@stable` **and** add `test.fixme` (tag removal alone leaves the test red on the impacted-specs gate; #871). Quarantine is manual — the workflow never auto-removes flakes. Lifting it (remove `test.fixme` + restore `@stable`) is a **deliverable of that dedicated issue**. |
 | Flake with a **different** signature | Prior flake on the same test, but a different signature | Treat as a first occurrence of a **new cause** — note it; the raw count alone does not trigger an issue. |
 | Mix (hard-failed one day, flaky later) | 2+ days | The hard-fail day already auto-removed `@stable`; once restored, apply the flake rows above if the flakiness persists. |
 
