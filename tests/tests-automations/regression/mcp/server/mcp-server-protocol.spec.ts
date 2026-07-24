@@ -20,12 +20,12 @@ import { mcpCall, mcpHandshake } from "../../../../helpers/mcp/mcp-streamable-cl
  *   T2 — tools/call runs the flow and echoes a unique sentinel back through the
  *        protocol (deterministic, no LLM).
  *
- * §14.1 resource-by-URI and prompt-template are NOT covered: Langflow's MCP
- * server exposes flows only as tools — resources/list and prompts/list return []
- * on 1.11.0.dev49 (no product surface). See docs/mcp/server/mcp-server-protocol.md.
+ * Resource-by-URI is covered separately in mcp-server-resources.spec.ts;
+ * prompt-template is NOT covered — the MCP server's prompts/list returns [] (no
+ * product surface). See docs/mcp/server/mcp-server-protocol.md.
  *
- * `@stable` withheld — promotion gated (#829; MCP flaky cluster #773, surface
- * deps #809/#643).
+ * `@stable` — promoted under #948 (validated on nightly 1.12.0.dev4: repeated
+ * clean --workers=1 --retries=0 runs + per-assertion force-failure check).
  */
 
 // Shared project MCP settings are instance-wide; run serially so a second
@@ -85,7 +85,7 @@ test.describe("MCP Server — flow-as-server protocol", () => {
 
   test(
     "generated endpoint advertises the project and lists the enabled flow",
-    { tag: ["@regression", "@api", "@mcp"] },
+    { tag: ["@stable", "@regression", "@api", "@mcp"] },
     async ({ request }) => {
       await test.step("composer-url returns the generated endpoint URLs", async () => {
         const res = await request.get(
@@ -126,7 +126,7 @@ test.describe("MCP Server — flow-as-server protocol", () => {
 
   test(
     "execute the exposed tool over the MCP protocol echoes the input",
-    { tag: ["@regression", "@api", "@mcp"] },
+    { tag: ["@stable", "@regression", "@api", "@mcp"] },
     async ({ request }) => {
       // Unique sentinel: a canned/empty/cached response cannot echo this exact
       // string, so a pass proves the call round-tripped through the flow.

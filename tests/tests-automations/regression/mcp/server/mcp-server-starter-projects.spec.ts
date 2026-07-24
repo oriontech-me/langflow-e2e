@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folders";
 import { convertTestName } from "../../../../helpers/filesystem/convert-test-name";
@@ -6,7 +6,7 @@ import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 
 test(
   "user must be able to see starter projects for mcp servers",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     //starter mcp project
 
@@ -104,7 +104,7 @@ test(
 
 test(
   "user must not be able to add duplicate mcp servers from starter projects",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

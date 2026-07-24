@@ -660,12 +660,12 @@
 ### mcp/server/ — Resource and Tool Provider
 
 #### 14.1 MCP Server
-- [-] MCP Server tab in flow
-- [-] Add MCP server via modal
-- [-] Starter project with MCP
-- [-] Flow exposed as MCP server — verify generated endpoint → `mcp/server/mcp-server-protocol.spec.ts`
-- [-] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
-- [-] Resource exposed by server is accessible via URI — flow files are exposed as MCP resources (`resources/list` is `[]` only for a file-less flow; an uploaded flow file appears and is readable via `resources/read`) → `mcp/server/mcp-server-resources.spec.ts`
+- [x] MCP Server tab in flow → `mcp/server/mcp-server-tab.spec.ts`
+- [x] Add MCP server via modal → `mcp/server/mcp-server-tab.spec.ts`
+- [x] Starter project with MCP → `mcp/server/mcp-server-starter-projects.spec.ts`
+- [x] Flow exposed as MCP server — verify generated endpoint → `mcp/server/mcp-server-protocol.spec.ts`
+- [x] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
+- [-] Resource exposed by server is accessible via URI — flow files are exposed as MCP resources: `resources/list` is `@stable`; `resources/read` blocked by a live Langflow regression on 1.12.x (`AttributeError: 'str' object has no attribute 'hex'`, filed upstream **LE-2012**) — kept as a guard, not promoted → `mcp/server/mcp-server-resources.spec.ts`
 - [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
 ---
