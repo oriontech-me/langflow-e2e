@@ -134,7 +134,7 @@
 - [x] Edit int field → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit toggle field → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit key-pair list → `core-components/parameters-panel-field-types.spec.ts`
-- [-] Edit input list
+- [x] Edit input list → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit table input → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit slider → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit tab component → `core-components/parameters-panel-field-types.spec.ts`
