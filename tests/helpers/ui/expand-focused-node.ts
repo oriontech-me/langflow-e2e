@@ -8,10 +8,15 @@ import { dismissOnboardingIfPresent } from "./dismiss-onboarding";
 // (no `hide-node-content` in the DOM) this is a no-op, which future-proofs callers
 // against an upstream change to the `minimized` default.
 //
-// The `more-options-modal` menu can fail to render on the first click when the
-// single Langflow backend is under load — many flow-builds in one session degrade
-// it (issue #816/#817), so the menu-open is retried before failing instead of
-// timing out on `expand-button-modal`.
+// The `more-options-modal` (⋮) menu that hosts the expand action lives in a
+// floating ReactFlow NodeToolbar and only mounts for the SELECTED node. On 1.12 a
+// REAL coordinate click on that ⋮ button is hit-tested by the ReactFlow pane and
+// DESELECTS the node — which unmounts the toolbar and destroys the Radix menu as
+// it opens, so the expand item never appears (issue #867: reproduced at
+// `--workers=1` with no backend load — a UI-interaction defect, not the earlier
+// backend-saturation theory of #816/#817; deselection confirmed via
+// instrumentation). The fix dispatches the pointer events directly on the ⋮
+// element (see the retry below) so the pane never sees a coordinate hit.
 export async function expandFocusedNode(page: Page): Promise<void> {
   // The dev46 assistant-onboarding dialog opens over the flow editor on entry and
   // its overlay steals node selection / intercepts canvas clicks, so the node
@@ -20,18 +25,35 @@ export async function expandFocusedNode(page: Page): Promise<void> {
 
   if ((await page.getByTestId("hide-node-content").count()) === 0) return;
 
-  // Drive open-menu → expand → settle as ONE retried unit. Under backend load the
-  // menu can fail to open OR the expand click can be dropped mid-transition; when
-  // that happens the node stays minimized (`hide-node-content` lingers), so we
-  // re-drive the whole sequence rather than retrying only the menu-open. `toPass`
+  const minimizedNode = page
+    .locator('.react-flow__node:has([data-testid="hide-node-content"])')
+    .first();
+  const moreOptions = page.getByTestId("more-options-modal");
+  const expandButton = page.getByTestId("expand-button-modal");
+
+  // Drive re-select → open-menu → expand → settle as ONE retried unit. `toPass`
   // re-runs the body until the node has actually left the minimized state,
   // replacing the manual attempt loop + fixed `waitForTimeout` (Playwright
   // anti-patterns) with a web-first assertion. The onboarding dialog can reappear
   // a beat after mount, so it is re-dismissed inside the retry.
   await expect(async () => {
     await dismissOnboardingIfPresent(page);
-    await page.getByTestId("more-options-modal").click({ timeout: 5000 });
-    await page.getByTestId("expand-button-modal").click({ timeout: 5000 });
+    // A prior retry may already have expanded the node — nothing minimized left.
+    if ((await minimizedNode.count()) === 0) return;
+    // The ⋮ toolbar mounts only for the selected node; re-select it (a real click
+    // on the node BODY, which lives in the pane, selects correctly) if the toolbar
+    // is gone. This is the recovery for a selection genuinely lost before entry.
+    if ((await moreOptions.count()) === 0) {
+      await minimizedNode.click();
+    }
+    // Open the ⋮ menu by DISPATCHING the pointer events on the trigger element
+    // rather than issuing a real coordinate click — a real click deselects the
+    // node via the ReactFlow pane and destroys the menu (see the header comment,
+    // issue #867). Dispatching directly opens the Radix menu with selection intact.
+    await moreOptions.dispatchEvent("pointerdown");
+    await moreOptions.dispatchEvent("pointerup");
+    await moreOptions.dispatchEvent("click");
+    await expandButton.click({ timeout: 5000 });
     await expect(page.getByTestId("hide-node-content")).toHaveCount(0, {
       timeout: 5000,
     });
