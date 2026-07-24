@@ -39,9 +39,20 @@ const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:7860";
 // is the misconfiguration this gate catches (see #880).
 const PROVIDER_KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"];
 
-// The backend can still be starting when the suite launches; poll briefly.
-const HEALTH_TIMEOUT_MS = 30_000;
+// The backend can still be starting when the suite launches — and, in the
+// pr-validation impacted-specs job, the `collect-models` preflight step drives a
+// full model-toggle sweep that leaves the single backend process transiently
+// wedged (event loop blocked >30s; container alive, just silent) right when this
+// step's globalSetup begins. So poll with a SHORT per-request timeout (a wedged
+// request fails fast and retries instead of consuming the whole budget on one
+// hung GET) over a LONGER overall deadline that rides out the wedge. Capping
+// LANGFLOW_WORKERS alone did not fix this (#922 was insufficient — the wedge is
+// process-wide, not a worker-count issue). Overridable via env for slow boxes.
+const HEALTH_TIMEOUT_MS = Number(process.env.PREFLIGHT_TIMEOUT_MS) || 120_000;
 const HEALTH_INTERVAL_MS = 2_000;
+// Per-request cap so one hung GET can't swallow the whole deadline — the loop
+// must be free to retry across the wedge window.
+const HEALTH_REQUEST_MS = Number(process.env.PREFLIGHT_REQUEST_MS) || 8_000;
 
 const truthy = (v: string | undefined): boolean =>
   !!v && v !== "0" && v.toLowerCase() !== "false";
@@ -55,7 +66,9 @@ async function assertBackendHealthy(ctx: APIRequestContext): Promise<void> {
   let lastError = "";
   for (;;) {
     try {
-      const res = await ctx.get("/api/v1/version");
+      const res = await ctx.get("/api/v1/version", {
+        timeout: HEALTH_REQUEST_MS,
+      });
       if (res.ok()) {
         const body = (await res.json()) as {
           version?: string;
