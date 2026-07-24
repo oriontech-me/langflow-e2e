@@ -765,10 +765,10 @@
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 26 | 1 | 1 | 0 |
 | `mcp/client/` | 12 | 2 | 8 | 0 | 2 |
-| `mcp/server/` | 7 | 0 | 6 | 0 | 1 |
+| `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **452** | **320 (71%)** | **120 (27%)** | **6 (1%)** | **6 (1%)** |
+| **TOTAL** | **452** | **325 (72%)** | **115 (25%)** | **6 (1%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 347 `test()` calls carrying the `@stable` tag, distributed across 140 spec
+> 353 `test()` calls carrying the `@stable` tag, distributed across 144 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1146,6 +1146,14 @@
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
 
+#### mcp/server/
+- [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
+- [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
+- [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
+- [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
+- [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
+- [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
+
 #### ui-ux/
 - [x] select and delete a flow → `actionsMainPage-shard-1.spec.ts`
 - [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
@@ -1177,7 +1185,7 @@
 | `core-functionality/model-provider/` | 0 | 0 |
 | `core-functionality/playground/` | 1 | 0 |
 | `mcp/client/` | 8 | 2 |
-| `mcp/server/` | 6 | 1 |
+| `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 36 | 0 |
 
 ---
