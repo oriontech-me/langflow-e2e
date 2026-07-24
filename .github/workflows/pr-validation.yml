@@ -111,6 +111,14 @@ jobs:
           LANGFLOW_AUTO_LOGIN: "true"
           LANGFLOW_SUPERUSER: langflow
           LANGFLOW_SUPERUSER_PASSWORD: langflow123
+          # Cap the backend to one worker. Langflow's image default is (2*cpu)+1
+          # workers, each holding full in-memory state; under the collect-models
+          # load on the runner they contend until requests hang, and the
+          # impacted-specs preflight then times out on /api/v1/version after
+          # collect-models succeeds (#922, blocked #867). The launch scripts
+          # already default LANGFLOW_WORKERS=1 for this reason (#773) — the
+          # service container was the one place missing it.
+          LANGFLOW_WORKERS: "1"
           # Nightly image defaults LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false
           # (custom-component creation disabled → sidebar button hidden, API
           # 403). Enable it so the custom-component specs exercise the feature.
