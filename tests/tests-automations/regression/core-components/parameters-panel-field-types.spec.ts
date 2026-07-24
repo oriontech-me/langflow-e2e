@@ -533,9 +533,71 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
     },
   );
 
-  // Input list (`SortableListInput` — Read File `storage_location`) is deferred:
-  // its edit mechanic (remove the pre-selected chip → open selection → pick a new
-  // option) diverges across nightly builds — the remove control renders as
-  // `icon-x` on some and is absent on others — and could not be validated on the
-  // build the daily currently runs. Tracked as a follow-up.
+  test(
+    "input list field edit persists",
+    { tag: ["@stable", "@components", "@regression"] },
+    async ({ page, request }) => {
+      const bearer = await getAuthToken(request);
+      const flowId = await openFlowWithComponent(
+        page,
+        request,
+        bearer,
+        "Read File",
+        "add-component-button-read-file",
+        "title-Read File",
+      );
+      // `storage_location` is an advanced SortableListInput — reveal it if this
+      // build hides advanced fields (its title span is present once shown).
+      await ensureAdvancedFieldVisible(
+        page,
+        "title-storage location",
+        "storage_location",
+      );
+
+      // Edit mechanic: remove the pre-selected `Local` chip so the
+      // open-selection button appears, then pick `AWS`. The remove control
+      // renders differently across nightly builds (an `icon-x` svg on some,
+      // absent on others — the #806 blocker), so this is build-robust: only
+      // remove when the open-selection button is not already available, scope the
+      // remove to the `Local` chip's `<li>`, and fall back from `icon-x` to any
+      // control inside the chip.
+      const openButton = page.getByTestId(
+        "button_open_list_selection_sortablelist_sortablelist_storage_location",
+      );
+      if ((await openButton.count()) === 0) {
+        const chip = page
+          .locator(".react-flow__node li")
+          .filter({ hasText: "Local" })
+          .first();
+        const removeIcon = chip.getByTestId("icon-x");
+        if ((await removeIcon.count()) > 0) {
+          await removeIcon.click();
+        } else {
+          await chip.locator("button, svg").last().click();
+        }
+      }
+      await openButton.click();
+      await page.getByTestId("list_item_aws").click();
+
+      // storage_location.value is a list of {name,icon,…} objects (limit=1) —
+      // after switching from the default `Local` to `AWS`, value[0].name is
+      // `AWS` (the react-sortablejs chosen/selected keys are ignored).
+      await expect
+        .poll(
+          async () => {
+            const v = await readFieldValue(
+              request,
+              bearer,
+              flowId,
+              "storage_location",
+            );
+            return Array.isArray(v)
+              ? (v as Array<{ name?: string }>)[0]?.name
+              : undefined;
+          },
+          { timeout: 15000 },
+        )
+        .toBe("AWS");
+    },
+  );
 });
