@@ -1,0 +1,105 @@
+// Unit tests for the duration-balanced shard partitioner (issue #936).
+// Run with: node --test scripts/partition-shards.test.mjs
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  stableFilesFromReport,
+  stableDurationsByFile,
+  buildShards,
+} from "./partition-shards.mjs";
+
+// A minimal Playwright-JSON-report shape: nested suites -> specs -> tests -> results.
+// `tags` live on the spec (without the leading "@"), `duration` on each result (ms).
+const report = {
+  suites: [
+    {
+      file: "a.spec.ts",
+      specs: [
+        { tags: ["stable"], tests: [{ results: [{ duration: 1000 }, { duration: 500 }] }] },
+        { tags: ["regression"], tests: [{ results: [{ duration: 9999 }] }] }, // not stable
+      ],
+    },
+    {
+      file: "b.spec.ts",
+      suites: [
+        {
+          file: "b.spec.ts",
+          specs: [{ tags: ["stable", "agents"], tests: [{ results: [{ duration: 2000 }] }] }],
+        },
+      ],
+    },
+    {
+      file: "c.spec.ts",
+      specs: [{ tags: ["release"], tests: [{ results: [{ duration: 3000 }] }] }], // no stable
+    },
+  ],
+};
+
+test("stableFilesFromReport returns only files carrying an @stable spec, deduped", () => {
+  assert.deepEqual(stableFilesFromReport(report).sort(), ["a.spec.ts", "b.spec.ts"]);
+});
+
+test("stableDurationsByFile sums all attempt durations of stable specs, in seconds", () => {
+  const d = stableDurationsByFile(report);
+  assert.equal(d["a.spec.ts"], 1.5); // 1000 + 500 ms, only the stable spec
+  assert.equal(d["b.spec.ts"], 2.0);
+  assert.equal(d["c.spec.ts"], undefined); // no stable spec
+});
+
+test("buildShards assigns every file exactly once across exactly N shards", () => {
+  const files = ["f1", "f2", "f3", "f4", "f5"];
+  const shards = buildShards(files, {}, 3);
+  assert.equal(shards.length, 3);
+  const flat = shards.flatMap((s) => s.files);
+  assert.equal(flat.length, files.length);
+  assert.deepEqual([...flat].sort(), [...files].sort());
+});
+
+test("buildShards balances by duration (LPT) and beats a naive count-split on skew", () => {
+  // One monster file + many small ones — the pathological case the count-split mishandles.
+  const durations = { big: 300, s1: 10, s2: 10, s3: 10, s4: 10, s5: 10, s6: 10 };
+  const files = Object.keys(durations);
+  const shards = buildShards(files, durations, 4);
+  const load = (s) => s.files.reduce((a, f) => a + durations[f], 0);
+  const loads = shards.map(load);
+  const max = Math.max(...loads), min = Math.min(...loads);
+  // The 300s monster dominates one shard; LPT still packs the rest to minimize the max.
+  assert.equal(max, 300); // monster isolated on its own shard
+  // Remaining 60s spread over 3 shards -> 20 each; naive round-robin by count would
+  // have stacked several small ones with the monster. Assert no shard exceeds monster.
+  assert.ok(loads.every((l) => l <= 300));
+  assert.ok(min >= 20); // small files fully packed, no empty shard
+});
+
+test("buildShards falls back to equal weights when durations are empty (count-balanced)", () => {
+  const files = Array.from({ length: 10 }, (_, i) => `f${i}`);
+  const shards = buildShards(files, {}, 4);
+  const counts = shards.map((s) => s.files.length);
+  assert.ok(Math.max(...counts) - Math.min(...counts) <= 1); // counts within 1
+});
+
+test("buildShards gives unknown files the median known weight, not zero", () => {
+  // known weights: 100, 100, 100 ; unknown 'u' must NOT be treated as 0 (which would
+  // let it pile onto a heavy shard for free). Median = 100, so 'u' is a heavy file.
+  const durations = { a: 100, b: 100, c: 100 };
+  const files = ["a", "b", "c", "u"];
+  const shards = buildShards(files, durations, 2);
+  const eff = { ...durations, u: 100 };
+  const loads = shards.map((s) => s.files.reduce((x, f) => x + eff[f], 0));
+  assert.equal(Math.max(...loads), 200); // 2 heavy files per shard, balanced
+  assert.equal(Math.min(...loads), 200);
+});
+
+test("buildShards handles N greater than file count without dup or crash", () => {
+  const shards = buildShards(["x", "y"], {}, 4);
+  assert.equal(shards.length, 4);
+  assert.equal(shards.flatMap((s) => s.files).length, 2);
+  assert.deepEqual(shards.flatMap((s) => s.files).sort(), ["x", "y"]);
+});
+
+test("buildShards is deterministic (stable tie-break by filename)", () => {
+  const files = ["b", "a", "d", "c"];
+  const a = buildShards(files, {}, 2);
+  const b = buildShards([...files].reverse(), {}, 2);
+  assert.deepEqual(a, b);
+});
