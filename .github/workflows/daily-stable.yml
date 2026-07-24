@@ -41,22 +41,45 @@ permissions:
 jobs:
   prep:
     name: Prepare shard matrix
+    # Runs inside the Playwright image so `--list` has the pinned runner without a
+    # browser download (the GCS leg the runners cannot complete — see #346). No
+    # Langflow service is needed: `--list` collects tests, it does not execute them.
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright:v1.58.2-noble
     outputs:
-      shard_list: ${{ steps.mk.outputs.shard_list }}
+      # `matrix` is the strategy.matrix.include array: one entry per shard, each
+      # carrying its explicit space-separated spec-file list (issue #936).
+      matrix: ${{ steps.mk.outputs.matrix }}
       shard_total: ${{ steps.mk.outputs.shard_total }}
     steps:
-      - name: Compute shard matrix
+      - uses: actions/checkout@v7
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Duration-balanced sharding (#936). Native `--shard=i/N` splits by test
+      # COUNT and piles the heavy real-LLM specs onto one shard that then runs ~2x
+      # longer against the single serialized Langflow backend (the load-timeout
+      # root cause tracked in #773). Instead we enumerate the current @stable spec
+      # files (authoritative — handles added/removed specs) and LPT bin-pack them
+      # by their committed historical durations (reports/spec-durations.json). Cold
+      # start / missing durations: the script degrades to a file-COUNT balance.
+      - name: Compute duration-balanced shard matrix
         id: mk
         shell: bash
+        env:
+          SHARDS: ${{ inputs.shards || '4' }}
         run: |
-          N="${{ inputs.shards || '4' }}"
+          N="$SHARDS"
           case "$N" in ''|*[!0-9]*) N=4 ;; esac      # non-numeric → default 4
           if [ "$N" -lt 1 ]; then N=4; fi
-          LIST="$(seq -s, 1 "$N")"                    # 1,2,3,4
-          echo "shard_list=[$LIST]" >> "$GITHUB_OUTPUT"
-          echo "shard_total=$N"    >> "$GITHUB_OUTPUT"
-          echo "shards=$N list=[$LIST]"
+          npx playwright test --grep "@stable" --list --reporter=json > /tmp/stable-list.json
+          MATRIX="$(node scripts/partition-shards.mjs matrix /tmp/stable-list.json reports/spec-durations.json "$N")"
+          # Extract just the include array for strategy.matrix.include.
+          INCLUDE="$(node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(JSON.stringify(JSON.parse(d).include)))' <<<"$MATRIX")"
+          echo "matrix=$INCLUDE"  >> "$GITHUB_OUTPUT"
+          echo "shard_total=$N"   >> "$GITHUB_OUTPUT"
 
   test:
     name: "Shard ${{ matrix.shard }}/${{ needs.prep.outputs.shard_total }} (${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }})"
@@ -65,8 +88,11 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      # One job per shard, each carrying its own spec-file list from the
+      # duration-balanced partition (prep.outputs.matrix). `matrix.shard` is the
+      # 1-based index; `matrix.files` is the space-separated spec-file list (#936).
       matrix:
-        shard: ${{ fromJSON(needs.prep.outputs.shard_list) }}
+        include: ${{ fromJSON(needs.prep.outputs.matrix) }}
     outputs:
       langflow_version: ${{ steps.lfver.outputs.version }}
 
@@ -308,7 +334,11 @@ jobs:
         # slice in the reporter's onExit() (per-run upload — no Flakiness merge
         # needed). OIDC auth for the upload comes from the workflow-level
         # `id-token: write` permission, inherited by this job.
-        run: npx playwright test --grep "@stable" --pass-with-no-tests --shard=${{ matrix.shard }}/${{ needs.prep.outputs.shard_total }}
+        # Duration-balanced sharding (#936): this shard runs the explicit spec-file
+        # list computed by prep (matrix.files), NOT Playwright's `--shard=i/N`
+        # count-split. `--grep @stable` still scopes to the stable tests within
+        # those files; `--pass-with-no-tests` tolerates an empty shard (N > files).
+        run: npx playwright test --grep "@stable" --pass-with-no-tests ${{ matrix.files }}
         env:
           CI: "true"
           PW_SHARD_FILE_LEVEL: "1"
@@ -487,6 +517,16 @@ jobs:
           echo "HTTP $code"; cat /tmp/resp.json || true
           case "$code" in 200|201) echo "Recorded.";; *) echo "::warning::QA platform POST failed ($code)";; esac
 
+      # Refresh the duration table that drives duration-balanced sharding (#936).
+      # GREEN scheduled runs ONLY: a red run's per-spec times are distorted by
+      # retries and timeouts, which would poison the next partition — so we only
+      # trust a clean run's timings (stricter than the history file, which records
+      # every run). The committed reports/spec-durations.json is read by the prep
+      # job on the next daily; a missing/stale entry just falls back to a count balance.
+      - name: Refresh spec durations (green runs only)
+        if: needs.test.result == 'success' && github.event_name == 'schedule'
+        run: node scripts/partition-shards.mjs extract results.json > reports/spec-durations.json
+
       # Long-lived run history: append one JSON line per scheduled run to
       # reports/daily-history.jsonl and commit it back to main. See
       # reports/README.md for schema and queries. Runs even on failure so
@@ -517,13 +557,19 @@ jobs:
           # re-declare it here, or git reports "fatal: not in a git directory"
           # and the commit/push back to main never happens (see issue #385).
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          if git diff --quiet reports/daily-history.jsonl 2>/dev/null; then
-            echo "No history change to commit."
+          # `git status --porcelain` (not `git diff --quiet`) so a brand-new,
+          # still-UNTRACKED reports/spec-durations.json (first green run) is
+          # detected too — `git diff` ignores untracked files.
+          if [ -z "$(git status --porcelain reports/daily-history.jsonl reports/spec-durations.json 2>/dev/null)" ]; then
+            echo "No history/durations change to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add reports/daily-history.jsonl
+          # Present only after a green run's "Refresh spec durations" step; a no-op
+          # add on a red run (file unchanged / already tracked).
+          [ -f reports/spec-durations.json ] && git add reports/spec-durations.json
           git commit -m "chore(history): record daily run ${{ github.run_id }} [skip ci]"
           # Push with rebase-retry. The suite runs ~35 min, and main routinely
           # advances during that window (merged PRs, the coverage-bot [skip ci]
