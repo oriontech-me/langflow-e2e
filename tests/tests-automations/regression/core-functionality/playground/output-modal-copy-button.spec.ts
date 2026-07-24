@@ -1,24 +1,7 @@
-import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
-
-// Expand the currently focused node from minimized to full view. Chat Input
-// defaults to `minimized = True` (see lfx/components/input_output/chat.py);
-// without expanding, the run button and inspector fields rendered on the node
-// body are not present in the DOM. Idempotent: if the node is already expanded
-// (no `hide-node-content` in the DOM) the helper is a no-op.
-async function expandFocusedNode(page: Page) {
-  if ((await page.getByTestId("hide-node-content").count()) === 0) return;
-  await page.getByTestId("more-options-modal").click();
-  await expect(page.getByTestId("expand-button-modal")).toBeVisible({
-    timeout: 10000,
-  });
-  await page.getByTestId("expand-button-modal").click();
-  await expect(page.getByTestId("hide-node-content")).toHaveCount(0, {
-    timeout: 5000,
-  });
-}
+import { expandFocusedNode } from "../../../../helpers/ui/expand-focused-node";
 
 test.describe("Output Modal — Copy Button", () => {
   test.describe.configure({ mode: "serial" });
