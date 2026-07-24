@@ -103,10 +103,18 @@ for (const {
   invalidKey,
 } of targets) {
   test.describe.serial(`Invalid Auth Error — ${provider}`, () => {
+    // #933: the google variant is a recurrent flake (dailies 2026-07-22, 2026-07-24).
+    // The @stable tag is shared across all provider variants of this parameterized
+    // test (one test() call, one tag), so it cannot be dropped for google alone
+    // without also de-stabling openai/anthropic. Quarantine google via an in-body
+    // test.fixme instead: the daily still grep-selects @stable but skips google,
+    // while openai/anthropic keep running. Restoration = remove this fixme (#933).
+    const quarantined = provider === "google";
     test(
       `should display error message when using invalid authentication for provider ${provider}`,
       { tag: ["@stable", "@regression", "@model-provider", "@agents"] },
       async ({ page }) => {
+        test.fixme(quarantined, "#933: recurrent invalid-auth flake (google)");
 
         await page.goto("/");
         await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
