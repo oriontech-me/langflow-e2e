@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 348 `test()` calls carrying the `@stable` tag, distributed across 140 spec
+> 347 `test()` calls carrying the `@stable` tag, distributed across 140 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -811,7 +811,6 @@
 - [x] POST creates folder and returns ID and name → `api-folders-crud.spec.ts`
 - [x] GET lists folders and includes the created one → `api-folders-crud.spec.ts`
 - [x] DELETE removes folder and it no longer appears in listing → `api-folders-crud.spec.ts`
-- [x] moving flow between folders via PATCH folder_id updates association → `api-folders-crud.spec.ts`
 - [x] GET /health_check returns 200 with status ok → `api-health-check.spec.ts`
 - [x] GET /health_check returns db ok → `api-health-check.spec.ts`
 - [x] GET /health_check responds within 5 seconds → `api-health-check.spec.ts`
