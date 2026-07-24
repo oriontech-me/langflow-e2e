@@ -112,9 +112,10 @@ test.describe("Folder (Projects) CRUD via API", () => {
     },
   );
 
-  test(
+  // quarantined for #932 — recurrent flaky association assertion (dailies 2026-07-15, 2026-07-24)
+  test.fixme(
     "moving flow between folders via PATCH folder_id updates association",
-    { tag: ["@stable", "@release", "@api", "@regression"] },
+    { tag: ["@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
