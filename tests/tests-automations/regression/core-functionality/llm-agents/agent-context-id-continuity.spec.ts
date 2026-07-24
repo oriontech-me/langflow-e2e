@@ -473,7 +473,7 @@ for (const { label, options, skipReason } of targets) {
 test.describe("Context ID continuity — retrieval layer (model-free)", () => {
   test(
     "context-scoped retrieval returns all turns of the context and not the untagged control",
-    { tag: ["@stable", "@regression", "@agents", "@components"] },
+    { tag: ["@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedContextSession(request);
       try {

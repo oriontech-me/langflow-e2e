@@ -518,7 +518,7 @@ test.describe.configure({ mode: "serial" });
 test.describe("Context ID isolation — retrieval layer (model-free)", () => {
   test(
     "mirrored context-scoped retrievals return only their own context's messages",
-    { tag: ["@stable", "@regression", "@agents", "@components"] },
+    { tag: ["@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedTwoContextSession(request);
       try {

@@ -171,7 +171,7 @@ test.describe("Ollama Provider", () => {
 
   test(
     "the Ollama component lists the local model live and executes the flow",
-    { tag: ["@stable", "@regression", "@model-provider", "@components", "@playground"] },
+    { tag: ["@regression", "@model-provider", "@components", "@playground"] },
     async ({ page, request }) => {
       const probe = await probeOllama(request);
       test.skip(!probe.reachable, probe.reason);

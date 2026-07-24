@@ -166,7 +166,7 @@ function countOccurrences(text: string, needle: string): number {
 test.describe("Message History n_messages limit", () => {
   test(
     "a small n_messages truncates retrieval to the most recent messages",
-    { tag: ["@stable", "@regression", "@agents", "@components"] },
+    { tag: ["@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedFlowSession(request);
       try {
@@ -190,7 +190,7 @@ test.describe("Message History n_messages limit", () => {
 
   test(
     "causal control — a large n_messages retrieves the full seeded history",
-    { tag: ["@stable", "@regression", "@agents", "@components"] },
+    { tag: ["@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedFlowSession(request);
       try {
