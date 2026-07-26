@@ -46,6 +46,17 @@ Include:
 - The locator/selector being waited on
 - The exact error message or timeout signature
 
+**Name every spec you are claiming, in backticked repo-relative form, on every
+`daily-failure` issue** — in this table at triage time, and in follow-up comments
+as the scope grows. The QA Platform parses those paths to decide whether a failure
+on a run page is already being worked on, and shows a `tracked · #NNN` chip on the
+matching failures. Comments count as much as the body: a broad investigation
+naturally accumulates specs over time (see #773, which took on the whole
+`llm-agents` cluster across four comments), and that is the expected shape — not
+something to fold back into the opening post. What does *not* work is naming a spec
+in prose only, without the path: `agent-max-tokens` alone is unmatchable, while
+`` `core-functionality/llm-agents/agent-max-tokens.spec.ts:249` `` is not.
+
 #### Preliminary read (descriptive — NOT a verdict)
 
 Observations that *describe* the failure without claiming root cause. Format:
