@@ -14,28 +14,26 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 /**
  * MCP Client – Gemini tool-calling regression (upstream Langflow #440).
  *
- * Guards the Gemini × MCP tool-calling path IN ISOLATION. On 1.11.0
- * gemini-2.5-flash calls native Langflow tools (URL, Web Search, Calculator)
- * but silently does NOT invoke MCP tools (`echo`) — bug #440. The generic
- * mcp-client-agent.spec.ts could not surface this: its three provider variants
- * share a file-scope `mode: "serial"` group, the OpenAI variant runs first and
- * flakes daily on an unrelated `toBeHidden` timeout, and in serial mode a
- * failure SKIPS every later test — so the Gemini variant (the only one that
- * exercises #440) never ran. This file is deliberately standalone (no shared
- * serial group), pins Gemini and names it in the title (self-attributing
- * signal). See docs/mcp/client/mcp-client-agent-gemini-tool-regression.md.
+ * Covers the Gemini × MCP tool-calling path IN ISOLATION. Historically (1.11.0,
+ * gemini-2.5-flash) Gemini called native Langflow tools (URL, Web Search,
+ * Calculator) but silently did NOT invoke MCP tools (`echo`) — bug #440. The
+ * generic mcp-client-agent.spec.ts could not surface Gemini specifically: its
+ * provider variants share a file-scope `mode: "serial"` group where an earlier
+ * variant's failure SKIPS the later ones, so the Gemini variant could be masked.
+ * This file is deliberately standalone (no shared serial group), pins Gemini and
+ * names it in the title (self-attributing signal).
+ * See docs/mcp/client/mcp-client-agent-gemini-tool-regression.md.
  *
  * DIRECTION OF THE ASSERT (read before "fixing" this test):
- * While #440 is OPEN, this test asserts the CURRENTLY-BROKEN behavior — the
- * agent runs and answers but invokes NO `echo` MCP tool — via the monitor API
- * (backend truth, immune to frontend selector drift). It therefore PASSES today
- * and FLIPS RED the moment Langflow fixes #440 (an `echo` tool_use block starts
- * being persisted). A red here is the promote signal: remove this guard, fold
- * Gemini back into mcp-client-agent's coverage, promote to @stable.
- * `test.fail()` was deliberately rejected: it converts ANY failure (a broken
- * bootstrap, a down instance, an unregistered MCP server) into a green
- * "expected failure", masking real breakage — proven live during authoring.
- * Here the setup asserts stay LOUD: infra breakage goes genuinely red.
+ * #440 is FIXED as of Langflow 1.12.0.dev5 (validated under #947, gemini-flash-
+ * latest, 3/3 deterministic). This test now asserts the FIXED behavior — the
+ * agent runs, answers, AND invokes the `echo` MCP tool at least once — via the
+ * monitor API (backend truth, immune to frontend selector drift). It is a
+ * forward regression: it FLIPS RED if Langflow ever regresses Gemini × MCP
+ * tool-calling (echo tool_use count drops back to 0). `test.fail()` was
+ * deliberately rejected: it converts ANY failure (a broken bootstrap, a down
+ * instance, an unregistered MCP server) into a green "expected failure", masking
+ * real breakage. Here the setup asserts stay LOUD: infra breakage goes red.
  */
 
 if (!process.env.CI) {
@@ -44,7 +42,13 @@ if (!process.env.CI) {
 
 // Worker- and timestamp-suffixed name prevents cross-file races with the other
 // specs that also register an "everything" MCP server.
-const MCP_SERVER_NAME = `everything-gemini-${process.env.TEST_WORKER_INDEX ?? "0"}-${Date.now()}`;
+// Langflow silently truncates a registered MCP server name to 30 chars. A
+// base-10 `Date.now()` suffix pushed `everything-gemini-<worker>-<ts>` to 33
+// chars, so the stored name was truncated and the sidebar testid
+// (`add-component-button-<name>`) never matched the full name — the spec timed
+// out registering the server, and afterEach then failed to delete it (leaking an
+// orphan MCP server). A base-36 timestamp keeps the name ≤ 30 chars.
+const MCP_SERVER_NAME = `everything-gemini-${process.env.TEST_WORKER_INDEX ?? "0"}-${Date.now().toString(36)}`;
 const MCP_JSON_CONFIG = JSON.stringify({
   mcpServers: {
     [MCP_SERVER_NAME]: {
@@ -149,8 +153,8 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
   });
 
   test(
-    "Gemini runs but invokes no echo MCP tool (guards upstream #440)",
-    { tag: ["@mcp", "@agents", "@regression", "@model-provider"] },
+    "Gemini invokes the echo MCP tool (regression for fixed upstream #440)",
+    { tag: ["@mcp", "@agents", "@regression", "@model-provider", "@stable"] },
     async ({ page, request }) => {
       test.skip(!!skipReason, skipReason ?? "");
       test.skip(
@@ -271,7 +275,7 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
         ).toBeVisible({ timeout: 10000 });
       });
 
-      await test.step("#440: agent completes a turn but invokes no echo MCP tool", async () => {
+      await test.step("#440 (fixed): agent completes a turn and invokes the echo MCP tool", async () => {
         await waitForAgentToFinish(page);
 
         // Poll the monitor until the agent turn for this session is persisted —
@@ -295,16 +299,16 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
           "Agent must produce a final reply containing the echoed payload",
         ).toMatch(new RegExp(ECHO_PAYLOAD, "i"));
 
-        // The #440 flip (backend truth, no frontend selector drift): while the
-        // bug is OPEN, Gemini invokes NO `echo` MCP tool → count is 0 and this
-        // passes. When Langflow FIXES #440, an `echo` tool_use block starts
-        // being persisted → count > 0 → this FAILS. A red here means: #440 is
-        // fixed — remove this guard and promote Gemini into mcp-client-agent.
+        // The #440 fix (backend truth, no frontend selector drift): #440 is
+        // FIXED, so Gemini persists at least one `echo` MCP tool_use block for
+        // this turn → count > 0. This is a forward regression: if Langflow ever
+        // regresses Gemini × MCP tool-calling, the count drops back to 0 and
+        // this FAILS loudly (see spec doc / header for the #440 history).
         expect(
           turn!.echoToolUseCount,
-          "EXPECTED while Langflow #440 is open: Gemini invoked NO 'echo' MCP tool. " +
-            "If this fails, #440 is FIXED — promote this guard (see spec doc).",
-        ).toBe(0);
+          "Gemini must invoke the 'echo' MCP tool at least once (regression for fixed #440). " +
+            "A 0 count means Gemini × MCP tool-calling regressed to the #440 state.",
+        ).toBeGreaterThan(0);
       });
     },
   );

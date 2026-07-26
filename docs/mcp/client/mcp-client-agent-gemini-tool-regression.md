@@ -1,6 +1,6 @@
 # MCP Client – Gemini Tool-Calling Regression (#440)
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 **Tracking issue:** oriontech-me/langflow-e2e #858 · **Upstream bug:** langflow-ai/langflow #440
 
 ---
@@ -35,12 +35,13 @@ Gemini pinned and named in the test title (self-attributing signal), and a
 unique assertion read from the monitor API (backend truth, immune to frontend
 selector drift and to the `toBeHidden` flake).
 
-**Direction of the assert.** While #440 is **open upstream**, the test asserts
-the **currently-broken** behavior — the agent runs and answers but invokes **no**
-`echo` MCP tool — and therefore **passes** today. It **flips red the moment
-Langflow fixes #440** (an `echo` tool_use block starts being persisted): a red
-here is the promote signal — remove this guard and fold Gemini back into
-`mcp-client-agent`'s coverage.
+**Direction of the assert.** #440 is **FIXED** as of Langflow **1.12.0.dev5**
+(validated under #947, `gemini-flash-latest`, 3/3 deterministic: `echoToolUseCount`
+= 1 with the reply carrying the echoed payload). The test now asserts the
+**fixed** behavior — the agent runs, answers, **and invokes** the `echo` MCP tool
+at least once. It is a **forward regression**: it flips red if Langflow ever
+regresses Gemini × MCP tool-calling (the `echo` tool_use count drops back to 0,
+the #440 state).
 
 `test.fail()` was deliberately **rejected**. It converts *any* failure (a broken
 bootstrap, a down instance, an unregistered MCP server) into a green "expected
@@ -54,14 +55,11 @@ check encodes the expected #440 state.
 
 ## Tags *(required)*
 
-`@mcp` `@agents` `@regression` `@model-provider`
+`@mcp` `@agents` `@regression` `@model-provider` `@stable`
 
-> **No `@stable` yet (intentional).** The test genuinely passes while #440 is
-> open (it asserts the broken state), so it is `@stable`-eligible in principle —
-> but it is held out of `@stable` until team-validated against a nightly with the
-> UI served, since authoring could only validate it statically (typecheck + lint)
-> against an API-only local instance. Promote after one green nightly run.
-> Absence tracked by upstream #440.
+> **`@stable` — promoted under #947** after #440 was confirmed fixed on
+> 1.12.0.dev5 and the positive assertion (Gemini invokes `echo`) ran clean
+> `--workers=1 --retries=0` with a per-test force-failure check.
 
 ---
 
@@ -84,22 +82,21 @@ check encodes the expected #440 state.
    agent turn for this session (keyed by the nonce) is persisted.
 8. Assert (pipeline ran): the final reply contains the echoed payload
    (`hello mcp`).
-9. Assert (**the #440 flip**): the count of persisted `tool_use` blocks named
-   `/echo/i` for the session is **0** — Gemini invoked no `echo` MCP tool.
+9. Assert (**the #440 fix**): the count of persisted `tool_use` blocks named
+   `/echo/i` for the session is **> 0** — Gemini invoked the `echo` MCP tool.
 
 ---
 
 ## Validation criterion *(required)*
 
-- **While #440 open:** step 8 passes (a reply with `hello mcp` is produced) **and**
-  step 9's `echoToolUseCount === 0` holds → the test **passes**, documenting the
-  bug. A false pass — the count reading 0 because the pipeline never ran — is
-  prevented by step 8 (the persisted reply proves the agent completed a turn, so
-  a tool call was genuinely possible) and by the loud setup asserts (a broken
-  bootstrap / MCP registration fails before reaching step 9).
-- **When #440 is fixed:** an `echo` `tool_use` block is persisted →
-  `echoToolUseCount > 0` → step 9 **fails loudly**, signalling that the guard
-  must be removed and Gemini folded back into `mcp-client-agent` coverage.
+- **#440 fixed (current):** step 8 passes (a reply with `hello mcp` is produced)
+  **and** step 9's `echoToolUseCount > 0` holds → the test **passes**, proving
+  Gemini invoked the `echo` MCP tool. A false pass is prevented by step 8 (the
+  persisted reply proves the agent completed a turn) and by the loud setup asserts
+  (a broken bootstrap / MCP registration fails before reaching step 9).
+- **If #440 regresses:** no `echo` `tool_use` block is persisted →
+  `echoToolUseCount === 0` → step 9 **fails loudly**, signalling Gemini × MCP
+  tool-calling has regressed to the #440 state.
 
 ---
 
