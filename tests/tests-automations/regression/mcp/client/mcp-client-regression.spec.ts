@@ -130,7 +130,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
 
   test(
     "configures MCP server via JSON, selects echo tool, runs it, and verifies output",
-    { tag: ["@mcp", "@regression"] },
+    { tag: ["@mcp", "@regression", "@stable"] },
     async ({ page }) => {
       // Allow backend errors — npx server may return transient errors while starting
       (page as any).allowFlowErrors();

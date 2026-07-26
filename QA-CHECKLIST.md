@@ -642,16 +642,16 @@
 ### mcp/client/ — Tool and Context Consumption
 
 #### 13.1 MCP Client
-- [-] Configure connection with external MCP server (stdio or HTTP) → `mcp/client/mcp-client-regression.spec.ts`
-- [-] List available tools via MCP protocol → `mcp/client/mcp-client-regression.spec.ts`
-- [-] Execute MCP server tool and receive result in flow → `mcp/client/mcp-client-regression.spec.ts`
-- [-] MCP server connection error — unreachable server produces empty tool dropdown → `mcp/client/mcp-client-regression.spec.ts`
-- [-] Configure connection via HTTP form tab → `mcp/client/mcp-client-regression.spec.ts`
-- [-] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
+- [x] Configure connection with external MCP server (stdio or HTTP) → `mcp/client/mcp-client-regression.spec.ts`
+- [x] List available tools via MCP protocol → `mcp/client/mcp-client-regression.spec.ts`
+- [x] Execute MCP server tool and receive result in flow → `mcp/client/mcp-client-regression.spec.ts`
+- [x] MCP server connection error — unreachable server produces empty tool dropdown → `mcp/client/mcp-client-regression.spec.ts`
+- [x] Configure connection via HTTP form tab → `mcp/client/mcp-client-regression.spec.ts`
+- [x] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
 - [x] Duplicate MCP server registration returns 409 Conflict → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`
-- [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
-- [-] Gemini × MCP tool-calling regression — agent runs but invokes no echo MCP tool (guards upstream #440) → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
+- [x] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
+- [x] Gemini × MCP tool-calling regression — agent invokes the echo MCP tool (regression for fixed upstream #440) → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
 - [ ] List available resources via MCP protocol (client not-implementable on 1.11.x — MCPTools component and v2 client API expose tools only; server-side resources covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
 - [ ] Consume resource URI and inject content into flow (client not-implementable on 1.11.x — no client resource surface; server-side read covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
 
