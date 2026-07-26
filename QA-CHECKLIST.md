@@ -767,8 +767,8 @@
 | `mcp/client/` | 12 | 10 | 0 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
-| `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **452** | **333 (74%)** | **107 (24%)** | **6 (1%)** | **6 (1%)** |
+| `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
+| **TOTAL** | **452** | **336 (74%)** | **104 (23%)** | **6 (1%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 356 `test()` calls carrying the `@stable` tag, distributed across 146 spec
+> 365 `test()` calls carrying the `@stable` tag, distributed across 150 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1169,7 +1169,16 @@
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
+- [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
 - [x] User should be able to interact notifications tab → `notifications.spec.ts`
+- [x] Settings General section loads and shows its header → `settings-general-section.spec.ts`
+- [x] Settings Messages section is accessible → `settings-general-section.spec.ts`
+- [x] Settings Shortcuts section is accessible and lists shortcuts → `settings-general-section.spec.ts`
+- [x] Settings > Messages displays sent messages in correct order with working filters → `settings-message-history.spec.ts`
+- [x] user can access Settings page from the profile menu → `settings-navigation.spec.ts`
+- [x] Settings page shows all main sections in sidebar navigation → `settings-navigation.spec.ts`
+- [x] Settings Shortcuts section lists keyboard shortcuts → `settings-navigation.spec.ts`
+- [x] Settings Model Providers section loads with provider configuration → `settings-navigation.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
 
 ---
@@ -1204,4 +1213,4 @@
 | `flow-functionality/` | 1 | 0 |
 | `core-functionality/project-management/` | 7 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
-| `ui-ux/` — Settings | 3 | 0 |
+| `ui-ux/` — Settings | 0 | 0 |
