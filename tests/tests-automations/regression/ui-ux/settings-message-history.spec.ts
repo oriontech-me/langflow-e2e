@@ -9,9 +9,11 @@
  *
  * Expected Results:
  * - All sent and received messages appear in the message history
- * - Messages are displayed newest first (the backend orders by
- *   timestamp DESC by design — monitor.py get_messages always applies
- *   .desc(); verified in the 1.11 nightly source, #616)
+ * - Messages are displayed oldest first (chronological): 1.12 replaced the
+ *   hardcoded .desc() in monitor.py get_messages with order_by/order query
+ *   params defaulting to timestamp/ASC, so the grid — which renders the API
+ *   order — now starts with the oldest message (the 1.11 newest-first premise
+ *   from #616 is dead by design)
  * - All columns display correct information: timestamp, text, sender, sender_name,
  *   session_id, files, id, flow_id, properties, category, content_blocks
  * - Message content matches what was sent/received in Playground
@@ -69,7 +71,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "Settings > Messages displays sent messages in correct order with working filters",
-  { tag: ["@release", "@workspace", "@api", "@settings"] },
+  { tag: ["@stable", "@release", "@workspace", "@api", "@settings"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.OPENAI_API_KEY,
@@ -178,17 +180,21 @@ test(
       expect(renderedColumnIds, `column "${column}" missing from the messages grid`).toContain(column);
     }
 
-    // Steps 11-13: Verify display order — newest first. The backend orders
-    // messages by timestamp DESC by design (monitor.py get_messages always
-    // applies .desc(); verified in the 1.11 nightly source — #616), and the
-    // grid renders the API order.
+    // Steps 11-13: Verify display order — OLDEST first (chronological). The
+    // grid renders the API order, and 1.12 flipped that order on purpose:
+    // `monitor.py` `get_messages` no longer hardcodes `.desc()` — it now takes
+    // `order_by` (default `timestamp`) and `order` (default **ASC**), validated
+    // against ALLOWED_MESSAGE_ORDER_FIELDS / {ASC,DESC}, and applies
+    // `order_col.desc()` only when `order == DESC` (verified in the shipped
+    // 1.12.0.dev5 source; the newest-first premise #616 encoded for 1.11 is
+    // dead by design, not by regression).
     const timestampCells = page.locator('.ag-cell[col-id="timestamp"]');
     await expect(timestampCells.first()).toBeVisible({ timeout: 10000 });
 
     const rowCount = await timestampCells.count();
     expect(rowCount).toBeGreaterThanOrEqual(4); // at least: 2 user msgs + 2 agent responses
 
-    // Collect timestamps and verify descending (newest-first) order
+    // Collect timestamps and verify ascending (oldest-first) order
     const timestamps: number[] = [];
     for (let i = 0; i < rowCount; i++) {
       const rawTimestamp = await timestampCells.nth(i).textContent();
@@ -199,8 +205,15 @@ test(
         }
       }
     }
+    expect(
+      timestamps.length,
+      "timestamp cells must be parseable, otherwise the order check is vacuous",
+    ).toBeGreaterThanOrEqual(4);
     for (let i = 1; i < timestamps.length; i++) {
-      expect(timestamps[i]).toBeLessThanOrEqual(timestamps[i - 1]);
+      expect(
+        timestamps[i],
+        `row ${i} is older than row ${i - 1} — the grid is not in chronological order`,
+      ).toBeGreaterThanOrEqual(timestamps[i - 1]);
     }
 
     // Step 14: Verify sender values — "User" rows and "Machine"/"AI" rows exist
@@ -230,6 +243,19 @@ test(
     const joinedTexts = allTexts.join(" ");
     expect(joinedTexts).toContain(FIRST_MESSAGE);
     expect(joinedTexts).toContain(SECOND_MESSAGE);
+
+    // Direction-sensitive companion to the timestamp check: monotonic
+    // timestamps alone also hold for a reversed grid, so pin the two prompts to
+    // their chronological positions — the first message sent must render above
+    // the second one.
+    const firstMessageRow = allTexts.findIndex((t) => t === FIRST_MESSAGE);
+    const secondMessageRow = allTexts.findIndex((t) => t === SECOND_MESSAGE);
+    expect(firstMessageRow, `"${FIRST_MESSAGE}" row not found`).toBeGreaterThanOrEqual(0);
+    expect(secondMessageRow, `"${SECOND_MESSAGE}" row not found`).toBeGreaterThanOrEqual(0);
+    expect(
+      firstMessageRow,
+      "the first message sent must render above the second one (oldest-first)",
+    ).toBeLessThan(secondMessageRow);
 
     // Steps 16-18: Filter by sender "Equals User"
     // The header renders a dedicated filter button (.ag-header-cell-filter-button)

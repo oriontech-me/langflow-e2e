@@ -1,6 +1,6 @@
 # Settings → Messages — history shows sent messages in order with working filters
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev6`)
 
 ---
 
@@ -17,10 +17,15 @@ conversation, the test validates that:
    new columns (1.11 added `context_id`, `edit`, `duration`,
    `session_metadata`) must not fail the test; a promised column *removed*
    must.
-2. **Messages appear newest first** — the backend orders by timestamp DESC
-   by design (`monitor.py` `get_messages` always applies `.desc()`; verified
-   in the 1.11 nightly source) and the grid renders the API order. The old
-   spec asserted ascending ("oldest first"), a premise that no longer holds.
+2. **Messages appear oldest first (chronological)** — the grid renders the
+   API order, and **1.12 flipped that order on purpose**: `monitor.py`
+   `get_messages` no longer hardcodes `.desc()`; it now exposes `order_by`
+   (default `timestamp`) and `order` (default **`ASC`**), validated against
+   `ALLOWED_MESSAGE_ORDER_FIELDS` / `{ASC,DESC}`, and applies
+   `order_col.desc()` only when `order == DESC` (verified in the shipped
+   `1.12.0.dev5` source). The newest-first premise this spec carried for 1.11
+   (#616) is dead **by design**, not by regression — see the ordering-history
+   note below.
 3. **Content integrity** — both sent prompts appear verbatim in the `text`
    column; `sender` distinguishes `User` from the machine/agent side.
 4. **Column filters work** — filtering `sender` by "Equals User" leaves only
@@ -43,11 +48,11 @@ per-column DOM visibility.
 
 ## Tags *(required)*
 
-`@release` `@workspace` `@api` `@settings`
+`@stable` `@release` `@workspace` `@api` `@settings`
 
-No `@stable`: the spec was broken on clean main when triaged (#616) and is
-restored under its original tag set; promotion is a separate
-validate-&-promote decision after the fix has soaked.
+Promoted to `@stable` in #946 after the ordering premise was re-derived from the
+1.12 backend (`order=ASC` default) and the spec ran clean in a 3x `--retries=0`
+burst on nightly `1.12.0.dev6`.
 
 ---
 
@@ -74,7 +79,11 @@ validate-&-promote decision after the fix has soaked.
    `.ag-header-cell` `col-id`; assert the collected set contains all 11
    promised columns (superset-tolerant).
 6. **Order:** read all `timestamp` cells (≥ 4 rows expected: 2 user + 2
-   agent); parse and assert descending (newest-first) order.
+   agent); assert they parse (≥ 4 parseable, so the check is never vacuous)
+   and are **monotonically ascending**. Monotonicity alone also holds for a
+   reversed grid, so it is paired with a direction-sensitive check: the row
+   index of `Hello, how are you?` must be **less than** the row index of
+   `What is 2+2?` in the `text` column.
 7. **Content:** `sender` column contains `User` and a machine/agent value;
    `text` column contains both prompts verbatim.
 8. **Filter:** click the `sender` header's dedicated filter button
@@ -88,8 +97,9 @@ validate-&-promote decision after the fix has soaked.
 ## Validation criterion *(required)*
 
 - The collected column-id set ⊇ the 11 promised columns.
-- Timestamps render in descending (newest-first) order; ≥ 4 rows after two
-  exchanges.
+- Timestamps render in ascending (oldest-first) order, with ≥ 4 parseable
+  timestamp cells after two exchanges; the first prompt sent renders above the
+  second one.
 - Both prompts present verbatim; `User` and machine senders both present.
 - "Equals User" filter yields only User rows; clearing restores the full set.
 
