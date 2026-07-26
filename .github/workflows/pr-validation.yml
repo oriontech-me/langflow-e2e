@@ -75,6 +75,7 @@ jobs:
     outputs:
       specs: ${{ steps.diff.outputs.specs }}
       has_specs: ${{ steps.diff.outputs.has_specs }}
+      needs_models: ${{ steps.diff.outputs.needs_models }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -94,6 +95,31 @@ jobs:
             echo "has_specs=false" >> "$GITHUB_OUTPUT"
           fi
           echo "specs=$SPECS" >> "$GITHUB_OUTPUT"
+
+          # Decide whether the impacted specs need provider model data. Only
+          # LLM-dependent specs consume collect-models output (models.json), so
+          # running "Collect models" for an LLM-free PR needlessly gates it on
+          # provider key health — a provider billing/quota outage then reddens a
+          # PR that never touches that provider (the recurring #915/#910/#911
+          # class). A spec needs models if it lives in an always-LLM area
+          # (llm-agents/ or model-provider/) OR its content references a
+          # collect-models consumer (getTestTargets / SimpleAgentTemplatePage /
+          # provider-setup / models.json / MODEL_TEST_ID) — this catches the
+          # cross-area consumers (mcp/client agent specs, the loop-component
+          # regression) without a blanket path rule, and leaves LLM-free specs
+          # (e.g. mcp/server/*) out.
+          NEEDS_MODELS=false
+          for f in $SPECS; do
+            case "$f" in
+              tests/tests-automations/regression/core-functionality/llm-agents/*|tests/tests-automations/regression/core-functionality/model-provider/*)
+                NEEDS_MODELS=true; break;;
+            esac
+            if grep -qE 'getTestTargets|SimpleAgentTemplatePage|provider-setup|models\.json|MODEL_TEST_ID' "$f" 2>/dev/null; then
+              NEEDS_MODELS=true; break
+            fi
+          done
+          echo "Needs provider models: $NEEDS_MODELS"
+          echo "needs_models=$NEEDS_MODELS" >> "$GITHUB_OUTPUT"
 
   e2e:
     name: Run impacted E2E specs
@@ -160,7 +186,11 @@ jobs:
       # ~1-token completion and writes only ACCESSIBLE models, so agent specs
       # resolve a usable model — matching what the daily validates (no
       # divergence). Same provider keys as daily-stable.yml.
+      # Skipped when no impacted spec needs provider model data (see detect-specs
+      # → needs_models). Keeps a provider billing/quota outage from reddening a
+      # PR whose specs never use that provider (#915/#910/#911 class).
       - name: Collect models
+        if: needs.detect-specs.outputs.needs_models == 'true'
         env:
           CI: "true"
           # This run is what IMPORTS the provider credentials into Langflow, so
