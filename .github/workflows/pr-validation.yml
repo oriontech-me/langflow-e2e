@@ -104,17 +104,19 @@ jobs:
           # class). A spec needs models if it lives in an always-LLM area
           # (llm-agents/ or model-provider/) OR its content references a
           # collect-models consumer (getTestTargets / SimpleAgentTemplatePage /
-          # provider-setup / models.json / MODEL_TEST_ID) — this catches the
+          # provider-setup / models.json / MODEL_TEST_ID / initialGPTsetup /
+          # setupOpenAI / resolveGptModel / resolveGeminiModel) — this catches the
           # cross-area consumers (mcp/client agent specs, the loop-component
-          # regression) without a blanket path rule, and leaves LLM-free specs
-          # (e.g. mcp/server/*) out.
+          # regression, the ui-ux message-history spec, which reaches the
+          # resolvers indirectly through initialGPTsetup — #946), and leaves
+          # LLM-free specs (e.g. mcp/server/*) out.
           NEEDS_MODELS=false
           for f in $SPECS; do
             case "$f" in
               tests/tests-automations/regression/core-functionality/llm-agents/*|tests/tests-automations/regression/core-functionality/model-provider/*)
                 NEEDS_MODELS=true; break;;
             esac
-            if grep -qE 'getTestTargets|SimpleAgentTemplatePage|provider-setup|models\.json|MODEL_TEST_ID' "$f" 2>/dev/null; then
+            if grep -qE 'getTestTargets|SimpleAgentTemplatePage|provider-setup|models\.json|MODEL_TEST_ID|initialGPTsetup|setupOpenAI|resolveGptModel|resolveGeminiModel' "$f" 2>/dev/null; then
               NEEDS_MODELS=true; break
             fi
           done
@@ -209,6 +211,15 @@ jobs:
       - name: Run impacted specs
         env:
           CI: "true"
+          # When "Collect models" is skipped (needs_models == false) the provider
+          # keys below are still in the environment but were never imported into
+          # Langflow as global variables, so globalSetup's credential pre-flight
+          # (#884) hard-fails in CI and the job dies before running a single
+          # spec — every LLM-free spec PR was guaranteed red after #953 added the
+          # skip. Nothing in an LLM-free run consumes those credentials, so the
+          # check has nothing to protect there: skip it exactly when the import
+          # step was skipped, and keep it enforced for LLM runs.
+          PREFLIGHT_SKIP_CREDENTIALS: ${{ needs.detect-specs.outputs.needs_models == 'true' && '0' || '1' }}
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
