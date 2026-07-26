@@ -735,11 +735,11 @@
 - [-] Main menu actions
 
 #### 15.10 Settings and UI Configuration
-- [-] Access Settings page
-- [-] Message history settings → `ui-ux/settings-message-history.spec.ts`
+- [x] Access Settings page — profile menu opens Settings, the sidebar lists General/Model Providers/Shortcuts/Messages, and each section renders its own content (General shows the Language + Profile Picture groups) → `ui-ux/settings-navigation.spec.ts`, `ui-ux/settings-general-section.spec.ts`
+- [x] Message history settings — Settings → Messages grid keeps the 11-column contract, renders messages oldest-first (1.12 `get_messages` defaults to `order=ASC`) and the sender "Equals User" filter narrows/restores the row set → `ui-ux/settings-message-history.spec.ts`
 - [x] Change appearance/theme settings — dark/light toggle updates #body.dark class → `ui-ux/settings-theme-toggle.spec.ts`
-- [-] Keyboard shortcuts work in editor
-- [~] All documented shortcuts work
+- [x] Keyboard shortcuts work in editor — Duplicate/Delete/Copy/Paste/Cut/Undo/Redo each act on the selected node (node count asserted after every keypress) → `ui-ux/langflowShortcuts.spec.ts`
+- [~] All documented shortcuts work — all 27 `defaultShortcuts` rows are listed with a non-empty key binding in Settings → Shortcuts (`ui-ux/settings-navigation.spec.ts`), and 7 of them are exercised on canvas (`ui-ux/langflowShortcuts.spec.ts`) plus 1 rebound end-to-end (`ui-ux/settings-shortcuts-edit.spec.ts`); the remaining 20 (API, Docs, Download, Play, Group, Minimize, Freeze, Save, Code, Update, Controls, sidebar search, …) are not exercised yet
 - [x] Edit a keyboard shortcut (Duplicate → `Ctrl/Cmd+Alt+U`) persists to the table and the new combination triggers the action on canvas → `ui-ux/settings-shortcuts-edit.spec.ts`
 - [x] API Keys table renders `created_at`/`expires_at` in the viewer's local timezone (UTC→local), shows "Never" for unused keys and ∞ for no-expiry keys (PR #13471) → `ui-ux/api-keys-timezone-display.spec.ts`
 

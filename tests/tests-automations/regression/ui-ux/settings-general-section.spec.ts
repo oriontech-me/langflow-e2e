@@ -17,7 +17,7 @@ test.describe("Settings General Section", () => {
 
   test(
     "Settings General section loads and shows its header",
-    { tag: ["@release", "@regression", "@settings"] },
+    { tag: ["@stable", "@release", "@regression", "@settings"] },
     async ({ page }) => {
       await page.getByRole("link", { name: "General", exact: true }).click();
       await page.waitForTimeout(500);
@@ -28,16 +28,26 @@ test.describe("Settings General Section", () => {
         { timeout: 10000 },
       );
 
-      // The section content area must be present (at minimum the page header component)
-      await expect(page.locator("main, [role='main'], .flex.h-full.w-full").first()).toBeVisible({
-        timeout: 5000,
-      });
+      // The header alone does not prove the section rendered — assert the
+      // groups the General page actually ships on the 1.12 nightly. A generic
+      // "some main element is visible" check passed even on an empty page.
+      await expect(
+        page.getByText("Language", { exact: true }).first(),
+      ).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.getByText(
+          "Choose the display language for the Langflow interface.",
+        ),
+      ).toBeVisible({ timeout: 5000 });
+      await expect(
+        page.getByText("Profile Picture", { exact: true }).first(),
+      ).toBeVisible({ timeout: 5000 });
     },
   );
 
   test(
     "Settings Messages section is accessible",
-    { tag: ["@release", "@regression", "@settings"] },
+    { tag: ["@stable", "@release", "@regression", "@settings"] },
     async ({ page }) => {
       await page.getByRole("link", { name: "Messages", exact: true }).click();
       await page.waitForTimeout(500);
@@ -51,7 +61,7 @@ test.describe("Settings General Section", () => {
 
   test(
     "Settings Shortcuts section is accessible and lists shortcuts",
-    { tag: ["@release", "@regression", "@settings"] },
+    { tag: ["@stable", "@release", "@regression", "@settings"] },
     async ({ page }) => {
       await page.getByRole("link", { name: "Shortcuts", exact: true }).click();
       await page.waitForTimeout(500);
