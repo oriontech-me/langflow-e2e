@@ -764,11 +764,11 @@
 | `core-functionality/project-management/` | 11 | 4 | 7 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 26 | 1 | 1 | 0 |
-| `mcp/client/` | 12 | 2 | 8 | 0 | 2 |
+| `mcp/client/` | 12 | 10 | 0 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 3 | 3 | 1 | 0 |
-| **TOTAL** | **452** | **325 (72%)** | **115 (25%)** | **6 (1%)** | **6 (1%)** |
+| **TOTAL** | **452** | **333 (74%)** | **107 (24%)** | **6 (1%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 353 `test()` calls carrying the `@stable` tag, distributed across 144 spec
+> 356 `test()` calls carrying the `@stable` tag, distributed across 146 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1142,6 +1142,9 @@
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
+- [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
+- [x] agent calls echo MCP tool and returns echoed message → `mcp-client-agent.spec.ts`
+- [x] configures MCP server via JSON, selects echo tool, runs it, and verifies output → `mcp-client-regression.spec.ts`
 - [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
@@ -1184,7 +1187,7 @@
 | `core-functionality/llm-agents/` | 5 | 2 |
 | `core-functionality/model-provider/` | 0 | 0 |
 | `core-functionality/playground/` | 1 | 0 |
-| `mcp/client/` | 8 | 2 |
+| `mcp/client/` | 0 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 36 | 0 |
 
