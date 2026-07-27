@@ -18,6 +18,7 @@
     "lint:ci": "eslint tests/ --quiet",
     "coverage:summary": "ts-node scripts/coverage-summary.ts && ts-node scripts/stable-tests.ts",
     "regressions:summary": "ts-node scripts/regressions-summary.ts",
+    "regressions:check": "ts-node scripts/regressions-summary.ts --check",
     "impacted": "ts-node scripts/impacted-tests.ts",
     "validate:specs": "ts-node scripts/validate-spec-deps.ts",
     "check:checklist-coverage": "ts-node scripts/check-checklist-coverage.ts",

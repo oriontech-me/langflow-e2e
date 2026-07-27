@@ -188,6 +188,14 @@ The JSONL files are **machine-written and human-read only** — never hand-edit.
 
 Triage rules driven by this history (when to remove `@stable`, when to open an issue for a recurring flake) live in `CONTRIBUTING.md` under "Tag @stable — validated tests".
 
+## REGRESSIONS.md — the Regression Ledger
+
+Curated, append-only registry of the real Langflow regressions **the suite caught**, and the source of the ROI indicator at the top of the file. A row is added only when all three hold: a confirmed `langflow-regression` verdict, adversarial (refute-first) validation, and a filed upstream ticket (Jira `LE-####` or a `langflow-ai/langflow` issue). Confirmed but unticketed goes under **Candidates**; a finding validation downgrades to a non-user-facing gap is listed nowhere. Regressions the team confirms by hand, outside the suite, stay on the Jira board — every row must trace to a spec failure or spec-validation run recorded in a repo issue.
+
+The block between `<!-- REGRESSIONS:START -->` and `<!-- REGRESSIONS:END -->` is **auto-generated** — never hand-edit it, and never hand-edit the counts. Edit the `## Ledger` table only, then run `npm run regressions:summary` to regenerate the block and commit both. Logic lives in `scripts/regressions-summary.ts`; it is idempotent and aborts rather than emitting a wrong count (bad marker order, missing/empty `## Ledger` section, wrong column count, invalid `Severity`/`Status`, an `Area / Test` cell without the `area · spec-file` separator, or two rows with the same `Upstream` ticket).
+
+Unlike `QA-CHECKLIST.md`, the generated block here **is** committed in the PR that adds the row — the file changes a handful of times per quarter, so the collision risk that forced the checklist guard (issue #741) does not apply. The `pr-validation.yml` typecheck job runs `npm run regressions:check`, which fails the PR when the committed block disagrees with the table.
+
 ## QA-CHECKLIST.md
 
 Two passages in `QA-CHECKLIST.md` are **auto-generated**:

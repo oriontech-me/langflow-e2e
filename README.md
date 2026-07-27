@@ -275,3 +275,5 @@ See [`QA_CHECKLIST.md`](./QA_CHECKLIST.md) for the full coverage map.
 ## Contributing
 
 See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the complete guide on how to create tests, validate coverage and respond to file-watcher issues.
+
+See [`REGRESSIONS.md`](./REGRESSIONS.md) for the ledger of real Langflow regressions this suite has caught — each one adversarially validated and tracked upstream.
