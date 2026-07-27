@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 361 `test()` calls carrying the `@stable` tag, distributed across 148 spec
+> 360 `test()` calls carrying the `@stable` tag, distributed across 148 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -994,7 +994,6 @@
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
 - [x] agent selects the Web Search tool for a search prompt → `agent-multi-tool-selection.spec.ts`
-- [x] image via input handle is described by the agent → `agent-multimodal-image-input.spec.ts`
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
 - [x] output_schema fields come back as typed JSON keys on the structured response → `agent-structured-output.spec.ts`
 - [x] a multiple (As List) schema row returns an array of the row's type → `agent-structured-output.spec.ts`
