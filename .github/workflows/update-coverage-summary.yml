@@ -15,6 +15,8 @@ on:
       - "QA-CHECKLIST.md"
       - "scripts/coverage-summary.ts"
       - "scripts/stable-tests.ts"
+      # The `@stable` parser the Phase 0 generator reads from (#985).
+      - "scripts/lib/stable-tests.ts"
       - "tests/**/*.spec.ts"
       - ".github/workflows/update-coverage-summary.yml"
 
