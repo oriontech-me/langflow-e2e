@@ -168,7 +168,7 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 
 GitHub Actions workflows:
 
-- **`pr-validation.yml`** — Runs on every PR to `main`; two parallel jobs: TypeScript check (`tsc --noEmit`) and ESLint. Both must pass before merge.
+- **`pr-validation.yml`** — Runs on every PR to `main`. Parallel jobs: TypeScript check (`tsc --noEmit`), ESLint, the **QA-CHECKLIST guard** (generated blocks untouched + spec↔doc↔checklist triad, see below), and the impacted-specs E2E run. All must pass before merge.
 - **`nightly.yml`** — Runs daily at 03:00 BRT against `langflowai/langflow-nightly:latest`; opens a GitHub issue on failure assigned to @Victor-w-Madeira.
 - **`daily-stable.yml`** — Runs on weekdays (Mon–Fri) at 05:00 BRT against `langflowai/langflow-nightly:latest`; runs only `@stable` tests; opens a GitHub issue on failure for triage (`daily-failure` label); appends one entry to `reports/daily-history.jsonl` and commits it back to `main` with `[skip ci]` (runs on success and failure). **This is the active stable workflow.**
 - **`weekly-stable.yml`** — **Disabled** (kept as a fallback, superseded by `daily-stable.yml`). When enabled it runs every Monday with the same machinery, writing to `reports/weekly-history.jsonl`.
@@ -198,6 +198,8 @@ Two passages in `QA-CHECKLIST.md` are **auto-generated**:
 Both regenerators run together via `npm run coverage:summary` and are idempotent — a second run produces no diff when in sync.
 
 > **In a PR, edit ONLY the manual Part II bullets — do NOT run `npm run coverage:summary` and commit its output.** The generated blocks (Coverage Summary table + note, `Phase 0 — Validated` list, Phase 1/2 tables) are regenerated on merge to `main` by `update-coverage-summary.yml`. Committing regenerated counts in a PR makes concurrent `@stable` PRs collide on the same count lines (the recurring `QA-CHECKLIST.md` conflict — issue #741). `npm run coverage:summary` is for local inspection only; the `pr-validation.yml` **QA-CHECKLIST guard** job (`scripts/check-checklist-guard.mjs`) fails any PR that edits a generated block.
+
+> **The bullet itself is mandatory.** The same job runs `npm run check:checklist-coverage` (`scripts/check-checklist-coverage.ts`), which fails the PR when a spec carries `@stable` **or** has a spec doc under `docs/` but no manual Part II bullet references it — that spec would otherwise be invisible in every generated count (issue #985). Only the hand-written region counts as a reference: the generated `Phase 0` block echoes every `@stable` basename, so matching the whole file is vacuous. A missing mirrored doc is **not** a defect — docs resolve by content reference, not filename.
 
 ## Playwright Configuration
 

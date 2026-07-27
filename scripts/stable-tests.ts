@@ -12,177 +12,22 @@
  * surface in the rendered checklist as well as the Playwright report. Prefer
  * self-explanatory titles; wrap code substrings in backticks (Markdown inline
  * code) and template `${expr}` placeholders are rendered as `<expr>`.
+ *
+ * The `@stable` parsing itself lives in `scripts/lib/stable-tests.ts` — shared
+ * with `scripts/check-checklist-coverage.ts` so the guard and this generator
+ * cannot disagree on what "`@stable`" means (#985).
  */
 
 import * as fs from "fs";
 import * as path from "path";
-import * as ts from "typescript";
 
-const REPO_ROOT = path.resolve(__dirname, "..");
-const REGRESSION_ROOT = path.join(
+import {
   REPO_ROOT,
-  "tests",
-  "tests-automations",
-  "regression",
-);
+  type StableTest,
+  collectStableTests,
+} from "./lib/stable-tests";
+
 const CHECKLIST_PATH = path.join(REPO_ROOT, "QA-CHECKLIST.md");
-
-const STABLE_TAG = "@stable";
-
-const warnings: string[] = [];
-
-interface StableTest {
-  /** Title as written in the `test(...)` first argument (template `${...}` placeholders preserved). */
-  title: string;
-  /** Module path under `regression/`, e.g. `core-functionality/llm-agents`. */
-  modulePath: string;
-  /** Spec basename, e.g. `loop-component-regression.spec.ts`. */
-  specFile: string;
-  /** Path under `regression/`, e.g. `core-components/loop-component-regression.spec.ts`. */
-  relativePath: string;
-  /** 1-based source line of the `test(...)` call. */
-  line: number;
-}
-
-// ─── Filesystem walk ─────────────────────────────────────────────────────────
-
-function walkSpecs(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...walkSpecs(full));
-    } else if (entry.isFile() && entry.name.endsWith(".spec.ts")) {
-      out.push(full);
-    }
-  }
-  return out;
-}
-
-// ─── AST helpers ─────────────────────────────────────────────────────────────
-
-function literalText(node: ts.Node): string | null {
-  if (ts.isStringLiteral(node)) return node.text;
-  if (ts.isNoSubstitutionTemplateLiteral(node)) return node.text;
-  if (ts.isTemplateExpression(node)) {
-    let s = node.head.text;
-    for (const span of node.templateSpans) {
-      s += "${" + span.expression.getText() + "}" + span.literal.text;
-    }
-    return s;
-  }
-  return null;
-}
-
-interface TagReadResult {
-  /** Tags extracted from the inline array literal, or null if no `tag` property was found. */
-  tags: string[] | null;
-  /** True when a `tag` property exists but its value is not a parseable inline array literal. */
-  unparseable: boolean;
-}
-
-function readTagsArray(node: ts.Node): TagReadResult {
-  if (!ts.isObjectLiteralExpression(node)) {
-    return { tags: null, unparseable: false };
-  }
-  for (const prop of node.properties) {
-    if (
-      !ts.isPropertyAssignment(prop) ||
-      !ts.isIdentifier(prop.name) ||
-      prop.name.text !== "tag"
-    ) {
-      continue;
-    }
-    const init = prop.initializer;
-    if (!ts.isArrayLiteralExpression(init)) {
-      return { tags: null, unparseable: true };
-    }
-    const tags: string[] = [];
-    for (const el of init.elements) {
-      const t = literalText(el);
-      if (t !== null) tags.push(t);
-      else {
-        // Non-literal element (spread, identifier, etc.) — treat as unparseable
-        // so an `@stable` constant referenced indirectly does not silently slip past.
-        return { tags: null, unparseable: true };
-      }
-    }
-    return { tags, unparseable: false };
-  }
-  return { tags: null, unparseable: false };
-}
-
-/** Match exactly `test(...)` — not `test.describe`, `test.skip`, `test.only`, etc. */
-function isPlainTestCall(call: ts.CallExpression): boolean {
-  return ts.isIdentifier(call.expression) && call.expression.text === "test";
-}
-
-function parseStableTestsInFile(
-  filePath: string,
-  source: ts.SourceFile,
-): StableTest[] {
-  const out: StableTest[] = [];
-  const relativePath = path
-    .relative(REGRESSION_ROOT, filePath)
-    .split(path.sep)
-    .join("/");
-  const modulePath = path.dirname(relativePath);
-
-  function visit(node: ts.Node): void {
-    if (ts.isCallExpression(node) && isPlainTestCall(node)) {
-      const args = node.arguments;
-      if (args.length >= 2) {
-        const title = literalText(args[0]);
-        const { tags, unparseable } = readTagsArray(args[1]);
-        const { line } = source.getLineAndCharacterOfPosition(
-          node.getStart(source),
-        );
-        if (unparseable) {
-          warnings.push(
-            `${relativePath}:${line + 1} — \`tag\` option is not an inline array of string literals; ` +
-              "the script cannot determine if this test is `@stable`. Inline the array " +
-              "(e.g. `tag: [\"@stable\", ...]`) so it shows up in Phase 0.",
-          );
-        }
-        if (title !== null && tags && tags.includes(STABLE_TAG)) {
-          out.push({
-            title,
-            modulePath,
-            specFile: path.basename(relativePath),
-            relativePath,
-            line: line + 1,
-          });
-        }
-      }
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(source);
-  return out;
-}
-
-function collectStableTests(): StableTest[] {
-  const all: StableTest[] = [];
-  for (const file of walkSpecs(REGRESSION_ROOT)) {
-    const text = fs.readFileSync(file, "utf-8");
-    const source = ts.createSourceFile(
-      file,
-      text,
-      ts.ScriptTarget.Latest,
-      /* setParentNodes */ true,
-    );
-    all.push(...parseStableTestsInFile(file, source));
-  }
-  all.sort((a, b) => {
-    if (a.modulePath !== b.modulePath)
-      return a.modulePath.localeCompare(b.modulePath);
-    if (a.relativePath !== b.relativePath)
-      return a.relativePath.localeCompare(b.relativePath);
-    return a.line - b.line;
-  });
-  return all;
-}
 
 // ─── Markdown block builders ─────────────────────────────────────────────────
 
@@ -319,11 +164,11 @@ function main(): void {
   // (STABLE_COUNT) in weekly-stable.yml. Reuses collectStableTests() so the
   // count always matches the Phase 0 regeneration.
   if (process.argv.includes("--count")) {
-    console.log(collectStableTests().length);
+    console.log(collectStableTests().tests.length);
     process.exit(0);
   }
 
-  const tests = collectStableTests();
+  const { tests, warnings } = collectStableTests();
   const phase0Lines = buildPhase0Block(tests);
 
   const original = fs.readFileSync(CHECKLIST_PATH, "utf-8");
