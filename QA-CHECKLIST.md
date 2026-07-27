@@ -762,22 +762,22 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
-| `core-components/` — Component Config | 24 | 23 | 1 | 0 | 0 |
-| `core-components/` — Core Components | 82 | 80 | 0 | 1 | 1 |
+| `core-components/` — Component Config | 26 | 23 | 3 | 0 | 0 |
+| `core-components/` — Core Components | 85 | 80 | 3 | 1 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 39 | 31 | 5 | 1 | 2 |
+| `core-functionality/llm-agents/` | 40 | 31 | 6 | 1 | 2 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 48 | 46 | 1 | 1 | 0 |
+| `core-functionality/playground/` | 50 | 46 | 3 | 1 | 0 |
 | `core-functionality/project-management/` | 11 | 4 | 7 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 25 | 1 | 2 | 0 |
-| `mcp/client/` | 12 | 10 | 0 | 0 | 2 |
+| `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 17 | 24 | 3 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **452** | **345 (76%)** | **92 (20%)** | **9 (2%)** | **6 (1%)** |
+| **TOTAL** | **461** | **345 (75%)** | **101 (22%)** | **9 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1213,13 +1213,13 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
-| `core-components/` — Component Config | 1 | 0 |
-| `core-components/` — Core Components | 0 | 1 |
+| `core-components/` — Component Config | 3 | 0 |
+| `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 5 | 2 |
+| `core-functionality/llm-agents/` | 6 | 2 |
 | `core-functionality/model-provider/` | 0 | 0 |
-| `core-functionality/playground/` | 1 | 0 |
-| `mcp/client/` | 0 | 2 |
+| `core-functionality/playground/` | 3 | 0 |
+| `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 24 | 0 |
 
