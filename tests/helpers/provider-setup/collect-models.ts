@@ -4,7 +4,6 @@ import path from "path";
 import fs from "fs";
 import { SettingsPage } from "../../pages/SettingsPage";
 import { providerConfigMap, type Provider } from "./provider-config";
-import { probeProviderKey } from "./probe-provider-key";
 
 const DATA_DIR = path.join(__dirname, "data");
 const PROVIDERS_PATH = path.join(DATA_DIR, "providers.json");
@@ -27,29 +26,99 @@ interface ModelRecord {
 
 // ─── Provider validation (API calls) ──────────────────────────────────────────
 
-// One probe implementation, shared with scripts/resolve-provider-keys.ts (#976).
-// Before that extraction these were three near-identical fetch blocks, each
-// reading its own env var — which is why a key-level fallback had nowhere to
-// live. The factory keeps the (model) => ProviderRecord shape that
-// validateProviderWithFallback drives, and preserves the "<ENV> not set"
-// suffix its early-exit keys off.
-function makeValidator(provider: Provider): (model: string) => Promise<ProviderRecord> {
-  const envKey = providerConfigMap[provider].envKeys[0];
+async function validateOpenAI(model: string): Promise<ProviderRecord> {
+  const apiKey = process.env.OPENAI_API_KEY ?? "";
+  const provider = "openai";
 
-  return async (model: string): Promise<ProviderRecord> => {
-    const checkedAt = new Date().toISOString();
-    const apiKey = process.env[envKey] ?? "";
+  if (!apiKey) {
+    return { provider, model, status: "inactive", error: "OPENAI_API_KEY not set", checkedAt: new Date().toISOString() };
+  }
 
-    if (!apiKey) {
-      return { provider, model, status: "inactive", error: `${envKey} not set`, checkedAt };
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { provider, model, status: "inactive", error: (body as any)?.error?.message ?? `HTTP ${res.status}`, checkedAt: new Date().toISOString() };
     }
 
-    const probe = await probeProviderKey(provider, apiKey, model);
+    return { provider, model, status: "active", error: null, checkedAt: new Date().toISOString() };
+  } catch (e: any) {
+    return { provider, model, status: "inactive", error: e?.message ?? "Unknown error", checkedAt: new Date().toISOString() };
+  }
+}
 
-    return probe.ok
-      ? { provider, model, status: "active", error: null, checkedAt }
-      : { provider, model, status: "inactive", error: probe.error ?? "Unknown error", checkedAt };
-  };
+async function validateAnthropic(model: string): Promise<ProviderRecord> {
+  const apiKey = process.env.ANTHROPIC_API_KEY ?? "";
+  const provider = "anthropic";
+
+  if (!apiKey) {
+    return { provider, model, status: "inactive", error: "ANTHROPIC_API_KEY not set", checkedAt: new Date().toISOString() };
+  }
+
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { provider, model, status: "inactive", error: (body as any)?.error?.message ?? `HTTP ${res.status}`, checkedAt: new Date().toISOString() };
+    }
+
+    return { provider, model, status: "active", error: null, checkedAt: new Date().toISOString() };
+  } catch (e: any) {
+    return { provider, model, status: "inactive", error: e?.message ?? "Unknown error", checkedAt: new Date().toISOString() };
+  }
+}
+
+async function validateGoogle(model: string): Promise<ProviderRecord> {
+  const apiKey = process.env.GOOGLE_API_KEY ?? "";
+  const provider = "google";
+
+  if (!apiKey) {
+    return { provider, model, status: "inactive", error: "GOOGLE_API_KEY not set", checkedAt: new Date().toISOString() };
+  }
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: "hi" }] }],
+          generationConfig: { maxOutputTokens: 1 },
+        }),
+      },
+    );
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      return { provider, model, status: "inactive", error: (body as any)?.error?.message ?? `HTTP ${res.status}`, checkedAt: new Date().toISOString() };
+    }
+
+    return { provider, model, status: "active", error: null, checkedAt: new Date().toISOString() };
+  } catch (e: any) {
+    return { provider, model, status: "inactive", error: e?.message ?? "Unknown error", checkedAt: new Date().toISOString() };
+  }
 }
 
 function modelsFor(models: ModelRecord[], provider: string): string[] {
@@ -151,9 +220,9 @@ async function collectProviders(models: ModelRecord[]): Promise<ProviderRecord[]
   console.log("Validating providers via API...");
 
   const results = await Promise.all([
-    validateProviderWithFallback("openai", rankCandidates("openai", modelsFor(models, "openai")), makeValidator("openai")),
-    validateProviderWithFallback("anthropic", rankCandidates("anthropic", modelsFor(models, "anthropic")), makeValidator("anthropic")),
-    validateProviderWithFallback("google", rankCandidates("google", modelsFor(models, "google")), makeValidator("google")),
+    validateProviderWithFallback("openai", rankCandidates("openai", modelsFor(models, "openai")), validateOpenAI),
+    validateProviderWithFallback("anthropic", rankCandidates("anthropic", modelsFor(models, "anthropic")), validateAnthropic),
+    validateProviderWithFallback("google", rankCandidates("google", modelsFor(models, "google")), validateGoogle),
   ]);
 
   for (const r of results) {
