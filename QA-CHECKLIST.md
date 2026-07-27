@@ -680,10 +680,10 @@
 - [-] Sidebar shows correct provider count
 
 #### 15.2 Add Components to Canvas
-- [-] Drag component from sidebar to canvas
-- [-] Double-click in sidebar adds component to canvas
+- [x] Drag component from sidebar to canvas — node lands at the drop position → `ui-ux/sidebar-add-component.spec.ts`
+- [x] Double-click in sidebar adds component to canvas → `ui-ux/sidebar-add-component.spec.ts`
 - [x] Hover + click "+" button adds component to canvas → `core-components/componentHoverAdd.spec.ts`
-- [-] Added component appears with default settings
+- [x] Added component appears with default settings — every field value compared against the `GET /api/v1/all` catalog template → `ui-ux/sidebar-add-component.spec.ts`
 
 #### 15.3 Component Connections
 - [-] Connect two compatible components
