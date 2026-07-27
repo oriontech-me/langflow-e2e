@@ -218,9 +218,12 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Multimodal Image Input [${label}]`, () => {
-    test(
+    // Quarantined for #964 — recurrent flake (2026-07-20 / 07-22 / 07-27): the
+    // agent answers that it cannot interpret images instead of describing the
+    // one delivered through the input handle.
+    test.fixme(
       "image via input handle is described by the agent",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
