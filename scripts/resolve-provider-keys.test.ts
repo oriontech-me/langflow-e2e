@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { classifyProbeFailure } from "../tests/helpers/provider-setup/probe-provider-key";
+import { candidateEnvNames } from "./resolve-provider-keys";
 
 test("a thrown fetch (no HTTP response) is transport — never burns a key", () => {
   assert.equal(classifyProbeFailure(null, "fetch failed"), "transport");
@@ -47,4 +48,37 @@ test("billing wording wins over a status that would otherwise read as model", ()
 test("an unrecognised failure is transport — inconclusive, never burns a key", () => {
   assert.equal(classifyProbeFailure(418, "i am a teapot"), "transport");
   assert.equal(classifyProbeFailure(400, "malformed request"), "transport");
+});
+
+test("no key configured yields no candidates — absence of a key is valid config", () => {
+  assert.deepEqual(candidateEnvNames("ANTHROPIC_API_KEY", {}), []);
+  assert.deepEqual(candidateEnvNames("ANTHROPIC_API_KEY", { ANTHROPIC_API_KEY: "" }), []);
+});
+
+test("only the primary set yields one candidate", () => {
+  assert.deepEqual(candidateEnvNames("ANTHROPIC_API_KEY", { ANTHROPIC_API_KEY: "a" }), [
+    "ANTHROPIC_API_KEY",
+  ]);
+});
+
+test("primary plus backups are returned in order", () => {
+  assert.deepEqual(
+    candidateEnvNames("ANTHROPIC_API_KEY", {
+      ANTHROPIC_API_KEY: "a",
+      ANTHROPIC_API_KEY_2: "b",
+      ANTHROPIC_API_KEY_3: "c",
+    }),
+    ["ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY_2", "ANTHROPIC_API_KEY_3"],
+  );
+});
+
+test("a gap stops the scan — _3 without _2 is not reachable", () => {
+  assert.deepEqual(
+    candidateEnvNames("ANTHROPIC_API_KEY", { ANTHROPIC_API_KEY: "a", ANTHROPIC_API_KEY_3: "c" }),
+    ["ANTHROPIC_API_KEY"],
+  );
+});
+
+test("backups without a primary are not reachable — the canonical name anchors the scan", () => {
+  assert.deepEqual(candidateEnvNames("ANTHROPIC_API_KEY", { ANTHROPIC_API_KEY_2: "b" }), []);
 });
