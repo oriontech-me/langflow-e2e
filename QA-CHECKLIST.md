@@ -766,9 +766,9 @@
 | `flow-functionality/` | 28 | 26 | 1 | 1 | 0 |
 | `mcp/client/` | 12 | 10 | 0 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
-| `ui-ux/` — Canvas | 44 | 7 | 36 | 1 | 0 |
+| `ui-ux/` — Canvas | 44 | 11 | 32 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **452** | **336 (74%)** | **104 (23%)** | **6 (1%)** | **6 (1%)** |
+| **TOTAL** | **452** | **340 (75%)** | **100 (22%)** | **6 (1%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 360 `test()` calls carrying the `@stable` tag, distributed across 148 spec
+> 364 `test()` calls carrying the `@stable` tag, distributed across 149 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1156,6 +1156,10 @@
 - [x] select and delete a flow → `actionsMainPage-shard-1.spec.ts`
 - [x] serializes created_at/expires_at with UTC offset and no microseconds → `api-keys-timezone-display.spec.ts`
 - [x] renders API key timestamps in the viewer's local timezone → `api-keys-timezone-display.spec.ts`
+- [x] zoom in and zoom out step the canvas scale and clamp at the React Flow bounds → `canvas-zoom-navigation.spec.ts`
+- [x] Fit View centers every node inside the canvas viewport → `canvas-zoom-navigation.spec.ts`
+- [x] Fit View is reachable from the canvas controls toolbar → `canvas-zoom-navigation.spec.ts`
+- [x] wheel scroll navigates the canvas anchored at the pointer → `canvas-zoom-navigation.spec.ts`
 - [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
 - [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
 - [x] executing flow with server error shows error feedback → `execution-error-notification.spec.ts`
@@ -1193,7 +1197,7 @@
 | `core-functionality/playground/` | 1 | 0 |
 | `mcp/client/` | 0 | 2 |
 | `mcp/server/` | 1 | 1 |
-| `ui-ux/` — Canvas | 36 | 0 |
+| `ui-ux/` — Canvas | 32 | 0 |
 
 ---
 
