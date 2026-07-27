@@ -9,9 +9,12 @@ import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
 import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
 
-test(
+// Quarantined for #966 — recurrent flake (2026-07-16 / 07-27): neither the
+// welcome overlay nor the templates modal surfaces after the "New Flow" entry
+// point, so the reconciliation poll in openNewFlowTemplatesModal times out.
+test.fixme(
   "user should be able to use Run Flow without any issues",
-  { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
+  { tag: ["@release", "@workspace", "@api", "@regression"] },
   async ({ page, request }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
