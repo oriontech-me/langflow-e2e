@@ -1,4 +1,4 @@
-import { type Page, expect } from "@playwright/test";
+import { type Locator, type Page, expect } from "@playwright/test";
 
 // Cheap, fast chat models in priority order. `gpt-4o-mini` is kept first so older
 // Langflow builds still match; the `gpt-5.x` entries cover newer builds (1.11.0+)
@@ -49,6 +49,24 @@ async function selectPreferredChatModel(page: Page): Promise<void> {
   const chosen =
     (envModel && labels.find((label) => label === envModel)) ||
     PREFERRED_CHAT_MODELS.find((model) => labels.includes(model)) ||
+    // Prefer any OpenAI (`gpt-*`) chat option before the provider-agnostic
+    // last-resort fallback below: the 1.11+ unified ModelInput dropdown mixes
+    // providers and lists the Anthropic default (`claude-sonnet-5`) first, so
+    // that fallback used to hand back a non-OpenAI model from a helper named
+    // `...OpenAI` whenever PREFERRED_CHAT_MODELS drifted behind the build's
+    // curated list (issue #961).
+    // A multi-line label carries a badge rendered inside the option (e.g.
+    // "Deprecated"): skip it. Unlike the exact-match PREFERRED lookup above,
+    // this pattern-based branch would otherwise put the badge text into
+    // `chosen` and break the trigger assertion below — and a deprecated model
+    // is not what a regression run wants either.
+    labels.find(
+      (label) =>
+        !label.includes("\n") &&
+        /^gpt-/i.test(label) &&
+        !NON_CHAT_MODEL.test(label) &&
+        !AVOID_MODEL.test(label),
+    ) ||
     labels.find((label) => !NON_CHAT_MODEL.test(label) && !AVOID_MODEL.test(label));
 
   if (!chosen) {
@@ -164,7 +182,154 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
   // pointer events, timing the click out (issue #580). dispatchEvent bypasses
   // hit-testing and still opens the dropdown.
   await modelDropdown.dispatchEvent("click");
+
+  // The unified ModelInput dropdown lists models only from ENABLED providers, and
+  // the node renders this dropdown (instead of the "Setup Provider" button above)
+  // as soon as ANY provider is enabled. So on an instance where another provider
+  // is enabled but OpenAI is not — collect-models recording OpenAI `inactive`
+  // after a key/quota outage, or a run that configured only Anthropic/Google —
+  // no OpenAI option is offered and selectPreferredChatModel would fall through
+  // to another provider's model, silently running a non-OpenAI model from a
+  // helper named `...OpenAI` (issue #961). Configure OpenAI from `OPENAI_API_KEY`
+  // through the dropdown's "Manage Model Providers" panel so the helper is
+  // self-sufficient, then reopen the dropdown. Skipped when OpenAI is already
+  // offered (daily-stable configures it via collect-models; a prior local run
+  // persisted the credential).
+  if (!(await isOpenAIOffered(page))) {
+    await configureOpenAIProviderFromDropdown(page);
+
+    // Gate on an OpenAI OPTION appearing — never on a single sample of the list.
+    // Closing the panel refreshes every ModelInput *asynchronously*
+    // (`refreshAllModelInputs`, fired after the pending model toggles flush), so
+    // the reopened dropdown can still be rendering the pre-refresh list; sampling
+    // it once reports "no OpenAI model" for a provider that was just configured
+    // fine. The second dispatch covers the opposite state: if the panel left the
+    // popover open, the first dispatch toggled it shut instead of opening it.
+    const openAIOption = page.getByTestId(/^openai-.+-option$/i).first();
+    await modelDropdown.dispatchEvent("click");
+    let offered = await optionAppeared(openAIOption);
+    if (!offered) {
+      await modelDropdown.dispatchEvent("click");
+      offered = await optionAppeared(openAIOption);
+    }
+
+    if (!offered) {
+      await page.keyboard.press("Escape");
+      throw new Error(
+        "setupLanguageModelOpenAI: the model dropdown still offers no OpenAI model after " +
+          "configuring the provider from OPENAI_API_KEY. Check that the key is valid " +
+          "(Langflow validates it on save) and that the OpenAI provider is enabled.",
+      );
+    }
+  }
+
   await selectPreferredChatModel(page);
+}
+
+// Resolves true when the option becomes visible within the wait, false on timeout.
+async function optionAppeared(option: Locator): Promise<boolean> {
+  return option
+    .waitFor({ state: "visible", timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+}
+
+// True when the open ModelInput dropdown offers at least one OpenAI model.
+// Each option carries `data-testid="${provider}-${model}-option"` (frontend
+// `ModelList.getModelOptionTestId`), so the provider is authoritative straight
+// from the DOM; the `gpt-*` label check is a fallback for builds whose option
+// testid is not provider-prefixed. Returns false on the empty dropdown ("No
+// Models Enabled"), which is what an unconfigured instance renders.
+// The initial wait matches selectPreferredChatModel's own 15s budget for the same
+// list: a saturated runner that takes >5s to populate it must be waited out, not
+// mistaken for "OpenAI is missing" (which would trigger a pointless panel detour).
+async function isOpenAIOffered(page: Page): Promise<boolean> {
+  const options = page.locator('[data-testid$="-option"]');
+  await options
+    .first()
+    .waitFor({ state: "visible", timeout: 15000 })
+    .catch(() => {});
+
+  const testIds = await options.evaluateAll((els) =>
+    els.map((el) => el.getAttribute("data-testid") ?? ""),
+  );
+  if (testIds.some((id) => /^openai-/i.test(id))) return true;
+
+  const labels = await options.allInnerTexts();
+  return labels.some((label) => /^gpt-/i.test(label.trim()));
+}
+
+// Opens the model dropdown's "Manage Model Providers" panel, configures the
+// OpenAI credential from `OPENAI_API_KEY`, enables one preferred chat model and
+// closes the panel — so the dropdown then offers OpenAI options. Assumes the
+// dropdown is already open. Idempotent: when the credential is already stored
+// the button reads "Replace" and the re-save is skipped (re-saving 400s on
+// PATCH /variables and would trip the backend-error monitor, issue #751).
+// Restores the self-sufficiency the pre-ModelInput node had via its own
+// "Setup Provider" form.
+async function configureOpenAIProviderFromDropdown(page: Page): Promise<void> {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
+    await page.keyboard.press("Escape");
+    throw new Error(
+      "setupLanguageModelOpenAI: the model dropdown offers no OpenAI model and " +
+        "OPENAI_API_KEY is not set, so the provider cannot be configured.",
+    );
+  }
+
+  await page.getByTestId("manage-model-providers").click();
+  // The provider list is fetched when the modal mounts (`provider-list-loading`).
+  await page.waitForSelector('[data-testid="provider-item-OpenAI"]', { timeout: 15000 });
+  await page.getByTestId("provider-item-OpenAI").click();
+
+  const apiKeyInput = page.getByPlaceholder("sk-...");
+  await apiKeyInput.waitFor({ state: "visible", timeout: 10000 });
+
+  // The form's single submit button carries the state: "Save" (unconfigured),
+  // "Replace" (credential already stored) or "Retry Save" (key rejected on a
+  // previous save). Wait for it and branch on the label it actually renders —
+  // `isVisible({ timeout })` would NOT wait (the option is documented as ignored),
+  // and a premature "not configured" reading re-saves a stored credential, which
+  // 400s on PATCH /variables and trips the backend-error monitor (issue #751).
+  // Scoped to the dialog so a same-named button elsewhere on the canvas cannot match.
+  const submitBtn = page
+    .getByRole("dialog")
+    .getByRole("button", { name: /^(Save|Replace|Retry Save)$/ })
+    .first();
+  await submitBtn.waitFor({ state: "visible", timeout: 10000 });
+  const alreadyConfigured = /^Replace$/i.test((await submitBtn.innerText()).trim());
+
+  if (!alreadyConfigured) {
+    await apiKeyInput.click();
+    await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
+    await submitBtn.click();
+
+    // Saving validates the key against the provider and loads its model list.
+    // Failing hard here (instead of swallowing the timeout) is the point: with no
+    // toggle there is no model to enable, and closing the panel anyway would let
+    // the dropdown hand back another provider's model — the silent mis-run this
+    // whole branch exists to prevent. The submit button's label is reported as-is
+    // (it carries the save outcome) so the failure is diagnosable.
+    try {
+      await page
+        .locator('[data-testid^="llm-toggle-"]')
+        .first()
+        .waitFor({ state: "visible", timeout: 30000 });
+    } catch {
+      const label = (await submitBtn.innerText().catch(() => "<unreadable>")).trim();
+      throw new Error(
+        "setupLanguageModelOpenAI: saving OPENAI_API_KEY in the Model Providers panel did " +
+          `not load any OpenAI model (submit button reads "${label}"). Check that ` +
+          "OPENAI_API_KEY is valid and the account can list models.",
+      );
+    }
+  }
+
+  // One enabled model is all the dropdown needs (issue #569).
+  await enablePreferredModelToggle(page);
+
+  // Closing flushes the pending model toggles and refreshes every ModelInput.
+  await page.getByRole("button", { name: "Close", exact: true }).click();
 }
 
 // Cheap, non-reasoning OpenAI chat models, in priority order. Unlike the gpt-5.x
