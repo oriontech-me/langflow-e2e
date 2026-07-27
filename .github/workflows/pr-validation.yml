@@ -46,7 +46,7 @@ jobs:
   checklist-guard:
     name: QA-CHECKLIST guard
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
         with:
@@ -55,18 +55,35 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "20"
+          cache: "npm"
 
       # Fail the PR if it edits the AUTO-GENERATED blocks of QA-CHECKLIST.md
       # (Coverage Summary table + note, Phase 0 list, Phase 1/2 tables). Those
       # regenerate on merge via update-coverage-summary.yml; PRs must edit only
       # the manual Part II bullets, so concurrent PRs don't collide on the
-      # generated count lines (issue #741). No npm install needed — pure git+node.
+      # generated count lines (issue #741). No npm install needed — pure git+node,
+      # so it runs before the install step and reports fast.
       - name: Guard QA-CHECKLIST.md generated blocks
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
           git fetch origin "$BASE_REF" --quiet
           node scripts/check-checklist-guard.mjs "origin/$BASE_REF"
+
+      # The coverage guard below parses `@stable` out of the spec ASTs, so it
+      # needs ts-node + typescript. `--ignore-scripts` skips Playwright's
+      # browser download — nothing here drives a browser.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # Fail the PR when a spec CLAIMS coverage (carries `@stable`, or has a spec
+      # doc under docs/) but no manual Part II bullet references it — such a spec
+      # is invisible in every generated count, including the @stable lane the
+      # daily workflow reads as release signal (issue #985). Whole-repo check, not
+      # diff-based: main is kept clean, so any new drift fails on the PR that
+      # introduces it.
+      - name: Guard spec ↔ doc ↔ QA-CHECKLIST triad
+        run: npm run check:checklist-coverage
 
   detect-specs:
     name: Detect changed specs

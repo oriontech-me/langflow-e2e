@@ -20,6 +20,7 @@
     "regressions:summary": "ts-node scripts/regressions-summary.ts",
     "impacted": "ts-node scripts/impacted-tests.ts",
     "validate:specs": "ts-node scripts/validate-spec-deps.ts",
+    "check:checklist-coverage": "ts-node scripts/check-checklist-coverage.ts",
     "check:nightly-delta": "ts-node scripts/check-nightly-delta.ts"
   },
   "dependencies": {

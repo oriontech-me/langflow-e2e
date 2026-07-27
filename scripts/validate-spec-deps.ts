@@ -8,6 +8,12 @@
  * (a developer can ship a spec without filling the doc) is accepted; this
  * script lets the team see the current state when they want to triage.
  *
+ * Scope note (#985): this covers the spec↔doc edge only, and "no mirrored doc"
+ * is NOT a defect — 75 specs are documented elsewhere or not at all, and a doc
+ * may be SHARED under a different filename (see `scripts/check-checklist-coverage.ts`
+ * for the doc-resolution rule). The spec↔checklist edge IS gated, by that
+ * script, in `pr-validation.yml`.
+ *
  * Output (stdout):
  *   Total specs:        N
  *   With doc + deps:    N
