@@ -35,10 +35,18 @@
  * `Phase 0 — Validated` block lists one `- [x] <title> → `<basename>`` line per
  * `@stable` `test()`, so every `@stable` spec's basename appears in the file by
  * construction. The #985 audit hit exactly this and concluded the `@stable`
- * invariant held; restricting the search to the hand-written region (everything
- * before the `## Coverage Summary` anchor — Part I helpers + Part II bullets)
- * showed 5 `@stable` specs that no bullet referenced. So: only the manual region
- * counts as a reference.
+ * invariant held; restricting the search showed 5 `@stable` specs that no bullet
+ * referenced.
+ *
+ * The searched region is **Part II only** — from `# PART II — TEST AUTOMATION
+ * COVERAGE` to the `## Coverage Summary` anchor. Not merely "everything before
+ * the anchor": Part I is the Pages & Helpers inventory, and `coverage-summary.ts`
+ * counts bullets only from sections inside Part II, so a Part-I-only reference
+ * still contributes nothing to any generated count. Accepting it would leave a
+ * spec in exactly the state this guard exists to detect —
+ * `ui-ux/global-variables-crud.spec.ts` (`@stable`) and
+ * `core-components/configure-mcp-and-custom-component.spec.ts` were both in that
+ * state while the region was the whole pre-anchor text.
  *
  * ── Doc resolution: by reference, not by filename ────────────────────────────
  *
@@ -68,6 +76,8 @@ import {
 const CHECKLIST_PATH = path.join(REPO_ROOT, "QA-CHECKLIST.md");
 const DOCS_ROOT = path.join(REPO_ROOT, "docs");
 
+/** Start of the hand-written coverage bullets — the only region that counts. */
+const PART_II_HEADER = "# PART II — TEST AUTOMATION COVERAGE";
 /** Everything from this heading onward is machine-generated (see the header). */
 const GENERATED_ANCHOR = "## Coverage Summary";
 
@@ -87,17 +97,24 @@ interface Violation {
   stableTests: number;
 }
 
-/** The hand-written part of the checklist: everything before the generated blocks. */
-function manualRegion(checklist: string): string {
+/** The hand-written coverage bullets: Part II, up to the generated blocks. */
+function coverageRegion(checklist: string): string {
   const lines = checklist.split("\n");
-  const anchor = lines.findIndex((l) => l.startsWith(GENERATED_ANCHOR));
-  if (anchor === -1) {
+  const start = lines.findIndex((l) => l.trim() === PART_II_HEADER);
+  if (start === -1) {
     throw new Error(
-      `QA-CHECKLIST.md: generated-blocks anchor not found ("${GENERATED_ANCHOR}") — ` +
+      `QA-CHECKLIST.md: Part II header not found ("${PART_II_HEADER}") — ` +
         "the document structure changed; update this script before trusting it.",
     );
   }
-  return lines.slice(0, anchor).join("\n");
+  const anchor = lines.findIndex((l) => l.startsWith(GENERATED_ANCHOR));
+  if (anchor === -1 || anchor <= start) {
+    throw new Error(
+      `QA-CHECKLIST.md: generated-blocks anchor not found after Part II ("${GENERATED_ANCHOR}") — ` +
+        "the document structure changed; update this script before trusting it.",
+    );
+  }
+  return lines.slice(start, anchor).join("\n");
 }
 
 function escapeRegExp(s: string): string {
@@ -140,10 +157,25 @@ function distinguishingSuffixes(spec: string, allSpecs: string[]): string[] {
 
 function main(): void {
   const checklist = fs.readFileSync(CHECKLIST_PATH, "utf-8");
-  const manual = manualRegion(checklist);
+  const coverageBullets = coverageRegion(checklist);
 
   const specs = listSpecPaths();
   const { tests: stableTests, warnings } = collectStableTests();
+
+  // An exemption whose spec no longer exists is dead weight that exempts
+  // nothing and hides the fact that it rotted — the failure mode this whole
+  // guard exists to prevent.
+  const staleExemptions = Object.keys(INTENTIONALLY_UNLISTED).filter(
+    (spec) => !specs.includes(spec),
+  );
+  if (staleExemptions.length > 0) {
+    console.error(
+      `\n✖ INTENTIONALLY_UNLISTED names ${staleExemptions.length} spec(s) that do not exist ` +
+        `(renamed or deleted?). Remove the stale entries from ${path.relative(REPO_ROOT, __filename)}:`,
+    );
+    for (const s of staleExemptions) console.error(`    ${s}`);
+    process.exit(1);
+  }
 
   const stableCountBySpec = new Map<string, number>();
   for (const t of stableTests) {
@@ -182,7 +214,7 @@ function main(): void {
     }
 
     const isReferenced = distinguishingSuffixes(spec, specs).some((suffix) =>
-      referenced(manual, suffix),
+      referenced(coverageBullets, suffix),
     );
     if (!isReferenced) {
       violations.push({ spec, reasons, stableTests: stableCount });
@@ -201,18 +233,33 @@ function main(): void {
     }
   }
 
+  // A parse warning means the guard cannot see part of the truth (an @stable
+  // test it could not classify), so it fails — and must never print a success
+  // line alongside the failure: a reader scanning the tail of a CI log would
+  // take the ✓ at face value.
   if (warnings.length > 0) {
     console.error(
-      `\n${warnings.length} warning(s) — a non-literal \`tag\` array may hide an @stable test from this guard:`,
+      `\n✖ QA-CHECKLIST coverage guard: ${warnings.length} tag(s) could not be classified, so an ` +
+        `@stable test may be invisible to this guard and to the Phase 0 generator:`,
     );
     for (const w of warnings) console.error(`  • ${w}`);
+    if (violations.length > 0) {
+      console.error(
+        `\n(plus ${violations.length} unreferenced spec(s), listed below)`,
+      );
+    } else {
+      console.error(
+        `\nEvery @stable and every documented spec IS referenced by a Part II bullet — ` +
+          `only the tags above block this run.`,
+      );
+      process.exit(1);
+    }
   }
 
   if (violations.length === 0) {
     console.log(
       `\n✓ QA-CHECKLIST coverage guard: every @stable and every documented spec is referenced by a Part II bullet.`,
     );
-    if (warnings.length > 0) process.exit(1);
     return;
   }
 
@@ -231,8 +278,10 @@ function main(): void {
       `An existing bullet that already describes the behavior can simply gain the reference.\n` +
       `The reference may be the bare filename, or any deeper path slice — but when two specs\n` +
       `share a basename it must be deep enough to identify one (e.g. \`llm-agents/<file>\`).\n` +
-      `Edit ONLY the manual bullets (above the "${GENERATED_ANCHOR}" anchor) — the generated blocks\n` +
-      `regenerate on merge to main (issue #741, enforced by scripts/check-checklist-guard.mjs).\n` +
+      `The bullet must live in Part II ("${PART_II_HEADER}" … "${GENERATED_ANCHOR}") — a Part I\n` +
+      `Pages & Helpers entry does not count, since no Coverage Summary module reads it.\n` +
+      `Edit ONLY those manual bullets: the generated blocks below the anchor regenerate on\n` +
+      `merge to main (issue #741, enforced by scripts/check-checklist-guard.mjs).\n` +
       `Marker legend: QA-CHECKLIST.md → "How to use this checklist".\n` +
       `If a spec is genuinely meant to stay unlisted, add it to INTENTIONALLY_UNLISTED in\n` +
       `${path.relative(REPO_ROOT, __filename)} with a written reason.\n`,

@@ -129,6 +129,11 @@ function isPlainTestCall(call: ts.CallExpression): boolean {
   return ts.isIdentifier(call.expression) && call.expression.text === "test";
 }
 
+/** Match `test.describe(...)` and its modifiers (`.serial`, `.parallel`, `.only`, …). */
+function isDescribeCall(call: ts.CallExpression): boolean {
+  return /^test\.describe\b/.test(call.expression.getText());
+}
+
 function parseStableTestsInFile(
   filePath: string,
   source: ts.SourceFile,
@@ -142,6 +147,29 @@ function parseStableTestsInFile(
   const modulePath = path.dirname(relativePath);
 
   function visit(node: ts.Node): void {
+    // Playwright propagates a `test.describe` tag to every child test, and the
+    // daily's `--grep "@stable"` honours it — but this parser is per-`test()`,
+    // so a suite tagged that way would run in the stable lane while staying
+    // invisible to Phase 0 and to the checklist guard. Warn instead of guessing:
+    // the fix is to move `@stable` onto the individual `test()` calls (#985).
+    if (
+      ts.isCallExpression(node) &&
+      isDescribeCall(node) &&
+      node.arguments.length >= 2
+    ) {
+      const { tags } = readTagsArray(node.arguments[1]);
+      if (tags?.includes(STABLE_TAG)) {
+        const { line } = source.getLineAndCharacterOfPosition(
+          node.getStart(source),
+        );
+        warnings.push(
+          `${relativePath}:${line + 1} — \`@stable\` is declared on a \`test.describe\` block. ` +
+            "Playwright applies it to every test inside, but this parser only reads per-`test()` " +
+            "tags, so those tests would run in the daily while staying out of Phase 0 and the " +
+            "checklist guard. Move `@stable` onto each `test(...)` call.",
+        );
+      }
+    }
     if (ts.isCallExpression(node) && isPlainTestCall(node)) {
       const args = node.arguments;
       if (args.length >= 2) {

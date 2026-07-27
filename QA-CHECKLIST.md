@@ -156,6 +156,7 @@
 #### 2.4 Code Editing
 - [x] Edit Python code of custom component — Check & Save clears the pulse-pink indicator → `core-components/customComponentAdd.spec.ts`
 - [x] Full custom component → `core-components/full-custom-component.spec.ts`
+- [-] `configureCustomComponent` helper compiles code into a node with its declared interface → `core-components/configure-mcp-and-custom-component.spec.ts`
 
 ---
 
@@ -290,9 +291,9 @@
 - [x] Create global variable
 - [-] Use global variable in component (API key) → `ui-ux/use-global-variable-in-component.spec.ts`
 - [x] Edit existing global variable → `ui-ux/global-variable-edit.spec.ts`
-- [x] Delete global variable
-- [x] Create global variable of type "Generic"
-- [x] Credential variable value is hidden from the variable list
+- [x] Delete global variable → `ui-ux/global-variables-crud.spec.ts`
+- [x] Create global variable of type "Generic" → `ui-ux/global-variables-crud.spec.ts`
+- [x] Credential variable value is hidden from the variable list → `ui-ux/global-variables-crud.spec.ts`
 - [x] Create global variable from Settings page → `ui-ux/global-variable-edit.spec.ts`
 
 ---
@@ -654,6 +655,7 @@
 - [x] Execute MCP server tool and receive result in flow → `mcp/client/mcp-client-regression.spec.ts`
 - [x] MCP server connection error — unreachable server produces empty tool dropdown → `mcp/client/mcp-client-regression.spec.ts`
 - [x] Configure connection via HTTP form tab → `mcp/client/mcp-client-regression.spec.ts`
+- [-] `configureMcpServer` helper registers an MCP server via the HTTP form → `core-components/configure-mcp-and-custom-component.spec.ts`
 - [x] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
 - [x] Duplicate MCP server registration returns 409 Conflict → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`
