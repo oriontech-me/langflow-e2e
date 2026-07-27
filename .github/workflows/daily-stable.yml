@@ -206,6 +206,31 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Pick a LIVE key per provider before anything consumes one (#976). When a
+      # provider's key dies, collect-models records it "inactive" and the 17
+      # specs reading providers.json skip every target bound to it — silently,
+      # because a skip never trips the daily-failure gate (24 specs lost that way
+      # on 2026-07-27, #967). This probes <PROVIDER>_API_KEY, _2, _3... and
+      # re-exports the first that answers under the canonical name, so the
+      # Collect models step AND the sharded run below both inherit a validated
+      # key. It runs here rather than inside collect-models because those are
+      # separate steps: a fallback confined to collect-models would import the
+      # backup into Langflow while this job's test step still held the dead
+      # primary, and the first spec calling setupAnthropic would overwrite the
+      # working credential with it.
+      # STRICT here: a configured provider with no usable key is a broken
+      # environment, and eroded coverage must be loud. No continue-on-error.
+      - name: Resolve provider keys
+        run: npx ts-node scripts/resolve-provider-keys.ts
+        env:
+          PROVIDER_KEYS_STRICT: "1"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY_2: ${{ secrets.OPENAI_API_KEY_2 }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY_2: ${{ secrets.ANTHROPIC_API_KEY_2 }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
+
       # Guard: the @playwright/test version (from npm) MUST equal the container
       # image tag, or the runner looks for a browser revision the image doesn't
       # ship and every test fails at launch with a cryptic error. Fail fast with

@@ -191,6 +191,22 @@ jobs:
       # Skipped when no impacted spec needs provider model data (see detect-specs
       # → needs_models). Keeps a provider billing/quota outage from reddening a
       # PR whose specs never use that provider (#915/#910/#911 class).
+      # Same key resolution the daily runs (#976) — pick a live candidate before
+      # Collect models consumes one. WARN-ONLY here: this job must not go red
+      # because an account was drained, which is the whole point of #952/#955.
+      # Gated on needs_models for the same reason Collect models is.
+      - name: Resolve provider keys
+        if: needs.detect-specs.outputs.needs_models == 'true'
+        run: npx ts-node scripts/resolve-provider-keys.ts
+        env:
+          PROVIDER_KEYS_STRICT: "0"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY_2: ${{ secrets.OPENAI_API_KEY_2 }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY_2: ${{ secrets.ANTHROPIC_API_KEY_2 }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
+
       - name: Collect models
         if: needs.detect-specs.outputs.needs_models == 'true'
         env:
