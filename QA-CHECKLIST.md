@@ -138,9 +138,10 @@
 - [x] Edit table input → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit slider → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit tab component → `core-components/parameters-panel-field-types.spec.ts`
+- [-] Visibility toggle of a connected input is disabled (tooltip "Cannot change visibility of connected handles") and re-enables once the edge is deleted → `flow-functionality/general-bugs-hidden-input-edges.spec.ts`
 
 #### 2.2 Tool Mode
-- [x] Enable Tool Mode on a component
+- [x] Enable Tool Mode on a component → `core-components/tool-mode.spec.ts`
 - [x] Group components in Tool Mode → `core-components/tool-mode-group.spec.ts`
 - [x] Edit tools (slug, description, requires-approval persistence) → core-components/edit-tools.spec.ts
 
@@ -173,6 +174,7 @@
 - [x] Dismiss button on the Files field clears the value → `core-components/chat-input-files-field-regression.spec.ts`
 - [x] Chat Input is a singleton — adding one removes both the Chat Input and Webhook `+` buttons from the sidebar (mutual exclusion) → `core-components/singleton-components.spec.ts`
 - [x] Chat Input cannot be duplicated (`Cmd/Ctrl+D`) or copy/pasted (`Cmd/Ctrl+C`+`V`) — blocked with the "components were not pasted" toast → `core-components/singleton-components.spec.ts`
+- [-] File on the advanced `files` field can be removed and re-uploaded; after running, the image and the user message render in the Playground → `flow-functionality/general-bugs-shard-3836.spec.ts`
 
 #### 3.2 Prompt Template
 - [x] Prompt Template renders on canvas with output handle → `core-components/prompt-template-component-regression.spec.ts`
@@ -227,6 +229,8 @@
 - [x] Payload inválido (não-JSON) é encapsulado em `{"payload": "..."}` na saída → `core-components/webhook-component-regression.spec.ts`
 - [x] Webhook is a singleton — adding one removes both the Webhook and Chat Input `+` buttons from the sidebar (mutual exclusion) → `core-components/singleton-components.spec.ts`
 - [x] Webhook cannot be duplicated (`Cmd/Ctrl+D`) or copy/pasted (`Cmd/Ctrl+C`+`V`) — blocked with the "components were not pasted" toast → `core-components/singleton-components.spec.ts`
+- [-] Generated cURL includes the `x-api-key` header when webhook auth is enabled (mocked `GET /api/v1/config`, auto-login off) → `core-components/general-bugs-component-webhook-api-key-display.spec.ts`
+- [-] Generated cURL omits `x-api-key` when webhook auth is disabled → `core-components/general-bugs-component-webhook-api-key-display.spec.ts`
 
 #### 3.5 Agent (Component)
 - [x] Agent component renders on canvas with title, handles and default fields → `core-components/agent-component-regression.spec.ts`
@@ -267,11 +271,11 @@
 #### 4.1 Login / Logout
 - [-] Login with valid credentials
 - [-] Login with invalid credentials — should display error message
-- [x] Logout — should redirect to login screen
+- [x] Logout — should redirect to login screen → `core-functionality/auth/logout-flow.spec.ts`
 - [-] Auto-login enabled — should skip login screen
 - [-] Auto-login disabled — should display login screen
 - [-] Expired session — should redirect to login
-- [x] Session cleanup after logout
+- [x] Session cleanup after logout — after logging out, navigating to `/` and reloading both stay on the login screen → `core-functionality/auth/logout-flow.spec.ts`
 
 #### 4.2 User Management (Admin)
 - [-] Admin creates new user
@@ -315,7 +319,7 @@
 > Run `npx playwright test tests/collect-models.spec.ts` before executing these tests.
 > See `CLAUDE.md` in this folder for the complete guide.
 
-#### 6.1 agent-component-regression.spec.ts — Agent Behavior Regression `@stable`
+#### 6.1 llm-agents/agent-component-regression.spec.ts — Agent Behavior Regression `@stable`
 - [x] Agent responds without connected tools
 - [x] Agent displays valid response and optionally reasoning steps
 - [x] Stop button interrupts agent execution
@@ -363,6 +367,7 @@
 - [x] Toggle add_current_date_tool works (enables/disables date tool) → `agent-current-date-tool.spec.ts`
 - [~] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts` (**partially covered on 1.11**: the field is present and togglable, but True/False are behaviorally identical — the field now only toggles `ToolRetryMiddleware`, and component-tool failures are converted to content by the hardcoded `handle_tool_error=True` before the middleware can observe them; the only live trigger (LLM-emitted malformed args) is non-deterministic, so the semantic difference is not deterministically testable — re-scope tracked in #496)
 - [x] Image passed via input handle is processed correctly → `core-functionality/llm-agents/agent-multimodal-image-input.spec.ts`
+- [-] Image attached in the Playground is processed by the Agent — the attachment renders in the user message and the reply describes it → `core-functionality/llm-agents/general-bugs-agent-images-playground.spec.ts` (lost `@stable` in the OpenAI-quota quarantine #772; restore with that promotion)
 
 ---
 
@@ -421,10 +426,10 @@
 ### core-functionality/observability-monitoring/ — Tracing, Logs and Metrics
 
 #### 8.1 Traces
-- [x] View execution traces
-- [x] Trace API returns paginated transactions
-- [x] Trace displays latency of each component
-- [x] Trace displays tokens consumed
+- [x] View execution traces → `core-functionality/observability-monitoring/traces.spec.ts`
+- [x] Trace API returns paginated transactions → `core-functionality/observability-monitoring/traces-detail.spec.ts`
+- [x] Trace displays latency of each component → `core-functionality/observability-monitoring/traces-latency-tokens.spec.ts` (API `totalLatencyMs`, Flow Activity latency column, per-span latency in the Trace Details modal)
+- [x] Trace displays tokens consumed → `core-functionality/observability-monitoring/traces-latency-tokens.spec.ts` (API `totalTokens` + Flow Activity token column)
 - [x] Single-trace API returns 404 for an unknown trace_id → `traces-detail-single.spec.ts`
 - [x] Single-trace API returns the full TraceRead contract with a non-empty span tree → `traces-detail-single.spec.ts`
 - [x] Single-trace API returns populated tokenUsage + modelName on the LLM span (OpenAI) → `traces-detail-llm-span-populated.spec.ts`
@@ -478,6 +483,8 @@
 - [x] ChatInput Input Text pre-fills the playground textarea on first open → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] ChatInput Input Text re-pre-fills the textarea on a new session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
 - [x] Pre-filled Input Text can be sent as the first message of the session → `core-functionality/playground/playground-input-text-prefill.spec.ts`
+- [-] Attach and send an image on a live LLM flow (Basic Prompting) — the image renders in the chat messages → `core-functionality/llm-agents/chatInputOutputUser-shard-0.spec.ts`
+- [-] Custom `sender_name` on Chat Input/Output is applied to a live LLM turn — messages render as `chat-message-<custom name>` after a default-label turn → `core-functionality/llm-agents/chatInputOutputUser-shard-2.spec.ts`
 
 #### 9.2 History and Session
 - [x] Configure custom session ID → `core-functionality/playground/playground-session-id.spec.ts`
@@ -525,7 +532,7 @@
 - [x] Delete folder with flows inside → `core-functionality/project-management/folder-crud.spec.ts`
 - [-] Integrity after deletion
 - [-] Create folder after deleting all folders
-- [-] Upload flow by drag-and-drop to folder
+- [-] Upload flow by drag-and-drop to folder — dropping a collection file imports one flow per entry; dropping a single flow file imports exactly one → `flow-functionality/dragAndDrop.spec.ts`
 - [-] Move flow to another folder
 
 #### 10.2 Folder Navigation
@@ -689,7 +696,7 @@
 - [-] Connect two compatible components
 - [-] Prevent connection between incompatible types
 - [-] Delete edge/connection
-- [-] Filter edges by data type
+- [-] Filter edges by data type — clicking an input handle filters the sidebar to compatible sources (`url` → string sources, `headers` → Data sources), and the legacy/beta toggles expand that set → `ui-ux/filterSidebar.spec.ts`
 - [-] Reconnect existing edge
 
 #### 15.4 Node Manipulation
