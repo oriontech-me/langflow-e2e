@@ -1,4 +1,4 @@
-import { type Page, expect } from "@playwright/test";
+import { type Locator, type Page, expect } from "@playwright/test";
 
 // Cheap, fast chat models in priority order. `gpt-4o-mini` is kept first so older
 // Langflow builds still match; the `gpt-5.x` entries cover newer builds (1.11.0+)
@@ -55,9 +55,17 @@ async function selectPreferredChatModel(page: Page): Promise<void> {
     // that fallback used to hand back a non-OpenAI model from a helper named
     // `...OpenAI` whenever PREFERRED_CHAT_MODELS drifted behind the build's
     // curated list (issue #961).
+    // A multi-line label carries a badge rendered inside the option (e.g.
+    // "Deprecated"): skip it. Unlike the exact-match PREFERRED lookup above,
+    // this pattern-based branch would otherwise put the badge text into
+    // `chosen` and break the trigger assertion below — and a deprecated model
+    // is not what a regression run wants either.
     labels.find(
       (label) =>
-        /^gpt-/i.test(label) && !NON_CHAT_MODEL.test(label) && !AVOID_MODEL.test(label),
+        !label.includes("\n") &&
+        /^gpt-/i.test(label) &&
+        !NON_CHAT_MODEL.test(label) &&
+        !AVOID_MODEL.test(label),
     ) ||
     labels.find((label) => !NON_CHAT_MODEL.test(label) && !AVOID_MODEL.test(label));
 
@@ -189,9 +197,23 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
   // persisted the credential).
   if (!(await isOpenAIOffered(page))) {
     await configureOpenAIProviderFromDropdown(page);
-    await modelDropdown.dispatchEvent("click");
 
-    if (!(await isOpenAIOffered(page))) {
+    // Gate on an OpenAI OPTION appearing — never on a single sample of the list.
+    // Closing the panel refreshes every ModelInput *asynchronously*
+    // (`refreshAllModelInputs`, fired after the pending model toggles flush), so
+    // the reopened dropdown can still be rendering the pre-refresh list; sampling
+    // it once reports "no OpenAI model" for a provider that was just configured
+    // fine. The second dispatch covers the opposite state: if the panel left the
+    // popover open, the first dispatch toggled it shut instead of opening it.
+    const openAIOption = page.getByTestId(/^openai-.+-option$/i).first();
+    await modelDropdown.dispatchEvent("click");
+    let offered = await optionAppeared(openAIOption);
+    if (!offered) {
+      await modelDropdown.dispatchEvent("click");
+      offered = await optionAppeared(openAIOption);
+    }
+
+    if (!offered) {
       await page.keyboard.press("Escape");
       throw new Error(
         "setupLanguageModelOpenAI: the model dropdown still offers no OpenAI model after " +
@@ -204,17 +226,28 @@ export async function setupLanguageModelOpenAI(page: Page): Promise<void> {
   await selectPreferredChatModel(page);
 }
 
+// Resolves true when the option becomes visible within the wait, false on timeout.
+async function optionAppeared(option: Locator): Promise<boolean> {
+  return option
+    .waitFor({ state: "visible", timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+}
+
 // True when the open ModelInput dropdown offers at least one OpenAI model.
 // Each option carries `data-testid="${provider}-${model}-option"` (frontend
 // `ModelList.getModelOptionTestId`), so the provider is authoritative straight
 // from the DOM; the `gpt-*` label check is a fallback for builds whose option
 // testid is not provider-prefixed. Returns false on the empty dropdown ("No
 // Models Enabled"), which is what an unconfigured instance renders.
+// The initial wait matches selectPreferredChatModel's own 15s budget for the same
+// list: a saturated runner that takes >5s to populate it must be waited out, not
+// mistaken for "OpenAI is missing" (which would trigger a pointless panel detour).
 async function isOpenAIOffered(page: Page): Promise<boolean> {
   const options = page.locator('[data-testid$="-option"]');
   await options
     .first()
-    .waitFor({ state: "visible", timeout: 5000 })
+    .waitFor({ state: "visible", timeout: 15000 })
     .catch(() => {});
 
   const testIds = await options.evaluateAll((els) =>
@@ -252,38 +285,42 @@ async function configureOpenAIProviderFromDropdown(page: Page): Promise<void> {
   const apiKeyInput = page.getByPlaceholder("sk-...");
   await apiKeyInput.waitFor({ state: "visible", timeout: 10000 });
 
-  // "Replace" means the credential is already stored — enabling a model is all
-  // that is left. "Retry Save" is the label after a failed key validation.
-  const alreadyConfigured = await page
-    .getByRole("button", { name: "Replace", exact: true })
-    .isVisible({ timeout: 2000 })
-    .catch(() => false);
+  // The form's single submit button carries the state: "Save" (unconfigured),
+  // "Replace" (credential already stored) or "Retry Save" (key rejected on a
+  // previous save). Wait for it and branch on the label it actually renders —
+  // `isVisible({ timeout })` would NOT wait (the option is documented as ignored),
+  // and a premature "not configured" reading re-saves a stored credential, which
+  // 400s on PATCH /variables and trips the backend-error monitor (issue #751).
+  // Scoped to the dialog so a same-named button elsewhere on the canvas cannot match.
+  const submitBtn = page
+    .getByRole("dialog")
+    .getByRole("button", { name: /^(Save|Replace|Retry Save)$/ })
+    .first();
+  await submitBtn.waitFor({ state: "visible", timeout: 10000 });
+  const alreadyConfigured = /^Replace$/i.test((await submitBtn.innerText()).trim());
 
   if (!alreadyConfigured) {
     await apiKeyInput.click();
     await apiKeyInput.pressSequentially(apiKey, { delay: 0 });
-    await page.getByRole("button", { name: /^(Save|Retry Save)$/ }).click();
+    await submitBtn.click();
 
     // Saving validates the key against the provider and loads its model list.
     // Failing hard here (instead of swallowing the timeout) is the point: with no
     // toggle there is no model to enable, and closing the panel anyway would let
     // the dropdown hand back another provider's model — the silent mis-run this
-    // whole branch exists to prevent. A rejected key leaves the button on
-    // "Retry Save", which is reported so the failure is diagnosable.
+    // whole branch exists to prevent. The submit button's label is reported as-is
+    // (it carries the save outcome) so the failure is diagnosable.
     try {
       await page
         .locator('[data-testid^="llm-toggle-"]')
         .first()
         .waitFor({ state: "visible", timeout: 30000 });
     } catch {
-      const rejected = await page
-        .getByRole("button", { name: "Retry Save", exact: true })
-        .isVisible()
-        .catch(() => false);
+      const label = (await submitBtn.innerText().catch(() => "<unreadable>")).trim();
       throw new Error(
-        "setupLanguageModelOpenAI: saving OPENAI_API_KEY in the Model Providers panel " +
-          `did not load any OpenAI model${rejected ? " — Langflow rejected the key on validation" : ""}. ` +
-          "Check that OPENAI_API_KEY is valid and the account can list models.",
+        "setupLanguageModelOpenAI: saving OPENAI_API_KEY in the Model Providers panel did " +
+          `not load any OpenAI model (submit button reads "${label}"). Check that ` +
+          "OPENAI_API_KEY is valid and the account can list models.",
       );
     }
   }
