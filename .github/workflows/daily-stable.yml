@@ -226,20 +226,8 @@ jobs:
           PROVIDER_KEYS_STRICT: "1"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_KEY_2: ${{ secrets.OPENAI_API_KEY_2 }}
-          # PARKED — Anthropic is unconfigured for the daily until its account
-          # has credit (#967). Both keys draw on the same drained balance, so
-          # the strict gate above correctly reddens every run
-          # ("all 2 candidate key(s) failed — credit balance is too low").
-          # Leaving the provider unset is the honest state: the resolver skips
-          # it, collect-models records "not set", and its specs skip via
-          # hasProviderEnvKeys() — the pre-#976 behaviour, scoped to Anthropic
-          # alone, with OpenAI and Google still strictly gated.
-          # REVERT: uncomment both lines once the balance is topped up (or a
-          # separately-billed backup account is registered as _2), then confirm
-          # with a manual daily — the resolver must print
-          # "anthropic: resolved to ANTHROPIC_API_KEY (candidate 1/1)".
-          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          # ANTHROPIC_API_KEY_2: ${{ secrets.ANTHROPIC_API_KEY_2 }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY_2: ${{ secrets.ANTHROPIC_API_KEY_2 }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
 
@@ -357,8 +345,7 @@ jobs:
           PREFLIGHT_SKIP_CREDENTIALS: "1"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          # PARKED with the Resolve provider keys step above — see #967.
-          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
@@ -388,8 +375,7 @@ jobs:
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          # PARKED with the Resolve provider keys step above — see #967.
-          # ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
