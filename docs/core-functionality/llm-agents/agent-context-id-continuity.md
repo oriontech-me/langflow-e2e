@@ -1,6 +1,6 @@
 # Agent context_id — continuity between session messages
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev7`)
 
 ---
 
