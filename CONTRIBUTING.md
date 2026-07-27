@@ -645,6 +645,27 @@ The dedicated issue spun out of the triage must be **clear and agnostic**:
 
 The spec doc is **not updated** during this cycle — the auto-removal commit, the dedicated issue, and the restoration PR are the traceability record.
 
+### Regression Ledger — record every confirmed regression
+
+`REGRESSIONS.md` (repo root) is the curated registry of the real Langflow
+regressions the suite has caught, and the source of the ROI indicator at its
+top. It is the suite's headline evidence that it finds product breakage a green
+run never proves — so keeping it current is not optional.
+
+When a resolution confirms a **`langflow-regression`** verdict, has it
+**adversarially validated** (refute-first across source/API/UI where
+applicable), and a **filed upstream ticket** exists (DataStax Jira `LE-####` or
+a `langflow-ai/langflow` issue), **adding a row to `REGRESSIONS.md` is a
+mandatory step of the report/resolution** — not a follow-up.
+
+- Confirmed but not yet ticketed → add it under **Candidates**, not the ledger.
+- A finding that adversarial validation downgrades to a non-user-facing
+  robustness gap → do not list it (see the SQLite-lock counter-example in
+  `REGRESSIONS.md`).
+- After editing the table, run `npm run regressions:summary` to regenerate the
+  indicator block, then commit. **Never hand-edit** the block between the
+  `<!-- REGRESSIONS:START -->` / `<!-- REGRESSIONS:END -->` markers.
+
 ### Monitoring rules driven by run history
 
 Hard failures are now handled automatically (removed on the first red day — see the lifecycle above), so these history-driven rules are mostly about **flakes**, which are never auto-removed. Triage decisions should be informed by `reports/daily-history.jsonl` rather than by gut feel — the file makes recurrence visible. Before deciding whether to act on a flake, list every occurrence of the same test with its date and error signature (weekday dailies over 30 days are ≈22 runs):
