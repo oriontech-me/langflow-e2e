@@ -218,12 +218,17 @@ jobs:
       # backup into Langflow while this job's test step still held the dead
       # primary, and the first spec calling setupAnthropic would overwrite the
       # working credential with it.
-      # STRICT here: a configured provider with no usable key is a broken
-      # environment, and eroded coverage must be loud. No continue-on-error.
+      # WARN-ONLY, deliberately. An earlier revision failed the step when a
+      # configured provider had no live key; on 2026-07-27 that killed all four
+      # shards at the first step over a drained Anthropic account, blocking the
+      # dozens of specs that never touch Anthropic. Picking a live key is worth
+      # doing on its own — gating the run on it is not. A provider with no
+      # usable candidate falls through to exactly the pre-existing behaviour:
+      # collect-models records it inactive and its specs skip.
       - name: Resolve provider keys
         run: npx ts-node scripts/resolve-provider-keys.ts
         env:
-          PROVIDER_KEYS_STRICT: "1"
+          PROVIDER_KEYS_STRICT: "0"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_API_KEY_2: ${{ secrets.OPENAI_API_KEY_2 }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
