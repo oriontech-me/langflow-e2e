@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
 import type { PwStats } from './types.ts'
 
 // ---------- pure, unit-tested ----------
@@ -85,6 +86,12 @@ export function gitDiffNames(): string[] {
   const diff = sh('git', ['diff', '--name-only', 'HEAD']).stdout
   const untracked = sh('git', ['ls-files', '--others', '--exclude-standard']).stdout
   return filterScoutSpecs([...new Set((diff + '\n' + untracked).split('\n').filter(Boolean))])
+    // DELETED paths are in `git diff` too, and a consolidation issue legitimately
+    // deletes a duplicated spec (#938). They are not runnable targets: the burst,
+    // the FF enumeration and the REPORT skeleton all read the file, which threw
+    // ENOENT and blocked the phase. A deleted spec has no test() to run or
+    // force-fail, so dropping it weakens no gate.
+    .filter(f => existsSync(f))
 }
 
 // Throwaway scout specs (live-DOM harvesting during PLAN) are never burst

@@ -63,7 +63,7 @@ Mid-transition opacity values are intentionally not asserted. The hover-reveal c
 
 - The animated opacity transition itself (mid-transition values). The CSS uses `transition-all`, but the test asserts only the boundary states — initial `opacity: 0`, settled `opacity: 1` after hover, and a successful click that produces a node.
 - Keyboard-driven activation of the Plus button (`Enter` / `Space` while focused) — the test only covers mouse hover + click; no accessibility assertions are made.
-- Drag-and-drop from the sidebar (covered by `dragAndDrop.spec.ts`).
+- Drag-and-drop from the sidebar, and double-click on the sidebar card (both covered by `ui-ux/sidebar-add-component.spec.ts` — `flow-functionality/dragAndDrop.spec.ts`, despite its name, imports a flow **file** dropped on the home page and never touches the sidebar).
 - Below-`sm` viewports where `sm:opacity-0` does not apply and the Plus icon is permanently visible.
 
 ---
