@@ -766,9 +766,9 @@
 | `flow-functionality/` | 28 | 26 | 1 | 1 | 0 |
 | `mcp/client/` | 12 | 10 | 0 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
-| `ui-ux/` — Canvas | 44 | 14 | 29 | 1 | 0 |
+| `ui-ux/` — Canvas | 44 | 17 | 24 | 3 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **452** | **343 (76%)** | **97 (21%)** | **6 (1%)** | **6 (1%)** |
+| **TOTAL** | **452** | **346 (77%)** | **92 (20%)** | **8 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 367 `test()` calls carrying the `@stable` tag, distributed across 150 spec
+> 372 `test()` calls carrying the `@stable` tag, distributed across 152 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1168,6 +1168,7 @@
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
+- [x] user can search and add components using keyboard shortcuts → `keyboardComponentSearch.spec.ts`
 - [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
 - [x] User should be able to interact notifications tab → `notifications.spec.ts`
 - [x] Settings General section loads and shows its header → `settings-general-section.spec.ts`
@@ -1182,6 +1183,10 @@
 - [x] double-click on a sidebar component adds it to the canvas → `sidebar-add-component.spec.ts`
 - [x] dragging a sidebar component drops the node at the pointer → `sidebar-add-component.spec.ts`
 - [x] an added component arrives with its catalog default settings → `sidebar-add-component.spec.ts`
+- [x] searching by name lists the matching component and hides the others → `sidebar-search-and-filter.spec.ts`
+- [x] a query with no match shows the empty state and clearing restores the tree → `sidebar-search-and-filter.spec.ts`
+- [x] a provider query groups its components under the provider bundle → `sidebar-search-and-filter.spec.ts`
+- [x] category disclosures collapse and expand their component list → `sidebar-search-and-filter.spec.ts`
 
 ---
 
@@ -1200,7 +1205,7 @@
 | `core-functionality/playground/` | 1 | 0 |
 | `mcp/client/` | 0 | 2 |
 | `mcp/server/` | 1 | 1 |
-| `ui-ux/` — Canvas | 29 | 0 |
+| `ui-ux/` — Canvas | 24 | 0 |
 
 ---
 
