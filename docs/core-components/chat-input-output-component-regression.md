@@ -1,6 +1,6 @@
 # Chat Input / Chat Output Components — Regression
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev7`)
 
 ---
 
