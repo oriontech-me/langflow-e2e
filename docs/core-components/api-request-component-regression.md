@@ -1,6 +1,6 @@
 # API Request Component — Rendering, Inspector, HTTP Methods, cURL Mode and Error Paths
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev46`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev7`)
 
 ---
 
