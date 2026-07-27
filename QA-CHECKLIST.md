@@ -706,10 +706,10 @@
 - [-] Deselect node via Escape
 
 #### 15.5 Canvas Zoom and Navigation
-- [-] Zoom in / Zoom out
-- [-] Fit View centers nodes
-- [-] Fit View button in toolbar
-- [-] Scroll to navigate canvas
+- [x] Zoom in / Zoom out → `ui-ux/canvas-zoom-navigation.spec.ts`
+- [x] Fit View centers nodes → `ui-ux/canvas-zoom-navigation.spec.ts`
+- [x] Fit View button in toolbar → `ui-ux/canvas-zoom-navigation.spec.ts`
+- [x] Scroll to navigate canvas — on 1.12 the wheel zooms anchored at the pointer (no scroll-to-pan surface) → `ui-ux/canvas-zoom-navigation.spec.ts`
 - [~] Minimap — feature flag-gated
 
 #### 15.6 Grouping
