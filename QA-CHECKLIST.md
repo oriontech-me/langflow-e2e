@@ -627,7 +627,7 @@
 - [x] Save flow components as template → `core-components/saveComponents.spec.ts`
 
 #### 12.6 Flow Execution
-- [x] Run Flow component executes another flow → `flow-functionality/run-flow.spec.ts`
+- [!] Run Flow component executes another flow — runs again after the #966 quarantine lift, but **not `@stable`** while the upstream `New Flow` dead-click defect ([LE-2019](https://datastax.jira.com/browse/LE-2019)) is open; the shared helper gates on the flows list having rendered so the suite stays out of the broken window → `flow-functionality/run-flow.spec.ts`
 - [x] Run a flow from the canvas — terminal-node run builds the whole graph; all nodes reach build success and output is produced → `flow-functionality/flow-execution-canvas.spec.ts`
 - [x] Stop building flow → `flow-functionality/stop-building.spec.ts`
 - [!] Playground button disabled with empty flow — needs review → `regression/flow-functionality/generalBugs-shard-3.spec.ts` (**test skipped: assertion was a no-op, current Langflow behavior to confirm**)

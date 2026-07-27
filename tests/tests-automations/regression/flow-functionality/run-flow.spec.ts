@@ -9,10 +9,19 @@ import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
 import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
 
-// Quarantined for #966 — recurrent flake (2026-07-16 / 07-27): neither the
-// welcome overlay nor the templates modal surfaces after the "New Flow" entry
-// point, so the reconciliation poll in openNewFlowTemplatesModal times out.
-test.fixme(
+// `test.fixme` lifted in #966 — the spec runs again. The recurrent flake (dailies
+// 2026-07-16 / 07-27) was the mid-test `openNewFlowTemplatesModal` call below: after
+// the `icon-ChevronLeft` back-navigation the "New Flow" button becomes visible while
+// the flows list is still loading, and a click landed in that window is a no-op, so
+// neither the welcome overlay nor the templates modal was ever requested.
+//
+// That no-op is a PRODUCT defect, filed upstream as LE-2019 (evidence:
+// docs/upstream-bugs/UPSTREAM-BUG-new-flow-dead-click.md). The shared helper now
+// gates on the flows list having rendered, which keeps the suite out of the broken
+// window — but it does not fix the product, so `@stable` deliberately STAYS OFF
+// until LE-2019 lands on the nightly and this spec is re-validated there (#966 stays
+// open tracking it). See docs/flow-functionality/run-flow.md.
+test(
   "user should be able to use Run Flow without any issues",
   { tag: ["@release", "@workspace", "@api", "@regression"] },
   async ({ page, request }) => {
@@ -20,12 +29,36 @@ test.fixme(
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
     }
 
-    await awaitBootstrapTest(page);
-
-    // Track the IDs of the 2 flows we create so cleanup can target ONLY
-    // those via the API, not example/starter flows or flows belonging to
+    // Track the IDs of every flow THIS page creates so cleanup can target ONLY
+    // those via the API, never example/starter flows or flows belonging to
     // sibling specs running in parallel.
+    //
+    // Collected from the `POST /api/v1/flows` 201 responses, NOT from the canvas
+    // URL: the URL id is transient and 404s on delete (#505/#681), which is why
+    // this spec was leaking both flows it creates — a `Run Flow Target …` (2
+    // nodes) and the Run Flow canvas (1 node) survived every run. The listener is
+    // installed before the first navigation so the bootstrap's own creates are
+    // captured too; deleting a transient id is harmless (`deleteFlow` treats 404
+    // as done).
     const createdFlowIds: string[] = [];
+    page.on("response", (resp) => {
+      if (
+        resp.url().includes("/api/v1/flows") &&
+        resp.request().method() === "POST" &&
+        resp.status() === 201
+      ) {
+        resp
+          .json()
+          .then((body: { id?: string }) => {
+            if (body?.id) createdFlowIds.push(body.id);
+          })
+          .catch(() => {
+            /* a non-JSON 201 carries no id to clean up */
+          });
+      }
+    });
+
+    await awaitBootstrapTest(page);
 
     // Unique name for the sub-flow we build so the Run Flow "Flow Name" dropdown
     // can pick it deterministically by name instead of by position (issue #340).
@@ -35,12 +68,10 @@ test.fixme(
     const targetFlowName = `Run Flow Target ${test.info().workerIndex}-${Date.now()}-${Math.random()
       .toString(36)
       .slice(2, 8)}`;
-    const captureFlowIdFromUrl = async () => {
-      // `waitForURL` enforces the URL matches, so the subsequent match() is
-      // guaranteed — no need for a runtime null check.
+    // Gate on the editor route without reading an id off it: the id capture now
+    // rides the create responses above (the URL id is transient).
+    const waitForCanvasRoute = async () => {
       await page.waitForURL(/\/flow\/[0-9a-f-]+/i, { timeout: 15000 });
-      const id = page.url().match(/\/flow\/([0-9a-f-]+)/i)![1];
-      createdFlowIds.push(id);
     };
 
     try {
@@ -49,7 +80,7 @@ test.fixme(
       });
 
       await page.getByTestId("blank-flow").click();
-      await captureFlowIdFromUrl();
+      await waitForCanvasRoute();
 
       await page.getByTestId("sidebar-search-input").click();
       await page.getByTestId("sidebar-search-input").fill("chat output");
@@ -101,7 +132,7 @@ test.fixme(
       await openNewFlowTemplatesModal(page);
 
       await page.getByTestId("blank-flow").click();
-      await captureFlowIdFromUrl();
+      await waitForCanvasRoute();
 
       await page.getByTestId("sidebar-search-input").click();
       await page.getByTestId("sidebar-search-input").fill("run flow");
