@@ -766,9 +766,9 @@
 | `flow-functionality/` | 28 | 26 | 1 | 1 | 0 |
 | `mcp/client/` | 12 | 10 | 0 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
-| `ui-ux/` — Canvas | 44 | 11 | 32 | 1 | 0 |
+| `ui-ux/` — Canvas | 44 | 14 | 29 | 1 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **452** | **340 (75%)** | **100 (22%)** | **6 (1%)** | **6 (1%)** |
+| **TOTAL** | **452** | **343 (76%)** | **97 (21%)** | **6 (1%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -784,7 +784,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 364 `test()` calls carrying the `@stable` tag, distributed across 149 spec
+> 367 `test()` calls carrying the `@stable` tag, distributed across 150 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1179,6 +1179,9 @@
 - [x] Settings Shortcuts section lists keyboard shortcuts → `settings-navigation.spec.ts`
 - [x] Settings Model Providers section loads with provider configuration → `settings-navigation.spec.ts`
 - [x] dark and light mode toggle correctly updates the body class → `settings-theme-toggle.spec.ts`
+- [x] double-click on a sidebar component adds it to the canvas → `sidebar-add-component.spec.ts`
+- [x] dragging a sidebar component drops the node at the pointer → `sidebar-add-component.spec.ts`
+- [x] an added component arrives with its catalog default settings → `sidebar-add-component.spec.ts`
 
 ---
 
@@ -1197,7 +1200,7 @@
 | `core-functionality/playground/` | 1 | 0 |
 | `mcp/client/` | 0 | 2 |
 | `mcp/server/` | 1 | 1 |
-| `ui-ux/` — Canvas | 32 | 0 |
+| `ui-ux/` — Canvas | 29 | 0 |
 
 ---
 
