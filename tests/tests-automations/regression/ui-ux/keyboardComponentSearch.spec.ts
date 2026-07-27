@@ -1,86 +1,141 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { createFlow } from "../../../helpers/flows/create-flow";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
-test(
-  "user can search and add components using keyboard shortcuts",
-  { tag: ["@release", "@workspace"] },
-  async ({ page }) => {
-    // Navigate to homepage and handle initial modal
-    await awaitBootstrapTest(page);
+// Keyboard-driven component search and add — QA-CHECKLIST §15.1
+// "Keyboard search (keyboard shortcut)".
+// Spec doc: docs/ui-ux/keyboardComponentSearch.md
+//
+// One journey: `/` focuses the sidebar search from the canvas, typing filters the
+// tree, Tab walks into the results, and Space / Enter add the focused component.
+//
+// Rewritten from the inherited version, which pressed Tab three times blindly and
+// then asserted only a node COUNT: the live focus order is
+// sidebar-options-trigger -> disclosure-<category> -> first result card, so one
+// extra focusable element upstream would have moved Space onto another control
+// with the test still green. Here the Tab walk stops on the expected testid and
+// each added node is asserted by TYPE. The inherited version also opened a blank
+// flow through the UI and never deleted it.
 
-    // Start with blank flow
-    await page.getByTestId("blank-flow").click();
-    await page.waitForTimeout(500);
-    await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-      timeout: 3000,
+// Focus targets in the filtered result list.
+const CHAT_INPUT_CARD = "input_output_chat input_draggable";
+const CHAT_OUTPUT_CARD = "input_output_chat output_draggable";
+// A component that must not survive the "chat" query.
+const NON_MATCHING_CARD = "models_and_agentsPrompt Template";
+// Bounded Tab walk: the live order needs 3 presses, so this only runs out when
+// the card is unreachable by keyboard — which is the failure being tested.
+const MAX_TAB_PRESSES = 10;
+
+/** The `data-testid` of the currently focused element, if it has one. */
+async function focusedTestId(page: Page): Promise<string | null> {
+  return page.evaluate(
+    () => document.activeElement?.getAttribute("data-testid") ?? null,
+  );
+}
+
+/** Presses Tab until `testId` holds focus; fails if it never does. */
+async function tabUntilFocused(page: Page, testId: string): Promise<number> {
+  for (let presses = 1; presses <= MAX_TAB_PRESSES; presses++) {
+    await page.keyboard.press("Tab");
+    if ((await focusedTestId(page)) === testId) return presses;
+  }
+  throw new Error(
+    `"${testId}" never received focus within ${MAX_TAB_PRESSES} Tab presses ` +
+      `(last focused: ${await focusedTestId(page)})`,
+  );
+}
+
+test.describe("ui-ux — keyboard component search", () => {
+  let token: string;
+  let flowId: string;
+
+  test.beforeEach(async ({ page, request }) => {
+    token = await getAuthToken(request);
+    flowId = await createFlow(
+      request,
+      {
+        name: `keyboard-search-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        description: "Empty canvas for the §15.1 keyboard-search test",
+        data: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
+        is_component: false,
+      },
+      { headers: { Authorization: token } },
+    );
+
+    await page.goto(`/flow/${flowId}`);
+    await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+      timeout: 30000,
     });
+    await expect(page.locator(".react-flow__node")).toHaveCount(0);
+  });
 
-    // Press "/" to activate search
-    await page.keyboard.press("/");
+  test.afterEach(async ({ page, request }) => {
+    await page.goto("/").catch(() => {});
+    await deleteFlow(request, flowId, { headers: { Authorization: token } });
+  });
 
-    // Verify search is focused and disclosures are closed when search is empty
-    await expect(page.getByTestId("sidebar-search-input")).toBeFocused({
-      timeout: 1000,
+  test("user can search and add components using keyboard shortcuts",
+    { tag: ["@stable", "@workspace", "@ui-ux"] },
+    async ({ page }) => {
+      const search = page.getByTestId("sidebar-search-input");
+      const nodes = page.locator(".react-flow__node");
+
+      await test.step("'/' focuses the sidebar search from the canvas", async () => {
+        await page
+          .locator(".react-flow__pane")
+          .click({ position: { x: 500, y: 350 } });
+
+        await page.keyboard.press("/");
+
+        await expect(search).toBeFocused({ timeout: 10000 });
+        // The shortcut must not land in the field as text.
+        await expect(search).toHaveValue("");
+      });
+
+      await test.step("typing filters the component tree", async () => {
+        await page.keyboard.type("chat");
+
+        await expect(page.getByTestId(CHAT_INPUT_CARD)).toBeVisible({
+          timeout: 15000,
+        });
+        await expect(page.getByTestId(NON_MATCHING_CARD)).toBeHidden();
+      });
+
+      await test.step("Tab reaches the first result and Space adds it", async () => {
+        await tabUntilFocused(page, CHAT_INPUT_CARD);
+        await page.keyboard.press("Space");
+
+        await expect(nodes).toHaveCount(1, { timeout: 15000 });
+        // Identity, not just count: this is what proves the keyboard added the
+        // FOCUSED component.
+        await expect(nodes.first()).toHaveAttribute(
+          "data-testid",
+          /^rf__node-ChatInput-/,
+        );
+      });
+
+      await test.step("Tab reaches the next result and Enter adds it", async () => {
+        await search.click();
+        await tabUntilFocused(page, CHAT_OUTPUT_CARD);
+        await page.keyboard.press("Enter");
+
+        await expect(nodes).toHaveCount(2, { timeout: 15000 });
+        await expect(
+          page.locator('[data-testid^="rf__node-ChatOutput-"]'),
+        ).toHaveCount(1);
+      });
+
+      await test.step("Escape returns focus out of the search field", async () => {
+        await search.click();
+        await expect(search).toBeFocused();
+
+        await page.keyboard.press("Escape");
+
+        // Escape blurs the field on 1.12; it does NOT clear the query, so the
+        // text is deliberately not asserted here.
+        await expect(search).not.toBeFocused({ timeout: 10000 });
+      });
     });
-    await expect(page.getByTestId("input_outputChat Input")).not.toBeVisible();
-
-    // Type "chat" to search for chat components
-    await page.keyboard.type("chat");
-
-    await expect(page.getByTestId("input_outputChat Input")).toBeVisible({
-      timeout: 1000,
-    });
-
-    // Verify disclosures open when search has content
-    await expect(page.getByTestId("input_outputChat Input")).toBeVisible();
-
-    // Press Tab to focus first result
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Tab");
-
-    // Verify some expected chat-related components are visible
-    await expect(page.getByTestId("input_outputChat Input")).toBeVisible();
-    await expect(page.getByTestId("input_outputChat Output")).toBeVisible();
-
-    // Press Space to select the component
-    await page.keyboard.press("Space");
-
-    // Verify component was added to flow
-    const addedComponent = await page.locator(".react-flow__node").first();
-    await expect(addedComponent).toBeVisible();
-
-    // Clear search input and verify disclosures are closed
-    await page.getByTestId("sidebar-search-input").clear();
-    await expect(page.getByTestId("input_outputChat Input")).not.toBeVisible();
-
-    // Test Enter key selection
-    await page.keyboard.press("/");
-    await page.keyboard.type("prompt");
-
-    // Verify disclosures open with new search
-    await expect(
-      page.getByTestId("models_and_agentsPrompt Template"),
-    ).toBeVisible();
-
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Tab");
-    await page.keyboard.press("Enter");
-
-    // Verify second component was added
-    const nodeCount = await page.locator(".react-flow__node").count();
-    expect(nodeCount).toBe(2);
-
-    // Verify search is cleared and disclosures are closed after adding component
-    await page.keyboard.press("/");
-    await page.getByTestId("sidebar-search-input").clear();
-    await expect(page.getByTestId("sidebar-search-input")).toHaveValue("");
-    await expect(page.getByTestId("input_outputChat Input")).not.toBeVisible();
-
-    await expect(page.getByTestId("sidebar-search-input")).toBeFocused();
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("sidebar-search-input")).not.toBeFocused();
-    await expect(page.getByTestId("input_outputChat Input")).not.toBeVisible();
-  },
-);
+});
