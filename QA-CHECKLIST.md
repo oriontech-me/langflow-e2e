@@ -27,7 +27,7 @@
 
 - [-] `SimpleAgentTemplatePage` — loads Simple Agent template with configurable provider and model → `pages/SimpleAgentTemplatePage.ts`
 - [-] `SettingsPage` — navigation to the settings page via user menu → `pages/SettingsPage.ts`
-- [-] Component sidebar — component navigation bar with searchable parameter support → covered by `ui-ux/sidebar-provider-count.spec.ts`, `ui-ux/keyboardComponentSearch.spec.ts`, `ui-ux/sidebar-add-component.spec.ts`, `ui-ux/sidebar-category-filter.spec.ts` (#820: no dedicated nav spec needed — exercised across the sidebar suite)
+- [-] Component sidebar — component navigation bar with searchable parameter support → covered by `ui-ux/sidebar-search-and-filter.spec.ts`, `ui-ux/keyboardComponentSearch.spec.ts`, `ui-ux/sidebar-add-component.spec.ts` (#820: no dedicated nav spec needed — exercised across the sidebar suite; #937 consolidated `sidebar-provider-count` / `sidebar-category-filter` / `sidebar-filter-by-category` into `sidebar-search-and-filter`)
 - [-] Model Provider — navigation to the model provider management tab → covered by `ui-ux/settings-navigation.spec.ts` ("Settings Model Providers section loads") (#820)
 - [-] API Keys — navigation to the API keys / global variables tab → covered by `ui-ux/userSettings.spec.ts` (API Keys), `ui-ux/global-variable-edit.spec.ts` + `ui-ux/global-variables-crud.spec.ts` (global variables) (#820)
 - [-] Templates — navigation to the template selection tab (Starter Projects) → covered by `core-functionality/templates/starter-projects.spec.ts`, `flow-functionality/create-flow-from-template.spec.ts` (#820)
@@ -673,11 +673,11 @@
 ## ui-ux/ — Visual Interface, Canvas and Design System
 
 #### 15.1 Component Sidebar
-- [-] Search component by name
-- [-] Hover over component shows tooltip/preview
-- [-] Keyboard search (keyboard shortcut)
-- [-] Filter components by category
-- [-] Sidebar shows correct provider count
+- [x] Search component by name — matching component listed AND non-matching one hidden, case-insensitive → `ui-ux/sidebar-search-and-filter.spec.ts`
+- [~] Hover over component shows tooltip/preview — **no product surface on 1.12.0.dev6**: hovering a sidebar card renders zero `[role="tooltip"]` elements, zero Radix poppers, no `title` and no `aria-describedby`; the only hover affordance is the `+` button, already covered by `core-components/componentHoverAdd.spec.ts` (#937)
+- [x] Keyboard search (keyboard shortcut) — `/` focuses the search, Tab reaches a result, Space/Enter add that exact component → `ui-ux/keyboardComponentSearch.spec.ts`
+- [x] Filter components by category — disclosure collapse/expand and non-matching categories removed while filtering → `ui-ux/sidebar-search-and-filter.spec.ts`
+- [~] Sidebar shows correct provider count — **no count surface on 1.12.0.dev6**: the sidebar renders no numeric badge or count text anywhere (the count lives on Settings → Model Providers, §7). What exists is grouping under `disclosure-bundles-<provider>`, covered by `ui-ux/sidebar-search-and-filter.spec.ts` (#937)
 
 #### 15.2 Add Components to Canvas
 - [x] Drag component from sidebar to canvas — node lands at the drop position → `ui-ux/sidebar-add-component.spec.ts`
