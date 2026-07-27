@@ -3,6 +3,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
+import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import {
   closeAdvancedOptions,
@@ -131,6 +132,11 @@ async function retrieveViaMessageHistory(
   );
   const node = page.locator('[data-testid^="rf__node-Memory"]').first();
   await expect(node).toBeVisible({ timeout: 15000 });
+  // Fit the canvas BEFORE selecting the node: a sidebar-added node can land
+  // outside the viewport, taking `parameters-button` — which mounts in the
+  // node's own toolbar — off-screen with it (#989). Order matters: fitting
+  // AFTER selection drops the selection and unmounts the toolbar (#867).
+  await adjustScreenView(page, { numberOfZoomOut: 0 });
 
   // n_messages and session_id are hidden by default — expose them on the node
   // body via the inspector (dev46 replaced the edit-fields modal + show<field>).
@@ -166,7 +172,7 @@ function countOccurrences(text: string, needle: string): number {
 test.describe("Message History n_messages limit", () => {
   test(
     "a small n_messages truncates retrieval to the most recent messages",
-    { tag: ["@regression", "@agents", "@components"] },
+    { tag: ["@stable", "@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedFlowSession(request);
       try {
@@ -190,7 +196,7 @@ test.describe("Message History n_messages limit", () => {
 
   test(
     "causal control — a large n_messages retrieves the full seeded history",
-    { tag: ["@regression", "@agents", "@components"] },
+    { tag: ["@stable", "@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedFlowSession(request);
       try {

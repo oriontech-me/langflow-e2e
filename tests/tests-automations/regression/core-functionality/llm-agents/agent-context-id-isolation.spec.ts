@@ -12,6 +12,7 @@ import {
 } from "../../../../helpers/ui/open-advanced-options";
 import { createRunnableChatFlowViaApi } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
+import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
   hasProviderEnvKeys,
@@ -466,6 +467,11 @@ async function setupMessageHistoryNode(
   );
   const node = page.locator('[data-testid^="rf__node-Memory"]').first();
   await expect(node).toBeVisible({ timeout: 15000 });
+  // Fit the canvas BEFORE selecting the node: a sidebar-added node can land
+  // outside the viewport, taking `parameters-button` — which mounts in the
+  // node's own toolbar — off-screen with it (#989). Order matters: fitting
+  // AFTER selection drops the selection and unmounts the toolbar (#867).
+  await adjustScreenView(page, { numberOfZoomOut: 0 });
 
   await page.getByTestId("title-Message History").click();
   // dev46: expose the advanced n_messages / session_id / context_id fields on the
@@ -518,7 +524,7 @@ test.describe.configure({ mode: "serial" });
 test.describe("Context ID isolation — retrieval layer (model-free)", () => {
   test(
     "mirrored context-scoped retrievals return only their own context's messages",
-    { tag: ["@regression", "@agents", "@components"] },
+    { tag: ["@stable", "@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedTwoContextSession(request);
       try {

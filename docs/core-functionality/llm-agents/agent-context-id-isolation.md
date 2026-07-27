@@ -1,6 +1,6 @@
 # Agent context_id — switching isolates history between contexts
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev7`)
 
 ---
 
