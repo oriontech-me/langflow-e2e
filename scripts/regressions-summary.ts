@@ -4,11 +4,18 @@
  * from the hand-curated table in the `## Ledger` section.
  *
  * Run: `npx ts-node scripts/regressions-summary.ts` (or `npm run regressions:summary`).
+ * Pass `--check` (or `npm run regressions:check`) to verify without writing:
+ * exits 1 when the committed block disagrees with the table, which is how CI
+ * catches a row added without regenerating.
  *
  * Lean metrics only: total caught, open/fixed, by severity, by area.
  * Idempotent: a second run with no table change produces no diff.
- * Fails loudly on a malformed row or a missing/duplicate marker/section —
- * never emits wrong counts.
+ * Fails loudly rather than emitting a wrong count — a wrong headline number is
+ * the one outcome the ledger cannot afford. Aborts on: a missing, duplicated or
+ * out-of-order marker; a missing or empty `## Ledger` section; a row without
+ * exactly 9 columns; a `Severity` / `Status` outside its allowed set; an
+ * `Area / Test` cell missing the `area · spec-file` separator; and two rows
+ * carrying the same `Upstream` ticket.
  */
 
 import * as fs from "fs";
@@ -18,6 +25,7 @@ const FILE = path.join(__dirname, "..", "REGRESSIONS.md");
 const START = "<!-- REGRESSIONS:START -->";
 const END = "<!-- REGRESSIONS:END -->";
 const LEDGER_HEADER = "## Ledger";
+const AREA_SEPARATOR = "·";
 const SEVERITIES = ["High", "Medium", "Low"] as const;
 const STATUSES = ["Open", "Fixed"] as const;
 
@@ -28,6 +36,17 @@ interface Row {
   areaTest: string;
   severity: Severity;
   status: Status;
+  upstream: string;
+}
+
+/** Escape a literal for use inside a RegExp. */
+function escapeRe(literal: string): string {
+  return literal.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&");
+}
+
+/** Count non-overlapping occurrences of a literal. */
+function countOccurrences(haystack: string, literal: string): number {
+  return (haystack.match(new RegExp(escapeRe(literal), "g")) ?? []).length;
 }
 
 /** Split a markdown table row `| a | b |` into trimmed cell values. */
@@ -73,22 +92,49 @@ function parseLedger(md: string): Row[] {
     if (c.length !== 9) {
       throw new Error(`Malformed ledger row (expected exactly 9 columns, got ${c.length}): ${line}`);
     }
-    const [, areaTest, , severity, , , status] = c;
-    if (!SEVERITIES.includes(severity as Severity)) {
+    const [, areaTest, , severity, , upstream, status] = c;
+    if (!(SEVERITIES as readonly string[]).includes(severity)) {
       throw new Error(`Invalid Severity "${severity}" (must be High/Medium/Low): ${line}`);
     }
-    if (!STATUSES.includes(status as Status)) {
+    if (!(STATUSES as readonly string[]).includes(status)) {
       throw new Error(`Invalid Status "${status}" (must be Open/Fixed): ${line}`);
     }
-    rows.push({ areaTest, severity: severity as Severity, status: status as Status });
+    // The schema is `area · spec-file`; without the separator the whole cell
+    // becomes the area and the by-area breakdown silently reports a spec path.
+    if (!areaTest.includes(AREA_SEPARATOR)) {
+      throw new Error(
+        `Malformed "Area / Test" cell "${areaTest}" (expected "area ${AREA_SEPARATOR} spec-file"): ${line}`
+      );
+    }
+    rows.push({ areaTest, severity: severity as Severity, status: status as Status, upstream });
   }
+
+  if (rows.length === 0) {
+    throw new Error(
+      `"${LEDGER_HEADER}" section has no rows — refusing to publish a zero count. ` +
+        `The ledger is append-only; an empty table means the file was damaged.`
+    );
+  }
+
+  // A pasted row inflates the headline number, which is exactly the failure the
+  // indicator must never have. One ticket, one row.
+  const seen = new Map<string, string>();
+  for (const row of rows) {
+    const previous = seen.get(row.upstream);
+    if (previous) {
+      throw new Error(
+        `Duplicate Upstream "${row.upstream}" in the ledger (rows "${previous}" and "${row.areaTest}") — one ticket, one row.`
+      );
+    }
+    seen.set(row.upstream, row.areaTest);
+  }
+
   return rows;
 }
 
-/** Area = the token before " · " in the "Area / Test" cell. */
+/** Area = the token before the `·` in the "Area / Test" cell. */
 function areaOf(areaTest: string): string {
-  const idx = areaTest.indexOf("·");
-  return (idx === -1 ? areaTest : areaTest.slice(0, idx)).trim();
+  return areaTest.slice(0, areaTest.indexOf(AREA_SEPARATOR)).trim();
 }
 
 function buildBlock(rows: Row[]): string {
@@ -123,12 +169,18 @@ function buildBlock(rows: Row[]): string {
 }
 
 function main(): void {
+  const check = process.argv.includes("--check");
   const md = fs.readFileSync(FILE, "utf8");
 
-  const startCount = (md.match(new RegExp(START.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&"), "g")) ?? []).length;
-  const endCount = (md.match(new RegExp(END.replace(/[-/\\^$*+?.()|[\]{}]/g, "\\$&"), "g")) ?? []).length;
+  const startCount = countOccurrences(md, START);
+  const endCount = countOccurrences(md, END);
   if (startCount !== 1 || endCount !== 1) {
     throw new Error(`Expected exactly one ${START} and one ${END} (found ${startCount}/${endCount})`);
+  }
+  // Reversed markers would otherwise slice the file inside out: the block gets
+  // duplicated and the prose between the markers is dropped, silently.
+  if (md.indexOf(END) < md.indexOf(START)) {
+    throw new Error(`${END} appears before ${START} in REGRESSIONS.md — markers are out of order.`);
   }
 
   const rows = parseLedger(md);
@@ -139,9 +191,24 @@ function main(): void {
   const next = before + block + after;
 
   if (next === md) {
-    console.log("REGRESSIONS.md indicator already up to date.");
+    console.log(
+      check
+        ? `REGRESSIONS.md indicator is in sync with the table (${rows.length} regression(s)).`
+        : "REGRESSIONS.md indicator already up to date."
+    );
     return;
   }
+
+  if (check) {
+    console.error(
+      "REGRESSIONS.md indicator is stale — the committed block disagrees with the Ledger table.\n" +
+        "Run `npm run regressions:summary` and commit the result.\n\n" +
+        `Expected block:\n${block}`
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   fs.writeFileSync(FILE, next);
   console.log(`REGRESSIONS.md indicator regenerated: ${rows.length} regression(s).`);
 }

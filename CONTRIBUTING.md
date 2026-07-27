@@ -652,11 +652,16 @@ regressions the suite has caught, and the source of the ROI indicator at its
 top. It is the suite's headline evidence that it finds product breakage a green
 run never proves — so keeping it current is not optional.
 
-When a resolution confirms a **`langflow-regression`** verdict, has it
-**adversarially validated** (refute-first across source/API/UI where
-applicable), and a **filed upstream ticket** exists (DataStax Jira `LE-####` or
-a `langflow-ai/langflow` issue), **adding a row to `REGRESSIONS.md` is a
-mandatory step of the report/resolution** — not a follow-up.
+When a resolution confirms a **`langflow-regression`** verdict, has it **been
+adversarially validated** (refute-first across source/API/UI where applicable),
+and a **filed upstream ticket** exists (DataStax Jira `LE-####` or a
+`langflow-ai/langflow` issue), **adding a row to `REGRESSIONS.md` is a mandatory
+step of the report/resolution** — not a follow-up.
+
+Only regressions the **suite** caught earn a row: every row traces to a spec
+failure or a spec-validation run recorded in a repo issue. A regression the team
+confirms by hand — a manual Desktop session, an API investigation outside the
+suite — is filed upstream but stays off the ledger.
 
 - Confirmed but not yet ticketed → add it under **Candidates**, not the ledger.
 - A finding that adversarial validation downgrades to a non-user-facing
@@ -664,7 +669,9 @@ mandatory step of the report/resolution** — not a follow-up.
   `REGRESSIONS.md`).
 - After editing the table, run `npm run regressions:summary` to regenerate the
   indicator block, then commit. **Never hand-edit** the block between the
-  `<!-- REGRESSIONS:START -->` / `<!-- REGRESSIONS:END -->` markers.
+  `<!-- REGRESSIONS:START -->` / `<!-- REGRESSIONS:END -->` markers. The
+  `pr-validation.yml` typecheck job runs `npm run regressions:check` and fails
+  the PR if the committed block disagrees with the table.
 
 ### Monitoring rules driven by run history
 

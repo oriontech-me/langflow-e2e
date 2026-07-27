@@ -1,8 +1,9 @@
 # Decision — Regression Ledger (`REGRESSIONS.md`)
 
 **Date:** 2026-07-17 · **Shared with the team:** 2026-07-27
-**Status:** Implemented and seeded with 4 regressions on branch
-`docs/regression-ledger-decision` — not merged, no PR yet
+**Status:** Active — `REGRESSIONS.md` is live at the repo root and carries the
+regressions listed below. Curation is mandatory (`CONTRIBUTING.md`) and CI
+guards the indicator against drift.
 **Owner:** Rafael
 
 ---
@@ -119,14 +120,27 @@ mirroring the existing `scripts/coverage-summary.ts` marker-block pattern:
 - The row table is the single source of truth; the script rewrites only the
   marked block.
 - **Idempotent** — a second run with no data change produces no diff.
-- **Fails loudly** — a malformed row (wrong column count, `Severity` outside
-  High/Medium/Low, `Status` outside Open/Fixed), a missing `## Ledger` section,
-  or a missing/duplicated marker aborts the run rather than emitting wrong
-  counts.
+- **Fails loudly** — a wrong headline number is the one outcome the ledger
+  cannot afford, so the script aborts on: a missing, duplicated or
+  **out-of-order** marker pair; a missing **or empty** `## Ledger` section; a
+  row without exactly 9 columns; a `Severity` / `Status` outside its set; an
+  `Area / Test` cell missing the `area · spec-file` separator (which would
+  otherwise report a spec path as an area); and **two rows carrying the same
+  `Upstream` ticket** (a pasted row would otherwise inflate the count).
 
-Regeneration is local for now. A CI auto-regen job mirroring
-`update-coverage-summary.yml` is a possible later addition, deliberately out of
-scope.
+Regeneration stays a local, hand-run step, but drift is now caught in CI:
+`npm run regressions:check` recomputes the block and exits non-zero when the
+committed one disagrees, wired as a step of the existing typecheck job in
+`pr-validation.yml`.
+
+**On committing a generated block in a PR.** This is precisely the pattern
+`scripts/check-checklist-guard.mjs` forbids for `QA-CHECKLIST.md`, where
+concurrent `@stable` PRs collided on the same count lines (issue #741). The
+ledger is deliberately the exception: it changes a handful of times per quarter,
+never on the same lines as another PR's work, so the collision risk that
+justified the guard does not apply — and hand-committing keeps the row and its
+count in one reviewable diff. If the rate ever rises, the resolution is a CI
+auto-regen job mirroring `update-coverage-summary.yml`, not a second guard.
 
 ## What this changes for the team
 
@@ -162,7 +176,7 @@ regression*.
 - **Not a replacement** for the detailed per-bug reports — those stay as
   standalone documents; the ledger consolidates and links to them.
 
-## Seed — the four regressions the suite has caught
+## Seed — the five regressions the suite has caught
 
 Re-derived on 2026-07-27 from the Jira board and the repo's issue trail. The
 original 2026-07-17 seed listed a single row and was already wrong on three
@@ -171,20 +185,23 @@ and both candidates were dead.
 
 | Found | Area | Regression | Sev | Detected by | Upstream | Status | Fixed in |
 |---|---|---|---|---|---|---|---|
+| 07-27 | flows | "New Flow" click silently dropped when the flows list has not painted its cards yet — no navigation, no modal, no console error, and the button then stops being actionable until a reload | Medium | daily 07-27 · #962 → #966 | [LE-2019](https://datastax.jira.com/browse/LE-2019) | **Open** | — |
 | 07-24 | mcp | `resources/read` crashes with `AttributeError: 'str' object has no attribute 'hex'` — the project server advertises a flow file it cannot read (worked on 1.11.0) | Medium | #948 spec validation | [LE-2012](https://datastax.jira.com/browse/LE-2012) | **Open** (Ready for QA) | — |
 | 07-23 | model-provider | Groq / Mistral / Ollama components silently hidden from the sidebar — image ships the component source but not the `langchain-*` package, and Langflow hides the component with no message | Medium | daily 07-23 · #907 | [LE-1987](https://datastax.jira.com/browse/LE-1987) | Fixed | [langflow#14248](https://github.com/langflow-ai/langflow/pull/14248) |
 | 07-22 | model-provider | Nightly ships without `langchain-google-genai` — every Google chat/embedding model raises ImportError at build; surfaced as node-build timeouts across ~17 `@stable` specs | High | daily 07-22 · #898 | [LE-1974](https://datastax.jira.com/browse/LE-1974) | Fixed | [langflow#14220](https://github.com/langflow-ai/langflow/pull/14220) |
 | 07-17 | auth | Logout does not terminate the session — no `POST /api/v1/logout` fired, and `POST /api/v1/refresh` silently re-authenticates so the session survives a reload | High | daily 07-17 · #808 | [LE-1850](https://datastax.jira.com/browse/LE-1850) | Fixed | [langflow#14158](https://github.com/langflow-ai/langflow/pull/14158) |
 
-Indicator: `Regressions caught: 4 — Open: 1 · Fixed: 3`,
-`High 2 · Medium 2 · Low 0`, `model-provider 2 · auth 1 · mcp 1`.
+Indicator: `Regressions caught: 5 — Open: 2 · Fixed: 3`,
+`High 2 · Medium 3 · Low 0`, `model-provider 2 · auth 1 · flows 1 · mcp 1`.
 
-**Candidate (1, uncounted):** the "New Flow" button fires
-`POST /api/v1/flows` (201) but never navigates — neither the welcome panel nor
-the templates modal opens (#966, evidence log under `docs/upstream-bugs/`). It
-is short of **two** requirements: no ticket filed, and `Last known good` is
-unverified — it was only run on 1.12.0.dev6, so it is a defect on that build
-until the evidence log's comparison section is re-run against 1.11.x.
+**Candidates: none.** The New Flow dead click was the sole candidate for a few
+hours on 2026-07-27 — short of two requirements, since it had no ticket and its
+last-known-good was unverified. Filing LE-2019 closed both gaps in one move: the
+ticket exists, and the investigation behind it established 1.10.0 as the last
+good build with 1.10.1 (langflow#12575) as the first affected, refuting the
+initial "1.12 regression" reading by comparing the nightly and 1.11.x frontend
+trees. It was promoted the same day. That is the intended lifecycle, not an
+exception.
 
 **Not listed, recorded so nobody re-litigates them:** the bulk-delete
 SQLite-lock 500 (validated non-regression, downgraded to Low observability
@@ -195,26 +212,29 @@ triage without a confirmed verdict. The last two were the original candidates.
 
 ## Implementation status
 
-Branch `docs/regression-ledger-decision`, cut from current `main` — this
-document plus the four original implementation commits (2026-07-17), rebased
-forward and re-seeded. **Local only: not pushed, no PR, not merged.** The
-original `feat/regression-ledger` branch is superseded.
+Live on `main`. The ledger, the generator, the `CONTRIBUTING.md` rule and this
+record shipped together; the CI drift check, the `CLAUDE.md` rule for agents and
+the LE-2019 row followed in the review round.
 
-| File | Change |
+| File | Role |
 |---|---|
-| `REGRESSIONS.md` | New — scope + curation note, marker block, 4-row ledger, candidate, non-regression list |
-| `scripts/regressions-summary.ts` | New — indicator generator (149 lines) |
-| `package.json` | `regressions:summary` script |
-| `CONTRIBUTING.md` | New section documenting the mandatory curation step |
+| `REGRESSIONS.md` | The ledger — scope + curation notes, generated marker block, row table, candidates, non-regression list |
+| `scripts/regressions-summary.ts` | Indicator generator; `--check` mode for CI |
+| `package.json` | `regressions:summary` and `regressions:check` scripts |
+| `.github/workflows/pr-validation.yml` | Runs `regressions:check` in the typecheck job |
+| `CONTRIBUTING.md` | The mandatory curation step, for humans |
+| `CLAUDE.md` | The never-hand-edit rule for the generated block, for agents |
 | `docs/product-regression-core/regression-ledger.md` | This decision record |
 
-Verified on 2026-07-27 against the re-seeded ledger: the generator emits
-`4 regression(s)` matching the table by hand-count, a second run reports
-*already up to date* with no diff, a `Critical` severity row throws
-`Invalid Severity`, an 8-column row throws `Malformed ledger row`, and
-`typecheck` / `lint` report 0 errors.
+Verified 2026-07-27 against the live ledger: the generator emits
+`5 regression(s)` matching the table by hand-count; a second run reports
+*already up to date* with no diff; `regressions:check` passes in sync and exits
+1 with the expected block when the committed one is stale; and each guard was
+reproduced against a deliberately broken copy — reversed markers, an emptied
+`## Ledger` table, a 8-column row, a `Critical` severity, an `Area / Test` cell
+without the separator, and a duplicated row all abort instead of publishing a
+number. `typecheck` and `lint` report 0 errors.
 
-**Open decision for the team:** push and open the PR. The one thing that will
-age is `Fixed in` — three rows carry the fixing PR rather than a verified
-Langflow version, and each becomes a version the next time the corresponding
-spec runs green on a build that contains the fix.
+The one thing that still ages: `Fixed in` carries the fixing upstream PR on
+three rows, not a verified Langflow version. Each becomes a version the next
+time the corresponding spec runs green on a build that contains the fix.
