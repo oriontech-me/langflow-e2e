@@ -176,7 +176,31 @@ function rankCandidates(provider: string, candidates: string[]): string[] {
 // the single successful probe consumes ~1 token, so exhausting the catalog
 // costs time (~1s per candidate, once per run), not money. "inactive" then
 // genuinely means nothing the provider exposes works with this key.
-async function validateProviderWithFallback(
+// Stop probing once the SAME error repeats this many times in a row (#1011).
+//
+// A model-scoped failure names the model it is about — "models/gemini-3-pro is
+// not found for API version v1beta" — so consecutive candidates produce
+// DIFFERENT messages. An account-scoped failure (spend cap, drained credit,
+// exhausted quota, dead key) is byte-identical for every candidate, because the
+// request never reached a model at all. Byte-equality of the error is therefore
+// the discriminator, with no per-provider pattern list to keep in sync and no
+// risk of misreading a model-level 404 as an account problem.
+//
+// Why it matters: on 2026-07-28 Google's key had exceeded its monthly spend cap
+// and Anthropic's balance was drained, so the loop probed all 36 + 13 candidates
+// to learn what candidate #1 already said — three times over, because the step
+// retried. That sustained load wedged the daily's single Langflow and cost the
+// entire run (#1007). It also FIXED the wrong error: the aggregate kept only the
+// LAST candidate's message, which happened to be a model-level 404, so Google
+// was classified a hard key/config failure instead of the transient billing
+// outage it was (#955's downgrade never fired). Stopping on the repeat records
+// the real reason.
+//
+// Three, not two: #570's case — a single gated/preview LEAD model — must still
+// fall through to the models that do work.
+const IDENTICAL_ERROR_LIMIT = 3;
+
+export async function validateProviderWithFallback(
   provider: string,
   candidates: string[],
   validate: (model: string) => Promise<ProviderRecord>,
@@ -193,6 +217,7 @@ async function validateProviderWithFallback(
 
   const tried: string[] = [];
   let last: ProviderRecord | null = null;
+  let repeats = 0;
   for (const model of candidates) {
     const result = await validate(model);
     if (result.status === "active") {
@@ -206,8 +231,24 @@ async function validateProviderWithFallback(
     // A missing key fails identically for every candidate — stop immediately.
     if (result.error?.endsWith("not set")) return result;
     console.log(`   ${provider}: candidate "${model}" failed — ${result.error}`);
+    repeats = last && result.error === last.error ? repeats + 1 : 1;
     tried.push(model);
     last = result;
+
+    // The same message this many times in a row means it does not depend on the
+    // model, so no remaining candidate can pass — see IDENTICAL_ERROR_LIMIT.
+    if (repeats >= IDENTICAL_ERROR_LIMIT) {
+      console.log(
+        `   ${provider}: stopping after ${tried.length}/${candidates.length} candidate(s) — the same ` +
+          `model-independent error repeated ${repeats}x, so the remaining ${candidates.length - tried.length} cannot pass.`,
+      );
+      return {
+        ...last,
+        error:
+          `${tried.length} of ${candidates.length} candidate model(s) failed validation with the SAME ` +
+          `model-independent error — stopped early (tried: ${tried.join(", ")}); last error: ${last.error}`,
+      };
+    }
   }
 
   return {
