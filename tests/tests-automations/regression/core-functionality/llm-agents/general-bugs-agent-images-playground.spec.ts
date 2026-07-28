@@ -2,6 +2,28 @@ import dotenv from "dotenv";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage } from "../../../../pages";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+
+// Id of the flow created by the template load, so afterEach deletes exactly
+// that one via the API (id-scoped, #515) — never a global cleanAllFlows.
+// `SimpleAgentTemplatePage.load()` does NOT pre-clean since #553, so without
+// this the spec leaked one Simple Agent flow per run (#992).
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ page }) => {
+  const ids = createdFlowIds.splice(0);
+  if (ids.length === 0) return;
+  // Navigate off the editor first so the unmounted flow page stops polling a
+  // flow we are about to delete, then pass an explicit bearer — page.request is
+  // unauthenticated under AUTO_LOGIN and would 401 otherwise.
+  await page.goto("/");
+  const auth = await getAuthToken(page.request);
+  const opts = auth ? { headers: { Authorization: auth } } : undefined;
+  for (const id of ids) {
+    await deleteFlow(page.request, id, opts);
+  }
+});
 
 test(
   "user must be able to send images in the playground with the agent component",
@@ -27,7 +49,8 @@ test(
     // multimodal assertion below holds even as model families change on
     // nightlies. OpenAI is used (not Anthropic) so the test runs in the weekly
     // workflow, which provides OPENAI_API_KEY.
-    await new SimpleAgentTemplatePage(page).load({ provider: "openai" });
+    const flowId = await new SimpleAgentTemplatePage(page).load({ provider: "openai" });
+    if (flowId) createdFlowIds.push(flowId);
 
     await page.getByTestId("playground-btn-flow-io").click();
 

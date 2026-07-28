@@ -106,6 +106,13 @@ machinery as `agent-max-iterations.spec.ts` / `agent-tool-name-validation.spec.t
    output contains `SSRF Protection`.
 7. No `allowFlowErrors`: any flow error fails the test via the fixture —
    that IS the "handled without crashing" guarantee.
+8. **Teardown:** `afterEach` deletes the Simple Agent flow created by
+   `loadAgent()` by id via `DELETE /api/v1/flows/{id}` (id-scoped, #515 —
+   never a global `cleanAllFlows`). Added in #992: `loadAgent()` discarded
+   `load()`'s returned id and the spec had no teardown, leaking one flow per
+   run. A stale comment claiming `SimpleAgentTemplatePage.load()` "deletes all
+   flows before loading the template" — false since #553 — is why it went
+   unnoticed.
 
 ---
 

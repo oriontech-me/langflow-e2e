@@ -27,13 +27,14 @@ The spec contains **1 test** — `"user must be able to send images in the playg
 
 Requires `OPENAI_API_KEY` (vision-capable `gpt-4o-mini`); skips when the key is absent. OpenAI is used (not Anthropic) so the test actually runs in the weekly workflow, which provides `OPENAI_API_KEY`.
 
-1. Load the **Simple Agent** template via the canonical `SimpleAgentTemplatePage.load({ provider: "openai" })` — it clears existing flows, opens the templates modal through the correct entry point, waits for the canvas to actually load (`canvas_controls_dropdown`), then configures the OpenAI provider. With no explicit model it selects a resilient default (`gpt-4o-mini`, vision-capable on the Agent component)
+1. Load the **Simple Agent** template via the canonical `SimpleAgentTemplatePage.load({ provider: "openai" })` — it opens the templates modal through the correct entry point, waits for the canvas to actually load (`canvas_controls_dropdown`), then configures the OpenAI provider. With no explicit model it selects a resilient default (`gpt-4o-mini`, vision-capable on the Agent component). The returned flow id is captured for teardown; `load()` deliberately does **not** pre-clean other flows (removed in #553 — it was wiping flows other parallel workers were using)
 2. (Provider setup is part of step 1's `load()` — the centralized path: open `model_model` → `manage-model-providers` → select `provider-item-OpenAI` → fill the `sk-...` key → save → enable model toggles → select model)
 3. Open the Playground (`playground-btn-flow-io`) and wait for `input-chat-playground`
 4. Attach `tests/assets/media/chain.png` via the Playground file input (`[data-testid="input-wrapper"] input[type="file"]`) and confirm the `img[alt="chain.png"]` preview
 5. Clear the input and type `"what is this image?"` with real keystrokes (`pressSequentially`), retrying the clear+type until the value sticks so a late async pre-fill cannot clobber the prompt, then click `button-send`
 6. Wait for the streamed model reply (web-first `toContainText`, no fixed sleep)
 7. Read the last `.markdown.prose` block (the model reply) and assert it matches `/\b(chains?|links?|inkscape|logos?|icons?)\b/i` and is longer than 50 characters
+8. **Teardown:** `afterEach` deletes the flow created in step 1 by id via `DELETE /api/v1/flows/{id}` (id-scoped, #515 — never a global `cleanAllFlows`). Added in #992: the spec previously discarded `load()`'s return value and had no teardown at all, leaking one Simple Agent flow per run
 
 ---
 

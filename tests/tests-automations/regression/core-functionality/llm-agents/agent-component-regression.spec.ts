@@ -293,12 +293,15 @@ for (const { label, options, skipReason } of targets) {
           .fill("Write a detailed story about the life and adventures of a fictional explorer in the 18th century.");
         await page.getByTestId("button-send").last().click();
 
+        // The Stop button is the SUBJECT of this test, so its appearance is an
+        // assertion, not a probe (#992). This used to be
+        // `isVisible({ timeout: 30000 })` + an early `return`, which never
+        // waited at all — Playwright marks that option `@deprecated: this
+        // option is ignored`, so the read fired microseconds after the send
+        // click and any render latency turned the whole test into a silent
+        // no-op that asserted nothing while reporting green.
         const stopButton = page.getByRole("button", { name: "Stop" });
-        const stopVisible = await stopButton.isVisible({ timeout: 30000 }).catch(() => false);
-        if (!stopVisible) {
-          console.log(`Model ${options.model ?? provider} responded without stop button — skipping halt test`);
-          return;
-        }
+        await expect(stopButton).toBeVisible({ timeout: 30000 });
 
         // dispatchEvent bypasses Playwright actionability checks — stop button may be transitioning during stream teardown
         await stopButton.dispatchEvent("click");
