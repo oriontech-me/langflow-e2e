@@ -1,0 +1,115 @@
+// Unit test for the Playwright config's STDOUT contract (issue #1024).
+// Run with: npm run test:units
+//
+// Nothing in this module may write to stdout. It is imported by every
+// `playwright` invocation, and one of them has a machine-readable stdout:
+// `daily-stable.yml`'s `prep` job runs
+//
+//   npx playwright test --grep "@stable" --list --reporter=json > /tmp/stable-list.json
+//
+// and feeds that file to `partition-shards.mjs matrix`. PR #1021 added a
+// `console.log` announcing the `@destructive` lane exclusion — a good idea on the
+// wrong channel: the line landed ahead of the JSON, the partitioner exited 1, and
+// the daily would have died at `prep` with zero tests executed. No PR check could
+// catch it, because `pr-validation.yml` uses `--reporter=github` and `line`.
+//
+// This is the cheap check that closes that gap. stderr is deliberately NOT
+// asserted on: keeping the exclusion visible in the log is the point of #1010, it
+// just has to happen off the data path.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "child_process";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+
+const REPO_ROOT = __dirname;
+
+/**
+ * Import the config in a FRESH process and hand back what each stream received.
+ * A fresh process matters twice: this file's own runner has already loaded
+ * modules that could mask a write, and the top-level `if (!DESTRUCTIVE_LANE)`
+ * only runs on first import — a cached module would make the test vacuous.
+ */
+function importConfig(env: Record<string, string> = {}): { stdout: string; stderr: string } {
+  // spawnSync, not execFileSync: the two streams must be read from ONE run and
+  // kept apart, so a noisy stderr can never be mistaken for a stdout write.
+  const run = spawnSync(
+    process.execPath,
+    ["--require", "ts-node/register", "-e", 'require("./playwright.config");'],
+    {
+      cwd: REPO_ROOT,
+      encoding: "utf-8",
+      env: { ...process.env, ...env },
+    },
+  );
+  assert.equal(run.status, 0, `importing the config failed: ${run.stderr}`);
+  return { stdout: run.stdout, stderr: run.stderr };
+}
+
+test("importing playwright.config.ts writes NOTHING to stdout", () => {
+  const { stdout } = importConfig();
+  assert.equal(
+    stdout,
+    "",
+    `playwright.config.ts wrote to stdout, which breaks the JSON contract the ` +
+      `daily's shard matrix depends on (#1024). Move it to console.error. Got: ${JSON.stringify(stdout)}`,
+  );
+});
+
+test("the destructive-lane notice still reaches stderr", () => {
+  // The exclusion must not become a silent cap (#1010) — it just has to announce
+  // itself off the data path.
+  const { stderr } = importConfig();
+  assert.match(stderr, /@destructive tests are excluded/);
+  assert.match(stderr, /PW_DESTRUCTIVE=1/);
+});
+
+test("stdout stays clean in the destructive lane too", () => {
+  const { stdout, stderr } = importConfig({ PW_DESTRUCTIVE: "1" });
+  assert.equal(stdout, "");
+  // Inside the lane there is nothing to announce — the tests are running.
+  assert.doesNotMatch(stderr, /@destructive tests are excluded/);
+});
+
+test("the daily's prep command produces parseable JSON", () => {
+  // The end-to-end assertion, run exactly as `daily-stable.yml`'s `prep` job does
+  // (line 81) rather than trusting the unit checks above to imply it. Kept to
+  // `--list`, so nothing executes and no backend is needed.
+  const listed = execFileSync(
+    "npx",
+    ["playwright", "test", "--grep", "@stable", "--list", "--reporter=json"],
+    { cwd: REPO_ROOT, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] },
+  );
+
+  const report = JSON.parse(listed) as { suites?: unknown[] };
+  assert.ok(Array.isArray(report.suites), "the listed report has no suites array");
+  assert.ok(report.suites.length > 0, "no @stable specs were listed");
+
+  // And the consumer itself: `partition-shards.mjs matrix` is what actually dies
+  // on a polluted stdout, so run it over this output and require a usable matrix.
+  // Through a real file, exactly as the workflow does (`> /tmp/stable-list.json`),
+  // rather than `/dev/stdin` — the script reads its argument with readFileSync.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "prep-1024-"));
+  try {
+    const listPath = path.join(dir, "stable-list.json");
+    fs.writeFileSync(listPath, listed);
+    const matrix = execFileSync(
+      process.execPath,
+      [
+        path.join(REPO_ROOT, "scripts", "partition-shards.mjs"),
+        "matrix",
+        listPath,
+        path.join(REPO_ROOT, "reports", "spec-durations.json"),
+        "4",
+      ],
+      { cwd: REPO_ROOT, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 },
+    );
+
+    const parsed = JSON.parse(matrix) as { include?: Array<{ shard: number; files: string }> };
+    assert.ok(Array.isArray(parsed.include), "the matrix has no include array");
+    assert.equal(parsed.include!.length, 4);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

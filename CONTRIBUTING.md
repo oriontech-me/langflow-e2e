@@ -540,7 +540,12 @@ Next to the code it covers, named `*.test.ts` (or `*.test.mjs` for the dependenc
 scripts/lib/stable-tests.ts             →  scripts/lib/stable-tests.test.ts
 scripts/remove-stable-from-failures.ts  →  scripts/remove-stable-from-failures.test.ts
 tests/helpers/provider-setup/x.ts       →  tests/helpers/provider-setup/x.test.ts
+playwright.config.ts                    →  playwright.config.test.ts
 ```
+
+The discovery roots are `scripts/`, `tests/` and the repo root's top level (not recursive
+outside those two) — so a `*.test.ts` anywhere else is **not run**, which is the one way to
+add a unit test that silently never executes.
 
 Never validate a helper in a scratch file outside the repo. That is what left the
 `collect-models` fallback with its only regression net living in a PR description
