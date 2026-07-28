@@ -32,10 +32,15 @@ const BLANK_FLOW_DATA = {
 async function createBlankFlow(
   page: Page,
 ): Promise<{ id: string; name: string; authorization: string }> {
-  // Hyphens stripped on purpose: Langflow derives an MCP tool slug from the flow
-  // name and normalises `-` the same way it normalises spaces, which would make
-  // the slug unpredictable for `mcp-server-regression.spec.ts`.
-  const name = `E2E Playground ${randomUUID().replace(/-/g, "")}`;
+  // Two constraints from the MCP tool name Langflow derives from this
+  // (`lfx.base.mcp.util.sanitize_mcp_name`), both of which
+  // `mcp-server-regression.spec.ts` asserts on:
+  //  - hyphens are normalised like spaces, so a raw UUID makes the slug
+  //    ambiguous — strip them;
+  //  - the sanitised name is truncated at 46 characters, so keep the whole
+  //    thing well under that. 16 hex digits is 64 bits of uniqueness, far more
+  //    than enough to keep two workers off the same name.
+  const name = `E2E Playground ${randomUUID().replace(/-/g, "").slice(0, 16)}`;
   // The browser context has not loaded the app yet, so it carries no session:
   // mint one up front (auto-login mode) and let the resulting cookies serve the
   // subsequent `page.goto` as well. Falls back to whatever credentials the
