@@ -440,3 +440,17 @@ test('assertDedicatedIssueBody ignores angle brackets inside code spans', () => 
 test('assertDedicatedIssueBody throws when asked', () => {
   assert.throws(() => assertDedicatedIssueBody('nothing here', { throwOnError: true }), /is invalid/);
 });
+
+test('renderDedicatedIssueBody always carries the Upstream slot', () => {
+  // The seam to the treatment layer (Jira). Unfilled at triage time is normal —
+  // omitted is not, or the failure layer stops linking to the card layer.
+  assert.ok(renderDedicatedIssueBody(CLUSTER).includes('**Upstream:** _not filed_'));
+  assert.ok(
+    renderDedicatedIssueBody({ ...CLUSTER, upstream: 'LE-1234' }).includes('**Upstream:** LE-1234'),
+  );
+});
+
+test('assertDedicatedIssueBody reports a dropped Upstream line', () => {
+  const body = renderDedicatedIssueBody(CLUSTER).replace(/^\*\*Upstream:\*\* .+$/m, '');
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /Upstream/.test(p)));
+});

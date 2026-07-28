@@ -32,6 +32,20 @@ body:
     validations:
       required: true
 
+  - type: input
+    id: upstream
+    attributes:
+      label: Upstream
+      description: >
+        The seam to the treatment layer. This issue tracks the **failure**; what is done
+        about it is worked on the Jira board. Leave `_not filed_` when no card exists yet —
+        normal at triage time, since the card follows the investigation — but never delete
+        the field, or the failure stops linking to the card. `LE-####` or
+        `langflow-ai/langflow#N`.
+      value: "_not filed_"
+    validations:
+      required: true
+
   - type: textarea
     id: symptom
     attributes:

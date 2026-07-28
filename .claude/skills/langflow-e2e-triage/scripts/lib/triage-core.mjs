@@ -277,6 +277,7 @@ export function renderDedicatedIssueBody(input) {
     umbrella,
     run,
     provenanceNote = '',
+    upstream = null,
     summary,
     tests,
     whyOneCause,
@@ -310,6 +311,14 @@ export function renderDedicatedIssueBody(input) {
     `Spun out of daily-failure triage #${umbrella} (run ${runRef}, ${run.date}).` +
     (provenanceNote.trim() ? ` ${provenanceNote.trim()}` : '');
 
+  // The seam to the treatment layer. This issue tracks the *failure*; what is
+  // done about it is worked on the Jira board, so the key has to be a field the
+  // body always carries — not a mention inside a deliverable checkbox, which
+  // cannot be swept and disappears if nobody ticks it. Rendered unfilled at
+  // triage time (the card rarely exists yet) precisely so the slot is visible
+  // and someone fills it later.
+  const upstreamLine = `**Upstream:** ${String(upstream || '').trim() || '_not filed_'}`;
+
   const rows = tests.map((t) => {
     const spec = `\`${t.file}:${t.line}\`` + (t.test ? ` ("${tableCell(t.test)}")` : '');
     const waits = t.waits_for ? `\`${tableCell(t.waits_for)}\`` : '—';
@@ -320,6 +329,8 @@ export function renderDedicatedIssueBody(input) {
 
   const out = [
     provenance,
+    '',
+    upstreamLine,
     '',
     '## Symptom',
     '',
@@ -392,6 +403,10 @@ export function assertDedicatedIssueBody(body, opts = {}) {
 
   if (!/`[^`\s]+\.spec\.ts:\d+`/.test(text)) {
     problems.push('no backticked repo-relative spec path with a line number — the QA Platform cannot match this issue to a failure');
+  }
+
+  if (!/^\*\*Upstream:\*\* .+/m.test(text)) {
+    problems.push('missing the **Upstream:** line — the seam to the Jira/upstream card; render it as _not filed_ when no card exists yet, never omit it');
   }
 
   if (!/- \[ \] /.test(text)) {

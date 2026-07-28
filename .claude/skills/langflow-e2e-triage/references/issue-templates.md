@@ -44,6 +44,25 @@ Example: `[Daily #744] agent/flow execution does not complete — div-chat-messa
 Spun out of daily-failure triage #<umbrella> (run [<run_id>](<run_url>), <date>).
 ```
 
+**Upstream (second line)**
+
+```
+**Upstream:** LE-1234
+```
+
+The seam to the treatment layer. **This issue tracks the failure, not the fix** —
+what gets done about it is worked on the Jira board, so the card key has to be a
+field the body always carries. It is rendered as `_not filed_` when no card exists
+yet (the normal state at triage time, since the card follows the investigation),
+and the renderer never omits the line: an always-present slot is what makes the
+failure → issue → card walk possible, and what lets the link be swept for
+mechanically. Accepts a DataStax Jira key (`LE-####`) or a
+`langflow-ai/langflow#N` issue.
+
+Do **not** rely on the `REGRESSIONS.md` deliverable checkbox to carry this. That
+checkbox is an acceptance criterion — it records that a row is owed, not where the
+card is, and it vanishes from any sweep if nobody ticks it.
+
 **Sections**
 
 #### Symptom
