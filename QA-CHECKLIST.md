@@ -368,7 +368,7 @@
 - [x] Toggle add_current_date_tool works (enables/disables date tool) → `agent-current-date-tool.spec.ts`
 - [~] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts` (**partially covered on 1.11**: the field is present and togglable, but True/False are behaviorally identical — the field now only toggles `ToolRetryMiddleware`, and component-tool failures are converted to content by the hardcoded `handle_tool_error=True` before the middleware can observe them; the only live trigger (LLM-emitted malformed args) is non-deterministic, so the semantic difference is not deterministically testable — re-scope tracked in #496)
 - [x] Image passed via input handle is processed correctly → `core-functionality/llm-agents/agent-multimodal-image-input.spec.ts`
-- [-] Image attached in the Playground is processed by the Agent — the attachment renders in the user message and the reply describes it → `core-functionality/llm-agents/general-bugs-agent-images-playground.spec.ts` (lost `@stable` in the OpenAI-quota quarantine #772; restore with that promotion)
+- [x] Image attached in the Playground is processed by the Agent — the attachment renders in the user message and the reply describes it → `core-functionality/llm-agents/general-bugs-agent-images-playground.spec.ts` (`@stable` restored in #992 — the OpenAI quota that caused the #772 quarantine is back)
 
 ---
 

@@ -1,6 +1,6 @@
 # Agent tool error — handled as an observation, execution continues
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -56,6 +56,12 @@ nightly. `@regression` — guards the `handle_tool_error=True` wiring and the
 agent's continue-after-error loop; `@agents` — agent tool-calling behavior;
 `@playground` — the run and the reply observable live in the Playground.
 
+`@stable` was removed by the daily triage #704 (recurrent flake on healthy
+days, 07-07 and 07-10) and **restored in #992**. Because the removal reason was
+a flake, isolation evidence alone does not refute it: the restoration required
+7/7 clean at `--retries=0` — 4 serial rounds plus 2 rounds with a second spec
+running as concurrent load.
+
 ---
 
 ## Preconditions *(optional)*
@@ -100,6 +106,13 @@ machinery as `agent-max-iterations.spec.ts` / `agent-tool-name-validation.spec.t
    output contains `SSRF Protection`.
 7. No `allowFlowErrors`: any flow error fails the test via the fixture —
    that IS the "handled without crashing" guarantee.
+8. **Teardown:** `afterEach` deletes the Simple Agent flow created by
+   `loadAgent()` by id via `DELETE /api/v1/flows/{id}` (id-scoped, #515 —
+   never a global `cleanAllFlows`). Added in #992: `loadAgent()` discarded
+   `load()`'s returned id and the spec had no teardown, leaking one flow per
+   run. A stale comment claiming `SimpleAgentTemplatePage.load()` "deletes all
+   flows before loading the template" — false since #553 — is why it went
+   unnoticed.
 
 ---
 

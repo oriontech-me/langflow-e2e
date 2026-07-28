@@ -1,6 +1,6 @@
 # OpenAI Provider — configure key, select GPT, execute
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -32,6 +32,11 @@ common provider setup in Langflow.
 `@stable` added only after multiple clean `--retries=0` runs on the fresh
 nightly. `@model-provider` (area, all tests) · `@settings` (Test 1 navigates
 Settings) · `@agents` + `@playground` (Test 2 executes an agent).
+
+`@stable` was removed from **Test 2** by the OpenAI-quota quarantine #772 /
+PR #775 — the key had no quota, not the test — and **restored in #992** once
+the quota was confirmed back (live HTTP 200 completion on `gpt-4o-mini`) and
+the test ran clean at `--retries=0`.
 
 ---
 

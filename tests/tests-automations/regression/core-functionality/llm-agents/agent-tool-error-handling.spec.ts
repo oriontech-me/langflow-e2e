@@ -6,6 +6,7 @@ import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
   hasProviderEnvKeys,
@@ -138,14 +139,35 @@ function getTestTargets(): TestTarget[] {
   }));
 }
 
+// Ids of the flows created by loadAgent(), so afterEach can delete exactly
+// those via the API (id-scoped, #515) — never a global cleanAllFlows.
+// `SimpleAgentTemplatePage.load()` does NOT pre-clean since #553, so without
+// this the spec leaked one Simple Agent flow per run (#992).
+const createdFlowIds: string[] = [];
+
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
   try {
-    await new SimpleAgentTemplatePage(page).load(options);
+    const flowId = await new SimpleAgentTemplatePage(page).load(options);
+    if (flowId) createdFlowIds.push(flowId);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
   }
 }
+
+test.afterEach(async ({ page }) => {
+  const ids = createdFlowIds.splice(0);
+  if (ids.length === 0) return;
+  // Navigate off the editor first so the unmounted flow page stops polling a
+  // flow we are about to delete, then pass an explicit bearer — page.request is
+  // unauthenticated under AUTO_LOGIN and would 401 otherwise.
+  await page.goto("/");
+  const auth = await getAuthToken(page.request);
+  const opts = auth ? { headers: { Authorization: auth } } : undefined;
+  for (const id of ids) {
+    await deleteFlow(page.request, id, opts);
+  }
+});
 
 // Set the Agent Instructions (system prompt) on the node.
 async function setSystemPrompt(page: Page, prompt: string): Promise<void> {
@@ -283,19 +305,21 @@ async function expectReplyContainsPersisted(
 
 const targets = getTestTargets();
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template;
-// serial mode + --workers=1 keeps the shared instance state deterministic.
+// Serial mode + --workers=1 keeps the shared instance state deterministic.
+// (This used to claim SimpleAgentTemplatePage.load() deletes all flows first —
+// false since #553, and the reason the missing cleanup above went unnoticed.)
 test.describe.configure({ mode: "serial" });
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Tool Error Handling [${label}]`, () => {
-    // @stable removed by daily triage #704 — recurrent flake on healthy days
-    // (07-07, 07-10; see reports/daily-history.jsonl). Restore once fixed — #726.
+    // @stable restored in #992: the #726 flake (removed by daily triage #704 on
+    // 07-07/07-10) no longer reproduces — 7/7 clean at `--retries=0`, including
+    // two rounds under concurrent load. See reports/daily-history.jsonl.
     test(
       "agent handles a tool error and continues execution",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
