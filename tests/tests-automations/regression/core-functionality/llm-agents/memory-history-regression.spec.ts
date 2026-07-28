@@ -10,6 +10,7 @@ import {
   setupLanguageModelOpenAI,
   setAgentModelViaApi,
 } from "../../../../helpers/provider-setup/setup-language-model-openai";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -118,10 +119,11 @@ test.describe("Memory Chatbot Regression", () => {
     "message history context retention suite",
     { tag: ["@stable", "@release", "@agents", "@playground"] },
     async ({ page }) => {
-      test.skip(
-        !process.env.OPENAI_API_KEY,
-        "OPENAI_API_KEY required to run this test",
-      );
+      // Real OpenAI completions drive the whole suite, so gate on provider
+      // HEALTH, not on the env var alone — a drained key would block the backend
+      // past gunicorn's 300s timeout and kill the shard's worker (#1029).
+      const gate = providerSkipGate("openai");
+      test.skip(gate.skip, gate.reason);
 
       createdFlowId = await loadMemoryChatbot(page);
       const playground = await openConfiguredPlayground(page, createdFlowId);
@@ -164,10 +166,11 @@ test.describe("Memory Chatbot Regression", () => {
     "session isolation: new session has no context from previous session",
     { tag: ["@stable", "@release", "@agents", "@playground"] },
     async ({ page }) => {
-      test.skip(
-        !process.env.OPENAI_API_KEY,
-        "OPENAI_API_KEY required to run this test",
-      );
+      // Real OpenAI completions drive the whole suite, so gate on provider
+      // HEALTH, not on the env var alone — a drained key would block the backend
+      // past gunicorn's 300s timeout and kill the shard's worker (#1029).
+      const gate = providerSkipGate("openai");
+      test.skip(gate.skip, gate.reason);
 
       createdFlowId = await loadMemoryChatbot(page);
       const playground = await openConfiguredPlayground(page, createdFlowId);

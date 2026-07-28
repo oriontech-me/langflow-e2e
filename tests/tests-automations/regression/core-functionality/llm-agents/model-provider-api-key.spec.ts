@@ -58,6 +58,13 @@ test.describe("Model Provider API Key Management", () => {
       // OpenAI is the configured-provider reference (collect-models configures
       // it in both environments). Skip with a reason when the instance has no
       // stored key — never silently.
+      //
+      // Deliberately NOT gated on provider health (#1029 audit): this asserts the
+      // key-edit SURFACE, and a configured-but-drained key is exactly a state it
+      // must still cover. It drives no completion — the models badge comes from the
+      // catalog and the typed value is never submitted — so it cannot produce the
+      // hung request that wedges a shard. The instance-side variable check below is
+      // already stronger than env-var presence.
       const bearer = await getAuthToken(request);
       const vars = await request
         .get("/api/v1/variables/", { headers: { Authorization: bearer } })

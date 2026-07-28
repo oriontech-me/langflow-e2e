@@ -33,6 +33,7 @@ import { navigateSettingsPages } from "../../../helpers/ui/go-to-settings";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { FlowEditorPage, PlaygroundPage } from "../../../pages";
+import { providerSkipGate } from "../../../helpers/provider-setup/provider-health";
 
 const FIRST_MESSAGE = "Hello, how are you?";
 const SECOND_MESSAGE = "What is 2+2?";
@@ -73,14 +74,16 @@ test(
   "Settings > Messages displays sent messages in correct order with working filters",
   { tag: ["@stable", "@release", "@workspace", "@api", "@settings"] },
   async ({ page }) => {
-    test.skip(
-      !process?.env?.OPENAI_API_KEY,
-      "OPENAI_API_KEY required to run this test",
-    );
-
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
     }
+
+    // Two real OpenAI completions run below, so gate on provider HEALTH, not on
+    // the env var alone — a drained key would otherwise block the backend past
+    // gunicorn's 300s timeout and kill the shard's Langflow worker (#1029).
+    // Evaluated after dotenv so a local `.env`-only key is seen.
+    const openaiGate = providerSkipGate("openai");
+    test.skip(openaiGate.skip, openaiGate.reason);
 
     const flowEditor = new FlowEditorPage(page);
     const playground = new PlaygroundPage(page);

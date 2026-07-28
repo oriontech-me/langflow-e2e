@@ -4,6 +4,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage } from "../../../../pages";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 // Id of the flow created by the template load, so afterEach deletes exactly
 // that one via the API (id-scoped, #515) — never a global cleanAllFlows.
@@ -29,14 +30,16 @@ test(
   "user must be able to send images in the playground with the agent component",
   { tag: ["@stable", "@release", "@components", "@agents"] },
   async ({ page }) => {
-    test.skip(
-      !process?.env?.OPENAI_API_KEY,
-      "OPENAI_API_KEY required to run this test",
-    );
-
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
     }
+
+    // A real multimodal completion runs below, so gate on provider HEALTH, not on
+    // the env var alone — a drained key would block the backend past gunicorn's
+    // 300s timeout and kill the shard's Langflow worker (#1029). Evaluated after
+    // dotenv so a local `.env`-only key is seen.
+    const openaiGate = providerSkipGate("openai");
+    test.skip(openaiGate.skip, openaiGate.reason);
     // Load the Simple Agent template via the canonical helper, which clears
     // existing flows, opens the templates modal through the correct entry point,
     // and waits for the canvas to actually load. The previous manual

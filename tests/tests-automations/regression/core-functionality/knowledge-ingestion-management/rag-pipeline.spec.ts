@@ -10,6 +10,7 @@ import {
   deleteKnowledgeBase,
   getKnowledgeBase,
 } from "../../../../helpers/knowledge/knowledge-base";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 // §5.2.4 — the *complete RAG pipeline* end-to-end. Builds on #673 (Split Text
 // chunking) and #674 (vector-store index + query) and adds the final "answer"
@@ -67,10 +68,14 @@ const createdKbNames: string[] = [];
 // knowledge-ingestion specs).
 test.describe.configure({ mode: "serial" });
 
-test.skip(
-  !process?.env?.GOOGLE_API_KEY,
-  "GOOGLE_API_KEY required to embed the document and answer with gemini-flash-latest",
-);
+// Google backs BOTH the embedding of every chunk and the answer model, so a key
+// that exists but is drained turns each node run into a live call against a dead
+// provider — which blocks the backend past gunicorn's 300s timeout and kills the
+// shard's Langflow worker. Gate on the health `collect-models` recorded, not on
+// the env var alone (#1029). Reason when it fires: either GOOGLE_API_KEY is
+// unset, or the collected `inactive` error (spend cap, revoked key, …).
+const googleGate = providerSkipGate("google");
+test.skip(googleGate.skip, googleGate.reason);
 
 async function authHeaders(page: Page): Promise<Record<string, string>> {
   const authHeader = await getAuthToken(page.request);

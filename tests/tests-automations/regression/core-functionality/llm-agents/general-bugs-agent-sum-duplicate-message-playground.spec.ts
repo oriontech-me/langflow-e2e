@@ -3,19 +3,22 @@ import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { setupAnthropic } from "../../../../helpers/provider-setup/setup-anthropic";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 test(
   "user must not experience message duplication in mathematical expressions with agent component",
   { tag: ["@release", "@components", "@workspace"] },
   async ({ page }) => {
-    test.skip(
-      !process?.env?.ANTHROPIC_API_KEY,
-      "ANTHROPIC_API_KEY required to run this test",
-    );
-
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
     }
+
+    // Real completions run below, so gate on provider HEALTH, not on the env var
+    // alone — a drained key would block the backend past gunicorn's 300s timeout
+    // and kill the shard's Langflow worker (#1029). Evaluated after dotenv so a
+    // local `.env`-only key is seen.
+    const gate = providerSkipGate("anthropic");
+    test.skip(gate.skip, gate.reason);
     await awaitBootstrapTest(page);
 
     await page.getByTestId("side_nav_options_all-templates").click();

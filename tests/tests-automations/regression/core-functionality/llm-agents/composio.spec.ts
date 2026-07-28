@@ -7,6 +7,11 @@ test(
   "user should be able to interact with composio component",
   { tag: ["@release", "@workspace", "@api", "@components"] },
   async ({ page, context }) => {
+    // Env-var presence is the CORRECT gate here (#1029 audit): Composio is a tool
+    // provider, not an LLM provider — `collect-models` never probes it, so
+    // providers.json holds no health record to consume. The test also drives no
+    // completion; it only configures the Gmail component's credential surface, so
+    // a dead key cannot produce the hung request that wedges a shard.
     test.skip(
       !process?.env?.COMPOSIO_API_KEY,
       "COMPOSIO_API_KEY required to run this test",
