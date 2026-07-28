@@ -17,12 +17,15 @@ on:
     # `edited` closes the loop: fixing the body re-runs the check, and the guard
     # comment is updated in place rather than a new one being appended.
     types: [opened, edited]
-  # Pre-merge proof path. The `issues` trigger above only fires from the file on
-  # the DEFAULT branch, so it cannot be exercised from a PR branch — the same
-  # constraint triage-dispatch.yml documents for its own triggers. This entry
-  # runs the identical composite action against a chosen issue from any branch,
-  # which proves everything except the event wiring itself. Defaults to dry_run
-  # so a validation run never comments on or labels a real issue.
+  # Manual entry: run the identical composite action against a chosen issue,
+  # printing the verdict without mutating it by default.
+  #
+  # NOTE on what this does and does not buy. GitHub requires a workflow_dispatch
+  # workflow to exist on the DEFAULT branch before it can be dispatched at all
+  # (API 404s otherwise), so this could NOT validate the very PR that introduced
+  # it. What it does buy, from here on: every later change to this guard is
+  # testable from its own branch (`gh workflow run ... --ref <branch>`), and the
+  # guard can be re-run on demand against any issue.
   workflow_dispatch:
     inputs:
       issue:
