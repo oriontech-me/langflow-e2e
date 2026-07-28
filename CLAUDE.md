@@ -50,6 +50,8 @@ npm run test:features                         # core + extended
 npm run test:integrations                     # Integration tests
 npm run test:unit                             # Unit tests
 npm run test:regression                       # Regression tests
+npm run test:units                            # TypeScript unit tests (scripts/ + tests/helpers/)
+npm run test:scripts                          # .mjs unit tests for scripts/
 npm run test:grep <pattern>                   # Filter by grep pattern
 npx playwright test tests/path/to/file.spec.ts  # Single file
 npm run report                                # Open HTML report
@@ -118,6 +120,18 @@ regression/
 - Tag every test with at least one tag (`@release`, `@regression`, etc.)
 - Use helpers from `tests/helpers/` instead of writing raw Playwright calls
 
+### Unit tests (our code, not Langflow)
+
+Specs cover Langflow; **unit tests cover this repo's own code** — the `scripts/` that
+generate the release signal, the guards that gate PRs, the automation that edits specs on
+`main`, and the helpers under `tests/helpers/`. A unit test goes **next to the code it
+covers**, named `*.test.ts` (`*.test.mjs` for the `.mjs` scripts) — e.g.
+`scripts/lib/stable-tests.ts` → `scripts/lib/stable-tests.test.ts`. Run with
+`npm run test:units` (TypeScript, `node --test` via ts-node's require hook) or
+`npm run test:scripts` (`.mjs`); both gate every PR. Never validate a helper in a scratch
+file outside the repo (#1017). Full rules — the runner trade-off, how to make a script
+importable, `testMatch`/discovery gotchas — in `CONTRIBUTING.md` → **Unit tests**.
+
 **Test validation checklist** before marking complete (from CONTRIBUTING.md):
 1. Run with full trace (`--trace=on`) and verify steps match screenshots
 2. Force a failure to confirm no false positives
@@ -169,7 +183,7 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 
 GitHub Actions workflows:
 
-- **`pr-validation.yml`** — Runs on every PR to `main`. Parallel jobs: TypeScript check (`tsc --noEmit`, plus `npm run test:scripts` — the `node --test` unit tests for the dependency-free `scripts/` helpers), ESLint, the **QA-CHECKLIST guard** (generated blocks untouched + spec↔doc↔checklist triad, see below), and the impacted-specs E2E run. All must pass before merge.
+- **`pr-validation.yml`** — Runs on every PR to `main`. Parallel jobs: TypeScript check (`tsc --noEmit`, plus the two unit lanes — `npm run test:scripts` for the dependency-free `.mjs` helpers under `scripts/`, and `npm run test:units` for everything in TypeScript), ESLint, the **QA-CHECKLIST guard** (generated blocks untouched + spec↔doc↔checklist triad, see below), and the impacted-specs E2E run. All must pass before merge.
 - **`nightly.yml`** — Runs daily at 03:00 BRT against `langflowai/langflow-nightly:latest`; opens a GitHub issue on failure assigned to @Victor-w-Madeira.
 - **`daily-stable.yml`** — Runs on weekdays (Mon–Fri) at 05:00 BRT against `langflowai/langflow-nightly:latest`; runs only `@stable` tests; opens a GitHub issue on failure for triage (`daily-failure` label); appends one entry to `reports/daily-history.jsonl` and commits it back to `main` with `[skip ci]` (runs on success and failure). **This is the active stable workflow.** The `Collect models` pre-flight step shares the Langflow container with the `@stable` run and can leave it **wedged** (container alive, event loop blocked — #922/#927), so three guards keep that from costing the run: `LANGFLOW_WORKERS=1` on the service, `PLAYWRIGHT_RETRIES=0` on that step, and a health gate between the two that waits for the backend and fails with the real cause named if it does not recover (#1011). A red `Collect models` **does not** abort the shard — a drained provider key must not kill the specs that never touch it (#980). Two independent report guards run in the merge job: `shardguard` (every shard produced a blob → results are not under-counted; it runs `if: always()` so its verdict exists even when no shard produced anything to download) and `runguard` (`scripts/check-run-integrity.mjs` — the merged report actually contains tests). A **zero-test run is an infra abort, not a per-test day**: it fails loudly (fail-closed — an unknown `runguard` verdict fails too), is barred from both paths that write on the strength of the report (`@stable` auto-removal and the `spec-durations.json` refresh), and opens an issue titled *"executed ZERO tests"* instead of the usual per-test body — even when the `test` job came back green, which `--pass-with-no-tests` makes possible (#1012).
 - **`weekly-stable.yml`** — **Disabled** (kept as a fallback, superseded by `daily-stable.yml`). When enabled it runs every Monday with the same machinery, writing to `reports/weekly-history.jsonl`.

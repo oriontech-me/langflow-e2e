@@ -517,6 +517,94 @@ State persistence requires the secret `GH_PAT_VARIABLES` (a PAT with `Variables:
 
 ---
 
+## Unit tests
+
+Playwright specs cover Langflow. **Unit tests cover our own code**: the scripts that
+generate the release signal, the guards that gate every PR, the automation that edits
+specs on `main`, and the helpers under `tests/helpers/`. These are pure functions over
+text — given a spec file, which `test()` calls carry `@stable`; given a Playwright JSON
+report, which tests hard-failed — the cheapest thing to test and the most expensive to
+get wrong, since a parser that silently under-counts becomes a wrong release signal with
+no failing test anywhere (issue #1017).
+
+**Write one whenever you add or change:** a `scripts/*` code path, a guard's decision
+logic, or a helper whose defect would surface as a random spec failure instead of a
+reproducible one (#988, #1002).
+
+### Where the file goes
+
+Next to the code it covers, named `*.test.ts` (or `*.test.mjs` for the dependency-free
+`.mjs` scripts) — same convention `scripts/partition-shards.test.mjs` already follows:
+
+```
+scripts/lib/stable-tests.ts             →  scripts/lib/stable-tests.test.ts
+scripts/remove-stable-from-failures.ts  →  scripts/remove-stable-from-failures.test.ts
+tests/helpers/provider-setup/x.ts       →  tests/helpers/provider-setup/x.test.ts
+```
+
+Never validate a helper in a scratch file outside the repo. That is what left the
+`collect-models` fallback with its only regression net living in a PR description
+(#1011) — the gap this section exists to close.
+
+### Running them
+
+```bash
+npm run test:units      # TypeScript unit tests (scripts/ + tests/), node --test via ts-node
+npm run test:scripts    # the .mjs half — dependency-free scripts/ helpers
+```
+
+Both run in `pr-validation.yml`'s **TypeScript Check** job, so a failing unit test fails
+the PR. Neither needs a browser, a backend or provider keys.
+
+To drive a single file (or a single test) while writing it:
+
+```bash
+node --require ts-node/register --test scripts/lib/stable-tests.test.ts
+node --require ts-node/register --test --test-name-pattern "guard trips" scripts/remove-stable-from-failures.test.ts
+```
+
+### The runner, and why this one
+
+`node --test` with **ts-node's CommonJS require hook**. No new dependency, no second
+runner to keep current, and it works on the Node 20 that `pr-validation.yml` pins. A
+type error in the test file fails it too, so `tsc` and the runner agree.
+
+Two consequences worth knowing before you fight them:
+
+- **`npm run test:units` discovers files with `find`, not a glob.** On Node 20 the test
+  runner's own discovery pattern does not recognise `.ts`, so passing it a directory
+  finds nothing and passes silently. The script therefore lists the files explicitly and
+  **fails** when the list comes out empty, rather than reporting a green vacuous run.
+- **`playwright.config.ts` pins `testMatch: "**/*.spec.ts"`.** Playwright's default
+  pattern also collects `*.test.ts`, which would pull these into `npx playwright test`,
+  `--grep`, the tag counters and the impacted-specs pathspec. Keep every real spec named
+  `*.spec.ts` and every unit test named `*.test.ts`.
+
+Rejected, for the record: `--loader ts-node/esm` (deprecated loader API), bumping CI to
+Node ≥22.6 for `--experimental-strip-types` (changes the Node every job runs on, for one
+lane), Playwright as the unit runner (a `*.unit.spec.ts` matches the impacted-specs
+pathspec and would boot a Langflow container to run a pure function), and `vitest`
+(better ergonomics, but a standing maintenance decision for what the require hook already
+does).
+
+### Making a script testable
+
+A script whose `main()` runs at import time cannot be imported by a test. Guard it:
+
+```ts
+if (require.main === module) {
+  main();
+}
+```
+
+Then export the seam you want to assert on — a pure function over the parsed input, as
+`collectHardFailures` and `parseStableTests` are. When the behaviour under test *is* the
+file mutation (as with the `@stable` auto-removal guard), drive the real script as a
+subprocess over throwaway fixtures in a temp dir and assert the files came back
+byte-identical; a reimplementation of a guard is not that guard.
+
+---
+
 ## Tag @stable — validated tests
 
 ### What it is
