@@ -258,6 +258,33 @@ jobs:
           # here — it would fail on the very keys this step is about to set
           # (chicken-and-egg). Matches daily-stable.yml's Collect models step.
           PREFLIGHT_SKIP_CREDENTIALS: "1"
+          # NO RETRIES for this step (#1011, ported here by #1019). CI's default
+          # is 2, so a FAILING collect-models runs three full attempts, each
+          # re-importing every key and re-walking the Model Providers UI against
+          # the single backend this job shares with the specs. On the daily that
+          # multiplier turned a ~49 s step into 7-12 min of sustained load and
+          # wedged the gunicorn worker.
+          #
+          # The trade is NOT the daily's, and the difference is worth stating.
+          # There the step is `continue-on-error: true` (#980): its result is
+          # purely diagnostic, so dropping the retries costs nothing and spares
+          # the shard that still has to run. Here the step is a HARD gate — a red
+          # sweep fails the job outright, the specs never run, and the health gate
+          # below is skipped for want of `always()`. So the cap protects no
+          # downstream step; what it buys is a red in ~1 min instead of three
+          # sweeps' worth of load and runner minutes. What it COSTS is the retry
+          # that could have rescued a transient sweep failure (a provider 503, a
+          # UI timing flake) — a real, if narrow, loss of PR-check reliability.
+          # Accepted deliberately: a sweep that fails for a substantive reason
+          # (drained key, component missing from the image — #1039) fails all
+          # three attempts too. Revisit if PRs start going red here on flakes a
+          # retry would have absorbed.
+          #
+          # Note the cap alone would NOT have prevented the wedges of 2026-07-28
+          # (three occurrences, all after a collect-models that PASSED on its
+          # first attempt in ~1 min). One successful sweep is enough to wedge the
+          # backend; the health gate below is what covers that case.
+          PLAYWRIGHT_RETRIES: "0"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -265,6 +292,95 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
         run: npx playwright test tests/collect-models.spec.ts --reporter=line
+
+      # Health gate between the two steps that share the Langflow container —
+      # ported from daily-stable.yml (#1011) by #1019. collect-models' model-toggle
+      # sweep can leave the backend process-wide WEDGED: container alive, event
+      # loop blocked, requests simply not answered (#922, #927). globalSetup polls
+      # for 120 s and then throws, so a wedge that outlasts that window costs the
+      # whole job and reports itself as a preflight timeout on /api/v1/version with
+      # no mention of the cause.
+      #
+      # On the daily this gate was documented as "attribution, with recovery as
+      # upside" because no run had ever shown the backend coming back. Run
+      # 30405897916 (job 90432861222) measured it — a pr-validation run that had
+      # NO gate yet, so what stood in for one was globalSetup's own 120 s poll.
+      # From the service container's log:
+      #
+      #   23:01:09  Collect models → 1 passed (57.2s)
+      #   23:01:18  globalSetup starts polling /api/v1/version
+      #   23:03:18  globalSetup gives up (HEALTH_TIMEOUT_MS = 120000) → job RED
+      #   23:04:39  critical  WORKER TIMEOUT (pid:36)     [gunicorn.error]
+      #   23:04:40  error     Worker (pid:36) was sent SIGKILL!
+      #   23:04:51  replacement worker finishes startup ("Initializing agentic
+      #             global variables…"), serves /auto_login at 23:04:52
+      #             ← 214 s after polling began
+      #
+      # Read that last line for exactly what it is: recovery inferred from the
+      # replacement worker's startup log, not from an observed 200 on
+      # /api/v1/version — by then nothing was polling, the job had already died.
+      # It is enough to establish that the backend came back, and that this step's
+      # budget would have found it where globalSetup's 120 s missed by 94 s. So
+      # here the gate is a RECOVERY mechanism, not only a diagnostic one — on one
+      # measurement. The same log explains why the service-level --health-cmd
+      # cannot cover this: gunicorn itself only noticed ~3.5 min in, and the
+      # container reads healthy that whole time.
+      #
+      # Polls with a SHORT per-request timeout over a long deadline (the #928
+      # shape): a hung request must fail fast so the loop keeps polling across the
+      # wedge instead of burning the budget on one GET. Runs only when Collect
+      # models ran — with no sweep there is no wedge to wait out, and an unrelated
+      # startup failure is globalSetup's to report.
+      - name: Wait for the backend to recover from the collect-models load
+        if: needs.detect-specs.outputs.needs_models == 'true'
+        shell: bash
+        env:
+          # 420 s, deliberately ABOVE daily-stable.yml's 300 s. The one measured
+          # recovery consumed 223 s — 74% of a 300 s budget — and every second of
+          # it was gunicorn's own timer: the wedge has to outlast WORKER TIMEOUT
+          # (~3.5 min), then the SIGKILL, then ~12 s of Langflow startup. A
+          # slightly slower restart blows 300 s, and this is the workflow where
+          # over-waiting is nearly free: the extra 120 s is only ever spent on a
+          # run that is already going red, inside a job with timeout-minutes: 60.
+          # The daily still says 300 s — changing it was outside #1019's scope;
+          # #1045 unifies both behind one composite action and settles the number.
+          RECOVER_TIMEOUT_S: "420"
+        run: |
+          deadline=$(( $(date +%s) + RECOVER_TIMEOUT_S ))
+          attempt=0
+          rc=0
+          while :; do
+            attempt=$((attempt + 1))
+            # `|| rc=$?` keeps the non-zero exit from tripping `bash -e` AND
+            # preserves curl's code, which is the one datum that distinguishes the
+            # two states this step exists to attribute (decoded at the deadline).
+            rc=0
+            curl -sf --connect-timeout 5 --max-time 8 http://localhost:7860/api/v1/version >/dev/null 2>&1 || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "Backend answered /api/v1/version on attempt $attempt — proceeding to the impacted specs."
+              exit 0
+            fi
+            # Heartbeat every ~6 attempts (~30 s when refused, ~78 s when each GET
+            # hangs for the full --max-time). Without it a step that can legitimately
+            # sit for 7 min prints nothing and reads as hung.
+            if [ $((attempt % 6)) -eq 0 ]; then
+              echo "Still waiting: attempt $attempt, last curl exit=$rc, $(( deadline - $(date +%s) ))s left of ${RECOVER_TIMEOUT_S}s."
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              # 7 = connection refused (nothing listening → the backend is DEAD or
+              # never came back); 28 = timeout (connection accepted, no answer →
+              # the WEDGE shape of #922/#927). Naming it here saves the next reader
+              # a dig through the container log.
+              case "$rc" in
+                7) diag="connection refused — the backend is DEAD or never came back up";;
+                28) diag="connection accepted but unanswered within 8s — the WEDGE shape of #922/#927";;
+                *) diag="last curl exit code $rc";;
+              esac
+              echo "::error::Langflow did not answer /api/v1/version within ${RECOVER_TIMEOUT_S}s after the Collect models step (${attempt} attempts; ${diag}). The impacted-specs run would abort in globalSetup with zero tests. This is the post-collect-models wedge (#922/#927/#1011/#1019), NOT a failure of the specs this PR touches."
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Run impacted specs
         env:
