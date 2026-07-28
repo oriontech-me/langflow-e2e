@@ -1,6 +1,6 @@
 # Agent Component — Image Input in Playground
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -13,6 +13,11 @@ Validates that the **Agent** component can receive an image attachment in the Pl
 ## Tags *(required)*
 
 `@stable` `@release` `@components` `@agents`
+
+`@stable` was removed by the OpenAI-quota quarantine #772 / PR #775 — the key
+had no quota, not the test — and **restored in #992** once a direct probe of
+`api.openai.com/v1/chat/completions` with the CI/local key returned HTTP 200
+and the spec ran clean at `--retries=0`.
 
 ---
 

@@ -1,6 +1,6 @@
 # Language Model Component Regression
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -31,6 +31,11 @@ dialog test).
 removed again in the 2026-07-14 quarantine PR #749 (recurrent flake) and
 **restored by the #750 fix** (deterministic build-completion observable —
 see Notes).
+
+`@stable` was removed from the **OpenAI** test by the quota quarantine #772 /
+PR #775 — the key had no quota, not the test — and **restored in #992** once
+the quota was confirmed back (live HTTP 200 completion on `gpt-4o-mini`) and
+the test ran clean at `--retries=0`.
 
 ---
 

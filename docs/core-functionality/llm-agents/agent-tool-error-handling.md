@@ -1,6 +1,6 @@
 # Agent tool error — handled as an observation, execution continues
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -55,6 +55,12 @@ core resilience contract of tool-calling agents.
 nightly. `@regression` — guards the `handle_tool_error=True` wiring and the
 agent's continue-after-error loop; `@agents` — agent tool-calling behavior;
 `@playground` — the run and the reply observable live in the Playground.
+
+`@stable` was removed by the daily triage #704 (recurrent flake on healthy
+days, 07-07 and 07-10) and **restored in #992**. Because the removal reason was
+a flake, isolation evidence alone does not refute it: the restoration required
+7/7 clean at `--retries=0` — 4 serial rounds plus 2 rounds with a second spec
+running as concurrent load.
 
 ---
 

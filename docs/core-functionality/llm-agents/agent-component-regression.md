@@ -1,6 +1,6 @@
 # Agent Component Regression
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -13,6 +13,12 @@ If any of these tests fail, the LLM Agent is broken for Playground use.
 
 ## Tags *(required)*
 `@stable` `@release` `@components` `@agents` `@playground`
+
+`@stable` was removed from "agent stop button must halt execution mid-run" by
+the weekly triage for #355 (deterministic hard failure, 120s `waitForSelector`
+on the stop button, two consecutive runs) and **restored in #992**: on
+1.12.0.dev7 the test finishes in ~10s and the failure no longer reproduces —
+no code change was needed, only the verification.
 
 ---
 
