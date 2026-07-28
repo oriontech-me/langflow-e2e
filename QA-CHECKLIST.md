@@ -781,9 +781,9 @@
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
-| `ui-ux/` — Canvas | 44 | 29 | 11 | 4 | 0 |
+| `ui-ux/` — Canvas | 44 | 34 | 6 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **465** | **360 (77%)** | **88 (19%)** | **11 (2%)** | **6 (1%)** |
+| **TOTAL** | **465** | **365 (78%)** | **83 (18%)** | **11 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -799,7 +799,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 408 `test()` calls carrying the `@stable` tag, distributed across 166 spec
+> 415 `test()` calls carrying the `@stable` tag, distributed across 169 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1145,10 +1145,16 @@
 - [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
 - [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
 - [x] user should be able to manually save a flow when the auto_save is off → `auto-save-off.spec.ts`
+- [x] connecting two compatible components creates exactly one edge → `canvas-connect-components.spec.ts`
+- [x] connecting the same compatible pair twice does not duplicate the edge → `canvas-connect-components.spec.ts`
+- [x] a type-incompatible pair does not connect → `canvas-connect-components.spec.ts`
+- [x] clicking the same target handle twice does not create an edge → `canvas-connect-components.spec.ts`
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] clicking empty canvas area deselects a selected node → `canvas-deselect-node.spec.ts`
 - [x] pressing Escape deselects a selected node → `canvas-deselect-node.spec.ts`
+- [x] deleting an edge from its context menu removes it from the canvas and the flow → `canvas-edge-reconnect.spec.ts`
+- [x] an edge can be recreated after it is deleted → `canvas-edge-reconnect.spec.ts`
 - [x] dragging a component moves it on the canvas and persists the new position → `canvas-move-node.spec.ts`
 - [x] a Shift+drag marquee selects every component it encloses → `canvas-multiselect.spec.ts`
 - [x] deleting a box selection clears the selected components → `canvas-multiselect.spec.ts`
@@ -1206,6 +1212,7 @@
 - [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
 - [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
 - [x] executing flow with server error shows error feedback → `execution-error-notification.spec.ts`
+- [x] user must see on handle click the possibility connections → `filterSidebar.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
@@ -1256,7 +1263,7 @@
 | `core-functionality/playground/` | 3 | 0 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
-| `ui-ux/` — Canvas | 11 | 0 |
+| `ui-ux/` — Canvas | 6 | 0 |
 
 ---
 
