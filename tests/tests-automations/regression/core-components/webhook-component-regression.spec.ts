@@ -145,17 +145,10 @@ test(
   },
 );
 
-// Marked fixme until the Langflow frontend bundle stops mutating an undefined
-// `Accept-Language` header inside the request wrapper (see #165 item 2 — surfaced
-// by weekly run 25441253323 as `TypeError: Cannot set properties of undefined`).
-// When the upstream bug is fixed, remove `.fixme` and re-validate.
-test.fixme(
+test(
   "Webhook component — flow is saved to database and contains the Webhook node",
-  // @stable removed: upstream Langflow regression breaks page.evaluate(fetch)
-  // with "Cannot set properties of undefined (setting 'Accept-Language')".
-  // Tracked in #180; restore @stable once upstream is fixed.
-  { tag: ["@release", "@regression"] },
-  async ({ page }) => {
+  { tag: ["@stable", "@release", "@regression"] },
+  async ({ page, request }) => {
     await addWebhookComponent(page);
 
     const flowId = page.url().split("/").slice(-1)[0];
@@ -166,16 +159,19 @@ test.fixme(
     await page.waitForTimeout(4000);
 
     // Verify the flow is persisted and contains the Webhook component.
-    // Use page.evaluate(fetch) so the request runs in the browser context and
-    // carries the session cookies. The request fixture is unauthenticated and
-    // would get a 403 from the flows endpoint even in auto-login mode.
-    const flowData = await page.evaluate(async (fId) => {
-      const res = await fetch(`/api/v1/flows/${fId}`, {
-        credentials: "include",
-      });
-      if (!res.ok) return null;
-      return res.json();
-    }, flowId);
+    // Read it through the `request` fixture with an explicit bearer, NOT through
+    // page.evaluate(fetch): the flows endpoint only needs a token (403 without
+    // one, 200 with the bearer getAuthToken mints from /api/v1/auto_login), and
+    // a fetch issued from the page context hits a defect in the Langflow bundle's
+    // window.fetch wrapper — it assumes the init carries a mutable `headers`
+    // object and throws "Cannot set properties of undefined (setting
+    // 'Accept-Language')". That defect is real and unrelated to what this test
+    // asserts; running the read out here keeps the product bug out of our signal
+    // (#990, and docs/core-components/webhook-component-regression.md).
+    const flowRes = await request.get(`/api/v1/flows/${flowId}`, {
+      headers: { Authorization: await getAuthToken(request) },
+    });
+    const flowData = flowRes.ok() ? await flowRes.json() : null;
 
     expect(flowData).not.toBeNull();
     const nodes: any[] = flowData?.data?.nodes ?? [];
