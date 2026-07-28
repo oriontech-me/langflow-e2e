@@ -113,6 +113,19 @@ jobs:
           LANGFLOW_AUTO_LOGIN: "true"
           LANGFLOW_SUPERUSER: langflow
           LANGFLOW_SUPERUSER_PASSWORD: langflow123
+          # Cap the backend to one worker. Langflow's image default is (2*cpu)+1
+          # workers, each holding full in-memory state; under the collect-models
+          # load on the runner they contend until requests hang (#773). The launch
+          # scripts have defaulted to 1 since #888, and #923 applied the same cap
+          # to pr-validation.yml's service container — but that fix never reached
+          # THIS workflow, so the daily kept running ~5 workers on a 2-core runner
+          # that also hosts the Playwright container, Ollama and go-httpbin. That
+          # is the one place the known hardening was missing when run 30351107916
+          # (2026-07-28) wedged on every shard (#1011).
+          # Necessary but NOT sufficient on its own: #927 proved the wedge is
+          # process-wide, not worker contention. The retry cap and the health gate
+          # below are the other two halves.
+          LANGFLOW_WORKERS: "1"
           # The nightly image ships LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false (a
           # security default): custom-component creation is disabled, which
           # hides the sidebar "New Custom Component" button and makes
@@ -308,12 +321,31 @@ jobs:
           done
           echo "::warning::go-httpbin at $IP:8080 did not answer; ECHO_BASE_URL left unset (specs use postman-echo.com)."
 
+      # `continue-on-error` stays: a drained provider key must not kill a day of
+      # coverage for the dozens of specs that never touch that provider — the
+      # lesson of #980, where a strict gate killed all four shards over a drained
+      # Anthropic account. A red step here is therefore EXPECTED to be survivable,
+      # and the shard deliberately does NOT abort (see the health gate below,
+      # which is what actually protects the run).
       - name: Collect models
+        id: collect_models
         run: npx playwright test tests/collect-models.spec.ts --reporter=line
         continue-on-error: true
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          # NO RETRIES for this step (#1011). CI's default is 2, so a failing
+          # collect-models ran THREE full attempts, each re-importing every key and
+          # re-walking the Model Providers UI against the single backend. On run
+          # 30351107916 that turned a ~49 s step into 7-12 min of sustained load
+          # and wedged the gunicorn worker; the next step's globalSetup preflight
+          # then found nothing answering and every shard exited with 0 tests.
+          # Retrying does not add information here — the first attempt already
+          # produced the diagnosis, and the step is allowed to fail. The cost of a
+          # transient flake is that provider specs skip this run (pre-existing
+          # behaviour, and #570's gate reports it); the cost of retrying is the
+          # whole run.
+          PLAYWRIGHT_RETRIES: "0"
           # This run is what IMPORTS the provider credentials into Langflow, so
           # the pre-flight credential check (globalSetup, #884) must not fire
           # here — it would fail on the very keys this step is about to set.
@@ -323,6 +355,54 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+
+      # Health gate between the two steps that share the Langflow container
+      # (#1011). collect-models' model-toggle sweep can leave the backend
+      # process-wide WEDGED — container alive, event loop blocked, requests simply
+      # not answered (#922, #927). globalSetup polls for 120 s and then throws, so
+      # a wedge that outlasts that window costs the ENTIRE shard and reports itself
+      # as a preflight error with no mention of what caused it.
+      # This gate does two things the preflight cannot:
+      #   1. gives the wedge a longer window to clear BEFORE Playwright starts, and
+      #   2. when it does not clear, fails with the real cause named here, in its
+      #      own step, instead of 40 specs' worth of container time and a
+      #      globalSetup stack trace.
+      # It polls with a SHORT per-request timeout over a long deadline, the shape
+      # #928 established: a hung request must fail fast so the loop can keep
+      # polling across the wedge instead of burning the budget on one GET.
+      # Honest about its limits: whether the backend recovers is not guaranteed —
+      # on 2026-07-28 the wedge outlasted 120 s and the run ended before we could
+      # know. What this gate always buys is attribution; recovery is upside.
+      - name: Wait for the backend to recover from the collect-models load
+        shell: bash
+        env:
+          # Generous: a wedge is worth waiting out when the alternative is losing
+          # a ~20 min run. Overridable so a validation dispatch can shorten it.
+          RECOVER_TIMEOUT_S: "300"
+          # Only for the log line below — the run is NOT gated on it (see the
+          # Collect models step: a drained key must not kill unrelated specs).
+          COLLECT_MODELS_OUTCOME: ${{ steps.collect_models.outcome }}
+        run: |
+          # Surface the pre-flight's own verdict here, where a reader is already
+          # looking. Without this the step's failure is buried in its log and the
+          # resulting skips look unexplained (the silent-erosion class of #570).
+          if [ "$COLLECT_MODELS_OUTCOME" = "failure" ]; then
+            echo "::warning::Collect models FAILED (outcome=$COLLECT_MODELS_OUTCOME). The run continues by design, but providers.json/models.json may be stale or incomplete, so provider-parameterized specs can skip. Check that step's log for which provider is down."
+          fi
+          deadline=$(( $(date +%s) + RECOVER_TIMEOUT_S ))
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            if curl -sf --connect-timeout 5 --max-time 8 http://localhost:7860/api/v1/version >/dev/null 2>&1; then
+              echo "Backend answered /api/v1/version on attempt $attempt — proceeding to the @stable run."
+              exit 0
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Langflow did not answer /api/v1/version within ${RECOVER_TIMEOUT_S}s after the Collect models step (${attempt} attempts). The backend is wedged or dead, so the @stable run would abort in globalSetup with zero tests. This is the post-collect-models wedge (#922/#927/#1011), NOT a per-test failure."
+              exit 1
+            fi
+            sleep 5
+          done
 
       - name: Run @stable tests (shard ${{ matrix.shard }})
         # Sharded run. The reporter list is NOT overridden on the CLI: setting
