@@ -781,9 +781,9 @@
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
-| `ui-ux/` — Canvas | 44 | 19 | 21 | 4 | 0 |
+| `ui-ux/` — Canvas | 44 | 25 | 15 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **465** | **350 (75%)** | **98 (21%)** | **11 (2%)** | **6 (1%)** |
+| **TOTAL** | **465** | **356 (77%)** | **92 (20%)** | **11 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -799,7 +799,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 396 `test()` calls carrying the `@stable` tag, distributed across 160 spec
+> 402 `test()` calls carrying the `@stable` tag, distributed across 164 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1147,6 +1147,11 @@
 - [x] user should be able to manually save a flow when the auto_save is off → `auto-save-off.spec.ts`
 - [x] copy and paste ChatOutput component via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
 - [x] copy and paste Prompt Template (component with dynamic ports) via Ctrl+C / Ctrl+V → `canvas-copy-paste.spec.ts`
+- [x] clicking empty canvas area deselects a selected node → `canvas-deselect-node.spec.ts`
+- [x] pressing Escape deselects a selected node → `canvas-deselect-node.spec.ts`
+- [x] dragging a component moves it on the canvas and persists the new position → `canvas-move-node.spec.ts`
+- [x] a Shift+drag marquee selects every component it encloses → `canvas-multiselect.spec.ts`
+- [x] deleting a box selection clears the selected components → `canvas-multiselect.spec.ts`
 - [x] user can create a blank flow from the new-project modal → `create-blank-flow.spec.ts`
 - [x] user can create a flow from a starter template → `create-flow-from-template.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
@@ -1207,6 +1212,7 @@
 - [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
 - [x] the main menu lists every item, reports the running version and links out → `main-menu-actions.spec.ts`
 - [x] the main menu's Settings action navigates to the Settings page → `main-menu-actions.spec.ts`
+- [x] user must be able to minimize and expand a component → `minimize.spec.ts`
 - [x] User should be able to interact notifications tab → `notifications.spec.ts`
 - [x] right-clicking a component selects it and opens its options menu → `right-click-dropdown.spec.ts`
 - [x] an item picked from the right-click menu acts on that component → `right-click-dropdown.spec.ts`
@@ -1244,7 +1250,7 @@
 | `core-functionality/playground/` | 3 | 0 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
-| `ui-ux/` — Canvas | 21 | 0 |
+| `ui-ux/` — Canvas | 15 | 0 |
 
 ---
 
