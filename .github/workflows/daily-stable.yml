@@ -544,8 +544,15 @@ jobs:
       # trust a clean run's timings (stricter than the history file, which records
       # every run). The committed reports/spec-durations.json is read by the prep
       # job on the next daily; a missing/stale entry just falls back to a count balance.
+      # ALSO gated on runguard.empty (#1012), same class of hazard as the tag
+      # mutation below: `extract` on an empty report emits `{"durations":{}}` and the
+      # commit step below `git add`s the file, so a zero-test run would wipe the
+      # duration table on main and silently drop duration-balanced sharding on every
+      # later daily. `needs.test.result == 'success'` does NOT cover that on its own —
+      # the shard step runs with `--pass-with-no-tests`, so a run matching no @stable
+      # test at all is GREEN with zero tests.
       - name: Refresh spec durations (green runs only)
-        if: needs.test.result == 'success' && github.event_name == 'schedule'
+        if: needs.test.result == 'success' && github.event_name == 'schedule' && steps.runguard.outputs.empty == 'false'
         run: node scripts/partition-shards.mjs extract results.json > reports/spec-durations.json
 
       # Long-lived run history: append one JSON line per scheduled run to
@@ -639,8 +646,13 @@ jobs:
       # triage/experiment run: if it surfaces something real we open a specific
       # issue by hand following the triage rule (a hard failure, or a flaky that
       # recurs 2+ times), so an auto-umbrella on manual runs would just be noise.
+      # `|| runguard.empty` (#1012): a zero-test run must open an issue even when the
+      # `test` job came back GREEN. That is reachable — the shard step runs with
+      # `--pass-with-no-tests`, so a run that matches no @stable test passes while
+      # executing nothing. Without this the run only goes red at the last step and no
+      # umbrella issue names the condition.
       - name: Create issue on failure
-        if: needs.test.result == 'failure' && github.event_name == 'schedule'
+        if: (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true') && github.event_name == 'schedule'
         uses: actions/github-script@v9
         env:
           IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
@@ -652,6 +664,7 @@ jobs:
           # From the report-integrity guard (#1012) — a run that executed ZERO
           # tests must announce itself as an infra abort, never as a per-test day.
           RUN_EMPTY: ${{ steps.runguard.outputs.empty }}
+          RUN_UNREADABLE: ${{ steps.runguard.outputs.unreadable }}
           RUN_ERRORS: ${{ steps.runguard.outputs.report_errors }}
           RUN_FIRST_ERROR: ${{ steps.runguard.outputs.first_error }}
         with:
@@ -661,6 +674,7 @@ jobs:
             const arStatus = process.env.AUTO_REMOVE_STATUS || '';
             const arSummary = process.env.AUTO_REMOVE_SUMMARY || '';
             const empty = process.env.RUN_EMPTY === 'true';
+            const unreadable = process.env.RUN_UNREADABLE === 'true';
             const runErrors = process.env.RUN_ERRORS || '0';
             const firstError = process.env.RUN_FIRST_ERROR || '';
             // Three shapes, most specific first.
@@ -673,13 +687,20 @@ jobs:
               ? [
                   '### ⚠️ ZERO tests executed — infra abort, not a per-test failure',
                   '',
-                  `The merged report carries **no test results at all** (${runErrors} top-level report error(s)).`,
-                  'No spec failed, no `@stable` tag was touched, and Langflow is not implicated by this run.',
+                  unreadable
+                    ? 'The merged report was **missing or unparseable** — the run produced no readable result at all. Suspect the `Merge blob reports` step and the per-shard blob artifacts first.'
+                    : `The merged report carries **no test results at all** (${runErrors} top-level report error(s)) — the shards aborted before the first test.`,
+                  'No spec failed and no `@stable` tag was touched, so there is **no per-test evidence to triage**.',
                   ...(firstError ? ['', '```', firstError, '```'] : []),
                   '',
-                  '**Triage this as infrastructure**: find why the shards aborted before the first test',
-                  '(see the shard logs and the Langflow service container logs), not which test broke.',
-                  'Known cause of this shape: the post-`collect-models` backend wedge — #1011.',
+                  '**Triage this as infrastructure**: find why nothing ran, not which test broke.',
+                  ...(unreadable
+                    ? ['Start from the `Merge blob reports` step log and the per-shard blob artifacts.']
+                    : [
+                        'The shard logs and the Langflow service container logs are the evidence. This does',
+                        '*not* clear Langflow — a wedged or unreachable backend fails the pre-flight before',
+                        'any test starts. Known cause of this shape: the post-`collect-models` backend wedge — #1011.',
+                      ]),
                 ]
               : arStatus
                 ? ['### `@stable` auto-removal', '', arSummary]
@@ -723,13 +744,30 @@ jobs:
       # it, nothing in the merge job ever names the condition, and the run reads
       # as an ordinary red day. Manual dispatches keep warnings only — they never
       # gate on report integrity.
+      # FAIL-CLOSED on `empty != 'false'`, not `== 'true'`: an absent output means
+      # runguard never reported (it was skipped, or a future edit broke its
+      # entrypoint), and an unknown verdict must fail the run rather than let it
+      # go green — a guard whose silence reads as "all good" is the exact failure
+      # this whole mechanism exists to remove. `complete` keeps `== 'false'`: its
+      # own absence is already covered, since a skipped shardguard means no blobs
+      # were downloaded and runguard then sees no report at all.
       - name: Fail scheduled run on an incomplete or empty report
-        if: always() && github.event_name == 'schedule' && (steps.shardguard.outputs.complete == 'false' || steps.runguard.outputs.empty == 'true')
+        if: always() && github.event_name == 'schedule' && (steps.shardguard.outputs.complete == 'false' || steps.runguard.outputs.empty != 'false')
+        env:
+          COMPLETE: ${{ steps.shardguard.outputs.complete }}
+          RUN_EMPTY: ${{ steps.runguard.outputs.empty }}
+          RUN_UNREADABLE: ${{ steps.runguard.outputs.unreadable }}
+          RUN_ERRORS: ${{ steps.runguard.outputs.report_errors }}
+          RUN_TESTS: ${{ steps.runguard.outputs.tests_total }}
         run: |
-          if [ "${{ steps.shardguard.outputs.complete }}" = "false" ]; then
+          if [ "$COMPLETE" = "false" ]; then
             echo "::error::Merge was incomplete (a shard produced no blob); results are under-counted. Failing the scheduled run so it is not mistaken for a clean pass."
           fi
-          if [ "${{ steps.runguard.outputs.empty }}" = "true" ]; then
-            echo "::error::ZERO tests executed — the shards aborted before the first test (${{ steps.runguard.outputs.report_errors }} top-level report error(s)). This is an INFRA abort, not a per-test failure: no spec failed and no @stable tag was touched. Triage the abort, not the tests (see #1011)."
+          if [ "$RUN_UNREADABLE" = "true" ]; then
+            echo "::error::The merged report is missing or unparseable, so ZERO test results could be read. Check the 'Merge blob reports' step and the per-shard blob artifacts."
+          elif [ "$RUN_EMPTY" = "true" ]; then
+            echo "::error::ZERO tests executed — the shards aborted before the first test ($RUN_ERRORS top-level report error(s), tests_total=$RUN_TESTS). This is an INFRA abort, not a per-test failure: no spec failed and no @stable tag was touched. Triage the abort, not the tests (see #1011)."
+          elif [ -z "$RUN_EMPTY" ]; then
+            echo "::error::The report-integrity guard reported nothing (empty output is unset) — its verdict is UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — merged report contains test results' step."
           fi
           exit 1
