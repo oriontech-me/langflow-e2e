@@ -64,6 +64,9 @@ The series is **not continuous**. Document any missing weeks here rather than ba
       "attempts": 2,                         // result entries; >1 means at least one retry happened
       "error_signature": "..."               // first line of the FIRST failed attempt (before the passing retry)
     }
+  ],
+  "run_errors": [                            // OPTIONAL: top-level report errors — see below.
+    "Error: [preflight] Langflow backend at http://localhost:7860/ is not reachable after 120000ms"
   ]
 }
 ```
@@ -73,6 +76,8 @@ The series is **not continuous**. Document any missing weeks here rather than ba
 - `tags` reflects the **state at the moment of the run**, not the current state in the repo. A test that was `@stable` at run time and has since had `@stable` removed will still show `@stable` in its historical entries.
 - `error_signature` is the first non-empty line of a failed result's error message, truncated to 240 chars. Stack frames and locator details are stripped — enough to cluster recurring failures, not enough to debug from history alone. For `failures[]` it is taken from the **last** failed result (the one that made the test fail for good); for `flaky[]` it is taken from the **first** failed attempt (the one that triggered the retry that later passed). Falls back to `"unknown"` when no message is available.
 - `failures` are tests where Playwright's final `test.status === "unexpected"`. `flaky` are tests where final status is `"flaky"` (failed and then passed on retry). Both carry `error_signature`, so the 30-day same-signature flake-recurrence criterion in `CONTRIBUTING.md` applies mechanically to either array.
+- **A run where `totals` are ALL ZERO means no test executed at all** — an infra abort, *not* a clean day. The shards died before the first test (a failed `globalSetup`, a merge that produced nothing), so the line carries no per-test evidence and nothing in it should be read as a per-test signal. Distinguish it from "nothing failed", which always has `passed > 0`. `duration_ms` is a useful corroborating hint: an aborted run is far shorter than a real one (7.6 min vs the usual 14–22 on the daily). First occurrence: `run_id` `30351107916` (2026-07-28) — see #1007 for the incident and #1012 for the guard that now fails such a run loudly.
+- `run_errors` (optional, additive to schema v1) carries the **top-level** report errors — `globalSetup` / worker-level failures that stopped tests from running, as opposed to a test failing. Same normalisation as `error_signature` (first non-empty line, capped at 240 chars). One entry per shard that aborted, so a 4-shard daily aborting everywhere yields 4 near-identical signatures. **Omitted entirely when there are none**, which is the normal case — so its presence is itself the signal that something happened outside the tests. Absent from history written before #1012.
 - `param` (optional, additive to schema v1) is the parameterization label a model-parameterized spec carries on its `describe` title — e.g. `"google / gemini-2.5-flash"` or `"model:gpt-4o-mini"`. The triage dataset builder uses it to group failures by provider variant and surface **provider-wide** clusters (same provider failing across ≥2 spec files → likely an environment/package cause, not per-test rot; #899). Absent for non-parameterized specs and for history written before #899.
 
 ---
@@ -98,6 +103,12 @@ jq -r '.flaky[] | "\(.test) :: \(.error_signature // "flaky")"' reports/daily-hi
 
 # Did a Langflow image upgrade correlate with new failures?
 jq -r '"\(.date)  \(.langflow_image)  failed=\(.totals.failed)"' reports/weekly-history.jsonl
+
+# Runs that executed NO test at all (infra aborts) — exclude these before any
+# per-test aggregation, or they read as days when nothing failed.
+jq -r 'select([.totals[]] | add == 0)
+       | "\(.date)  run=\(.run_id)  \(.duration_ms/1000 | floor)s  \(.run_errors[0] // "no recorded reason")"' \
+  reports/daily-history.jsonl
 
 # Pull the full error_signature for a specific test, across history.
 # `. as $row` keeps the parent object reachable while iterating `.failures[]`,
