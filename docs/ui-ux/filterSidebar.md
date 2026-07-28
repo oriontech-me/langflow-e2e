@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts`
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev46`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev8`)
 
 ---
 
@@ -27,7 +27,7 @@ The test drives an **API Request** node and exercises two of its inputs:
 
 ## Tags
 
-`@release` `@components` `@api`
+`@stable` `@release` `@components` `@api` `@ui-ux`
 
 ---
 
@@ -102,6 +102,13 @@ The test drives an **API Request** node and exercises two of its inputs:
   representative compatible processing component present under the beta filter.
   The connection-filtering behavior itself is unchanged; only the representative
   component changed. Added id-scoped `afterEach` flow cleanup.
+- **Absorbed `filterEdge-shard-0.spec.ts` and `filterEdge-shard-1.spec.ts`
+  (removed, issue #939).** Both anchored on **Retrieval QA**, which is
+  `legacy: true` on 1.12 and absent from the default sidebar — shard-1 was
+  already red because of it and shard-0 only survived by accident. Their
+  subject (clicking a handle reveals the compatible connections) is this
+  spec's subject, exercised here on a non-legacy component and with
+  substantially stronger assertions.
 - Validated on `1.11.0.dev46` (2026-07-20): 3/3 green (~52s), `--workers=1
   --retries=0`, 0 orphan flows. Force-fail: asserting a component that is not in
   the compatible set (`processingSplit Text`) fails.

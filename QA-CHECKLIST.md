@@ -701,11 +701,11 @@
 - [x] Added component appears with default settings — every field value compared against the `GET /api/v1/all` catalog template → `ui-ux/sidebar-add-component.spec.ts`
 
 #### 15.3 Component Connections
-- [-] Connect two compatible components
-- [-] Prevent connection between incompatible types
-- [-] Delete edge/connection
-- [-] Filter edges by data type — clicking an input handle filters the sidebar to compatible sources (`url` → string sources, `headers` → Data sources), and the legacy/beta toggles expand that set → `ui-ux/filterSidebar.spec.ts`
-- [-] Reconnect existing edge
+- [x] Connect two compatible components — clicking the Chat Input source handle then the Chat Output target handle creates exactly one edge, persisted to `data.edges`; repeating the pair does not duplicate it → `flow-functionality/canvas-connect-components.spec.ts`
+- [x] Prevent connection between incompatible types — a DataFrame output (Split Text `chunks`) into a Message input (Chat Output) creates no edge, while the Message→Message pair in the same test does (positive control); target-to-target is separately covered as invalid topology → `flow-functionality/canvas-connect-components.spec.ts`
+- [x] Delete edge/connection — right-clicking the edge context menu and choosing the destructive item removes the edge from the canvas and from `data.edges` → `flow-functionality/canvas-edge-reconnect.spec.ts`
+- [x] Filter edges by data type — clicking an input handle filters the sidebar to compatible sources (`url` → string sources, `headers` → Data sources), and the legacy/beta toggles expand that set → `ui-ux/filterSidebar.spec.ts`
+- [x] Reconnect existing edge — after deleting it, clicking the same two handles restores exactly one edge in the canvas and in the flow → `flow-functionality/canvas-edge-reconnect.spec.ts`
 
 #### 15.4 Node Manipulation
 - [x] Delete component from canvas via Backspace key → `core-components/componentDelete.spec.ts`

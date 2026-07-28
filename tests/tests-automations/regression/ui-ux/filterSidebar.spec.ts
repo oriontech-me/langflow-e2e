@@ -42,7 +42,7 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user must see on handle click the possibility connections",
-  { tag: ["@release", "@components", "@api"] },
+  { tag: ["@stable", "@release", "@components", "@api", "@ui-ux"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);
