@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Filed upstream** | *pending — Jira card to be opened* |
+| **Filed upstream** | [LE-2020](https://datastax.jira.com/browse/LE-2020) (filed 2026-07-28) |
 | **Repo issue** | [oriontech-me/langflow-e2e#965](https://github.com/oriontech-me/langflow-e2e/issues/965) (spun out of daily triage #962) |
 | **Affected builds** | `langflowai/langflow-nightly:latest` → `1.12.0.dev6` and `1.12.0.dev7`; reproduced at a lower rate on stable `langflowai/langflow:latest` → `1.10.3` |
 | **Component** | `src/backend/base/langflow/api/v1/projects.py` → `delete_project` |

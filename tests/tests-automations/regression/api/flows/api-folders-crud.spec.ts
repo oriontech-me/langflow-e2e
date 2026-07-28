@@ -87,7 +87,13 @@ test.describe("Folder (Projects) CRUD via API", () => {
   );
 
   // Quarantined for #965 — recurrent flake (2026-07-22 / 07-27): the DELETE
-  // answers HTTP 500 where the contract expects 204 No Content.
+  // answers HTTP 500 (`sqlite3.OperationalError: database is locked`) where the
+  // contract expects 204 No Content, and the folder survives. Product defect,
+  // filed upstream as LE-2020 (https://datastax.jira.com/browse/LE-2020); the
+  // 204 assertion below stays bare and this stays `test.fixme` without @stable
+  // until the fix reaches `langflowai/langflow-nightly:latest`. Evidence and the
+  // reproduction scripts: docs/api/flows/api-folders-crud.md §"Known product
+  // defect" and docs/upstream-bugs/.
   test.fixme(
     "DELETE removes folder and it no longer appears in listing",
     { tag: ["@release", "@api", "@regression"] },

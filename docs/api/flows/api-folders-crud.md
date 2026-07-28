@@ -137,7 +137,8 @@ SQLAlchemy 2.0.51 / aiosqlite 0.22.1 / SQLite 3.46.1 — the rate change is
 reproducible but **not explained at code level**, and the upstream report says so
 explicitly.
 
-Filed upstream: see `docs/upstream-bugs/UPSTREAM-BUG-project-delete-500-under-contention.md`.
+Filed upstream as **[LE-2020](https://datastax.jira.com/browse/LE-2020)** — full evidence
+in `docs/upstream-bugs/UPSTREAM-BUG-project-delete-500-under-contention.md`.
 
 ## Relationship between #965 and #932 — separate causes, both stay
 
