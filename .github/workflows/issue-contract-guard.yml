@@ -1,0 +1,43 @@
+# Contract gate for the HUMAN path (#1035).
+#
+# The agent path is gated inline, as a post-step of triage-dispatch.yml's
+# `execute` job: that job creates issues as GITHUB_TOKEN, and GitHub suppresses
+# workflow runs for GITHUB_TOKEN-raised events, so an `issues` trigger would
+# never fire for them — the exact reason triage-dispatch.yml itself runs on
+# workflow_run. This workflow covers what that inline step cannot: a per-cause
+# issue a person opens by hand, through .github/ISSUE_TEMPLATE/failure-root-cause.yml
+# or otherwise. Those are raised by a user account, so `issues` fires normally.
+#
+# Reports, never blocks. A malformed issue keeps its evidence and gets a comment
+# naming the gaps plus a label; nothing is closed or rejected.
+name: Issue Contract Guard
+
+on:
+  issues:
+    # `edited` closes the loop: fixing the body re-runs the check, and the guard
+    # comment is updated in place rather than a new one being appended.
+    types: [opened, edited]
+
+# Only issues: write — this workflow never touches code.
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  guard:
+    name: Dedicated-issue contract
+    # Cheap pre-filter. The action still classifies by title and skips the
+    # umbrella, but there is no reason to spin a runner for unrelated issues.
+    if: contains(github.event.issue.labels.*.name, 'daily-failure')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      # An edit burst must not race itself into duplicate comments.
+      group: issue-contract-guard-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/guard-dedicated-issue
+        with:
+          issue: ${{ github.event.issue.number }}
+          github_token: ${{ github.token }}

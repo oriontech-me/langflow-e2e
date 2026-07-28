@@ -14,6 +14,15 @@ This document defines the canonical template and rules for dedicated-issue triag
 > renderer is a guarantee. (The GitHub issue form at
 > `.github/ISSUE_TEMPLATE/failure-root-cause.yml` mirrors this same shape for humans
 > opening a cause issue by hand through the web UI.)
+>
+> **And CI checks it after the fact.** Calling the renderer is still an instruction, so
+> the contract is also validated from outside the author: `.github/actions/guard-dedicated-issue`
+> runs the same `assertDedicatedIssueBody()` against the issue as it exists on GitHub —
+> as a post-step of `triage-dispatch.yml`'s `execute` job for agent-created issues, and
+> via `issue-contract-guard.yml` on `issues` `opened`/`edited` for hand-opened ones. It
+> **reports and never blocks**: a body that misses fields gets a comment listing them
+> and a `needs-triage` label, because a half-filled cause issue still carries evidence
+> someone needs. Fixing the body re-runs the check and updates the same comment (#1035).
 
 ## Scope — which issues this covers
 
