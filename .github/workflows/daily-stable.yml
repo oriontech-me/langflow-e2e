@@ -27,6 +27,10 @@ on:
         description: "Override Playwright retries for this run (e.g. 0 for a fast, unamplified validation signal). Empty = config default (2 in CI)."
         required: false
         default: ""
+      recover_timeout_s:
+        description: "Seconds to wait for the backend to answer after Collect models before failing the shard (#1011). Empty = 300."
+        required: false
+        default: ""
 
 permissions:
   issues: write
@@ -377,8 +381,9 @@ jobs:
         shell: bash
         env:
           # Generous: a wedge is worth waiting out when the alternative is losing
-          # a ~20 min run. Overridable so a validation dispatch can shorten it.
-          RECOVER_TIMEOUT_S: "300"
+          # a ~20 min run. The recover_timeout_s dispatch input shortens it for a
+          # validation run without editing the file; empty on schedule → 300.
+          RECOVER_TIMEOUT_S: ${{ inputs.recover_timeout_s || '300' }}
           # Only for the log line below — the run is NOT gated on it (see the
           # Collect models step: a drained key must not kill unrelated specs).
           COLLECT_MODELS_OUTCOME: ${{ steps.collect_models.outcome }}
@@ -493,9 +498,21 @@ jobs:
 
       - name: Guard — every expected shard produced a blob
         id: shardguard
+        # always(): this guard's output gates the @stable auto-removal and the
+        # incomplete-run issue, so it must be SET even when the download step
+        # above failed — which is exactly what happens when every shard died
+        # before producing a blob (e.g. all four failed the post-collect-models
+        # health gate, #1011) and the artifact pattern matched nothing. Skipping
+        # it there left `complete` empty: neither 'true' nor 'false', so the run
+        # reported as a plain per-test failure with no under-count attribution.
+        if: always()
         shell: bash
         run: |
           EXPECTED="${{ needs.prep.outputs.shard_total }}"
+          # Tolerate a missing directory for the same reason: with zero artifacts
+          # downloaded, all-blobs/ may not exist and `find` would fail the step
+          # under `bash -eo pipefail`, re-opening the hole always() just closed.
+          mkdir -p all-blobs
           # After merge-multiple, blobs are flat *.zip files (one per shard), not subdirs.
           FOUND="$(find all-blobs -maxdepth 1 -name '*.zip' | wc -l | tr -d ' ')"
           echo "Expected $EXPECTED shard blobs, found $FOUND."
