@@ -100,6 +100,11 @@
 - [x] POST with invalid API key → returns 401/403 → `api-invalid-key.spec.ts`
 - [x] POST to non-existent flow → returns 404 → `api/flows/api-run-flow.spec.ts`
 
+#### 1.3.1 Folder (Project) CRUD via API
+- [x] POST `/api/v1/projects/` → creates folder, returns id and name → `api/flows/api-folders-crud.spec.ts`
+- [x] GET `/api/v1/projects/` → lists folders including the created one → `api/flows/api-folders-crud.spec.ts`
+- [!] DELETE `/api/v1/projects/{id}` → returns 204 and the folder leaves the listing — quarantined (#965): under concurrent writes the endpoint answers **500** (`sqlite3.OperationalError: database is locked`) and the folder survives; measured 44% of deletes on `1.12.0.dev7` vs 6% on stable `1.10.3` at the same 2-client contention. Product defect, upstream card pending; the `204` assertion is unchanged → `api/flows/api-folders-crud.spec.ts`
+
 #### 1.4 Components via API
 - [x] GET `/api/v1/all` → lists all available components → `api/flows/api-custom-component-creation.spec.ts`
 - [x] POST `/api/v1/custom_component` → creates custom component → `api/flows/api-custom-component-creation.spec.ts`
@@ -630,7 +635,7 @@
 #### 12.5 Flow Operations
 - [x] Lock flow — prevents editing → `flow-functionality/lock-flow.spec.ts`
 - [x] Unlock flow → `flow-functionality/flow-lock.spec.ts`
-- [x] Move flow between folders via API → `api/flows/api-folders-crud.spec.ts`
+- [!] Move flow between folders via API — quarantined (#932): `PATCH /api/v1/flows/{id}` returns `200` but the association read back is intermittently stale. Separate root cause from #965 — under contention the `PATCH` can 500, yet every `200` observed persisted the new `folder_id` (18/18) → `api/flows/api-folders-crud.spec.ts`
 - [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [x] Save flow components as template → `core-components/saveComponents.spec.ts`
 
