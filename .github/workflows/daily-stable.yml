@@ -432,6 +432,27 @@ jobs:
           PLAYWRIGHT_JSON_OUTPUT_NAME: results.json
           PLAYWRIGHT_HTML_REPORT: playwright-report
 
+      # Second, independent guard (#1012). `shardguard` above answers "did every
+      # shard produce a blob"; this one answers "did the run produce any TEST" —
+      # a question a blob count cannot reach. On run 30351107916 (2026-07-28) all
+      # four shards aborted in globalSetup on the post-collect-models backend
+      # wedge (#1011) yet each still uploaded a valid, EMPTY blob: shardguard saw
+      # 4/4 and reported complete, the merged report held ZERO tests, and the
+      # umbrella issue rendered "No per-test @stable hard failures were
+      # auto-removed" — indistinguishable from a clean triage.
+      # An empty run is a DIFFERENT failure class from an incomplete merge (the
+      # merge was complete; the shards just never ran anything), so it gets its
+      # own output rather than being folded into `complete`. `always()` so a
+      # FAILED merge-reports step is caught too — the script treats a missing
+      # results.json as empty, because a guard must not go green because it could
+      # not look.
+      - name: Guard — merged report contains test results
+        id: runguard
+        if: always()
+        run: node scripts/check-run-integrity.mjs
+        env:
+          PLAYWRIGHT_JSON: results.json
+
       - name: Upload Playwright report (full, heavy)
         id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)
         uses: actions/upload-artifact@v7
@@ -599,9 +620,14 @@ jobs:
       # a manual dispatch must never mutate the test source.
       # Gated on shardguard.complete: an incomplete merge (a dead shard) yields an
       # under-counted results.json, so never mutate the @stable tag on partial data.
+      # ALSO gated on runguard.empty (#1012): a report with zero tests carries no
+      # per-test evidence at all, so it must never reach the tag-mutation path. On
+      # 2026-07-28 this step ran on an empty report and only found nothing to do
+      # by luck — the abort happened in globalSetup, before any test could be
+      # recorded as failing, so the action's mass-failure guard was never reached.
       - name: Auto-remove @stable from hard failures
         id: auto_remove
-        if: needs.test.result == 'failure' && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'true'
+        if: needs.test.result == 'failure' && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'true' && steps.runguard.outputs.empty == 'false'
         uses: ./.github/actions/auto-remove-stable
         with:
           playwright_json: results.json
@@ -619,31 +645,60 @@ jobs:
         env:
           IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
           # Set by the (schedule-only) auto-remove step above; empty only if that
-          # step errored or its mass-failure guard left everything untouched.
+          # step errored, its mass-failure guard left everything untouched, or a
+          # guard skipped the step entirely (incomplete merge / empty report).
           AUTO_REMOVE_STATUS: ${{ steps.auto_remove.outputs.status }}
           AUTO_REMOVE_SUMMARY: ${{ steps.auto_remove.outputs.summary_md }}
+          # From the report-integrity guard (#1012) — a run that executed ZERO
+          # tests must announce itself as an infra abort, never as a per-test day.
+          RUN_EMPTY: ${{ steps.runguard.outputs.empty }}
+          RUN_ERRORS: ${{ steps.runguard.outputs.report_errors }}
+          RUN_FIRST_ERROR: ${{ steps.runguard.outputs.first_error }}
         with:
           script: |
             const today = new Date().toISOString().split('T')[0];
             const image = process.env.IMAGE;
             const arStatus = process.env.AUTO_REMOVE_STATUS || '';
             const arSummary = process.env.AUTO_REMOVE_SUMMARY || '';
-            // The auto-remove step above normally already acted; show what it
-            // did. If it produced no status (it errored, or its mass-failure
-            // guard left everything untouched), fall back to manual triage.
-            const section = arStatus
-              ? ['### `@stable` auto-removal', '', arSummary]
-              : [
-                  '### Next steps',
-                  '1. Open the Playwright report in the artifact from the run above',
-                  '2. Determine if the failure is a test bug or a Langflow regression',
-                  '3. If the test is incorrect or outdated: remove the `@stable` tag from the test and open a fix PR',
-                  '4. If it is a Langflow regression: flag it to the team and monitor upstream',
-                ];
+            const empty = process.env.RUN_EMPTY === 'true';
+            const runErrors = process.env.RUN_ERRORS || '0';
+            const firstError = process.env.RUN_FIRST_ERROR || '';
+            // Three shapes, most specific first.
+            // 1. ZERO tests executed (#1012): there is no per-test evidence to
+            //    triage, so say so instead of rendering the auto-removal line,
+            //    which reads as a clean triage on an empty report.
+            // 2. The auto-remove step acted — show what it did.
+            // 3. Neither (it errored, or a guard skipped it) — manual triage.
+            const section = empty
+              ? [
+                  '### ⚠️ ZERO tests executed — infra abort, not a per-test failure',
+                  '',
+                  `The merged report carries **no test results at all** (${runErrors} top-level report error(s)).`,
+                  'No spec failed, no `@stable` tag was touched, and Langflow is not implicated by this run.',
+                  ...(firstError ? ['', '```', firstError, '```'] : []),
+                  '',
+                  '**Triage this as infrastructure**: find why the shards aborted before the first test',
+                  '(see the shard logs and the Langflow service container logs), not which test broke.',
+                  'Known cause of this shape: the post-`collect-models` backend wedge — #1011.',
+                ]
+              : arStatus
+                ? ['### `@stable` auto-removal', '', arSummary]
+                : [
+                    '### Next steps',
+                    '1. Open the Playwright report in the artifact from the run above',
+                    '2. Determine if the failure is a test bug or a Langflow regression',
+                    '3. If the test is incorrect or outdated: remove the `@stable` tag from the test and open a fix PR',
+                    '4. If it is a Langflow regression: flag it to the team and monitor upstream',
+                  ];
+            // The title is what gets scanned in the issue list, so an empty run
+            // must not claim that tests failed — none ran.
+            const title = empty
+              ? `[Daily Failure] @stable run executed ZERO tests on ${today} (${image})`
+              : `[Daily Failure] @stable tests failed on ${today} (${image})`;
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              title: `[Daily Failure] @stable tests failed on ${today} (${image})`,
+              title,
               body: [
                 '## Daily @stable E2E Failure',
                 '',
@@ -659,11 +714,22 @@ jobs:
             });
 
       # Runs LAST, after history / QA POST / umbrella issue have all recorded the
-      # (flagged) partial run: fail a scheduled run whose merge was incomplete so
-      # it shows RED instead of a silent green built on under-counted results.
-      # Manual dispatches keep the warning only — they never gate on completeness.
-      - name: Fail scheduled run if shard blobs were incomplete
-        if: always() && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'false'
+      # (flagged) degraded run: fail a scheduled run whose report cannot be
+      # trusted, so it shows RED instead of a silent green.
+      # Two distinct conditions, each with its own message (#1012):
+      #   incomplete — a shard produced no blob, so results are UNDER-COUNTED;
+      #   empty      — the merge was complete but ZERO tests ran (infra abort).
+      # The empty case matters even though the `test` job already failed: without
+      # it, nothing in the merge job ever names the condition, and the run reads
+      # as an ordinary red day. Manual dispatches keep warnings only — they never
+      # gate on report integrity.
+      - name: Fail scheduled run on an incomplete or empty report
+        if: always() && github.event_name == 'schedule' && (steps.shardguard.outputs.complete == 'false' || steps.runguard.outputs.empty == 'true')
         run: |
-          echo "::error::Merge was incomplete (a shard produced no blob); results are under-counted. Failing the scheduled run so it is not mistaken for a clean pass."
+          if [ "${{ steps.shardguard.outputs.complete }}" = "false" ]; then
+            echo "::error::Merge was incomplete (a shard produced no blob); results are under-counted. Failing the scheduled run so it is not mistaken for a clean pass."
+          fi
+          if [ "${{ steps.runguard.outputs.empty }}" = "true" ]; then
+            echo "::error::ZERO tests executed — the shards aborted before the first test (${{ steps.runguard.outputs.report_errors }} top-level report error(s)). This is an INFRA abort, not a per-test failure: no spec failed and no @stable tag was touched. Triage the abort, not the tests (see #1011)."
+          fi
           exit 1
