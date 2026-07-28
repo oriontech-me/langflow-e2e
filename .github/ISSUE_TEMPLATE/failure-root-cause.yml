@@ -1,0 +1,143 @@
+name: Failure — Dedicated (root cause)
+description: One cause and every test it breaks. Mirrors the canonical template the triage skill renders — for opening a cause issue by hand.
+title: "[Daily #<umbrella>] <symptom>"
+labels: ["daily-failure"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **One issue = one cause.** Different causes ⇒ different issues. Two open issues that
+        turn out to share a cause get merged and cross-linked.
+
+        **Check first — enrich beats create.** `gh issue list --state open --label daily-failure`
+        and match on the *error signature*, not on a description of the symptom. A cause that
+        already has an open issue gets a comment with the new run id and occurrence count.
+
+        **Descriptive, not conclusive.** Do not state a root cause here. The verdict, and the
+        evidence behind it, is a *deliverable* of this issue — not an input to opening it.
+
+        This form mirrors `.claude/skills/langflow-e2e-triage/references/issue-templates.md`,
+        which is the canonical source. Opened by the triage skill, the same body is rendered
+        from code; this form exists so a hand-opened issue comes out in the same shape.
+
+  - type: input
+    id: provenance
+    attributes:
+      label: Provenance
+      description: >
+        Umbrella issue, run id and date. The run id is the value recorded in
+        `reports/daily-history.jsonl`, so the issue joins back to the history row.
+        Multiple runs in the cluster: newest first.
+      placeholder: "Spun out of daily-failure triage #744 (run 30261409427, 2026-07-27)."
+    validations:
+      required: true
+
+  - type: textarea
+    id: symptom
+    attributes:
+      label: Symptom
+      description: >
+        What failed, then one row per test. Full repo-relative path with line number
+        (the QA Platform parses these to show the `tracked · #NNN` chip — a spec named in
+        prose without its path is unmatchable). **The signature is copied unedited from
+        `reports/daily-history.jsonl`** — not paraphrased, not shortened; write `unknown`
+        where the run recorded `unknown`. Recurrence is matched on this string.
+      value: |
+        <one sentence: the shared shape of the failure>
+
+        | Spec (line) | Waits for | Signature |
+        |---|---|---|
+        | `core-functionality/.../x.spec.ts:123` ("test name") | `getByTestId('...')` | `<verbatim from daily-history.jsonl>` |
+    validations:
+      required: true
+
+  - type: textarea
+    id: why-one-cause
+    attributes:
+      label: Why these failures are one cause
+      description: >
+        The linking argument — what ties these observations together: shared timing, same
+        shard, same dependency, a common step, a signature cluster. Keep it descriptive;
+        naming the mechanism is the investigation's job. Without this field a root-cause
+        issue is indistinguishable from unrelated failures filed together.
+      placeholder: |
+        All five failed inside the same 40s window on shard 3, every one on the first request
+        after `Collect models`. The signatures differ (timeout, `toBeVisible failed`, 502) and
+        no test-level change is common to them.
+    validations:
+      required: true
+
+  - type: textarea
+    id: preliminary-read
+    attributes:
+      label: Preliminary read (descriptive — NOT a verdict)
+      description: >
+        Environmental context and pattern. State what the day looked like (mass-failure day?
+        guard tripped? counts) and what the shape is *consistent with* — never that it is the
+        cause. Cite related issues. Use "consistent with" / "must be ruled out", never
+        "likely caused by".
+      placeholder: |
+        Surfaced on a mass-failure day (27 hard + 27 flaky, guard tripped); the shape is
+        consistent with instance saturation under load. But these are final hard failures
+        (no recovery on retry), so the day-level signal must not be assumed as the cause.
+    validations:
+      required: true
+
+  - type: textarea
+    id: investigation
+    attributes:
+      label: Investigation directive
+      description: >
+        Independent paths, **product as prime suspect first**. List plausible roots as
+        parallel branches, not nested conclusions, each with a concrete verification step.
+      placeholder: |
+        Product first: on the current nightly, confirm whether these flows execute to
+        completion before concluding provider/latency. Only after ruling out a regression:
+        (a) transient saturation → prove on 3 environments and restore; (b) wait-strategy
+        fragility → harden the wait to a deterministic observable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: deliverables
+    attributes:
+      label: Deliverables (Done when)
+      description: >
+        A product regression closes only when the product is fixed where the suite runs —
+        never on a test-side mute. Lifting a quarantine is always a deliverable when one
+        was applied at triage.
+      value: |
+        - [ ] Root cause confirmed per spec (product regression vs. test/wait-strategy vs. environment), with evidence on the current nightly.
+        - [ ] Each spec passes reliably (multiple clean `--retries=0` runs).
+        - [ ] **Quarantine lifted** in the fix PR — remove `test.fixme` **and** restore `@stable`, re-validated per `CONTRIBUTING.md`. *(Nothing to lift if nothing was quarantined.)*
+        - [ ] If the verdict is a **product (Langflow) regression**: recorded here, and this issue stays **open** until the upstream fix lands in `langflowai/langflow-nightly:latest` (or the `release-1.x.x` branch) and is re-validated there.
+        - [ ] `REGRESSIONS.md` row added — required once the verdict is `langflow-regression`, adversarially validated, and an upstream ticket (`LE-####` / `langflow-ai/langflow#N`) exists.
+    validations:
+      required: true
+
+  - type: textarea
+    id: flake-signal
+    attributes:
+      label: Flake signal
+      description: >
+        Recurrent flakes only — a test failing across multiple independent dailies. List the
+        daily dates, the exact spec paths with test line numbers, and the quarantine PR.
+        Quarantine is manual and applied **at triage as prevention**: `@stable` removed
+        **and** `test.fixme` added (tag removal alone leaves the test red on the
+        impacted-specs gate — #871). Leave blank for hard failures.
+      placeholder: |
+        Confirmed recurrent (dailies 2026-07-08, 2026-07-09, 2026-07-13). Quarantined at
+        triage in PR #NNN — `@stable` removed and `test.fixme` added:
+
+        - `core-functionality/playground/playground-input-text-prefill.spec.ts` (test at line 97)
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        **Labels:** `daily-failure` is applied automatically. Add exactly one `area:<x>`
+        derived from the failing spec's directory (mapping table in `issue-templates.md`);
+        if no area label fits, `daily-failure` alone is correct.
+
+        **Assignee:** leave blank — the issue belongs to the triage queue, not a person.
