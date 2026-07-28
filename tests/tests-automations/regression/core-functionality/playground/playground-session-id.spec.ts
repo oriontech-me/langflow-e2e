@@ -34,21 +34,43 @@ test.describe("Playground — Session ID", () => {
       const customSessionId = `e2e-session-${randomUUID().slice(0, 8)}`;
       let autoSessionId = "";
 
-      /** Every message the flow has produced, straight from the database. */
-      const readMessages = async (): Promise<
-        Array<{ session_id: string; text: string }>
-      > => {
+      type StoredMessage = { session_id: string; text: string };
+
+      /**
+       * Every message the flow has produced, straight from the database, or
+       * `null` when the read itself did not answer 200.
+       *
+       * The null is what makes this callable from inside `expect.poll`:
+       * Playwright runs the poll generator OUTSIDE its retry try/catch
+       * (`matchers/expect.js` → `pollMatcher`), so a generator that throws
+       * aborts the poll instead of retrying it. A single transient 500 from a
+       * container running the whole suite in parallel would then fail this test
+       * outright — the saturation signature behind #549/#553. Same shape as
+       * `playground-session-rename`'s persistence gate.
+       */
+      const readMessages = async (): Promise<StoredMessage[] | null> => {
         const response = await page.request.get(
           `/api/v1/monitor/messages?flow_id=${createdFlowId}`,
         );
-        expect(response.ok()).toBe(true);
-        return (await response.json()) as Array<{
-          session_id: string;
-          text: string;
-        }>;
+        if (!response.ok()) return null;
+        return (await response.json()) as StoredMessage[];
+      };
+
+      /** Same read, for the assertions that must not tolerate a failed GET. */
+      const readMessagesOrFail = async (): Promise<StoredMessage[]> => {
+        const messages = await readMessages();
+        if (messages === null) {
+          throw new Error(
+            `GET /api/v1/monitor/messages?flow_id=${createdFlowId} did not answer 200.`,
+          );
+        }
+        return messages;
       };
 
       const sendMessage = async (text: string) => {
+        const botBubblesBefore = await page
+          .getByTestId("div-chat-message")
+          .count();
         await page.getByTestId("input-chat-playground").fill(text);
         await page.getByTestId("button-send").click();
         await expect(page.getByTestId("input-chat-playground")).toHaveValue("", {
@@ -57,6 +79,17 @@ test.describe("Playground — Session ID", () => {
         await expect(page.getByTestId("button-stop")).toBeHidden({
           timeout: 30000,
         });
+        // The two gates above do not prove the run produced anything: the input
+        // is cleared optimistically on send, and `toBeHidden` passes trivially
+        // when the stop button never rendered. Without this the session
+        // assertions downstream report "0 messages persisted" for a flow that
+        // simply never executed, which names the wrong culprit.
+        // `div-chat-message` is rendered by `bot-message.tsx` only (the user
+        // bubble does not carry it), so one more of them IS the flow's answer.
+        await expect(page.getByTestId("div-chat-message")).toHaveCount(
+          botBubblesBefore + 1,
+          { timeout: 30000 },
+        );
       };
 
       await test.step("set up ChatInput → ChatOutput flow and open playground", async () => {
@@ -89,17 +122,18 @@ test.describe("Playground — Session ID", () => {
           await expect
             .poll(
               async () =>
-                (await readMessages()).filter(
+                (await readMessages())?.filter(
                   (message) => message.session_id !== createdFlowId,
-                ).length,
+                ).length ?? 0,
               { timeout: 20000, intervals: [250, 500, 1000] },
             )
             .toBeGreaterThan(0);
 
-          const persisted = (await readMessages()).find(
+          const persisted = (await readMessagesOrFail()).find(
             (message) => message.session_id !== createdFlowId,
           );
-          autoSessionId = persisted!.session_id;
+          autoSessionId = persisted?.session_id ?? "";
+          expect(autoSessionId).not.toBe("");
           expect(autoSessionId).not.toBe(customSessionId);
         },
       );
@@ -126,14 +160,14 @@ test.describe("Playground — Session ID", () => {
           await expect
             .poll(
               async () =>
-                (await readMessages()).filter(
+                (await readMessages())?.filter(
                   (message) => message.session_id === customSessionId,
-                ).length,
+                ).length ?? 0,
               { timeout: 15000, intervals: [250, 500, 1000] },
             )
             .toBeGreaterThan(0);
 
-          const messages = await readMessages();
+          const messages = await readMessagesOrFail();
           expect(
             messages.filter((message) => message.session_id === autoSessionId),
           ).toHaveLength(0);
@@ -153,7 +187,7 @@ test.describe("Playground — Session ID", () => {
           await expect
             .poll(
               async () =>
-                (await readMessages()).find(
+                (await readMessages())?.find(
                   (message) => message.text === "second message",
                 )?.session_id ?? "not persisted yet",
               { timeout: 20000, intervals: [250, 500, 1000] },
