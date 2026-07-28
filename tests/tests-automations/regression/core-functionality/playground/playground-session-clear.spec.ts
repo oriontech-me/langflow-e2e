@@ -1,10 +1,8 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
-import { zoomOut } from "../../../../helpers/ui/zoom-out";
+import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 
 // Id of the flow the running test created; teardown deletes only this one via
 // the API (scoped) — never a global cleanAllFlows, which wipes flows other
@@ -17,62 +15,12 @@ let createdFlowId: string | undefined;
  */
 
 async function setupChatEchoFlow(page: Page): Promise<void> {
-  await awaitBootstrapTest(page);
-  await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-
-  // Capture the id from the flow-creation POST so teardown can delete only this
-  // flow (scoped), NOT from the canvas URL: the URL id is a transient
-  // client-side handle on this Langflow version and does not match the
-  // persisted flow (deleting it 404s and silently leaks the real one).
-  const flowCreation = page.waitForResponse(
-    (resp) =>
-      resp.url().includes("/api/v1/flows") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201,
-    { timeout: 30000 },
-  );
-  await page.getByTestId("blank-flow").click();
-  const created = (await (await flowCreation).json()) as { id?: string };
-  if (!created.id) {
-    throw new Error("blank-flow creation returned no flow id");
-  }
-  createdFlowId = created.id;
-
-  await page.getByTestId("sidebar-search-input").fill("chat output");
-  await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
-    timeout: 30000,
-  });
-  await page
-    .getByTestId("input_outputChat Output")
-    .hover()
-    .then(async () => {
-      await page.getByTestId("add-component-button-chat-output").click();
-    });
-
-  await zoomOut(page, 2);
-
-  await page.getByTestId("sidebar-search-input").fill("chat input");
-  await expect(page.getByTestId("input_outputChat Input")).toBeVisible({
-    timeout: 30000,
-  });
-  await page
-    .getByTestId("input_outputChat Input")
-    .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-      targetPosition: { x: 100, y: 100 },
-    });
-
-  await adjustScreenView(page);
-
-  await page
-    .getByTestId("handle-chatinput-noshownode-chat message-source")
-    .click();
-  await page
-    .getByTestId("handle-chatoutput-noshownode-inputs-target")
-    .click();
-
-  await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
-    timeout: 8000,
-  });
+  // Was a line-by-line copy of `setupPlayground`, and therefore carried the same
+  // concurrency defect (#988): it created the flow through the home page →
+  // templates modal → "Blank Flow" path, whose `POST /api/v1/flows/` races
+  // another worker's on the server-derived name and 500s. Delegating to the
+  // shared helper fixes it in one place and keeps the two from drifting apart.
+  createdFlowId = await setupPlayground(page);
 }
 
 async function openPlayground(page: Page): Promise<void> {
@@ -112,7 +60,7 @@ test.describe("Playground – Clear Session History", () => {
 
   test(
     "clear-chat removes all messages from Default Session",
-    { tag: ["@regression", "@playground"] },
+    { tag: ["@stable", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step(
         "Set up ChatInput → ChatOutput echo flow and open playground",
