@@ -24,6 +24,15 @@ jobs:
       - name: TypeScript check
         run: npm run typecheck
 
+      # Unit tests for the dependency-free helpers under scripts/ — plain
+      # `node --test`, no Playwright and no backend, so they belong in this fast
+      # job rather than the E2E one. These cover CI-critical logic that had no
+      # test job at all before: the duration-balanced shard partitioner (#936)
+      # and the report-integrity guard (#1012). A guard whose own test never
+      # runs is a guard nobody is guarding.
+      - name: Script unit tests
+        run: npm run test:scripts
+
       # The REGRESSIONS.md indicator block is generated and committed by hand.
       # Fail the PR when a row was added without regenerating it, so the
       # headline number can never silently disagree with the table.

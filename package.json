@@ -10,6 +10,7 @@
     "test:features": "npx playwright test tests/core/features/ tests/extended/features/",
     "test:integrations": "npx playwright test tests/core/integrations/",
     "test:unit": "npx playwright test tests/core/unit/",
+    "test:scripts": "node --test scripts/",
     "test:regression": "npx playwright test tests/core/regression/ tests/extended/regression/",
     "test:grep": "npx playwright test --grep",
     "report": "npx playwright show-report",

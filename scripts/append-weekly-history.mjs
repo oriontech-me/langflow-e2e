@@ -22,11 +22,16 @@
 //   "duration_ms": 0,
 //   "totals": { "passed": 0, "failed": 0, "flaky": 0, "skipped": 0 },
 //   "failures": [ { test, file, line, tags, attempts, error_signature, param? } ],
-//   "flaky":    [ { test, file, line, tags, attempts, error_signature, param? } ]
+//   "flaky":    [ { test, file, line, tags, attempts, error_signature, param? } ],
+//   "run_errors": [ "..." ]                     // optional, see below
 //   `param` (optional, additive to schema v1) is the parameterization label a
 //   model-parameterized spec carries on its describe title (e.g.
 //   "google / gemini-2.5-flash" or "model:gpt-4o-mini"), used by the triage
 //   dataset to group failures by provider variant (#899).
+//   `run_errors` (optional, additive to schema v1) carries the TOP-LEVEL report
+//   errors — globalSetup / worker-level failures that stopped tests from running
+//   at all. Omitted when there are none, so its presence is itself the signal
+//   that something failed outside the tests (#1012).
 // }
 
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
@@ -50,11 +55,17 @@ const failures = [];
 const flaky = [];
 
 function firstErrorMessage(result) {
-  const err = result?.error || result?.errors?.[0];
+  return errorSignature(result?.error || result?.errors?.[0]);
+}
+
+// Normalise ONE error object (not a result) to its signature: first *non-empty*
+// line (some messages lead with a blank line), trimmed and capped so equal
+// causes cluster to an equal signature. Shared by the per-test path above and
+// the top-level `report.errors` path below, whose entries are already error
+// objects rather than results.
+function errorSignature(err) {
   if (!err) return null;
   const raw = err.message || err.value || "";
-  // First *non-empty* line (some messages lead with a blank line), trimmed and
-  // capped so equal causes cluster to an equal signature.
   const line = raw.split("\n").map((l) => l.trim()).find((l) => l.length > 0);
   return line ? line.slice(0, 240) : null;
 }
@@ -152,6 +163,15 @@ const serverUrl = process.env.GITHUB_SERVER_URL || "https://github.com";
 const repo = process.env.GITHUB_REPOSITORY || "";
 const runUrl = repo ? `${serverUrl}/${repo}/actions/runs/${runId}` : null;
 
+// Top-level report errors — globalSetup / worker-level failures that stopped
+// tests from running at all, as opposed to a test failing. Recorded so a line
+// whose `totals` are ALL ZERO carries its own explanation instead of being
+// indistinguishable from "nothing failed" (#1012: on 2026-07-28 every shard
+// aborted in the globalSetup preflight and the history line said 0/0/0/0 with
+// no reason attached). Additive and optional — omitted when there are none, so
+// schema v1 readers are unaffected.
+const runErrors = (report?.errors || []).map((e) => errorSignature(e)).filter(Boolean);
+
 const entry = {
   version: SCHEMA_VERSION,
   date: new Date().toISOString().split("T")[0],
@@ -163,11 +183,15 @@ const entry = {
   totals,
   failures,
   flaky,
+  ...(runErrors.length ? { run_errors: runErrors } : {}),
 };
 
 mkdirSync(dirname(historyPath), { recursive: true });
 appendFileSync(historyPath, JSON.stringify(entry) + "\n");
 
+const executed = totals.passed + totals.failed + totals.flaky + totals.skipped;
 const summary = `[history] ${entry.date} ${workflow} run=${runId} ` +
-  `passed=${totals.passed} failed=${totals.failed} flaky=${totals.flaky} skipped=${totals.skipped}`;
+  `passed=${totals.passed} failed=${totals.failed} flaky=${totals.flaky} skipped=${totals.skipped}` +
+  (runErrors.length ? ` run_errors=${runErrors.length}` : "") +
+  (executed === 0 ? " (ZERO tests executed — infra abort)" : "");
 console.log(summary);
