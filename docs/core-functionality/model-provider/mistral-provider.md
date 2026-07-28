@@ -25,12 +25,32 @@ If this fails, Mistral can no longer be configured or executed in a flow.
 
 ## Tags *(required)*
 
-`@stable` `@components` `@model-provider` `@playground`
+`@components` `@model-provider` `@playground`
 
-`@stable` added only after multiple clean `--retries=0` runs on the fresh
-nightly. `@components` (cross-cutting — canvas component configuration) ·
+`@components` (cross-cutting — canvas component configuration) ·
 `@model-provider` (area) · `@playground` (executes via Playground).
 No `@settings`: the Settings surface does not exist for Mistral.
+
+**No `@stable` — the component is not packaged in the image this suite
+validates (#1039).** Langflow 1.12 moved component families out of
+`lfx.components.*` into per-vendor distributions plus an aggregate
+`lfx-bundles` package; `langflowai/langflow-nightly:latest` installs ~20 vendor
+distributions and no `lfx-bundles`, so the MistralAI component is absent from
+`GET /api/v1/all` and the test's availability pre-flight skips it on **every**
+run. A tag that can never produce a verdict is worse than no tag: it would
+credit coverage in the generated `Phase 0 — Validated` block for assertions
+that never execute.
+
+This is a **product packaging decision, not a regression** — Mistral remains a
+supported provider, and the test itself is valid. Verified on 1.12.0.dev8: with
+`uv pip install lfx-bundles langchain-mistralai` + a restart, the test
+**passes** against a real Mistral cloud inference, and a deliberately inverted
+reply assert turns it red. Two packages are required, not one — `lfx-bundles`
+alone leaves the `mistral` registry category present but **empty**; the
+`langchain-mistralai` package is what makes
+`ext:mistral:MistralAIModelComponent@official` appear.
+
+Restore `@stable` only if the component returns to the default nightly image.
 
 ---
 
@@ -49,16 +69,16 @@ No `@settings`: the Settings surface does not exist for Mistral.
 
 ## Step by step *(required)*
 
-**Component-availability pre-flight (#907 / LE-1987):** `GET /api/v1/all` and
+**Component-availability pre-flight (#907, #1039):** `GET /api/v1/all` and
 check the component registry (second-level component-type keys) for a `mistral`
-type. When the nightly ships without `langchain-mistralai`, Langflow hides the
-MistralAI component entirely (sidebar AND registry), so the later
-`waitForSelector('[data-testid="mistralMistralAI"]')` would hard-fail after 30s.
-This probe runs **first** and `test.skip`s with an explicit reason ("MistralAI
-component not available in this Langflow build") — an upstream packaging gap
-becomes an honest skip, not a misleading UI timeout, and auto-clears when the
-package returns. Distinct from the cloud-API probe below, which only validates
-the key.
+type. The default nightly image does not install the distribution that ships
+the MistralAI component, so it is absent from the sidebar AND the registry, and
+the later `waitForSelector('[data-testid="mistralMistralAI"]')` would hard-fail
+after 30s. This probe runs **first** and `test.skip`s with an explicit reason
+("MistralAI component not exposed by this Langflow build") — a packaging
+decision becomes an honest skip, not a misleading UI timeout, and auto-clears
+when the component returns. Distinct from the cloud-API probe below, which only
+validates the key.
 
 **Probe:** `GET https://api.mistral.ai/v1/models` with the key from the env.
 Missing key / non-200 / test model absent from the catalog → `test.skip`

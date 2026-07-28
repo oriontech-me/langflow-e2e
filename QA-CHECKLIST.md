@@ -418,8 +418,8 @@
 
 #### 7.6 Open-Source Providers
 - [x] Configure and execute flow with Ollama (local model) → `model-provider/ollama-provider.spec.ts`
-- [x] Configure and execute flow with Groq → `model-provider/groq-provider.spec.ts`
-- [x] Configure and execute flow with Mistral → `model-provider/mistral-provider.spec.ts`
+- [-] Configure and execute flow with Groq → `model-provider/groq-provider.spec.ts` (automated but not validatable on the tested image: the Groq component ships in the `lfx-bundles` distribution, which `langflowai/langflow-nightly:latest` does not install, so the spec's availability pre-flight skips it on every run — `@stable` removed, see #1039)
+- [-] Configure and execute flow with Mistral → `model-provider/mistral-provider.spec.ts` (automated but not validatable on the tested image: same `lfx-bundles` packaging decision as Groq — `@stable` removed, see #1039)
 
 #### 7.7 Model Parameters (Agent)
 - [x] Maximum token count — response truncated as configured → `llm-agents/agent-max-tokens.spec.ts`

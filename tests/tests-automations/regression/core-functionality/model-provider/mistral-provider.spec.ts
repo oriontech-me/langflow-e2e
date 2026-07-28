@@ -92,13 +92,16 @@ test.describe.configure({ mode: "serial" });
 test.describe("Mistral Provider", () => {
   test(
     "the MistralAI component configures the API key and executes the flow",
-    { tag: ["@stable", "@components", "@model-provider", "@playground"] },
+    // No @stable (#1039): the MistralAI component is NOT packaged in the image
+    // this suite validates, so this test skips on every daily run — a tag that
+    // can never produce a verdict is worse than no tag. Restore it only if the
+    // component returns to `langflowai/langflow-nightly:latest`.
+    { tag: ["@components", "@model-provider", "@playground"] },
     async ({ page, request }) => {
-      // Build-side pre-flight (#907 / LE-1987): when the nightly ships without
-      // `langchain-mistralai`, Langflow hides the MistralAI component entirely,
-      // so the sidebar `waitForSelector('[data-testid="mistralMistralAI"]')`
-      // would hard-fail after 30s. Skip explicitly instead — the component
-      // genuinely is not in this build. Runs BEFORE the cloud-API probe: no
+      // Build-side pre-flight (#907, #1039): the MistralAI component is not
+      // exposed by the default image, so the sidebar
+      // `waitForSelector('[data-testid="mistralMistralAI"]')` would hard-fail
+      // after 30s. Skip explicitly instead. Runs BEFORE the cloud-API probe: no
       // point checking the key when the component cannot be placed at all.
       const componentAvailable = await isProviderComponentAvailable(
         request,
@@ -106,7 +109,7 @@ test.describe("Mistral Provider", () => {
       );
       test.skip(
         !componentAvailable,
-        "MistralAI component not available in this Langflow build — langchain-mistralai missing (#907, LE-1987)",
+        "MistralAI component not exposed by this Langflow build — the `lfx-bundles` distribution that ships it is not installed (#1039)",
       );
 
       const probe = await probeMistral(request);

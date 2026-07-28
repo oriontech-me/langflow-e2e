@@ -92,18 +92,21 @@ test.describe.configure({ mode: "serial" });
 test.describe("Groq Provider", () => {
   test(
     "the Groq component configures the API key and executes the flow",
-    { tag: ["@stable", "@components", "@model-provider", "@playground"] },
+    // No @stable (#1039): the Groq component is NOT packaged in the image this
+    // suite validates, so this test skips on every daily run — a tag that can
+    // never produce a verdict is worse than no tag. Restore it only if the
+    // component returns to `langflowai/langflow-nightly:latest`.
+    { tag: ["@components", "@model-provider", "@playground"] },
     async ({ page, request }) => {
-      // Build-side pre-flight (#907 / LE-1987): when the nightly ships without
-      // `langchain-groq`, Langflow hides the Groq component entirely, so the
-      // sidebar `waitForSelector('[data-testid="groqGroq"]')` would hard-fail
-      // after 30s. Skip explicitly instead — the component genuinely is not in
-      // this build. Runs BEFORE the cloud-API probe: no point checking the key
-      // when the component cannot be placed at all.
+      // Build-side pre-flight (#907, #1039): the Groq component is not exposed
+      // by the default image, so the sidebar
+      // `waitForSelector('[data-testid="groqGroq"]')` would hard-fail after
+      // 30s. Skip explicitly instead. Runs BEFORE the cloud-API probe: no point
+      // checking the key when the component cannot be placed at all.
       const componentAvailable = await isProviderComponentAvailable(request, "groq");
       test.skip(
         !componentAvailable,
-        "Groq component not available in this Langflow build — langchain-groq missing (#907, LE-1987)",
+        "Groq component not exposed by this Langflow build — the `lfx-bundles` distribution that ships it is not installed (#1039)",
       );
 
       const probe = await probeGroq(request);
