@@ -22,11 +22,16 @@
 //   "duration_ms": 0,
 //   "totals": { "passed": 0, "failed": 0, "flaky": 0, "skipped": 0 },
 //   "failures": [ { test, file, line, tags, attempts, error_signature, param? } ],
-//   "flaky":    [ { test, file, line, tags, attempts, error_signature, param? } ]
+//   "flaky":    [ { test, file, line, tags, attempts, error_signature, param? } ],
+//   "run_errors": [ "..." ]                     // optional, see below
 //   `param` (optional, additive to schema v1) is the parameterization label a
 //   model-parameterized spec carries on its describe title (e.g.
 //   "google / gemini-2.5-flash" or "model:gpt-4o-mini"), used by the triage
 //   dataset to group failures by provider variant (#899).
+//   `run_errors` (optional, additive to schema v1) carries the TOP-LEVEL report
+//   errors — globalSetup / worker-level failures that stopped tests from running
+//   at all. Omitted when there are none, so its presence is itself the signal
+//   that something failed outside the tests (#1012).
 // }
 
 import { readFileSync, appendFileSync, mkdirSync, existsSync } from "node:fs";
