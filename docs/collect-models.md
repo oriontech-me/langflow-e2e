@@ -1,6 +1,6 @@
 # Collect Models
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -38,7 +38,12 @@ surface (the #505 lesson).
    c. Wait for model toggles to load; enable any that are unchecked
    d. Record each model name paired with the provider
 3. Write the collected model list to `data/models.json`
-4. For each provider, call its API directly (using the first model found) to confirm the key is active
+4. For each provider, call its API directly to confirm the key is active. The
+   probe walks the collected catalog in preference order rather than trusting a
+   single lead model, so one gated/preview model cannot disable a whole provider
+   (#570). It stops early on the first model that validates — or, when the SAME
+   error repeats 3× in a row, on the conclusion that the error does not depend on
+   the model at all (#1011; see Validation criterion).
 5. Write the provider status records to `data/providers.json`
 
 ---
@@ -62,6 +67,46 @@ contract; the SPEC now verifies the outcome):
 A provider with a key that genuinely fails its probe (e.g. a model the
 account cannot access) is a legitimate `inactive` — recorded, logged, not a
 test failure.
+
+### Env-keyed provider must be ACTIVE — with one exception
+
+A provider whose key IS configured but that ends `inactive` silently
+`test.skip()`s every spec parametrized on it, and a skip never trips the
+daily-failure gate — coverage erodes with a green run (#570). So that case
+**fails the spec loudly**, with one exception: a *transient billing/quota*
+outage (drained credit, exhausted quota, an exceeded spend cap, 402/429) is an
+ops state, not a code or config defect. Failing on it reddens every LLM PR,
+including the ones that never touch the drained provider, until someone tops up
+the account. It is therefore downgraded to a loud **warning** while at least one
+provider is still active; genuine key rot still fails loud, and a total wipeout
+(zero active providers) still fails.
+
+**The candidate probe stops early when the error is model-independent** (#1011).
+A model-scoped failure names the model it is about, so consecutive candidates
+produce different messages; an account-scoped one (spend cap, drained credit,
+dead key) is byte-identical for every candidate, because the request never
+reached a model. Three identical errors in a row therefore mean no remaining
+candidate can pass — unless the repeated error is a **transport** failure
+(`fetch failed`, a refused connection, a DNS blip), which repeats identically
+without saying anything about the account. Those do not count toward the streak:
+a runner-side hiccup on three consecutive probes must not turn into an
+`inactive` provider, which is a hard failure plus the silent skips the fallback
+exists to prevent. Two consequences, both load-bearing:
+
+- **Cost.** On 2026-07-28 a capped Google key made the loop probe all 36
+  candidates to learn what candidate #1 already said — three times over, since
+  the CI step retried. That load wedged the daily's Langflow and cost the entire
+  run (#1007). Measured after the change, against a live 1.12.0.dev7 with the
+  same capped key: 3 probes, spec green in 8 s.
+- **Correctness.** The aggregate error used to keep only the LAST candidate's
+  message. With a capped Google key that was a trailing model-level 404, so the
+  provider was classified as key rot and the billing downgrade never fired.
+  Stopping on the repeat records the real reason. When the sweep does run to the
+  end (the errors never repeat 3× consecutively — a catalog that interleaves
+  valid models with ones that reject the probe endpoint), the aggregate now
+  reports the **most frequent** error instead of the last, on the same signal the
+  early exit uses: a model-scoped message names its model and so occurs once,
+  while an account-scoped one occurs for every candidate.
 
 ---
 

@@ -98,8 +98,17 @@ test(
       // one provider is still active; genuine key rot (401 invalid key, 403 no
       // model access, etc.) still fails LOUD, and a total wipeout (zero active
       // providers) still fails.
+      //
+      // `spend(ing) cap` is listed EXPLICITLY (#1011). Google's spend-cap error
+      // — "Your project has exceeded its monthly spending cap. Please go to AI
+      // Studio at ... to manage your project spend cap. Learn more at
+      // https://ai.google.dev/gemini-api/docs/billing#project-spend-caps." —
+      // matched this pattern on 2026-07-28 only via the word `billing` inside a
+      // DOCUMENTATION URL. That is an accident: reword the message or drop the
+      // link and an exhausted spend cap silently becomes a hard key/config
+      // failure, which is exactly the false alarm Approach B exists to prevent.
       const BILLING_OR_QUOTA =
-        /credit balance is too low|insufficient[_ ]?quota|exceeded your current quota|\bquota\b|resource[_ ]?exhausted|billing|payment required|\b402\b|\b429\b/i;
+        /credit balance is too low|insufficient[_ ]?quota|exceeded your current quota|\bquota\b|resource[_ ]?exhausted|billing|spend(?:ing)?[ _-]?cap|payment required|\b402\b|\b429\b/i;
 
       const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
       const activeCount = providers.filter((p) => p.status === "active").length;
