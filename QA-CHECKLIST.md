@@ -798,7 +798,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 390 `test()` calls carrying the `@stable` tag, distributed across 157 spec
+> 391 `test()` calls carrying the `@stable` tag, distributed across 158 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1131,6 +1131,7 @@
 
 #### core-functionality/project-management/
 - [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
+- [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
 - [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
 - [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
 - [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
