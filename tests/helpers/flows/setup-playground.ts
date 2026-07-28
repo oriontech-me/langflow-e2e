@@ -79,13 +79,16 @@ async function createBlankFlow(
   }
   return {
     id: flowId,
-    name: (created?.name as string) ?? name,
+    // `||`, not `??`: an empty name would slip past a nullish check and turn the
+    // hydration gate below into `toContainText("")`, which passes against any
+    // page at all — a safety gate that fails open is worse than none.
+    name: (created?.name as string) || name,
     authorization,
   };
 }
 
 /**
- * Blocks until the persisted graph satisfies `predicate`.
+ * Blocks until the persisted graph satisfies `expectation.matches`.
  *
  * Exists to serialise our canvas edits against the SPA's debounced autosave
  * (#988). Each graph change schedules its own `PATCH /api/v1/flows/{id}` with
@@ -97,22 +100,48 @@ async function createBlankFlow(
  * downstream recovered it. Letting each change reach the database before making
  * the next one removes the overlap, and makes "the graph this helper built is
  * durable" a postcondition callers can rely on after a reload.
+ *
+ * A bare `toPass` timeout here would read "expected true, received false",
+ * which says neither what was awaited nor how far the graph got — the same mute
+ * failure this helper was rewritten to stop producing. So the last observed
+ * state is captured on every probe and reported when the budget runs out.
  */
 async function waitForGraphPersisted(
   page: Page,
   flowId: string,
   authorization: string,
-  predicate: (data: { nodes?: unknown[]; edges?: unknown[] }) => boolean,
-  timeoutMs = 30000,
+  expectation: {
+    expected: string;
+    matches: (data: { nodes?: unknown[]; edges?: unknown[] }) => boolean;
+  },
+  // Deliberately tighter than the UI gates above: this polls a local API, so a
+  // budget that stretches toward the 5-minute test timeout only delays the real
+  // error. If the write has not landed in 15s it is not slow, it is lost.
+  timeoutMs = 15000,
 ): Promise<void> {
   const options = authorization
     ? { headers: { Authorization: authorization } }
     : undefined;
-  await expect(async () => {
-    const res = await page.request.get(`/api/v1/flows/${flowId}`, options);
-    expect(res.ok()).toBe(true);
-    expect(predicate((await res.json())?.data ?? {})).toBe(true);
-  }).toPass({ timeout: timeoutMs, intervals: [250, 500, 1000] });
+  let lastSeen = "no successful read";
+
+  try {
+    await expect(async () => {
+      const res = await page.request.get(`/api/v1/flows/${flowId}`, options);
+      if (!res.ok()) {
+        lastSeen = `GET /api/v1/flows/{id} → ${res.status()} ${res.statusText()}`;
+      }
+      expect(res.ok()).toBe(true);
+      const data = (await res.json())?.data ?? {};
+      lastSeen = `${data.nodes?.length ?? 0} node(s), ${data.edges?.length ?? 0} edge(s)`;
+      expect(expectation.matches(data)).toBe(true);
+    }).toPass({ timeout: timeoutMs, intervals: [250, 500, 1000] });
+  } catch {
+    throw new Error(
+      `setupPlayground: a canvas edit never reached the database — expected ${expectation.expected}, ` +
+        `last saw ${lastSeen} after ${timeoutMs}ms. The usual cause is a stale autosave PATCH ` +
+        `committed after a newer one, which rolls the graph back for good (#988).`,
+    );
+  }
 }
 
 /**
@@ -200,7 +229,7 @@ export async function setupPlayground(page: Page): Promise<string> {
       page,
       flowId,
       authorization,
-      (data) => (data.nodes?.length ?? 0) === 1,
+      { expected: "1 node", matches: (data) => (data.nodes?.length ?? 0) === 1 },
     );
 
     await zoomOut(page, 2);
@@ -226,7 +255,7 @@ export async function setupPlayground(page: Page): Promise<string> {
       page,
       flowId,
       authorization,
-      (data) => (data.nodes?.length ?? 0) === 2,
+      { expected: "2 nodes", matches: (data) => (data.nodes?.length ?? 0) === 2 },
     );
 
     await page
@@ -246,7 +275,7 @@ export async function setupPlayground(page: Page): Promise<string> {
       page,
       flowId,
       authorization,
-      (data) => (data.edges?.length ?? 0) >= 1,
+      { expected: "1 edge", matches: (data) => (data.edges?.length ?? 0) >= 1 },
     );
   } catch (err) {
     // Best-effort rollback of the created flow — swallow so the original
