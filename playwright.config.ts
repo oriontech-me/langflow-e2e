@@ -36,7 +36,15 @@ const DESTRUCTIVE_LANE = !!process.env.PW_DESTRUCTIVE;
 if (!DESTRUCTIVE_LANE) {
   // Never let the exclusion become a silent cap: say it on every run, with the
   // exact command that runs what was left out.
-  console.log(
+  //
+  // stderr, NOT stdout (#1024). This module is imported by every `playwright`
+  // invocation, including `--list --reporter=json`, whose STDOUT is a machine
+  // contract: `daily-stable.yml`'s `prep` job redirects it into a file and feeds
+  // that to `partition-shards.mjs matrix`. One line ahead of the JSON made the
+  // file unparseable, the partitioner exited 1, and the daily died before a
+  // single test ran. stderr keeps the line just as visible in the Actions log —
+  // and `playwright-config.test.ts` now asserts stdout stays clean.
+  console.error(
     "[lane] @destructive tests are excluded from this run — run them with: PW_DESTRUCTIVE=1 npx playwright test --grep @destructive",
   );
 }
