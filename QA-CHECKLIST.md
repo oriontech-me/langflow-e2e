@@ -781,9 +781,9 @@
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
-| `ui-ux/` — Canvas | 44 | 25 | 15 | 4 | 0 |
+| `ui-ux/` — Canvas | 44 | 29 | 11 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **465** | **356 (77%)** | **92 (20%)** | **11 (2%)** | **6 (1%)** |
+| **TOTAL** | **465** | **360 (77%)** | **88 (19%)** | **11 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -799,7 +799,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 402 `test()` calls carrying the `@stable` tag, distributed across 164 spec
+> 408 `test()` calls carrying the `@stable` tag, distributed across 166 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1152,6 +1152,9 @@
 - [x] dragging a component moves it on the canvas and persists the new position → `canvas-move-node.spec.ts`
 - [x] a Shift+drag marquee selects every component it encloses → `canvas-multiselect.spec.ts`
 - [x] deleting a box selection clears the selected components → `canvas-multiselect.spec.ts`
+- [x] deleting a sticky note from its options menu removes it everywhere → `canvas-sticky-note-delete.spec.ts`
+- [x] deleting a sticky note with Backspace removes it everywhere → `canvas-sticky-note-delete.spec.ts`
+- [x] deleting one of two sticky notes leaves the other in place → `canvas-sticky-note-delete.spec.ts`
 - [x] user can create a blank flow from the new-project modal → `create-blank-flow.spec.ts`
 - [x] user can create a flow from a starter template → `create-flow-from-template.spec.ts`
 - [x] user can copy a valid macOS/Linux curl command from the API access modal → `curlApiGeneration.spec.ts`
@@ -1232,6 +1235,9 @@
 - [x] a query with no match shows the empty state and clearing restores the tree → `sidebar-search-and-filter.spec.ts`
 - [x] a provider query groups its components under the provider bundle → `sidebar-search-and-filter.spec.ts`
 - [x] category disclosures collapse and expand their component list → `sidebar-search-and-filter.spec.ts`
+- [x] adding a sticky note places it on the canvas and in the flow → `sticky-notes.spec.ts`
+- [x] changing a sticky note colour repaints it and persists the choice → `sticky-notes.spec.ts`
+- [x] resizing a sticky note grows it and persists the new size → `sticky-notes.spec.ts`
 
 ---
 
@@ -1250,7 +1256,7 @@
 | `core-functionality/playground/` | 3 | 0 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
-| `ui-ux/` — Canvas | 15 | 0 |
+| `ui-ux/` — Canvas | 11 | 0 |
 
 ---
 
