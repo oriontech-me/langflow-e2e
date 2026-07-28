@@ -13,6 +13,12 @@
 // files in a temp dir. Anything less would test a reimplementation of the guard
 // rather than the guard: `main()` reads its threshold at module scope and writes
 // to disk, so the file mutation IS the behaviour under test.
+//
+// The "path resolution (#476)" block at the bottom absorbs
+// `tests/scripts/remove-stable-from-failures.spec.ts`, deleted with this file's
+// arrival. Those three cases were Playwright specs, so running three assertions
+// over a pure function booted a Langflow container and waited on the credential
+// pre-flight — the cost #1017's lane exists to remove.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "child_process";
@@ -100,7 +106,6 @@ function runScript(opts: {
           ...process.env,
           PLAYWRIGHT_JSON: reportPath,
           MAX_AUTO_REMOVE: opts.maxAutoRemove ?? "5",
-          TS_NODE_PROJECT: path.join(__dirname, "..", "tsconfig.json"),
         },
         stdio: ["ignore", "pipe", "pipe"],
       },
@@ -124,8 +129,8 @@ test("guard trips above the threshold and rewrites NOTHING", () => {
   const titles = ["t1", "t2", "t3", "t4", "t5", "t6"];
   const before = specSource(titles);
   const { result, after } = runScript({
-    specs: { "a.spec.ts": titles },
-    failures: titles.map((title) => ({ file: "a.spec.ts", title })),
+    specs: { "fixture-1017-a.spec.ts": titles },
+    failures: titles.map((title) => ({ file: "fixture-1017-a.spec.ts", title })),
     maxAutoRemove: "5",
   });
 
@@ -134,14 +139,14 @@ test("guard trips above the threshold and rewrites NOTHING", () => {
   assert.equal(result.threshold, 5);
   assert.deepEqual(result.removed, []);
   // The assertion that matters: the file on disk is byte-identical.
-  assert.equal(after["a.spec.ts"], before);
+  assert.equal(after["fixture-1017-a.spec.ts"], before);
 });
 
 test("exactly at the threshold still proceeds (the guard is strictly greater-than)", () => {
   const titles = ["t1", "t2", "t3", "t4", "t5"];
   const { result, after } = runScript({
-    specs: { "a.spec.ts": titles },
-    failures: titles.map((title) => ({ file: "a.spec.ts", title })),
+    specs: { "fixture-1017-a.spec.ts": titles },
+    failures: titles.map((title) => ({ file: "fixture-1017-a.spec.ts", title })),
     maxAutoRemove: "5",
   });
 
@@ -149,10 +154,10 @@ test("exactly at the threshold still proceeds (the guard is strictly greater-tha
   assert.equal(result.removed.length, 5);
   // No `tag` array still holds it. (The prose mention in the header comment is
   // expected to survive — that is the point of the AST-located edit.)
-  assert.equal(after["a.spec.ts"].includes('"@stable"'), false);
-  assert.match(after["a.spec.ts"], /Promoted to @stable in the 1\.10\.x cycle/);
+  assert.equal(after["fixture-1017-a.spec.ts"].includes('"@stable"'), false);
+  assert.match(after["fixture-1017-a.spec.ts"], /Promoted to @stable in the 1\.10\.x cycle/);
   // Every other tag survives — removal is per-element, not per-array.
-  assert.equal(after["a.spec.ts"].match(/@regression/g)?.length, 5);
+  assert.equal(after["fixture-1017-a.spec.ts"].match(/@regression/g)?.length, 5);
 });
 
 test("the threshold is read from MAX_AUTO_REMOVE, not hardcoded", () => {
@@ -160,14 +165,14 @@ test("the threshold is read from MAX_AUTO_REMOVE, not hardcoded", () => {
   const titles = ["t1", "t2"];
   const before = specSource(titles);
   const { result, after } = runScript({
-    specs: { "a.spec.ts": titles },
-    failures: titles.map((title) => ({ file: "a.spec.ts", title })),
+    specs: { "fixture-1017-a.spec.ts": titles },
+    failures: titles.map((title) => ({ file: "fixture-1017-a.spec.ts", title })),
     maxAutoRemove: "1",
   });
 
   assert.equal(result.status, "guard_tripped");
   assert.equal(result.threshold, 1);
-  assert.equal(after["a.spec.ts"], before);
+  assert.equal(after["fixture-1017-a.spec.ts"], before);
 });
 
 test("guard counts failures ACROSS files, not per file", () => {
@@ -175,8 +180,8 @@ test("guard counts failures ACROSS files, not per file", () => {
   const titles = ["t1", "t2"];
   const before = specSource(titles);
   const { result, after } = runScript({
-    specs: { "a.spec.ts": titles, "b.spec.ts": titles, "c.spec.ts": titles },
-    failures: ["a.spec.ts", "b.spec.ts", "c.spec.ts"].flatMap((file) =>
+    specs: { "fixture-1017-a.spec.ts": titles, "fixture-1017-b.spec.ts": titles, "fixture-1017-c.spec.ts": titles },
+    failures: ["fixture-1017-a.spec.ts", "fixture-1017-b.spec.ts", "fixture-1017-c.spec.ts"].flatMap((file) =>
       titles.map((title) => ({ file, title })),
     ),
     maxAutoRemove: "5",
@@ -184,7 +189,7 @@ test("guard counts failures ACROSS files, not per file", () => {
 
   assert.equal(result.status, "guard_tripped");
   assert.equal(result.hardFailures, 6);
-  for (const file of ["a.spec.ts", "b.spec.ts", "c.spec.ts"]) {
+  for (const file of ["fixture-1017-a.spec.ts", "fixture-1017-b.spec.ts", "fixture-1017-c.spec.ts"]) {
     assert.equal(after[file], before);
   }
 });
@@ -193,34 +198,34 @@ test("guard counts failures ACROSS files, not per file", () => {
 
 test("a green report removes nothing", () => {
   const before = specSource(["t1"]);
-  const { result, after } = runScript({ specs: { "a.spec.ts": ["t1"] }, failures: [] });
+  const { result, after } = runScript({ specs: { "fixture-1017-a.spec.ts": ["t1"] }, failures: [] });
 
   assert.equal(result.status, "none");
   assert.equal(result.hardFailures, 0);
-  assert.equal(after["a.spec.ts"], before);
+  assert.equal(after["fixture-1017-a.spec.ts"], before);
 });
 
 test("a missing report removes nothing", () => {
   // The suite never really ran — same conclusion as the guard, reached earlier.
   const before = specSource(["t1"]);
   const { result, after } = runScript({
-    specs: { "a.spec.ts": ["t1"] },
+    specs: { "fixture-1017-a.spec.ts": ["t1"] },
     reportPath: "missing.json",
   });
 
   assert.equal(result.status, "none");
-  assert.equal(after["a.spec.ts"], before);
+  assert.equal(after["fixture-1017-a.spec.ts"], before);
 });
 
 test("an unparseable report removes nothing", () => {
   const before = specSource(["t1"]);
   const { result, after } = runScript({
-    specs: { "a.spec.ts": ["t1"] },
+    specs: { "fixture-1017-a.spec.ts": ["t1"] },
     reportBody: "{ this is not json",
   });
 
   assert.equal(result.status, "none");
-  assert.equal(after["a.spec.ts"], before);
+  assert.equal(after["fixture-1017-a.spec.ts"], before);
 });
 
 test("a FLAKY test keeps @stable", () => {
@@ -228,13 +233,13 @@ test("a FLAKY test keeps @stable", () => {
   // reason to drop the tag. Only status "unexpected" counts.
   const before = specSource(["t1"]);
   const { result, after } = runScript({
-    specs: { "a.spec.ts": ["t1"] },
-    failures: [{ file: "a.spec.ts", title: "t1", status: "flaky" }],
+    specs: { "fixture-1017-a.spec.ts": ["t1"] },
+    failures: [{ file: "fixture-1017-a.spec.ts", title: "t1", status: "flaky" }],
   });
 
   assert.equal(result.status, "none");
   assert.equal(result.hardFailures, 0);
-  assert.equal(after["a.spec.ts"], before);
+  assert.equal(after["fixture-1017-a.spec.ts"], before);
 });
 
 // ─── Splicing ────────────────────────────────────────────────────────────────
@@ -258,15 +263,15 @@ test("removes only the @stable element, preserving comments and the other tags",
       'test("untouched", { tag: ["@stable"] }, async () => {});',
       "",
     ].join("\n");
-    fs.writeFileSync(path.join(dir, "a.spec.ts"), source);
+    fs.writeFileSync(path.join(dir, "fixture-1017-a.spec.ts"), source);
     const report = {
       config: { rootDir: dir },
       suites: [
         {
-          file: "a.spec.ts",
+          file: "fixture-1017-a.spec.ts",
           specs: ["middle", "last", "sole"].map((title, i) => ({
             title,
-            file: "a.spec.ts",
+            file: "fixture-1017-a.spec.ts",
             line: 6 + i,
             tests: [{ status: "unexpected" }],
           })),
@@ -284,7 +289,7 @@ test("removes only the @stable element, preserving comments and the other tags",
       },
     );
     const result = JSON.parse(stdout) as Result;
-    const after = fs.readFileSync(path.join(dir, "a.spec.ts"), "utf-8");
+    const after = fs.readFileSync(path.join(dir, "fixture-1017-a.spec.ts"), "utf-8");
 
     assert.equal(result.status, "removed");
     assert.equal(result.removed.length, 3);
@@ -324,9 +329,9 @@ test("an unresolvable spec path is reported, not silently swallowed", () => {
       config: { rootDir: dir },
       suites: [
         {
-          file: "ghost.spec.ts",
+          file: "fixture-1017-ghost.spec.ts",
           specs: [
-            { title: "t1", file: "ghost.spec.ts", line: 4, tests: [{ status: "unexpected" }] },
+            { title: "t1", file: "fixture-1017-ghost.spec.ts", line: 4, tests: [{ status: "unexpected" }] },
           ],
         },
       ],
@@ -357,7 +362,7 @@ test("an unresolvable spec path is reported, not silently swallowed", () => {
 test("collectHardFailures reads nested suites and counts only 'unexpected'", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autoremove-parse-"));
   try {
-    fs.writeFileSync(path.join(dir, "deep.spec.ts"), specSource(["hard", "flaky"]));
+    fs.writeFileSync(path.join(dir, "fixture-1017-deep.spec.ts"), specSource(["hard", "flaky"]));
     const reportPath = path.join(dir, "results.json");
     fs.writeFileSync(
       reportPath,
@@ -365,14 +370,14 @@ test("collectHardFailures reads nested suites and counts only 'unexpected'", () 
         config: { rootDir: dir },
         suites: [
           {
-            file: "deep.spec.ts",
+            file: "fixture-1017-deep.spec.ts",
             suites: [
               {
-                file: "deep.spec.ts",
+                file: "fixture-1017-deep.spec.ts",
                 specs: [
-                  { title: "hard", file: "deep.spec.ts", line: 4, tests: [{ status: "unexpected" }] },
-                  { title: "flaky", file: "deep.spec.ts", line: 8, tests: [{ status: "flaky" }] },
-                  { title: "ok", file: "deep.spec.ts", line: 12, tests: [{ status: "expected" }] },
+                  { title: "hard", file: "fixture-1017-deep.spec.ts", line: 4, tests: [{ status: "unexpected" }] },
+                  { title: "flaky", file: "fixture-1017-deep.spec.ts", line: 8, tests: [{ status: "flaky" }] },
+                  { title: "ok", file: "fixture-1017-deep.spec.ts", line: 12, tests: [{ status: "expected" }] },
                 ],
               },
             ],
@@ -384,7 +389,7 @@ test("collectHardFailures reads nested suites and counts only 'unexpected'", () 
     const failures = collectHardFailures(reportPath);
     assert.equal(failures.length, 1);
     assert.equal(failures[0].title, "hard");
-    assert.equal(failures[0].file, path.join(dir, "deep.spec.ts"));
+    assert.equal(failures[0].file, path.join(dir, "fixture-1017-deep.spec.ts"));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -401,4 +406,120 @@ test("collectHardFailures returns [] for a missing or unparseable report", () =>
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ─── Path resolution (#476) ──────────────────────────────────────────────────
+//
+// Absorbed from `tests/scripts/remove-stable-from-failures.spec.ts`, deleted
+// with this block's arrival. These cases need a fixture UNDER `<repo>/tests`,
+// not in a temp dir, because the behaviour under test is precisely the base the
+// script falls back to: the Playwright JSON reporter emits `spec.file` relative
+// to its rootDir (`<repo>/tests`, from `testDir: "./tests"`), and the original
+// code resolved against REPO_ROOT — so every hard failure was skipped as "spec
+// file not found" and the auto-remove feature never removed a single tag.
+//
+// The fixture name matches `tests/scripts/.auto-remove-fixture-*.ts`, which is
+// git-ignored (`.gitignore:32`); the leading dot also keeps `tsc` from compiling
+// it if a crash ever leaks one, since TypeScript's include globs skip dotfiles.
+
+const TESTS_ROOT = path.join(__dirname, "..", "tests");
+const FIXTURE_DIR = path.join(TESTS_ROOT, "scripts");
+const FIXTURE_TITLE = "auto-remove fixture: sample stable test";
+const FIXTURE_SOURCE = `import { test } from "@playwright/test";
+
+test(
+  "${FIXTURE_TITLE}",
+  { tag: ["@release", "@stable"] },
+  async () => {
+    // Fixture for scripts/remove-stable-from-failures — never run as a real test.
+  },
+);
+`;
+
+/**
+ * Write the throwaway fixture under `tests/scripts/` and hand back both paths:
+ * `abs` to read it, `rel` in the reporter's own form (relative to `tests/`).
+ * `label` keys the filename so two cases never share a file.
+ */
+function withTestsRootFixture<T>(
+  label: string,
+  fn: (paths: { abs: string; rel: string }) => T,
+): T {
+  fs.mkdirSync(FIXTURE_DIR, { recursive: true });
+  const abs = path.join(FIXTURE_DIR, `.auto-remove-fixture-${label}.ts`);
+  fs.writeFileSync(abs, FIXTURE_SOURCE);
+  try {
+    return fn({ abs, rel: path.relative(TESTS_ROOT, abs) });
+  } finally {
+    fs.rmSync(abs, { force: true });
+  }
+}
+
+/** A one-hard-failure report for the fixture, optionally carrying a rootDir. */
+function fixtureReport(specFile: string, rootDir?: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "autoremove-476-"));
+  const reportPath = path.join(dir, "results.json");
+  fs.writeFileSync(
+    reportPath,
+    JSON.stringify({
+      config: rootDir ? { rootDir } : {},
+      suites: [
+        {
+          specs: [
+            { title: FIXTURE_TITLE, file: specFile, line: 3, tests: [{ status: "unexpected" }] },
+          ],
+          suites: [],
+        },
+      ],
+    }),
+  );
+  return reportPath;
+}
+
+test("resolves a rootDir-relative report path against tests/, not the repo root", () => {
+  withTestsRootFixture("no-rootdir", ({ abs, rel }) => {
+    // No `config.rootDir` at all — the exact shape that regressed in #476, where
+    // REPO_ROOT was the only base tried and nothing ever resolved.
+    const failures = collectHardFailures(fixtureReport(rel));
+
+    assert.equal(failures.length, 1);
+    assert.ok(path.isAbsolute(failures[0].file));
+    assert.equal(failures[0].file, abs);
+    assert.ok(fs.existsSync(failures[0].file));
+  });
+});
+
+test("prefers the report's own config.rootDir when it is present", () => {
+  withTestsRootFixture("with-rootdir", ({ abs, rel }) => {
+    const failures = collectHardFailures(fixtureReport(rel, TESTS_ROOT));
+
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0].file, abs);
+  });
+});
+
+test("end-to-end through the tests/-relative path: @stable out, @release kept", () => {
+  // The two above prove resolution; this one proves the script ACTS on it, which
+  // is what #476 broke — resolution failing looked exactly like "nothing to do".
+  withTestsRootFixture("end-to-end", ({ abs, rel }) => {
+    const stdout = execFileSync(
+      process.execPath,
+      ["--require", "ts-node/register", SCRIPT],
+      {
+        encoding: "utf-8",
+        env: { ...process.env, PLAYWRIGHT_JSON: fixtureReport(rel), MAX_AUTO_REMOVE: "5" },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
+    const result = JSON.parse(stdout) as Result;
+
+    assert.equal(result.status, "removed");
+    assert.equal(result.removed.length, 1);
+    assert.equal(result.removed[0].title, FIXTURE_TITLE);
+    assert.deepEqual(result.skipped, []);
+
+    const after = fs.readFileSync(abs, "utf-8");
+    assert.equal(after.includes("@stable"), false);
+    assert.ok(after.includes("@release"));
+  });
 });

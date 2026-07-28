@@ -546,6 +546,14 @@ Never validate a helper in a scratch file outside the repo. That is what left th
 `collect-models` fallback with its only regression net living in a PR description
 (#1011) — the gap this section exists to close.
 
+**And never write one as a `.spec.ts`.** Before this lane existed, the only way to test a
+script was to make it a Playwright spec, so `tests/scripts/remove-stable-from-failures.spec.ts`
+was one — which meant three assertions over a pure function booted a Langflow container and
+waited on the credential pre-flight to run, and a `*.unit.spec.ts` under `tests/` also
+matches the impacted-specs pathspec (`:(glob)tests/**/*.spec.ts`) and fires the E2E job.
+That spec was migrated into `scripts/remove-stable-from-failures.test.ts` and deleted; if
+you find another, migrate it rather than adding to it.
+
 ### Running them
 
 ```bash

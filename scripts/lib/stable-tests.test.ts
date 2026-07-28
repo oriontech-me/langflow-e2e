@@ -167,15 +167,19 @@ test("nested paths become the reported modulePath", () => {
 
 // ─── Invariant over the real suite ───────────────────────────────────────────
 
-test("the real suite parses with no warnings", () => {
-  // Not a fixture: this walks `regression/` as CI does. A warning here means a
-  // real `@stable` is unreadable to the parser — either describe-level or
-  // behind a non-literal array — so the daily would run a test that Phase 0
-  // and the checklist guard cannot see. Fails on the PR that introduces it.
-  const { tests, warnings } = collectStableTests();
-  assert.deepEqual(warnings, [], warnings.join("\n"));
-  // The count is volatile by design (triage adds/removes tags), so assert only
-  // that the walk found something — a zero here would mean the walk broke, and
-  // every generated count would silently read as "no coverage".
+test("the real suite walk finds @stable tests", () => {
+  // Not a fixture: this walks `regression/` as CI does. The count itself is
+  // volatile by design (triage adds and removes tags), so the assertion is only
+  // that the walk found SOMETHING. A zero is the silent failure with no other
+  // alarm: `check-checklist-coverage.ts` would pass trivially (no `@stable` left
+  // to cross-check), the Phase 0 generator would emit an empty block, and every
+  // generated number would read as "no coverage" rather than "broken walk".
+  //
+  // Deliberately NOT asserting `warnings` is empty: `check-checklist-coverage.ts`
+  // already exits non-zero on any parse warning, inside the `QA-CHECKLIST guard`
+  // job — whose name tells a spec author that a tag is misplaced. Repeating it
+  // here would report the same problem from a job called "TypeScript unit tests"
+  // and make this lane's verdict depend on the state of the whole suite.
+  const { tests } = collectStableTests();
   assert.ok(tests.length > 0, "no @stable tests found under regression/");
 });

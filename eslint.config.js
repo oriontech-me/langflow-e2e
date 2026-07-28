@@ -16,29 +16,44 @@ module.exports = tseslint.config(
     ignores: ["tests/**/*.test.ts"],
   },
   {
-    // Overrides pragmáticos: regras de estilo/padrão ficam como warning
-    // e serão apertadas progressivamente nas fases 1.1 a 1.5.
-    // Apenas regras que afetam CORREÇÃO dos testes ficam como error.
+    // Pragmatic overrides for the PLAYWRIGHT rules: style/pattern rules stay as
+    // warnings and get tightened progressively (phases 1.1 to 1.5); only rules
+    // that affect test CORRECTNESS are errors.
+    //
+    // Must carry the same `ignores` as the block above: referencing a
+    // `playwright/*` rule for a file the plugin is not registered for is a hard
+    // ESLint config error, not a no-op.
     files: ["tests/**/*.ts"],
     ignores: ["tests/**/*.test.ts"],
     rules: {
-      // Fase 1.1 — assertions modernas
+      // Phase 1.1 — modern assertions
       "playwright/prefer-web-first-assertions": "warn",
       "playwright/no-useless-not": "warn",
       "playwright/prefer-to-have-count": "warn",
       "playwright/prefer-to-have-length": "warn",
 
-      // Fase 1.2 — higiene TypeScript
-      "@typescript-eslint/no-unused-vars": "warn",
-      "@typescript-eslint/no-explicit-any": "warn",
       "playwright/no-unused-locators": "warn",
 
-      // Fase 1.3 — migração para API de locators
+      // Phase 1.3 — migration to the locators API
       "playwright/no-networkidle": "warn",
 
-      // Fase 1.5 — estrutura de testes
+      // Phase 1.5 — test structure
       "playwright/no-conditional-in-test": "warn",
       "playwright/no-conditional-expect": "warn",
+    },
+  },
+  {
+    // Phase 1.2 — TypeScript hygiene. Kept in its own block WITHOUT the
+    // `*.test.ts` exclusion: these come from tseslint's recommended set at
+    // `error`, so leaving unit tests out of the downgrade made `any` a
+    // PR-blocking error in `tests/**/*.test.ts` while the identical code in a
+    // neighbouring spec only warned (`lint:ci` runs `--quiet`, so warnings are
+    // invisible and errors are fatal). Same severity for every file under
+    // tests/, unit test or spec.
+    files: ["tests/**/*.ts"],
+    rules: {
+      "@typescript-eslint/no-unused-vars": "warn",
+      "@typescript-eslint/no-explicit-any": "warn",
     },
   }
 );

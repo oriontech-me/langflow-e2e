@@ -123,8 +123,6 @@ const ANTHROPIC_CATALOG = [
 
 // ─── Harness ─────────────────────────────────────────────────────────────────
 
-const at = (n: number): string => new Date(0).toISOString().replace("1970", String(1970 + n));
-
 /**
  * A fake validator driven by a per-model error map: `null` means the model
  * validates, a string is the error reported. Records every model it was asked
@@ -143,9 +141,13 @@ function fakeValidator(
       // `??` would be wrong here: `null` is the "this model validates" signal,
       // not an absent entry.
       const error = errors.has(model) ? errors.get(model)! : "unexpected candidate";
+      // `checkedAt` is passed through untouched by the function under test and no
+      // assertion reads it, so a fixed stamp keeps the records shaped right
+      // without pretending the value matters.
+      const checkedAt = "2026-07-28T10:38:18.000Z";
       return error === null
-        ? { provider, model, status: "active", error: null, checkedAt: at(probed.length) }
-        : { provider, model, status: "inactive", error, checkedAt: at(probed.length) };
+        ? { provider, model, status: "active", error: null, checkedAt }
+        : { provider, model, status: "inactive", error, checkedAt };
     },
   };
 }
@@ -321,6 +323,31 @@ test("interleaved spend cap / model-404: the aggregate reports the MOST FREQUENT
   assert.ok(
     BILLING_OR_QUOTA.test(result.error!),
     `the aggregate must carry the account-scoped error, got: ${result.error}`,
+  );
+});
+
+test("a tie in the aggregate resolves to the EARLIEST-seen error", async () => {
+  // `mostCommonError` compares with strict `>`, so insertion order breaks ties —
+  // documented in the source and, until now, asserted by nothing: `>=` would have
+  // passed every other scenario here. Two spend caps and two 404s carrying the
+  // SAME message (both name `model-2`, so they collapse into one count) is a 2-2
+  // tie where the account-scoped error was seen first and must win.
+  const models = ["model-1", "model-2", "model-3", "model-4"];
+  const shared404 = modelNotFound("model-2");
+  const errors = new Map<string, string | null>([
+    ["model-1", SPEND_CAP],
+    ["model-2", shared404],
+    ["model-3", SPEND_CAP],
+    ["model-4", shared404],
+  ]);
+  const { validate, probed } = fakeValidator("google", errors);
+  const result = await quiet(() => validateProviderWithFallback("google", models, validate));
+
+  assert.equal(probed.length, 4);
+  assert.match(result.error!, /most common error \(2\/4\)/);
+  assert.ok(
+    result.error!.includes(SPEND_CAP),
+    `the earliest-seen error must win the tie, got: ${result.error}`,
   );
 });
 
