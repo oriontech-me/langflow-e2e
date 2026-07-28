@@ -17,6 +17,14 @@ on:
       - "scripts/stable-tests.ts"
       # The `@stable` parser the Phase 0 generator reads from (#985).
       - "scripts/lib/stable-tests.ts"
+      # Unlike a git pathspec, an Actions `paths:` filter DOES match a spec
+      # sitting directly under `tests/` — so this one needs no `tests/*.spec.ts`
+      # companion. Measured, not assumed (issue #1016): commit f0bee50 was a
+      # single-commit push to main whose only changed file was
+      # `tests/collect-models.spec.ts`, and this workflow ran on it
+      # (event=push, conclusion=success). The identical-looking git pathspec in
+      # `pr-validation.yml` silently missed that same file — different glob
+      # engine, different rules. Don't port a fix from there to here.
       - "tests/**/*.spec.ts"
       - ".github/workflows/update-coverage-summary.yml"
 

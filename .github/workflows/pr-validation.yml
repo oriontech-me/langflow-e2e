@@ -119,7 +119,19 @@ jobs:
           BASE_REF: ${{ github.base_ref }}
         run: |
           git fetch origin "$BASE_REF" --quiet
-          SPECS=$(git diff --name-only --diff-filter=d "origin/$BASE_REF"...HEAD -- 'tests/**/*.spec.ts' | tr '\n' ' ' | sed 's/ *$//')
+          # The `:(glob)` magic prefix is load-bearing — do NOT "simplify" it away
+          # (issue #1016). Without it, git matches the pathspec with fnmatch and
+          # no FNM_PATHNAME, so `**` degrades to a plain `*` that carries no
+          # "zero or more directories" meaning, and the literal `/` after it must
+          # still match something. Every spec under a subdirectory matched (245 of
+          # them), while the one spec sitting directly under `tests/` never did:
+          # `tests/collect-models.spec.ts` — the @stable pre-flight utility every
+          # provider spec depends on, and thus the only spec exempt from PR-time
+          # E2E validation (surfaced by PR #1015, blast radius shown by #1007).
+          # `:(glob)` switches git to wildmatch with pathname semantics, where
+          # `/**/` genuinely means "zero or more directories", so the pattern now
+          # means what it always looked like it meant. Verified: 246 specs matched.
+          SPECS=$(git diff --name-only --diff-filter=d "origin/$BASE_REF"...HEAD -- ':(glob)tests/**/*.spec.ts' | tr '\n' ' ' | sed 's/ *$//')
           echo "Changed specs: ${SPECS:-<none>}"
           if [ -n "$SPECS" ]; then
             echo "has_specs=true" >> "$GITHUB_OUTPUT"
