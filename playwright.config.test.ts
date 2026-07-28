@@ -24,27 +24,59 @@ import * as os from "os";
 import * as path from "path";
 
 const REPO_ROOT = __dirname;
+/** The local CLI entrypoint. NOT `npx`, which downloads from the registry when the
+ *  binary is missing instead of failing — a test must not be able to reach the network. */
+const PLAYWRIGHT_CLI = path.join(REPO_ROOT, "node_modules", "@playwright", "test", "cli.js");
 
 /**
  * Import the config in a FRESH process and hand back what each stream received.
  * A fresh process matters twice: this file's own runner has already loaded
  * modules that could mask a write, and the top-level `if (!DESTRUCTIVE_LANE)`
  * only runs on first import — a cached module would make the test vacuous.
+ *
+ * Hermetic against the developer's environment on purpose, in two ways:
+ *  - `PW_DESTRUCTIVE` is stripped from the inherited env. The very notice these
+ *    tests assert on tells the reader to run `PW_DESTRUCTIVE=1 npx playwright
+ *    test --grep @destructive`; exporting it and then running the lane in the
+ *    same shell would fail with a message blaming the config, not the shell.
+ *  - the child runs from an EMPTY cwd, because `playwright.config.ts` calls
+ *    `dotenv.config()`, which reads `.env` relative to cwd — and `.env` is
+ *    developer-local and git-ignored, so it could inject the same variable
+ *    invisibly. That means requiring the config by absolute path and pointing
+ *    ts-node at the repo tsconfig explicitly, since it resolves from cwd too.
  */
 function importConfig(env: Record<string, string> = {}): { stdout: string; stderr: string } {
-  // spawnSync, not execFileSync: the two streams must be read from ONE run and
-  // kept apart, so a noisy stderr can never be mistaken for a stdout write.
-  const run = spawnSync(
-    process.execPath,
-    ["--require", "ts-node/register", "-e", 'require("./playwright.config");'],
-    {
-      cwd: REPO_ROOT,
-      encoding: "utf-8",
-      env: { ...process.env, ...env },
-    },
-  );
-  assert.equal(run.status, 0, `importing the config failed: ${run.stderr}`);
-  return { stdout: run.stdout, stderr: run.stderr };
+  const base = { ...process.env };
+  delete base.PW_DESTRUCTIVE;
+
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "config-1024-"));
+  try {
+    // spawnSync, not execFileSync: the two streams must be read from ONE run and
+    // kept apart, so a noisy stderr can never be mistaken for a stdout write.
+    const run = spawnSync(
+      process.execPath,
+      [
+        "--require",
+        // Absolute: a bare specifier would be resolved against the empty cwd.
+        require.resolve("ts-node/register"),
+        "-e",
+        `require(${JSON.stringify(path.join(REPO_ROOT, "playwright.config.ts"))});`,
+      ],
+      {
+        cwd,
+        encoding: "utf-8",
+        env: {
+          ...base,
+          ...env,
+          TS_NODE_PROJECT: path.join(REPO_ROOT, "tsconfig.json"),
+        },
+      },
+    );
+    assert.equal(run.status, 0, `importing the config failed: ${run.stderr}`);
+    return { stdout: run.stdout, stderr: run.stderr };
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
 }
 
 test("importing playwright.config.ts writes NOTHING to stdout", () => {
@@ -77,8 +109,8 @@ test("the daily's prep command produces parseable JSON", () => {
   // (line 81) rather than trusting the unit checks above to imply it. Kept to
   // `--list`, so nothing executes and no backend is needed.
   const listed = execFileSync(
-    "npx",
-    ["playwright", "test", "--grep", "@stable", "--list", "--reporter=json"],
+    process.execPath,
+    [PLAYWRIGHT_CLI, "test", "--grep", "@stable", "--list", "--reporter=json"],
     { cwd: REPO_ROOT, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] },
   );
 

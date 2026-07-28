@@ -526,7 +526,7 @@ jobs:
           # in #1011: a guard asserting "complete" over a run that executed nothing.
           case "$EXPECTED" in
             ''|*[!0-9]*)
-              echo "::warning::prep produced no usable shard_total ('$EXPECTED') — the run never got a shard matrix, so no shard could report. Treating the merged report as INCOMPLETE."
+              echo "::warning::prep produced no usable shard_total ('$EXPECTED') — the run never got a shard matrix, so no shard could report ($FOUND blob(s) present). Treating the merged report as INCOMPLETE."
               echo "complete=false" >> "$GITHUB_OUTPUT"
               exit 0
               ;;
