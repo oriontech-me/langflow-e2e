@@ -781,9 +781,9 @@
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
-| `ui-ux/` — Canvas | 44 | 17 | 24 | 3 | 0 |
+| `ui-ux/` — Canvas | 44 | 19 | 21 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **465** | **348 (75%)** | **101 (22%)** | **10 (2%)** | **6 (1%)** |
+| **TOTAL** | **465** | **350 (75%)** | **98 (21%)** | **11 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -799,7 +799,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 392 `test()` calls carrying the `@stable` tag, distributed across 158 spec
+> 396 `test()` calls carrying the `@stable` tag, distributed across 160 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1205,7 +1205,11 @@
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
 - [x] user can search and add components using keyboard shortcuts → `keyboardComponentSearch.spec.ts`
 - [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
+- [x] the main menu lists every item, reports the running version and links out → `main-menu-actions.spec.ts`
+- [x] the main menu's Settings action navigates to the Settings page → `main-menu-actions.spec.ts`
 - [x] User should be able to interact notifications tab → `notifications.spec.ts`
+- [x] right-clicking a component selects it and opens its options menu → `right-click-dropdown.spec.ts`
+- [x] an item picked from the right-click menu acts on that component → `right-click-dropdown.spec.ts`
 - [x] Settings General section loads and shows its header → `settings-general-section.spec.ts`
 - [x] Settings Messages section is accessible → `settings-general-section.spec.ts`
 - [x] Settings Shortcuts section is accessible and lists shortcuts → `settings-general-section.spec.ts`
@@ -1240,7 +1244,7 @@
 | `core-functionality/playground/` | 3 | 0 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
-| `ui-ux/` — Canvas | 24 | 0 |
+| `ui-ux/` — Canvas | 21 | 0 |
 
 ---
 
