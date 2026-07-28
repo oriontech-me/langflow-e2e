@@ -766,7 +766,7 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 25 | 25 | 0 | 0 | 0 |
+| `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 26 | 23 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 85 | 80 | 3 | 1 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
@@ -777,12 +777,12 @@
 | `core-functionality/playground/` | 50 | 46 | 3 | 1 | 0 |
 | `core-functionality/project-management/` | 11 | 4 | 7 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `flow-functionality/` | 28 | 25 | 1 | 2 | 0 |
+| `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 17 | 24 | 3 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **461** | **346 (75%)** | **100 (22%)** | **9 (2%)** | **6 (1%)** |
+| **TOTAL** | **464** | **347 (75%)** | **100 (22%)** | **11 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
