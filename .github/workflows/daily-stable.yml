@@ -375,14 +375,19 @@ jobs:
       # #928 established: a hung request must fail fast so the loop can keep
       # polling across the wedge instead of burning the budget on one GET.
       # Honest about its limits: whether the backend recovers is not guaranteed.
-      # It was first measured on 2026-07-28 (#1019), on pr-validation's copy of
-      # this gate — same container, same sweep. From the container's own log:
-      # gunicorn raised WORKER TIMEOUT ~3.5 min after the worker stopped
-      # answering, SIGKILLed it, and the replacement was serving 214 s after the
-      # preflight began polling. globalSetup's 120 s missed it by 94 s; this
-      # step's 300 s would not have. So recovery is real and observed, not merely
-      # hoped for — but it is one measurement, and attribution is still what the
-      # gate buys unconditionally.
+      # It was first measured on 2026-07-28 (#1019) — not by this gate, and not by
+      # pr-validation's copy either, which did not exist yet. The measurement came
+      # out of the service container's own log on a pr-validation job that died in
+      # globalSetup: same image, same sweep. gunicorn raised WORKER TIMEOUT
+      # ~3.5 min after the sweep ended, SIGKILLed the worker, and the replacement
+      # had finished startup 214 s after the preflight began polling (inferred
+      # from that startup log — nothing was polling by then to observe a 200).
+      # globalSetup's 120 s missed it by 94 s; this step's 300 s would not have,
+      # though only just: 223 s of budget spent, all of it gunicorn's own timer.
+      # So recovery is real and observed, not merely hoped for — but it is one
+      # measurement, and attribution is still what the gate buys unconditionally.
+      # pr-validation's copy widened the deadline to 420 s for that margin and
+      # decodes curl's exit code in its error; #1045 unifies the two.
       - name: Wait for the backend to recover from the collect-models load
         shell: bash
         env:
