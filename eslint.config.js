@@ -10,12 +10,17 @@ module.exports = tseslint.config(
   {
     ...playwright.configs["flat/recommended"],
     files: ["tests/**/*.ts"],
+    // `*.test.ts` under tests/ are `node --test` unit tests for the helpers
+    // (issue #1017), not Playwright specs — they assert with `node:assert`, so
+    // every Playwright rule that looks for `expect()` misfires on them.
+    ignores: ["tests/**/*.test.ts"],
   },
   {
     // Overrides pragmáticos: regras de estilo/padrão ficam como warning
     // e serão apertadas progressivamente nas fases 1.1 a 1.5.
     // Apenas regras que afetam CORREÇÃO dos testes ficam como error.
     files: ["tests/**/*.ts"],
+    ignores: ["tests/**/*.test.ts"],
     rules: {
       // Fase 1.1 — assertions modernas
       "playwright/prefer-web-first-assertions": "warn",

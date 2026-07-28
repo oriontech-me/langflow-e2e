@@ -46,6 +46,14 @@ export default defineConfig({
   // The destructive lane runs account-wide wipers, so it must never schedule two
   // tests at once (see DESTRUCTIVE_LANE above).
   grepInvert: DESTRUCTIVE_LANE ? undefined : /@destructive/,
+  // Playwright's default testMatch is `**/*.@(spec|test).?(c|m)[jt]s`, which would
+  // also collect the `*.test.ts` unit tests that live next to the helpers they
+  // cover (issue #1017) — they run under `node --test` (`npm run test:units`),
+  // need no browser and no backend, and would fail on the Playwright fixtures
+  // they never import. Every real spec in this suite is `*.spec.ts`, so narrowing
+  // the pattern costs nothing and keeps `npx playwright test`, `--grep`, the tag
+  // counters and the impacted-specs pathspec seeing exactly the same file set.
+  testMatch: "**/*.spec.ts",
   // File-level sharding for the daily's sharded run keeps every test() of a spec
   // file in one shard (so @database state-sharing holds). The sharded job sets
   // PW_SHARD_FILE_LEVEL=1; local dev / nightly / manual keep test-level parallelism.
