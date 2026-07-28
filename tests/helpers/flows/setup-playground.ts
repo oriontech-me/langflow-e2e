@@ -42,7 +42,16 @@ async function createBlankFlow(
   // context already holds when the instance is not in auto-login mode.
   const authorization = await getAuthToken(page.request);
   const res = await page.request.post("/api/v1/flows/", {
-    data: { name, description: "", data: BLANK_FLOW_DATA },
+    data: {
+      name,
+      description: "",
+      data: BLANK_FLOW_DATA,
+      // The SPA's `createNewFlow` hardcodes this to true while the column
+      // defaults to false, so omitting it produces a flow that — unlike every
+      // UI-created one — is NOT exposed as an MCP tool. Caught by
+      // `mcp-server-regression.spec.ts` on a clean instance.
+      mcp_enabled: true,
+    },
     headers: authorization ? { Authorization: authorization } : undefined,
   });
 
