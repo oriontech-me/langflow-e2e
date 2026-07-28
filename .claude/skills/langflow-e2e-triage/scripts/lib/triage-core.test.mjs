@@ -41,13 +41,32 @@ test('findLatestRedRun returns null when every run is green', () => {
   assert.equal(findLatestRedRun(green), null);
 });
 
+// Real signatures in reports/daily-history.jsonl carry the ESC byte (stored as
+// an escape by the appender). Building it here rather than pasting a literal
+// control character keeps the source clean — and an earlier version of these
+// tests used ESC-less input, which is what let a broken ANSI_RE go unnoticed.
+const ESC = String.fromCharCode(27);
+
 test('stripAnsi removes escape codes', () => {
-  assert.equal(stripAnsi('[2mError: x[22m'), 'Error: x');
+  assert.equal(stripAnsi(`${ESC}[2mError: x${ESC}[22m`), 'Error: x');
+});
+
+test('stripAnsi leaves no orphan ESC byte behind', () => {
+  // Guards the drift where the pattern matched `[2m` without the ESC: the codes
+  // vanished but the control bytes stayed, so two recordings of one cause
+  // stopped comparing equal.
+  const out = stripAnsi(`Error: ${ESC}[2mexpect(${ESC}[22mlocator).toBeVisible failed`);
+  assert.ok(!out.includes(ESC));
+  assert.equal(out, 'Error: expect(locator).toBeVisible failed');
+});
+
+test('stripAnsi does not eat bracketed text that is not an escape sequence', () => {
+  assert.equal(stripAnsi('Error: index [2m] out of range'), 'Error: index [2m] out of range');
 });
 
 test('normalizeSignature makes ANSI and plain signatures compare equal', () => {
   assert.equal(
-    normalizeSignature('[2mError: toBe equality[22m'),
+    normalizeSignature(`${ESC}[2mError: toBe equality${ESC}[22m`),
     normalizeSignature('Error:   toBe equality'),
   );
 });

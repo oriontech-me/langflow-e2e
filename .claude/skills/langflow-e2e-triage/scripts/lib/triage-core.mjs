@@ -19,8 +19,13 @@ export function findLatestRedRun(rows) {
   return null;
 }
 
+// The ESC is required. Without it the pattern strips the `[2m` and leaves the
+// bare ESC byte behind, so a signature recorded with ANSI never compares equal to
+// the same signature recorded without it — silently breaking the same-signature
+// recurrence rule that drives every flake decision.
+// `scripts/build-run-payload.mjs` already uses this form; this one had drifted.
 // eslint-disable-next-line no-control-regex
-const ANSI_RE = /\[[0-9;]*m/g;
+const ANSI_RE = /\u001b\[[0-9;]*m/g;
 
 /** Strip ANSI SGR escape sequences. */
 export function stripAnsi(s) {
