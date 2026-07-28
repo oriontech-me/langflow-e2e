@@ -768,7 +768,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 26 | 23 | 3 | 0 | 0 |
-| `core-components/` — Core Components | 85 | 80 | 3 | 1 | 1 |
+| `core-components/` — Core Components | 85 | 81 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
@@ -782,7 +782,7 @@
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 17 | 24 | 3 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **464** | **347 (75%)** | **100 (22%)** | **11 (2%)** | **6 (1%)** |
+| **TOTAL** | **464** | **348 (75%)** | **100 (22%)** | **10 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -798,7 +798,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 391 `test()` calls carrying the `@stable` tag, distributed across 158 spec
+> 392 `test()` calls carrying the `@stable` tag, distributed across 158 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -964,6 +964,7 @@
 - [x] applying a single component update refreshes it, decrements the outdated count, and creates a backup → `update-component-action.spec.ts`
 - [x] user should be able to see errors on popups when raise an error → `validate-raise-errors-components.spec.ts`
 - [x] Webhook component — HTTP POST accepts JSON and plain-text bodies returning 202 → `webhook-component-regression.spec.ts`
+- [x] Webhook component — flow is saved to database and contains the Webhook node → `webhook-component-regression.spec.ts`
 - [x] Webhook component — cURL command in inspector shows valid POST URL with flow ID → `webhook-component-regression.spec.ts`
 - [x] Webhook component — empty data field returns empty Data object → `webhook-component-regression.spec.ts`
 - [x] Webhook component — endpoint field renders the actual webhook URL → `webhook-component-regression.spec.ts`
