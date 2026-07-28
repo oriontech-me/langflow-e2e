@@ -68,6 +68,28 @@ A provider with a key that genuinely fails its probe (e.g. a model the
 account cannot access) is a legitimate `inactive` — recorded, logged, not a
 test failure.
 
+### Who consumes the recorded health
+
+Writing `inactive` is only half the mechanism — a spec has to obey it. Two kinds
+of spec do:
+
+- **Provider-parametrized** specs (the `agent-*` family, `mcp-client-agent`) build
+  their target list from `models.json` and drop a target whose provider is
+  `inactive`, quoting the recorded reason.
+- **Provider-hardcoded** specs gate through
+  `providerSkipGate(...)` in `tests/helpers/provider-setup/provider-health.ts`
+  (#1029). That helper is the single implementation of the rule: missing env key
+  first, then the recorded `inactive` reason. It **fails open** when
+  `providers.json` is absent or unparseable — a fresh clone has no file (it is
+  gitignored) and CI is allowed to run with a failed `Collect models` step (#980),
+  so "no signal" must never skip the suite. `IGNORE_PROVIDER_HEALTH=1` overrides a
+  stale local file.
+
+Before #1029 the hardcoded specs gated on env-var presence, so a key that existed
+but was drained still made the live call. On run 30374528125 that hung two Google
+tests past gunicorn's 300s timeout, killed shard 2's Langflow worker six times, and
+produced 14 collateral timeouts in specs that never touch Google.
+
 ### Env-keyed provider must be ACTIVE — with one exception
 
 A provider whose key IS configured but that ends `inactive` silently

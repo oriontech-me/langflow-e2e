@@ -41,8 +41,14 @@ the test ran clean at `--retries=0`.
 
 ## Preconditions *(optional)*
 
-- `OPENAI_API_KEY` / `GOOGLE_API_KEY` in the env (each test self-skips
-  without its key).
+- `OPENAI_API_KEY` / `GOOGLE_API_KEY` in the env, **and** the corresponding
+  provider recorded `active` in `providers.json`. Each test gates on provider
+  *health* via `providerSkipGate` (`helpers/provider-setup/provider-health.ts`),
+  not on the env var alone: a key that exists but is drained used to pass the old
+  gate and hang the live call past gunicorn's 300s timeout, killing the shard's
+  Langflow worker (#1029). The skip reason quotes the error `collect-models`
+  recorded. Set `IGNORE_PROVIDER_HEALTH=1` to override a stale local
+  `providers.json`.
 - `models.json` fresh (`collect-models.spec.ts`) for the setup helpers.
 - `--workers=1` (template loads create named flows; id-scoped afterEach
   cleanup is in place).

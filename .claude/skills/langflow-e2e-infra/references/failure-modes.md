@@ -34,14 +34,18 @@ path). This skill never removes `@stable` itself.
 
 **Symptom:** whole provider's agent specs silently skip, or fail with 403; a
 single inaccessible lead model disables the provider; PR impacted-specs gate picks
-an inaccessible model; a raw API key probes OK but the model isn't Langflow-buildable.
+an inaccessible model; a raw API key probes OK but the model isn't Langflow-buildable;
+a spec runs a live call against a provider already recorded `inactive` and hangs
+the shard's worker.
 
 **Levers:** build-probe the provider's model class (not just the raw key) ·
 collect models **before** the impacted-specs gate · set `PREFLIGHT_SKIP_CREDENTIALS`
-on PR collect-models · resolve model via alias/settled, never a hardcoded dated id.
+on PR collect-models · resolve model via alias/settled, never a hardcoded dated id ·
+gate provider-hardcoded specs on recorded **health**, never on env-var presence
+(`providerSkipGate` in `tests/helpers/provider-setup/provider-health.ts`).
 
-**Docs:** `docs/collect-models.md`.
-**Issues/PRs:** #570 · #873 · #900 · #886 · #892 · PR #878 · PR #887 · PR #893 · PR #901.
+**Docs:** `docs/collect-models.md` (→ *Who consumes the recorded health*).
+**Issues/PRs:** #570 · #873 · #900 · #886 · #892 · #1029 · PR #878 · PR #887 · PR #893 · PR #901.
 
 ## 3. External-dependency hard-fail
 

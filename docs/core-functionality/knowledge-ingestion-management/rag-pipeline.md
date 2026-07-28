@@ -89,8 +89,12 @@ bundle-free and never yields a false failure on a packaging change.
 ### Key/bundle guard
 
 The components are all core, so **no bundle presence guard is needed**. The spec
-**skips** only when `GOOGLE_API_KEY` is not configured (embedding + answer both
-need a live Google key), matching the provider-key skips elsewhere in the suite.
+**skips** when Google cannot serve a live call (embedding + answer both need a live
+Google key) — either `GOOGLE_API_KEY` is unset, or `collect-models` recorded the
+provider `inactive` in `providers.json`. The gate is `providerSkipGate("google")`
+(`helpers/provider-setup/provider-health.ts`), matching the provider-health skips
+elsewhere in the suite: gating on the env var alone let a drained key through, and
+the resulting hung call killed the shard's Langflow worker (#1029).
 
 ## Validation criterion (concrete, distinctive)
 
@@ -138,7 +142,7 @@ The answer observed live on 1.11.0.dev38 is exactly `ZEPHYR-42`.
 canvas-component configuration. `@stable`/`@release` cross-cutting. Third and
 final §5.2 RAG spec, builds on #673/#674; created `@stable` after deterministic
 end-to-end validation on the fresh nightly. All-core components — no bundle guard;
-skips cleanly only when `GOOGLE_API_KEY` is absent.)
+skips cleanly when Google is unusable — key absent or recorded `inactive`.)
 
 ---
 
@@ -147,7 +151,9 @@ skips cleanly only when `GOOGLE_API_KEY` is absent.)
 One test, one shared fixture flow, imported via the API with a unique flow name
 per run.
 
-**Guard:** skip if `GOOGLE_API_KEY` is unset.
+**Guard:** skip if Google cannot serve a live call — `GOOGLE_API_KEY` unset, or the
+provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, #1029).
+`IGNORE_PROVIDER_HEALTH=1` overrides a stale local `providers.json`.
 
 **Setup:**
 1. Create a fresh KB via `POST /api/v1/knowledge_bases` — unique name per run,
@@ -187,7 +193,8 @@ per run.
   the spec replaces per run. Built + configured live on the canvas and validated
   end-to-end on 1.11.0.dev38.
 - `GOOGLE_API_KEY` — required (embeds each chunk with `models/gemini-embedding-001` and
-  answers with `gemini-flash-latest`).
+  answers with `gemini-flash-latest`), **and** Google recorded `active` in
+  `providers.json` by `collect-models` (#1029).
 - Knowledge Base API: `POST /api/v1/knowledge_bases` (create),
   `GET /api/v1/knowledge_bases/{name}` (chunk count),
   `DELETE /api/v1/knowledge_bases/{name}` (scoped cleanup).
