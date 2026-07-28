@@ -1,45 +1,205 @@
+import { randomUUID } from "node:crypto";
 import { expect, Page } from "@playwright/test";
 import { adjustScreenView } from "../ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../other/await-bootstrap-test";
+import { getAuthToken } from "../auth/get-auth-token";
 import { zoomOut } from "../ui/zoom-out";
 import { deleteFlow } from "./delete-flow";
 
-export async function setupPlayground(page: Page): Promise<string> {
-  await awaitBootstrapTest(page);
-  await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
+/** Empty graph payload — what the SPA posts when the "Blank Flow" card is picked. */
+const BLANK_FLOW_DATA = {
+  nodes: [],
+  edges: [],
+  viewport: { zoom: 1, x: 0, y: 0 },
+};
 
-  const flowCreationPromise = page.waitForResponse(
-    (resp) =>
-      resp.url().includes("/api/v1/flows") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201,
-    { timeout: 15000 },
-  );
+/**
+ * Creates the empty flow through the REST API and returns its id.
+ *
+ * Why not the UI (#988): `POST /api/v1/flows/` derives the flow name
+ * server-side with a check-then-insert (`_deduplicate_flow_name` SELECTs the
+ * highest `New Flow (N)` and the INSERT follows in a separate statement). Two
+ * concurrent creations for the same user therefore resolve to the SAME name and
+ * the loser dies on `UNIQUE constraint failed: flow.user_id, flow.name`, which
+ * the endpoint maps to a bare **500** — measured directly in the container log
+ * while reproducing this helper's flake. The SPA stays on the flows list when
+ * that happens, so the old UI path then waited 30s for a navigation that could
+ * never occur.
+ *
+ * Posting an explicit, unique name takes the deduplication branch out of play
+ * entirely: the exact-name lookup misses, the name is used verbatim, and there
+ * is no shared value left for two workers to collide on.
+ */
+async function createBlankFlow(
+  page: Page,
+): Promise<{ id: string; name: string; authorization: string }> {
+  // Two constraints from the MCP tool name Langflow derives from this
+  // (`lfx.base.mcp.util.sanitize_mcp_name`), both of which
+  // `mcp-server-regression.spec.ts` asserts on:
+  //  - hyphens are normalised like spaces, so a raw UUID makes the slug
+  //    ambiguous — strip them;
+  //  - the sanitised name is truncated at 46 characters, so keep the whole
+  //    thing well under that. 16 hex digits is 64 bits of uniqueness, far more
+  //    than enough to keep two workers off the same name.
+  const name = `E2E Playground ${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  // The browser context has not loaded the app yet, so it carries no session:
+  // mint one up front (auto-login mode) and let the resulting cookies serve the
+  // subsequent `page.goto` as well. Falls back to whatever credentials the
+  // context already holds when the instance is not in auto-login mode.
+  const authorization = await getAuthToken(page.request);
+  const res = await page.request.post("/api/v1/flows/", {
+    data: {
+      name,
+      description: "",
+      data: BLANK_FLOW_DATA,
+      // The SPA's `createNewFlow` hardcodes this to true while the column
+      // defaults to false, so omitting it produces a flow that — unlike every
+      // UI-created one — is NOT exposed as an MCP tool. Caught by
+      // `mcp-server-regression.spec.ts` on a clean instance.
+      mcp_enabled: true,
+    },
+    headers: authorization ? { Authorization: authorization } : undefined,
+  });
 
-  await page.getByTestId("blank-flow").click();
-
-  const creationResponse = await flowCreationPromise;
-  const flowData = await creationResponse.json();
-  const flowId = flowData.id as string | undefined;
-  if (!flowId || flowId.trim() === "") {
+  if (!res.ok()) {
+    // Surface the real reason instead of the downstream navigation timeout the
+    // old implementation reported (#988).
     throw new Error(
-      "Flow creation response did not include a valid non-empty id.",
+      `setupPlayground: flow creation failed — POST /api/v1/flows/ → ${res.status()} ${res.statusText()}: ${await res
+        .text()
+        .catch(() => "<unreadable body>")}`,
     );
   }
 
+  const created = await res.json();
+  const flowId = created?.id as string | undefined;
+  if (!flowId || flowId.trim() === "") {
+    throw new Error(
+      "setupPlayground: flow creation response did not include a valid non-empty id.",
+    );
+  }
+  return {
+    id: flowId,
+    // `||`, not `??`: an empty name would slip past a nullish check and turn the
+    // hydration gate below into `toContainText("")`, which passes against any
+    // page at all — a safety gate that fails open is worse than none.
+    name: (created?.name as string) || name,
+    authorization,
+  };
+}
+
+/**
+ * Blocks until the persisted graph satisfies `expectation.matches`.
+ *
+ * Exists to serialise our canvas edits against the SPA's debounced autosave
+ * (#988). Each graph change schedules its own `PATCH /api/v1/flows/{id}` with
+ * the WHOLE graph, and those requests are not serialised client-side: under
+ * parallel load two of them overlap and the older one can be committed last,
+ * silently rolling the graph back. Measured on a failing run — the PATCH issued
+ * at 6.2s (nodes, no edge) answered at 7.56s, AFTER the 7.36s PATCH that carried
+ * the edge; the flow then stayed edge-less permanently, so no amount of waiting
+ * downstream recovered it. Letting each change reach the database before making
+ * the next one removes the overlap, and makes "the graph this helper built is
+ * durable" a postcondition callers can rely on after a reload.
+ *
+ * A bare `toPass` timeout here would read "expected true, received false",
+ * which says neither what was awaited nor how far the graph got — the same mute
+ * failure this helper was rewritten to stop producing. So the last observed
+ * state is captured on every probe and reported when the budget runs out.
+ */
+async function waitForGraphPersisted(
+  page: Page,
+  flowId: string,
+  authorization: string,
+  expectation: {
+    expected: string;
+    matches: (data: { nodes?: unknown[]; edges?: unknown[] }) => boolean;
+  },
+  // Deliberately tighter than the UI gates above: this polls a local API, so a
+  // budget that stretches toward the 5-minute test timeout only delays the real
+  // error. If the write has not landed in 15s it is not slow, it is lost.
+  timeoutMs = 15000,
+): Promise<void> {
+  const options = authorization
+    ? { headers: { Authorization: authorization } }
+    : undefined;
+  let lastSeen = "no successful read";
+
   try {
-    // POST /api/v1/flows → 201 only confirms the flow exists server-side — it
-    // does NOT confirm the SPA finished routing into the flow editor. Gate on
-    // the destination state (editor URL + canvas) before reaching for
-    // editor-only elements; otherwise an occasional navigation race leaves the
-    // app on the flows list and the sidebar wait times out (flaky).
-    await page.waitForURL(/\/flow\/[^/?#]+/, { timeout: 30000 });
+    await expect(async () => {
+      const res = await page.request.get(`/api/v1/flows/${flowId}`, options);
+      if (!res.ok()) {
+        lastSeen = `GET /api/v1/flows/{id} → ${res.status()} ${res.statusText()}`;
+      }
+      expect(res.ok()).toBe(true);
+      const data = (await res.json())?.data ?? {};
+      lastSeen = `${data.nodes?.length ?? 0} node(s), ${data.edges?.length ?? 0} edge(s)`;
+      expect(expectation.matches(data)).toBe(true);
+    }).toPass({ timeout: timeoutMs, intervals: [250, 500, 1000] });
+  } catch {
+    throw new Error(
+      `setupPlayground: a canvas edit never reached the database — expected ${expectation.expected}, ` +
+        `last saw ${lastSeen} after ${timeoutMs}ms. The usual cause is a stale autosave PATCH ` +
+        `committed after a newer one, which rolls the graph back for good (#988).`,
+    );
+  }
+}
+
+/**
+ * Creates a flow wired as ChatInput → ChatOutput and leaves the page on its
+ * canvas, ready for the playground. Returns the created flow's id so callers
+ * can clean it up with `deleteFlow`.
+ *
+ * The empty flow is created via the API (see `createBlankFlow`) and the canvas
+ * is reached by direct navigation; the two components are then added and
+ * connected through the real UI, which is the part the playground specs depend
+ * on. Compared with driving the home page → templates modal → "Blank Flow"
+ * path, this drops two of the three flow writes the setup used to perform (the
+ * throwaway flow the "New Flow" entry point eagerly creates, plus the bulk
+ * DELETE that disposes of it) and removes the navigation race altogether.
+ *
+ * Postcondition: the wired graph is durable — every canvas edit is confirmed
+ * server-side before the next one is made (`waitForGraphPersisted`), so callers
+ * may reload the page or read the flow back over the API immediately.
+ */
+export async function setupPlayground(page: Page): Promise<string> {
+  const {
+    id: flowId,
+    name: flowName,
+    authorization,
+  } = await createBlankFlow(page);
+
+  try {
+    await page.goto(`/flow/${flowId}`);
+
+    // Gate on the canvas being mounted before reaching for editor-only
+    // elements. Unlike the previous URL wait, this cannot hang on a navigation
+    // that never happened — the flow provably exists at this point.
     await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
       timeout: 30000,
     });
 
-    // The flow editor sidebar mounts after the POST /api/v1/flows response
-    // resolves; wait for sidebar-search-input before interacting (see #278).
+    // …and on the flow store having HYDRATED this flow, not merely on the
+    // canvas chrome being painted. The header name renders
+    // `useFlowStore.currentFlow.name`, so a match proves the fetched flow is in
+    // the store. Without it a component added into the pre-hydration window is
+    // wiped when the store swaps in the persisted (empty) graph.
+    await expect(page.getByTestId("flow_name")).toContainText(flowName, {
+      timeout: 30000,
+    });
+
+    // …and on write permission having RESOLVED. `useAddComponent` bails out
+    // silently while `useIsFlowReadOnly(currentFlow.id)` is true, and that hook
+    // reports read-only for the whole time the effective-permissions query is
+    // in flight — so a click landed in that window adds nothing at all, with no
+    // error anywhere. The header's flow-name button is disabled by the very
+    // same expression (`FlowMenu` → `useIsFlowReadOnly(currentFlow?.id)`), so
+    // its enabled state is an exact observable for "the add will register".
+    await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
+      timeout: 30000,
+    });
+
+    // The flow editor sidebar mounts after the flow payload resolves; wait for
+    // sidebar-search-input before interacting (see #278).
     await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
       timeout: 30000,
     });
@@ -53,6 +213,24 @@ export async function setupPlayground(page: Page): Promise<string> {
       .then(async () => {
         await page.getByTestId("add-component-button-chat-output").click();
       });
+
+    // Assert each component landed before adding the next one: a bare
+    // "expected 2, got 1" at the end of the setup does not say WHICH add was
+    // lost, and that ambiguity cost a debug cycle on #988.
+    await expect(page.locator(".react-flow__node")).toHaveCount(1, {
+      timeout: 15000,
+    });
+
+    // …and let it reach the database before the next edit — see
+    // `waitForGraphPersisted`. The gate has to sit after EVERY mutation, not
+    // just at the end: it is the in-flight save of edit N that edit N+1's save
+    // can overtake, and the loser is committed last.
+    await waitForGraphPersisted(
+      page,
+      flowId,
+      authorization,
+      { expected: "1 node", matches: (data) => (data.nodes?.length ?? 0) === 1 },
+    );
 
     await zoomOut(page, 2);
 
@@ -72,6 +250,14 @@ export async function setupPlayground(page: Page): Promise<string> {
       timeout: 10000,
     });
 
+    // Both nodes committed before the edge is drawn.
+    await waitForGraphPersisted(
+      page,
+      flowId,
+      authorization,
+      { expected: "2 nodes", matches: (data) => (data.nodes?.length ?? 0) === 2 },
+    );
+
     await page
       .getByTestId("handle-chatinput-noshownode-chat message-source")
       .click();
@@ -82,10 +268,25 @@ export async function setupPlayground(page: Page): Promise<string> {
     await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
       timeout: 8000,
     });
+
+    // Postcondition: the wired graph survives a reload. Several callers reload
+    // the page or read the flow back over the API right after this returns.
+    await waitForGraphPersisted(
+      page,
+      flowId,
+      authorization,
+      { expected: "1 edge", matches: (data) => (data.edges?.length ?? 0) >= 1 },
+    );
   } catch (err) {
     // Best-effort rollback of the created flow — swallow so the original
     // failure (err) is the one that surfaces, not a secondary cleanup error.
-    await deleteFlow(page.request, flowId).catch(() => {});
+    // The explicit header matters: `page.request` on its own is unauthenticated
+    // under AUTO_LOGIN, so a bare delete would 401 and leak the flow.
+    await deleteFlow(
+      page.request,
+      flowId,
+      authorization ? { headers: { Authorization: authorization } } : undefined,
+    ).catch(() => {});
     throw err;
   }
 

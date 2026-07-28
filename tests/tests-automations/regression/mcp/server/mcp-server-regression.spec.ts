@@ -1,5 +1,4 @@
 import { expect, test } from "../../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
@@ -20,7 +19,11 @@ test.describe("MCP Server – Flow Exposed as MCP Tool", () => {
       let flowName = "";
 
       await test.step("Create a blank ChatInput → ChatOutput flow and capture its name", async () => {
-        await awaitBootstrapTest(page);
+        // No `awaitBootstrapTest` here: `setupPlayground` creates the flow over
+        // the API and navigates straight to its canvas (#988). Going through
+        // the home page first would only add a throwaway flow — the "New Flow"
+        // entry point eagerly creates one — and leak it, since nothing in this
+        // path disposes of it any more.
         flowId = await setupPlayground(page);
         // Capture the auto-generated name so we can assert this specific flow surfaces
         // in the tool list, instead of relying on a generic "at least one tool" check
