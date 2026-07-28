@@ -60,9 +60,16 @@ moment a ticket is filed. Not counted in the indicator.
 
 | Found | Area / Test | Regression | Severity | Report |
 |-------|-------------|------------|----------|--------|
+| 2026-07-27 | api · api-folders-crud.spec.ts | `DELETE /api/v1/projects/{id}` answers `500` (`sqlite3.OperationalError: database is locked`) instead of `204` while any other write is in flight, and the project survives. Not new — stable 1.10.3 emits the same instant `500` — but 1.12 raises the rate ~7× (6 % → 44 % at 2 concurrent clients, A/B/A/B) and flips the mode: 1.10.3 blocks and mostly honours the contract, 1.12 gives up in 0.03 s. Sibling write endpoints (`POST /projects`, `POST /flows`, `DELETE /flows`) survive the identical contention | Medium | docs/upstream-bugs/UPSTREAM-BUG-project-delete-500-under-contention.md |
 
-*(none — the New Flow dead click was promoted to the Ledger on 2026-07-27 when
-LE-2019 was filed.)*
+Note on the row above, so the earlier adjudication is not re-litigated blindly:
+the *Bulk-flow-delete SQLite-lock 500* entry below was downgraded because a
+client-side retry masked the failure. That defence was re-tested here and holds
+**only at light contention** — 6/6 UI deletes succeeded at 2 background writers,
+2 of them via a masked retry. With 4 writers the retry budget is exhausted and
+the delete **silently no-ops**: project still in the sidebar, no toast, notification
+centre empty, only a console error. That silent no-op is what makes this row
+user-facing; it is Medium, not High, because it needs sustained concurrent writes.
 
 ## Not listed — validated non-regression
 

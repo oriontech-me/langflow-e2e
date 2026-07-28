@@ -2,6 +2,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { deleteProject } from "../../../../helpers/flows/delete-project";
 import { MainPage } from "../../../../pages/MainPage";
 
 /**
@@ -101,11 +102,14 @@ test(
     } finally {
       if (flowAId) await deleteFlow(request, flowAId, { headers });
       if (flowBId) await deleteFlow(request, flowBId, { headers });
-      if (folderAId) {
-        await request.delete(`/api/v1/projects/${folderAId}`, { headers }).catch(() => {});
-      }
-      if (folderBId) {
-        await request.delete(`/api/v1/projects/${folderBId}`, { headers }).catch(() => {});
+      // deleteProject retries the 500 the endpoint returns under concurrent
+      // writes (#965) — the bare request.delete here resolved on that status and
+      // left both folders on the instance permanently.
+      for (const folderId of [folderAId, folderBId]) {
+        if (!folderId) continue;
+        await deleteProject(request, folderId, { headers }).catch((error) => {
+          console.warn(`⚠️ Orphan project left behind (${folderId}): ${error}`);
+        });
       }
     }
   },

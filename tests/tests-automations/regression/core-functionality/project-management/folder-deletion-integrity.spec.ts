@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteProject } from "../../../../helpers/flows/delete-project";
 import { MainPage } from "../../../../pages/MainPage";
 
 /**
@@ -61,11 +62,13 @@ test(
       });
     } finally {
       if (!folderDeleted) {
-        await request
-          .delete(`/api/v1/projects/${folderId}`, {
-            headers: { Authorization: authToken },
-          })
-          .catch(() => {});
+        // deleteProject retries the 500 the endpoint returns under concurrent
+        // writes (#965), which the bare request.delete accepted as done.
+        await deleteProject(request, folderId, {
+          headers: { Authorization: authToken },
+        }).catch((error) => {
+          console.warn(`⚠️ Orphan project left behind (${folderId}): ${error}`);
+        });
       }
     }
   },

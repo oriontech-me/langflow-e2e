@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { deleteProject } from "../../../../helpers/flows/delete-project";
 
 // Folders use the /api/v1/projects/ endpoint (legacy alias kept for compatibility)
 test.describe("Folder (Projects) CRUD via API", () => {
@@ -19,10 +20,16 @@ test.describe("Folder (Projects) CRUD via API", () => {
       await deleteFlow(request, id, { headers: { Authorization: authToken } });
     }
     for (const id of createdFolderIds) {
-      // request.delete resolves on any status and 404 (already gone) is the
-      // desired idempotent end state, so no throw/catch is needed here.
-      await request.delete(`/api/v1/projects/${id}`, {
+      // deleteProject, not a bare request.delete: the endpoint answers 500
+      // instead of 204 under concurrent writes (#965, a product defect), and a
+      // bare call resolves on any status — so every such teardown used to leave
+      // a permanent orphan project behind. The helper verifies the deletion and
+      // retries the transient 5xx; a still-failing cleanup is logged rather than
+      // failing this hook, so it can never mask the assertion that already ran.
+      await deleteProject(request, id, {
         headers: { Authorization: authToken },
+      }).catch((error) => {
+        console.warn(`⚠️ Orphan project left behind (${id}): ${error}`);
       });
     }
     createdFlowIds.length = 0;

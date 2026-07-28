@@ -3,6 +3,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { deleteProject } from "../../../../helpers/flows/delete-project";
 
 test(
   "user should be able to select flows with different methods and perform bulk actions",
@@ -190,10 +191,14 @@ test(
           }
         }
         // Delete the dedicated folder last (its flows are already gone above).
+        // deleteProject retries the 500 the endpoint returns under concurrent
+        // writes (#965), which a bare request.delete silently accepted.
         if (folderId) {
-          await request
-            .delete(`/api/v1/projects/${folderId}`, { headers })
-            .catch(() => {});
+          await deleteProject(request, folderId, { headers }).catch((error) => {
+            console.warn(
+              `⚠️ Orphan project left behind (${folderId}): ${error}`,
+            );
+          });
         }
       } catch {
         // Cleanup is best-effort — do not mask the original test failure.
