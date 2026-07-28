@@ -273,9 +273,10 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent stop button must halt execution mid-run",
-      // @stable removed: hard-fails every weekly run (deterministic). Tracked in #355;
-      // tag to be restored in the correction PR. See @stable lifecycle in CONTRIBUTING.md.
-      { tag: ["@release", "@components", "@agents", "@playground"] },
+      // @stable restored in #992: the #355 hard failure (120s `waitForSelector`
+      // on the stop button) no longer reproduces on 1.12.0.dev7 — the test
+      // finishes in ~10s. See CONTRIBUTING.md for the @stable lifecycle.
+      { tag: ["@stable", "@release", "@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

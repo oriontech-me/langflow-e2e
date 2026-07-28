@@ -5,7 +5,7 @@ import { SimpleAgentTemplatePage } from "../../../../pages";
 
 test(
   "user must be able to send images in the playground with the agent component",
-  { tag: ["@release", "@components", "@agents"] },
+  { tag: ["@stable", "@release", "@components", "@agents"] },
   async ({ page }) => {
     test.skip(
       !process?.env?.OPENAI_API_KEY,
