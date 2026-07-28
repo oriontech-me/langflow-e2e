@@ -712,13 +712,13 @@
 - [x] Delete component from canvas via node options (...) menu → `core-components/componentDelete.spec.ts`
 - [x] Copy and paste ChatOutput component (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [x] Copy and paste Prompt Template (component with dynamic ports) (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
-- [-] Canvas keyboard shortcuts
-- [-] Minimize component on canvas
-- [-] Move component within canvas
-- [-] Select multiple components via box selection
-- [x] Delete multiple selected components (marquee box selection) → `core-components/componentDelete.spec.ts`
-- [-] Deselect node by clicking on empty canvas area
-- [-] Deselect node via Escape
+- [x] Canvas keyboard shortcuts — Duplicate/Delete/Copy/Paste/Cut/Undo/Redo each act on the selected node, with the selection re-gated before every keypress → `ui-ux/langflowShortcuts.spec.ts`
+- [x] Minimize component on canvas — the options menu collapses the node (every handle gains `no-show`, height shrinks) and persists `data.showNode = false`; the item swaps to Expand, which restores both → `ui-ux/minimize.spec.ts`
+- [x] Move component within canvas — dragging a node by its title moves it on canvas and the new coordinates reach the backend (`GET /api/v1/flows/{id}` `position` matches the rendered transform) → `flow-functionality/canvas-move-node.spec.ts`
+- [x] Select multiple components via box selection — a Shift+drag marquee enclosing two separated nodes takes `.react-flow__node.selected` from 0 to 2, while a marquee drawn away from them selects nothing (negative control) → `flow-functionality/canvas-multiselect.spec.ts`
+- [x] Delete multiple selected components (marquee box selection) → `core-components/componentDelete.spec.ts`, `flow-functionality/canvas-multiselect.spec.ts`
+- [x] Deselect node by clicking on empty canvas area — clicking `.react-flow__pane` clears a selection asserted present first → `flow-functionality/canvas-deselect-node.spec.ts`
+- [x] Deselect node via Escape → `flow-functionality/canvas-deselect-node.spec.ts`
 
 #### 15.5 Canvas Zoom and Navigation
 - [x] Zoom in / Zoom out → `ui-ux/canvas-zoom-navigation.spec.ts`
