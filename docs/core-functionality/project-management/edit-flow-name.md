@@ -1,6 +1,6 @@
 # Project Management – Edit Flow Name
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -26,6 +26,8 @@ in editor-local state.
 
 ## Step by step *(required)*
 
+0. Install a `POST /api/v1/flows` → 201 listener so every flow the test creates
+   is tracked by id and deleted in `afterEach` (id-scoped cleanup, #553).
 1. Bootstrap the session (`awaitBootstrapTest(page)`).
 2. Open the **Basic Prompting** starter flow.
 3. For each of two random target names:
@@ -72,3 +74,26 @@ multiple nightly runs because the return-to-home flow-list API refetch + render
 exceeds 3 s under parallel load (issue #410). The web-first assertions auto-retry
 until the renamed flow appears, so a genuine failure (flow never listed) still
 fails the test.
+
+### The upstream rename-clobber race (issue #995)
+
+This test lost `@stable` on 2026-07-13 as a recurrent flake whose cause #727
+never classified. Root-caused on 1.12.0.dev7: `PATCH /api/v1/flows/{id}` has no
+version check and `use-save-flow.ts` applies whichever response lands last
+(`setCurrentFlow(updatedFlow)` in the mutation's `onSuccess`). The editor's
+debounced mount autosave carries the **pre-rename** name, so when it overlaps
+the flow-settings save and lands after it, the rename is reverted in the store
+**and in the database** — `GET /api/v1/flows/` returns the old name. The header
+then never reaches the new name.
+
+This is product behaviour, not test timing; the test is only fast enough to hit
+the window. Reproduced naturally in 2 of 6 runs at `--workers=4` under load, and
+deterministically by holding the mount autosave so it lands last.
+
+`renameFlow` mitigates it in three layers: `waitForFlowSaveSettled` now waits on
+in-flight PATCH **requests** (not just response silence); the barrier is closed a
+second time immediately before the save click; and the one variant no barrier can
+prevent — an autosave *issued after* our PATCH, from a store that has not yet
+received our response — is absorbed by re-applying the rename once, with a
+`console.warn`. The closing assertion is unconditional, so a rename that never
+persists still fails.
