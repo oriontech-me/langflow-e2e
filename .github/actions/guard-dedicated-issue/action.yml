@@ -23,6 +23,13 @@ inputs:
     description: "Label applied to an issue that fails the contract."
     required: false
     default: "needs-triage"
+  dry_run:
+    description: >-
+      Evaluate and print the verdict without commenting or labelling. Lets the
+      action be proven from a branch (workflow_dispatch) without mutating a real
+      issue — the `issues` trigger itself only fires from the default branch.
+    required: false
+    default: "false"
   github_token:
     description: "Token with issues: write."
     required: true
@@ -48,6 +55,7 @@ runs:
         GH_TOKEN: ${{ inputs.github_token }}
         IN_ISSUE: ${{ inputs.issue }}
         IN_SINCE: ${{ inputs.since }}
+        DRY_RUN: ${{ inputs.dry_run }}
         FAIL_LABEL: ${{ inputs.label }}
         REPO: ${{ github.repository }}
       run: |
@@ -117,6 +125,11 @@ runs:
           invalid=$((invalid + 1))
           echo "::warning::issue #$n does not meet the dedicated-issue contract"
           echo "$verdict" | jq -r '.problems[] | "  - " + .'
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "  [dry-run] would comment and apply the '$FAIL_LABEL' label"
+            continue
+          fi
 
           # Upsert, so editing the body does not accumulate one comment per edit.
           marker="dedicated-issue-contract-guard:$n"

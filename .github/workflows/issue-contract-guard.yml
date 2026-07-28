@@ -17,6 +17,21 @@ on:
     # `edited` closes the loop: fixing the body re-runs the check, and the guard
     # comment is updated in place rather than a new one being appended.
     types: [opened, edited]
+  # Pre-merge proof path. The `issues` trigger above only fires from the file on
+  # the DEFAULT branch, so it cannot be exercised from a PR branch — the same
+  # constraint triage-dispatch.yml documents for its own triggers. This entry
+  # runs the identical composite action against a chosen issue from any branch,
+  # which proves everything except the event wiring itself. Defaults to dry_run
+  # so a validation run never comments on or labels a real issue.
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue number to check"
+        required: true
+      dry_run:
+        description: "Print the verdict without commenting or labelling"
+        type: boolean
+        default: true
 
 # Only issues: write — this workflow never touches code.
 permissions:
@@ -26,18 +41,26 @@ permissions:
 jobs:
   guard:
     name: Dedicated-issue contract
-    # Cheap pre-filter. The action still classifies by title and skips the
-    # umbrella, but there is no reason to spin a runner for unrelated issues.
-    if: contains(github.event.issue.labels.*.name, 'daily-failure')
+    # Cheap pre-filter on the event path. The action still classifies by title and
+    # skips the umbrella, but there is no reason to spin a runner for unrelated
+    # issues. The manual path is gated on a trusted actor instead — without that,
+    # any collaborator who can dispatch could make the guard comment on an
+    # arbitrary issue (same guard triage-dispatch.yml puts on its dispatch entry).
+    if: >-
+      (github.event_name == 'issues' &&
+       contains(github.event.issue.labels.*.name, 'daily-failure')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       contains(fromJSON('["rafaelgiln","Victor-w-Madeira","daniellicnerski1"]'), github.actor))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
       # An edit burst must not race itself into duplicate comments.
-      group: issue-contract-guard-${{ github.event.issue.number }}
+      group: issue-contract-guard-${{ github.event.issue.number || inputs.issue }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/guard-dedicated-issue
         with:
-          issue: ${{ github.event.issue.number }}
+          issue: ${{ github.event.issue.number || inputs.issue }}
+          dry_run: ${{ inputs.dry_run || false }}
           github_token: ${{ github.token }}
