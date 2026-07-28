@@ -56,6 +56,9 @@ async function injectChatInputValue(
 // Poll the backend until the ChatInput → ChatOutput edge is persisted, so the
 // upcoming reload renders the saved graph. Replaces a fixed-duration sleep
 // that was tuned to the autosave debounce.
+// Kept as a local guard even though `setupPlayground` now returns only once the
+// edge is committed (#988) — it costs one API call when the graph is already
+// durable, and it keeps this spec's precondition explicit at the call site.
 async function waitForEdgePersisted(
   page: Page,
   flowId: string,
@@ -116,7 +119,7 @@ test.describe("Playground – Input Text Pre-fill Behavior", () => {
 
   test(
     "creating a new session re-applies the Input Text pre-fill",
-    { tag: ["@regression", "@playground"] },
+    { tag: ["@stable", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up flow with Input Text and open playground", async () => {
         createdFlowId = await setupFlowWithPrefill(page);
@@ -150,7 +153,7 @@ test.describe("Playground – Input Text Pre-fill Behavior", () => {
 
   test(
     "pre-filled value is sent as the first message of the session",
-    { tag: ["@regression", "@playground"] },
+    { tag: ["@stable", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("set up flow with Input Text and open playground", async () => {
         createdFlowId = await setupFlowWithPrefill(page);

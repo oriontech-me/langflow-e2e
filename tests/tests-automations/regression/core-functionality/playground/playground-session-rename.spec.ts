@@ -30,7 +30,7 @@ test.describe("Playground – Session Rename (B2)", () => {
 
   test(
     "rename option must not be available for the Default Session",
-    { tag: ["@regression", "@playground"] },
+    { tag: ["@stable", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step(
         "Set up ChatInput → ChatOutput echo flow and open playground",
