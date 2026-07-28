@@ -27,9 +27,13 @@
 //
 // Outputs ($GITHUB_OUTPUT + human summary on stdout):
 //   empty          "true" when the report carries no test result at all
+//   unreadable     "true" when the report was missing or unparseable — a SUBSET of
+//                  `empty`, split out so the failure message can name the real
+//                  condition ("the merge produced nothing" rather than "the shards
+//                  aborted before the first test", which points triage elsewhere)
 //   tests_total    expected + unexpected + flaky + skipped
 //   report_errors  number of top-level report errors
-//   first_error    first error signature (single line, capped) or ""
+//   first_error    first error signature (single line, capped, display-safe) or ""
 //
 // Always exits 0 — this step reports facts and the workflow decides whether to
 // fail, so the guard's own message stays separable from the run's verdict. A
@@ -39,6 +43,7 @@
 // Pure, dependency-free ESM so the merge job runs it with plain `node` (no ts-node).
 
 import fs from "node:fs";
+import { pathToFileURL } from "node:url";
 
 // Same normalisation the history appender uses (scripts/append-weekly-history.mjs):
 // first non-empty line, trimmed, capped at 240 chars, so equal causes cluster to
@@ -56,6 +61,30 @@ export function errorSignature(error) {
 
 export function errorSignatures(report) {
   return (report?.errors || []).map((e) => errorSignature(e)).filter(Boolean);
+}
+
+// Make a signature safe to RENDER (step output → `::error::` annotation and the
+// umbrella issue's fenced block) WITHOUT changing what `errorSignature` returns:
+// that value is the clustering key shared with the history appender, and rewriting
+// it would stop new signatures from matching the ones already committed in
+// reports/daily-history.jsonl — the 30-day same-signature flake criterion in
+// CONTRIBUTING.md compares them across runs.
+//   1. Playwright error messages carry ANSI colour codes (the committed history
+//      shows `Error: \u001b[2mexpect(\u001b[22m…`), which render as literal noise
+//      in an issue body.
+//   2. Any remaining C0/DEL control char becomes a space. A lone `\r` survives
+//      `errorSignature` (it splits on "\n" and only trims the ends) and the Actions
+//      runner reads $GITHUB_OUTPUT line-wise, so a CR inside the value could forge
+//      a second `key=value` line — `empty=false` included. Sanitising at the source
+//      makes the output injection-proof without needing a heredoc delimiter.
+export function displaySignature(signature) {
+  if (!signature) return "";
+  return signature
+    // eslint-disable-next-line no-control-regex
+    .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .trim();
 }
 
 // Total test results the run produced, in any state. Read from `stats` rather
@@ -109,7 +138,9 @@ function main() {
       `[integrity] ZERO tests executed (stats total = 0) with ${result.reportErrors} top-level ` +
         `report error(s) — the shards aborted before any test ran.`,
     );
-    for (const sig of result.signatures.slice(0, 4)) console.log(`[integrity]   ${sig}`);
+    for (const sig of result.signatures.slice(0, 4)) {
+      console.log(`[integrity]   ${displaySignature(sig)}`);
+    }
   } else {
     console.log(
       `[integrity] ${result.testsTotal} test result(s) in ${reportPath}` +
@@ -122,17 +153,38 @@ function main() {
       process.env.GITHUB_OUTPUT,
       [
         `empty=${result.empty}`,
+        `unreadable=${result.unreadable}`,
         `tests_total=${result.testsTotal}`,
         `report_errors=${result.reportErrors}`,
-        // Single-line by construction (the signature is one capped line), so a
-        // plain key=value is safe here — no heredoc delimiter needed.
-        `first_error=${result.signatures[0] || ""}`,
+        // Single line and control-char free by construction (see displaySignature),
+        // so a plain key=value is safe here — no heredoc delimiter needed.
+        `first_error=${displaySignature(result.signatures[0])}`,
       ].join("\n") + "\n",
     );
   }
 }
 
 // Run only when invoked directly (not when imported by the test file).
-if (import.meta.url === `file://${process.argv[1]}`) {
+//
+// Both normalisations are load-bearing, and getting either wrong is SILENT: main()
+// simply never runs, the step exits 0 with NO outputs, the workflow reads `empty`
+// as "" and — before the fail-closed gate — went green on an empty report. A guard
+// that can vanish quietly is the failure mode this whole file exists to remove, so
+// the comparison has to be exact:
+//   pathToFileURL — import.meta.url is percent-encoded, so a `file://${argv[1]}`
+//     template stops matching as soon as the path needs escaping (one space does it);
+//   realpathSync — the ESM loader resolves symlinks in import.meta.url while argv[1]
+//     keeps the path as typed, so any symlinked ancestor (a macOS /var/folders tmpdir,
+//     a symlinked checkout) breaks a plain comparison.
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  try {
+    return import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   main();
 }
