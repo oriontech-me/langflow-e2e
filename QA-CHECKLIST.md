@@ -224,7 +224,7 @@
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
-- [!] Flow salvo no banco contém o nó Webhook com endpoint="BACKEND_URL" → `core-components/webhook-component-regression.spec.ts` (fixme — upstream Accept-Language TypeError, see #165 item 2)
+- [x] Flow salvo no banco contém o nó Webhook com endpoint="BACKEND_URL" → `core-components/webhook-component-regression.spec.ts` (quarentena de 2½ meses liberada em #990: o teste lia o flow via `page.evaluate(fetch)` e tropeçava no defeito do interceptor de `window.fetch` do frontend; agora lê via `request.get` autenticado)
 - [x] Campo cURL no inspector mostra URL válida com flow ID e flags corretas (`-X POST`, `Content-Type`, `-d`) → `core-components/webhook-component-regression.spec.ts`
 - [x] Data field vazia retorna objeto Data vazio `{}` ao executar → `core-components/webhook-component-regression.spec.ts`
 - [x] Campo endpoint (`str_endpoint`) renderiza a URL real do webhook → `core-components/webhook-component-regression.spec.ts`
