@@ -15,9 +15,7 @@ test(
 
     // Gate on provider HEALTH, not on the env var alone — a drained key would
     // block the backend past gunicorn's 300s timeout and kill the shard's
-    // Langflow worker (#1029). Evaluated after dotenv so a local `.env`-only key
-    // is seen.
-    //
+    // Langflow worker (#1029).
     // NOTE (#1029 audit): the gate names Anthropic but the test configures the
     // node with `initialGPTsetup` (OpenAI). The mismatch predates this change and
     // is preserved deliberately — this is an unvalidated inherited spec with no

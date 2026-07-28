@@ -36,10 +36,10 @@ test(
 
     // A real multimodal completion runs below, so gate on provider HEALTH, not on
     // the env var alone — a drained key would block the backend past gunicorn's
-    // 300s timeout and kill the shard's Langflow worker (#1029). Evaluated after
-    // dotenv so a local `.env`-only key is seen.
+    // 300s timeout and kill the shard's Langflow worker (#1029).
     const openaiGate = providerSkipGate("openai");
     test.skip(openaiGate.skip, openaiGate.reason);
+
     // Load the Simple Agent template via the canonical helper, which clears
     // existing flows, opens the templates modal through the correct entry point,
     // and waits for the canvas to actually load. The previous manual

@@ -81,7 +81,6 @@ test(
     // Two real OpenAI completions run below, so gate on provider HEALTH, not on
     // the env var alone — a drained key would otherwise block the backend past
     // gunicorn's 300s timeout and kill the shard's Langflow worker (#1029).
-    // Evaluated after dotenv so a local `.env`-only key is seen.
     const openaiGate = providerSkipGate("openai");
     test.skip(openaiGate.skip, openaiGate.reason);
 
