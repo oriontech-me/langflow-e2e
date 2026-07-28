@@ -1,6 +1,6 @@
 # Playground Session — Rename Availability
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 

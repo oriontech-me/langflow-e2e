@@ -1,6 +1,6 @@
 # Playground — Input Text Pre-fill Behavior
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
