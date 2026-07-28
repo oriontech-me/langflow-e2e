@@ -10,12 +10,47 @@ dotenv.config();
  */
 const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:7860";
 
+/**
+ * Destructive lane (#1010).
+ *
+ * A `@destructive` test mutates account-wide state — today
+ * `folder-deletion-integrity.spec.ts` deleting EVERY project of the shared
+ * superuser to reach the empty-project screen. Under `fullyParallel` that is a
+ * cross-test wiper: it emptied the account under its own file-siblings and under
+ * folder-crud / bulk-actions / flow-navigation-between-folders, whose bootstrap
+ * then took the empty-instance branch and burned a 30s poll on a welcome overlay
+ * that state never produces.
+ *
+ * So the tag is a LANE SELECTOR, not a severity: every normal run excludes it,
+ * and `PW_DESTRUCTIVE=1` runs it alone. Two details are deliberate:
+ *  - the exclusion uses `grepInvert`, not `grep`. A CLI `--grep` (the daily's
+ *    `@stable`, nightly's optional filter) OVERRIDES `config.grep` but leaves
+ *    `config.grepInvert` in place — so no caller can bypass the exclusion by
+ *    passing a filter of its own.
+ *  - the lane pins `workers: 1` / `fullyParallel: false` HERE rather than relying
+ *    on the command line, so a caller cannot forget and let two destructive tests
+ *    wipe each other.
+ */
+const DESTRUCTIVE_LANE = !!process.env.PW_DESTRUCTIVE;
+
+if (!DESTRUCTIVE_LANE) {
+  // Never let the exclusion become a silent cap: say it on every run, with the
+  // exact command that runs what was left out.
+  console.log(
+    "[lane] @destructive tests are excluded from this run — run them with: PW_DESTRUCTIVE=1 npx playwright test --grep @destructive",
+  );
+}
+
 export default defineConfig({
   testDir: "./tests",
+  // The destructive lane runs account-wide wipers, so it must never schedule two
+  // tests at once (see DESTRUCTIVE_LANE above).
+  grepInvert: DESTRUCTIVE_LANE ? undefined : /@destructive/,
   // File-level sharding for the daily's sharded run keeps every test() of a spec
   // file in one shard (so @database state-sharing holds). The sharded job sets
   // PW_SHARD_FILE_LEVEL=1; local dev / nightly / manual keep test-level parallelism.
-  fullyParallel: process.env.PW_SHARD_FILE_LEVEL ? false : true,
+  fullyParallel:
+    DESTRUCTIVE_LANE || process.env.PW_SHARD_FILE_LEVEL ? false : true,
   forbidOnly: !!process.env.CI,
   // PLAYWRIGHT_RETRIES overrides the retry count when set (e.g. a manual
   // validation dispatch passing 0 for a fast, unamplified signal); empty/unset
@@ -32,7 +67,7 @@ export default defineConfig({
   // per shard (~90 tests each) the 2nd worker is a net win — benchmarked at ~28min
   // (workers=2) vs ~39min (workers=1) at N=4, correctness identical. See
   // ISSUE-833-SHARDING-DESIGN.md §"workers per shard".
-  workers: process.env.CI ? 2 : undefined,
+  workers: DESTRUCTIVE_LANE ? 1 : process.env.CI ? 2 : undefined,
   timeout: 5 * 60 * 1000, // 5 minutes per test
   // Reporters run side by side. The Flakiness.io reporter MUST live here, not on
   // the CLI `--reporter` flag, because its `flakinessProject` option (required for

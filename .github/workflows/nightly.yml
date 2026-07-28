@@ -96,6 +96,31 @@ jobs:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
 
+      # Destructive lane (#1010). `@destructive` tests mutate account-wide state
+      # (deleting every project of the shared superuser), so playwright.config.ts
+      # excludes them from the run above and pins this lane to workers=1. It runs
+      # AFTER that run, and `--pass-with-no-tests` makes it a no-op when the
+      # optional grep filter above selected nothing destructive.
+      #
+      # `--reporter=github` replaces the whole configured reporter list, so this
+      # step writes no HTML and cannot clobber the main run's `playwright-report/`
+      # — at the cost of the lane not reaching Flakiness.io. `--output` keeps its
+      # traces/screenshots out of the main run's `test-results/` too. The GitHub
+      # annotations are the lane's signal.
+      - name: Run destructive lane
+        if: always()
+        run: |
+          GREP="${{ github.event.inputs.test_grep }}"
+          if [ -n "$GREP" ]; then
+            npx playwright test --grep "(?=.*@destructive)(?=.*${GREP})" --pass-with-no-tests --reporter=github --output=test-results-destructive
+          else
+            npx playwright test --grep "@destructive" --pass-with-no-tests --reporter=github --output=test-results-destructive
+          fi
+        env:
+          CI: "true"
+          PW_DESTRUCTIVE: "1"
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+
       - name: Upload Playwright report
         uses: actions/upload-artifact@v7
         if: always()

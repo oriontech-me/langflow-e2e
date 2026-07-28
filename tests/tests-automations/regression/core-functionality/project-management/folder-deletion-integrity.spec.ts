@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
 import { MainPage } from "../../../../pages/MainPage";
 
@@ -18,6 +19,65 @@ import { MainPage } from "../../../../pages/MainPage";
  * the integrity properties around deletion and set their fixtures up via the
  * REST API so they don't repeat the UI create/rename steps.
  */
+
+// Ids of flows a test created, deleted id-scoped in afterEach (#515 — never a
+// global cleanAllFlows, which wipes flows other workers are building). Tests 2
+// and 3 open a starter template to reach the folder view through the real
+// navigation path, and opening it CREATES a flow; nothing used to delete it, so
+// every run left one behind (47 flows on the local instance, 20 of them stray
+// "Basic Prompting" copies, before this was added).
+const createdFlowIds: string[] = [];
+
+test.afterEach(async ({ page, request }) => {
+  const ids = [...createdFlowIds];
+  createdFlowIds.length = 0;
+  if (ids.length === 0) return;
+  const authToken = await getAuthToken(request);
+  for (const id of ids) {
+    // Not swallowed silently: a failed cleanup is reported, never hidden — but it
+    // must not fail the hook and mask the assertion that already ran.
+    await deleteFlow(request, id, {
+      headers: { Authorization: authToken },
+    }).catch((error) => {
+      console.warn(`⚠️ Orphan flow left behind (${id}): ${error}`);
+    });
+  }
+});
+
+/**
+ * Opens the starter-template gallery, creates a flow from "Basic Prompting" and
+ * comes back to the folder view — the navigation round-trip tests 2 and 3 use to
+ * reach the sidebar the way a user does. Captures the created flow id from the
+ * creation POST so afterEach can delete exactly that flow.
+ */
+async function openTemplateAndReturnToFolders(page: any) {
+  const flowCreation = page.waitForResponse(
+    (resp: any) =>
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201,
+    { timeout: 30000 },
+  );
+
+  await page.getByTestId("side_nav_options_all-templates").click();
+  await page.getByRole("heading", { name: "Basic Prompting" }).click();
+
+  const created = (await (await flowCreation).json()) as { id?: string };
+  if (created.id) {
+    createdFlowIds.push(created.id);
+  }
+
+  await page.waitForSelector('[data-testid="sidebar-search-input"]', {
+    timeout: 30000,
+  });
+
+  // Go back to folder view
+  await page.getByTestId("icon-ChevronLeft").first().click();
+
+  await page.waitForSelector('[data-testid="add-project-button"]', {
+    timeout: 30000,
+  });
+}
 
 test(
   "deleting a folder should update the folder list immediately",
@@ -80,20 +140,9 @@ test(
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
-    // Navigate to templates
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-
-    await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-      timeout: 30000,
-    });
-
-    // Go back to folder view
-    await page.getByTestId("icon-ChevronLeft").first().click();
-
-    await page.waitForSelector('[data-testid="add-project-button"]', {
-      timeout: 30000,
-    });
+    // Template round-trip to reach the folder view the way a user does; the
+    // created flow is tracked and deleted in afterEach.
+    await openTemplateAndReturnToFolders(page);
 
     // Create first folder
     await page.getByTestId("add-project-button").click();
@@ -196,20 +245,9 @@ test(
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
-    // Navigate to templates
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
-
-    await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-      timeout: 30000,
-    });
-
-    // Go back to folder view
-    await page.getByTestId("icon-ChevronLeft").first().click();
-
-    await page.waitForSelector('[data-testid="add-project-button"]', {
-      timeout: 30000,
-    });
+    // Template round-trip to reach the folder view the way a user does; the
+    // created flow is tracked and deleted in afterEach.
+    await openTemplateAndReturnToFolders(page);
 
     // Create first folder
     await page.getByTestId("add-project-button").click();
@@ -289,13 +327,24 @@ test(
   },
 );
 
-// NOTE: destructive — this test deletes EVERY folder of the shared superuser.
-// Under fullyParallel it can race with sibling folder tests (delete their
-// folders / be prevented from reaching zero). Proper isolation (a per-test user)
-// is tracked separately; CI retries currently absorb the rare collision.
+// Destructive — this test deletes EVERY folder of the shared superuser, so the
+// `@destructive` tag keeps it out of every normal run and confines it to the
+// low-concurrency lane (`PW_DESTRUCTIVE=1`, workers pinned to 1 in
+// playwright.config.ts). It used to run under fullyParallel beside its own
+// file-siblings and beside folder-crud / bulk-actions /
+// flow-navigation-between-folders: it emptied the account mid-flight and their
+// awaitBootstrapTest then took the empty-instance branch and timed out waiting
+// for a welcome overlay (#1010 — 1 of 3 measured runs failed that way, with 404s
+// on project ids the siblings still owned).
+//
+// The assertions below are unchanged: the deletion is real and the empty-project
+// screen is the real one. Per-test user isolation was measured and is NOT
+// possible while LANGFLOW_AUTO_LOGIN=true — the app re-mints a superuser token on
+// mount. See docs/core-functionality/project-management/folder-deletion-integrity.md
+// (§"The destructive lane") for the rejected alternatives and the daily's known gap.
 test(
   "deleting every folder lands on the empty project screen",
-  { tag: ["@release", "@api"] },
+  { tag: ["@release", "@api", "@destructive"] },
   async ({ page, request }) => {
     // Guarantee there is at least one folder holding a flow, so the
     // "delete everything" path is exercised against real content.

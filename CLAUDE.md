@@ -148,6 +148,7 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 | `@workspace` | Flow/folder/canvas management |
 | `@database` | Tests with persistent saved state |
 | `@mainpage` | Home/dashboard UI tests |
+| `@destructive` | Test mutates account-wide state (e.g. deletes every project of the shared superuser). **Lane selector, not a severity:** `playwright.config.ts` excludes it from every normal run via `grepInvert` and CI runs it alone afterwards with `PW_DESTRUCTIVE=1` (workers pinned to 1). Run it locally with `PW_DESTRUCTIVE=1 npx playwright test --grep @destructive`. Do **not** combine with `@stable` — `daily-stable.yml` has no destructive lane, so such a test would silently never run there (#1010) |
 
 **Functional** (product area — use alongside cross-cutting tags)
 

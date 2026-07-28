@@ -52,6 +52,32 @@ runs:
         echo "Running: npx playwright test ${ARGS[*]}"
         npx playwright test "${ARGS[@]}"
 
+    # Destructive lane (#1010). `@destructive` tests mutate account-wide state, so
+    # playwright.config.ts excludes them from the run above and pins this lane to
+    # workers=1. It runs after that run, ANDed with whatever filters the dispatch
+    # asked for, and no-ops when nothing destructive matches.
+    - name: Run destructive lane
+      if: always()
+      shell: bash
+      env:
+        CI: "true"
+        PW_DESTRUCTIVE: "1"
+        PLAYWRIGHT_BASE_URL: ${{ inputs.base_url }}
+        TEST_TAG: ${{ inputs.test_tag }}
+        TEST_GREP: ${{ inputs.test_grep }}
+        OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+      run: |
+        # Same one-grep constraint as above: AND the filters into a single
+        # lookahead regex, always including @destructive.
+        FILTER="(?=.*@destructive)"
+        if [ -n "$TEST_TAG" ]; then FILTER="${FILTER}(?=.*${TEST_TAG})"; fi
+        if [ -n "$TEST_GREP" ]; then FILTER="${FILTER}(?=.*${TEST_GREP})"; fi
+        # --reporter=github only: keeps this lane from overwriting the HTML report
+        # the step above produced and the artifact below uploads.
+        echo "Running destructive lane: --grep $FILTER"
+        npx playwright test --pass-with-no-tests --reporter=github \
+          --output=test-results-destructive --grep "$FILTER"
+
     - name: Upload Playwright report
       if: always()
       uses: actions/upload-artifact@v4

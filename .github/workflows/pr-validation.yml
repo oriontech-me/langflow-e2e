@@ -276,6 +276,30 @@ jobs:
           # shellcheck disable=SC2086
           npx playwright test $SPECS --reporter=github
 
+      # Destructive lane (#1010). `@destructive` tests wipe account-wide state, so
+      # playwright.config.ts keeps them out of the run above and pins this lane to
+      # workers=1. Scoped to the same impacted $SPECS, so it is a no-op (via
+      # --pass-with-no-tests) unless a destructive spec is actually impacted.
+      # --reporter=github replaces the reporter list, so no HTML is written here and
+      # the main run's playwright-report/ stays intact.
+      - name: Run destructive lane
+        if: always()
+        env:
+          CI: "true"
+          PW_DESTRUCTIVE: "1"
+          PREFLIGHT_SKIP_CREDENTIALS: ${{ needs.detect-specs.outputs.needs_models == 'true' && '0' || '1' }}
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          SPECS: ${{ needs.detect-specs.outputs.specs }}
+        run: |
+          # shellcheck disable=SC2086
+          npx playwright test $SPECS --grep "@destructive" --pass-with-no-tests \
+            --reporter=github --output=test-results-destructive
+
       - name: Upload Playwright report
         uses: actions/upload-artifact@v7
         if: always()
