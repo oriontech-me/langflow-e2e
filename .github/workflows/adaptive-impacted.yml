@@ -202,6 +202,27 @@ jobs:
             npx playwright test $SPECS --reporter=github
           fi
 
+      # Destructive lane (#1010). Excluded from the run above by
+      # playwright.config.ts and pinned to workers=1 here; runs after it, scoped to
+      # the same subset, and no-ops when nothing destructive is in scope.
+      - name: Run destructive lane
+        if: always()
+        env:
+          CI: "true"
+          PW_DESTRUCTIVE: "1"
+          PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          RUN_FULL: ${{ needs.compute-impact.outputs.run_full }}
+          SPECS: ${{ needs.compute-impact.outputs.specs }}
+        run: |
+          if [ "$RUN_FULL" = "true" ]; then
+            npx playwright test --grep "@destructive" --pass-with-no-tests \
+              --reporter=github --output=test-results-destructive
+          else
+            # shellcheck disable=SC2086
+            npx playwright test $SPECS --grep "@destructive" --pass-with-no-tests \
+              --reporter=github --output=test-results-destructive
+          fi
+
       - name: Upload Playwright report
         uses: actions/upload-artifact@v7
         if: always()

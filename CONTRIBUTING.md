@@ -546,6 +546,7 @@ Three cases where the tag is intentionally absent:
 1. **Inherited tests not yet reviewed** — they exist in the repository but have not yet gone through the validation and documentation process.
 2. **Tests temporarily removed while failing** — the tag was removed while the test awaits correction (see lifecycle below).
 3. **Utility specs** — scripts that collect data or configure infrastructure rather than asserting product behavior (e.g. `collect-models.spec.ts`). These are not regression tests and must never enter the stable workflow.
+4. **`@destructive` tests** — a test that mutates account-wide state (deleting every project of the shared superuser, for instance) runs only in the destructive lane: `playwright.config.ts` excludes `@destructive` from every normal run and CI runs it alone afterwards with `PW_DESTRUCTIVE=1`. `daily-stable.yml` filters on `--grep "@stable"` and has **no destructive lane**, so a test carrying both tags would be excluded from the daily and silently never run. Treat the two as mutually exclusive until the daily grows a lane of its own (#1010).
 
 **When `@stable` is permanently absent** (case 3): state the reason in the spec doc's **Tags** section so it is visible without reading PR history.
 
