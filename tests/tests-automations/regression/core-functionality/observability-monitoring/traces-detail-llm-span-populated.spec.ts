@@ -3,6 +3,7 @@ import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 const TRACE_FIXTURE = JSON.parse(
   readFileSync(
@@ -67,10 +68,12 @@ test.describe("Single trace — populated LLM span (OpenAI)", () => {
 
   // A real LLM call is the whole point of this spec — without a key the
   // tokenUsage / modelName / latencyMs values can never populate.
-  test.skip(
-    !process?.env?.OPENAI_API_KEY,
-    "OPENAI_API_KEY required to run this test",
-  );
+  // A real LLM call is the whole point of this spec, so gate on provider HEALTH rather than on
+  // the mere presence of the env var: a key that exists but is drained blocks
+  // the backend past gunicorn's 300s timeout and kills the shard's Langflow
+  // worker (#1029).
+  const gate = providerSkipGate("openai");
+  test.skip(gate.skip, gate.reason);
 
   let bearerToken: string;
   let apiKey: string;

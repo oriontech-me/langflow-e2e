@@ -48,6 +48,16 @@ test(
   "user must be able to lock a flow and it must be saved",
   { tag: ["@stable", "@release", "@components", "@workspace"] },
   async ({ page }) => {
+    // Left on env-var presence (#1029 audit): this test never drives a
+    // completion. It creates a Basic Prompting flow from the starter, locks it,
+    // reopens, asserts the lock persisted, unlocks and deletes edges — the model
+    // is never run, so a dead key cannot produce the hung request that wedges a
+    // shard, and consulting provider health would only add a false skip.
+    //
+    // The gate looks vestigial: nothing here reads OPENAI_API_KEY. Removing it
+    // would make the test run where it currently skips, which is a behaviour
+    // change this sweep deliberately does not make — it belongs to whoever
+    // revisits this spec.
     test.skip(
       !process?.env?.OPENAI_API_KEY,
       "OPENAI_API_KEY required to run this test",

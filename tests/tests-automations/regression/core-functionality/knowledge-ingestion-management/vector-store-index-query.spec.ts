@@ -11,6 +11,7 @@ import {
   getKnowledgeBase,
 } from "../../../../helpers/knowledge/knowledge-base";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 // §5.2.2 + §5.2.3 — the *vectorization + retrieval* step of RAG ingestion. The
 // chunks produced by Split Text are embedded and indexed into a native (core,
@@ -60,10 +61,12 @@ const createdKbNames: string[] = [];
 // knowledge-ingestion specs).
 test.describe.configure({ mode: "serial" });
 
-test.skip(
-  !process?.env?.GOOGLE_API_KEY,
-  "GOOGLE_API_KEY required to embed the document into the Knowledge Base",
-);
+// Google embeds every chunk into the Knowledge Base, so gate on provider HEALTH rather than on
+// the mere presence of the env var: a key that exists but is drained blocks
+// the backend past gunicorn's 300s timeout and kills the shard's Langflow
+// worker (#1029).
+const gate = providerSkipGate("google");
+test.skip(gate.skip, gate.reason);
 
 async function authHeaders(page: Page): Promise<Record<string, string>> {
   const authHeader = await getAuthToken(page.request);
