@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-27
+> **Last updated:** 2026-07-28
 
 ---
 
@@ -793,7 +793,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 379 `test()` calls carrying the `@stable` tag, distributed across 153 spec
+> 384 `test()` calls carrying the `@stable` tag, distributed across 154 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1092,6 +1092,8 @@
 - [x] playground closes and reopens correctly from the flow editor → `playground-fullscreen.spec.ts`
 - [x] messages sent in playground must persist after closing and reopening → `playground-history-persist.spec.ts`
 - [x] playground opens with chat textarea pre-filled from ChatInput Input Text → `playground-input-text-prefill.spec.ts`
+- [x] creating a new session re-applies the Input Text pre-fill → `playground-input-text-prefill.spec.ts`
+- [x] pre-filled value is sent as the first message of the session → `playground-input-text-prefill.spec.ts`
 - [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
 - [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
@@ -1104,7 +1106,10 @@
 - [x] playground must show image compact preview in input area after attaching an image → `playground-output-image.spec.ts`
 - [x] playground must display uploaded image in user message after sending → `playground-output-image.spec.ts`
 - [x] Playground run is delivered over an SSE (text/event-stream) response → `playground-response-streaming-sse.spec.ts`
+- [x] clear-chat removes all messages from Default Session → `playground-session-clear.spec.ts`
+- [x] new-chat button must add a new session entry to the sidebar → `playground-session-nav.spec.ts`
 - [x] session selector sidebar must switch to the selected session → `playground-session-nav.spec.ts`
+- [x] rename option must not be available for the Default Session → `playground-session-rename.spec.ts`
 - [x] rename option must not be available for a session with no messages → `playground-session-rename.spec.ts`
 - [x] rename option must be available and functional for a session with messages → `playground-session-rename.spec.ts`
 - [x] Shareable playground URL is generated when publishing is enabled → `playground-shareable-url.spec.ts`
