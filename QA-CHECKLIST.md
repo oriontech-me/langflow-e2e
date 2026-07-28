@@ -766,7 +766,7 @@
 | `core-components/` — Core Components | 85 | 80 | 3 | 1 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 40 | 31 | 6 | 1 | 2 |
+| `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
 | `core-functionality/model-provider/` | 31 | 31 | 0 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 50 | 46 | 3 | 1 | 0 |
@@ -777,7 +777,7 @@
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 17 | 24 | 3 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **461** | **345 (75%)** | **101 (22%)** | **9 (2%)** | **6 (1%)** |
+| **TOTAL** | **461** | **346 (75%)** | **100 (22%)** | **9 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -793,7 +793,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 385 `test()` calls carrying the `@stable` tag, distributed across 155 spec
+> 390 `test()` calls carrying the `@stable` tag, distributed across 157 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -990,6 +990,7 @@
 
 #### core-functionality/llm-agents/
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
+- [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
 - [x] agent run persists every session message tagged with the custom context_id → `agent-context-id-continuity.spec.ts`
 - [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
@@ -1015,8 +1016,11 @@
 - [x] a multiple (As List) schema row returns an array of the row's type → `agent-structured-output.spec.ts`
 - [x] Agent Instructions are respected in the model response → `agent-system-prompt.spec.ts`
 - [x] negative control — sentinel is absent without the instruction → `agent-system-prompt.spec.ts`
+- [x] agent handles a tool error and continues execution → `agent-tool-error-handling.spec.ts`
 - [x] an invalid tool name blocks execution with a clear message → `agent-tool-name-validation.spec.ts`
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
+- [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
+- [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
 - [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
@@ -1052,6 +1056,7 @@
 - [x] the MistralAI component configures the API key and executes the flow → `mistral-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
+- [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
 - [x] a misconfigured flow surfaces an appropriate build-error message → `flow-error-message.spec.ts`
@@ -1222,7 +1227,7 @@
 | `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 6 | 2 |
+| `core-functionality/llm-agents/` | 5 | 2 |
 | `core-functionality/model-provider/` | 0 | 0 |
 | `core-functionality/playground/` | 3 | 0 |
 | `mcp/client/` | 1 | 2 |
