@@ -103,7 +103,7 @@
 #### 1.3.1 Folder (Project) CRUD via API
 - [x] POST `/api/v1/projects/` → creates folder, returns id and name → `api/flows/api-folders-crud.spec.ts`
 - [x] GET `/api/v1/projects/` → lists folders including the created one → `api/flows/api-folders-crud.spec.ts`
-- [!] DELETE `/api/v1/projects/{id}` → returns 204 and the folder leaves the listing — quarantined (#965): under concurrent writes the endpoint answers **500** (`sqlite3.OperationalError: database is locked`) and the folder survives; measured 44% of deletes on `1.12.0.dev7` vs 6% on stable `1.10.3` at the same 2-client contention. Product defect, upstream card pending; the `204` assertion is unchanged → `api/flows/api-folders-crud.spec.ts`
+- [!] DELETE `/api/v1/projects/{id}` → returns 204 and the folder leaves the listing — quarantined (#965): under concurrent writes the endpoint answers **500** (`sqlite3.OperationalError: database is locked`) and the folder survives; measured 44% of deletes on `1.12.0.dev7` vs 6% on stable `1.10.3` at the same 2-client contention. Product defect filed as [LE-2020](https://datastax.jira.com/browse/LE-2020); the `204` assertion is unchanged → `api/flows/api-folders-crud.spec.ts`
 
 #### 1.4 Components via API
 - [x] GET `/api/v1/all` → lists all available components → `api/flows/api-custom-component-creation.spec.ts`

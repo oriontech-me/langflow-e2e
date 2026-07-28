@@ -36,22 +36,33 @@ issue that carries the evidence. Both shapes are allowed; what is not allowed is
 a reference that does not resolve.
 
 <!-- REGRESSIONS:START -->
-**Regressions caught:** 5 — **Open:** 2 · **Fixed:** 3
+**Regressions caught:** 6 — **Open:** 3 · **Fixed:** 3
 
-**By severity:** High 2 · Medium 3 · Low 0
+**By severity:** High 2 · Medium 4 · Low 0
 
-**By area:** model-provider 2 · auth 1 · flows 1 · mcp 1
+**By area:** model-provider 2 · api 1 · auth 1 · flows 1 · mcp 1
 <!-- REGRESSIONS:END -->
 
 ## Ledger
 
 | Found | Area / Test | Regression | Severity | Detected by | Upstream | Status | Fixed in | Report |
 |-------|-------------|------------|----------|-------------|----------|--------|----------|--------|
+| 2026-07-27 | api · api-folders-crud.spec.ts | `DELETE /api/v1/projects/{id}` answers `500` (`sqlite3.OperationalError: database is locked`) instead of `204` while any other write is in flight, and the project survives. Not new — stable 1.10.3 emits the same instant `500` — but 1.12 raises the rate ~7× (6 % → 44 % at 2 concurrent clients, A/B/A/B) and flips the mode: 1.10.3 blocks and mostly honours the contract, 1.12 gives up in 0.03 s. Sibling write endpoints (`POST /projects`, `POST /flows`, `DELETE /flows`) survive the identical contention | Medium | daily 07-22 + 07-27 · #962 → #965 | [LE-2020](https://datastax.jira.com/browse/LE-2020) | Open | — | docs/upstream-bugs/UPSTREAM-BUG-project-delete-500-under-contention.md |
 | 2026-07-27 | flows · run-flow.spec.ts | "New Flow" click is silently dropped when the flows list has not painted its cards yet — no navigation, no modal, no console error, and the button then stops being actionable until a reload. Introduced in 1.10.1 by langflow#12575; 1.10.0 opened the templates modal and created nothing | Medium | daily 07-27 · #962 → #966 | [LE-2019](https://datastax.jira.com/browse/LE-2019) | Open | — | docs/upstream-bugs/UPSTREAM-BUG-new-flow-dead-click.md |
 | 2026-07-24 | mcp · mcp-server-resources.spec.ts | MCP `resources/read` crashes with `AttributeError: 'str' object has no attribute 'hex'` — the project server advertises a flow file it cannot itself read (worked on 1.11.0) | Medium | #948 spec validation | [LE-2012](https://datastax.jira.com/browse/LE-2012) | Open | — | docs/upstream-bugs/UPSTREAM-BUG-mcp-resources-read-uuid-hex.log |
 | 2026-07-23 | model-provider · groq-provider.spec.ts | Groq / Mistral / Ollama components silently hidden from the sidebar — the image ships the component source but not the provider's `langchain-*` package, and Langflow now hides the component with no message | Medium | daily 07-23 · #907 | [LE-1987](https://datastax.jira.com/browse/LE-1987) | Fixed | [langflow#14248](https://github.com/langflow-ai/langflow/pull/14248) | #907 |
 | 2026-07-22 | model-provider · google-provider.spec.ts | Nightly ships without `langchain-google-genai` — every Google chat/embedding model raises ImportError at build; surfaced as node-build timeouts across ~17 `@stable` specs | High | daily 07-22 · #898 | [LE-1974](https://datastax.jira.com/browse/LE-1974) | Fixed | [langflow#14220](https://github.com/langflow-ai/langflow/pull/14220) | #898 |
 | 2026-07-17 | auth · logout-flow.spec.ts | Logout does not terminate the session — no redirect to login, no `POST /api/v1/logout` fired, and `POST /api/v1/refresh` silently re-authenticates so the session survives a reload | High | daily 07-17 · #808 | [LE-1850](https://datastax.jira.com/browse/LE-1850) | Fixed | [langflow#14158](https://github.com/langflow-ai/langflow/pull/14158) | #808 |
+
+Note on the LE-2020 row, so the earlier adjudication is not re-litigated blindly:
+the *Bulk-flow-delete SQLite-lock 500* entry under *Not listed* was downgraded
+because a client-side retry masked the failure. That defence was re-tested for
+this row and holds **only at light contention** — 6/6 UI deletes succeeded at 2
+background writers, 2 of them via a masked retry. With 4 writers the retry budget
+is exhausted and the delete **silently no-ops**: project still in the sidebar, no
+toast, notification centre empty, only a console error. That silent no-op is what
+makes the row user-facing; it is Medium, not High, because it needs sustained
+concurrent writes.
 
 ## Candidates — pending upstream ticket
 
@@ -60,16 +71,9 @@ moment a ticket is filed. Not counted in the indicator.
 
 | Found | Area / Test | Regression | Severity | Report |
 |-------|-------------|------------|----------|--------|
-| 2026-07-27 | api · api-folders-crud.spec.ts | `DELETE /api/v1/projects/{id}` answers `500` (`sqlite3.OperationalError: database is locked`) instead of `204` while any other write is in flight, and the project survives. Not new — stable 1.10.3 emits the same instant `500` — but 1.12 raises the rate ~7× (6 % → 44 % at 2 concurrent clients, A/B/A/B) and flips the mode: 1.10.3 blocks and mostly honours the contract, 1.12 gives up in 0.03 s. Sibling write endpoints (`POST /projects`, `POST /flows`, `DELETE /flows`) survive the identical contention | Medium | docs/upstream-bugs/UPSTREAM-BUG-project-delete-500-under-contention.md |
 
-Note on the row above, so the earlier adjudication is not re-litigated blindly:
-the *Bulk-flow-delete SQLite-lock 500* entry below was downgraded because a
-client-side retry masked the failure. That defence was re-tested here and holds
-**only at light contention** — 6/6 UI deletes succeeded at 2 background writers,
-2 of them via a masked retry. With 4 writers the retry budget is exhausted and
-the delete **silently no-ops**: project still in the sidebar, no toast, notification
-centre empty, only a console error. That silent no-op is what makes this row
-user-facing; it is Medium, not High, because it needs sustained concurrent writes.
+*(none — the project-delete 500 was promoted to the Ledger on 2026-07-28 when
+LE-2020 was filed.)*
 
 ## Not listed — validated non-regression
 

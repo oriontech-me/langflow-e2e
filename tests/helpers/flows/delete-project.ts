@@ -17,7 +17,7 @@ import type { APIRequestContext } from "@playwright/test";
  * The retry here is cleanup robustness, NOT a workaround for the defect: the
  * assertion in `api/flows/api-folders-crud.spec.ts` still demands a bare `204`
  * from the endpoint under test, and that test stays quarantined until the
- * upstream fix lands. See `docs/api/flows/api-folders-crud.md` and
+ * upstream fix for LE-2020 lands. See `docs/api/flows/api-folders-crud.md` and
  * `docs/upstream-bugs/UPSTREAM-BUG-project-delete-500-under-contention.md`.
  *
  * Contract, mirroring `deleteFlow` so the two can't drift:
