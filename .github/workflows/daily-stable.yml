@@ -515,6 +515,22 @@ jobs:
           mkdir -p all-blobs
           # After merge-multiple, blobs are flat *.zip files (one per shard), not subdirs.
           FOUND="$(find all-blobs -maxdepth 1 -name '*.zip' | wc -l | tr -d ' ')"
+          # An empty (or non-numeric) shard_total means `prep` ITSELF failed, so the
+          # run never got a matrix and no shard could have produced anything — the
+          # most incomplete a run can be. Decide that explicitly, because the
+          # comparison below silently calls it COMPLETE (#1024): `[ 0 -lt "" ]`
+          # errors with "integer expression expected", and a failing command inside
+          # an `if` condition is not fatal under `set -e`, so it falls through to
+          # the else. Defaulting EXPECTED to 0 does not help either — `0 -lt 0` is
+          # false and lands in the same else. Same shape as the hole always() closed
+          # in #1011: a guard asserting "complete" over a run that executed nothing.
+          case "$EXPECTED" in
+            ''|*[!0-9]*)
+              echo "::warning::prep produced no usable shard_total ('$EXPECTED') — the run never got a shard matrix, so no shard could report. Treating the merged report as INCOMPLETE."
+              echo "complete=false" >> "$GITHUB_OUTPUT"
+              exit 0
+              ;;
+          esac
           echo "Expected $EXPECTED shard blobs, found $FOUND."
           if [ "$FOUND" -lt "$EXPECTED" ]; then
             echo "::warning::Only $FOUND/$EXPECTED shard blobs present — the merged report is INCOMPLETE (a shard died before producing a blob). Failures may be under-counted."
