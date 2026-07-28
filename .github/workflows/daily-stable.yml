@@ -374,9 +374,15 @@ jobs:
       # It polls with a SHORT per-request timeout over a long deadline, the shape
       # #928 established: a hung request must fail fast so the loop can keep
       # polling across the wedge instead of burning the budget on one GET.
-      # Honest about its limits: whether the backend recovers is not guaranteed —
-      # on 2026-07-28 the wedge outlasted 120 s and the run ended before we could
-      # know. What this gate always buys is attribution; recovery is upside.
+      # Honest about its limits: whether the backend recovers is not guaranteed.
+      # It was first measured on 2026-07-28 (#1019), on pr-validation's copy of
+      # this gate — same container, same sweep. From the container's own log:
+      # gunicorn raised WORKER TIMEOUT ~3.5 min after the worker stopped
+      # answering, SIGKILLed it, and the replacement was serving 214 s after the
+      # preflight began polling. globalSetup's 120 s missed it by 94 s; this
+      # step's 300 s would not have. So recovery is real and observed, not merely
+      # hoped for — but it is one measurement, and attribution is still what the
+      # gate buys unconditionally.
       - name: Wait for the backend to recover from the collect-models load
         shell: bash
         env:
