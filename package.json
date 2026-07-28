@@ -11,6 +11,7 @@
     "test:integrations": "npx playwright test tests/core/integrations/",
     "test:unit": "npx playwright test tests/core/unit/",
     "test:scripts": "node --test scripts/",
+    "test:units": "files=$(find scripts tests -name '*.test.ts' -not -path '*/node_modules/*' | sort); [ -n \"$files\" ] || { echo 'no *.test.ts found — the TypeScript unit lane would silently pass' >&2; exit 1; }; node --require ts-node/register --test $files",
     "test:regression": "npx playwright test tests/core/regression/ tests/extended/regression/",
     "test:grep": "npx playwright test --grep",
     "report": "npx playwright show-report",

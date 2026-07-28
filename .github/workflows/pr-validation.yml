@@ -33,6 +33,20 @@ jobs:
       - name: Script unit tests
         run: npm run test:scripts
 
+      # The TypeScript half of the same idea (#1017). Everything written in `.ts`
+      # was ungated: the `@stable` parser two generators read as the release
+      # signal (#985), the script that EDITS SPECS AND COMMITS TO `main` with no
+      # human review, and the collect-models fallback whose scenario matrix was
+      # validated in a scratch file outside the repo (#1011).
+      #
+      # Same runner as the lane above — `node --test` — via ts-node's require
+      # hook, so no new dependency and no second runner to keep current. The hook
+      # (not the deprecated `--loader ts-node/esm`) is what makes this work on the
+      # Node 20 this workflow pins; the trade-off and the rejected options are
+      # recorded in CONTRIBUTING.md → "Unit tests".
+      - name: TypeScript unit tests
+        run: npm run test:units
+
       # The REGRESSIONS.md indicator block is generated and committed by hand.
       # Fail the PR when a row was added without regenerating it, so the
       # headline number can never silently disagree with the table.

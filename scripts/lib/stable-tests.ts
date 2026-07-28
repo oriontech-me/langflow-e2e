@@ -204,6 +204,26 @@ function parseStableTestsInFile(
 }
 
 /**
+ * Parse one spec's SOURCE TEXT (no filesystem read) — the unit-testable seam
+ * under `collectStableTests()`. `filePath` is only used to derive the reported
+ * `modulePath` / `relativePath`, so it may point at a file that does not exist;
+ * it must still be under `REGRESSION_ROOT` for those paths to come out right.
+ */
+export function parseStableTests(
+  filePath: string,
+  text: string,
+): CollectResult {
+  const warnings: string[] = [];
+  const source = ts.createSourceFile(
+    filePath,
+    text,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+  );
+  return { tests: parseStableTestsInFile(filePath, source, warnings), warnings };
+}
+
+/**
  * Every `@stable` `test()` call under `regression/`, sorted by module → spec →
  * source line, plus any non-fatal parse warnings.
  */
@@ -211,14 +231,9 @@ export function collectStableTests(): CollectResult {
   const all: StableTest[] = [];
   const warnings: string[] = [];
   for (const file of walkSpecs(REGRESSION_ROOT)) {
-    const text = fs.readFileSync(file, "utf-8");
-    const source = ts.createSourceFile(
-      file,
-      text,
-      ts.ScriptTarget.Latest,
-      /* setParentNodes */ true,
-    );
-    all.push(...parseStableTestsInFile(file, source, warnings));
+    const parsed = parseStableTests(file, fs.readFileSync(file, "utf-8"));
+    all.push(...parsed.tests);
+    warnings.push(...parsed.warnings);
   }
   all.sort((a, b) => {
     if (a.modulePath !== b.modulePath)
