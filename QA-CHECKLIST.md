@@ -738,11 +738,11 @@
 - [-] Unfreeze component
 
 #### 15.8 Sticky Notes
-- [-] Add sticky note
+- [x] Add sticky note — the `canvas-add-note-button` canvas control places a note at the default 280×140 and the flow gains a node with `type: "noteNode"` → `ui-ux/sticky-notes.spec.ts`
 - [x] Edit sticky note text → `ui-ux/edit-sticky-note-text.spec.ts`
-- [-] Change sticky note color
-- [-] Resize sticky note
-- [-] Delete sticky note
+- [x] Change sticky note color — the picker offers all seven presets; choosing rose repaints the note (`--note-rose` inline style) and persists `template.backgroundColor: "rose"` → `ui-ux/sticky-notes.spec.ts`
+- [x] Resize sticky note — dragging the bottom-right resize handle grows the note past 280×140 and the new dimensions persist to the node's `width`/`height` → `ui-ux/sticky-notes.spec.ts`
+- [x] Delete sticky note — removed via the options menu and via Backspace, gone from the canvas and from the persisted flow; deleting one of two leaves exactly one → `flow-functionality/canvas-sticky-note-delete.spec.ts`
 
 #### 15.9 Right-Click and Menus
 - [~] Context menu via right-click on canvas — **no product surface on 1.12.0.dev8**: a right-click on `.react-flow__pane` dispatches a `contextmenu` event that reaches `document` with `defaultPrevented === false` (so the browser's native menu is what opens) and renders zero `[role="menu"]` / `[role="listbox"]` / Radix popper elements, with or without a node selected — Langflow does not wire ReactFlow's `onPaneContextMenu`. Edge menus (`edge-context-menu-trigger`) are a left-click affordance and belong to §15.3 (#945)

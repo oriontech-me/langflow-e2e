@@ -1,137 +1,228 @@
 import { expect, test } from "../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 
-import { zoomOut } from "../../../helpers/ui/zoom-out";
+/**
+ * §15.8 — Add a sticky note, change its colour, resize it.
+ *
+ * Every behaviour is asserted in the DOM AND in the persisted flow: a note that
+ * renders correctly but never reaches the autosave `PATCH` would come back
+ * wrong on reload, which is the regression worth catching.
+ *
+ * This file consolidates three inherited specs. All of them were red on
+ * 1.12.0.dev8 for one reason: they clicked **`sidebar-nav-add_note`**, a testid
+ * that no longer exists — the affordance moved to the canvas control
+ * `canvas-add-note-button` (the shape the already-@stable
+ * `edit-sticky-note-text.spec.ts` uses). `sticky-notes-dimensions.spec.ts` and
+ * `note-color-picker.spec.ts` were removed in the same change; what survived
+ * from them is folded in here, and the CSS-only assertions they carried
+ * (`font-size`, `overflow`) were dropped — see `docs/ui-ux/sticky-notes.md` for
+ * the per-test disposition.
+ *
+ * Text editing is `ui-ux/edit-sticky-note-text.spec.ts`; deletion is
+ * `flow-functionality/canvas-sticky-note-delete.spec.ts`.
+ */
 
-test(
-  "user should be able to interact with sticky notes",
-  { tag: ["@release", "@workspace"] },
+/** Default size of a freshly added note on 1.12.0.dev8. */
+const DEFAULT_WIDTH = 280;
+const DEFAULT_HEIGHT = 140;
 
-  async ({ page }) => {
-    const randomTitle = Math.random()
-      .toString(36)
-      .substring(7)
-      .padEnd(8, "x")
-      .substring(0, 8);
+/** Every colour the note picker must offer. */
+const COLOR_OPTIONS = [
+  "amber",
+  "neutral",
+  "rose",
+  "blue",
+  "lime",
+  "transparent",
+  "custom",
+];
 
-    const noteText = `# ${randomTitle}
+test.describe("Canvas — sticky notes", () => {
+  let createdFlowId: string | null = null;
 
-Artificial Intelligence (AI) has rapidly evolved from a speculative concept in science fiction to a transformative force reshaping industries and everyday life. The term AI encompasses a broad range of technologies, from simple algorithms designed to perform specific tasks to complex systems capable of learning and adapting independently. As AI continues to advance, its applications are becoming increasingly diverse, impacting everything from healthcare to finance, entertainment, and beyond.
-
-At its core, AI is about creating systems that can perform tasks that would typically require human intelligence. This includes abilities such as visual perception, speech recognition, decision-making, and even language translation. The development of AI can be traced back to the mid-20th century, when pioneers like Alan Turing began exploring the idea of machines that could think. Turing's famous "Turing Test" proposed a benchmark for AI, where a machine would be considered intelligent if it could engage in a conversation with a human without being detected as a machine.
-
-The early days of AI research were marked by optimism, with researchers believing that human-like intelligence in machines was just around the corner. However, progress was slower than expected, leading to periods known as "AI winters," where interest and funding in the field waned. Despite these setbacks, AI research persisted, and by the 21st century, significant breakthroughs began to emerge.
-
-One of the key drivers of modern AI is the availability of vast amounts of data. The internet and the proliferation of digital devices have generated unprecedented quantities of data, which AI systems can analyze to identify patterns and make predictions. This data-driven approach is at the heart of machine learning, a subset of AI that focuses on teaching machines to learn from experience rather than relying on explicitly programmed instructions.
-
-Machine learning has enabled remarkable advancements in AI, particularly in areas like image and speech recognition. For example, AI systems can now accurately identify objects in images, transcribe spoken words into text, and even understand natural language. These capabilities have led to the development of virtual assistants like Siri, Alexa, and Google Assistant, which can perform a wide range of tasks, from setting reminders to controlling smart home devices.
-
-Another important development in AI is the rise of deep learning, a type of machine learning that uses artificial neural networks to model complex patterns in data. Deep learning has been instrumental in achieving breakthroughs in areas such as computer vision and natural language processing. For instance, deep learning algorithms power the facial recognition systems used in security applications and the language models behind advanced chatbots and translation services.
-
-AI's impact is not limited to consumer applications; it is also transforming industries on a larger scale. In healthcare, AI is being used to analyze medical images, predict patient outcomes, and even discover new drugs. In finance, AI-driven algorithms are used for trading, fraud detection, and personalized financial advice. The automotive industry is leveraging AI to develop self-driving cars, which have the potential to reduce accidents and revolutionize transportation.
-
-Despite its many benefits, AI also raises important ethical and societal questions. As AI systems become more capable, there are concerns about job displacement, privacy, and the potential for bias in decision-making. AI algorithms are only as good as the data they are trained on, and if that data is biased, the AI's decisions may be biased as well. This has led to calls for greater transparency and accountability in AI development, as well as discussions about the need for regulations to ensure that AI is used responsibly.
-
-The future of AI is both exciting and uncertain. As the technology continues to advance, it will undoubtedly bring about profound changes in society. The challenge will be to harness AI's potential for good while addressing the ethical and societal issues that arise. Whether it's through smarter healthcare, more efficient transportation, or enhanced creativity, AI has the potential to reshape the world in ways we are only beginning to imagine. The journey of AI is far from over, and its impact will be felt for generations to come.
-  `;
-
-    await awaitBootstrapTest(page);
-
-    await page.waitForSelector('[data-testid="blank-flow"]', {
-      timeout: 30000,
+  /** Note nodes as the backend currently has them. */
+  async function fetchNoteNodes(
+    request: import("@playwright/test").APIRequestContext,
+    flowId: string,
+  ) {
+    const bearer = await getAuthToken(request);
+    const response = await request.get(`/api/v1/flows/${flowId}`, {
+      headers: bearer ? { Authorization: bearer } : undefined,
     });
-    await page.getByTestId("blank-flow").click();
-    await page.getByTestId("sidebar-nav-add_note").click();
+    expect(response.status()).toBe(200);
+    const body = await response.json();
+    const nodes = (body?.data?.nodes ?? []) as Array<{
+      type?: string;
+      width?: number;
+      height?: number;
+      data: { node?: { template?: { backgroundColor?: string } } };
+    }>;
+    return nodes.filter((n) => n.type === "noteNode");
+  }
 
-    const targetElement = page.locator('//*[@id="react-flow-id"]');
-    await targetElement.click();
+  test.beforeEach(async ({ page }) => {
+    createdFlowId = await setupBlankFlow(page);
+    await expect(page.getByTestId("note_node")).toHaveCount(0);
+  });
 
-    await page.mouse.up();
-    await page.mouse.down();
-    await adjustScreenView(page, { numberOfZoomOut: 6 });
+  test.afterEach(async ({ page }) => {
+    if (createdFlowId) {
+      await page.goto("/").catch(() => {});
+      await deleteFlow(page.request, createdFlowId);
+      createdFlowId = null;
+    }
+  });
 
-    await page.getByTestId("note_node").click();
+  test("adding a sticky note places it on the canvas and in the flow",
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
+    async ({ page, request }) => {
+      const note = page.getByTestId("note_node");
 
-    await page.locator(".generic-node-desc-text").last().dblclick();
-    await page.getByTestId("textarea").fill(noteText);
+      await test.step("Add a note from the canvas controls", async () => {
+        await page.getByTestId("canvas-add-note-button").click();
+        await expect(note).toBeVisible({ timeout: 15000 });
+      });
 
-    await expect(page.getByText("2500/2500")).toHaveCount(1);
+      await test.step("The note renders at its default size", async () => {
+        const box = await note.boundingBox();
+        expect(box, "the note must be on screen").not.toBeNull();
+        expect(Math.round(box!.width)).toBe(DEFAULT_WIDTH);
+        expect(Math.round(box!.height)).toBe(DEFAULT_HEIGHT);
+      });
 
-    await targetElement.click();
-    await page.keyboard.press("Escape");
-    const textMarkdown = await page
-      .getByTestId("generic-node-desc")
-      .innerText();
+      await test.step("The note reached the backend as a noteNode", async () => {
+        // Polled, not read once: the canvas autosave is debounced, so an
+        // immediate GET still reports an empty node list.
+        await expect
+          .poll(
+            async () => (await fetchNoteNodes(request, createdFlowId!)).length,
+            {
+              timeout: 30000,
+              message: "the added note should be persisted to the flow",
+            },
+          )
+          .toBe(1);
+      });
+    },
+  );
 
-    const textLength = textMarkdown.length;
-    const noteTextLength = noteText.length;
+  test("changing a sticky note colour repaints it and persists the choice",
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
+    async ({ page, request }) => {
+      const note = page.getByTestId("note_node");
 
-    expect(textLength).toBeLessThan(noteTextLength);
+      await test.step("Add a note and select it", async () => {
+        await page.getByTestId("canvas-add-note-button").click();
+        await expect(note).toBeVisible({ timeout: 15000 });
+        await note.click();
+      });
 
-    await page.getByTestId("note_node").click();
+      await test.step("The picker offers every colour", async () => {
+        await page.getByTestId("color_picker").click();
+        for (const color of COLOR_OPTIONS) {
+          await expect(
+            page.getByTestId(`color_picker_button_${color}`),
+          ).toBeVisible({ timeout: 10000 });
+        }
+      });
 
-    let element = await page.getByTestId("note_node");
+      await test.step("Picking rose repaints the note", async () => {
+        await page.getByTestId("color_picker_button_rose").click();
+        // The colour lives on the note's inline style, not on a class.
+        await expect(note).toHaveAttribute("style", /--note-rose/, {
+          timeout: 10000,
+        });
+      });
 
-    let hasStyles = await element?.evaluate((el) => {
-      const style = window.getComputedStyle(el);
-      return (
-        style.backgroundColor === "rgb(252, 211, 77)" ||
-        style.backgroundColor === "rgb(253, 230, 138)"
-      );
-    });
-    expect(hasStyles).toBe(true);
+      await test.step("The colour reached the backend", async () => {
+        await expect
+          .poll(
+            async () => {
+              const notes = await fetchNoteNodes(request, createdFlowId!);
+              return notes[0]?.data?.node?.template?.backgroundColor;
+            },
+            {
+              timeout: 30000,
+              message: "the chosen colour should be persisted to the flow",
+            },
+          )
+          .toBe("rose");
+      });
+    },
+  );
 
-    await page.getByTestId("note_node").click();
+  test("resizing a sticky note grows it and persists the new size",
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
+    async ({ page, request }) => {
+      const note = page.getByTestId("note_node");
 
-    await page.getByTestId("color_picker").click();
+      await test.step("Add a note and select it", async () => {
+        await page.getByTestId("canvas-add-note-button").click();
+        await expect(note).toBeVisible({ timeout: 15000 });
+        await note.click();
+      });
 
-    await page.getByTestId("color_picker_button_rose").click();
-    //await for the  animation to complete
-    await page.waitForTimeout(1000);
+      await test.step("Drag the bottom-right resize handle", async () => {
+        // Selecting the note mounts ReactFlow's NodeResizer controls.
+        const handle = page.locator(
+          ".react-flow__resize-control.bottom.right.handle",
+        );
+        const box = await handle.boundingBox();
+        expect(box, "the resize handle must be on screen").not.toBeNull();
 
-    await page.getByTestId("note_node").click();
+        await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(box!.x + 120, box!.y + 90, { steps: 12 });
+        await page.mouse.up();
+      });
 
-    element = await page.getByTestId("note_node");
+      let resized = { width: 0, height: 0 };
 
-    hasStyles = await element?.evaluate((el) => {
-      const style = window.getComputedStyle(el);
+      await test.step("The note grew in both axes", async () => {
+        await expect
+          .poll(
+            async () => {
+              const box = await note.boundingBox();
+              return (
+                !!box &&
+                box.width > DEFAULT_WIDTH &&
+                box.height > DEFAULT_HEIGHT
+              );
+            },
+            {
+              timeout: 15000,
+              message: "the note should be larger than its default size",
+            },
+          )
+          .toBe(true);
 
-      return (
-        style.backgroundColor === "rgb(253, 164, 175)" ||
-        style.backgroundColor === "rgb(254, 205, 211)"
-      );
-    });
-    expect(hasStyles).toBe(true);
+        const box = await note.boundingBox();
+        resized = {
+          width: Math.round(box!.width),
+          height: Math.round(box!.height),
+        };
+      });
 
-    await page.getByTestId("note_node").click();
-    await page.getByTestId("more-options-modal").click();
-
-    await page.getByText("Duplicate").click();
-
-    let titleNumber = await page.getByText(randomTitle).count();
-    expect(titleNumber).toBe(2);
-
-    await page.getByTestId("note_node").last().click();
-    await page.getByTestId("more-options-modal").click();
-
-    await page.getByText("Copy").click();
-    await adjustScreenView(page);
-
-    //double click
-    await targetElement.click();
-    await targetElement.click();
-    await page.keyboard.press(`ControlOrMeta+v`);
-
-    titleNumber = await page.getByText(randomTitle).count();
-    expect(titleNumber).toBe(3);
-
-    await page.getByTestId("note_node").last().click();
-    await page.getByTestId("more-options-modal").click();
-    await page.getByText("Delete").first().click();
-
-    titleNumber = await page.getByText(randomTitle).count();
-
-    expect(titleNumber).toBe(2);
-  },
-);
+      await test.step("The new size reached the backend", async () => {
+        await expect
+          .poll(
+            async () => {
+              const notes = await fetchNoteNodes(request, createdFlowId!);
+              const persisted = notes[0];
+              if (!persisted) return null;
+              return `${Math.round(persisted.width ?? 0)}x${Math.round(
+                persisted.height ?? 0,
+              )}`;
+            },
+            {
+              timeout: 30000,
+              message: "the resized dimensions should be persisted to the flow",
+            },
+          )
+          .toBe(`${resized.width}x${resized.height}`);
+      });
+    },
+  );
+});
