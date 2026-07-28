@@ -213,6 +213,26 @@ export function findNewestUmbrella(issues) {
 // render from data, then assert before creating.
 // ---------------------------------------------------------------------------
 
+/**
+ * Which contract an issue title is subject to.
+ *
+ * The gate must never validate the **umbrella** against the dedicated-issue
+ * contract: `daily-stable.yml` opens it with the same `daily-failure` label but a
+ * completely different body, so enforcing here would fail every red day forever.
+ * The title is the discriminator the codebase already uses (`matchUmbrella`,
+ * `findNewestUmbrella`).
+ *
+ * Returns `'umbrella'`, `'dedicated'`, or `'other'` — and only `'dedicated'` is
+ * enforced. `'other'` is deliberately permissive: an issue carrying the label
+ * without either title shape is somebody's manual note, not a contract breach.
+ */
+export function classifyIssueTitle(title) {
+  const t = String(title || '').trim();
+  if (/^\[Daily Failure\]/.test(t)) return 'umbrella';
+  if (/^\[Daily #\d+\]/.test(t)) return 'dedicated';
+  return 'other';
+}
+
 /** Section headings a dedicated issue must carry, in order. */
 export const DEDICATED_ISSUE_SECTIONS = [
   '## Symptom',

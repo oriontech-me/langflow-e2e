@@ -1,0 +1,162 @@
+name: "Guard the dedicated-issue contract"
+description: >-
+  Validate that per-cause triage issues meet the dedicated-issue contract, from
+  OUTSIDE the agent that wrote the body (#1035). Phase 7 of the triage skill is
+  instructed to call renderDedicatedIssueBody()/assertDedicatedIssueBody(), but an
+  instruction is not a gate — a hand-written body bypasses both. This runs the same
+  validator against the issue as it exists on GitHub. Reports and never blocks: a
+  malformed issue gets a comment naming the gaps and a label, never a closure.
+  Checks one issue (`issue`) or every dedicated issue opened since a timestamp
+  (`since`). The umbrella is excluded by title — it carries the same daily-failure
+  label but a different contract, so enforcing on it would fail every red day.
+
+inputs:
+  issue:
+    description: "Issue number to check. Mutually exclusive with `since`."
+    required: false
+    default: ""
+  since:
+    description: "ISO-8601 timestamp; check every daily-failure issue created at or after it."
+    required: false
+    default: ""
+  label:
+    description: "Label applied to an issue that fails the contract."
+    required: false
+    default: "needs-triage"
+  dry_run:
+    description: >-
+      Evaluate and print the verdict without commenting or labelling. Lets the
+      action be proven from a branch (workflow_dispatch) without mutating a real
+      issue — the `issues` trigger itself only fires from the default branch.
+    required: false
+    default: "false"
+  github_token:
+    description: "Token with issues: write."
+    required: true
+
+outputs:
+  invalid_count:
+    description: "Number of issues that failed the contract."
+    value: ${{ steps.guard.outputs.invalid_count }}
+  checked_count:
+    description: "Number of issues actually subject to the contract and checked."
+    value: ${{ steps.guard.outputs.checked_count }}
+  guard_error_count:
+    description: "Issues the guard could not evaluate — a broken guard, not a bad issue."
+    value: ${{ steps.guard.outputs.guard_error_count }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Validate dedicated-issue bodies
+      id: guard
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github_token }}
+        IN_ISSUE: ${{ inputs.issue }}
+        IN_SINCE: ${{ inputs.since }}
+        DRY_RUN: ${{ inputs.dry_run }}
+        FAIL_LABEL: ${{ inputs.label }}
+        REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+
+        # Scratch outside the checkout: this action runs inside the repo working
+        # directory, and dropping body/comment files there would dirty a tree that
+        # other steps may inspect or commit.
+        work=$(mktemp -d)
+        trap 'rm -rf "$work"' EXIT
+
+        if [ -z "$IN_ISSUE" ] && [ -z "$IN_SINCE" ]; then
+          # Single quotes: backticks here would be command substitution, not Markdown.
+          echo '::error::guard-dedicated-issue needs either the issue or the since input.'
+          exit 1
+        fi
+
+        # Select the issues to check. Single-issue mode is the human path
+        # (issues.opened/edited); `since` mode is the agent path, where the
+        # numbers are not known up front because the agent created them.
+        if [ -n "$IN_ISSUE" ]; then
+          echo "$IN_ISSUE" > "$work/numbers.txt"
+        else
+          gh issue list --repo "$REPO" --label daily-failure --state open \
+            --limit 100 --json number,createdAt \
+            --jq "[.[] | select(.createdAt >= \"$IN_SINCE\")] | .[].number" > "$work/numbers.txt"
+        fi
+
+        checked=0
+        invalid=0
+        errors=0
+        # A malformed body must not abort the sweep — the remaining issues still
+        # need checking, and this step reports rather than blocks.
+        while read -r n; do
+          [ -n "$n" ] || continue
+          title=$(gh issue view "$n" --repo "$REPO" --json title --jq .title)
+          gh issue view "$n" --repo "$REPO" --json body --jq .body > "$work/body.md"
+
+          set +e
+          verdict=$(node .claude/skills/langflow-e2e-triage/scripts/check-issue-body.mjs \
+            --title "$title" --body-file "$work/body.md" --json)
+          code=$?
+          set -e
+
+          # FAIL LOUD on an unusable verdict. A crashed validator (missing module,
+          # syntax error, bad flag) leaves `verdict` empty, and without this the
+          # `.checked != true` branch below would report it as a benign "skipped"
+          # — a gate that silently passes when it is itself broken, which is the
+          # precise failure mode this guard exists to prevent.
+          if [ "$code" -eq 2 ] || ! echo "$verdict" | jq -e . >/dev/null 2>&1; then
+            echo "::error::the contract guard could not evaluate issue #$n — the validator did not return a verdict (exit $code). Treating as a guard failure, not a pass."
+            errors=$((errors + 1))
+            continue
+          fi
+
+          if [ "$(echo "$verdict" | jq -r .checked)" != "true" ]; then
+            echo "#$n — skipped ($(echo "$verdict" | jq -r .kind))"
+            continue
+          fi
+          checked=$((checked + 1))
+
+          if [ "$code" -eq 0 ]; then
+            echo "#$n — ok"
+            continue
+          fi
+
+          invalid=$((invalid + 1))
+          echo "::warning::issue #$n does not meet the dedicated-issue contract"
+          echo "$verdict" | jq -r '.problems[] | "  - " + .'
+
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "  [dry-run] would comment and apply the '$FAIL_LABEL' label"
+            continue
+          fi
+
+          # Upsert, so editing the body does not accumulate one comment per edit.
+          marker="dedicated-issue-contract-guard:$n"
+          echo "$verdict" | jq -r .comment > "$work/comment.md"
+          printf '\n<!-- %s -->\n' "$marker" >> "$work/comment.md"
+          existing=$(gh api "repos/$REPO/issues/$n/comments" --paginate \
+            --jq "[.[] | select(.body | contains(\"$marker\"))] | .[0].id // empty")
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@"$work/comment.md" >/dev/null
+            echo "  updated existing guard comment"
+          else
+            gh issue comment "$n" --repo "$REPO" --body-file "$work/comment.md" >/dev/null
+            echo "  posted guard comment"
+          fi
+          gh issue edit "$n" --repo "$REPO" --add-label "$FAIL_LABEL" >/dev/null || \
+            echo "::warning::could not apply the '$FAIL_LABEL' label to #$n"
+        done < "$work/numbers.txt"
+
+        echo "checked_count=$checked" >> "$GITHUB_OUTPUT"
+        echo "invalid_count=$invalid" >> "$GITHUB_OUTPUT"
+        echo "guard_error_count=$errors" >> "$GITHUB_OUTPUT"
+        echo "Contract guard: $checked checked, $invalid invalid, $errors unevaluable."
+
+        # An issue the guard could not evaluate is not a pass. The caller runs this
+        # with continue-on-error (report, do not block), so failing here surfaces a
+        # broken guard in the run without killing the triage.
+        if [ "$errors" -gt 0 ]; then
+          echo "::error::$errors issue(s) could not be evaluated — the guard itself is broken, not the issues."
+          exit 1
+        fi

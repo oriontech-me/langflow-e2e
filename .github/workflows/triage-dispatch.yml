@@ -97,6 +97,12 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+      # Stamped BEFORE the agent runs so the guard below can tell the issues this
+      # run created from every other open daily-failure issue. Minus a minute of
+      # slack for clock skew between the runner and the API.
+      - name: Mark the start of this run
+        id: started
+        run: echo "at=$(date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
       - uses: anthropics/claude-code-action@v1
         env:
           GH_TOKEN: ${{ github.token }}
@@ -104,3 +110,24 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: "/langflow-e2e-triage --phase execute --issue ${{ github.event.issue.number }}"
           claude_args: '--allowedTools "Read,Bash" --max-turns 40'
+
+      # The contract gate for the AGENT path (#1035).
+      #
+      # An `issues.opened` trigger cannot do this job: the step above creates the
+      # issues as GITHUB_TOKEN, and GitHub suppresses workflow runs for
+      # GITHUB_TOKEN-raised events (the same constraint that put this whole
+      # workflow on workflow_run). An issues-triggered gate would never fire here
+      # while looking green — so the check runs inline instead, outside the agent
+      # but inside its job.
+      #
+      # `if: always()` — a triage that died mid-way can still have created issues,
+      # and those are exactly the ones worth checking.
+      # `continue-on-error` — report, never block: a malformed issue still carries
+      # evidence someone needs, so it gets a comment and a label, not a red job.
+      - name: Guard — issues created by this run meet the dedicated-issue contract
+        if: always()
+        continue-on-error: true
+        uses: ./.github/actions/guard-dedicated-issue
+        with:
+          since: ${{ steps.started.outputs.at }}
+          github_token: ${{ github.token }}

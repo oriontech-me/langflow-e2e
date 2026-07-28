@@ -1,0 +1,69 @@
+# Contract gate for the HUMAN path (#1035).
+#
+# The agent path is gated inline, as a post-step of triage-dispatch.yml's
+# `execute` job: that job creates issues as GITHUB_TOKEN, and GitHub suppresses
+# workflow runs for GITHUB_TOKEN-raised events, so an `issues` trigger would
+# never fire for them — the exact reason triage-dispatch.yml itself runs on
+# workflow_run. This workflow covers what that inline step cannot: a per-cause
+# issue a person opens by hand, through .github/ISSUE_TEMPLATE/failure-root-cause.yml
+# or otherwise. Those are raised by a user account, so `issues` fires normally.
+#
+# Reports, never blocks. A malformed issue keeps its evidence and gets a comment
+# naming the gaps plus a label; nothing is closed or rejected.
+name: Issue Contract Guard
+
+on:
+  issues:
+    # `edited` closes the loop: fixing the body re-runs the check, and the guard
+    # comment is updated in place rather than a new one being appended.
+    types: [opened, edited]
+  # Manual entry: run the identical composite action against a chosen issue,
+  # printing the verdict without mutating it by default.
+  #
+  # NOTE on what this does and does not buy. GitHub requires a workflow_dispatch
+  # workflow to exist on the DEFAULT branch before it can be dispatched at all
+  # (API 404s otherwise), so this could NOT validate the very PR that introduced
+  # it. What it does buy, from here on: every later change to this guard is
+  # testable from its own branch (`gh workflow run ... --ref <branch>`), and the
+  # guard can be re-run on demand against any issue.
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "Issue number to check"
+        required: true
+      dry_run:
+        description: "Print the verdict without commenting or labelling"
+        type: boolean
+        default: true
+
+# Only issues: write — this workflow never touches code.
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  guard:
+    name: Dedicated-issue contract
+    # Cheap pre-filter on the event path. The action still classifies by title and
+    # skips the umbrella, but there is no reason to spin a runner for unrelated
+    # issues. The manual path is gated on a trusted actor instead — without that,
+    # any collaborator who can dispatch could make the guard comment on an
+    # arbitrary issue (same guard triage-dispatch.yml puts on its dispatch entry).
+    if: >-
+      (github.event_name == 'issues' &&
+       contains(github.event.issue.labels.*.name, 'daily-failure')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       contains(fromJSON('["rafaelgiln","Victor-w-Madeira","daniellicnerski1"]'), github.actor))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      # An edit burst must not race itself into duplicate comments.
+      group: issue-contract-guard-${{ github.event.issue.number || inputs.issue }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/guard-dedicated-issue
+        with:
+          issue: ${{ github.event.issue.number || inputs.issue }}
+          dry_run: ${{ inputs.dry_run || false }}
+          github_token: ${{ github.token }}
