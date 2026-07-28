@@ -1,169 +1,193 @@
 import { expect, test } from "../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { zoomOut } from "../../../helpers/ui/zoom-out";
+import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
+import { unselectNodes } from "../../../helpers/ui/unselect-nodes";
 
-test(
-  "box selection (shift+drag) selects multiple components",
-  { tag: ["@release", "@workspace", "@regression"] },
-  async ({ page }) => {
-    await awaitBootstrapTest(page);
+/**
+ * §15.4 — Select multiple components via box selection.
+ *
+ * A Shift+drag marquee must select every node it encloses. The selection is
+ * asserted DIRECTLY through `.react-flow__node.selected`.
+ *
+ * The inherited version asserted it indirectly — copy the selection, paste it,
+ * expect `2 originals + 2 pasted = 4` — and was deterministically red at 3: one
+ * of its fixtures was Chat Input, a **singleton** that cannot be copy/pasted
+ * (`core-components/singleton-components.spec.ts`), so only one node ever
+ * pasted. Keyboard Copy/Paste is covered by `ui-ux/langflowShortcuts.spec.ts`
+ * and `flow-functionality/canvas-copy-paste.spec.ts`; this spec has no business
+ * routing a selection assertion through the clipboard.
+ *
+ * Marquee-delete of a whole canvas is also covered by
+ * `core-components/componentDelete.spec.ts` (§15.4, already `[x]`); test 2 here
+ * is scoped to proving *this* selection reaches the canvas action layer.
+ */
 
-    await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
-    await page.getByTestId("blank-flow").click();
+/** How far the second node is dragged so the two stop overlapping. */
+const SEPARATION_DX = 40;
+const SEPARATION_DY = 260;
 
-    // Add ChatOutput (first component via hover+click)
-    await page.getByTestId("sidebar-search-input").fill("chat output");
-    await page.waitForSelector('[data-testid="input_outputChat Output"]', {
+test.describe("Canvas — box selection", () => {
+  let createdFlowId: string | null = null;
+
+  test.beforeEach(async ({ page }) => {
+    createdFlowId = await setupBlankFlow(page);
+    await expect(page.locator(".react-flow__node")).toHaveCount(0);
+
+    await addComponentFromSidebar(
+      page,
+      "prompt",
+      "add-component-button-prompt-template",
+    );
+    await expect(page.locator(".react-flow__node")).toHaveCount(1, {
       timeout: 30000,
     });
-    await page
-      .getByTestId("input_outputChat Output")
-      .hover()
-      .then(async () => {
-        await page.getByTestId("add-component-button-chat-output").click();
-      });
 
-    await zoomOut(page, 2);
-
-    // Add ChatInput (second component via dragTo)
-    await page.getByTestId("sidebar-search-input").fill("chat input");
-    await page.waitForSelector('[data-testid="input_outputChat Input"]', {
-      timeout: 30000,
-    });
-    await page
-      .getByTestId("input_outputChat Input")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 100, y: 100 },
-      });
-
-    await adjustScreenView(page);
+    await addComponentFromSidebar(
+      page,
+      "chat output",
+      "add-component-button-chat-output",
+    );
     await expect(page.locator(".react-flow__node")).toHaveCount(2, {
-      timeout: 10000,
-    });
-
-    // Get bounding boxes of both nodes
-    const nodes = page.locator(".react-flow__node");
-    const firstBox = await nodes.first().boundingBox();
-    const secondBox = await nodes.nth(1).boundingBox();
-
-    if (firstBox && secondBox) {
-      // Calculate selection rectangle that encompasses both nodes
-      const startX = Math.min(firstBox.x, secondBox.x) - 30;
-      const startY = Math.min(firstBox.y, secondBox.y) - 30;
-      const endX =
-        Math.max(
-          firstBox.x + firstBox.width,
-          secondBox.x + secondBox.width,
-        ) + 30;
-      const endY =
-        Math.max(
-          firstBox.y + firstBox.height,
-          secondBox.y + secondBox.height,
-        ) + 30;
-
-      // Box selection via Shift+drag on the canvas
-      await page.keyboard.down("Shift");
-      await page.mouse.move(startX, startY);
-      await page.mouse.down();
-      await page.mouse.move(endX, endY, { steps: 10 });
-      await page.mouse.up();
-      await page.keyboard.up("Shift");
-      await page.waitForTimeout(500);
-    }
-
-    // Both nodes should be selected (selection box visible or nodes have selected state)
-    // Verify by checking that Ctrl+C copies both nodes (lastCopiedSelection has 2 nodes)
-    await page.keyboard.press("Control+c");
-    await page.waitForTimeout(300);
-
-    // Click empty canvas area for paste
-    await page.locator('//*[@id="react-flow-id"]').click({
-      position: { x: 50, y: 400 },
-    });
-    await page.waitForTimeout(300);
-
-    await page.keyboard.press("Control+v");
-    await page.waitForTimeout(1500);
-
-    // After pasting the multi-selection, should have exactly 4 nodes (2 original + 2 pasted)
-    await expect(page.locator(".react-flow__node")).toHaveCount(4, {
-      timeout: 5000,
-    });
-  },
-);
-
-test(
-  "box-selecting all nodes and deleting clears the canvas",
-  { tag: ["@release", "@workspace", "@regression"] },
-  async ({ page }) => {
-    await awaitBootstrapTest(page);
-
-    await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
-    await page.getByTestId("blank-flow").click();
-
-    // Add two components
-    await page.getByTestId("sidebar-search-input").fill("chat output");
-    await page.waitForSelector('[data-testid="input_outputChat Output"]', {
       timeout: 30000,
     });
-    await page
-      .getByTestId("input_outputChat Output")
-      .hover()
-      .then(async () => {
-        await page.getByTestId("add-component-button-chat-output").click();
-      });
 
-    await zoomOut(page, 2);
-
-    await page.getByTestId("sidebar-search-input").fill("chat input");
-    await page.waitForSelector('[data-testid="input_outputChat Input"]', {
-      timeout: 30000,
+    // Components added from the sidebar stack ~10px apart. A marquee over
+    // stacked nodes cannot distinguish "selected both" from "selected the top
+    // one", so the second node is dragged clear first.
+    const topNode = page.locator(".react-flow__node").nth(1);
+    const box = await topNode.boundingBox();
+    expect(box, "the second node must be on screen to separate it").not.toBeNull();
+    const startX = box!.x + box!.width / 2;
+    const startY = box!.y + 12;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX + SEPARATION_DX, startY + SEPARATION_DY, {
+      steps: 15,
     });
-    await page
-      .getByTestId("input_outputChat Input")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-        targetPosition: { x: 100, y: 100 },
-      });
+    await page.mouse.up();
 
-    await adjustScreenView(page);
-    await expect(page.locator(".react-flow__node")).toHaveCount(2, {
-      timeout: 10000,
-    });
+    await expect
+      .poll(
+        async () => {
+          const boxes = await page
+            .locator(".react-flow__node")
+            .evaluateAll((nodes) =>
+              nodes.map((n) => {
+                const r = n.getBoundingClientRect();
+                return { top: r.top, bottom: r.bottom };
+              }),
+            );
+          return boxes[0].bottom < boxes[1].top || boxes[1].bottom < boxes[0].top;
+        },
+        {
+          timeout: 15000,
+          message: "the two nodes must not overlap before the marquee",
+        },
+      )
+      .toBe(true);
+  });
 
-    // Box-select all nodes via Shift+drag from corner to corner
-    const nodes = page.locator(".react-flow__node");
-    const firstBox = await nodes.first().boundingBox();
-    const secondBox = await nodes.nth(1).boundingBox();
-
-    if (firstBox && secondBox) {
-      const startX = Math.min(firstBox.x, secondBox.x) - 30;
-      const startY = Math.min(firstBox.y, secondBox.y) - 30;
-      const endX =
-        Math.max(firstBox.x + firstBox.width, secondBox.x + secondBox.width) +
-        30;
-      const endY =
-        Math.max(
-          firstBox.y + firstBox.height,
-          secondBox.y + secondBox.height,
-        ) + 30;
-
-      await page.keyboard.down("Shift");
-      await page.mouse.move(startX, startY);
-      await page.mouse.down();
-      await page.mouse.move(endX, endY, { steps: 10 });
-      await page.mouse.up();
-      await page.keyboard.up("Shift");
-      await page.waitForTimeout(500);
+  test.afterEach(async ({ page }) => {
+    if (createdFlowId) {
+      await page.goto("/").catch(() => {});
+      await deleteFlow(page.request, createdFlowId);
+      createdFlowId = null;
     }
+  });
 
-    // Delete selected nodes
-    await page.keyboard.press("Delete");
-    await page.waitForTimeout(1000);
+  /**
+   * Shift+drags a marquee across the given screen rectangle. ReactFlow needs an
+   * intermediate move to start the selection gesture.
+   */
+  const marquee = async (
+    page: import("@playwright/test").Page,
+    from: { x: number; y: number },
+    to: { x: number; y: number },
+  ) => {
+    await page.keyboard.down("Shift");
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x + 20, from.y + 20, { steps: 5 });
+    await page.mouse.move(to.x, to.y, { steps: 15 });
+    await page.mouse.up();
+    await page.keyboard.up("Shift");
+  };
 
-    // Canvas must be completely empty after deleting all selected nodes
-    await expect(page.locator(".react-flow__node")).toHaveCount(0, {
-      timeout: 5000,
-    });
-  },
-);
+  /** Screen rectangle enclosing every node, padded by `pad` pixels. */
+  const nodesBounds = async (
+    page: import("@playwright/test").Page,
+    pad: number,
+  ) => {
+    const boxes = await page
+      .locator(".react-flow__node")
+      .evaluateAll((nodes) =>
+        nodes.map((n) => {
+          const r = n.getBoundingClientRect();
+          return { x: r.x, y: r.y, right: r.right, bottom: r.bottom };
+        }),
+      );
+    return {
+      from: {
+        x: Math.min(...boxes.map((b) => b.x)) - pad,
+        y: Math.min(...boxes.map((b) => b.y)) - pad,
+      },
+      to: {
+        x: Math.max(...boxes.map((b) => b.right)) + pad,
+        y: Math.max(...boxes.map((b) => b.bottom)) + pad,
+      },
+    };
+  };
+
+  test("a Shift+drag marquee selects every component it encloses",
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
+    async ({ page }) => {
+      const selected = page.locator(".react-flow__node.selected");
+
+      await test.step("Start from an unselected canvas", async () => {
+        await unselectNodes(page);
+        await expect(selected).toHaveCount(0);
+      });
+
+      await test.step("A marquee drawn away from the nodes selects nothing", async () => {
+        // Negative control: proves the count below is caused by enclosing the
+        // nodes, not by the marquee gesture itself.
+        const bounds = await nodesBounds(page, 30);
+        const emptyY = bounds.from.y - 120;
+        await marquee(
+          page,
+          { x: bounds.from.x, y: emptyY },
+          { x: bounds.to.x, y: bounds.from.y - 40 },
+        );
+        await expect(selected).toHaveCount(0);
+      });
+
+      await test.step("A marquee enclosing both nodes selects both", async () => {
+        const bounds = await nodesBounds(page, 30);
+        await marquee(page, bounds.from, bounds.to);
+        await expect(selected).toHaveCount(2, { timeout: 10000 });
+      });
+    },
+  );
+
+  test("deleting a box selection clears the selected components",
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
+    async ({ page }) => {
+      const selected = page.locator(".react-flow__node.selected");
+
+      await test.step("Box-select both nodes", async () => {
+        await unselectNodes(page);
+        const bounds = await nodesBounds(page, 30);
+        await marquee(page, bounds.from, bounds.to);
+        await expect(selected).toHaveCount(2, { timeout: 10000 });
+      });
+
+      await test.step("Delete removes every selected node", async () => {
+        await page.keyboard.press("Delete");
+        await expect(page.locator(".react-flow__node")).toHaveCount(0, {
+          timeout: 10000,
+        });
+      });
+    },
+  );
+});
