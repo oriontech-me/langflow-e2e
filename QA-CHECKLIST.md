@@ -745,9 +745,9 @@
 - [-] Delete sticky note
 
 #### 15.9 Right-Click and Menus
-- [-] Context menu via right-click on canvas
-- [-] Context menu via right-click on component
-- [-] Main menu actions
+- [~] Context menu via right-click on canvas — **no product surface on 1.12.0.dev8**: a right-click on `.react-flow__pane` dispatches a `contextmenu` event that reaches `document` with `defaultPrevented === false` (so the browser's native menu is what opens) and renders zero `[role="menu"]` / `[role="listbox"]` / Radix popper elements, with or without a node selected — Langflow does not wire ReactFlow's `onPaneContextMenu`. Edge menus (`edge-context-menu-trigger`) are a left-click affordance and belong to §15.3 (#945)
+- [x] Context menu via right-click on component — one right-click selects the node AND opens its options menu with the exact ordered item contract (Save/Duplicate/Copy/Docs/Minimize/Freeze/Download/Delete), Escape closes it, and choosing Duplicate from that menu adds the node → `ui-ux/right-click-dropdown.spec.ts`
+- [x] Main menu actions — the header account menu lists all nine `menu_*_button` items, its version row matches `GET /api/v1/version`, the four external items carry their documented `href`/`target=_blank`, Escape closes it, and the Settings item routes to `/settings` → `ui-ux/main-menu-actions.spec.ts`
 
 #### 15.10 Settings and UI Configuration
 - [x] Access Settings page — profile menu opens Settings, the sidebar lists General/Model Providers/Shortcuts/Messages, and each section renders its own content (General shows the Language + Profile Picture groups) → `ui-ux/settings-navigation.spec.ts`, `ui-ux/settings-general-section.spec.ts`
