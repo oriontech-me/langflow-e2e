@@ -184,7 +184,8 @@ function rankCandidates(provider: string, candidates: string[]): string[] {
 // exhausted quota, dead key) is byte-identical for every candidate, because the
 // request never reached a model at all. Byte-equality of the error is therefore
 // the discriminator, with no per-provider pattern list to keep in sync and no
-// risk of misreading a model-level 404 as an account problem.
+// risk of misreading a model-level 404 as an account problem — with one
+// exception, the transport failures listed in TRANSIENT_TRANSPORT below.
 //
 // Why it matters: on 2026-07-28 Google's key had exceeded its monthly spend cap
 // and Anthropic's balance was drained, so the loop probed all 36 + 13 candidates
@@ -199,6 +200,36 @@ function rankCandidates(provider: string, candidates: string[]): string[] {
 // Three, not two: #570's case — a single gated/preview LEAD model — must still
 // fall through to the models that do work.
 const IDENTICAL_ERROR_LIMIT = 3;
+
+// ONE class of identical error is exempt from the early exit: a transport
+// failure. The validators' catch branch reports `e.message`, so a runner-side
+// network hiccup yields "fetch failed" — byte-identical for every candidate
+// (it never reaches the provider, let alone a model) while being neither
+// model-scoped NOR account-scoped, just transient. Counting it would turn a
+// blip that the full sweep used to ride out on candidate #4 into an `inactive`
+// provider with a non-billing error, i.e. a HARD failure of collect-models
+// plus the silent skips #570 exists to prevent. Cheap to exclude: a transport
+// error costs a connection attempt, not a wedge, so probing on is safe.
+const TRANSIENT_TRANSPORT = /fetch failed|network|terminated|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up/i;
+
+// Representative error for a provider that exhausted every candidate. NOT the
+// last one (#1011): on 2026-07-28 Google's trailing candidate was a model-level
+// 404, so the aggregate reported key rot and #955's billing downgrade never
+// fired. Frequency is the right pick because it carries the same signal the
+// early exit does — a model-scoped message names its model and therefore occurs
+// ONCE, while an account-scoped one repeats for every candidate. Insertion
+// order breaks ties (strict `>`), so the earliest-seen error wins.
+function mostCommonError(counts: Map<string, number>): { error: string; count: number } {
+  let error = "unknown error";
+  let count = 0;
+  for (const [message, n] of counts) {
+    if (n > count) {
+      error = message;
+      count = n;
+    }
+  }
+  return { error, count };
+}
 
 export async function validateProviderWithFallback(
   provider: string,
@@ -216,6 +247,7 @@ export async function validateProviderWithFallback(
   }
 
   const tried: string[] = [];
+  const errorCounts = new Map<string, number>();
   let last: ProviderRecord | null = null;
   let repeats = 0;
   for (const model of candidates) {
@@ -231,7 +263,13 @@ export async function validateProviderWithFallback(
     // A missing key fails identically for every candidate — stop immediately.
     if (result.error?.endsWith("not set")) return result;
     console.log(`   ${provider}: candidate "${model}" failed — ${result.error}`);
-    repeats = last && result.error === last.error ? repeats + 1 : 1;
+    const message = result.error ?? "no error message recorded";
+    errorCounts.set(message, (errorCounts.get(message) ?? 0) + 1);
+    // A transport failure repeats identically without meaning the account is
+    // done — see TRANSIENT_TRANSPORT. Resetting the streak (rather than holding
+    // it) is the conservative side: it probes more, never less.
+    repeats =
+      last && result.error === last.error && !TRANSIENT_TRANSPORT.test(message) ? repeats + 1 : 1;
     tried.push(model);
     last = result;
 
@@ -251,9 +289,12 @@ export async function validateProviderWithFallback(
     }
   }
 
+  const common = mostCommonError(errorCounts);
   return {
     ...(last as ProviderRecord),
-    error: `all ${tried.length} candidate model(s) failed validation (tried: ${tried.join(", ")}); last error: ${last?.error}`,
+    error:
+      `all ${tried.length} candidate model(s) failed validation (tried: ${tried.join(", ")}); ` +
+      `most common error (${common.count}/${tried.length}): ${common.error}`,
   };
 }
 

@@ -86,7 +86,12 @@ A model-scoped failure names the model it is about, so consecutive candidates
 produce different messages; an account-scoped one (spend cap, drained credit,
 dead key) is byte-identical for every candidate, because the request never
 reached a model. Three identical errors in a row therefore mean no remaining
-candidate can pass. Two consequences, both load-bearing:
+candidate can pass — unless the repeated error is a **transport** failure
+(`fetch failed`, a refused connection, a DNS blip), which repeats identically
+without saying anything about the account. Those do not count toward the streak:
+a runner-side hiccup on three consecutive probes must not turn into an
+`inactive` provider, which is a hard failure plus the silent skips the fallback
+exists to prevent. Two consequences, both load-bearing:
 
 - **Cost.** On 2026-07-28 a capped Google key made the loop probe all 36
   candidates to learn what candidate #1 already said — three times over, since
@@ -96,7 +101,12 @@ candidate can pass. Two consequences, both load-bearing:
 - **Correctness.** The aggregate error used to keep only the LAST candidate's
   message. With a capped Google key that was a trailing model-level 404, so the
   provider was classified as key rot and the billing downgrade never fired.
-  Stopping on the repeat records the real reason.
+  Stopping on the repeat records the real reason. When the sweep does run to the
+  end (the errors never repeat 3× consecutively — a catalog that interleaves
+  valid models with ones that reject the probe endpoint), the aggregate now
+  reports the **most frequent** error instead of the last, on the same signal the
+  early exit uses: a model-scoped message names its model and so occurs once,
+  while an account-scoped one occurs for every candidate.
 
 ---
 
