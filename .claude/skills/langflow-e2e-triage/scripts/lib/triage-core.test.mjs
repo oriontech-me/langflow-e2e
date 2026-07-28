@@ -454,3 +454,82 @@ test('assertDedicatedIssueBody reports a dropped Upstream line', () => {
   const body = renderDedicatedIssueBody(CLUSTER).replace(/^\*\*Upstream:\*\* .+$/m, '');
   assert.ok(assertDedicatedIssueBody(body).some((p) => /Upstream/.test(p)));
 });
+
+// --- review findings on PR #1034 -------------------------------------------
+
+test('renderDedicatedIssueBody rejects a missing or malformed run.date', () => {
+  // Used to render "(run 123, undefined)" and pass validation — the provenance
+  // line joins the issue to its history row, so it shipped broken.
+  assert.throws(
+    () => renderDedicatedIssueBody({ ...CLUSTER, run: { run_id: '1', run_url: 'u' } }),
+    /run\.date must be YYYY-MM-DD/,
+  );
+  assert.throws(
+    () => renderDedicatedIssueBody({ ...CLUSTER, run: { run_id: '1', date: '27/07/2026' } }),
+    /run\.date must be YYYY-MM-DD/,
+  );
+});
+
+test('renderDedicatedIssueBody rejects a null umbrella naming the real cause', () => {
+  // buildDataset returns umbrella_issue: null when no umbrella carries the run id.
+  assert.throws(
+    () => renderDedicatedIssueBody({ ...CLUSTER, umbrella: null }),
+    /positive issue number.*matchUmbrella/s,
+  );
+});
+
+test('assertDedicatedIssueBody rejects a provenance line with no date', () => {
+  const body = renderDedicatedIssueBody(CLUSTER).replace(', 2026-07-27).', ', undefined).');
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /provenance line/.test(p)));
+});
+
+test('a spec title containing "todo" is not a placeholder', () => {
+  // Case-insensitive \bTODO\b matched ordinary prose. The table quotes the title
+  // rather than fencing it, so the code-span strip does not protect it — this
+  // aborted issue creation for a real cluster in the unattended path.
+  const body = renderDedicatedIssueBody({
+    ...CLUSTER,
+    tests: [{ ...CLUSTER.tests[0], test: 'todo list renders after reload' }],
+  });
+  assert.deepEqual(assertDedicatedIssueBody(body), []);
+});
+
+test('an uppercase TODO is still caught', () => {
+  const body = renderDedicatedIssueBody({ ...CLUSTER, investigation: 'TODO: decide the path' });
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /unfilled placeholder/.test(p)));
+});
+
+test('assertDedicatedIssueBody reports sections that carry no content', () => {
+  const body = renderDedicatedIssueBody(CLUSTER).replace(
+    'All three failed in the same 40s window on shard 3.',
+    '',
+  );
+  assert.ok(
+    assertDedicatedIssueBody(body).includes('empty section: ## Why these failures are one cause'),
+  );
+});
+
+test('assertDedicatedIssueBody reports an empty Signature cell', () => {
+  // The format's whole point; a hand-written or enriched table could drop it.
+  const body = renderDedicatedIssueBody(CLUSTER).replace(
+    '| `Error: expect(locator).toBeVisible() failed` |',
+    '|  |',
+  );
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /empty Signature cell/.test(p)));
+});
+
+test('assertDedicatedIssueBody reports a Symptom table with no rows', () => {
+  const body = renderDedicatedIssueBody(CLUSTER).split('\n')
+    .filter((l) => !l.includes('agent-component-regression'))
+    .join('\n');
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /no test rows/.test(p)));
+});
+
+test('a quote inside a test title cannot break out of the quoted cell', () => {
+  const body = renderDedicatedIssueBody({
+    ...CLUSTER,
+    tests: [{ ...CLUSTER.tests[0], test: 'the "new" flow opens' }],
+  });
+  assert.ok(body.includes(`("the 'new' flow opens")`));
+  assert.deepEqual(assertDedicatedIssueBody(body), []);
+});

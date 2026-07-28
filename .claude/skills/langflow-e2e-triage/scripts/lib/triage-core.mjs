@@ -23,7 +23,6 @@ export function findLatestRedRun(rows) {
 // bare ESC byte behind, so a signature recorded with ANSI never compares equal to
 // the same signature recorded without it — silently breaking the same-signature
 // recurrence rule. `scripts/build-run-payload.mjs` already uses this form.
-// eslint-disable-next-line no-control-regex
 const ANSI_RE = /\u001b\[[0-9;]*m/g;
 
 /** Strip ANSI SGR escape sequences. */
@@ -245,6 +244,24 @@ function tableCell(value) {
   return stripAnsi(value).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>').trim();
 }
 
+/** Table rows of the Symptom table: not the header, not the `|---|` separator. */
+function symptomRows(text) {
+  return text
+    .split('\n')
+    .filter((l) => /^\s*\|.*\|\s*$/.test(l))
+    .filter((l) => !/^\s*\|[\s\-:|]+\|\s*$/.test(l))
+    .filter((l) => !/\|\s*Signature\s*\|/.test(l));
+}
+
+/** Cells of a Markdown table row, splitting only on unescaped pipes. */
+function rowCells(line) {
+  return line
+    .trim()
+    .replace(/^\||\|$/g, '')
+    .split(/(?<!\\)\|/)
+    .map((c) => c.trim());
+}
+
 /**
  * Title for a dedicated issue: `[Daily #<umbrella>] <symptom>`.
  *
@@ -287,7 +304,21 @@ export function renderDedicatedIssueBody(input) {
     flakeSignal = null,
   } = input || {};
 
+  // Guard the umbrella the same way renderDedicatedIssueTitle does. buildDataset
+  // legitimately returns `umbrella_issue: null` when matchUmbrella() finds no
+  // umbrella carrying this run id, and interpolating that produces "#null" — a
+  // body the validator then rejects as a malformed provenance line, naming the
+  // wrong cause in a job with nobody watching. Fail here, where the reason is known.
+  if (!Number.isInteger(Number(umbrella)) || Number(umbrella) <= 0) {
+    throw new Error(`renderDedicatedIssueBody: umbrella must be a positive issue number, got ${JSON.stringify(umbrella)} — matchUmbrella() returns null when no umbrella carries this run id`);
+  }
   if (!run?.run_id) throw new Error('renderDedicatedIssueBody: run.run_id is required');
+  // Without this the provenance line renders "(run 123, undefined)" and the
+  // validator's `\(run .+\)` used to accept it — the line that joins the issue
+  // back to its history row, shipped broken.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(run?.date || ''))) {
+    throw new Error(`renderDedicatedIssueBody: run.date must be YYYY-MM-DD, got ${JSON.stringify(run?.date)}`);
+  }
   if (!Array.isArray(tests) || tests.length === 0) {
     throw new Error('renderDedicatedIssueBody: at least one affected test is required');
   }
@@ -320,7 +351,9 @@ export function renderDedicatedIssueBody(input) {
   const upstreamLine = `**Upstream:** ${String(upstream || '').trim() || '_not filed_'}`;
 
   const rows = tests.map((t) => {
-    const spec = `\`${t.file}:${t.line}\`` + (t.test ? ` ("${tableCell(t.test)}")` : '');
+    // The title is quoted, not fenced, so a `"` inside it would close the quote early.
+    const title = tableCell(t.test).replace(/"/g, "'");
+    const spec = `\`${t.file}:${t.line}\`` + (t.test ? ` ("${title}")` : '');
     const waits = t.waits_for ? `\`${tableCell(t.waits_for)}\`` : '—';
     return `| ${spec} | ${waits} | \`${tableCell(t.error_signature)}\` |`;
   });
@@ -397,12 +430,37 @@ export function assertDedicatedIssueBody(body, opts = {}) {
     if (!text.includes(heading)) problems.push(`missing section: ${heading}`);
   }
 
-  if (!/^Spun out of daily-failure triage #\d+ \(run .+\)/m.test(text)) {
-    problems.push('missing or malformed provenance line (expected: "Spun out of daily-failure triage #N (run <id>, <date>).")');
+  // The date is matched explicitly: `\(run .+\)` accepted "(run 123, undefined)",
+  // which shipped a provenance line that joins to nothing.
+  if (!/^Spun out of daily-failure triage #\d+ \(run .+, \d{4}-\d{2}-\d{2}\)\./m.test(text)) {
+    problems.push('missing or malformed provenance line (expected: "Spun out of daily-failure triage #N (run <id>, YYYY-MM-DD).")');
   }
 
   if (!/`[^`\s]+\.spec\.ts:\d+`/.test(text)) {
     problems.push('no backticked repo-relative spec path with a line number — the QA Platform cannot match this issue to a failure');
+  }
+
+  // Shape is not content. A body can carry every heading and say nothing under
+  // them — which the renderer cannot produce, but a hand-written or enriched one
+  // can, and those are exactly what this function exists to cover.
+  const lines = text.split('\n');
+  for (const heading of DEDICATED_ISSUE_SECTIONS) {
+    const at = lines.findIndex((l) => l.trim() === heading);
+    if (at < 0) continue; // already reported as missing above
+    const body_ = [];
+    for (let i = at + 1; i < lines.length && !/^##\s/.test(lines[i]); i++) body_.push(lines[i]);
+    if (!body_.join('').trim()) problems.push(`empty section: ${heading}`);
+  }
+
+  // The whole point of the format: every affected test carries a signature.
+  const rows = symptomRows(text);
+  if (rows.length === 0) {
+    problems.push('the Symptom table has no test rows');
+  } else {
+    const blank = rows.filter((r) => !rowCells(r).at(-1));
+    if (blank.length) {
+      problems.push(`${blank.length} Symptom row(s) with an empty Signature cell — copy it verbatim from reports/daily-history.jsonl, or "unknown" if that is what the run recorded`);
+    }
   }
 
   if (!/^\*\*Upstream:\*\* .+/m.test(text)) {
@@ -413,10 +471,12 @@ export function assertDedicatedIssueBody(body, opts = {}) {
     problems.push('no checkbox deliverables — "Deliverables (Done when)" must be actionable');
   }
 
-  // Unfilled template scaffolding. Matches the `<placeholder>` form used in the
-  // reference doc and the issue form; real content rarely contains it, and when
-  // it does (an HTML tag in a signature) the signature is inside backticks.
-  const placeholder = /<(?:one sentence|symptom|umbrella|verbatim|placeholder|TODO)[^>]*>|\bTODO\b/i.exec(
+  // Unfilled template scaffolding. Deliberately case-SENSITIVE: an earlier
+  // case-insensitive `\bTODO\b` matched ordinary prose, and a test legitimately
+  // titled "todo list renders" reaches this text outside backticks (the table
+  // quotes the title, it does not fence it) — which aborted issue creation for a
+  // real cluster in the unattended Phase 7 path.
+  const placeholder = /<(?:one sentence|symptom|umbrella|verbatim|placeholder)[^>]*>|\bTODO\b/.exec(
     text.replace(/`[^`]*`/g, ''),
   );
   if (placeholder) problems.push(`unfilled placeholder left in the body: ${placeholder[0]}`);
