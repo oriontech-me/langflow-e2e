@@ -29,12 +29,31 @@ OpenAI-compatible alt-cloud provider covered by the suite.
 
 ## Tags *(required)*
 
-`@stable` `@components` `@model-provider` `@playground`
+`@components` `@model-provider` `@playground`
 
-`@stable` added only after multiple clean `--retries=0` runs on the fresh
-nightly. `@components` (cross-cutting — canvas component configuration) ·
+`@components` (cross-cutting — canvas component configuration) ·
 `@model-provider` (area) · `@playground` (executes via Playground).
 No `@settings`: the Settings surface does not exist for Groq (see above).
+
+**No `@stable` — the component is not packaged in the image this suite
+validates (#1039).** Langflow 1.12 moved component families out of
+`lfx.components.*` into per-vendor distributions plus an aggregate
+`lfx-bundles` package; `langflowai/langflow-nightly:latest` installs ~20 vendor
+distributions and no `lfx-bundles`, so the Groq component is absent from
+`GET /api/v1/all` and the test's availability pre-flight skips it on **every**
+run. A tag that can never produce a verdict is worse than no tag: it would
+credit coverage in the generated `Phase 0 — Validated` block for assertions
+that never execute.
+
+This is a **product packaging decision, not a regression** — Groq remains a
+supported provider, and the test itself is valid. Verified on 1.12.0.dev8: with
+`uv pip install lfx-bundles langchain-groq` + a restart, the test **passes**
+against a real Groq cloud inference, and a deliberately inverted reply assert
+turns it red. Two packages are required, not one — `lfx-bundles` alone exposes
+the component but the run then dies with `ComponentBuildError: Error building
+Component Groq: langchain-groq is not installed`.
+
+Restore `@stable` only if the component returns to the default nightly image.
 
 ---
 
@@ -52,17 +71,17 @@ No `@settings`: the Settings surface does not exist for Groq (see above).
 
 ## Step by step *(required)*
 
-**Component-availability pre-flight (#907 / LE-1987):** `GET /api/v1/all` and
+**Component-availability pre-flight (#907, #1039):** `GET /api/v1/all` and
 check the component registry (second-level component-type keys) for a `groq`
-type. When the nightly ships without `langchain-groq`, Langflow hides the Groq
-component entirely (it drops out of the sidebar AND the registry), so the later
-`waitForSelector('[data-testid="groqGroq"]')` would hard-fail after 30s. This
-probe runs **first** and `test.skip`s with an explicit reason ("Groq component
-not available in this Langflow build") — turning an upstream packaging gap into
-an honest skip, not a misleading UI timeout. It auto-clears (the test runs
-again) the moment the package returns to the build. Distinct from the cloud-API
-probe below, which only validates the key, not Langflow's ability to expose the
-component.
+type. The default nightly image does not install the distribution that ships
+the Groq component, so it is absent from the sidebar AND the registry, and the
+later `waitForSelector('[data-testid="groqGroq"]')` would hard-fail after 30s.
+This probe runs **first** and `test.skip`s with an explicit reason ("Groq
+component not exposed by this Langflow build") — turning a packaging decision
+into an honest skip, not a misleading UI timeout. It auto-clears (the test runs
+again) the moment the component returns to the build. Distinct from the
+cloud-API probe below, which only validates the key, not Langflow's ability to
+expose the component.
 
 **Probe:** `GET https://api.groq.com/openai/v1/models` with the key from the
 env. Missing key / non-200 / test model absent from the catalog →
