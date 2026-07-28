@@ -16,6 +16,10 @@ import {
   findNewestUmbrella,
   parseProviderModel,
   computeProviderClusters,
+  renderDedicatedIssueTitle,
+  renderDedicatedIssueBody,
+  assertDedicatedIssueBody,
+  DEDICATED_ISSUE_SECTIONS,
 } from './triage-core.mjs';
 
 const fixture = (name) =>
@@ -41,13 +45,32 @@ test('findLatestRedRun returns null when every run is green', () => {
   assert.equal(findLatestRedRun(green), null);
 });
 
+// Real signatures in reports/daily-history.jsonl carry the ESC byte (stored as
+// an escape by the appender). Building it here rather than pasting a literal
+// control character keeps the source clean — and an earlier version of these
+// tests used ESC-less input, which is what let a broken ANSI_RE go unnoticed.
+const ESC = String.fromCharCode(27);
+
 test('stripAnsi removes escape codes', () => {
-  assert.equal(stripAnsi('[2mError: x[22m'), 'Error: x');
+  assert.equal(stripAnsi(`${ESC}[2mError: x${ESC}[22m`), 'Error: x');
+});
+
+test('stripAnsi leaves no orphan ESC byte behind', () => {
+  // Guards the drift where the pattern matched `[2m` without the ESC: the codes
+  // vanished but the control bytes stayed, so two recordings of one cause
+  // stopped comparing equal.
+  const out = stripAnsi(`Error: ${ESC}[2mexpect(${ESC}[22mlocator).toBeVisible failed`);
+  assert.ok(!out.includes(ESC));
+  assert.equal(out, 'Error: expect(locator).toBeVisible failed');
+});
+
+test('stripAnsi does not eat bracketed text that is not an escape sequence', () => {
+  assert.equal(stripAnsi('Error: index [2m] out of range'), 'Error: index [2m] out of range');
 });
 
 test('normalizeSignature makes ANSI and plain signatures compare equal', () => {
   assert.equal(
-    normalizeSignature('[2mError: toBe equality[22m'),
+    normalizeSignature(`${ESC}[2mError: toBe equality${ESC}[22m`),
     normalizeSignature('Error:   toBe equality'),
   );
 });
@@ -262,4 +285,251 @@ test('buildDataset attaches provider/model and provider_wide_clusters', () => {
   const gw = ds.provider_wide_clusters.find((c) => c.provider === 'google');
   assert.equal(gw.provider_wide, true);
   assert.equal(gw.count, 2);
+});
+
+// --- dedicated-issue rendering ---------------------------------------------
+
+const CLUSTER = {
+  umbrella: 744,
+  run: { run_id: '30261409427', run_url: 'https://gh/runs/30261409427', date: '2026-07-27' },
+  summary: 'Three @stable tests hard-failed with the same shape.',
+  tests: [
+    {
+      file: 'core-functionality/llm-agents/agent-component-regression.spec.ts',
+      line: 145,
+      test: 'agent interaction suite',
+      waits_for: "getByTestId('div-chat-message')",
+      error_signature: 'Error: expect(locator).toBeVisible() failed',
+    },
+  ],
+  whyOneCause: 'All three failed in the same 40s window on shard 3.',
+  preliminaryRead: 'Mass-failure day (guard tripped); consistent with saturation, not concluded.',
+  investigation: 'Product first: confirm on the current nightly whether these flows complete.',
+};
+
+test('renderDedicatedIssueTitle uses the umbrella number', () => {
+  assert.equal(
+    renderDedicatedIssueTitle({ umbrella: 744, symptom: 'agent execution never completes' }),
+    '[Daily #744] agent execution never completes',
+  );
+});
+
+test('renderDedicatedIssueTitle rejects a non-issue-number umbrella', () => {
+  // Guards the run-id-for-umbrella swap the reference doc warns about.
+  assert.throws(() => renderDedicatedIssueTitle({ umbrella: 'abc', symptom: 'x' }), /positive issue number/);
+  assert.throws(() => renderDedicatedIssueTitle({ umbrella: 744, symptom: '  ' }), /symptom is required/);
+});
+
+test('renderDedicatedIssueBody emits every canonical section in order', () => {
+  const body = renderDedicatedIssueBody(CLUSTER);
+  let cursor = -1;
+  for (const heading of DEDICATED_ISSUE_SECTIONS) {
+    const at = body.indexOf(heading);
+    assert.ok(at > cursor, `${heading} missing or out of order`);
+    cursor = at;
+  }
+  assert.match(body, /^Spun out of daily-failure triage #744 \(run \[30261409427\]/);
+});
+
+test('renderDedicatedIssueBody keeps the signature verbatim', () => {
+  const body = renderDedicatedIssueBody(CLUSTER);
+  assert.ok(body.includes('`Error: expect(locator).toBeVisible() failed`'));
+});
+
+test('renderDedicatedIssueBody preserves the literal "unknown" signature', () => {
+  // The run recorded no error message; substituting a description here would
+  // make the next run's history unmatchable.
+  const body = renderDedicatedIssueBody({
+    ...CLUSTER,
+    tests: [{ ...CLUSTER.tests[0], error_signature: 'unknown' }],
+  });
+  assert.ok(body.includes('| `unknown` |'));
+});
+
+test('renderDedicatedIssueBody escapes a pipe so the table survives', () => {
+  const body = renderDedicatedIssueBody({
+    ...CLUSTER,
+    tests: [{ ...CLUSTER.tests[0], error_signature: 'Error: got a|b, want c' }],
+  });
+  const row = body.split('\n').find((l) => l.includes('agent-component-regression'));
+  assert.equal(row.split(/(?<!\\)\|/).length - 1, 4); // 4 unescaped delimiters = 3 cells
+  assert.ok(row.includes('a\\|b'));
+});
+
+test('renderDedicatedIssueBody strips ANSI from a raw history signature', () => {
+  // daily-history.jsonl stores signatures with the SGR codes Playwright emits.
+  const esc = String.fromCharCode(27);
+  const raw = `Error: ${esc}[2mexpect(${esc}[22mlocator).toBeVisible failed`;
+  const body = renderDedicatedIssueBody({
+    ...CLUSTER,
+    tests: [{ ...CLUSTER.tests[0], error_signature: raw }],
+  });
+  assert.ok(!body.includes(esc));
+  assert.ok(body.includes('Error: expect(locator).toBeVisible failed'));
+});
+
+test('renderDedicatedIssueBody refuses a test with no signature', () => {
+  assert.throws(
+    () => renderDedicatedIssueBody({ ...CLUSTER, tests: [{ file: 'a.spec.ts', line: 1 }] }),
+    /no error_signature/,
+  );
+});
+
+test('renderDedicatedIssueBody requires at least one test and the narrative fields', () => {
+  assert.throws(() => renderDedicatedIssueBody({ ...CLUSTER, tests: [] }), /at least one affected test/);
+  assert.throws(() => renderDedicatedIssueBody({ ...CLUSTER, whyOneCause: '' }), /whyOneCause is required/);
+  assert.throws(() => renderDedicatedIssueBody({ ...CLUSTER, run: {} }), /run\.run_id is required/);
+});
+
+test('renderDedicatedIssueBody always carries the canonical deliverables', () => {
+  const body = renderDedicatedIssueBody({ ...CLUSTER, deliverables: ['Extra thing.'] });
+  assert.ok(body.includes('- [ ] **Quarantine lifted**'));
+  assert.ok(body.includes('- [ ] Extra thing.'));
+});
+
+test('renderDedicatedIssueBody adds the flake block only when asked', () => {
+  assert.ok(!renderDedicatedIssueBody(CLUSTER).includes('## Flake signal'));
+  const body = renderDedicatedIssueBody({
+    ...CLUSTER,
+    flakeSignal: {
+      dates: ['2026-07-08', '2026-07-09'],
+      quarantine_pr: 870,
+      specs: [{ file: 'core-functionality/playground/prefill.spec.ts', line: 97 }],
+    },
+  });
+  assert.ok(body.includes('## Flake signal'));
+  assert.ok(body.includes('(dailies 2026-07-08, 2026-07-09)'));
+  assert.ok(body.includes('in PR #870'));
+  assert.ok(body.includes('(test at line 97)'));
+});
+
+test('assertDedicatedIssueBody accepts a rendered body', () => {
+  assert.deepEqual(assertDedicatedIssueBody(renderDedicatedIssueBody(CLUSTER)), []);
+});
+
+test('assertDedicatedIssueBody reports a missing section', () => {
+  const body = renderDedicatedIssueBody(CLUSTER).replace('## Why these failures are one cause', '## Notes');
+  assert.deepEqual(assertDedicatedIssueBody(body), [
+    'missing section: ## Why these failures are one cause',
+  ]);
+});
+
+test('assertDedicatedIssueBody rejects a spec named in prose only', () => {
+  // `agent-max-tokens` alone is unmatchable by the QA Platform.
+  const body = renderDedicatedIssueBody(CLUSTER).replace(
+    /`core-functionality\/llm-agents\/agent-component-regression\.spec\.ts:145`/,
+    'agent-component-regression',
+  );
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /backticked repo-relative spec path/.test(p)));
+});
+
+test('assertDedicatedIssueBody catches an unfilled placeholder', () => {
+  const body = renderDedicatedIssueBody({ ...CLUSTER, whyOneCause: '<one sentence: why>' });
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /unfilled placeholder/.test(p)));
+});
+
+test('assertDedicatedIssueBody ignores angle brackets inside code spans', () => {
+  // A signature legitimately containing markup must not read as scaffolding.
+  const body = renderDedicatedIssueBody({
+    ...CLUSTER,
+    tests: [{ ...CLUSTER.tests[0], error_signature: 'Error: <symptom> element not found' }],
+  });
+  assert.deepEqual(assertDedicatedIssueBody(body), []);
+});
+
+test('assertDedicatedIssueBody throws when asked', () => {
+  assert.throws(() => assertDedicatedIssueBody('nothing here', { throwOnError: true }), /is invalid/);
+});
+
+test('renderDedicatedIssueBody always carries the Upstream slot', () => {
+  // The seam to the treatment layer (Jira). Unfilled at triage time is normal —
+  // omitted is not, or the failure layer stops linking to the card layer.
+  assert.ok(renderDedicatedIssueBody(CLUSTER).includes('**Upstream:** _not filed_'));
+  assert.ok(
+    renderDedicatedIssueBody({ ...CLUSTER, upstream: 'LE-1234' }).includes('**Upstream:** LE-1234'),
+  );
+});
+
+test('assertDedicatedIssueBody reports a dropped Upstream line', () => {
+  const body = renderDedicatedIssueBody(CLUSTER).replace(/^\*\*Upstream:\*\* .+$/m, '');
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /Upstream/.test(p)));
+});
+
+// --- review findings on PR #1034 -------------------------------------------
+
+test('renderDedicatedIssueBody rejects a missing or malformed run.date', () => {
+  // Used to render "(run 123, undefined)" and pass validation — the provenance
+  // line joins the issue to its history row, so it shipped broken.
+  assert.throws(
+    () => renderDedicatedIssueBody({ ...CLUSTER, run: { run_id: '1', run_url: 'u' } }),
+    /run\.date must be YYYY-MM-DD/,
+  );
+  assert.throws(
+    () => renderDedicatedIssueBody({ ...CLUSTER, run: { run_id: '1', date: '27/07/2026' } }),
+    /run\.date must be YYYY-MM-DD/,
+  );
+});
+
+test('renderDedicatedIssueBody rejects a null umbrella naming the real cause', () => {
+  // buildDataset returns umbrella_issue: null when no umbrella carries the run id.
+  assert.throws(
+    () => renderDedicatedIssueBody({ ...CLUSTER, umbrella: null }),
+    /positive issue number.*matchUmbrella/s,
+  );
+});
+
+test('assertDedicatedIssueBody rejects a provenance line with no date', () => {
+  const body = renderDedicatedIssueBody(CLUSTER).replace(', 2026-07-27).', ', undefined).');
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /provenance line/.test(p)));
+});
+
+test('a spec title containing "todo" is not a placeholder', () => {
+  // Case-insensitive \bTODO\b matched ordinary prose. The table quotes the title
+  // rather than fencing it, so the code-span strip does not protect it — this
+  // aborted issue creation for a real cluster in the unattended path.
+  const body = renderDedicatedIssueBody({
+    ...CLUSTER,
+    tests: [{ ...CLUSTER.tests[0], test: 'todo list renders after reload' }],
+  });
+  assert.deepEqual(assertDedicatedIssueBody(body), []);
+});
+
+test('an uppercase TODO is still caught', () => {
+  const body = renderDedicatedIssueBody({ ...CLUSTER, investigation: 'TODO: decide the path' });
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /unfilled placeholder/.test(p)));
+});
+
+test('assertDedicatedIssueBody reports sections that carry no content', () => {
+  const body = renderDedicatedIssueBody(CLUSTER).replace(
+    'All three failed in the same 40s window on shard 3.',
+    '',
+  );
+  assert.ok(
+    assertDedicatedIssueBody(body).includes('empty section: ## Why these failures are one cause'),
+  );
+});
+
+test('assertDedicatedIssueBody reports an empty Signature cell', () => {
+  // The format's whole point; a hand-written or enriched table could drop it.
+  const body = renderDedicatedIssueBody(CLUSTER).replace(
+    '| `Error: expect(locator).toBeVisible() failed` |',
+    '|  |',
+  );
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /empty Signature cell/.test(p)));
+});
+
+test('assertDedicatedIssueBody reports a Symptom table with no rows', () => {
+  const body = renderDedicatedIssueBody(CLUSTER).split('\n')
+    .filter((l) => !l.includes('agent-component-regression'))
+    .join('\n');
+  assert.ok(assertDedicatedIssueBody(body).some((p) => /no test rows/.test(p)));
+});
+
+test('a quote inside a test title cannot break out of the quoted cell', () => {
+  const body = renderDedicatedIssueBody({
+    ...CLUSTER,
+    tests: [{ ...CLUSTER.tests[0], test: 'the "new" flow opens' }],
+  });
+  assert.ok(body.includes(`("the 'new' flow opens")`));
+  assert.deepEqual(assertDedicatedIssueBody(body), []);
 });

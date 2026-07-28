@@ -19,8 +19,11 @@ export function findLatestRedRun(rows) {
   return null;
 }
 
-// eslint-disable-next-line no-control-regex
-const ANSI_RE = /\[[0-9;]*m/g;
+// The ESC is required: without it the pattern strips the `[2m` and leaves the
+// bare ESC byte behind, so a signature recorded with ANSI never compares equal to
+// the same signature recorded without it — silently breaking the same-signature
+// recurrence rule. `scripts/build-run-payload.mjs` already uses this form.
+const ANSI_RE = /\u001b\[[0-9;]*m/g;
 
 /** Strip ANSI SGR escape sequences. */
 export function stripAnsi(s) {
@@ -197,6 +200,291 @@ export function findNewestUmbrella(issues) {
     if (!best || m[1] > best.date) best = { date: m[1], number: i.number };
   }
   return best;
+}
+
+// ---------------------------------------------------------------------------
+// Dedicated-issue rendering
+//
+// The canonical body format lives in ../../references/issue-templates.md, but a
+// Markdown reference is only ever advice to whoever (or whatever) is composing
+// the issue. Since Claude Code is the primary author of these issues — Phase 7
+// runs `gh issue create`, which bypasses .github/ISSUE_TEMPLATE entirely — the
+// structure has to be code to actually hold. These two functions are that:
+// render from data, then assert before creating.
+// ---------------------------------------------------------------------------
+
+/** Section headings a dedicated issue must carry, in order. */
+export const DEDICATED_ISSUE_SECTIONS = [
+  '## Symptom',
+  '## Why these failures are one cause',
+  '## Preliminary read (descriptive — NOT a verdict)',
+  '## Investigation directive',
+  '## Deliverables (Done when)',
+];
+
+/** Canonical acceptance criteria. Callers may extend, but not drop, these. */
+const DEFAULT_DELIVERABLES = [
+  'Root cause confirmed per spec (product regression vs. test/wait-strategy vs. environment), with evidence on the current nightly.',
+  'Each spec passes reliably (multiple clean `--retries=0` runs), fixing waits/flow as needed.',
+  '**Quarantine lifted** in the fix PR — remove `test.fixme` **and** restore `@stable`, re-validated per `CONTRIBUTING.md`. *(Nothing to lift if nothing was quarantined.)*',
+  'If the root cause is a **product (Langflow) regression**: recorded as such here, and this issue stays **open** until the upstream fix lands in `langflowai/langflow-nightly:latest` (or the `release-1.x.x` branch), is re-validated there, and `@stable` is restored — not on a test-side mute.',
+];
+
+/**
+ * Make a value safe as a single Markdown table cell.
+ *
+ * Signatures are copied verbatim out of `reports/daily-history.jsonl` so that
+ * recurrence stays matchable via `normalizeSignature()`. Two things still have
+ * to be neutralised or the table silently breaks: a literal `|` ends the cell
+ * early, and an embedded newline ends the row. Both are escaped rather than
+ * stripped — `normalizeSignature()` collapses whitespace and the reader can
+ * still see the original characters, so matching survives the escaping.
+ */
+function tableCell(value) {
+  return stripAnsi(value).replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>').trim();
+}
+
+/** Table rows of the Symptom table: not the header, not the `|---|` separator. */
+function symptomRows(text) {
+  return text
+    .split('\n')
+    .filter((l) => /^\s*\|.*\|\s*$/.test(l))
+    .filter((l) => !/^\s*\|[\s\-:|]+\|\s*$/.test(l))
+    .filter((l) => !/\|\s*Signature\s*\|/.test(l));
+}
+
+/** Cells of a Markdown table row, splitting only on unescaped pipes. */
+function rowCells(line) {
+  return line
+    .trim()
+    .replace(/^\||\|$/g, '')
+    .split(/(?<!\\)\|/)
+    .map((c) => c.trim());
+}
+
+/**
+ * Title for a dedicated issue: `[Daily #<umbrella>] <symptom>`.
+ *
+ * The number is the **umbrella issue** number, never the run id — they are both
+ * bare integers in the dataset and swapping them produces a plausible-looking
+ * title that links nowhere, so it is enforced here instead of being a note in
+ * the reference doc.
+ */
+export function renderDedicatedIssueTitle({ umbrella, symptom }) {
+  const n = Number(umbrella);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`renderDedicatedIssueTitle: umbrella must be a positive issue number, got ${JSON.stringify(umbrella)}`);
+  }
+  const s = String(symptom || '').trim();
+  if (!s) throw new Error('renderDedicatedIssueTitle: symptom is required');
+  return `[Daily #${n}] ${s}`;
+}
+
+/**
+ * Render the canonical dedicated-issue body from triage data.
+ *
+ * `tests[]` entries carry `error_signature` exactly as recorded in the history
+ * row — including the literal string `"unknown"`, which is preserved rather
+ * than replaced by a description. A paraphrased signature cannot be matched
+ * against the next run's history, which is what would silently turn per-cause
+ * issues back into one-issue-per-day.
+ */
+export function renderDedicatedIssueBody(input) {
+  const {
+    umbrella,
+    run,
+    provenanceNote = '',
+    upstream = null,
+    summary,
+    tests,
+    whyOneCause,
+    preliminaryRead,
+    investigation,
+    deliverables = [],
+    flakeSignal = null,
+  } = input || {};
+
+  // Guard the umbrella the same way renderDedicatedIssueTitle does. buildDataset
+  // legitimately returns `umbrella_issue: null` when matchUmbrella() finds no
+  // umbrella carrying this run id, and interpolating that produces "#null" — a
+  // body the validator then rejects as a malformed provenance line, naming the
+  // wrong cause in a job with nobody watching. Fail here, where the reason is known.
+  if (!Number.isInteger(Number(umbrella)) || Number(umbrella) <= 0) {
+    throw new Error(`renderDedicatedIssueBody: umbrella must be a positive issue number, got ${JSON.stringify(umbrella)} — matchUmbrella() returns null when no umbrella carries this run id`);
+  }
+  if (!run?.run_id) throw new Error('renderDedicatedIssueBody: run.run_id is required');
+  // Without this the provenance line renders "(run 123, undefined)" and the
+  // validator's `\(run .+\)` used to accept it — the line that joins the issue
+  // back to its history row, shipped broken.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(run?.date || ''))) {
+    throw new Error(`renderDedicatedIssueBody: run.date must be YYYY-MM-DD, got ${JSON.stringify(run?.date)}`);
+  }
+  if (!Array.isArray(tests) || tests.length === 0) {
+    throw new Error('renderDedicatedIssueBody: at least one affected test is required');
+  }
+  for (const [i, t] of tests.entries()) {
+    if (!t?.file || !t?.line) throw new Error(`renderDedicatedIssueBody: tests[${i}] needs file and line`);
+    if (!t?.error_signature) {
+      throw new Error(`renderDedicatedIssueBody: tests[${i}] (${t.file}:${t.line}) has no error_signature — copy it verbatim from reports/daily-history.jsonl, or "unknown" if that is what the run recorded`);
+    }
+  }
+  for (const [field, value] of [
+    ['summary', summary],
+    ['whyOneCause', whyOneCause],
+    ['preliminaryRead', preliminaryRead],
+    ['investigation', investigation],
+  ]) {
+    if (!String(value || '').trim()) throw new Error(`renderDedicatedIssueBody: ${field} is required`);
+  }
+
+  const runRef = run.run_url ? `[${run.run_id}](${run.run_url})` : `\`${run.run_id}\``;
+  const provenance =
+    `Spun out of daily-failure triage #${umbrella} (run ${runRef}, ${run.date}).` +
+    (provenanceNote.trim() ? ` ${provenanceNote.trim()}` : '');
+
+  // The seam to the treatment layer. This issue tracks the *failure*; what is
+  // done about it is worked on the Jira board, so the key has to be a field the
+  // body always carries — not a mention inside a deliverable checkbox, which
+  // cannot be swept and disappears if nobody ticks it. Rendered unfilled at
+  // triage time (the card rarely exists yet) precisely so the slot is visible
+  // and someone fills it later.
+  const upstreamLine = `**Upstream:** ${String(upstream || '').trim() || '_not filed_'}`;
+
+  const rows = tests.map((t) => {
+    // The title is quoted, not fenced, so a `"` inside it would close the quote early.
+    const title = tableCell(t.test).replace(/"/g, "'");
+    const spec = `\`${t.file}:${t.line}\`` + (t.test ? ` ("${title}")` : '');
+    const waits = t.waits_for ? `\`${tableCell(t.waits_for)}\`` : '—';
+    return `| ${spec} | ${waits} | \`${tableCell(t.error_signature)}\` |`;
+  });
+
+  const items = [...DEFAULT_DELIVERABLES, ...deliverables].map((d) => `- [ ] ${d}`);
+
+  const out = [
+    provenance,
+    '',
+    upstreamLine,
+    '',
+    '## Symptom',
+    '',
+    String(summary).trim(),
+    '',
+    '| Spec (line) | Waits for | Signature |',
+    '|---|---|---|',
+    ...rows,
+    '',
+    '## Why these failures are one cause',
+    '',
+    String(whyOneCause).trim(),
+    '',
+    '## Preliminary read (descriptive — NOT a verdict)',
+    '',
+    String(preliminaryRead).trim(),
+    '',
+    '## Investigation directive',
+    '',
+    String(investigation).trim(),
+    '',
+    '## Deliverables (Done when)',
+    '',
+    ...items,
+  ];
+
+  if (flakeSignal) {
+    const { dates = [], quarantine_pr = null, specs = [] } = flakeSignal;
+    const when = dates.length ? ` (dailies ${dates.join(', ')})` : '';
+    const pr = quarantine_pr ? ` in PR #${quarantine_pr}` : '';
+    out.push(
+      '',
+      '## Flake signal',
+      '',
+      `This test is confirmed recurrent${when}. As prevention it was **quarantined** at triage${pr} — \`@stable\` removed **and** \`test.fixme\` added — so it stops running in **every** context (daily, PR impacted-specs gate, full suite) until this issue is worked:`,
+      '',
+      ...specs.map((s) => `- \`${s.file}\` (test at line ${s.line})`),
+      '',
+      'Lifting the quarantine after the fix (remove `test.fixme` + restore `@stable`) is a deliverable of this issue.',
+    );
+  }
+
+  return out.join('\n') + '\n';
+}
+
+/**
+ * Validate a dedicated-issue body before `gh issue create`.
+ *
+ * Covers hand-written and enriched bodies too, so it is deliberately broader
+ * than the renderer's own input checks. Returns the list of problems; callers
+ * that want it fatal pass `{ throwOnError: true }`.
+ *
+ * The backticked `path.spec.ts:line` check is not cosmetic: the QA Platform
+ * parses those paths out of the body to decide whether a failure on a run page
+ * is already tracked, and renders the `tracked · #NNN` chip from the match. A
+ * spec named in prose alone is invisible to it.
+ */
+export function assertDedicatedIssueBody(body, opts = {}) {
+  const { throwOnError = false } = opts;
+  const text = String(body || '');
+  const problems = [];
+
+  for (const heading of DEDICATED_ISSUE_SECTIONS) {
+    if (!text.includes(heading)) problems.push(`missing section: ${heading}`);
+  }
+
+  // The date is matched explicitly: `\(run .+\)` accepted "(run 123, undefined)",
+  // which shipped a provenance line that joins to nothing.
+  if (!/^Spun out of daily-failure triage #\d+ \(run .+, \d{4}-\d{2}-\d{2}\)\./m.test(text)) {
+    problems.push('missing or malformed provenance line (expected: "Spun out of daily-failure triage #N (run <id>, YYYY-MM-DD).")');
+  }
+
+  if (!/`[^`\s]+\.spec\.ts:\d+`/.test(text)) {
+    problems.push('no backticked repo-relative spec path with a line number — the QA Platform cannot match this issue to a failure');
+  }
+
+  // Shape is not content. A body can carry every heading and say nothing under
+  // them — which the renderer cannot produce, but a hand-written or enriched one
+  // can, and those are exactly what this function exists to cover.
+  const lines = text.split('\n');
+  for (const heading of DEDICATED_ISSUE_SECTIONS) {
+    const at = lines.findIndex((l) => l.trim() === heading);
+    if (at < 0) continue; // already reported as missing above
+    const body_ = [];
+    for (let i = at + 1; i < lines.length && !/^##\s/.test(lines[i]); i++) body_.push(lines[i]);
+    if (!body_.join('').trim()) problems.push(`empty section: ${heading}`);
+  }
+
+  // The whole point of the format: every affected test carries a signature.
+  const rows = symptomRows(text);
+  if (rows.length === 0) {
+    problems.push('the Symptom table has no test rows');
+  } else {
+    const blank = rows.filter((r) => !rowCells(r).at(-1));
+    if (blank.length) {
+      problems.push(`${blank.length} Symptom row(s) with an empty Signature cell — copy it verbatim from reports/daily-history.jsonl, or "unknown" if that is what the run recorded`);
+    }
+  }
+
+  if (!/^\*\*Upstream:\*\* .+/m.test(text)) {
+    problems.push('missing the **Upstream:** line — the seam to the Jira/upstream card; render it as _not filed_ when no card exists yet, never omit it');
+  }
+
+  if (!/- \[ \] /.test(text)) {
+    problems.push('no checkbox deliverables — "Deliverables (Done when)" must be actionable');
+  }
+
+  // Unfilled template scaffolding. Deliberately case-SENSITIVE: an earlier
+  // case-insensitive `\bTODO\b` matched ordinary prose, and a test legitimately
+  // titled "todo list renders" reaches this text outside backticks (the table
+  // quotes the title, it does not fence it) — which aborted issue creation for a
+  // real cluster in the unattended Phase 7 path.
+  const placeholder = /<(?:one sentence|symptom|umbrella|verbatim|placeholder)[^>]*>|\bTODO\b/.exec(
+    text.replace(/`[^`]*`/g, ''),
+  );
+  if (placeholder) problems.push(`unfilled placeholder left in the body: ${placeholder[0]}`);
+
+  if (throwOnError && problems.length) {
+    throw new Error(`Dedicated issue body is invalid:\n  - ${problems.join('\n  - ')}`);
+  }
+  return problems;
 }
 
 /** Assemble the normalized triage dataset from the latest red run. */

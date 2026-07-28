@@ -239,11 +239,18 @@ plan and present it again — the gate re-applies to the revised plan too.
 
 Only after the user approves the plan:
 
-1. For each **create** row: `gh issue create` using the dedicated-issue
-   template and area-label mapping in
+1. For each **create** row: build the body with
+   `renderDedicatedIssueBody()` from `scripts/lib/triage-core.mjs` — do **not**
+   compose the Markdown by hand. The renderer owns section order, the
+   provenance line and the canonical deliverables; it refuses a cluster with a
+   missing `error_signature`, and `renderDedicatedIssueTitle()` refuses a title
+   built from the run id instead of the umbrella number. Then run
+   `assertDedicatedIssueBody(body, { throwOnError: true })` before
+   `gh issue create`, and apply the area-label mapping in
    `references/issue-templates.md`.
 2. For each **enrich** row: `gh issue comment` on the matched existing issue,
-   per the same reference's *Enrich vs Create Rule*.
+   per the same reference's *Enrich vs Create Rule*. Match on the **normalized
+   signature**, not on a description of the symptom.
 3. **Quarantines — separate authorization, one at a time.** For each recurrent
    flake in the removals block: show the **exact diff** (drop `@stable` **and**
    wrap the test as `test.fixme(<reason + issue #>)`, at `spec:line`) and ask

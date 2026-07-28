@@ -2,6 +2,27 @@
 
 This document defines the canonical template and rules for dedicated-issue triage in the `langflow-e2e-triage` skill.
 
+> **The body is rendered from code, not composed by hand.** `renderDedicatedIssueBody()`
+> and `assertDedicatedIssueBody()` in `scripts/lib/triage-core.mjs` own the structure;
+> Phase 7 calls them before `gh issue create`. This document explains *what each section
+> is for* and *what belongs in it* — the renderer enforces that the sections exist, that
+> every affected test carries a signature, and that at least one backticked spec path is
+> present. Editing the shape here without editing the renderer changes nothing.
+>
+> Why code and not prose: `gh issue create` bypasses `.github/ISSUE_TEMPLATE` entirely,
+> and the primary author of these issues is an LLM. A Markdown reference is advice; the
+> renderer is a guarantee. (The GitHub issue form at
+> `.github/ISSUE_TEMPLATE/failure-root-cause.yml` mirrors this same shape for humans
+> opening a cause issue by hand through the web UI.)
+
+## Scope — which issues this covers
+
+Two issues get opened around a red daily; only one is templated:
+
+- The **umbrella** is created by `daily-stable.yml` through the GitHub API
+  (`github.rest.issues.create`), which no template can govern. Not this.
+- The **dedicated per-cause issues** are created here, in Phase 7. These.
+
 ## Dedicated-Issue Template
 
 When opening a new issue to track a daily-failure cluster, use this structure:
@@ -22,6 +43,25 @@ Example: `[Daily #744] agent/flow execution does not complete — div-chat-messa
 ```
 Spun out of daily-failure triage #<umbrella> (run [<run_id>](<run_url>), <date>).
 ```
+
+**Upstream (second line)**
+
+```
+**Upstream:** LE-1234
+```
+
+The seam to the treatment layer. **This issue tracks the failure, not the fix** —
+what gets done about it is worked on the Jira board, so the card key has to be a
+field the body always carries. It is rendered as `_not filed_` when no card exists
+yet (the normal state at triage time, since the card follows the investigation),
+and the renderer never omits the line: an always-present slot is what makes the
+failure → issue → card walk possible, and what lets the link be swept for
+mechanically. Accepts a DataStax Jira key (`LE-####`) or a
+`langflow-ai/langflow#N` issue.
+
+Do **not** rely on the `REGRESSIONS.md` deliverable checkbox to carry this. That
+checkbox is an acceptance criterion — it records that a row is owed, not where the
+card is, and it vanishes from any sweep if nobody ticks it.
 
 **Sections**
 
@@ -44,7 +84,25 @@ Include:
 - Line number where the test fails
 - Human-readable test name (from `test()` or `test.describe()`)
 - The locator/selector being waited on
-- The exact error message or timeout signature
+- The `error_signature` **copied verbatim** from the run's row in
+  `reports/daily-history.jsonl`
+
+**The signature is copied, never written.** It is the key the same-signature
+recurrence rule matches on (`CONTRIBUTING.md` → *Monitoring rules driven by run
+history*), and `normalizeSignature()` only strips ANSI, collapses whitespace and
+lowercases — it does not understand paraphrase. So:
+
+- Copy the value out of the history row unedited. Do not shorten it, do not
+  reword it, do not merge two tests' signatures into one description.
+- If the run recorded `"unknown"` — which happens when the failure carried no
+  error message — write `unknown`. Substituting a description of what you think
+  happened makes the next run's occurrence unmatchable, and the flake rule then
+  reads a recurrence as a first occurrence.
+- ANSI codes are stripped by the renderer; a literal `|` is escaped so it cannot
+  break the table. Both are safe to leave in the value you copy.
+
+A paraphrased signature is the single most likely way per-cause issues quietly
+degrade back into one issue per day for the same cause.
 
 **Name every spec you are claiming, in backticked repo-relative form, on every
 `daily-failure` issue** — in this table at triage time, and in follow-up comments
@@ -56,6 +114,37 @@ naturally accumulates specs over time (see #773, which took on the whole
 something to fold back into the opening post. What does *not* work is naming a spec
 in prose only, without the path: `agent-max-tokens` alone is unmatchable, while
 `` `core-functionality/llm-agents/agent-max-tokens.spec.ts:249` `` is not.
+
+#### Why these failures are one cause
+
+The linking argument for this cluster. Format:
+
+```markdown
+## Why these failures are one cause
+
+All five failed inside the same 40s window on shard 3, every one on the first request issued after `Collect models`. The signatures differ (timeout, `toBeVisible failed`, 502) and no test-level change is common to them — the shared dimension is the backend they all hit, not anything in the specs.
+```
+
+The team files issues **per root cause, not per failing test**. That only works if
+the grouping is stated and checkable; otherwise a cause issue and a pile of
+unrelated failures filed together are indistinguishable — at triage time and, worse,
+six weeks later when someone tries to reopen the reasoning.
+
+Rules:
+- Name the **shared dimension**: same window, same shard, same provider, same
+  dependency, same step, same normalized signature.
+- Say it explicitly when the signatures **differ** and you are grouping anyway.
+  One cause routinely produces several signatures (a wedged backend surfaces as
+  timeouts, `toBeVisible failed`, 5xx and `unknown` at once) — that is a legitimate
+  grouping, but it has to be argued, not assumed.
+- Equally, the same signature across unrelated specs is **not** by itself a cause.
+  `expect(locator).toBeVisible() failed` is the most generic string Playwright
+  emits and it collides constantly.
+- Stay **descriptive**. Name what is shared, not what is broken — the mechanism is
+  the investigation's job, and the section below exists precisely to keep that
+  line intact.
+- One cluster whose argument splits into two arguments is two issues. Split it
+  and cross-link.
 
 #### Preliminary read (descriptive — NOT a verdict)
 
@@ -253,10 +342,24 @@ Then:
 
 2. **If the subject (symptom, specs, or root path) is genuinely new**, create the issue using the template above.
 
-**Symptom matching logic:**
-- Same failure symptom (e.g., "div-chat-message timeout") across different specs → **same issue, comment**
+**Match on the normalized signature, not on a description of the symptom.**
+Run each candidate's `error_signature` and the open issues' recorded signatures
+through `normalizeSignature()` and compare the results. Matching on prose is what
+lets the same cause read as new every morning — and one new issue per day for one
+cause is per-test issues wearing a hat, which is the exact outcome the per-cause
+policy exists to avoid.
+
+**Matching logic:**
+- Same normalized signature across different specs → **same issue, comment**
 - Same spec failing at different lines (different tests) → likely same issue, **comment** (unless it clearly branches into separate root paths, then split)
-- Same directory/feature but different symptoms (e.g., one auth failure, one upload failure) → **separate issues**
+- Same directory/feature but different signatures → **separate issues**, unless the *Why these failures are one cause* argument holds across them (a shared backend, provider or step can produce several signatures — see that section)
+- Generic signatures (`expect(locator).toBeVisible() failed`, `unknown`) are **too weak to match on alone**. They collide across unrelated specs, and `unknown` is a null key that would cluster every message-less failure together. Require a second shared dimension — same spec, same provider, same run window — before treating them as one cause.
+
+**Merge, not just split.** The rule runs both ways: two *open* dedicated issues
+later found to share a cause get merged (keep the older number, close the newer
+as a duplicate, cross-link both and carry over any spec paths the closed one
+claimed — the QA Platform matches on those paths, so a path dropped in the merge
+stops being tracked).
 
 ---
 
@@ -296,6 +399,8 @@ Every dedicated issue embodies this philosophy:
 
 - **Provenance first:** readers know where the issue came from and when
 - **Description before diagnosis:** symptom table + preliminary observations, no verdict
+- **Signatures verbatim:** copied from the history row, `unknown` included — recurrence is matched mechanically, and a paraphrase breaks it
+- **Grouping is argued, not assumed:** one issue per cause only means something if the issue says why these failures are one cause
 - **Investigation as independent branches:** test the product first, then environment, then test design
 - **Deliverables as checkboxes:** done when all items are ticked
 - **Quarantine decisions are explicit:** quarantined at triage as prevention — `@stable` removed **+** `test.fixme` added (or nothing quarantined on a guard-tripped day) — and **lifted as a deliverable** after the fix — always documented
