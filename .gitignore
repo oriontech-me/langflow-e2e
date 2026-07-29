@@ -30,3 +30,9 @@ tests/helpers/provider-setup/data/providers.json
 
 # Transient spec fixtures written at runtime by remove-stable-from-failures.spec.ts
 tests/scripts/.auto-remove-fixture-*.ts
+
+# In-run backend liveness probes and summaries (scripts/watch-backend.mjs, #1030).
+# CI artifacts and local debugging output — never committed.
+backend-liveness.jsonl
+liveness/
+all-liveness/
