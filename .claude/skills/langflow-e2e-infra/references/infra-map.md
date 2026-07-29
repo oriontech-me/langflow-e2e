@@ -25,7 +25,7 @@ before acting; this list drifts.
 
 | Script | Role |
 |---|---|
-| `start-langflow-docker.sh` / `stop-langflow-docker.sh` | Bring a Langflow instance up/down via Docker (nightly by default) |
+| `start-langflow-docker.sh` / `stop-langflow-docker.sh` | Bring a Langflow instance up/down via Docker. No arg → `langflowai/langflow-nightly:latest` (refreshed before start); a version arg → the released repo; `LANGFLOW_IMAGE` → an exact reference (`#1076`) |
 | `start-langflow-pip.sh` / `stop-langflow-pip.sh` | Same via pip (local dev). Caps to 1 worker to avoid OOM (`#888`) |
 | `coverage-summary.ts` | Regenerates the QA-CHECKLIST Coverage Summary table (bullet markers → table) |
 | `stable-tests.ts` | Regenerates the `Phase 0 — Validated` block from `@stable` `test()` calls |

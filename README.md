@@ -23,11 +23,14 @@ cp .env.example .env  # adjust PLAYWRIGHT_BASE_URL and API keys
 ## Starting Langflow
 
 ```bash
-# Docker — nightly (default)
+# Docker — nightly (default): langflowai/langflow-nightly:latest, the image CI runs
 ./scripts/start-langflow-docker.sh
 
-# Docker — specific version
+# Docker — a released version, from langflowai/langflow
 ./scripts/start-langflow-docker.sh 1.3.0
+
+# Docker — any exact image reference
+LANGFLOW_IMAGE=langflowai/langflow:latest ./scripts/start-langflow-docker.sh
 
 # External instance (staging, PR branch, already running locally)
 # Just set PLAYWRIGHT_BASE_URL in .env or on the command line
