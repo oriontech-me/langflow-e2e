@@ -266,7 +266,11 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
   raised to **120 s** for exactly this (#463), so the tool-list waits here use
   the same 120 s budget rather than the 30 s the file carried while it was
   never running in CI. The subsequent option/testid waits stay short (10 s) —
-  once `toolsCount` is non-null the dropdown is local state.
+  once `toolsCount` is non-null the dropdown is local state. Test 5 carries
+  **three** of those 120 s waits (register A → edit to B → re-register A), which
+  does not fit the suite's 5-minute per-test cap, so it raises its own budget to
+  8 min via `test.setTimeout` — otherwise a slow registry surfaces as a test
+  timeout instead of as the wait that actually ran out.
 - **A second defect the fix exposed.** With registration working again, test 1
   reached an assertion it had never executed: it sampled the selected tool's
   `message` input with a bare `count()` immediately after clicking the option.

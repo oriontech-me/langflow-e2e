@@ -54,6 +54,14 @@ async function listMcpServerNames(page: Page): Promise<string[]> {
   const resp = await page.request.get("/api/v2/mcp/servers", {
     headers: authHeader ? { Authorization: authHeader } : undefined,
   });
+  // Checked, not assumed: an error body is not an array, so an unchecked read
+  // fails as `servers.map is not a function` inside whichever assertion called
+  // this — hiding the status that actually explains the run.
+  if (!resp.ok()) {
+    throw new Error(
+      `GET /api/v2/mcp/servers: ${resp.status()} — ${await resp.text()}`,
+    );
+  }
   const servers: Array<{ name: string }> = await resp.json();
   return servers.map((s) => s.name);
 }
@@ -95,11 +103,26 @@ test.afterEach(async ({ request }) => {
       : names;
     for (const name of names) {
       if (existing.includes(name)) {
-        await request.delete(`/api/v2/mcp/servers/${name}`, options);
+        const del = await request.delete(
+          `/api/v2/mcp/servers/${name}`,
+          options,
+        );
+        // Warn rather than throw: the flow cleanup below still has to run, and
+        // a silent failure here is what lets registered servers accumulate on
+        // the shared instance (the buildup #545 set out to stop).
+        if (!del.ok()) {
+          console.warn(
+            `⚠️  MCP server cleanup failed: ${name} — ${del.status()} ${await del.text()}`,
+          );
+        }
       }
     }
   }
 
+  // Deliberately NOT swallowed, unlike the precedent in
+  // `agent-tool-name-validation.spec.ts` — `deleteFlow` throws so a cleanup
+  // regression is visible instead of silent (see its docstring). A transient id
+  // 404s, which it treats as done, so this only fires on a real failure.
   for (const id of ids) {
     await deleteFlow(request, id, options);
   }
@@ -745,6 +768,13 @@ test(
   "mcp server tools should be refreshed when editing a server",
   { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
+    // Three `TOOL_LIST_TIMEOUT` waits (register A, edit to B, re-register A)
+    // plus the settings round-trips do not fit the suite's 5-minute per-test
+    // cap. Without this the test would die at the TEST timeout on a slow npm
+    // registry instead of at the wait that actually ran out — the unattributed
+    // timeout that costs a triage cycle to explain (#1011/#1019).
+    test.setTimeout(8 * 60 * 1000);
+
     await page.waitForTimeout(5000);
 
     await awaitBootstrapTest(page);
