@@ -848,8 +848,12 @@ jobs:
       # later daily. `needs.test.result == 'success'` does NOT cover that on its own —
       # the shard step runs with `--pass-with-no-tests`, so a run matching no @stable
       # test at all is GREEN with zero tests.
+      # ALSO gated on runguard.partial (#1058): durations extracted from a run where
+      # some shards aborted would record only the shards that ran, so the specs of a
+      # dead shard silently lose their timing and the partitioner mis-balances every
+      # later daily on stale data.
       - name: Refresh spec durations (green runs only)
-        if: needs.test.result == 'success' && github.event_name == 'schedule' && steps.runguard.outputs.empty == 'false'
+        if: needs.test.result == 'success' && github.event_name == 'schedule' && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
         run: node scripts/partition-shards.mjs extract results.json > reports/spec-durations.json
 
       # Long-lived run history: append one JSON line per scheduled run to
@@ -929,9 +933,14 @@ jobs:
       # 2026-07-28 this step ran on an empty report and only found nothing to do
       # by luck — the abort happened in globalSetup, before any test could be
       # recorded as failing, so the action's mass-failure guard was never reached.
+      # ALSO gated on runguard.partial (#1058). The same reasoning as `empty`, one
+      # granularity down: on run 30444299314 two of four shards aborted in the
+      # credentials preflight, so the report held 205 results against a ~380
+      # baseline. Mutating @stable on that report would judge tags by a report that
+      # never saw half the suite — and a spec cannot fail in a shard that never ran.
       - name: Auto-remove @stable from hard failures
         id: auto_remove
-        if: needs.test.result == 'failure' && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'true' && steps.runguard.outputs.empty == 'false'
+        if: needs.test.result == 'failure' && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'true' && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
         uses: ./.github/actions/auto-remove-stable
         with:
           playwright_json: results.json
@@ -964,6 +973,12 @@ jobs:
           RUN_UNREADABLE: ${{ steps.runguard.outputs.unreadable }}
           RUN_ERRORS: ${{ steps.runguard.outputs.report_errors }}
           RUN_FIRST_ERROR: ${{ steps.runguard.outputs.first_error }}
+          # PARTIAL (#1058): SOME shards aborted while others ran, so the totals in
+          # this body are UNDER-COUNTED. Without saying so, the umbrella reads as an
+          # ordinary failure day — which is exactly how run 30444299314 reported ~184
+          # unexecuted tests as a routine 10-failure triage.
+          RUN_PARTIAL: ${{ steps.runguard.outputs.partial }}
+          RUN_TESTS: ${{ steps.runguard.outputs.tests_total }}
           # In-run backend liveness (#1030). Rendered on EVERY umbrella issue,
           # not only on a wedged run: "the backend answered every probe" rules
           # the wedge out for the triager, and "not measured" says the state is
@@ -979,6 +994,8 @@ jobs:
             const unreadable = process.env.RUN_UNREADABLE === 'true';
             const runErrors = process.env.RUN_ERRORS || '0';
             const firstError = process.env.RUN_FIRST_ERROR || '';
+            const partial = process.env.RUN_PARTIAL === 'true';
+            const runTests = process.env.RUN_TESTS || '0';
             // Three shapes, most specific first.
             // 1. ZERO tests executed (#1012): there is no per-test evidence to
             //    triage, so say so instead of rendering the auto-removal line,
@@ -1004,7 +1021,25 @@ jobs:
                         'any test starts. Known cause of this shape: the post-`collect-models` backend wedge — #1011.',
                       ]),
                 ]
-              : arStatus
+              : partial
+                ? [
+                    '### ⚠️ PARTIAL run — some shards never ran their tests',
+                    '',
+                    `The merged report carries **${runTests} test result(s)** but also **${runErrors} top-level report error(s)**.`,
+                    'A top-level error means a shard aborted before running the tests assigned to it, so',
+                    'the totals above are **UNDER-COUNTED** — the specs of the dead shard are neither',
+                    'passed nor failed, they simply never ran.',
+                    ...(firstError ? ['', '```', firstError, '```'] : []),
+                    '',
+                    '`@stable` auto-removal and the spec-duration refresh were **both skipped**: a tag must',
+                    'not be judged, nor a timing baseline rebuilt, on a report that never saw half the suite.',
+                    '',
+                    '**Triage the abort first.** Compare the recorded total against the last green run — a',
+                    'large drop is the abort, not a fix. The cause above is quoted from the shard that died;',
+                    'the shard logs hold the rest. Known cause of this shape: `Collect models` failing without',
+                    'importing a provider key as a Langflow global variable — #1058.',
+                  ]
+                : arStatus
                 ? ['### `@stable` auto-removal', '', arSummary]
                 : [
                     '### Next steps',
@@ -1023,7 +1058,9 @@ jobs:
             // must not claim that tests failed — none ran.
             const title = empty
               ? `[Daily Failure] @stable run executed ZERO tests on ${today} (${image})`
-              : `[Daily Failure] @stable tests failed on ${today} (${image})`;
+              : partial
+                ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
+                : `[Daily Failure] @stable tests failed on ${today} (${image})`;
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -1060,14 +1097,16 @@ jobs:
       # this whole mechanism exists to remove. `complete` keeps `== 'false'`: its
       # own absence is already covered, since a skipped shardguard means no blobs
       # were downloaded and runguard then sees no report at all.
-      - name: Fail scheduled run on an incomplete or empty report
-        if: always() && github.event_name == 'schedule' && (steps.shardguard.outputs.complete == 'false' || steps.runguard.outputs.empty != 'false')
+      - name: Fail scheduled run on an incomplete, empty or partial report
+        if: always() && github.event_name == 'schedule' && (steps.shardguard.outputs.complete == 'false' || steps.runguard.outputs.empty != 'false' || steps.runguard.outputs.partial == 'true')
         env:
           COMPLETE: ${{ steps.shardguard.outputs.complete }}
           RUN_EMPTY: ${{ steps.runguard.outputs.empty }}
+          RUN_PARTIAL: ${{ steps.runguard.outputs.partial }}
           RUN_UNREADABLE: ${{ steps.runguard.outputs.unreadable }}
           RUN_ERRORS: ${{ steps.runguard.outputs.report_errors }}
           RUN_TESTS: ${{ steps.runguard.outputs.tests_total }}
+          RUN_FIRST_ERROR: ${{ steps.runguard.outputs.first_error }}
         run: |
           if [ "$COMPLETE" = "false" ]; then
             echo "::error::Merge was incomplete (a shard produced no blob); results are under-counted. Failing the scheduled run so it is not mistaken for a clean pass."
@@ -1076,6 +1115,8 @@ jobs:
             echo "::error::The merged report is missing or unparseable, so ZERO test results could be read. Check the 'Merge blob reports' step and the per-shard blob artifacts."
           elif [ "$RUN_EMPTY" = "true" ]; then
             echo "::error::ZERO tests executed — the shards aborted before the first test ($RUN_ERRORS top-level report error(s), tests_total=$RUN_TESTS). This is an INFRA abort, not a per-test failure: no spec failed and no @stable tag was touched. Triage the abort, not the tests (see #1011)."
+          elif [ "$RUN_PARTIAL" = "true" ]; then
+            echo "::error::PARTIAL run — $RUN_TESTS test result(s) recorded, but $RUN_ERRORS top-level report error(s) mean at least one shard aborted before running its tests. The totals are UNDER-COUNTED and the specs of that shard neither passed nor failed: they never ran. @stable auto-removal and the spec-duration refresh were skipped. Cause from the shard that died: $RUN_FIRST_ERROR (see #1058)."
           elif [ -z "$RUN_EMPTY" ]; then
             echo "::error::The report-integrity guard reported nothing (empty output is unset) — its verdict is UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — merged report contains test results' step."
           fi

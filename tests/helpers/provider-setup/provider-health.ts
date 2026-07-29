@@ -67,6 +67,78 @@ export function readProviderHealth(
 }
 
 /**
+ * The providers that own the given env keys — `["GOOGLE_API_KEY"]` → `["google"]`.
+ *
+ * Inverts `providerConfigMap.envKeys` rather than hardcoding the mapping, so a
+ * provider that grows a second required key is covered without editing this.
+ */
+export function providersForEnvKeys(envKeys: string[]): Provider[] {
+  const wanted = new Set(envKeys);
+  return (Object.keys(providerConfigMap) as Provider[]).filter((provider) =>
+    (providerConfigMap[provider]?.envKeys ?? []).some((key) => wanted.has(key)),
+  );
+}
+
+/**
+ * Marks the given providers `inactive`, returning a NEW record list (issue #1058).
+ *
+ * The credentials pre-flight used to `throw` in CI when a provider key was present
+ * in the environment but absent as a Langflow global variable — killing the whole
+ * shard over ONE provider. On run 30444299314 that cost ~184 tests that never
+ * touch google. Recording the provider as unusable instead routes it through the
+ * gate this module already owns: dependent specs `test.skip` with the reason, and
+ * every unrelated spec runs.
+ *
+ * An existing `inactive` record is NEVER overwritten: `collect-models` measured
+ * why the provider is dead ("credit balance too low", "monthly spending cap"), and
+ * that is strictly more actionable than the pre-flight's structural observation.
+ * A provider with no record at all gets one, because absence means "no signal" to
+ * `readProviderHealth` and callers fail OPEN — leaving it absent would let the
+ * specs run against a key Langflow does not have.
+ */
+export function degradeProviders(
+  records: ProviderHealthRecord[] | null,
+  providers: Provider[],
+  reason: string,
+): ProviderHealthRecord[] {
+  const existing = records ?? [];
+  const seen = new Map(existing.map((r) => [r.provider, r]));
+
+  for (const provider of providers) {
+    const record = seen.get(provider);
+    if (record?.status === "inactive") continue;
+    seen.set(provider, { provider, model: null, status: "inactive", error: reason });
+  }
+
+  // Preserve input order, then append providers that had no record at all.
+  const ordered = existing.map((r) => seen.get(r.provider) ?? r);
+  for (const [provider, record] of seen) {
+    if (!existing.some((r) => r.provider === provider)) ordered.push(record);
+  }
+  return ordered;
+}
+
+/**
+ * Persists provider health. Best-effort by design: this runs from `globalSetup`,
+ * where a write failure must not become the reason the suite cannot start — a
+ * failed write leaves the previous (or absent) signal, and `readProviderHealth`
+ * already fails open on absence. Returns whether the write landed so the caller
+ * can say so out loud instead of assuming.
+ */
+export function writeProviderHealth(
+  records: ProviderHealthRecord[],
+  jsonPath: string = PROVIDERS_PATH,
+): boolean {
+  try {
+    fs.mkdirSync(path.dirname(jsonPath), { recursive: true });
+    fs.writeFileSync(jsonPath, JSON.stringify(records, null, 2), "utf-8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Pure decision function: the reason the given providers cannot serve a live
  * call, or `undefined` when every one of them is usable.
  *
