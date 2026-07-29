@@ -136,6 +136,81 @@ jobs:
           curl -sf --retry 10 --retry-delay 3 --retry-connrefused \
             "$OLLAMA_BASE_URL/api/tags" | grep -q "$OLLAMA_TEST_MODEL" \
             && echo "model $OLLAMA_TEST_MODEL ready"
+
+      # Import the provider credentials into THIS run's Langflow container, the
+      # same way daily-stable.yml and pr-validation.yml do (#1055).
+      #
+      # Without it every dispatch died before the first test: the run below
+      # passes OPENAI_API_KEY, and the #884 pre-flight hard-fails in CI on a key
+      # that is present in the environment but absent from Langflow's global
+      # variables — which is exactly the state a container that never ran
+      # collect-models is in. The gate landed 2026-07-22 (#885) and this
+      # workflow's last dispatch before the bug surfaced was 2026-07-08, so no
+      # one had run it since.
+      #
+      # Dropping the key instead would NOT have been equivalent: the provider
+      # health gate fails OPEN when providers.json is absent
+      # (`readProviderHealth` → null, #1029), so the provider-hardcoded specs
+      # would run against a credential-less Langflow and fail with the
+      # misleading node_duration errors #884 exists to remove.
+      #
+      # Same three guards the other two workflows carry:
+      #  - PREFLIGHT_SKIP_CREDENTIALS: this run is what IMPORTS the keys, so the
+      #    pre-flight must not assert them first (chicken-and-egg);
+      #  - PLAYWRIGHT_RETRIES=0: a failing sweep must not re-walk the Model
+      #    Providers UI three times against a single backend (#1011);
+      #  - continue-on-error: a drained key must not kill the specs that never
+      #    touch that provider (#980).
+      - name: Collect models
+        id: collect_models
+        continue-on-error: true
+        run: npx playwright test tests/collect-models.spec.ts --reporter=line
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: ${{ needs.detect-target.outputs.base_url }}
+          PLAYWRIGHT_RETRIES: "0"
+          PREFLIGHT_SKIP_CREDENTIALS: "1"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+
+      # The sweep above can leave the shared backend WEDGED — container alive,
+      # event loop blocked, requests unanswered (#922/#927). globalSetup polls
+      # 120 s and then throws, reporting a preflight error that names nothing, so
+      # wait it out here and, when it does not clear, fail with the real cause.
+      # Short per-request timeout over a long deadline (#928): a hung request must
+      # fail fast so the loop keeps polling across the wedge.
+      #
+      # This is the FOURTH copy of this loop (daily-stable, pr-validation, here,
+      # and the one weekly-stable still lacks). #1045 extracts them into
+      # `.github/actions/wait-for-backend`; adopt it here when it lands rather
+      # than letting this drift on its own.
+      - name: Wait for the backend to recover from the collect-models load
+        shell: bash
+        env:
+          BASE_URL: ${{ needs.detect-target.outputs.base_url }}
+          COLLECT_MODELS_OUTCOME: ${{ steps.collect_models.outcome }}
+        run: |
+          if [ "$COLLECT_MODELS_OUTCOME" = "failure" ]; then
+            echo "::warning::Collect models FAILED. The run continues by design (#980), but providers.json/models.json may be stale or incomplete, so provider-parameterized specs can skip. Check that step's log for which provider is down."
+          fi
+          deadline=$(( $(date +%s) + 420 ))
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            if curl -sf --connect-timeout 5 --max-time 8 "${BASE_URL%/}/api/v1/version" >/dev/null 2>&1; then
+              echo "Backend answered /api/v1/version on attempt $attempt — proceeding to the tests."
+              exit 0
+            fi
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "::error::Langflow did not answer /api/v1/version within 420s after the Collect models step (${attempt} attempts). The backend is wedged or dead, so the run would abort in globalSetup with zero tests. This is the post-collect-models wedge (#922/#927/#1011), NOT a failure of the tests you dispatched."
+              exit 1
+            fi
+            sleep 5
+          done
+
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e
         with:
@@ -160,10 +235,25 @@ jobs:
       - run: npm ci
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
+
+      # No `openai_api_key`, and no `collect-models` — deliberately different
+      # from the Docker job (#1055).
+      #
+      # This job targets an instance that already exists and that we do not own:
+      # a staging deployment, someone's tunnel. `collect-models` would WRITE our
+      # CI provider keys into that instance as global variables, which is not a
+      # side effect a test dispatch may have on a shared environment. Passing the
+      # key WITHOUT importing it is what broke this workflow in the first place —
+      # the #884 pre-flight hard-fails on a key present in the environment but
+      # absent from Langflow.
+      #
+      # So the target's OWN credentials govern. With no provider key in the
+      # environment the pre-flight has nothing to assert and skips the check, and
+      # the provider specs exercise whatever that instance is actually configured
+      # with — the honest thing to test against a deployment we do not control.
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e
         with:
           base_url: ${{ needs.detect-target.outputs.base_url }}
           test_tag: ${{ github.event.inputs.test_tag }}
           test_grep: ${{ github.event.inputs.test_grep }}
-          openai_api_key: ${{ secrets.OPENAI_API_KEY }}
