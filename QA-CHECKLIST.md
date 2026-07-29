@@ -419,7 +419,7 @@
 - [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
 #### 7.6 Open-Source Providers
-- [x] Configure and execute flow with Ollama (local model) → `model-provider/ollama-provider.spec.ts`
+- [x] Configure and execute flow with Ollama (local model) → `model-provider/ollama-provider.spec.ts` (both halves `@stable` again after #931: the `lfx-ollama` packaging gap that broke it on 07-23/24 is fixed upstream, a build-side bundle pre-flight now fails attributed instead of timing out blind for 30 s, the run-completion wait was rebuilt on the `button-stop`/`button-send` signal — the 07-15 failure mode — and the test model is derived from the instance instead of a hardcoded tag that could skip silently. Restored on 4 consecutive green `manual.yml` runs on `1.12.0.dev9`, not on local evidence)
 - [-] Configure and execute flow with Groq → `model-provider/groq-provider.spec.ts` (automated but not validatable on the tested image: the Groq component ships in the `lfx-bundles` distribution, which `langflowai/langflow-nightly:latest` does not install, so the spec's availability pre-flight skips it on every run — `@stable` removed, see #1039)
 - [-] Configure and execute flow with Mistral → `model-provider/mistral-provider.spec.ts` (automated but not validatable on the tested image: same `lfx-bundles` packaging decision as Groq — `@stable` removed, see #1039)
 

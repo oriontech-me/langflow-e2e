@@ -9,6 +9,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
 
 /**
  * Ollama provider path (QA-CHECKLIST §7.6 "Configure and execute flow with
@@ -46,10 +47,19 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 // instance; host.docker.internal resolves to the host from the container.
 const OLLAMA_BASE_URL_FROM_LANGFLOW =
   process.env.OLLAMA_BASE_URL_FROM_LANGFLOW ?? "http://host.docker.internal:11434";
-const OLLAMA_TEST_MODEL = process.env.OLLAMA_TEST_MODEL ?? "llama3.2:1b";
+// The model to exercise. Left EMPTY on purpose when unset: the model is baked
+// into the CI image by build-ollama-image.yml (docker/ollama-e2e/Dockerfile,
+// `ARG OLLAMA_E2E_MODEL`), so the instance — not this file — is the source of
+// truth. A hardcoded fallback used to live here, and it lied: with the env var
+// unset, or the baked model changed, the probe reported "model not pulled" and
+// the test SKIPPED silently on the very surface it exists to guard. Unset now
+// means "whatever this instance serves"; the workflows still pin it explicitly.
+const OLLAMA_TEST_MODEL = process.env.OLLAMA_TEST_MODEL ?? "";
 
 interface OllamaProbe {
   reachable: boolean;
+  // The resolved model: the pinned one when set, else the instance's first.
+  model: string;
   models: string[];
   reason: string;
 }
@@ -62,23 +72,40 @@ async function probeOllama(request: APIRequestContext): Promise<OllamaProbe> {
     if (res.status() !== 200) {
       return {
         reachable: false,
+        model: "",
         models: [],
         reason: `local Ollama at ${OLLAMA_BASE_URL} answered ${res.status()}`,
       };
     }
     const body = (await res.json()) as { models?: Array<{ name?: string }> };
     const models = (body.models ?? []).map((m) => m.name ?? "").filter(Boolean);
-    if (!models.includes(OLLAMA_TEST_MODEL)) {
+    // Pinned (every CI workflow does): the exact model must be there, so a
+    // drifted image is a loud skip reason instead of a silent substitution.
+    if (OLLAMA_TEST_MODEL) {
+      if (!models.includes(OLLAMA_TEST_MODEL)) {
+        return {
+          reachable: false,
+          model: "",
+          models,
+          reason: `model "${OLLAMA_TEST_MODEL}" not pulled on the local Ollama (has: ${models.join(", ") || "none"})`,
+        };
+      }
+      return { reachable: true, model: OLLAMA_TEST_MODEL, models, reason: "" };
+    }
+    // Unpinned: follow the instance. Only a model-less instance skips.
+    if (models.length === 0) {
       return {
         reachable: false,
+        model: "",
         models,
-        reason: `model "${OLLAMA_TEST_MODEL}" not pulled on the local Ollama (has: ${models.join(", ") || "none"})`,
+        reason: `local Ollama at ${OLLAMA_BASE_URL} serves no model — pull one (e.g. \`ollama pull llama3.2:1b\`) or set OLLAMA_TEST_MODEL`,
       };
     }
-    return { reachable: true, models, reason: "" };
+    return { reachable: true, model: models[0], models, reason: "" };
   } catch {
     return {
       reachable: false,
+      model: "",
       models: [],
       reason: `local Ollama not reachable at ${OLLAMA_BASE_URL} — see the spec doc's provisioning commands`,
     };
@@ -102,13 +129,23 @@ async function resetOllamaProviderVariable(request: APIRequestContext): Promise<
   }
 }
 
+// Waits until the playground turn has FULLY completed, on the model-agnostic
+// signal used across the playground specs: the bot bubble mounted, then the
+// generating indicator cleared (`button-stop` hidden, `button-send` back).
+//
+// The previous version probed the Stop button with `isVisible({ timeout:
+// 10000 })` and, when it did not show up in time, skipped the wait entirely —
+// falling straight into the caller's 60s wait for the reply. On a CI runner,
+// where `llama3.2:1b` inference on shared CPU is an order of magnitude slower
+// than locally, that is precisely how the run was declared finished before it
+// had produced anything: daily 2026-07-15 failed 3/3 on
+// `div-chat-message not found` after ~100s (#931).
 async function waitForRunToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    // Local CPU inference is slow — allow the small model a wide window.
-    await expect(stopButton).toBeHidden({ timeout: 180000 });
-  }
+  // The bubble mounts when the turn BEGINS, so this also rules out the
+  // "checked completion before generation started" race (#354).
+  await expect(page.getByTestId("div-chat-message")).toHaveCount(1, { timeout: 180000 });
+  await expect(page.getByTestId("button-stop")).toBeHidden({ timeout: 240000 });
+  await expect(page.getByTestId("button-send").last()).toBeVisible({ timeout: 30000 });
 }
 
 test.describe.configure({ mode: "serial" });
@@ -161,18 +198,58 @@ test.describe("Ollama Provider", () => {
           validatePromise,
           persistPromise,
         ]);
-        // validate-provider 2xx = Langflow validated the URL against the
-        // LIVE local instance; variables 2xx = the URL is persisted.
+        // validate-provider 2xx = the endpoint answered; variables 2xx = the
+        // URL is persisted.
         expect(validateResp.ok()).toBe(true);
         expect(persistResp.ok()).toBe(true);
+
+        // The BODY is what proves Langflow reached the live instance: the
+        // endpoint answers HTTP 200 with `{ valid: false, error: … }` for a URL
+        // it could not reach (measured on 1.12.0.dev9 with the SSRF allowlist
+        // absent), so the status alone is a weak assert. Without this the
+        // failure surfaces only as the persistence waiter timing out at 60s,
+        // naming nothing (#931).
+        const validateBody = (await validateResp.json()) as {
+          valid?: boolean;
+          error?: string | null;
+        };
+        expect(
+          validateBody.valid,
+          `validate-provider rejected the base URL: ${validateBody.error ?? "no reason given"}`,
+        ).toBe(true);
       });
     },
   );
 
   test(
     "the Ollama component lists the local model live and executes the flow",
-    { tag: ["@regression", "@model-provider", "@components", "@playground"] },
+    {
+      // @stable restored for #931 after 4 consecutive green `manual.yml` runs on
+      // the branch (2 passed, 23.8-29.2s each) — the CI environment, not a dev
+      // box: the 07-23/24 bundle gap is fixed upstream and the rebuilt
+      // run-completion wait holds under runner-speed inference.
+      tag: ["@stable", "@regression", "@model-provider", "@components", "@playground"],
+    },
     async ({ page, request }) => {
+      // Local CPU inference on a shared CI runner is far slower than on a dev
+      // box (~13s locally vs. >100s in the daily), and the waits below are
+      // sized for it — the default 5-min budget would cut them short.
+      test.setTimeout(8 * 60 * 1000);
+
+      // Build-side pre-flight (#931). 1.12 moved the Ollama components into the
+      // separate `lfx-ollama` distribution (`lfx.components.ollama` is now a
+      // shim, removed at M4 — see #1040). When that distribution is missing from
+      // the image the component vanishes from the registry and the sidebar wait
+      // below dies after 30s naming nothing; this is what broke the daily on
+      // 2026-07-23/24. Unlike Groq/Mistral — absent by design, hence a skip
+      // (#1039) — `lfx-ollama` SHIPS in the stock nightly, so its absence is a
+      // packaging regression that must stay visible: fail, attributed, in ~1s.
+      const componentAvailable = await isProviderComponentAvailable(request, "ollama");
+      expect(
+        componentAvailable,
+        "Ollama component not exposed by this Langflow build — the `lfx-ollama` distribution that ships it is not installed (#931)",
+      ).toBe(true);
+
       const probe = await probeOllama(request);
       test.skip(!probe.reachable, probe.reason);
 
@@ -250,15 +327,16 @@ test.describe("Ollama Provider", () => {
           await page.getByTestId("dropdown_str_model_name").click();
           const option = page
             .locator('[data-testid$="-option"]')
-            .filter({ hasText: OLLAMA_TEST_MODEL })
+            .filter({ hasText: probe.model })
             .first();
           // THE connectivity assert: passing requires the component to have
           // enumerated the real local instance (the static catalog does not
-          // contain the pulled model's tag).
+          // contain the pulled model's tag). `probe.model` is the model the
+          // instance actually serves, so this cannot drift from the CI image.
           await expect(option).toBeVisible({ timeout: 15000 });
           await option.click();
           await expect(page.getByTestId("value-dropdown-dropdown_str_model_name")).toContainText(
-            OLLAMA_TEST_MODEL,
+            probe.model,
             { timeout: 10000 },
           );
           await waitForFlowSaveSettled(page);
