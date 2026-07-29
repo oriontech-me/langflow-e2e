@@ -130,6 +130,31 @@ jobs:
           # process-wide, not worker contention. The retry cap and the health gate
           # below are the other two halves.
           LANGFLOW_WORKERS: "1"
+          # Cap how long ONE wedge can cost (#1048). Langflow's default is 300 s
+          # (`worker_timeout` in lfx runtime settings), handed straight to
+          # gunicorn's `timeout`. The worker class is LangflowUvicornWorker — an
+          # ASYNC worker — so that timeout is a heartbeat watchdog on the event
+          # loop, NOT a per-request deadline: it fires when the loop stops
+          # ticking (the #922/#927 wedge), and a merely slow request that awaits
+          # network I/O keeps the heartbeat alive. A 4-minute live-LLM build is
+          # therefore unaffected.
+          #
+          # Why lower it: a wedged worker does not recover on its own — in run
+          # 30410211167 gunicorn's kill is what restored service, twice, each
+          # time a full 300 s after the loop stopped (one block began within
+          # seconds of a failing Google call at 00:17:28 and was killed at
+          # 00:22:28). Waiting the default out buys nothing and every second of
+          # it is served to unrelated specs as a dead backend. 120 s recycles the
+          # worker ~3 min earlier.
+          #
+          # Measured, not assumed: a probe container of this image started with
+          # LANGFLOW_WORKER_TIMEOUT=5 boots and serves /api/v1/version normally.
+          # Langflow's heavy init (components, starter projects, DB) runs in the
+          # PARENT process and gunicorn is launched afterwards with the app already
+          # built (`__main__.py`, progress step 6), so this ceiling does not bound
+          # startup — only a worker whose loop stops ticking once it is serving.
+          # Rollback is this one value.
+          LANGFLOW_WORKER_TIMEOUT: "120"
           # The nightly image ships LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false (a
           # security default): custom-component creation is disabled, which
           # hides the sidebar "New Custom Component" button and makes

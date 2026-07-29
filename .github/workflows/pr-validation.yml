@@ -205,6 +205,33 @@ jobs:
           # already default LANGFLOW_WORKERS=1 for this reason (#773) — the
           # service container was the one place missing it.
           LANGFLOW_WORKERS: "1"
+          # Cap how long ONE wedge can cost (#1048). Default is 300 s
+          # (`worker_timeout` in lfx runtime settings → gunicorn's `timeout`).
+          # LangflowUvicornWorker is ASYNC, so this is a heartbeat watchdog on the
+          # event loop, not a request deadline: it fires when the loop stops
+          # ticking (#922/#927), while a slow request that awaits I/O keeps the
+          # heartbeat alive — a long live-LLM build is unaffected.
+          #
+          # This job is where the cost was measured. Run 30410211167 (PR #1042)
+          # burned two full 300 s outages: the post-collect-models wedge the health
+          # gate below had to wait out (227 s, cleared only by gunicorn's kill),
+          # and a second block starting within seconds of a failing Google call.
+          # Four worker kill/restart cycles in 26 min, and the collateral landed on
+          # specs that make no LLM call at all (general-bugs-shard-3909 timing out
+          # on `add-project-button`). A wedged worker never self-heals, so waiting
+          # 300 s buys nothing; 120 s cuts each outage by ~3 min.
+          #
+          # This BOUNDS the damage, it does not prevent it: a spec whose API call
+          # has a 20 s timeout still dies inside a 120 s window. Eliminating
+          # collateral needs the provider-heavy specs not to share the backend with
+          # unrelated ones (serialization / low-concurrency lane) — see #1048.
+          #
+          # It does NOT bound startup, which was the obvious worry: a probe
+          # container of this image started with LANGFLOW_WORKER_TIMEOUT=5 boots and
+          # serves /api/v1/version fine, because Langflow's heavy init runs in the
+          # parent process and gunicorn is launched afterwards with the app already
+          # built (`__main__.py`, progress step 6). Rollback is this one value.
+          LANGFLOW_WORKER_TIMEOUT: "120"
           # Nightly image defaults LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false
           # (custom-component creation disabled → sidebar button hidden, API
           # 403). Enable it so the custom-component specs exercise the feature.

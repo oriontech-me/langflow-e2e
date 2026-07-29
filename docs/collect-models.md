@@ -90,6 +90,32 @@ but was drained still made the live call. On run 30374528125 that hung two Googl
 tests past gunicorn's 300s timeout, killed shard 2's Langflow worker six times, and
 produced 14 collateral timeouts in specs that never touch Google.
 
+### What the health gate does NOT cover
+
+`collect-models` records a **point-in-time probe**. The gate therefore covers a
+provider that is *durably* unusable — spend cap, revoked key, drained balance —
+and cannot cover a provider that is healthy when probed and limited minutes later.
+Run 30410211167 is the reference case: Google was recorded `✅ active` at 00:11:11
+and returned `429 RESOURCE_EXHAUSTED` (`retryDelay ~13.5s`, a per-minute limit) at
+00:15:46, inside the specs run. The record was 4 minutes old and correct when
+written, so no amount of gate logic — including expiring stale records via the
+`checkedAt` field `ProviderHealthRecord` omits — would have skipped those tests.
+
+The second half of the defence is therefore not prevention but a **bound on the
+damage**, and it lives in CI config, not here: `LANGFLOW_WORKER_TIMEOUT: "120"` on
+the service containers (#1048). Langflow's default is 300 s, handed to gunicorn as
+its `timeout`; because the worker class is async (`LangflowUvicornWorker`), that
+timeout watches the **event loop's heartbeat** rather than request duration — it
+fires on the wedge that a blocking provider call produces, and never on a merely
+slow live-LLM build that awaits I/O. A wedged worker does not recover on its own
+(gunicorn's kill is what restores service), so the lower ceiling turns each wedge
+from a ~300 s outage into a ~120 s one.
+
+That bounds collateral without eliminating it: a spec whose own API call has a 20 s
+timeout still fails inside a 120 s window. Removing the collateral entirely means
+not letting provider-heavy specs share a backend with unrelated ones — a
+serialization / low-concurrency lane, tracked in #1048.
+
 ### Env-keyed provider must be ACTIVE — with one exception
 
 A provider whose key IS configured but that ends `inactive` silently
