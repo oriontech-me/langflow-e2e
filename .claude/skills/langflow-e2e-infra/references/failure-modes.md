@@ -18,7 +18,8 @@ specs into a low-concurrency lane · cap workers per shard · reproduce locally 
 `--workers=N` before blaming the product · cap the **outage per wedge** with
 `LANGFLOW_WORKER_TIMEOUT` on the service container (async worker ⇒ the value
 watches the event-loop heartbeat, not request duration, so it bounds a blocked loop
-without killing a slow live-LLM build — #1048).
+without killing a slow live-LLM build — #1048; Langflow's own docs get this
+backwards and advise raising it, so check the code, not `deployment-multi-worker.mdx`).
 
 **Docs:** `ISSUE-817-CI-RUNNER-SIZING.md`, `ISSUE-833-SHARDING-DESIGN.md`,
 `ISSUE-833-SHARDING-PLAN.md`; `@stable`-removal rules → `CONTRIBUTING.md` →

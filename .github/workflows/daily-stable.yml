@@ -134,18 +134,31 @@ jobs:
           # (`worker_timeout` in lfx runtime settings), handed straight to
           # gunicorn's `timeout`. The worker class is LangflowUvicornWorker — an
           # ASYNC worker — so that timeout is a heartbeat watchdog on the event
-          # loop, NOT a per-request deadline: it fires when the loop stops
-          # ticking (the #922/#927 wedge), and a merely slow request that awaits
-          # network I/O keeps the heartbeat alive. A 4-minute live-LLM build is
-          # therefore unaffected.
+          # loop, NOT a per-request deadline: it fires when the loop stops ticking
+          # (the #922/#927 wedge). Build DURATION cannot trip it — a component's
+          # sync method runs off the loop in a thread (`asyncio.to_thread` in
+          # `custom_component/component.py`, `_get_output_result`), so even a
+          # blocking provider call keeps the heartbeat ticking and an 8-minute
+          # live-LLM build is unaffected.
+          #
+          # Langflow's own docs contradict this: `deployment-multi-worker.mdx`
+          # calls the value "how long a worker may handle a single request" and
+          # says to RAISE it for long agent runs (its heavy-agent profile uses
+          # 600). The code above does not support that reading. Do NOT restore a
+          # higher value on the strength of those docs.
           #
           # Why lower it: a wedged worker does not recover on its own — in run
           # 30410211167 gunicorn's kill is what restored service, twice, each
           # time a full 300 s after the loop stopped (one block began within
           # seconds of a failing Google call at 00:17:28 and was killed at
           # 00:22:28). Waiting the default out buys nothing and every second of
-          # it is served to unrelated specs as a dead backend. 120 s recycles the
-          # worker ~3 min earlier.
+          # it is served to unrelated specs as a dead backend.
+          #
+          # What 120 buys, precisely: the kill lands 60-120 s after the loop
+          # stops, not at a fixed 120 — gunicorn hands the worker `timeout / 2`
+          # and uvicorn refreshes the heartbeat only that often, so detection
+          # costs up to one notify interval. The default's equivalent band is
+          # 150-300 s.
           #
           # Measured, not assumed: a probe container of this image started with
           # LANGFLOW_WORKER_TIMEOUT=5 boots and serves /api/v1/version normally.

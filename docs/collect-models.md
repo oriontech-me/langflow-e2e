@@ -105,14 +105,24 @@ The second half of the defence is therefore not prevention but a **bound on the
 damage**, and it lives in CI config, not here: `LANGFLOW_WORKER_TIMEOUT: "120"` on
 the service containers (#1048). Langflow's default is 300 s, handed to gunicorn as
 its `timeout`; because the worker class is async (`LangflowUvicornWorker`), that
-timeout watches the **event loop's heartbeat** rather than request duration — it
-fires on the wedge that a blocking provider call produces, and never on a merely
-slow live-LLM build that awaits I/O. A wedged worker does not recover on its own
-(gunicorn's kill is what restores service), so the lower ceiling turns each wedge
-from a ~300 s outage into a ~120 s one.
+timeout watches the **event loop's heartbeat** rather than request duration. Build
+duration cannot trip it: a component's sync method runs off the loop in a thread
+(`asyncio.to_thread` in `custom_component/component.py`, `_get_output_result`), so
+even a blocking provider call keeps the heartbeat ticking. It fires on a stalled
+loop and nothing else. A wedged worker does not recover on its own (gunicorn's kill
+is what restores service), so the lower ceiling turns each wedge from a 150–300 s
+outage into a 60–120 s one — the spread, in both cases, is because gunicorn hands
+the worker `timeout / 2` and uvicorn refreshes the heartbeat only that often, so
+detection costs up to one notify interval.
+
+⚠️ Langflow's published docs describe this setting incorrectly:
+`deployment-multi-worker.mdx` calls it "how long a worker may handle a single
+request" and advises **raising** it for long agent runs (its heavy-agent profile
+uses `600`). That reading does not survive the code above — do not restore a higher
+value on the strength of those docs.
 
 That bounds collateral without eliminating it: a spec whose own API call has a 20 s
-timeout still fails inside a 120 s window. Removing the collateral entirely means
+timeout still fails inside that window. Removing the collateral entirely means
 not letting provider-heavy specs share a backend with unrelated ones — a
 serialization / low-concurrency lane, tracked in #1048.
 
