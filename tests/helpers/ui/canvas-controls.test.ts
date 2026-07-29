@@ -73,6 +73,15 @@ test("openCanvasControls throws, attributed, when opening does not reveal the co
       assert.match(err.message, /canvas-controls/);
       assert.match(err.message, /zoom_out/);
       assert.match(err.message, /#997/);
+      // A rename is not the only way to get here: the wait is bounded, so a menu
+      // that merely mounted slowly lands on this same message. Naming only the
+      // layout change would send the reader after a Langflow diff that does not
+      // exist.
+      assert.match(
+        err.message,
+        /mounting/,
+        "the message must offer a slow mount as a cause, not only a rename",
+      );
       return true;
     },
   );

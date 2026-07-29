@@ -10,6 +10,17 @@ import type { Page } from "@playwright/test";
 export const CANVAS_CONTROLS = "canvas_controls_dropdown";
 
 /**
+ * Mirror of `use.actionTimeout` in `playwright.config.ts` (20 s).
+ *
+ * Not imported from there on purpose: the config reads the environment and runs
+ * `dotenv`, and these helpers are exercised by `npm run test:units` outside the
+ * Playwright runner. Kept as a named constant so the coupling is visible — the
+ * reachability check below must not be stricter than the implicit budget the
+ * callers used to get from `click()`'s own auto-wait.
+ */
+const ACTION_TIMEOUT_MS = 20_000;
+
+/**
  * Makes `controlTestId` reachable, returning whether THIS call opened the menu.
  *
  * On the build this was written against (Nightly 1.12.0.dev7) every canvas
@@ -42,17 +53,25 @@ export async function openCanvasControls(
   // normally — which would turn this guard into a flake on every dependent spec.
   // Callers used to absorb that latency by accident, because the next thing they
   // did was `click()` the control and Playwright's auto-wait covered it.
+  //
+  // The budget matches that accidental one — `actionTimeout` in
+  // `playwright.config.ts`. A shorter one would be a NARROWER window than the
+  // code this replaced, on ~140 dependent specs: a menu whose mount is merely
+  // slow (a loaded worker, a template canvas re-rendering) would stop being
+  // absorbed and start hard-failing with the message below, which names a
+  // Langflow layout change. Keep the two in step.
   try {
     await page
       .getByTestId(controlTestId)
-      .waitFor({ state: "attached", timeout: 5000 });
+      .waitFor({ state: "attached", timeout: ACTION_TIMEOUT_MS });
   } catch {
     throw new Error(
-      `[canvas-controls] "${controlTestId}" is still not rendered after opening ` +
-        `"${CANVAS_CONTROLS}". On the build these helpers were written against it ` +
-        `lives inside that menu, so either the control was renamed or the layout ` +
-        `changed (#997). Teach the caller how the new layout exposes it rather ` +
-        `than reintroducing a blind toggle.`,
+      `[canvas-controls] "${controlTestId}" is still not rendered ` +
+        `${ACTION_TIMEOUT_MS} ms after opening "${CANVAS_CONTROLS}". On the ` +
+        `build these helpers were written against it lives inside that menu, so ` +
+        `either the control was renamed, the layout changed (#997), or the menu ` +
+        `never finished mounting. Check which before teaching the caller a new ` +
+        `layout — and do not reintroduce a blind toggle.`,
     );
   }
 
