@@ -117,6 +117,45 @@ test("a guard-tripped run still names its collateral and explains the count", ()
   assert.match(md, /the 5 attributable/);
 });
 
+test("a guard-tripped run that is ALL collateral does not promise attributable triage", () => {
+  // The 0-attributable wording matters: "the 0 attributable failure(s) above are
+  // for manual triage" would send the analyst looking for evidence that is not
+  // there.
+  const md = render({
+    status: "guard_tripped",
+    threshold: 5,
+    hardFailures: 6,
+    attributableFailures: 0,
+    removed: [],
+    skipped: [],
+    exempt: Array.from({ length: 6 }, (_, i) => collateral(`c${i}`)),
+    backendWedged: "true",
+  });
+
+  assert.match(md, /Mass-failure guard tripped/);
+  assert.match(md, /all 6 were collateral/);
+  assert.match(md, /no per-spec evidence to triage/);
+  assert.doesNotMatch(md, /the 0 attributable/);
+});
+
+test("a backtick in the error cannot break out of the code span", () => {
+  const md = render({
+    status: "none",
+    threshold: 5,
+    hardFailures: 1,
+    attributableFailures: 0,
+    removed: [],
+    skipped: [],
+    exempt: [{ ...collateral("a"), error: "Error: connect ECONNREFUSED to `langflow`:7860" }],
+    backendWedged: "",
+  });
+
+  // One line, and the backticks in it are only the two that open and close it.
+  const line = md.split("\n").find((l) => l.includes("ECONNREFUSED"));
+  assert.equal((line.match(/`/g) || []).length, 2, line);
+  assert.match(line, /'langflow'/);
+});
+
 test("a run with no collateral renders exactly the pre-#1031 block", () => {
   const md = render({
     status: "removed",

@@ -12,6 +12,13 @@ import { readFileSync } from "node:fs";
 const r = JSON.parse(readFileSync(process.argv[2], "utf8"));
 const lines = [];
 
+/**
+ * Make text safe inside a single-backtick code span. An error message is
+ * arbitrary product text — one backtick in it closes the span and the rest of
+ * the line renders as prose, mid-issue-body.
+ */
+const code = (text) => String(text).replaceAll("`", "'");
+
 const exempt = Array.isArray(r.exempt) ? r.exempt : [];
 // `attributableFailures` is absent on output produced before #1031; fall back to
 // the total so an older artifact still renders something truthful.
@@ -38,7 +45,7 @@ if (exempt.length) {
   lines.push("");
   for (const e of exempt) {
     lines.push(`- \`${e.file}\` — ${e.title} _(${e.signature}: ${e.why})_`);
-    lines.push(`  \`${String(e.error).split("\n")[0]}\``);
+    lines.push(`  \`${code(String(e.error).split("\n")[0])}\``);
   }
   lines.push("");
   lines.push(
@@ -58,9 +65,13 @@ if (r.status === "guard_tripped") {
   if (exempt.length) {
     lines.push("");
     lines.push(
-      `The guard counts **every** hard failure, collateral included (${exempt.length} of ${r.hardFailures} ` +
-        `here), so it never removes more than it would have before #1031 — the ${attributable} attributable ` +
-        `failure(s) above are for manual triage.`,
+      attributable === 0
+        ? `The guard counts **every** hard failure, so it never removes more than it would have before ` +
+            `#1031 — but here **all ${r.hardFailures} were collateral** (above). There is no per-spec ` +
+            `evidence to triage on this run.`
+        : `The guard counts **every** hard failure, collateral included (${exempt.length} of ${r.hardFailures} ` +
+            `here), so it never removes more than it would have before #1031 — the ${attributable} attributable ` +
+            `failure(s) above are for manual triage.`,
     );
   }
 } else if (r.status === "removed") {

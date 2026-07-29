@@ -948,7 +948,14 @@ jobs:
           # inside the action stands on the failure's own error, so it still
           # applies when this is empty — which is the run where the backend
           # state is least known and the exemption matters most.
-          backend_wedged: ${{ steps.liveness.outputs.wedged }}
+          #
+          # Gated on `measured`: a run whose shards uploaded NO liveness artifact
+          # also emits `wedged=false`, and forwarding that bare would have the
+          # auto-removal block claim the recorder "measured no outage" over a run
+          # where it measured nothing. That is the exact misreading
+          # report-backend-outages.mjs warns about ("must never be read as no
+          # outage"), so unmeasured has to arrive as "" (unknown), not "false".
+          backend_wedged: ${{ steps.liveness.outputs.measured == 'true' && steps.liveness.outputs.wedged || '' }}
 
       # Open the umbrella triage issue on failure — scheduled runs ONLY, aligned
       # with the history / auto-remove steps above. A manual dispatch is itself a

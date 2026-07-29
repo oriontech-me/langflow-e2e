@@ -27,6 +27,10 @@ inputs:
       backend was not measured. WORDING ONLY — the infra-signature exemption
       never depends on it, so a caller with no liveness step (weekly-stable)
       can leave it unset and still get the exemption.
+      Callers must NOT forward `report-backend-outages.mjs`'s `wedged` output
+      bare: it is also "false" when no shard produced probes at all. Gate it on
+      that step's `measured` output so "unmeasured" arrives here as "", or the
+      summary claims the recorder measured no outage on a run it never measured.
     required: false
     default: ""
 
@@ -74,6 +78,10 @@ runs:
     - name: Commit @stable removals to main
       if: steps.remove.outputs.status == 'removed'
       shell: bash
+      env:
+        REMOVED_COUNT: ${{ steps.remove.outputs.removed_count }}
+        EXEMPT_COUNT: ${{ steps.remove.outputs.exempt_count }}
+        RUN_LABEL: ${{ inputs.run_label }}
       run: |
         set -euo pipefail
         # Same "dubious ownership" workaround as the history commit step: the job
@@ -89,5 +97,12 @@ runs:
         # results.json / payload.json / auto-remove-result.json at repo root are
         # not git-ignored and must not be committed.
         git add tests/tests-automations/regression QA-CHECKLIST.md
-        git commit -m "chore(triage): auto-remove @stable from ${{ steps.remove.outputs.removed_count }} hard-failing test(s) (${{ inputs.run_label }}) [skip ci]"
+        MSG="chore(triage): auto-remove @stable from ${REMOVED_COUNT} hard-failing test(s) (${RUN_LABEL}) [skip ci]"
+        if [ "${EXEMPT_COUNT:-0}" != "0" ]; then
+          # Record in the commit itself why fewer tags were removed than tests
+          # failed — otherwise auditing this commit means re-opening the run
+          # to discover the wedge collateral (#1031).
+          MSG="${MSG}"$'\n\n'"${EXEMPT_COUNT} further hard failure(s) kept @stable as non-attributable wedge collateral (#1031)."
+        fi
+        git commit -m "$MSG"
         git push

@@ -55,7 +55,10 @@ interface Failure {
   title: string;
   file: string; // absolute path
   line: number; // 1-based test() line, as Playwright reports it
-  /** Last failed attempt's error, ANSI-stripped and truncated; "" if none. */
+  /**
+   * Last failed attempt's error, ANSI-stripped and UNtruncated; "" if none.
+   * Full text on purpose — it is what the infra-signature classifier reads.
+   */
   error: string;
 }
 
@@ -113,6 +116,27 @@ function candidateBases(report: any): string[] {
 const ERROR_MAX = 240;
 
 /**
+ * Shorten an error for the result JSON / issue body.
+ *
+ * DISPLAY ONLY. Classification always runs on the untruncated text: a wedge
+ * frequently surfaces as an assertion header whose `Cause:` line — the transport
+ * error — sits hundreds of characters in, under a Playwright call log. Truncating
+ * before `classifyInfraError` would silently un-exempt exactly those, which is
+ * the harm #1031 exists to prevent.
+ */
+export function truncateError(error: string): string {
+  return error.length > ERROR_MAX ? `${error.slice(0, ERROR_MAX)}…` : error;
+}
+
+/** One error object flattened to text: message (or thrown value) plus its stack. */
+function errorText(e: any): string {
+  const message = stripAnsi(e?.message || e?.value || "");
+  const stack = stripAnsi(e?.stack || "");
+  if (stack && !message.includes(stack)) return message ? `${message}\n${stack}` : stack;
+  return message || stack;
+}
+
+/**
  * The error of the LAST failed attempt — the same result `build-run-payload.mjs`
  * picks for `error_signature`, so the exemption and the history file talk about
  * the same attempt. Last, not first: retries are what a wedge burns, and the
@@ -121,18 +145,33 @@ const ERROR_MAX = 240;
  * Unlike `firstErr` there, this keeps the whole message (plus the stack) rather
  * than its first line — a transport error is often the *cause* line under an
  * assertion header, and truncating to line one would hide it.
+ *
+ * It also keeps EVERY error of that attempt, not just the first. A `timedOut`
+ * result carries the `Test timeout of Xms exceeded` wrapper in `error` and the
+ * pending call — the transport error itself — in a later `errors[]` entry, which
+ * is precisely the shape "the test timed out while an API call hung".
  */
 export function lastFailureError(test: any): string {
   const results: any[] = Array.isArray(test?.results) ? test.results : [];
   const lastFailed =
     [...results].reverse().find((r) => r?.status !== "passed" && r?.status !== "skipped") ??
     results[results.length - 1];
-  const e = lastFailed?.error || lastFailed?.errors?.[0];
-  if (!e) return "";
-  const message = stripAnsi(e.message || e.value || "");
-  const stack = stripAnsi(e.stack || "");
-  const combined = stack && !message.includes(stack) ? `${message}\n${stack}` : message || stack;
-  return combined.slice(0, ERROR_MAX);
+  if (!lastFailed) return "";
+  const candidates = [
+    lastFailed.error,
+    ...(Array.isArray(lastFailed.errors) ? lastFailed.errors : []),
+  ];
+  // Playwright usually sets `error` to `errors[0]`, so dedup by text.
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const text = errorText(candidate);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    parts.push(text);
+  }
+  return parts.join("\n");
 }
 
 export function collectHardFailures(reportFile: string): Failure[] {
@@ -294,7 +333,7 @@ function main(): void {
       line: f.line,
       signature: signature.id,
       why: signature.why,
-      error: f.error,
+      error: truncateError(f.error),
     });
   }
 
@@ -321,11 +360,6 @@ function main(): void {
     backendWedged: BACKEND_WEDGED,
   };
 
-  if (failures.length === 0) {
-    process.stdout.write(JSON.stringify(result));
-    return;
-  }
-
   // Mass-failure guard: too many hard failures => treat as infra, remove nothing.
   //
   // Counts EVERY hard failure, not just the attributable ones. Netting the
@@ -335,8 +369,19 @@ function main(): void {
   // remove 5 tags with no review. #1031 asks to protect innocent specs, not to
   // widen auto-removal's reach — so the removal set here is always a subset of
   // what the pre-#1031 script would have produced.
+  //
+  // Evaluated BEFORE the "nothing attributable" exit so `status` keeps meaning
+  // "would the guard have tripped": a wide wedge whose every failure is
+  // collateral is still a mass-failure day, and the triage skill's own
+  // `detectGuard` (which recomputes from `totals.failed`) would otherwise
+  // disagree with this field.
   if (allFailures.length > MAX_AUTO_REMOVE) {
     result.status = "guard_tripped";
+    process.stdout.write(JSON.stringify(result));
+    return;
+  }
+
+  if (failures.length === 0) {
     process.stdout.write(JSON.stringify(result));
     return;
   }

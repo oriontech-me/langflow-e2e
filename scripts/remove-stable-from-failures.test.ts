@@ -75,7 +75,14 @@ function specSource(titles: string[]): string {
  */
 function runScript(opts: {
   specs: Record<string, string[]>;
-  failures?: Array<{ file: string; title: string; status?: string; error?: string }>;
+  failures?: Array<{
+    file: string;
+    title: string;
+    status?: string;
+    error?: string;
+    /** Raw `tests[].results` override, for shapes `error` alone cannot express. */
+    results?: unknown[];
+  }>;
   maxAutoRemove?: string;
   reportPath?: string;
   reportBody?: string;
@@ -106,7 +113,11 @@ function runScript(opts: {
                 status: f.status ?? "unexpected",
                 // The retry shape Playwright actually emits, so the exemption is
                 // exercised through `results[].error`, not a shortcut field.
-                ...(f.error ? { results: [{ status: "failed", error: { message: f.error } }] } : {}),
+                ...(f.results
+                  ? { results: f.results }
+                  : f.error
+                    ? { results: [{ status: "failed", error: { message: f.error } }] }
+                    : {}),
               },
             ],
           },
@@ -357,6 +368,91 @@ test("the signature is matched anywhere in the error, not only on line one", () 
   assert.equal(result.exempt[0].signature, "connection-refused");
 });
 
+test("a transport cause DEEP in the message still exempts — truncation is display-only", () => {
+  // The regression this pins: the error was cut to ERROR_MAX chars BEFORE being
+  // classified, so an assertion header plus a Playwright call log pushed the
+  // `Cause:` line out of range and the innocent spec lost its tag anyway — the
+  // exact harm #1031 exists to prevent.
+  const deepCause =
+    "Error: expect(received).toBeVisible() failed\n\n" +
+    "Locator: getByTestId('chat-message-ai-response')\nExpected: visible\n" +
+    "Received: <element(s) not found>\nTimeout: 30000ms\n\nCall log:\n" +
+    Array.from(
+      { length: 6 },
+      (_, i) => `  - waiting for getByTestId('chat-message-ai-response') attempt ${i}`,
+    ).join("\n") +
+    "\nCause: connect ECONNREFUSED 127.0.0.1:7860";
+  assert.ok(
+    deepCause.indexOf("ECONNREFUSED") > 240,
+    "fixture must push the cause past the display limit to be meaningful",
+  );
+
+  const titles = ["t1"];
+  const before = specSource(titles);
+  const { result, after } = runScript({
+    specs: { "fixture-1031-a.spec.ts": titles },
+    failures: [{ file: "fixture-1031-a.spec.ts", title: "t1", error: deepCause }],
+  });
+
+  assert.equal(result.exempt.length, 1);
+  assert.equal(result.exempt[0].signature, "connection-refused");
+  assert.equal(after["fixture-1031-a.spec.ts"], before);
+  // The issue body still carries a bounded excerpt, not the whole call log.
+  assert.ok(result.exempt[0].error.length <= 241, String(result.exempt[0].error.length));
+  assert.match(result.exempt[0].error, /…$/);
+});
+
+test("the transport error is found past errors[0] — the timedOut wrapper shape", () => {
+  // A test that times out while an API call hangs: Playwright puts the timeout
+  // wrapper in `error` and the pending call in a later `errors[]` entry. Reading
+  // only `error`/`errors[0]` would classify this as attributable.
+  const { result } = runScript({
+    specs: { "fixture-1031-a.spec.ts": ["t1"] },
+    failures: [
+      {
+        file: "fixture-1031-a.spec.ts",
+        title: "t1",
+        results: [
+          {
+            status: "timedOut",
+            error: { message: "Test timeout of 300000ms exceeded." },
+            errors: [
+              { message: "Test timeout of 300000ms exceeded." },
+              { message: INFRA_ERROR },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  assert.equal(result.exempt.length, 1);
+  assert.equal(result.exempt[0].signature, "api-request-timeout");
+});
+
+test("a wide wedge with NO attributable failure still reports guard_tripped", () => {
+  // `status` has to keep meaning "would the guard have tripped". The triage
+  // skill's own detectGuard recomputes the guard from totals.failed, so an
+  // all-collateral mass-failure day reported as "none" would contradict it.
+  const titles = ["t1", "t2", "t3", "t4", "t5", "t6"];
+  const before = specSource(titles);
+  const { result, after } = runScript({
+    specs: { "fixture-1031-a.spec.ts": titles },
+    failures: titles.map((title) => ({
+      file: "fixture-1031-a.spec.ts",
+      title,
+      error: INFRA_ERROR,
+    })),
+    maxAutoRemove: "5",
+  });
+
+  assert.equal(result.status, "guard_tripped");
+  assert.equal(result.hardFailures, 6);
+  assert.equal(result.attributableFailures, 0);
+  assert.equal(result.exempt.length, 6);
+  assert.equal(after["fixture-1031-a.spec.ts"], before);
+});
+
 test("classifyInfraError covers the transport signatures and rejects product ones", () => {
   const infra: Array<[string, string]> = [
     ["TimeoutError: apiRequestContext.get: Timeout 20000ms exceeded.", "api-request-timeout"],
@@ -413,6 +509,28 @@ test("lastFailureError reads the LAST failed attempt, ANSI stripped", () => {
     INFRA_ERROR,
   );
   assert.equal(lastFailureError({}), "");
+
+  // Every error of the attempt is kept, and the `error === errors[0]` duplication
+  // Playwright normally emits is collapsed rather than repeated.
+  assert.equal(
+    lastFailureError({
+      results: [
+        {
+          status: "timedOut",
+          error: { message: PRODUCT_ERROR },
+          errors: [{ message: PRODUCT_ERROR }, { message: INFRA_ERROR }],
+        },
+      ],
+    }),
+    `${PRODUCT_ERROR}\n${INFRA_ERROR}`,
+  );
+
+  // No truncation here — the classifier needs the full text (#1031 review).
+  const long = `${"x".repeat(400)} ECONNREFUSED`;
+  assert.equal(
+    lastFailureError({ results: [{ status: "failed", error: { message: long } }] }),
+    long,
+  );
 });
 
 // ─── Nothing to do ───────────────────────────────────────────────────────────
