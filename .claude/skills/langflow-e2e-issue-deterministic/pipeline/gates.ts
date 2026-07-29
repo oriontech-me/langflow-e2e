@@ -1,4 +1,5 @@
-import type { FFEntry } from './types.ts'
+import type { FFEntry, ReproRate, TestEntry } from './types.ts'
+import { VERDICTS } from './types.ts'
 
 export const SPEC_DOC_SECTIONS = [
   'What this test validates', 'Tags', 'Validation criterion', 'External dependencies',
@@ -55,7 +56,190 @@ export function checkNoMutationMarkers(diffs: Array<{ file: string; diff: string
     .map(d => `FF-MUTATION marker still present in working diff of ${d.file} — revert incomplete`)
 }
 
+// ---------- quarantine lift (#1060) ----------
+
+const QUARANTINE_RE = /quarantin|test\.fixme/i
+const RESTORE_STABLE_RE = /restore\s+`?@stable|@stable\b[^.\n]{0,40}\brestor/i
+
+/**
+ * Lifting the quarantine is the DELIVERABLE of a dedicated issue spawned by
+ * triage: `test.fixme` comes off and `@stable` goes back. Nothing checked it,
+ * so a fix could ship leaving the test muted in every context — daily, PR gate
+ * and full suite alike.
+ *
+ * Only the issue body arms this gate: an issue that never quarantined anything
+ * is unaffected, and the `@stable` half only fires when the body asks for the
+ * tag back (utility specs legitimately carry no `@stable`).
+ */
+export function checkQuarantineLifted(
+  issueBody: string, files: Array<{ file: string; entries: TestEntry[] }>,
+): string[] {
+  if (!QUARANTINE_RE.test(issueBody)) return []
+  const problems: string[] = []
+  for (const { file, entries } of files) {
+    for (const e of entries) {
+      if (e.modifier === '.fixme') {
+        problems.push(`quarantine not lifted: test.fixme still on "${e.title}" in ${file}`)
+      }
+    }
+  }
+  if (RESTORE_STABLE_RE.test(issueBody)) {
+    for (const { file, entries } of files) {
+      for (const e of entries) {
+        if (!issueBody.includes(e.title)) continue
+        if (!e.tags.includes('@stable')) {
+          problems.push(`@stable not restored on "${e.title}" in ${file} (the issue asks for it)`)
+        }
+      }
+    }
+  }
+  return problems
+}
+
+// ---------- per-symptom verdicts (#1060) ----------
+
+/**
+ * The spec rows of a dedicated issue's symptom table. A row is any table cell
+ * naming a spec file with a line number — the shape triage writes.
+ */
+export function extractSymptomRows(body: string): string[] {
+  const rows = new Set<string>()
+  for (const line of body.split('\n')) {
+    if (!line.trim().startsWith('|')) continue
+    const cell = line.split('|')[1]?.trim()
+    if (!cell) continue
+    const m = cell.match(/([\w/.-]+\.spec\.ts:\d+)/)
+    if (m) rows.add(m[1])
+  }
+  return [...rows]
+}
+
+/**
+ * Every row of the issue must get its own verdict. #1060 listed two failures
+ * of the SAME test line; they had different causes and one belonged to another
+ * issue entirely — a single `verdict` field cannot say that, and closing on the
+ * first cause silently drops the second.
+ */
+export function checkSymptomCoverage(rows: string[], symptoms: unknown): string[] {
+  if (rows.length === 0) return []
+  if (!Array.isArray(symptoms) || symptoms.length === 0) {
+    return [`issue lists ${rows.length} symptom row(s) — evidence.symptoms must give each one a verdict: ${rows.join(', ')}`]
+  }
+  const problems: string[] = []
+  const list = symptoms as Array<Record<string, unknown>>
+  for (const s of list) {
+    if (typeof s?.row !== 'string') problems.push('every symptom needs a "row"')
+    if (typeof s?.verdict !== 'string' || !VERDICTS.includes(s.verdict as never)) {
+      problems.push(`symptom "${String(s?.row)}" has an invalid verdict "${String(s?.verdict)}" (one of: ${VERDICTS.join(' | ')})`)
+    }
+    if (s?.ownedBy !== undefined && !/^#\d+$/.test(String(s.ownedBy))) {
+      problems.push(`symptom "${String(s?.row)}" has ownedBy "${String(s.ownedBy)}" — use "#NNNN"`)
+    }
+  }
+  for (const row of rows) {
+    const covered = list.some(s =>
+      typeof s?.row === 'string' && (s.row.includes(row) || row.includes(s.row)))
+    if (!covered) problems.push(`symptom row not accounted for: ${row}`)
+  }
+  return problems
+}
+
+export function symptomsOwnedElsewhere(symptoms: unknown): string[] {
+  if (!Array.isArray(symptoms)) return []
+  return (symptoms as Array<Record<string, unknown>>)
+    .map(s => (typeof s?.ownedBy === 'string' ? s.ownedBy : null))
+    .filter((x): x is string => x !== null)
+}
+
+// ---------- DEBUG evidence ----------
+
+const FLAKE_RE = /\bflak(e|y|iness)\b|\brecurrent\b|\bintermittent\b/i
+const MIN_REPRO_RUNS = 5
+
+/**
+ * A flake needs its PRE-fix rate measured, because VALIDATE's clean burst is
+ * not evidence on its own: at #1060's ~8 %-per-run rate, three green runs is
+ * the expected outcome of doing NOTHING. Either the baseline reproduced the
+ * failure, or the mechanism was proven some other way and that proof is stated.
+ */
+export function checkDebugEvidence(e: {
+  issueBody: string
+  labels: string[]
+  verdict: unknown
+  summary: unknown
+  decision: unknown
+  symptoms: unknown
+  reproRate?: ReproRate
+  mechanismProof: unknown
+}): string[] {
+  const problems: string[] = []
+  if (typeof e.verdict !== 'string' || !VERDICTS.includes(e.verdict as never)) {
+    problems.push(`evidence.verdict must be one of: ${VERDICTS.join(' | ')}`)
+  }
+  if (typeof e.summary !== 'string' || e.summary.trim() === '') {
+    problems.push('evidence.summary must state the root cause')
+  }
+  if (e.verdict !== 'test-defect' && (typeof e.decision !== 'string' || e.decision.trim() === '')) {
+    problems.push(`verdict "${String(e.verdict)}" requires the user's decision in evidence.decision — present the evidence and wait`)
+  }
+  problems.push(...checkSymptomCoverage(extractSymptomRows(e.issueBody), e.symptoms))
+
+  const isFlake = FLAKE_RE.test(e.issueBody) || e.labels.some(l => /flak/i.test(l))
+  if (isFlake) {
+    const r = e.reproRate
+    if (!r) {
+      problems.push('flake issue: measure the PRE-fix rate first — repro-run <NNN> --spec <path> [--grep "<title>"] --runs 10 (VALIDATE\'s clean burst proves nothing on its own)')
+    } else if (r.runs < MIN_REPRO_RUNS) {
+      problems.push(`repro-run recorded only ${r.runs} run(s); need at least ${MIN_REPRO_RUNS}`)
+    } else if (r.failures === 0 && (typeof e.mechanismProof !== 'string' || e.mechanismProof.trim() === '')) {
+      problems.push(`the baseline never reproduced (${r.runs} runs, 0 failures) — state how the mechanism was proven in evidence.mechanismProof, or raise --runs`)
+    }
+  }
+  return problems
+}
+
+// ---------- PR ----------
+
 export const BRANCH_RE = /^(test|fix|docs|chore|feat|refactor)\/issue-\d+-[a-z0-9][a-z0-9-]*$/
+
+/**
+ * The branch must carry the pipeline's files and nothing else. Rebasing onto a
+ * local `main` that a parallel session had already committed to silently
+ * absorbs that session's commit into the PR (#1060 — caught by hand).
+ * `changed === null` means the base ref could not be resolved: fail closed.
+ */
+export function checkBranchPurity(changed: string[] | null, allowed: string[]): string[] {
+  if (changed === null) {
+    return ['could not diff against the base ref (git fetch origin?) — branch purity unverified']
+  }
+  const ok = new Set(allowed)
+  return changed.filter(f => !ok.has(f))
+    .map(f => `branch carries a file the pipeline never touched: ${f} (another session's commit? rebase with --onto)`)
+}
+
+/**
+ * A red CI gate must be either fixed or justified in writing on the PR — never
+ * merged silently. #1060's E2E job was red for an ambient cause tracked
+ * elsewhere; the justification comment is what makes that call reviewable.
+ */
+export function checkCiVerdict(
+  evidence: { ciVerdict?: unknown; justificationCommentUrl?: unknown },
+  prCommentUrls: string[],
+): string[] {
+  const v = evidence.ciVerdict
+  if (v !== 'green' && v !== 'ambient-red') {
+    return ['evidence.ciVerdict must be "green" (all checks pass) or "ambient-red" (red for a cause outside this PR)']
+  }
+  if (v === 'green') return []
+  const url = evidence.justificationCommentUrl
+  if (typeof url !== 'string' || url.trim() === '') {
+    return ['ambient-red needs evidence.justificationCommentUrl — comment on the PR naming the cause, the evidence it is ambient, and why merging is still right']
+  }
+  if (!prCommentUrls.some(c => c === url || c.endsWith(url) || url.endsWith(c))) {
+    return [`justificationCommentUrl ${url} is not a comment on this PR`]
+  }
+  return []
+}
 
 export function checkPrReadiness(e: {
   branch: string; prBody: string; issue: number; isWave: boolean; labels: string[]

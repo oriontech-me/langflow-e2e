@@ -42,6 +42,57 @@ export interface PwStats {
   skipped: number
   durationMs: number
   backendErrors: boolean
+  /** Error messages of every non-passing result — the input to classifyRun. */
+  failureMessages: string[]
+}
+
+/**
+ * A run that aborted on a known environment signature (a wedged backend
+ * dropping /api/v1/auto_login, a socket hang up) says nothing about the spec.
+ * It is voided and re-run, never counted as a failure or as a clean run.
+ */
+export type RunClass = 'clean' | 'infra-void' | 'real-failure'
+
+export interface RunRecord {
+  target: string
+  stats: PwStats
+  class?: RunClass
+}
+
+/** Pre-fix flake rate, written by `repro-run` (never by hand). */
+export interface ReproRate {
+  spec: string
+  grep?: string
+  runs: number
+  failures: number
+  voids: number
+  signatures: string[]
+  at: string
+}
+
+export interface TestEntry {
+  title: string
+  /** '', '.fixme', '.skip', '.only' or '.fail' as written in the source. */
+  modifier: string
+  tags: string[]
+}
+
+export const VERDICTS = [
+  'test-defect', 'langflow-regression', 'product-changed',
+  'transient-saturation', 'cross-worker-wiper', 'stale-confirmed-bug',
+] as const
+export type Verdict = (typeof VERDICTS)[number]
+
+/**
+ * One row of a dedicated issue's symptom table. A daily-failure issue can list
+ * several failures with DIFFERENT causes (#1060 listed two; the second was
+ * #1030's auto_login timeout), so each row carries its own verdict and, when
+ * it belongs elsewhere, the issue that owns it.
+ */
+export interface Symptom {
+  row: string
+  verdict: Verdict
+  ownedBy?: string
 }
 
 export interface PipelineState {

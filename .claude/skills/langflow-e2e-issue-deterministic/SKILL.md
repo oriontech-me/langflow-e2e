@@ -42,11 +42,18 @@ Other commands, only when the situation calls for them:
 ```bash
 $PIPE escalate <NNN> debug --reason "…"   # behavior looks broken, any phase
 $PIPE ff-run <NNN> --file <spec> --test "<title>" --mutation "<desc>"
+$PIPE artifacts <NNN> --run <workflow-run-id> [--filter "<test title>"]
+$PIPE repro-run <NNN> --spec <path> [--grep "<title>"] [--runs 10]   # DEBUG only
 $PIPE status <NNN>
 $PIPE metrics <NNN>                        # benchmark data
 $PIPE abort <NNN> --reason "…"
 $PIPE authorize-pr <NNN> --quote "<user's exact words>"   # ONLY after explicit user authorization
 ```
+
+`artifacts` downloads the failing run's `playwright-json-daily-<run>` blob and
+prints each attempt's status, duration and error — the first thing to read on a
+daily-failure issue, before any theory. `repro-run` measures the **pre-fix**
+rate of a flake on the unmodified spec (it refuses a dirty spec file).
 
 ## Hard rules
 
@@ -69,8 +76,37 @@ $PIPE authorize-pr <NNN> --quote "<user's exact words>"   # ONLY after explicit 
   slow spec for zero added signal (a real session ran a spec ~10× this way).
   Scout runs to design/debug are fine; redundant confirmation bursts are not.
   Need more/fewer runs? Set `PIPELINE_BURST`, don't loop manually.
+- **An environment abort is not a spec result.** A run whose every failure
+  carries an infra signature (`/api/v1/auto_login` timeout, `socket hang up`,
+  connection refused — the wedged-backend class measured in #1074) is recorded
+  **void** and re-run; it counts neither as a failure nor as one of the clean
+  burst runs. Never "fix" a spec against one, and never report it as a defect.
+  Repeated voids stop the phase naming the **instance** as the blocker: restart
+  it, don't loosen the test. `PIPELINE_MAX_INFRA_VOIDS` (default 3) tunes the cap.
+- **A flake issue needs its PRE-fix rate.** Run `repro-run` on the unmodified
+  spec BEFORE changing anything; DEBUG will not complete without it. VALIDATE's
+  clean burst is not evidence on its own — at an 8 %-per-run flake, three green
+  runs is the expected outcome of doing nothing (#1060). If the baseline never
+  reproduces, prove the mechanism another way and say how in
+  `evidence.mechanismProof`.
+- **One verdict per symptom row.** A dedicated issue's table can list failures
+  with different causes; #1060's second row was another issue's `auto_login`
+  timeout, not the defect being fixed. Each row gets its own verdict, and a row
+  another issue owns carries `ownedBy:"#NNNN"` and must be named in the PR body.
+- **Lifting a quarantine is a deliverable, and it is gated.** If the issue
+  quarantined a test, VALIDATE fails while a `test.fixme` survives in a touched
+  spec — and, when the issue asks for the tag back, while a quarantined title
+  lacks `@stable`.
 - **Never bypass the CLI**: no `gh pr create`, no commit/push, no phase
   skipping, no editing files under `.claude/issue-pipeline/`.
+- **The branch carries this issue's files and nothing else.** The PR gate diffs
+  against `origin/main`; a rebase onto a local `main` that a parallel session
+  already committed to drags their work into your PR (#1060 — caught by hand).
+  Fix it with `git rebase --onto origin/main <their-commit> <your-branch>`.
+- **A red CI check is fixed or justified in writing, never ignored.** The PR
+  gate takes `ciVerdict: green | ambient-red`; `ambient-red` requires the URL of
+  a PR comment naming the cause, the evidence that it is ambient, and why
+  merging is still the right call.
 - **Never fabricate evidence**: `userConfirmed: true` only after the user
   actually confirmed in chat; `--quote` only with words the user actually said.
   Runner-written keys (runs/typecheck/lint/nightly/qaDiff/ff/finalGreen) are

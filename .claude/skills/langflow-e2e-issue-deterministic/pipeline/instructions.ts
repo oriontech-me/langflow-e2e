@@ -61,9 +61,12 @@ export function instructionFor(s: PipelineState): string {
     case 'DEBUG':
       return [
         `Root-cause before fixing. Invoke superpowers:systematic-debugging.`,
-        `Decide the verdict with evidence per the langflow-e2e-issues taxonomy: test-defect | langflow-regression | product-changed | transient-saturation | cross-worker-wiper.`,
+        `Read the failing run's own artifact FIRST — it names the killer: ${CLI} artifacts ${n} --run <workflow-run-id> [--filter "<test title>"] (per-attempt status/duration/error).`,
+        `Flake issue? Measure the PRE-fix rate before changing anything: ${CLI} repro-run ${n} --spec <path> [--grep "<title>"] --runs 10. VALIDATE's clean burst is NOT evidence on its own — at an 8%/run flake, 3 green runs is the expected outcome of doing nothing.`,
+        `Decide the verdict with evidence per the langflow-e2e-issues taxonomy: test-defect | langflow-regression | product-changed | transient-saturation | cross-worker-wiper | stale-confirmed-bug.`,
+        `ONE VERDICT PER SYMPTOM ROW: an issue's table can list failures with different causes (#1060's second row was another issue's auto_login timeout). Give each row its own entry; a row that belongs elsewhere carries ownedBy:"#NNNN" and must be referenced in the PR body.`,
         `Any verdict other than test-defect: STOP and present evidence to the user; their decision goes in evidence.decision.`,
-        done('DEBUG', '{"verdict":"<verdict>","summary":"<root cause>","decision":"<required unless test-defect>"}'),
+        done('DEBUG', '{"verdict":"<verdict>","summary":"<root cause>","symptoms":[{"row":"<spec.ts:line>","verdict":"<verdict>","ownedBy":"#NNNN (only if another issue owns it)"}],"decision":"<required unless test-defect>","mechanismProof":"<only if the baseline never reproduced>"}'),
       ].join('\n')
 
     case 'IMPLEMENT':
@@ -75,7 +78,9 @@ export function instructionFor(s: PipelineState): string {
 
     case 'VALIDATE':
       return [
-        `Mechanical validation ran (see status above): nightly check, --retries=0 burst parsed from JSON stats, typecheck, lint, backend-error scan, QA-CHECKLIST diff rules.`,
+        `Mechanical validation ran (see status above): nightly check, --retries=0 burst parsed from JSON stats, typecheck, lint, backend-error scan, QA-CHECKLIST diff rules, quarantine-lift check.`,
+        `Runs whose every failure carries an environment signature (auto_login timeout, socket hang up, connection refused) are recorded as VOID and re-run — they are not spec verdicts. Repeated voids stop the phase naming the instance, not the spec: restart it and run next again.`,
+        `If this issue quarantined a test, the gate requires the lift: no test.fixme left in the touched specs, and @stable back on the quarantined titles when the issue asks for it.`,
         `Fix whatever is red and re-run ${CLI} next ${n}. Update the QA-CHECKLIST bullet (bullets only — generated blocks are enforced).`,
         `Extra targets beyond the git diff: ${CLI} next ${n} --spec <path> or --grep <pattern>.`,
         done('VALIDATE'),
@@ -111,8 +116,10 @@ export function instructionFor(s: PipelineState): string {
       return [
         `Authorized. Follow langflow-e2e/references/pr-guide.md: branch type/issue-NNN-desc, Conventional-Commit title with (#${n}), body with "Closes #${n}" + the correct template + the REAL Validation block.`,
         `The complete gate fetches the REAL PR body via "gh pr view" and verifies branch name, Closes line, and roadmap label mechanically against it.`,
+        `It also checks BRANCH PURITY (git diff origin/main..HEAD must carry only the files this pipeline touched — rebasing onto a local main that another session committed to absorbs their work) and the CI verdict.`,
+        `Wait for the checks. All green → ciVerdict "green". Red for a cause outside this PR → comment on the PR naming the cause, the evidence that it is ambient and why merging is still right, then pass ciVerdict "ambient-red" with that comment's URL.`,
         `Post-merge: verify the issue actually closed (edited-Fixes GitHub quirk) and delete the branch.`,
-        done('PR', '{"prUrl":"<url>"}'),
+        done('PR', '{"prUrl":"<url>","ciVerdict":"green|ambient-red","justificationCommentUrl":"<required when ambient-red>"}'),
       ].join('\n')
 
     case 'DISPATCH':
