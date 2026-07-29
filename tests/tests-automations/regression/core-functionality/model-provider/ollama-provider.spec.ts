@@ -223,7 +223,13 @@ test.describe("Ollama Provider", () => {
 
   test(
     "the Ollama component lists the local model live and executes the flow",
-    { tag: ["@regression", "@model-provider", "@components", "@playground"] },
+    {
+      // @stable restored for #931 after 4 consecutive green `manual.yml` runs on
+      // the branch (2 passed, 23.8-29.2s each) — the CI environment, not a dev
+      // box: the 07-23/24 bundle gap is fixed upstream and the rebuilt
+      // run-completion wait holds under runner-speed inference.
+      tag: ["@stable", "@regression", "@model-provider", "@components", "@playground"],
+    },
     async ({ page, request }) => {
       // Local CPU inference on a shared CI runner is far slower than on a dev
       // box (~13s locally vs. >100s in the daily), and the waits below are

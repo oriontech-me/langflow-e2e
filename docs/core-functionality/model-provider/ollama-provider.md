@@ -68,8 +68,7 @@ a selected local model no longer executes.
 ## Tags *(required)*
 
 Test 1: `@stable` `@model-provider` `@settings`
-Test 2: `@regression` `@model-provider` `@components` `@playground`
-— `@stable` **withheld pending CI proof**, see the history below.
+Test 2: `@stable` `@regression` `@model-provider` `@components` `@playground`
 
 `@stable` added after 4 clean `--retries=0` runs against the local Ollama
 (issue #498's "Done when"). In environments without a local Ollama, both
@@ -99,8 +98,8 @@ the shard, is simply far slower than the ~13 s this spec takes locally. So a
 local green says nothing about the daily, and `@stable` restored on local
 evidence alone would predictably redden it again for an unrelated reason.
 
-**Restoration gate:** the tag goes back only after the spec passes in the
-real CI environment, proven by dispatching `manual.yml` on the branch (it
+**Restoration gate — SATISFIED.** The bar was a green sequence in the real CI
+environment, not on a dev box, via `manual.yml` dispatched on the branch (it
 carries the same `ollama` service container and SSRF allowlist):
 
 ```bash
@@ -109,10 +108,25 @@ gh workflow run manual.yml --repo oriontech-me/langflow-e2e \
   -f test_grep="Ollama"
 ```
 
-The tag matters structurally, which is why this must converge rather than be
+Result — **4 consecutive green runs**, each `Running 2 tests` → `2 passed`
+(28.2 s, 29.2 s, 28.1 s, 23.8 s), with the sentinel line present, so the
+playground genuinely answered: the step that failed 3/3 on 07-15. `@stable` is
+restored on that evidence. A 5th run aborted before executing any test —
+`globalSetup`'s credential pre-flight threw on a quota-drained `GOOGLE_API_KEY`
+(#1058 / #976), a provider this spec never touches; it counts as neither pass
+nor fail. **Expect that abort to cost this spec occasional days in the daily**
+until #1058 is fixed.
+
+The tag matters structurally, which is why this had to converge rather than be
 dropped: `daily-stable.yml` runs `--grep @stable`, and `nightly.yml` (the only
-full-suite workflow) is disabled — so while untagged, this test runs in **no**
+full-suite workflow) is disabled — so while untagged, this test ran in **no**
 recurring workflow at all.
+
+**Residual known flake:** on a dev box the execute test still failed ~1 in 8
+runs with no playground reply in 180 s (measured while authoring this). It did
+not reproduce across the 4 CI runs. Watch it in the daily; if it returns, the
+root cause to chase is whether the run starts at all (`POST /api/v2/workflows`,
+SSE) versus the Ollama node failing to build.
 
 **Model resolution — the image is the source of truth (#931).** The model the
 CI exercises is BAKED into a dedicated image by
