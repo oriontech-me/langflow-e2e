@@ -114,6 +114,24 @@ dropped: `daily-stable.yml` runs `--grep @stable`, and `nightly.yml` (the only
 full-suite workflow) is disabled — so while untagged, this test runs in **no**
 recurring workflow at all.
 
+**Model resolution — the image is the source of truth (#931).** The model the
+CI exercises is BAKED into a dedicated image by
+`.github/workflows/build-ollama-image.yml`
+(`docker/ollama-e2e/Dockerfile`, `ARG OLLAMA_E2E_MODEL`), consumed as a service
+container. That tag is currently pinned in **9 places** across the Dockerfile,
+the build workflow, `nightly.yml`, `manual.yml`, `daily-stable.yml` and this
+spec — and the Dockerfile itself documents the sync as manual ("update
+`OLLAMA_E2E_MODEL` here AND `OLLAMA_TEST_MODEL` in the workflows/.env").
+
+The spec's copy was the dangerous one: a hardcoded `?? "llama3.2:1b"` fallback.
+If a workflow forgot to set `OLLAMA_TEST_MODEL`, or the baked model changed,
+the probe would conclude *"model not pulled"* and the test would **skip
+silently** — a skip nobody triages, on the very surface the spec exists to
+guard. The fallback is gone: an unset `OLLAMA_TEST_MODEL` now means "use
+whatever this instance actually serves", so the spec follows the image instead
+of duplicating its choice. The CI workflows keep pinning the value explicitly,
+so their executed path is unchanged.
+
 **Run-completion signal (fixed for #931).** The old `waitForRunToFinish`
 probed the Stop button with `isVisible({ timeout: 10000 })` and, when it did
 not appear in time, skipped the wait entirely and fell straight into a 60 s
@@ -133,7 +151,10 @@ a slow run is waited out instead of being mistaken for a finished one.
   - `OLLAMA_BASE_URL_FROM_LANGFLOW` — the URL typed INTO Langflow, i.e. how
     the Langflow container reaches the instance (default
     `http://host.docker.internal:11434` for the dockerized nightly);
-  - `OLLAMA_TEST_MODEL` — the pulled model (default `llama3.2:1b`).
+  - `OLLAMA_TEST_MODEL` — the model to exercise. **Optional: when unset the
+    spec derives it from the instance** (the first model `/api/tags` reports)
+    and skips only when the instance has NO model at all. There is
+    deliberately no hardcoded fallback tag — see *Model resolution* below.
   - Provisioning used for validation:
     `docker run -d --name ollama-e2e -p 11434:11434 ollama/ollama` +
     `docker exec ollama-e2e ollama pull llama3.2:1b`.

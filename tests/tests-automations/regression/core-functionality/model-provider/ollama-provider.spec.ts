@@ -47,10 +47,19 @@ const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 // instance; host.docker.internal resolves to the host from the container.
 const OLLAMA_BASE_URL_FROM_LANGFLOW =
   process.env.OLLAMA_BASE_URL_FROM_LANGFLOW ?? "http://host.docker.internal:11434";
-const OLLAMA_TEST_MODEL = process.env.OLLAMA_TEST_MODEL ?? "llama3.2:1b";
+// The model to exercise. Left EMPTY on purpose when unset: the model is baked
+// into the CI image by build-ollama-image.yml (docker/ollama-e2e/Dockerfile,
+// `ARG OLLAMA_E2E_MODEL`), so the instance — not this file — is the source of
+// truth. A hardcoded fallback used to live here, and it lied: with the env var
+// unset, or the baked model changed, the probe reported "model not pulled" and
+// the test SKIPPED silently on the very surface it exists to guard. Unset now
+// means "whatever this instance serves"; the workflows still pin it explicitly.
+const OLLAMA_TEST_MODEL = process.env.OLLAMA_TEST_MODEL ?? "";
 
 interface OllamaProbe {
   reachable: boolean;
+  // The resolved model: the pinned one when set, else the instance's first.
+  model: string;
   models: string[];
   reason: string;
 }
@@ -63,23 +72,40 @@ async function probeOllama(request: APIRequestContext): Promise<OllamaProbe> {
     if (res.status() !== 200) {
       return {
         reachable: false,
+        model: "",
         models: [],
         reason: `local Ollama at ${OLLAMA_BASE_URL} answered ${res.status()}`,
       };
     }
     const body = (await res.json()) as { models?: Array<{ name?: string }> };
     const models = (body.models ?? []).map((m) => m.name ?? "").filter(Boolean);
-    if (!models.includes(OLLAMA_TEST_MODEL)) {
+    // Pinned (every CI workflow does): the exact model must be there, so a
+    // drifted image is a loud skip reason instead of a silent substitution.
+    if (OLLAMA_TEST_MODEL) {
+      if (!models.includes(OLLAMA_TEST_MODEL)) {
+        return {
+          reachable: false,
+          model: "",
+          models,
+          reason: `model "${OLLAMA_TEST_MODEL}" not pulled on the local Ollama (has: ${models.join(", ") || "none"})`,
+        };
+      }
+      return { reachable: true, model: OLLAMA_TEST_MODEL, models, reason: "" };
+    }
+    // Unpinned: follow the instance. Only a model-less instance skips.
+    if (models.length === 0) {
       return {
         reachable: false,
+        model: "",
         models,
-        reason: `model "${OLLAMA_TEST_MODEL}" not pulled on the local Ollama (has: ${models.join(", ") || "none"})`,
+        reason: `local Ollama at ${OLLAMA_BASE_URL} serves no model — pull one (e.g. \`ollama pull llama3.2:1b\`) or set OLLAMA_TEST_MODEL`,
       };
     }
-    return { reachable: true, models, reason: "" };
+    return { reachable: true, model: models[0], models, reason: "" };
   } catch {
     return {
       reachable: false,
+      model: "",
       models: [],
       reason: `local Ollama not reachable at ${OLLAMA_BASE_URL} — see the spec doc's provisioning commands`,
     };
@@ -295,15 +321,16 @@ test.describe("Ollama Provider", () => {
           await page.getByTestId("dropdown_str_model_name").click();
           const option = page
             .locator('[data-testid$="-option"]')
-            .filter({ hasText: OLLAMA_TEST_MODEL })
+            .filter({ hasText: probe.model })
             .first();
           // THE connectivity assert: passing requires the component to have
           // enumerated the real local instance (the static catalog does not
-          // contain the pulled model's tag).
+          // contain the pulled model's tag). `probe.model` is the model the
+          // instance actually serves, so this cannot drift from the CI image.
           await expect(option).toBeVisible({ timeout: 15000 });
           await option.click();
           await expect(page.getByTestId("value-dropdown-dropdown_str_model_name")).toContainText(
-            OLLAMA_TEST_MODEL,
+            probe.model,
             { timeout: 10000 },
           );
           await waitForFlowSaveSettled(page);
