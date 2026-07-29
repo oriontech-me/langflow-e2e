@@ -60,7 +60,7 @@ The two tests differ only in step 2 (which component is added).
 ## What this test does not cover *(optional)*
 
 - `Ctrl+D` duplication shortcut — explicitly excluded per project convention.
-- Right-click context-menu duplication — separate spec (`canvas-right-click-component.spec.ts`).
+- Right-click context-menu duplication — separate spec (`ui-ux/right-click-dropdown.spec.ts`).
 - Copy/paste of **multiple** selected nodes via box-selection + clipboard — separate spec (`canvas-multiselect.spec.ts`).
 - Copy/paste of edges between two pasted nodes — paste duplicates only the selected node, not edges from the original; out of scope.
 - LLM-based components (Agent, OpenAI, Anthropic) — coverage on Prompt Template (dynamic ports) is sufficient to exercise the dynamic-state surface; LLM specifics are unrelated to copy/paste.
