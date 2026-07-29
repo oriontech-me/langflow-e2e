@@ -1,6 +1,6 @@
 # Anthropic Provider — configure key, select Claude, switch models
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
