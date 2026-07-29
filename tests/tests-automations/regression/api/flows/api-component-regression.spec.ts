@@ -1,5 +1,50 @@
 import { expect, test } from "../../../../fixtures/fixtures";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+
+// Capture every flow each test's page creates from its POST /api/v1/flows → 201
+// responses and delete them id-scoped in afterEach (repo convention, #490/#681).
+// Both flow-creating steps here — `awaitBootstrapTest` and the `blank-flow`
+// click — POST their own flow, so neither `page.url()` nor a single
+// `waitForResponse` identifies the right one; the accumulator captures both.
+// Never a name-scoped or delete-all cleanup: that wipes flows other parallel
+// workers are actively driving (#553).
+const createdFlowIds: string[] = [];
+
+test.beforeEach(({ page }) => {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {});
+    }
+  });
+});
+
+test.afterEach(async ({ page, request }) => {
+  if (createdFlowIds.length === 0) return;
+  // Leave the editor first: the open canvas polls GET /flows/{id}/events, and
+  // deleting the flow mid-poll 404s (logged by the fixture's error monitor).
+  await page.goto("/").catch(() => {});
+  // `page.request` carries only browser cookies, so the flows API answers 401 —
+  // pass the bearer token explicitly.
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(
+      request,
+      id,
+      bearer ? { headers: { Authorization: bearer } } : undefined,
+    ).catch(() => {});
+  }
+});
 
 // Reusable helper: create blank flow and add the API Request component.
 // After this call the inspector panel is open with all component fields visible.
