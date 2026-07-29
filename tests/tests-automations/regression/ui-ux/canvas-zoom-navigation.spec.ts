@@ -134,6 +134,9 @@ async function paneBox(page: Page) {
  * On 1.12 `zoom_in` / `zoom_out` / `reset_zoom` / `fit_view` are NOT in the DOM
  * until `canvas_controls_dropdown` is clicked, so every control interaction has
  * to go through here. Idempotent: a no-op when the controls are already out.
+ *
+ * Shares a NAME with `helpers/ui/canvas-controls.ts` but not a signature or a
+ * job — see `closeCanvasControls` below for why this spec keeps its own pair.
  */
 async function openCanvasControls(page: Page): Promise<void> {
   if ((await page.getByTestId("fit_view").count()) === 0) {
@@ -164,7 +167,14 @@ async function normalizeViewport(page: Page): Promise<Viewport> {
  *
  * The click is forced: while the dropdown is open its Radix overlay covers the
  * trigger, so a normal click never passes Playwright's hit-test (same reason
- * `loop-component.spec.ts` and `mcp-server.spec.ts` force this exact click).
+ * `closeCanvasControls` forces this exact click in
+ * `helpers/ui/canvas-controls.ts`).
+ *
+ * NOT that shared helper, despite the shared name. The shared one takes the
+ * postcondition "leave the menu closed, whoever opened it" and reads it off the
+ * trigger's `data-state`; this local probes `fit_view` in both directions and
+ * asserts the transition, because observing expand/collapse is what this spec
+ * exists to validate rather than something it reaches past (#1053).
  */
 async function closeCanvasControls(page: Page): Promise<void> {
   if ((await page.getByTestId("fit_view").count()) > 0) {
