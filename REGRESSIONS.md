@@ -65,6 +65,18 @@ toast, notification centre empty, only a console error. That silent no-op is wha
 makes the row user-facing; it is Medium, not High, because it needs sustained
 concurrent writes.
 
+**Second affected endpoint, same ticket (2026-07-29, #930 → #932).**
+`PATCH /api/v1/flows/{id}` fails the same way — `500 (sqlite3.OperationalError)
+database is locked` on `UPDATE flow SET folder_id`, with **two** concurrent writers
+(14/24; 0/30 serial) — so the row's claim that sibling write endpoints survive the
+identical contention does not hold for this one. It is deliberately **not** a second
+Ledger row: same root cause, same upstream ticket (LE-2020), and the ledger counts
+one row per ticket. The user-visible outcome differs and is milder: the flow stays
+in its source project and the UI *does* raise `Failed to save flow` (with the raw
+SQL and bound parameters), where the project-delete equivalent silently no-ops.
+Evidence, API and UI:
+[docs/upstream-bugs/UPSTREAM-BUG-flow-patch-500-under-contention.md](docs/upstream-bugs/UPSTREAM-BUG-flow-patch-500-under-contention.md).
+
 ## Candidates — pending upstream ticket
 
 Confirmed locally but not yet filed upstream; promoted to a Ledger row the

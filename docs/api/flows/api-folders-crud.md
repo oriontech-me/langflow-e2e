@@ -140,13 +140,69 @@ explicitly.
 Filed upstream as **[LE-2020](https://datastax.jira.com/browse/LE-2020)** — full evidence
 in `docs/upstream-bugs/UPSTREAM-BUG-project-delete-500-under-contention.md`.
 
-## Relationship between #965 and #932 — separate causes, both stay
+## Relationship between #965 and #932 — CORRECTED: one root cause, two endpoints
 
-Settled with evidence, not assumption. Under the same contention that breaks the
-DELETE, `PATCH /api/v1/flows/{id}` also returns `500` (7/20 at P=2, 27/32 at
-P=4) — but **every** `PATCH` that returned `200` had persisted the new
-`folder_id` (13/13 and 5/5). #932's symptom is a `200` followed by a **stale**
-association, which contention does not reproduce. Two issues, two root causes.
+An earlier pass of this document concluded these were separate causes, on the
+premise that *"#932's symptom is a `200` followed by a stale association, which
+contention does not reproduce"*. **That premise was wrong**, and the correction
+matters because it was being used to rule contention out.
+
+The daily artifact settles it. From `playwright-json-daily-30085452003`
+(run 30085452003, 2026-07-24), the failing assertion is:
+
+```
+Error: expect(received).toBe(expected)   Expected: 200   Received: 500
+
+> 160 |       expect(patchRes.status()).toBe(200);
+```
+
+It is the **HTTP status**, not the `folder_id`. There never was a `200` followed by
+a stale association. The `expect(received).toBe(expected) // Object.is equality`
+wording in the triage issue reads like an association mismatch, and both this
+document and #932's own hypotheses were written from that misreading.
+
+So the earlier measurement was right and its conclusion inverted: `PATCH
+/api/v1/flows/{id}` returning `500` under contention (7/20 at P=2, 27/32 at P=4;
+independently reproduced 2026-07-29 as 14/24 at P=2, 20/24 at P=4, 0/30 serial)
+**is** #932. #965 and #932 are the same root cause — SQLite write contention — on
+two different endpoints.
+
+What still distinguishes them is the **user-visible outcome**, which is why they
+remain separate reports:
+
+| | `DELETE /projects/{id}` (#965 / LE-2020) | `PATCH /flows/{id}` (#932) |
+|---|---|---|
+| End state | project **survives** the "successful" delete | flow stays in its source project |
+| User signal | **silent no-op** past the retry budget — no toast, notification centre empty | `Failed to save flow` notification, with the raw SQL and bound parameters |
+| Severity | Medium (silent) | Medium (reported, consistent state) |
+
+Measured on the UI path 2026-07-29 under 4 background writers: the drag fails, two
+`500`s appear in the console, the flow does not move, and the notification centre
+is **not** empty. Full evidence:
+`docs/upstream-bugs/UPSTREAM-BUG-flow-patch-500-under-contention.md`.
+
+**Do not re-derive "two root causes" from the symptom wording.** Read the artifact.
+
+### The duplicate that was left unquarantined
+
+`core-functionality/project-management/folder-drag-drop-flow.spec.ts` carried
+`moving a flow to another folder via API PATCH updates folder_id` — the same
+sequence as test 4, differing only in using the `/api/v1/folders/` legacy alias
+instead of `/api/v1/projects/`, and asserting `expect(patchRes.status()).toBe(200)`
+identically. It was **not** quarantined, so silencing test 4 for #932 left the
+same failure reachable from a second file: two flake sites, one signal, and a
+quarantine that only looked complete.
+
+It was removed by #932 rather than quarantined too — the API-level folder-move
+contract belongs here, in the API spec, and a pure-API test in a UI-focused
+project-management file is drift. When #932's upstream fix lands, test 4 here is
+the single place to restore.
+
+Noted while doing it, **not** fixed by #932 (out of scope): that file is named for
+drag-drop but contains no drag-drop test — its three tests are two API checks and
+one UI listing check. The UI move affordance *is* automatable; dragging
+`list-card` onto `sidebar-nav-<folder>` moves the flow, verified live on
+1.12.0.dev8 while measuring this defect. Worth a checklist item of its own.
 
 ---
 
