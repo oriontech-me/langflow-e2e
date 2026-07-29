@@ -244,7 +244,13 @@ jobs:
           base_url: ${{ needs.detect-target.outputs.base_url }}
           test_tag: ${{ github.event.inputs.test_tag }}
           test_grep: ${{ github.event.inputs.test_grep }}
+          # The same three keys the `Collect models` step above imported into this
+          # container. Passing only OpenAI made every anthropic/google-parameterized
+          # spec skip on `hasProviderEnvKeys`, so a dispatch could report success
+          # having run none of the specs it was aimed at (#967).
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          google_api_key: ${{ secrets.GOOGLE_API_KEY }}
 
   e2e-url:
     name: E2E via URL (${{ github.event.inputs.langflow_target }})
@@ -263,8 +269,8 @@ jobs:
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
 
-      # No `openai_api_key`, and no `collect-models` — deliberately different
-      # from the Docker job (#1055).
+      # No provider key inputs at all, and no `collect-models` — deliberately
+      # different from the Docker job (#1055).
       #
       # This job targets an instance that already exists and that we do not own:
       # a staging deployment, someone's tunnel. `collect-models` would WRITE our
