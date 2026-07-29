@@ -17,35 +17,18 @@ export class FlowEditorPage extends BasePage {
     );
   }
 
-  // Canvas controls
-  async fitView() {
-    await this.waitForCanvas();
-
-    const fitViewBtn = this.page.getByTestId("fit_view");
-    if ((await fitViewBtn.count()) === 0) {
-      await this.page.getByTestId("canvas_controls_dropdown").click();
-    }
-    await fitViewBtn.click();
-    await this.page.waitForTimeout(500);
-  }
-
-  async zoomOut(times = 1) {
-    for (let i = 0; i < times; i++) {
-      const zoomOutBtn = this.page.getByTestId("zoom_out");
-      if (await zoomOutBtn.isDisabled({ timeout: 1000 })) break;
-      await zoomOutBtn.click({ timeout: 1000 });
-    }
-  }
-
-  async adjustView(numberOfZoomOut = 1) {
-    await this.fitView();
-    await this.zoomOut(numberOfZoomOut);
-    // Close controls dropdown if it was opened
-    const dropdown = this.page.getByTestId("canvas_controls_dropdown");
-    if ((await dropdown.count()) > 0) {
-      await dropdown.click({ force: true, timeout: 1000 });
-    }
-  }
+  // Canvas view: use `helpers/ui/adjust-screen-view.ts` (fit view + zoom out +
+  // the menu-closed postcondition) and `helpers/ui/zoom-out.ts`. Both are
+  // unit-tested against a simulated widget and read the trigger's real
+  // `data-state`.
+  //
+  // This class used to carry its own `fitView()` / `zoomOut()` / `adjustView()`.
+  // They had no callers anywhere and had drifted into strictly worse copies: a
+  // `waitForTimeout(500)` where the helper polls the viewport transform, and an
+  // `adjustView()` that closed the menu by toggling a trigger whose count is 1
+  // whenever the canvas is up — an always-true guard, i.e. the #997 defect with
+  // no condition left at all. Deleted rather than repaired (#1053); a POM copy of
+  // a mechanism this delicate is a defect waiting for its first caller.
 
   // Flow execution
   async runFlow() {
