@@ -90,6 +90,42 @@ but was drained still made the live call. On run 30374528125 that hung two Googl
 tests past gunicorn's 300s timeout, killed shard 2's Langflow worker six times, and
 produced 14 collateral timeouts in specs that never touch Google.
 
+### What the health gate does NOT cover
+
+`collect-models` records a **point-in-time probe**. The gate therefore covers a
+provider that is *durably* unusable — spend cap, revoked key, drained balance —
+and cannot cover a provider that is healthy when probed and limited minutes later.
+Run 30410211167 is the reference case: Google was recorded `✅ active` at 00:11:11
+and returned `429 RESOURCE_EXHAUSTED` (`retryDelay ~13.5s`, a per-minute limit) at
+00:15:46, inside the specs run. The record was 4 minutes old and correct when
+written, so no amount of gate logic — including expiring stale records via the
+`checkedAt` field `ProviderHealthRecord` omits — would have skipped those tests.
+
+The second half of the defence is therefore not prevention but a **bound on the
+damage**, and it lives in CI config, not here: `LANGFLOW_WORKER_TIMEOUT: "120"` on
+the service containers (#1048). Langflow's default is 300 s, handed to gunicorn as
+its `timeout`; because the worker class is async (`LangflowUvicornWorker`), that
+timeout watches the **event loop's heartbeat** rather than request duration. Build
+duration cannot trip it: a component's sync method runs off the loop in a thread
+(`asyncio.to_thread` in `custom_component/component.py`, `_get_output_result`), so
+even a blocking provider call keeps the heartbeat ticking. It fires on a stalled
+loop and nothing else. A wedged worker does not recover on its own (gunicorn's kill
+is what restores service), so the lower ceiling turns each wedge from a 150–300 s
+outage into a 60–120 s one — the spread, in both cases, is because gunicorn hands
+the worker `timeout / 2` and uvicorn refreshes the heartbeat only that often, so
+detection costs up to one notify interval.
+
+⚠️ Langflow's published docs describe this setting incorrectly:
+`deployment-multi-worker.mdx` calls it "how long a worker may handle a single
+request" and advises **raising** it for long agent runs (its heavy-agent profile
+uses `600`). That reading does not survive the code above — do not restore a higher
+value on the strength of those docs.
+
+That bounds collateral without eliminating it: a spec whose own API call has a 20 s
+timeout still fails inside that window. Removing the collateral entirely means
+not letting provider-heavy specs share a backend with unrelated ones — a
+serialization / low-concurrency lane, tracked in #1048.
+
 ### Env-keyed provider must be ACTIVE — with one exception
 
 A provider whose key IS configured but that ends `inactive` silently
