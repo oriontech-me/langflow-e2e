@@ -122,37 +122,79 @@ jobs:
       specs: ${{ steps.diff.outputs.specs }}
       has_specs: ${{ steps.diff.outputs.has_specs }}
       needs_models: ${{ steps.diff.outputs.needs_models }}
+      full_suite: ${{ steps.diff.outputs.full_suite }}
+      impacted_total: ${{ steps.diff.outputs.impacted_total }}
+      dropped_count: ${{ steps.diff.outputs.dropped_count }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - id: diff
-        name: List added/modified spec files in this PR
+        name: Resolve the specs this PR impacts
         env:
           BASE_REF: ${{ github.base_ref }}
+          # A helper change can reach half the suite (112 specs for #1052's
+          # diff), which is a daily-sized run on a PR. Bound it — and NEVER
+          # silently: the dropped set is printed and summarised (#1012's
+          # silent-cap rule). The E2E job's own budget is 60 min.
+          IMPACTED_SPEC_CAP: "20"
         run: |
           git fetch origin "$BASE_REF" --quiet
-          # The `:(glob)` magic prefix is load-bearing — do NOT "simplify" it away
-          # (issue #1016). Without it, git matches the pathspec with fnmatch and
-          # no FNM_PATHNAME, so `**` degrades to a plain `*` that carries no
-          # "zero or more directories" meaning, and the literal `/` after it must
-          # still match something. Every spec under a subdirectory matched (245 of
-          # them), while the one spec sitting directly under `tests/` never did:
-          # `tests/collect-models.spec.ts` — the @stable pre-flight utility every
-          # provider spec depends on, and thus the only spec exempt from PR-time
-          # E2E validation (surfaced by PR #1015, blast radius shown by #1007).
-          # `:(glob)` switches git to wildmatch with pathname semantics, where
-          # `/**/` genuinely means "zero or more directories", so the pattern now
-          # means what it always looked like it meant. Verified: 246 specs matched.
-          SPECS=$(git diff --name-only --diff-filter=d "origin/$BASE_REF"...HEAD -- ':(glob)tests/**/*.spec.ts' | tr '\n' ' ' | sed 's/ *$//')
-          echo "Changed specs: ${SPECS:-<none>}"
-          if [ -n "$SPECS" ]; then
-            echo "has_specs=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_specs=false" >> "$GITHUB_OUTPUT"
+          # Selection is by IMPORT GRAPH, not by changed-spec glob (#1054).
+          # Selecting only changed `*.spec.ts` let the highest-reach change the
+          # repo can receive pass with zero specs executed: PR #1052 changed a
+          # helper reached by 112 specs and PR #1088 one imported by 135 — both
+          # reported "skipping". The resolver walks importers TRANSITIVELY, so a
+          # helper behind a Page Object still selects the specs at the end of
+          # the chain (a direct-importers-only pass would have found 62 of
+          # #1052's 112 and read as coverage). A changed spec selects itself, so
+          # the old behaviour is a subset of this one — including
+          # `tests/collect-models.spec.ts`, the file directly under `tests/`
+          # that the `:(glob)` pathspec existed to catch (#1016/#1015/#1007).
+          git diff --name-only --diff-filter=d "origin/$BASE_REF"...HEAD > /tmp/changed.txt
+          echo "Changed files:"; sed 's/^/  /' /tmp/changed.txt
+          node scripts/impacted-specs-by-import.mjs --stdin --format=json --cap "$IMPACTED_SPEC_CAP" \
+            < /tmp/changed.txt > /tmp/impacted.json || { echo "::error::impacted-spec resolution failed"; exit 1; }
+
+          SPECS=$(jq -r '.selected | join(" ")' /tmp/impacted.json)
+          TOTAL=$(jq -r '.specs | length' /tmp/impacted.json)
+          DROPPED=$(jq -r '.dropped | length' /tmp/impacted.json)
+          FULL_SUITE=$(jq -r '.fullSuite' /tmp/impacted.json)
+          DIRECT=$(jq -r '.direct | length' /tmp/impacted.json)
+          STABLE=$(jq -r '.stableSelected' /tmp/impacted.json)
+
+          echo "Impacted specs: $TOTAL ($DIRECT direct, $((TOTAL - DIRECT)) transitive); running ${TOTAL:-0} minus $DROPPED dropped"
+          echo "Running: ${SPECS:-<none>}"
+
+          {
+            echo "### Impacted specs"
+            echo ""
+            echo "- resolved by import graph: **$TOTAL** ($DIRECT direct, $((TOTAL - DIRECT)) transitive)"
+            echo "- running in this PR: **$((TOTAL - DROPPED))** (of which \`@stable\`: $STABLE)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # A fixture/config change governs every spec. Say so loudly instead of
+          # letting a bounded subset read as full coverage.
+          if [ "$FULL_SUITE" = "true" ]; then
+            echo "::warning::This PR changes a suite-wide surface (fixtures / playwright.config / global hooks): ALL $TOTAL specs are impacted. PR CI runs a bounded subset — dispatch manual.yml on this branch for the full suite before merging."
+            echo "- ⚠️ **suite-wide change** — every spec is impacted; the PR run is a subset. Dispatch \`manual.yml\` on this branch for the full suite." >> "$GITHUB_STEP_SUMMARY"
           fi
-          echo "specs=$SPECS" >> "$GITHUB_OUTPUT"
+          if [ "$DROPPED" -gt 0 ]; then
+            echo "::warning::Capped at $IMPACTED_SPEC_CAP of $TOTAL impacted specs — $DROPPED not run in this PR (listed in the step log)."
+            echo "- ⚠️ capped at \`$IMPACTED_SPEC_CAP\` — **$DROPPED impacted specs were NOT run**:" >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.dropped[] | "  - `" + . + "`"' /tmp/impacted.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          HAS_SPECS=false
+          if [ -n "$SPECS" ]; then HAS_SPECS=true; fi
+          {
+            echo "has_specs=$HAS_SPECS"
+            echo "specs=$SPECS"
+            echo "full_suite=$FULL_SUITE"
+            echo "impacted_total=$TOTAL"
+            echo "dropped_count=$DROPPED"
+          } >> "$GITHUB_OUTPUT"
 
           # Decide whether the impacted specs need provider model data. Only
           # LLM-dependent specs consume collect-models output (models.json), so
