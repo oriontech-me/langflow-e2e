@@ -24,7 +24,18 @@ import { providerConfigMap, type Provider } from "./provider-config";
 // `test.skip` quoting the collected reason instead of a live call against a dead
 // key.
 
-/** Shape of one providers.json entry written by `collect-models`. */
+/**
+ * Shape of one providers.json entry written by `collect-models`.
+ *
+ * Deliberately re-declared instead of importing `ProviderRecord` from
+ * `collect-models.ts`: that module imports `@playwright/test` and drives a
+ * `SettingsPage`, and this one is consumed by a `node --test` unit lane that must
+ * not pull a browser-facing dependency graph. Only the fields this gate reads are
+ * declared — the real records also carry `checkedAt`, the timestamp that would let
+ * a future version expire a stale record automatically instead of relying on
+ * `IGNORE_PROVIDER_HEALTH=1`. Keep in sync with `collect-models.ts` by hand; the
+ * producer's own spec asserts the record shape it writes.
+ */
 export interface ProviderHealthRecord {
   provider: string;
   model: string | null;
@@ -92,7 +103,13 @@ export function unavailableReason(
   for (const provider of providers) {
     const record = records.find((r) => r.provider === provider);
     if (record?.status === "inactive") {
-      return `Provider "${provider}" inactive — ${record.error}`;
+      // The reason lands in the Playwright report — it is the whole product of a
+      // skip, so it must never read `inactive — null`. `collect-models` always
+      // fills `error` for an inactive record today, but the field is nullable and
+      // a hand-edited or future-schema file must still produce a usable line.
+      return `Provider "${provider}" inactive — ${
+        record.error ?? "no reason recorded by collect-models"
+      }`;
     }
   }
 
@@ -114,6 +131,21 @@ export function providerUnavailableReason(
 }
 
 /**
+ * Shapes a reason into the `test.skip(condition, description)` pair.
+ *
+ * Split out for the same reason `unavailableReason` is: it makes the contract the
+ * 22 call sites actually depend on — `reason` is ALWAYS a string, so Playwright's
+ * signature is satisfied even when nothing is skipped — testable without a
+ * providers.json on disk.
+ */
+export function toSkipGate(reason: string | undefined): {
+  skip: boolean;
+  reason: string;
+} {
+  return { skip: !!reason, reason: reason ?? "" };
+}
+
+/**
  * `test.skip`-shaped gate for a provider-hardcoded spec:
  *
  *   const gate = providerSkipGate("openai", "google");
@@ -126,6 +158,5 @@ export function providerSkipGate(...providers: Provider[]): {
   skip: boolean;
   reason: string;
 } {
-  const reason = providerUnavailableReason(...providers);
-  return { skip: !!reason, reason: reason ?? "" };
+  return toSkipGate(providerUnavailableReason(...providers));
 }

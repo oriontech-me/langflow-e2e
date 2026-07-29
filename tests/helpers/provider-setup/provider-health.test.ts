@@ -22,6 +22,7 @@ import * as os from "os";
 import * as path from "path";
 import {
   readProviderHealth,
+  toSkipGate,
   unavailableReason,
   type ProviderHealthRecord,
 } from "./provider-health";
@@ -65,6 +66,20 @@ test("the skip reason quotes the collected error, not a generic message", () => 
   // reader cannot tell a drained key from a revoked one.
   const reason = unavailableReason(["google"], RUN_30374528125, ALL_KEYS_SET);
   assert.match(reason!, /monthly spending cap/);
+});
+
+test("an inactive record with no collected error still reads as a sentence", () => {
+  // The field is nullable; a skip reason ending in "inactive — null" would tell
+  // the report reader nothing.
+  const reason = unavailableReason(
+    ["google"],
+    [record("google", "inactive", null)],
+    ALL_KEYS_SET,
+  );
+  assert.equal(
+    reason,
+    'Provider "google" inactive — no reason recorded by collect-models',
+  );
 });
 
 test("an inactive provider taints a multi-provider gate", () => {
@@ -174,6 +189,20 @@ test("only the exact value \"1\" arms the escape hatch", () => {
     }),
     "a truthy-looking value must not silently disable the gate",
   );
+});
+
+// ─── The test.skip pair the 22 call sites consume ────────────────────────────
+
+test("toSkipGate returns an empty-string reason when nothing is skipped", () => {
+  // Playwright's test.skip(condition, description) types `description` as string.
+  // Passing `undefined` through would be a type error at every call site, so the
+  // no-skip case MUST carry "".
+  assert.deepEqual(toSkipGate(undefined), { skip: false, reason: "" });
+});
+
+test("toSkipGate carries the reason verbatim when it skips", () => {
+  const reason = unavailableReason(["google"], RUN_30374528125, ALL_KEYS_SET)!;
+  assert.deepEqual(toSkipGate(reason), { skip: true, reason });
 });
 
 // ─── readProviderHealth I/O ──────────────────────────────────────────────────
