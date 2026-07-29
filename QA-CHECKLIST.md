@@ -781,9 +781,9 @@
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
-| `ui-ux/` — Canvas | 44 | 37 | 3 | 4 | 0 |
+| `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **465** | **366 (79%)** | **82 (18%)** | **11 (2%)** | **6 (1%)** |
+| **TOTAL** | **465** | **369 (79%)** | **79 (17%)** | **11 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1262,7 +1262,7 @@
 | `core-functionality/playground/` | 3 | 0 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
-| `ui-ux/` — Canvas | 3 | 0 |
+| `ui-ux/` — Canvas | 0 | 0 |
 
 ---
 
