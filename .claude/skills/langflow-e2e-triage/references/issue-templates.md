@@ -303,7 +303,12 @@ test.fixme("... title ...", { tag: ["@components"] }, async ({ page }) => { ... 
 
 **Restoration** (the dedicated issue's deliverable) is the exact inverse, in one PR after the fix: remove `test.fixme`, restore `@stable`, re-validate per `CONTRIBUTING.md`.
 
-**Scope:** quarantine is for **recurrent flakes** removed manually at triage. Hard failures are auto-removed by the workflow (tag only, committed straight to `main` — no PR gate, so no red-PR problem); a hard-failure test that also needs `test.fixme` gets it when its dedicated `fix` issue is worked. On a **guard-tripped** day nothing is quarantined (tags kept).
+**Scope:** quarantine is for **recurrent flakes** removed manually at triage. Hard failures are auto-removed by the workflow (tag only, committed straight to `main` — no PR gate, so no red-PR problem); a hard-failure test that also needs `test.fixme` gets it when its dedicated `fix` issue is worked.
+
+**On a guard-tripped day** the workflow's automatic removal is suppressed, so the hard failures keep their tags. That suppression is the *only* thing the guard changes, and it changes it in **one** direction — it does not cancel a quarantine the criteria require:
+
+- **Recurrent flakes are quarantined as on any other day.** The guard governs hard failures; the flake criterion has no guard-day exemption (`CONTRIBUTING.md` → the criteria table). Skipping them here is how a known-recurrent flake keeps running red for another week.
+- **Hard failures depend on the triage's environmental verdict**, which a guard day makes a mandatory deliverable. Judged environmental → keep `@stable`, document why, and revisit if it reproduces on a clean daily. Judged **not** environmental → **manually quarantine** them, since the workflow did not.
 
 ---
 
@@ -394,11 +399,21 @@ Dedicated issues you **do** open on a guard day (the cross-day-recurrent ones) m
    - Name the plausible environmental cause (saturation, API outage, etc.)
    - Do not conclude it is the cause — only that it is consistent and must be ruled out
 
-3. **State that `@stable` was left in place:**
+3. **State what happened to `@stable`, and why.** When the guard trips the triage scripts auto-remove nothing, so the tags survive by default — but "the guard tripped" is not on its own a reason to leave them. What decides it is rule 4's verdict, and the issue records the outcome either way:
+
    ```markdown
-   Note: `@stable` was **kept** on these three (the mass-failure guard tripped and the driver for this cluster is not confirmed non-environmental). Quarantine only if the failure reproduces on a clean (non-wave) daily.
+   Note: `@stable` was **kept** on these three (the mass-failure guard tripped and the day's verdict is environmental — see above). Quarantine only if the failure reproduces on a clean (non-wave) daily.
    ```
-   When the guard trips, the triage scripts do **not** auto-remove `@stable` tags. The issue itself documents why they were left. If the cluster fails again on a non-guarded daily, then `@stable` is a candidate for quarantine.
+
+   If the verdict is **not** environmental, the opposite is recorded — the tests were **manually quarantined** at triage (`@stable` removed **+** `test.fixme`), since the workflow did not do it.
+
+4. **State the day's environmental verdict.** On a guard-tripped day, deciding whether the day was environmental is a **mandatory deliverable** of the triage (`CONTRIBUTING.md`), not an optional observation — it is what rule 3 turns on, and what a reader needs to weigh a cluster filed from a mass-failure run. Give the evidence, and keep it separable from rule 2: rule 2 forbids asserting an environmental cause **for this cluster**; rule 4 requires a verdict on **the day**. They are different claims, and a day judged environmental does not make every failure on it collateral.
+
+   ```markdown
+   The triage verdict on the day is that it **was environmental**: 6 of the 10 hard failures are a 20 s timeout on `GET /api/v1/auto_login` in shards where every provider was green and the health gate had already passed, and two further shards executed zero tests after a preflight abort.
+   ```
+
+> **Recurrent flakes are outside all of this.** Rules 3–4 govern **hard failures**, which are the only thing the guard's suppression touches. A flake meeting the recurrence criterion is quarantined on a guard day exactly as on any other — see *Quarantine mechanism* → *Scope*.
 
 ---
 
@@ -412,6 +427,6 @@ Every dedicated issue embodies this philosophy:
 - **Grouping is argued, not assumed:** one issue per cause only means something if the issue says why these failures are one cause
 - **Investigation as independent branches:** test the product first, then environment, then test design
 - **Deliverables as checkboxes:** done when all items are ticked
-- **Quarantine decisions are explicit:** quarantined at triage as prevention — `@stable` removed **+** `test.fixme` added (or nothing quarantined on a guard-tripped day) — and **lifted as a deliverable** after the fix — always documented
+- **Quarantine decisions are explicit:** quarantined at triage as prevention — `@stable` removed **+** `test.fixme` added — and **lifted as a deliverable** after the fix — always documented; when a test was *not* quarantined (a hard failure on a guard-tripped day judged environmental), the issue says so and why
 
 This ensures investigators inherit not just a failure, but the context and constraints needed to fix it efficiently.

@@ -55,8 +55,11 @@ Talk to the user in **Portuguese (PT-BR)**; produce every GitHub artifact
   only stops the daily, so the test keeps going red on the impacted-specs gate
   (file-diff selected, not tag-filtered — #871); `test.fixme` skips it in every
   context. Full mechanism + why: `references/issue-templates.md` →
-  *Quarantine mechanism*. Hard failures are already auto-removed by the workflow
-  (tag only); only **recurrent flakes** are quarantined here (never automatic).
+  *Quarantine mechanism*. Hard failures are normally auto-removed by the
+  workflow (tag only), so **recurrent flakes** are what gets quarantined here —
+  except on a **guard-tripped** day, where the workflow removed nothing and a
+  hard failure the triage judged non-environmental is quarantined here too. A
+  guard day never suspends the quarantine of a recurrent flake.
   The skill **never restores** either edit and never touches test *logic*, spec
   docs, or `QA-CHECKLIST.md` — un-`fixme` + restore-`@stable` is the dedicated
   issue's deliverable.
@@ -186,8 +189,22 @@ When `guard_tripped` is true the day is a mass-failure day (mostly collateral).
 other non-adjacent dailies — durable) are created/enriched as usual;
 **today-only collateral** is **noted, not filed** (aggregated with counts) and
 recorded in the umbrella's closing comment — the umbrella still **closes** at
-the end of triage (Phase 7). `@stable` is **kept** on everything. Full rule + wording: `references/issue-templates.md` →
+the end of triage (Phase 7). Full rule + wording: `references/issue-templates.md` →
 *Guard-Tripped Rule*.
+
+**The guard adds a deliverable, it does not remove one** (`CONTRIBUTING.md`):
+
+- **Decide whether the day was environmental** and say so, with evidence, on
+  every issue this run produces. This verdict is mandatory on a guard day —
+  it is what the reader needs to weigh any cluster filed from it.
+- **Hard failures:** the workflow's automatic `@stable` removal is suppressed,
+  so the tags are still in place. If the verdict is **not** environmental,
+  **manually quarantine** the real hard failures (Phase 7 step 3). If it **is**,
+  keep `@stable` and say why — quarantine only if one reproduces on a clean,
+  non-guarded daily.
+- **Recurrent flakes: unaffected.** The guard governs hard failures only; it is
+  **not** an exemption from the flake criterion. A flake with `actionable: true`
+  is quarantined exactly as on any other day (Phase 4).
 
 ### Phase 4 — FLAKES
 
@@ -200,7 +217,9 @@ own.
 
 For each actionable flake, the test must be **quarantined as prevention** (so it
 stops running everywhere until it is worked) — part of the triage, not a
-deferred follow-up. Quarantine = **remove `@stable` + add `test.fixme`**
+deferred follow-up, **and not suspended by a guard-tripped day** (the guard
+suppresses the automatic removal that applies to hard failures; the flake
+criterion has no guard-day exemption). Quarantine = **remove `@stable` + add `test.fixme`**
 together (see the hard gate + `references/issue-templates.md` → *Quarantine
 mechanism*). But it is a code change: **record the exact spec path + line here**
 and carry it into the plan (Phase 6) as its own row; it is executed only in
@@ -258,9 +277,12 @@ Only after the user approves the plan:
    quarentena?"). Only on an explicit yes, open the quarantine PR (branch off
    `main`, apply both edits, reference the dedicated issue — un-`fixme` +
    restore is that issue's deliverable, never done here). If the user declines
-   or defers, **do not edit** — record it as still pending. (Hard failures were
-   already auto-removed by the workflow; on a guard-tripped mass-failure day
-   nothing is quarantined here.)
+   or defers, **do not edit** — record it as still pending. (Hard failures are
+   normally auto-removed by the workflow, so they do not pass through here. The
+   exception is a **guard-tripped** day: the workflow removed nothing, so a hard
+   failure the Phase-3 verdict judged **non-environmental** is quarantined here
+   too, behind the same per-test confirmation. A guard-tripped day never
+   suspends the quarantine of a **recurrent flake**.)
 4. Comment on the umbrella issue linking every dedicated issue just
    created/enriched (so the umbrella's history stays a readable index).
 5. **Close the umbrella only when the triage is truly complete:** every needed
@@ -333,10 +355,15 @@ run is indistinguishable from a broken post, so every terminal path posts:
   "Nothing to triage — no red run found / history stale." note and stop.
 - **Guard-tripped mass-failure day** → still post the plan (durable cross-day
   clusters as create/enrich rows; today-only collateral as **note** rows), and
-  state descriptively that the guard tripped (count + threshold) and that
-  `@stable` was left in place. The umbrella still closes at the end of triage,
-  carrying the collateral in its closing comment (Phase 3 + Phase 7; guard rule
-  in `references/issue-templates.md`).
+  state descriptively that the guard tripped (count + threshold), that the
+  workflow left `@stable` in place on the hard failures, and the **environmental
+  verdict** for the day (Phase 3 — mandatory on a guard day). Any hard failure
+  the verdict does not cover, and every recurrent flake, is listed in the
+  quarantine block as a manual/local TODO — CI never edits code, so a guard day
+  does not turn those rows off, it only means a human still owes them. The
+  umbrella still closes at the end of triage, carrying the collateral in its
+  closing comment (Phase 3 + Phase 7; guard rule in
+  `references/issue-templates.md`).
 
 ### `--phase execute` (triggered by an approved "pode abrir" comment)
 
