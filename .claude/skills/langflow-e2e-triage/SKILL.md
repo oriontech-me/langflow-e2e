@@ -177,6 +177,14 @@ occurrences under it.
 than splitting it across per-symptom buckets — this is the #899 fix for the
 misgrouping that hid #898's `langchain-google-genai` cause.
 
+**Set aside the wedge collateral (#1031).** The umbrella's `@stable` section
+renders, ahead of the removals, the hard failures the run could **not** attribute
+to their spec — those whose last error is transport-level. Their tag was kept on
+purpose. Do **not** cluster them and do **not** open a per-spec issue for them:
+they are one backend outage, triaged once for the run against the umbrella's
+backend liveness section. Rule and signature list: `CONTRIBUTING.md` →
+*Infra-signature exemption (wedge collateral)*.
+
 Then cluster the rest of `hard_failures[]` by root cause: **same normalized
 error signature + same area + same failure symptom → one issue.** Don't open one
 issue per failing spec by default — a shared root cause is one problem, not N.

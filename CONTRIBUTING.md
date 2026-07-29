@@ -657,7 +657,7 @@ Three cases where the tag is intentionally absent:
 
 On a red scheduled `daily-stable.yml` run, the workflow does two things **automatically**:
 
-1. Removes `@stable` from **every hard failure** (a test that failed all retries), regenerates `QA-CHECKLIST.md`, and commits it to `main` with `[skip ci]` — no PR, no approval. If the mass-failure guard trips (too many at once → treated as infra), nothing is removed.
+1. Removes `@stable` from **every attributable hard failure** (a test that failed all retries with an error that could be its own), regenerates `QA-CHECKLIST.md`, and commits it to `main` with `[skip ci]` — no PR, no approval. Two things hold it back: the mass-failure guard (too many at once → treated as infra, nothing is removed) and the **infra-signature exemption** (a failure whose error is transport-level is wedge collateral and keeps its tag, whatever the count).
 2. Opens a single **triage issue** for the run, listing what was removed.
 
 The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. Its only deliverable is the **triage itself**: read the run, route each occurrence into a dedicated issue (or enrich an existing one), and then **close the triage issue**. It never carries an investigation or a fix. The triage issue is closed **only once the triage is complete** — every needed dedicated issue created or enriched (hard failure / flake / skip, per the criteria below) **and** every test the criteria require quarantined (hard failures: `@stable` auto-removed by the workflow; recurrent flakes: **quarantined via PR** at this point — remove `@stable` **and** add `test.fixme` — as prevention). When the mass-failure guard trips (see below), the triage gains one extra deliverable: **decide whether the day was environmental** and, if not, **manually quarantine** the real hard failures (only durable cross-day clusters get a dedicated issue on a guard day; the rest is **noted rather than filed** — see the Mass-failure guard note below). The triage issue still **closes** at the end of that triage, like on any other day, with the noted collateral listed in its closing comment. The human steps are the fan-out, the manual quarantine for recurrent flakes, and lifting it after the fix.
@@ -668,13 +668,17 @@ The runbook — order, dedup, analysis depth, and how the follow-up issue must b
 daily-stable.yml run goes red
       │
       │  AUTOMATIC:
-      │   • @stable removed from each hard failure + committed to main [skip ci]
-      │     (unless the mass-failure guard trips → nothing removed)
-      │   • one TRIAGE ISSUE opened for the run, listing what was removed
+      │   • infra-signature failures set aside as WEDGE COLLATERAL (tag kept)
+      │   • @stable removed from each remaining hard failure + committed to
+      │     main [skip ci] (unless the mass-failure guard trips → nothing removed)
+      │   • one TRIAGE ISSUE opened for the run, listing both groups
       ▼
 Analyst works the triage issue (dispatcher) — order: HARD FAILURES → FLAKES → SKIPS:
       │
-      ├─► per HARD FAILURE  (tag already auto-removed)
+      ├─► per WEDGE COLLATERAL failure  (tag still in place)
+      │        → NO per-spec issue. Triage the backend outage once, for the run
+      │
+      ├─► per ATTRIBUTABLE HARD FAILURE  (tag already auto-removed)
       │        → one DEDICATED issue per failure
       │          (group failures that share a root cause into one issue)
       │
@@ -696,6 +700,14 @@ Problem resolved → quarantine LIFTED via PR (remove test.fixme + restore
 > **Mass-failure guard.** The threshold is the `max_auto_remove` input of the `auto-remove-stable` action (default `5`, so the guard trips at **6+** hard failures in a run). Above the threshold, the workflow assumes an environment-wide failure and removes nothing, so a bad infra day cannot strip `@stable` off the whole suite. When it trips, the triage issue says so and the tags are still in place — investigate the environment; if it turns out not to be environmental, **manually quarantine** the real hard failures (remove `@stable` + add `test.fixme`). There is nothing to lift for tests never quarantined.
 >
 > On a guard-tripped day, split the clusters by durability: a cluster whose same test + error signature also failed on **other, non-adjacent** dailies is a **durable** signal (it reproduces off mass-failure days) and gets its own dedicated issue as usual; **today-only collateral** (no cross-day recurrence) is **noted, not filed** — a dedicated tracker for what most likely vanishes when the instance recovers is throwaway triage noise (same reason a first-occurrence flake is noted, not filed). The collateral has no dedicated issue, but that is **not** a reason to leave the umbrella open: **close it at the end of triage, as on any other day**, listing the noted-not-filed collateral in the closing comment so the thread stays readable. The standing record is `reports/daily-history.jsonl`, not the issue — every triage recomputes recurrence from that file over a 30-day window, so a collateral cluster that persists is re-detected on the next run and filed then, whether or not an umbrella was left open. Keeping them open instead accumulates stale rows in the `daily-failure` list that every later triage has to dedup against, and contradicts the rule above that the triage issue is a dispatcher, never a tracker.
+
+> **Infra-signature exemption (wedge collateral).** A hard failure whose last error is **transport-level** — the harness could not reach or talk to the backend — is not attributable to the spec that reported it. It is collateral of a mid-run backend wedge (#1030/#1048), and `@stable` is left in place **regardless of the mass-failure guard**. The guard only ever covered the *wide* wedge (6+ failures); a wedge costing ≤5 tests used to strip their tags in an unreviewed commit — issue #1031.
+>
+> The exempting signatures live in `scripts/lib/infra-signatures.ts` and the list is **deliberately narrow**: only errors that cannot be a product assertion under any reading (`apiRequestContext.*: Timeout`, the globalSetup `[preflight] … is not reachable`, `ECONNREFUSED`/`ECONNRESET`/`socket hang up`, `net::ERR_CONNECTION_*`, DNS failures). Signatures a wedge also produces but a real regression produces too — `locator.click: Timeout`, `page.waitForSelector: Timeout`, `expect(...).toBeVisible()` — are **not** on it, because exempting them would switch auto-removal off for most genuine breakage. Widening the list is a deliberate change, not a convenience: add a pattern only when it is transport-level, and add a case to `scripts/remove-stable-from-failures.test.ts` with it.
+>
+> **What this changes for triage.** The umbrella issue renders collateral in its own block, ahead of the removals. **Do not open a per-spec issue for a collateral failure** — triage the outage once for the run (start from the backend liveness section of the same issue, then the Langflow service container log; `WORKER TIMEOUT` ⇒ #1048). The tag is still in place, so there is nothing to restore. If the same spec keeps appearing as collateral across days while other specs do not, that is a signal about the *spec* (it hammers the backend hardest) and belongs on a dedicated issue about load, not about the assertion.
+>
+> The in-run liveness verdict (#1030) is **corroboration, not the criterion**: the exemption is decided on the failure's own error, so it still applies on a run where the recorder measured nothing — which is exactly the run whose backend state is least known. The liveness section itself says overlap with an outage window is a *lead, not a verdict*, because at a 33-73% down-share a failure lands inside a window by chance.
 
 > **Trade-off.** Auto-removal does not distinguish a product regression from a test bug before removing — a hard failure quarantines the test either way, and the classification happens afterwards on the dedicated issue. Accepted trade-off: a genuine regression stops being tracked by the stable suite until a human restores the tag, but the daily stops going red immediately.
 
@@ -791,6 +803,7 @@ Then compare the signatures — the action depends on **what** recurred (same ca
 
 | Symptom in the latest daily run | History context | Action |
 |---|---|---|
+| Hard failure, **infra signature** (transport-level error — the umbrella lists it as wedge collateral) | any | Not attributable to the spec. `@stable` was **kept** (#1031). **No per-spec issue** — triage the backend outage once for the run. Nothing to restore. |
 | Hard failure (all retries failed) | any | `@stable` was already auto-removed (or the mass-failure guard tripped and left it in place). No manual removal — classify on the dedicated issue and restore the tag when the test is fixed. |
 | Flake (passed on retry) | No matching signature in the last 30 days | Note in the triage; **do not** open an issue yet. The retry budget absorbs single-run noise. |
 | Flake (recurrent) | **Same `error_signature`** seen before within 30 days | Open a **dedicated issue** (`daily-failure` + `area:<...>`, cite the run ids) **and quarantine via PR as prevention** — remove `@stable` **and** add `test.fixme` (tag removal alone leaves the test red on the impacted-specs gate; #871). Quarantine is manual — the workflow never auto-removes flakes. Lifting it (remove `test.fixme` + restore `@stable`) is a **deliverable of that dedicated issue**. |

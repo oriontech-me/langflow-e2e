@@ -4,8 +4,10 @@ description: >-
   (failed every retry), regenerate QA-CHECKLIST.md, and commit the change back
   to main — no human review (leadership decision; restoring the tag is the
   human-gated step). A mass-failure guard leaves everything untouched when too
-  many tests fail at once (treated as infra, not per-test rot). Shared by
-  daily-stable.yml and weekly-stable.yml. Assumes checkout + npm ci already ran.
+  many tests fail at once (treated as infra, not per-test rot), and a hard
+  failure whose last error is transport-level is exempted outright as wedge
+  collateral (#1031). Shared by daily-stable.yml and weekly-stable.yml. Assumes
+  checkout + npm ci already ran.
 
 inputs:
   playwright_json:
@@ -19,6 +21,14 @@ inputs:
   run_label:
     description: "Human label for the commit message, e.g. 'daily #123'."
     required: true
+  backend_wedged:
+    description: >-
+      The in-run liveness verdict (#1030): "true", "false", or empty when the
+      backend was not measured. WORDING ONLY — the infra-signature exemption
+      never depends on it, so a caller with no liveness step (weekly-stable)
+      can leave it unset and still get the exemption.
+    required: false
+    default: ""
 
 outputs:
   status:
@@ -27,6 +37,9 @@ outputs:
   removed_count:
     description: "Number of tests the @stable tag was removed from."
     value: ${{ steps.remove.outputs.removed_count }}
+  exempt_count:
+    description: "Hard failures exempted as non-attributable wedge collateral (#1031)."
+    value: ${{ steps.remove.outputs.exempt_count }}
   summary_md:
     description: "Markdown summary for the triage issue body."
     value: ${{ steps.remove.outputs.summary_md }}
@@ -40,6 +53,7 @@ runs:
       env:
         PLAYWRIGHT_JSON: ${{ inputs.playwright_json }}
         MAX_AUTO_REMOVE: ${{ inputs.max_auto_remove }}
+        BACKEND_WEDGED: ${{ inputs.backend_wedged }}
       run: |
         set -euo pipefail
         npx ts-node scripts/remove-stable-from-failures.ts > auto-remove-result.json
@@ -47,6 +61,7 @@ runs:
         {
           echo "status=$(node -p "require('./auto-remove-result.json').status")"
           echo "removed_count=$(node -p "require('./auto-remove-result.json').removed.length")"
+          echo "exempt_count=$(node -p "(require('./auto-remove-result.json').exempt || []).length")"
         } >> "$GITHUB_OUTPUT"
         # Multi-line markdown value via a heredoc delimiter (GitHub Actions format).
         SUMMARY="$(node scripts/format-auto-remove-summary.mjs auto-remove-result.json)"

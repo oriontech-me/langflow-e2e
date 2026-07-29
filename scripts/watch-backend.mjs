@@ -25,7 +25,9 @@
 // polls the same URL the specs talk to, at a fixed interval, and appends one
 // JSONL line per probe. Two consecutive failed probes bound an outage to a few
 // seconds instead of two minutes, which is narrow enough for the merge job to
-// attribute collateral failures honestly (#1031 consumes that attribution).
+// attribute collateral failures honestly. (#1031 keeps the @stable decision on
+// the failure's own error signature and consumes only the `wedged` verdict, to
+// word its exemption — see scripts/lib/infra-signatures.ts.)
 //
 // It is DIAGNOSTIC ONLY. It never fails a step, never aborts a shard, and never
 // gates the @stable tag — at this wedge frequency an abort would discard the
