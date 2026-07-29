@@ -21,6 +21,12 @@ import { createRunnableChatFlowViaApi } from "../../../helpers/flows/create-runn
 // The flow is a repo-owned Chat Input -> Chat Output fixture created through the
 // API: no starter template, no provider key, no LLM call and no flow build, so
 // the spec is pure viewport geometry.
+//
+// Every viewport read goes through `waitForViewportSettled`, whose contract is
+// load-bearing rather than incidental: React Flow commits a viewport change in
+// one frame, so a settle poll can hand back the PRE-action transform and redden
+// an assertion about a control that worked. Read its comment before touching any
+// wait in this file (#1094).
 
 // React Flow bounds configured by Langflow. A silent change to either bound is a
 // product change this spec is meant to catch.
@@ -153,11 +159,20 @@ async function openCanvasControls(page: Page): Promise<void> {
  * already disabled — reproducible across reloads). Without normalizing, "zoom in
  * raises the scale" is untestable, so each test that measures relative zoom
  * starts from the deterministic Fit View state instead.
+ *
+ * The wait is on containment rather than on "the transform changed" (#1094): the
+ * baseline this returns is the divisor of every relative zoom assertion, so it
+ * must be the fitted viewport and not whatever the transform happened to hold on
+ * the first read. Containment is the postcondition regardless of the entry state,
+ * so this keeps working if the editor ever stops opening clamped.
  */
 async function normalizeViewport(page: Page): Promise<Viewport> {
   await openCanvasControls(page);
   await page.getByTestId("fit_view").click();
-  const fitted = await waitForViewportSettled(page);
+  const fitted = await waitForViewportSettled(
+    page,
+    async () => (await measureGeometry(page)).contained,
+  );
   await closeCanvasControls(page);
   return fitted;
 }
@@ -200,25 +215,61 @@ async function zoomUntilClamped(
   return clicks;
 }
 
+/** Sentinel no transform string can equal — see waitForViewportSettled. */
+const UNREAD_TRANSFORM = "<unread>";
+
 /**
- * Waits for the viewport transform to settle (React Flow animates zoom/fit
- * transitions), then returns the settled viewport. Polls the transform instead
- * of sleeping a fixed amount, so the wait tracks the real animation.
+ * Waits for the viewport transform to settle, then returns the settled viewport.
+ *
+ * `settledWhen` is the postcondition the caller actually depends on, and it is
+ * mandatory reading rather than a nicety (#1094). React Flow commits a viewport
+ * change in a single frame — measured: after the `fit_view` click the transform
+ * still holds its pre-click value at `t+0` and carries the fitted one by
+ * `t+100ms` — while `expect.poll` runs its callback immediately. Seeding
+ * `previous` with a transform read BEFORE the poll therefore let the first tick
+ * compare the pre-action value against itself, report "settled" and hand back the
+ * STALE viewport: that is how this spec read `scale(2)` out of a Fit View that had
+ * already fitted to `0.880331`. Whether the commit landed before that first read
+ * came down to CDP round-trip timing, so the identical code passed in CI and
+ * failed locally.
+ *
+ * Two guards, therefore:
+ *  - `previous` starts on a sentinel, so the first tick can never resolve and the
+ *    stability check always compares two reads at least one interval apart;
+ *  - `settledWhen` lets a caller demand the state it is about to assert on — a
+ *    transform different from the pre-action one, or the fitted geometry — so a
+ *    viewport that never moved times out here, naming the wait, instead of
+ *    reddening an unrelated assertion downstream.
+ *
+ * It defaults to "any stable transform", which is correct only where no change is
+ * expected: editor hydration and the idempotent second `fit_view` click.
  */
-async function waitForViewportSettled(page: Page): Promise<Viewport> {
-  let previous = await readTransform(page);
+async function waitForViewportSettled(
+  page: Page,
+  settledWhen: (transform: string) => boolean | Promise<boolean> = () => true,
+): Promise<Viewport> {
+  let previous = UNREAD_TRANSFORM;
   await expect
     .poll(
       async () => {
         const current = await readTransform(page);
-        const stable = current === previous;
+        const stable = current !== UNREAD_TRANSFORM && current === previous;
         previous = current;
-        return stable;
+        return stable && (await settledWhen(current));
       },
-      { timeout: 15000, intervals: [150, 150, 150, 200] },
+      {
+        timeout: 15000,
+        intervals: [150, 150, 150, 200],
+        message: "the canvas viewport never reached the expected settled state",
+      },
     )
     .toBe(true);
   return readViewport(page);
+}
+
+/** `settledWhen` predicate: the viewport moved off `from` and then held. */
+function movedFrom(from: string): (transform: string) => boolean {
+  return (transform) => transform !== from;
 }
 
 /** The flow-space point under a screen point, given the current viewport. */
@@ -281,25 +332,31 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
       });
 
       await test.step("zoom in multiplies the scale by the zoom step", async () => {
+        const before = await readTransform(page);
         await page.getByTestId("zoom_in").click();
-        const zoomedIn = await waitForViewportSettled(page);
+        const zoomedIn = await waitForViewportSettled(page, movedFrom(before));
 
         expect(zoomedIn.scale).toBeGreaterThan(baseline.scale);
         expect(zoomedIn.scale / baseline.scale).toBeCloseTo(ZOOM_STEP, 2);
       });
 
       await test.step("zoom out returns the scale to its previous value", async () => {
+        const before = await readTransform(page);
         await page.getByTestId("zoom_out").click();
-        const zoomedOut = await waitForViewportSettled(page);
+        const zoomedOut = await waitForViewportSettled(page, movedFrom(before));
 
         expect(zoomedOut.scale).toBeCloseTo(baseline.scale, 3);
       });
 
       await test.step("zoom out clamps at the minimum zoom and disables the button", async () => {
+        // `movedFrom` and not "scale is at the bound": predicating the wait on the
+        // value under test would turn a wrong clamp into an opaque 15s timeout.
+        // The bound itself is asserted below, off the settled read.
+        const before = await readTransform(page);
         const clicks = await zoomUntilClamped(page, "zoom_out");
         expect(clicks).toBeLessThan(MAX_ZOOM_CLICKS);
 
-        const clamped = await waitForViewportSettled(page);
+        const clamped = await waitForViewportSettled(page, movedFrom(before));
         expect(clamped.scale).toBeCloseTo(MIN_ZOOM, 4);
         await expect(page.getByTestId("zoom_out")).toBeDisabled();
         // The opposite direction must stay available at the bound.
@@ -307,10 +364,11 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
       });
 
       await test.step("zoom in clamps at the maximum zoom and disables the button", async () => {
+        const before = await readTransform(page);
         const clicks = await zoomUntilClamped(page, "zoom_in");
         expect(clicks).toBeLessThan(MAX_ZOOM_CLICKS);
 
-        const clamped = await waitForViewportSettled(page);
+        const clamped = await waitForViewportSettled(page, movedFrom(before));
         expect(clamped.scale).toBeCloseTo(MAX_ZOOM, 4);
         await expect(page.getByTestId("zoom_in")).toBeDisabled();
         await expect(page.getByTestId("zoom_out")).toBeEnabled();
@@ -325,10 +383,11 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
         // doing rather than the editor's entry state.
         await normalizeViewport(page);
         await openCanvasControls(page);
+        const before = await readTransform(page);
         const clicks = await zoomUntilClamped(page, "zoom_in");
         expect(clicks).toBeGreaterThan(0);
         expect(clicks).toBeLessThan(MAX_ZOOM_CLICKS);
-        const clamped = await waitForViewportSettled(page);
+        const clamped = await waitForViewportSettled(page, movedFrom(before));
         expect(clamped.scale).toBeCloseTo(MAX_ZOOM, 4);
       });
 
@@ -344,10 +403,16 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
 
       await test.step("Fit View brings every node inside the pane, centered", async () => {
         await openCanvasControls(page);
+        const displaced = await readTransform(page);
         await page.getByTestId("fit_view").click();
-        const fitted = await waitForViewportSettled(page);
+        const fitted = await waitForViewportSettled(page, movedFrom(displaced));
         fittedTransform = await readTransform(page);
 
+        // Sound for this fixture rather than a property of Fit View in general:
+        // the two nodes span 1090 x 315 flow px against a 1000 x 672 pane, so the
+        // unclamped fit is ~0.92 (measured 0.880331) — a factor of 2.3 off the
+        // bound. A fitted scale reading exactly `2` means the viewport never left
+        // the max-zoom clamp, which is the failure this asserts (#1094).
         expect(fitted.scale).toBeLessThan(MAX_ZOOM);
 
         const geometry = await measureGeometry(page);
@@ -366,6 +431,12 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
       await test.step("a second Fit View click is a no-op", async () => {
         // Idempotence is the contract the suite's adjustScreenView helper relies
         // on: fitting twice must not drift the viewport.
+        //
+        // The one step that must NOT wait for a change — so it waits for two
+        // identical reads at least one poll interval apart instead (#1094). A
+        // no-op and a not-yet-committed fit are indistinguishable from the
+        // transform alone; the interval is what separates them in practice, and
+        // the previous step has already proven this same click does commit.
         await openCanvasControls(page);
         await page.getByTestId("fit_view").click();
         await waitForViewportSettled(page);
@@ -404,7 +475,10 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
         expect((await measureGeometry(page)).contained).toBe(false);
 
         await page.getByTestId("fit_view").click();
-        await waitForViewportSettled(page);
+        // The wait demands the move; the assertion below still states it, so a
+        // regression reports as a diff on the transform and not only as a wait
+        // timeout.
+        await waitForViewportSettled(page, movedFrom(displacedTransform));
 
         expect(await readTransform(page)).not.toBe(displacedTransform);
         expect((await measureGeometry(page)).contained).toBe(true);
@@ -451,10 +525,11 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
 
       await test.step("scrolling down zooms out around the pointer", async () => {
         const anchorBefore = toFlowCoords(baseline, pointP.x, pointP.y, pane);
+        const before = await readTransform(page);
 
         await page.mouse.move(pointP.x, pointP.y);
         await page.mouse.wheel(0, WHEEL_DELTA);
-        const scrolled = await waitForViewportSettled(page);
+        const scrolled = await waitForViewportSettled(page, movedFrom(before));
 
         expect(scrolled.scale).toBeLessThan(baseline.scale);
 
@@ -470,9 +545,13 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
       await test.step("scrolling up restores the previous zoom level", async () => {
         const before = await readViewport(page);
         const anchorBefore = toFlowCoords(before, pointP.x, pointP.y, pane);
+        const beforeTransform = await readTransform(page);
 
         await page.mouse.wheel(0, -WHEEL_DELTA);
-        const scrolled = await waitForViewportSettled(page);
+        const scrolled = await waitForViewportSettled(
+          page,
+          movedFrom(beforeTransform),
+        );
 
         expect(scrolled.scale).toBeGreaterThan(before.scale);
         expect(scrolled.scale).toBeCloseTo(baseline.scale, 3);
@@ -491,10 +570,14 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
         // steps above only by luck and fails here.
         const before = await readViewport(page);
         const anchorBefore = toFlowCoords(before, pointQ.x, pointQ.y, pane);
+        const beforeTransform = await readTransform(page);
 
         await page.mouse.move(pointQ.x, pointQ.y);
         await page.mouse.wheel(0, WHEEL_DELTA);
-        const scrolled = await waitForViewportSettled(page);
+        const scrolled = await waitForViewportSettled(
+          page,
+          movedFrom(beforeTransform),
+        );
 
         expect(scrolled.scale).toBeLessThan(before.scale);
 
