@@ -1,6 +1,11 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import {
+  createProjectThroughSidebar,
+  renameProjectThroughSidebar,
+} from "../../../../helpers/flows/create-project-through-sidebar";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
 import { MainPage } from "../../../../pages/MainPage";
@@ -20,26 +25,104 @@ import { MainPage } from "../../../../pages/MainPage";
  * REST API so they don't repeat the UI create/rename steps.
  */
 
-// Ids of flows a test created, deleted id-scoped in afterEach (#515 — never a
-// global cleanAllFlows, which wipes flows other workers are building). Tests 2
-// and 3 open a starter template to reach the folder view through the real
-// navigation path, and opening it CREATES a flow; nothing used to delete it, so
-// every run left one behind (47 flows on the local instance, 20 of them stray
-// "Basic Prompting" copies, before this was added).
-const createdFlowIds: string[] = [];
+// Ids of flows and projects a test created, deleted id-scoped in afterEach
+// (#515 — never a global cleanAllFlows, which wipes what other workers are
+// building). Tests 2 and 3 open a starter template to reach the folder view
+// through the real navigation path, and opening it CREATES a flow; nothing used
+// to delete it, so every run left one behind (47 flows on the local instance, 20
+// of them stray "Basic Prompting" copies, before this was added).
+const createdFlowIds = new Set<string>();
+const createdProjectIds = new Set<string>();
 
-test.afterEach(async ({ page, request }) => {
-  const ids = [...createdFlowIds];
-  createdFlowIds.length = 0;
-  if (ids.length === 0) return;
+/**
+ * Records every flow the PAGE creates, so teardown deletes exactly those.
+ *
+ * A listener rather than a push at the one call site (#1023): besides the
+ * starter template, `awaitBootstrapTest`'s modal path can itself land on a
+ * freshly-created "New Flow" (see `openNewFlowTemplatesModal` — the 1.10.0
+ * welcome-overlay branch), and nothing tracked that one. Six `--workers=2` runs
+ * of this folder left two stray `New Flow` copies behind on the local instance.
+ */
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (response) => {
+    if (response.request().method() !== "POST" || response.status() !== 201) {
+      return;
+    }
+    if (new URL(response.url()).pathname.replace(/\/$/, "") !== "/api/v1/flows") {
+      return;
+    }
+    response
+      .json()
+      .then((body: { id?: string }) => {
+        if (body?.id) createdFlowIds.add(body.id);
+      })
+      .catch(() => {});
+  });
+}
+
+test.afterEach(async ({ page, request }, testInfo) => {
+  const flowIds = [...createdFlowIds];
+  const projectIds = [...createdProjectIds];
+  createdFlowIds.clear();
+  createdProjectIds.clear();
+  if (flowIds.length === 0 && projectIds.length === 0) return;
+
+  // Playwright's own `screenshot: only-on-failure` fires while the page fixture
+  // tears down, which is AFTER this hook — so the navigation below would hand
+  // the report a blank canvas. Capture the failure state first: #1061 was
+  // diagnosed entirely from that artifact showing the wrong flow open.
+  if (testInfo.status !== testInfo.expectedStatus) {
+    try {
+      testInfo.annotations.push({
+        type: "url-at-teardown",
+        description: page.url(),
+      });
+      await testInfo.attach("page-at-teardown", {
+        body: await page.screenshot({ fullPage: true }),
+        contentType: "image/png",
+      });
+    } catch {
+      // The page may already be gone — the cleanup below is what matters.
+    }
+  }
+
+  // Take the page off the flow canvas BEFORE deleting anything (#1023).
+  //
+  // Deleting a flow underneath a mounted editor makes the editor keep asking
+  // for a flow that no longer exists. Measured on `1.12.0.dev9` with a probe
+  // that varies only the page's location at delete time:
+  //   - page on the folder view  → 0 backend errors;
+  //   - editor open and idle     → 404 on `/api/v1/flows/{id}/events?since=`;
+  //   - editor still mounting    → 404 on `GET /api/v1/flows/{id}` **and** on
+  //     `/events?since=` — the signature #1023 reports, and the state a test
+  //     that dies inside `openTemplateAndReturnToFolders` leaves behind.
+  //
+  // Those 404s are an artifact of teardown ORDER, not a product defect, but the
+  // fixture logs each one as `🚨 Backend Error` and the deterministic pipeline's
+  // VALIDATE gate hard-stops on them. `about:blank` (rather than `/`) is used so
+  // the teardown adds no backend traffic of its own.
+  await page.goto("about:blank").catch(() => {});
+
   const authToken = await getAuthToken(request);
-  for (const id of ids) {
+  const headers = { Authorization: authToken };
+  for (const id of flowIds) {
     // Not swallowed silently: a failed cleanup is reported, never hidden — but it
     // must not fail the hook and mask the assertion that already ran.
-    await deleteFlow(request, id, {
-      headers: { Authorization: authToken },
-    }).catch((error) => {
+    await deleteFlow(request, id, { headers }).catch((error) => {
       console.warn(`⚠️ Orphan flow left behind (${id}): ${error}`);
+    });
+  }
+  // Folders created through the UI are deleted through the UI by the tests
+  // themselves — but that delete is NOT reliable cleanup: `DELETE
+  // /api/v1/projects/{id}` answers 500 under contention while the toast still
+  // reads "Project deleted successfully", so the folder survives (#965/LE-2020).
+  // Measured: six `--workers=2` runs from a clean instance left 11 orphan
+  // folders, and tests 2 and 3 then failed every run from the second onwards.
+  // `deleteProject` retries the 500 and treats 404 (already deleted by the UI,
+  // the happy path) as done.
+  for (const id of projectIds) {
+    await deleteProject(request, id, { headers }).catch((error) => {
+      console.warn(`⚠️ Orphan project left behind (${id}): ${error}`);
     });
   }
 });
@@ -47,12 +130,12 @@ test.afterEach(async ({ page, request }) => {
 /**
  * Opens the starter-template gallery, creates a flow from "Basic Prompting" and
  * comes back to the folder view — the navigation round-trip tests 2 and 3 use to
- * reach the sidebar the way a user does. Captures the created flow id from the
- * creation POST so afterEach can delete exactly that flow.
+ * reach the sidebar the way a user does. The created flow is picked up by
+ * `trackCreatedFlows` and deleted id-scoped in afterEach.
  */
-async function openTemplateAndReturnToFolders(page: any) {
+async function openTemplateAndReturnToFolders(page: Page) {
   const flowCreation = page.waitForResponse(
-    (resp: any) =>
+    (resp) =>
       resp.url().includes("/api/v1/flows") &&
       resp.request().method() === "POST" &&
       resp.status() === 201,
@@ -62,10 +145,7 @@ async function openTemplateAndReturnToFolders(page: any) {
   await page.getByTestId("side_nav_options_all-templates").click();
   await page.getByRole("heading", { name: "Basic Prompting" }).click();
 
-  const created = (await (await flowCreation).json()) as { id?: string };
-  if (created.id) {
-    createdFlowIds.push(created.id);
-  }
+  await flowCreation;
 
   await page.waitForSelector('[data-testid="sidebar-search-input"]', {
     timeout: 30000,
@@ -83,6 +163,11 @@ test(
   "deleting a folder should update the folder list immediately",
   { tag: ["@release", "@api"] },
   async ({ page, request }) => {
+    // Registered even though this test opens no template: on an instance with no
+    // flows left (the `@destructive` sibling empties it in its own lane)
+    // `awaitBootstrapTest` seeds one through `addFlowToTestOnEmptyLangflow`, and
+    // that flow was the last untracked leak in this file (#1023).
+    trackCreatedFlows(page);
     const authToken = await getAuthToken(request);
     const folderName = `del-integrity-${Date.now()}`;
 
@@ -95,7 +180,6 @@ test(
     expect(folderRes.status()).toBe(201);
     const { id: folderId } = await folderRes.json();
 
-    let folderDeleted = false;
     try {
       await awaitBootstrapTest(page, { skipModal: true });
       const mainPage = new MainPage(page);
@@ -114,22 +198,24 @@ test(
       await expect(
         page.getByTestId(`sidebar-nav-${folderName}`),
       ).not.toBeVisible({ timeout: 10000 });
-      folderDeleted = true;
 
       // Verify the page is still functional by checking for the add project button
       await expect(page.getByTestId("add-project-button")).toBeVisible({
         timeout: 5000,
       });
     } finally {
-      if (!folderDeleted) {
-        // deleteProject retries the 500 the endpoint returns under concurrent
-        // writes (#965), which the bare request.delete accepted as done.
-        await deleteProject(request, folderId, {
-          headers: { Authorization: authToken },
-        }).catch((error) => {
-          console.warn(`⚠️ Orphan project left behind (${folderId}): ${error}`);
-        });
-      }
+      // Unconditional, not "only if the UI delete did not complete" (#1023):
+      // the sidebar entry disappearing does NOT prove the folder is gone. The
+      // UI removes it optimistically and `DELETE /api/v1/projects/{id}` answers
+      // 500 under contention while the toast still reads "deleted successfully"
+      // (#965/LE-2020) — one of those landed in a 7/7-green run here and left
+      // the folder on the instance. `deleteProject` retries the 500 and treats
+      // 404 (the happy path, where the UI really did delete it) as done.
+      await deleteProject(request, folderId, {
+        headers: { Authorization: authToken },
+      }).catch((error) => {
+        console.warn(`⚠️ Orphan project left behind (${folderId}): ${error}`);
+      });
     }
   },
 );
@@ -138,70 +224,43 @@ test(
   "deleting one folder should not affect other folders",
   { tag: ["@release", "@api"] },
   async ({ page }) => {
+    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
     // Template round-trip to reach the folder view the way a user does; the
     // created flow is tracked and deleted in afterEach.
     await openTemplateAndReturnToFolders(page);
 
-    // Create first folder
-    await page.getByTestId("add-project-button").click();
+    // Per-run names (#1023): the fixed `folder-alpha` / `folder-beta` could be
+    // satisfied by a leftover from an earlier failed run, or collide with a
+    // sibling worker's folder under `fullyParallel`.
+    const stamp = Date.now();
+    const alpha = `folder-alpha-${stamp}`;
+    const beta = `folder-beta-${stamp}`;
 
-    await page
-      .locator("[data-testid='project-sidebar']")
-      .getByText("New Project")
-      .last()
-      .waitFor({ state: "visible", timeout: 10000 });
+    // Create both folders. `createProjectThroughSidebar` returns the name the
+    // backend actually assigned, so the rename addresses THIS folder instead of
+    // guessing with `getByText("New Project").last()` — see the helper's note.
+    const alphaProject = await createProjectThroughSidebar(page);
+    createdProjectIds.add(alphaProject.id);
+    await renameProjectThroughSidebar(page, alphaProject.name, alpha);
 
-    await page
-      .locator("[data-testid='project-sidebar']")
-      .getByText("New Project")
-      .last()
-      .dblclick();
-
-    await page.getByTestId("input-project").fill("folder-alpha");
-    await page.keyboard.press("Enter");
-
-    await page.getByText("folder-alpha").last().waitFor({
-      state: "visible",
-      timeout: 10000,
-    });
-
-    // Create second folder
-    await page.getByTestId("add-project-button").click();
-
-    await page
-      .locator("[data-testid='project-sidebar']")
-      .getByText("New Project")
-      .last()
-      .waitFor({ state: "visible", timeout: 10000 });
-
-    await page
-      .locator("[data-testid='project-sidebar']")
-      .getByText("New Project")
-      .last()
-      .dblclick();
-
-    await page.getByTestId("input-project").fill("folder-beta");
-    await page.keyboard.press("Enter");
-
-    await page.getByText("folder-beta").last().waitFor({
-      state: "visible",
-      timeout: 10000,
-    });
+    const betaProject = await createProjectThroughSidebar(page);
+    createdProjectIds.add(betaProject.id);
+    await renameProjectThroughSidebar(page, betaProject.name, beta);
 
     // Verify both folders exist
-    await expect(page.getByTestId("sidebar-nav-folder-alpha")).toBeVisible({
+    await expect(page.getByTestId(`sidebar-nav-${alpha}`)).toBeVisible({
       timeout: 5000,
     });
-    await expect(page.getByTestId("sidebar-nav-folder-beta")).toBeVisible({
+    await expect(page.getByTestId(`sidebar-nav-${beta}`)).toBeVisible({
       timeout: 5000,
     });
 
     // Delete the first folder
-    const folderAlpha = page.getByTestId("sidebar-nav-folder-alpha");
+    const folderAlpha = page.getByTestId(`sidebar-nav-${alpha}`);
     await folderAlpha.hover();
-    await page.getByTestId("more-options-button_folder-alpha").click();
+    await page.getByTestId(`more-options-button_${alpha}`).click();
     await page.getByTestId("btn-delete-project").click();
     await page.getByText("Delete").last().click();
 
@@ -210,16 +269,16 @@ test(
       timeout: 15000,
     });
 
-    // Verify folder-alpha is removed
-    await expect(page.getByTestId("sidebar-nav-folder-alpha")).not.toBeVisible({
+    // Verify the deleted folder is removed
+    await expect(page.getByTestId(`sidebar-nav-${alpha}`)).not.toBeVisible({
       timeout: 5000,
     });
 
-    // Verify folder-beta still exists and is accessible
-    const folderBeta = page.getByTestId("sidebar-nav-folder-beta");
+    // Verify the sibling folder still exists and is accessible
+    const folderBeta = page.getByTestId(`sidebar-nav-${beta}`);
     await expect(folderBeta).toBeVisible({ timeout: 5000 });
 
-    // Click on folder-beta to ensure the app is functional
+    // Click it to ensure the app is functional
     await folderBeta.click();
 
     // The page should still be functional
@@ -227,9 +286,11 @@ test(
       timeout: 10000,
     });
 
-    // Clean up - delete the remaining folder
+    // Clean up - delete the remaining folder through the same UI path. afterEach
+    // still deletes both ids via the API: this UI delete can 500 silently
+    // (#965), and the toast alone does not prove the folder is gone.
     await folderBeta.hover();
-    await page.getByTestId("more-options-button_folder-beta").click();
+    await page.getByTestId(`more-options-button_${beta}`).click();
     await page.getByTestId("btn-delete-project").click();
     await page.getByText("Delete").last().click();
 
@@ -243,39 +304,28 @@ test(
   "creating a new folder after deletion should work correctly",
   { tag: ["@release", "@api"] },
   async ({ page }) => {
+    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
     // Template round-trip to reach the folder view the way a user does; the
     // created flow is tracked and deleted in afterEach.
     await openTemplateAndReturnToFolders(page);
 
-    // Create first folder
-    await page.getByTestId("add-project-button").click();
+    // Per-run names (#1023) — see the sibling test for why the fixed
+    // `folder-one` / `folder-two` were replaced.
+    const stamp = Date.now();
+    const one = `folder-one-${stamp}`;
+    const two = `folder-two-${stamp}`;
 
-    await page
-      .locator("[data-testid='project-sidebar']")
-      .getByText("New Project")
-      .last()
-      .waitFor({ state: "visible", timeout: 10000 });
+    // Create the first folder
+    const oneProject = await createProjectThroughSidebar(page);
+    createdProjectIds.add(oneProject.id);
+    await renameProjectThroughSidebar(page, oneProject.name, one);
 
-    await page
-      .locator("[data-testid='project-sidebar']")
-      .getByText("New Project")
-      .last()
-      .dblclick();
-
-    await page.getByTestId("input-project").fill("folder-one");
-    await page.keyboard.press("Enter");
-
-    await page.getByText("folder-one").last().waitFor({
-      state: "visible",
-      timeout: 10000,
-    });
-
-    // Delete the folder
-    const folderOne = page.getByTestId("sidebar-nav-folder-one");
+    // Delete it
+    const folderOne = page.getByTestId(`sidebar-nav-${one}`);
     await folderOne.hover();
-    await page.getByTestId("more-options-button_folder-one").click();
+    await page.getByTestId(`more-options-button_${one}`).click();
     await page.getByTestId("btn-delete-project").click();
     await page.getByText("Delete").last().click();
 
@@ -284,40 +334,23 @@ test(
     });
 
     // Verify folder is deleted
-    await expect(page.getByTestId("sidebar-nav-folder-one")).not.toBeVisible({
+    await expect(page.getByTestId(`sidebar-nav-${one}`)).not.toBeVisible({
       timeout: 5000,
     });
 
-    // Create a new folder immediately after deletion
-    await page.getByTestId("add-project-button").click();
+    // Create a new folder immediately after the deletion — the assertion under
+    // test: no stale-cache collision between a deletion and the next creation.
+    const twoProject = await createProjectThroughSidebar(page);
+    createdProjectIds.add(twoProject.id);
+    await renameProjectThroughSidebar(page, twoProject.name, two);
 
-    await page
-      .locator("[data-testid='project-sidebar']")
-      .getByText("New Project")
-      .last()
-      .waitFor({ state: "visible", timeout: 10000 });
-
-    await page
-      .locator("[data-testid='project-sidebar']")
-      .getByText("New Project")
-      .last()
-      .dblclick();
-
-    await page.getByTestId("input-project").fill("folder-two");
-    await page.keyboard.press("Enter");
-
-    // The new folder should be created successfully without any stale data issues
-    await page.getByText("folder-two").last().waitFor({
-      state: "visible",
-      timeout: 10000,
-    });
-
-    const folderTwo = page.getByTestId("sidebar-nav-folder-two");
+    const folderTwo = page.getByTestId(`sidebar-nav-${two}`);
     await expect(folderTwo).toBeVisible({ timeout: 5000 });
 
-    // Clean up
+    // Clean up through the UI; afterEach still deletes both ids via the API
+    // because this delete can 500 silently (#965).
     await folderTwo.hover();
-    await page.getByTestId("more-options-button_folder-two").click();
+    await page.getByTestId(`more-options-button_${two}`).click();
     await page.getByTestId("btn-delete-project").click();
     await page.getByText("Delete").last().click();
 
@@ -346,6 +379,7 @@ test(
   "deleting every folder lands on the empty project screen",
   { tag: ["@release", "@api", "@destructive"] },
   async ({ page, request }) => {
+    trackCreatedFlows(page);
     // Guarantee there is at least one folder holding a flow, so the
     // "delete everything" path is exercised against real content.
     const authToken = await getAuthToken(request);

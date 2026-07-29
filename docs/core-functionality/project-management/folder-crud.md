@@ -1,6 +1,6 @@
 # Project Management – Folder (Project) CRUD
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev9`)
 
 ---
 
@@ -11,7 +11,11 @@ the `MainPage` folder helpers (`addProject` / `renameProject` / `deleteProject` 
 `clickProject`):
 
 1. **Create** — `add-project-button` creates a new folder that appears in the
-   project sidebar as `sidebar-nav-New Project`.
+   project sidebar. The entry is addressed by the name the **backend** assigned
+   (`createProjectThroughSidebar` reads it from the `201` body), not by the
+   literal `sidebar-nav-New Project`: Langflow de-duplicates the name into
+   `New Project (N)` whenever one already exists, so the literal was a bet on the
+   instance having no other folder by that name (#1023).
 2. **Rename** — double-clicking the folder and committing a new name updates the
    sidebar entry to `sidebar-nav-<new name>`. We assert only the new unique entry
    (not the absence of `New Project`), since other specs may create `New Project`
@@ -39,12 +43,17 @@ which is required for safety under `fullyParallel`.
 ### Test 1 — create, rename and delete an empty folder
 
 1. Bootstrap the session without the templates modal (`awaitBootstrapTest(page, { skipModal: true })`).
-2. Click `add-project-button`; assert `sidebar-nav-New Project` is visible.
+2. Create the folder with `createProjectThroughSidebar(page)`; it clicks
+   `add-project-button`, captures the `201` body and asserts
+   `sidebar-nav-<assigned name>` is visible. The id it returns is what teardown
+   deletes.
 3. Rename the folder to a unique name (`crud-folder-<timestamp>`); assert the new
    `sidebar-nav-<name>` is visible (the unique entry alone proves the rename
    committed — see note above on parallel `New Project` collisions).
 4. Delete the folder via its more-options menu and confirm; assert the
    "Project deleted successfully" notification and that the sidebar entry is gone.
+5. **Cleanup (finally):** delete the captured project id through `deleteProject`
+   — see *Why the UI delete is the assertion, not the cleanup* below.
 
 ### Test 2 — delete a folder containing a flow
 
@@ -59,6 +68,28 @@ which is required for safety under `fullyParallel`.
    deleted with the folder.
 6. **Cleanup (finally):** delete the captured flow ID (ignored if already gone)
    and, only if the UI deletion did not complete, the folder ID.
+
+---
+
+## Why the UI delete is the assertion, not the cleanup (#1023)
+
+Test 1 deletes its folder through the UI and asserts the toast plus the sidebar
+entry disappearing. **Neither proves the folder is gone.** The sidebar entry is
+removed optimistically, and `DELETE /api/v1/projects/{id}` answers **500** under
+concurrent writes while the toast still reads "Project deleted successfully"
+(#965 / LE-2020 — `database is locked` on `DELETE FROM folder`). The folder then
+survives with nothing left to remove it.
+
+Measured on `1.12.0.dev9`, this folder's four specs at `--workers=2`: a **7/7
+green** run still logged a `500` on a project delete, and six consecutive runs
+from a clean instance left **11 orphan folders** named `New Project`,
+`New Project (2)`… Those leftovers are not cosmetic — with 8 of them seeded,
+`folder-deletion-integrity.spec.ts` goes from *3 passed in 18.4 s* to *2 failed
+in 55.0 s*.
+
+So the `finally` block deletes the captured id unconditionally via
+`deleteProject`, which retries the 500 and treats `404` (the happy path, where
+the UI really did delete it) as done. The UI assertions are unchanged.
 
 ---
 

@@ -1,6 +1,6 @@
 # Folder Deletion Integrity
 
-**Last validated:** Langflow 1.12.x (`1.12.0.dev8`)
+**Last validated:** Langflow 1.12.x (`1.12.0.dev9`)
 
 ---
 
@@ -56,21 +56,22 @@ see *The destructive lane* below.
 
 **Test 2 — `deleting one folder should not affect other folders`**
 1. Bootstrap, open a template and come back (exercises the real navigation path)
-2. Create `folder-alpha` and `folder-beta` through the UI (`add-project-button` →
-   double-click the `New Project` entry → type the name → Enter)
+2. Create `folder-alpha-<stamp>` and `folder-beta-<stamp>` through the UI with
+   `createProjectThroughSidebar` (`add-project-button`, then rename the entry the
+   backend reports → type the name → Enter)
 3. Assert both sidebar entries exist
-4. Delete `folder-alpha` via its `more-options-button_folder-alpha` → `btn-delete-project` → confirm
-5. Assert the toast, assert `folder-alpha` is gone and `folder-beta` is still visible
-6. Click `folder-beta` and assert `mainpage_title` renders — the survivor is still usable
-7. Delete `folder-beta` (cleanup through the same UI path)
+4. Delete the alpha folder via its `more-options-button_<name>` → `btn-delete-project` → confirm
+5. Assert the toast, assert the alpha entry is gone and the beta one is still visible
+6. Click the beta folder and assert `mainpage_title` renders — the survivor is still usable
+7. Delete it (cleanup through the same UI path; afterEach still removes both ids)
 
 **Test 3 — `creating a new folder after deletion should work correctly`**
-1. Bootstrap, template round-trip, create `folder-one` through the UI
-2. Delete `folder-one`, assert the toast and that its sidebar entry is gone
-3. **Immediately** create `folder-two` through the same UI path
-4. Assert `folder-two` appears and `sidebar-nav-folder-two` is visible — proves no
+1. Bootstrap, template round-trip, create `folder-one-<stamp>` through the UI
+2. Delete it, assert the toast and that its sidebar entry is gone
+3. **Immediately** create `folder-two-<stamp>` through the same UI path
+4. Assert it appears and `sidebar-nav-folder-two-<stamp>` is visible — proves no
    stale-cache collision between the deletion and the next creation
-5. Delete `folder-two` (cleanup)
+5. Delete it (cleanup)
 
 **Test 4 — `deleting every folder lands on the empty project screen`** *(`@destructive`)*
 1. Create one folder via API **holding a flow** (`POST /api/v1/projects/` then
@@ -161,6 +162,71 @@ two tags as mutually exclusive — noted in `CONTRIBUTING.md` next to the tag ta
 
 ---
 
+## Teardown order and id-scoped folder cleanup (#1023)
+
+Two teardown defects survived the destructive lane (#1010) and are fixed here.
+
+### 1. The page must leave the canvas before the flow is deleted
+
+`afterEach` deletes the starter-template flow tests 2 and 3 create. When the page
+is still showing that flow, the editor keeps asking for it. Measured on
+`1.12.0.dev9` with a probe that varies **only** the page's location at delete
+time:
+
+| Page at delete time | Backend errors |
+|---|---|
+| folder view | **0** |
+| editor open, idle | `404` on `/api/v1/flows/{id}/events?since=` |
+| editor still mounting | `404` on `GET /api/v1/flows/{id}` **and** on `/events?since=` |
+
+The last row is the signature #1023 reports, and it is the state a test that dies
+inside `openTemplateAndReturnToFolders` leaves behind. Those `404`s are an
+artifact of teardown **order** — the fixture logs each as `🚨 Backend Error` and
+the deterministic pipeline's VALIDATE gate hard-stops on them — not a product
+defect, so the hook navigates to `about:blank` (no backend traffic of its own)
+before deleting anything.
+
+### 2. A UI delete is not cleanup
+
+Tests 2 and 3 delete their folders through the UI, and that used to be the only
+thing removing them. It is not reliable: `DELETE /api/v1/projects/{id}` answers
+**500** under concurrent writes while the toast still reads "Project deleted
+successfully" (#965 / LE-2020), and the folder survives. Test 1 had the same hole
+in a different shape — its `finally` only deleted the folder *if the UI deletion
+had not completed*, and "completed" was inferred from the sidebar entry
+disappearing, which the UI does optimistically.
+
+Measured: six consecutive `--workers=2` runs of the four folder specs from a
+clean instance left **11 orphan folders** (`New Project`, `New Project (2)`…),
+and the leak is what breaks the next run — with 8 of them seeded, this spec goes
+from *3 passed in 18.4 s* to *2 failed in 55.0 s*, both on `input-project` never
+appearing after the double-click. That is also why the folder names now carry a
+per-run stamp and why the fresh entry is addressed by the name the backend
+returned (`createProjectThroughSidebar`) instead of
+`getByText("New Project").last()`.
+
+Every project created through the page is therefore deleted id-scoped in
+`afterEach` via `deleteProject`, which retries the 500 and treats `404` (the
+happy path, where the UI really did delete it) as done. The same hook also
+tracks **every** `POST /api/v1/flows/ → 201` the page makes, not just the
+template one, and **all four tests register the tracker** — including the two
+that open no template. Two flows still leaked with only tests 2 and 3 tracking:
+on an instance left with no flows (which test 4 does inside its own lane),
+`awaitBootstrapTest` seeds one through `addFlowToTestOnEmptyLangflow`, and
+`openNewFlowTemplatesModal`'s welcome-overlay branch can land on a freshly
+created "New Flow". Neither is a flow the test asked for, and neither had an
+owner.
+
+**A/B for the naming half**, both arms with 8 leftover `New Project` folders
+seeded on the same instance:
+
+| Arm | Result |
+|---|---|
+| before (`getByText("New Project").last()`) | **2 failed** in 55.0 s |
+| after (name read from the `201`) | **3 passed** in 21.8 s, project count unchanged |
+
+---
+
 ## Validation criterion *(required)*
 
 - **The race is gone where it was observable.** Running the four folder-touching
@@ -169,6 +235,10 @@ two tags as mutually exclusive — noted in `CONTRIBUTING.md` next to the tag ta
   `flow-navigation-between-folders`) produces **no `404` on a sibling-owned flow
   or project id** and no folder-disappeared timeout, 3× in a row. Before the fix
   the same command logs `404`s on ids another test is still using.
+- **The run is repeatable, not just green once (#1023).** The same command, six
+  times back to back from a clean instance: 6/6 green and the project count back
+  at its baseline after **every** run. Before the id-scoped folder cleanup the
+  same six runs left 11 orphan folders and failed from run 2 onwards.
 - **The default lane really excludes it:** `npx playwright test <spec> --list`
   reports 3 tests, not 4, and a normal run prints the notice naming
   `@destructive` and the lane command.
