@@ -1,13 +1,113 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-server-modal";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+
+/**
+ * Add-MCP-Server modal: stdio / HTTP registration, field persistence and tool
+ * refresh. Spec doc: `docs/mcp/server/mcp-server.md`.
+ *
+ * STDIO CONTRACT (#1091). Langflow requires `command` to be a SINGLE executable
+ * — options and the package go in `args`. Registering
+ * "npx @modelcontextprotocol/server-everything" as the command is refused with
+ * a 422 ("MCP stdio command must be a single executable name or path"). The
+ * rule arrived with the multi-tenant hardening forward-port (upstream #14073,
+ * 2026-07-15) so every policy layer sees the same argv; `npx`/`uvx` themselves
+ * are still allowlisted. Every stdio registration below therefore fills
+ * `stdio-command-input` with the bare executable and `stdio-args_N` with the
+ * rest. The last test in this file pins that contract directly.
+ */
+
+// Package runners are `npx`, not `uvx`, wherever the subprocess must actually
+// come up: the published `mcp-server-fetch`/`mcp-server-time` packages this file
+// used to register now fail at import against the current `mcp` Python SDK
+// (`McpError` renamed to `MCPError`), and pinning the server version does not
+// help because its `mcp` dependency floats. That is a third-party breakage, not
+// Langflow's — see the spec doc. `uvx` stays covered as a command by the
+// field-persistence test, which never starts the subprocess.
+const NPX = "npx";
+const PKG_EVERYTHING = "@modelcontextprotocol/server-everything";
+const PKG_SEQUENTIAL = "@modelcontextprotocol/server-sequential-thinking";
+
+// `npx` downloads the package on a cold container, so the FIRST tool list of a
+// run can take far longer than every dropdown interaction that follows it. The
+// sibling stdio test in `mcp-client-regression.spec.ts` needed exactly this
+// budget for the same reason (#463); the 30 s this file carried was never
+// exercised in CI, because none of these tests were `@stable` until #1091.
+const TOOL_LIST_TIMEOUT = 120_000;
+
+// Flow ids observed on `POST /api/v1/flows` 201, plus the MCP servers each test
+// registered. Pattern A from authoring-conventions: `awaitBootstrapTest` runs
+// before the blank-flow / starter click, so the canvas URL id is the stale
+// bootstrap one (#681) and only the response ids are trustworthy. Deleting a
+// transient id 404s harmlessly — `deleteFlow` treats 404 as done.
+const createdFlowIds: string[] = [];
+const registeredServers: string[] = [];
+
+/** Server names currently registered on the instance. */
+async function listMcpServerNames(page: Page): Promise<string[]> {
+  const authHeader = await getAuthToken(page.request);
+  const resp = await page.request.get("/api/v2/mcp/servers", {
+    headers: authHeader ? { Authorization: authHeader } : undefined,
+  });
+  const servers: Array<{ name: string }> = await resp.json();
+  return servers.map((s) => s.name);
+}
+
+test.beforeEach(async ({ page }) => {
+  createdFlowIds.length = 0;
+  registeredServers.length = 0;
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {}); // non-JSON / batch payloads
+    }
+  });
+});
+
+// Id-scoped cleanup — never a wipe (#553). The servers are listed first so a
+// test that already deleted its own through the UI (the happy path for most of
+// them) does not issue a 404 delete on every run.
+test.afterEach(async ({ request }) => {
+  const names = registeredServers.splice(0);
+  const ids = createdFlowIds.splice(0);
+  if (names.length === 0 && ids.length === 0) return;
+
+  const bearer = await getAuthToken(request);
+  const options = bearer ? { headers: { Authorization: bearer } } : undefined;
+
+  if (names.length > 0) {
+    const resp = await request.get("/api/v2/mcp/servers", options);
+    const existing: string[] = resp.ok()
+      ? ((await resp.json()) as Array<{ name: string }>).map((s) => s.name)
+      : names;
+    for (const name of names) {
+      if (existing.includes(name)) {
+        await request.delete(`/api/v2/mcp/servers/${name}`, options);
+      }
+    }
+  }
+
+  for (const id of ids) {
+    await deleteFlow(request, id, options);
+  }
+});
 
 test(
   "user must be able to change mode of MCP tools without any issues",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
     await page.waitForTimeout(5000);
@@ -54,11 +154,11 @@ test(
 
     const randomSuffix = Math.floor(Math.random() * 90000) + 10000; // 5-digit random number
     const testName = `test_server_${randomSuffix}`;
+    registeredServers.push(testName);
     await page.getByTestId("stdio-name-input").fill(testName);
 
-    await page
-      .getByTestId("stdio-command-input")
-      .fill("npx @modelcontextprotocol/server-everything");
+    await page.getByTestId("stdio-command-input").fill(NPX);
+    await page.getByTestId("stdio-args_0").fill(PKG_EVERYTHING);
 
     await page.getByTestId("add-mcp-server-button").click();
 
@@ -73,7 +173,7 @@ test(
             await resp.json();
           return servers.find((s) => s.name === testName)?.toolsCount ?? null;
         },
-        { timeout: 90000, intervals: [3000] },
+        { timeout: TOOL_LIST_TIMEOUT, intervals: [3000] },
       )
       .not.toBeNull();
 
@@ -100,11 +200,16 @@ test(
 
     await adjustScreenView(page);
 
-    const messageInputCount = await page
-      .getByTestId("popover-anchor-input-message")
-      .count();
-
-    expect(messageInputCount).toBeGreaterThan(0);
+    // The selected tool's own inputs arrive with a node rebuild that lands a
+    // beat after the option click, so this needs an auto-retrying assertion —
+    // a bare count() samples the node before `message` is on it. The `@stable`
+    // sibling that selects the same echo tool waits the same way
+    // (`mcp-client-regression.spec.ts`), which is why it never hit this race;
+    // here it stayed invisible because the registration above had been failing
+    // since 2026-07-15 and the test never got this far (#1091).
+    await expect(page.getByTestId("popover-anchor-input-message")).toBeVisible({
+      timeout: 30000,
+    });
 
     await page.getByTestId("user_menu_button").click({ timeout: 3000 });
 
@@ -154,8 +259,11 @@ test(
       timeout: 3000,
     });
 
-    expect(await page.getByTestId("stdio-command-input").inputValue()).toBe(
-      "npx @modelcontextprotocol/server-everything",
+    // Both halves of the split must round-trip: a backend that dropped `args`
+    // on save would still show the right command.
+    expect(await page.getByTestId("stdio-command-input").inputValue()).toBe(NPX);
+    expect(await page.getByTestId("stdio-args_0").inputValue()).toBe(
+      PKG_EVERYTHING,
     );
 
     await page.waitForTimeout(500);
@@ -196,7 +304,7 @@ test(
 
 test(
   "user must be able to add and delete MCP server from sidebar",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
     await awaitBootstrapTest(page);
@@ -231,13 +339,13 @@ test(
 
     const randomSuffix = Math.floor(Math.random() * 90000) + 10000; // 5-digit random number
     const testName = `test_server_${randomSuffix}`;
+    registeredServers.push(testName);
     await page.getByTestId("stdio-name-input").fill(testName);
 
     await page.waitForTimeout(500);
 
-    await page
-      .getByTestId("stdio-command-input")
-      .fill("npx @modelcontextprotocol/server-everything");
+    await page.getByTestId("stdio-command-input").fill(NPX);
+    await page.getByTestId("stdio-args_0").fill(PKG_EVERYTHING);
 
     await page.getByTestId("add-mcp-server-button").click();
 
@@ -282,7 +390,7 @@ test(
 
 test(
   "STDIO MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -313,7 +421,13 @@ test(
     // Test data with random suffix
     const randomSuffix = Math.floor(Math.random() * 90000) + 10000; // 5-digit random number
     const testName = `test_stdio_server_${randomSuffix}`;
-    const testCommand = "uvx mcp-server-test";
+    registeredServers.push(testName);
+    // `uvx` keeps the second allowlisted package runner covered as a COMMAND.
+    // `mcp-server-test` is deliberately a package that does not exist: this test
+    // asserts form persistence, and registration is accepted independently of
+    // whether the subprocess ever starts.
+    const testCommand = "uvx";
+    const testPackageArg = "mcp-server-test";
     const testArg1 = "--verbose";
     const testArg2 = "--port=8080";
     const testArg3 = "--config=test.json";
@@ -326,16 +440,20 @@ test(
     await page.getByTestId("stdio-name-input").fill(testName);
     await page.getByTestId("stdio-command-input").fill(testCommand);
 
-    // Add first argument
-    await page.getByTestId("stdio-args_0").fill(testArg1);
+    // The package that used to be glued onto the command is now args[0]
+    await page.getByTestId("stdio-args_0").fill(testPackageArg);
 
-    // Add second argument by clicking plus button
+    // Add first option by clicking plus button
     await page.getByTestId("input-list-plus-btn_-0").click();
-    await page.getByTestId("stdio-args_1").fill(testArg2);
+    await page.getByTestId("stdio-args_1").fill(testArg1);
 
-    // Add third argument
+    // Add second option
     await page.getByTestId("input-list-plus-btn_-0").click();
-    await page.getByTestId("stdio-args_2").fill(testArg3);
+    await page.getByTestId("stdio-args_2").fill(testArg2);
+
+    // Add third option
+    await page.getByTestId("input-list-plus-btn_-0").click();
+    await page.getByTestId("stdio-args_3").fill(testArg3);
 
     // Add first environment variable
     await page.getByTestId("stdio-env-key-0").fill(testEnvKey1);
@@ -388,9 +506,12 @@ test(
     expect(await page.getByTestId("stdio-command-input").inputValue()).toBe(
       testCommand,
     );
-    expect(await page.getByTestId("stdio-args_0").inputValue()).toBe(testArg1);
-    expect(await page.getByTestId("stdio-args_1").inputValue()).toBe(testArg2);
-    expect(await page.getByTestId("stdio-args_2").inputValue()).toBe(testArg3);
+    expect(await page.getByTestId("stdio-args_0").inputValue()).toBe(
+      testPackageArg,
+    );
+    expect(await page.getByTestId("stdio-args_1").inputValue()).toBe(testArg1);
+    expect(await page.getByTestId("stdio-args_2").inputValue()).toBe(testArg2);
+    expect(await page.getByTestId("stdio-args_3").inputValue()).toBe(testArg3);
     expect(await page.getByTestId("stdio-env-key-0").last().inputValue()).toBe(
       testEnvKey1,
     );
@@ -432,7 +553,7 @@ test(
 
 test(
   "HTTP/SSE MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -463,6 +584,7 @@ test(
     // Test data with random suffix
     const randomSuffix = Math.floor(Math.random() * 90000) + 10000; // 5-digit random number
     const testName = `test_http_server_${randomSuffix}`;
+    registeredServers.push(testName);
     const testUrl = "https://api.example.com/mcp";
     const testHeaderKey1 = "Authorization";
     const testHeaderValue1 = "Bearer token123";
@@ -621,7 +743,7 @@ test(
 
 test(
   "mcp server tools should be refreshed when editing a server",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await page.waitForTimeout(5000);
 
@@ -661,9 +783,13 @@ test(
 
     const randomSuffix = Math.floor(Math.random() * 90000) + 10000; // 5-digit random number
     const testName = `test_server_${randomSuffix}`;
+    registeredServers.push(testName);
     await page.getByTestId("stdio-name-input").fill(testName);
 
-    await page.getByTestId("stdio-command-input").fill("uvx mcp-server-fetch");
+    // Server A — sequential-thinking serves exactly one tool, so the tool list
+    // it produces is unambiguous when compared against server B's below.
+    await page.getByTestId("stdio-command-input").fill(NPX);
+    await page.getByTestId("stdio-args_0").fill(PKG_SEQUENTIAL);
 
     await page.getByTestId("add-mcp-server-button").click();
 
@@ -676,45 +802,50 @@ test(
     await page.waitForSelector(
       '[data-testid="dropdown_str_tool"]:not([disabled])',
       {
-        timeout: 30000,
+        timeout: TOOL_LIST_TIMEOUT,
         state: "visible",
       },
     );
 
     await page.getByTestId("dropdown_str_tool").click();
 
-    await page.waitForSelector('[data-testid="fetch-0-option"]', {
+    await page.waitForSelector('[data-testid="sequentialthinking-0-option"]', {
       state: "visible",
       timeout: 10000,
     });
 
-    const fetchOptionCount = await page.getByTestId("fetch-0-option").count();
+    const sequentialOptionCount = await page
+      .getByTestId("sequentialthinking-0-option")
+      .count();
 
-    expect(fetchOptionCount).toBeGreaterThan(0);
+    expect(sequentialOptionCount).toBeGreaterThan(0);
 
-    await page.getByTestId("fetch-0-option").click();
+    await page.getByTestId("sequentialthinking-0-option").click();
 
     // Fit view only — no zoom step here. The helper waits on
     // `canvas_controls_dropdown` itself (30 s), which subsumes the explicit
     // 10 s wait this sequence used to open with.
     await adjustScreenView(page, { numberOfZoomOut: 0 });
 
-    await page.waitForSelector('[data-testid="int_int_max_length"]', {
+    // The selected tool's OWN inputs must render on the node. `sequentialthinking`
+    // exposes `thoughtNumber` (integer) and `thought` (string); the node lowercases
+    // integer names into `int_int_<name>` but keeps the case of string inputs.
+    await page.waitForSelector('[data-testid="int_int_thoughtnumber"]', {
       state: "visible",
       timeout: 30000,
     });
 
-    const maxLengthOptionCount = await page
-      .getByTestId("int_int_max_length")
+    const thoughtNumberOptionCount = await page
+      .getByTestId("int_int_thoughtnumber")
       .count();
 
-    expect(maxLengthOptionCount).toBeGreaterThan(0);
+    expect(thoughtNumberOptionCount).toBeGreaterThan(0);
 
-    const urlOptionCount = await page
-      .getByTestId("anchor-popover-anchor-input-url")
+    const thoughtOptionCount = await page
+      .getByTestId("anchor-popover-anchor-input-thought")
       .count();
 
-    expect(urlOptionCount).toBeGreaterThan(0);
+    expect(thoughtOptionCount).toBeGreaterThan(0);
 
     await page.getByTestId("user_menu_button").click({ timeout: 10000 });
 
@@ -766,11 +897,15 @@ test(
       timeout: 10000,
     });
 
-    expect(await page.getByTestId("stdio-command-input").inputValue()).toBe(
-      "uvx mcp-server-fetch",
+    expect(await page.getByTestId("stdio-command-input").inputValue()).toBe(NPX);
+    expect(await page.getByTestId("stdio-args_0").inputValue()).toBe(
+      PKG_SEQUENTIAL,
     );
 
-    await page.getByTestId("stdio-command-input").fill("uvx mcp-server-time");
+    // Switch to server B. Both runners are `npx` now that the command field
+    // holds a bare executable, so the package in args[0] is what changes — which
+    // also proves `args` round-trips through an edit, not only through a create.
+    await page.getByTestId("stdio-args_0").fill(PKG_EVERYTHING);
 
     await page.getByTestId("add-mcp-server-button").click();
 
@@ -812,23 +947,27 @@ test(
     await page.waitForSelector(
       '[data-testid="dropdown_str_tool"]:not([disabled])',
       {
-        timeout: 30000,
+        timeout: TOOL_LIST_TIMEOUT,
         state: "visible",
       },
     );
 
     await page.getByTestId("dropdown_str_tool").click();
 
-    await page.waitForSelector('[data-testid="get_current_time-0-option"]', {
+    // The refresh under test: the node must serve server B's tools, not the
+    // sequential-thinking list it cached before the edit.
+    await page.waitForSelector('[data-testid="echo-0-option"]', {
       state: "visible",
       timeout: 10000,
     });
 
-    const timeOptionCount = await page
-      .getByTestId("get_current_time-0-option")
-      .count();
+    const echoOptionCount = await page.getByTestId("echo-0-option").count();
 
-    expect(timeOptionCount).toBeGreaterThan(0);
+    expect(echoOptionCount).toBeGreaterThan(0);
+
+    await expect(
+      page.getByTestId("sequentialthinking-0-option"),
+    ).toHaveCount(0);
 
     await page.getByTestId("user_menu_button").click({ timeout: 10000 });
 
@@ -887,7 +1026,9 @@ test(
 
     await page.getByTestId("stdio-name-input").fill(testName);
 
-    await page.getByTestId("stdio-command-input").fill("uvx mcp-server-fetch");
+    // Re-register as server A — the node's tool list must go back to A's tools.
+    await page.getByTestId("stdio-command-input").fill(NPX);
+    await page.getByTestId("stdio-args_0").fill(PKG_SEQUENTIAL);
 
     await page.getByTestId("add-mcp-server-button").click();
 
@@ -926,27 +1067,29 @@ test(
     await page.waitForSelector(
       '[data-testid="dropdown_str_tool"]:not([disabled])',
       {
-        timeout: 30000,
+        timeout: TOOL_LIST_TIMEOUT,
         state: "visible",
       },
     );
 
     await page.getByTestId("dropdown_str_tool").click();
 
-    await page.waitForSelector('[data-testid="fetch-0-option"]', {
+    await page.waitForSelector('[data-testid="sequentialthinking-0-option"]', {
       state: "visible",
       timeout: 10000,
     });
 
-    const fetchOptionCount2 = await page.getByTestId("fetch-0-option").count();
+    const sequentialOptionCount2 = await page
+      .getByTestId("sequentialthinking-0-option")
+      .count();
 
-    expect(fetchOptionCount2).toBeGreaterThan(0);
+    expect(sequentialOptionCount2).toBeGreaterThan(0);
   },
 );
 
 test(
   "Streamable HTTP MCP server with server-everything should load tools correctly",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
     await awaitBootstrapTest(page);
@@ -1000,6 +1143,7 @@ test(
 
     const randomSuffix = Math.floor(Math.random() * 90000) + 10000;
     const testName = `test_streamable_http_${randomSuffix}`;
+    registeredServers.push(testName);
 
     await page.getByTestId("http-name-input").fill(testName);
     await page.getByTestId("http-url-input").fill(server);
@@ -1043,6 +1187,96 @@ test(
     const authHeader = await getAuthToken(page.request);
     await page.request.delete(`/api/v2/mcp/servers/${testName}`, {
       headers: { Authorization: authHeader },
+    });
+  },
+);
+
+test(
+  "stdio command with an embedded argument is refused, and command plus args is accepted",
+  { tag: ["@regression", "@workspace", "@components", "@mcp", "@stable"] },
+  async ({ page }) => {
+    // The refused registration is a deliberate 422. The fixture only FAILS a
+    // test on flow errors, but this keeps the intent explicit — and the run log
+    // will carry one expected `🚨 Backend Error: 422 /api/v2/mcp/servers/...`.
+    (page as any).allowFlowErrors();
+
+    await awaitBootstrapTest(page);
+
+    await page.waitForSelector('[data-testid="blank-flow"]', {
+      timeout: 30000,
+    });
+    await page.getByTestId("blank-flow").click();
+    await page.getByTestId("sidebar-nav-mcp").click();
+
+    // Sidebar trigger, not `openAddMcpServerModal` — this test adds no MCP node
+    // to the canvas, and that helper reaches the modal through the node's
+    // server dropdown. Two testid variants exist depending on whether servers
+    // already exist; same fallback the sidebar tests above use.
+    const sidebarButton = page.getByTestId("sidebar-add-mcp-server-button");
+    const fallbackButton = page.getByTestId("add-mcp-server-button-sidebar");
+    if (await sidebarButton.isVisible({ timeout: 30000 }).catch(() => false)) {
+      await sidebarButton.click();
+    } else {
+      await fallbackButton.click();
+    }
+    await page.waitForSelector('[data-testid="add-mcp-server-button"]', {
+      state: "visible",
+      timeout: 30000,
+    });
+
+    await page.getByTestId("stdio-tab").click();
+
+    await page.waitForSelector('[data-testid="stdio-name-input"]', {
+      state: "visible",
+      timeout: 30000,
+    });
+
+    const randomSuffix = Math.floor(Math.random() * 90000) + 10000; // 5-digit random number
+    const testName = `test_contract_${randomSuffix}`;
+    registeredServers.push(testName);
+    await page.getByTestId("stdio-name-input").fill(testName);
+
+    await test.step("an executable with the package glued on is refused", async () => {
+      await page
+        .getByTestId("stdio-command-input")
+        .fill(`${NPX} ${PKG_EVERYTHING}`);
+
+      await page.getByTestId("add-mcp-server-button").click();
+
+      // The dialog surfaces the policy message and stays open.
+      await expect(page.getByRole("dialog").getByRole("alert")).toContainText(
+        /single executable name or path/i,
+        { timeout: 15000 },
+      );
+      await expect(page.getByTestId("add-mcp-server-button")).toBeVisible();
+
+      // Asserted against the API too: a modal that stayed open while the server
+      // was created anyway would satisfy a UI-only check.
+      expect(await listMcpServerNames(page)).not.toContain(testName);
+    });
+
+    await test.step("the same registration split into command + args is accepted", async () => {
+      await page.getByTestId("stdio-command-input").fill(NPX);
+      await page.getByTestId("stdio-args_0").fill(PKG_EVERYTHING);
+
+      await page.getByTestId("add-mcp-server-button").click();
+
+      await expect(page.getByTestId("add-mcp-server-button")).toBeHidden({
+        timeout: 30000,
+      });
+
+      // The accepted half is what proves the validation discriminates rather
+      // than refusing everything.
+      expect(await listMcpServerNames(page)).toContain(testName);
+
+      const authHeader = await getAuthToken(page.request);
+      const stored = await (
+        await page.request.get(`/api/v2/mcp/servers/${testName}`, {
+          headers: authHeader ? { Authorization: authHeader } : undefined,
+        })
+      ).json();
+      expect(stored.command).toBe(NPX);
+      expect(stored.args).toEqual([PKG_EVERYTHING]);
     });
   },
 );
