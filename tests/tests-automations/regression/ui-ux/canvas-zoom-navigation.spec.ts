@@ -54,6 +54,17 @@ interface Viewport {
   scale: number;
 }
 
+/**
+ * A viewport plus the exact transform string it was parsed from.
+ *
+ * `waitForViewportSettled` returns this so a caller needing the raw string (the
+ * byte-identical idempotence assertion) uses the one the wait verified instead of
+ * reading the DOM again (#1099).
+ */
+interface SettledViewport extends Viewport {
+  transform: string;
+}
+
 interface Geometry {
   /** Distance between the nodes' union-box center and the pane center. */
   centerDeltaX: number;
@@ -64,17 +75,18 @@ interface Geometry {
 }
 
 /**
- * Reads the live React Flow viewport transform.
+ * Parses a React Flow viewport transform string.
  *
  * The transform is the single source of truth for what the user sees: React Flow
  * writes `translate(<x>px, <y>px) scale(<z>)` on `.react-flow__viewport` and
  * everything on the canvas is positioned by it.
+ *
+ * Pure, and deliberately so (#1099): it lets a caller that has ALREADY read and
+ * verified a transform turn that exact string into numbers, instead of going back
+ * to the DOM for a fresh read whose value nothing has checked. See
+ * `waitForViewportSettled`.
  */
-async function readViewport(page: Page): Promise<Viewport> {
-  const transform = await page
-    .locator(".react-flow__viewport")
-    .evaluate((el) => (el as HTMLElement).style.transform);
-
+function parseViewport(transform: string): Viewport {
   const match = transform.match(
     /translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)\s*scale\(([\d.]+)\)/,
   );
@@ -87,7 +99,14 @@ async function readViewport(page: Page): Promise<Viewport> {
   };
 }
 
-/** Raw transform string — used for the byte-identical idempotence assertion. */
+/**
+ * Raw transform string — the only DOM read in this file.
+ *
+ * There is deliberately no `readViewport` convenience wrapper (#1099): a caller
+ * that needs both the string and the numbers must get them from ONE read, so
+ * `parseViewport(await readTransform(page))` is written out at the call site
+ * rather than hidden behind a second helper that invites a second read.
+ */
 async function readTransform(page: Page): Promise<string> {
   return page
     .locator(".react-flow__viewport")
@@ -243,19 +262,32 @@ const UNREAD_TRANSFORM = "<unread>";
  *
  * It defaults to "any stable transform", which is correct only where no change is
  * expected: editor hydration and the idempotent second `fit_view` click.
+ *
+ * What it returns is the transform the poll ACCEPTED, parsed — not a fresh read
+ * (#1099). Re-reading the DOM after the poll would hand back a value nothing had
+ * checked, which is the same shape of hazard as the stale read above: the guards
+ * would prove one transform sound and the caller would assert on another.
+ *
+ * One exception, and it is the mirror image: a caller whose assertion would merely
+ * RESTATE its own `settledWhen` should keep reading the DOM itself, or the
+ * assertion becomes true by construction and cannot fail. See the toolbar Fit View
+ * step — don't "tidy" it into `.transform`.
  */
 async function waitForViewportSettled(
   page: Page,
   settledWhen: (transform: string) => boolean | Promise<boolean> = () => true,
-): Promise<Viewport> {
+): Promise<SettledViewport> {
   let previous = UNREAD_TRANSFORM;
+  let settled = UNREAD_TRANSFORM;
   await expect
     .poll(
       async () => {
         const current = await readTransform(page);
         const stable = current !== UNREAD_TRANSFORM && current === previous;
         previous = current;
-        return stable && (await settledWhen(current));
+        if (!stable || !(await settledWhen(current))) return false;
+        settled = current;
+        return true;
       },
       {
         timeout: 15000,
@@ -264,7 +296,7 @@ async function waitForViewportSettled(
       },
     )
     .toBe(true);
-  return readViewport(page);
+  return { ...parseViewport(settled), transform: settled };
 }
 
 /** `settledWhen` predicate: the viewport moved off `from` and then held. */
@@ -354,6 +386,10 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
         // The bound itself is asserted below, off the settled read.
         const before = await readTransform(page);
         const clicks = await zoomUntilClamped(page, "zoom_out");
+        // Zero clicks would mean the button was ALREADY disabled here, which the
+        // `movedFrom` wait below can only report as an opaque timeout. State it as
+        // a click count instead, so that failure names itself (#1099).
+        expect(clicks).toBeGreaterThan(0);
         expect(clicks).toBeLessThan(MAX_ZOOM_CLICKS);
 
         const clamped = await waitForViewportSettled(page, movedFrom(before));
@@ -366,6 +402,8 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
       await test.step("zoom in clamps at the maximum zoom and disables the button", async () => {
         const before = await readTransform(page);
         const clicks = await zoomUntilClamped(page, "zoom_in");
+        // Same reason as the step above (#1099).
+        expect(clicks).toBeGreaterThan(0);
         expect(clicks).toBeLessThan(MAX_ZOOM_CLICKS);
 
         const clamped = await waitForViewportSettled(page, movedFrom(before));
@@ -406,13 +444,20 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
         const displaced = await readTransform(page);
         await page.getByTestId("fit_view").click();
         const fitted = await waitForViewportSettled(page, movedFrom(displaced));
-        fittedTransform = await readTransform(page);
+        // The transform the wait verified, not a fresh read: the step-5 assertion
+        // below treats this string as canonical (#1099).
+        fittedTransform = fitted.transform;
 
-        // Sound for this fixture rather than a property of Fit View in general:
-        // the two nodes span 1090 x 315 flow px against a 1000 x 672 pane, so the
-        // unclamped fit is ~0.92 (measured 0.880331) — a factor of 2.3 off the
-        // bound. A fitted scale reading exactly `2` means the viewport never left
-        // the max-zoom clamp, which is the failure this asserts (#1094).
+        // Sound for this fixture rather than a property of Fit View in general,
+        // and the arithmetic closes exactly: the two nodes span 1090 x 315 flow
+        // px against a 1000 x 672 pane, and Langflow's toolbar handler calls
+        // `fitView({ padding: { left: "20px", right: "20px", top: "80px" } })`
+        // (CanvasControlsDropdown.tsx), so the fit is width-driven:
+        // (1000 - 20 - 20) / 1090 ~= 0.881 against the 0.880331 measured live —
+        // they agree to the rounding of the quoted span (960 / 0.880331 = 1090.5
+        // flow px). Either figure is a factor of ~2.3 off the bound. A fitted
+        // scale reading exactly `2` means the viewport never left the max-zoom
+        // clamp, which is the failure this asserts (#1094).
         expect(fitted.scale).toBeLessThan(MAX_ZOOM);
 
         const geometry = await measureGeometry(page);
@@ -437,11 +482,17 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
         // no-op and a not-yet-committed fit are indistinguishable from the
         // transform alone; the interval is what separates them in practice, and
         // the previous step has already proven this same click does commit.
+        //
+        // Idempotence here is also conditional on nothing being SELECTED between
+        // the two clicks: the handler's right padding jumps from 20px to 340px
+        // when the inspection panel is open with a node selected, so a selection
+        // would legitimately refit to a different transform. This spec never
+        // selects a node — stated because the assertion is byte-identical.
         await openCanvasControls(page);
         await page.getByTestId("fit_view").click();
-        await waitForViewportSettled(page);
+        const refitted = await waitForViewportSettled(page);
 
-        expect(await readTransform(page)).toBe(fittedTransform);
+        expect(refitted.transform).toBe(fittedTransform);
       });
     });
 
@@ -475,11 +526,13 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
         expect((await measureGeometry(page)).contained).toBe(false);
 
         await page.getByTestId("fit_view").click();
-        // The wait demands the move; the assertion below still states it, so a
-        // regression reports as a diff on the transform and not only as a wait
-        // timeout.
         await waitForViewportSettled(page, movedFrom(displacedTransform));
 
+        // Deliberately a FRESH read, and the one place in this file where that is
+        // the right call (#1099): asserting on the transform the wait returned
+        // would restate `movedFrom`'s own precondition, so it could not fail —
+        // a dead assertion. Reading again keeps it independent of the predicate,
+        // so a viewport that snaps back after settling still reddens here.
         expect(await readTransform(page)).not.toBe(displacedTransform);
         expect((await measureGeometry(page)).contained).toBe(true);
         // Off the zoom bound, both zoom controls are live again.
@@ -524,12 +577,20 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
       };
 
       await test.step("scrolling down zooms out around the pointer", async () => {
-        const anchorBefore = toFlowCoords(baseline, pointP.x, pointP.y, pane);
-        const before = await readTransform(page);
+        // ONE read, feeding both the anchor arithmetic and the wait predicate
+        // (#1099): computing the anchor off a different read than the one
+        // `movedFrom` is pinned to would let the two describe different
+        // viewports, which is exactly what the anchor comparison then measures.
+        const beforeTransform = await readTransform(page);
+        const before = parseViewport(beforeTransform);
+        const anchorBefore = toFlowCoords(before, pointP.x, pointP.y, pane);
 
         await page.mouse.move(pointP.x, pointP.y);
         await page.mouse.wheel(0, WHEEL_DELTA);
-        const scrolled = await waitForViewportSettled(page, movedFrom(before));
+        const scrolled = await waitForViewportSettled(
+          page,
+          movedFrom(beforeTransform),
+        );
 
         expect(scrolled.scale).toBeLessThan(baseline.scale);
 
@@ -543,9 +604,10 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
       });
 
       await test.step("scrolling up restores the previous zoom level", async () => {
-        const before = await readViewport(page);
-        const anchorBefore = toFlowCoords(before, pointP.x, pointP.y, pane);
+        // Same single read as the step above (#1099).
         const beforeTransform = await readTransform(page);
+        const before = parseViewport(beforeTransform);
+        const anchorBefore = toFlowCoords(before, pointP.x, pointP.y, pane);
 
         await page.mouse.wheel(0, -WHEEL_DELTA);
         const scrolled = await waitForViewportSettled(
@@ -568,9 +630,9 @@ test.describe("ui-ux — canvas zoom and navigation", () => {
       await test.step("the anchor follows the pointer to a second position", async () => {
         // A zoom pinned to the pane center (instead of the cursor) passes the
         // steps above only by luck and fails here.
-        const before = await readViewport(page);
-        const anchorBefore = toFlowCoords(before, pointQ.x, pointQ.y, pane);
         const beforeTransform = await readTransform(page);
+        const before = parseViewport(beforeTransform);
+        const anchorBefore = toFlowCoords(before, pointQ.x, pointQ.y, pane);
 
         await page.mouse.move(pointQ.x, pointQ.y);
         await page.mouse.wheel(0, WHEEL_DELTA);

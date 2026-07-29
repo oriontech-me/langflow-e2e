@@ -43,6 +43,27 @@ pane) rather than on "something changed". Only the two steps where no change is
 expected — editor hydration and the second, idempotent `fit_view` click — use the
 bare settle.
 
+The wait also **returns the transform it accepted**, parsed, rather than reading
+the DOM again once the poll clears (#1099). A fresh read would hand the caller a
+value none of the guards above had checked — the same shape of hazard, one step
+later: the wait would prove one transform sound and the assertion would run on
+another. Fit View idempotence, which compares the raw string across two clicks,
+therefore asserts on that verified string.
+
+The exception is the toolbar Fit View's "it moved" check, which keeps a **fresh**
+read on purpose. Its wait already demands `movedFrom(<displaced>)`, so asserting
+on the returned transform would restate the predicate's own precondition and could
+never fail. Reading the DOM again keeps that assertion independent of the wait, so
+it still catches a viewport that snaps back after settling — and it is what fails
+if the predicate is ever weakened.
+
+The same one-read rule applies on the way **in**. The wheel test needs the
+pre-gesture transform twice — as numbers, to place the pointer anchor in flow
+space, and as a string, to pin `movedFrom` — and takes both from a single read
+(`parseViewport(await readTransform(page))`). Two reads could describe two
+different viewports, and the drift between them is precisely what the anchor
+tolerance then measures. There is no `readViewport` helper for that reason.
+
 Four independent tests:
 
 1. **Zoom in / Zoom out** — `zoom_in` multiplies the viewport scale by `1.2` per
@@ -98,9 +119,9 @@ part of test 3's enabled-controls assertion), and the minimap.
 | Zoom-out clamp | `zoom_out` becomes `disabled` with scale exactly `0.25`; `zoom_in` still enabled |
 | Zoom-in clamp | `zoom_in` becomes `disabled` with scale exactly `2`; `zoom_out` still enabled |
 | Fit View precondition | at scale `2` the nodes' union box is NOT contained in the pane rect |
-| Fit View scale | the fitted scale is strictly below `maxZoom` (`2`). Sound for this fixture, not an accident of the pane: the two nodes span `1090 × 315` flow px, so the unclamped fit is `min(1000/1090, 672/315) ≈ 0.92` — measured `0.880331` live, a factor of 2.3 away from the bound (#1094) |
+| Fit View scale | the fitted scale is strictly below `maxZoom` (`2`). Sound for this fixture, not an accident of the pane, and the arithmetic closes exactly: the two nodes span `1090 × 315` flow px against a `1000 × 672` pane, and Langflow's toolbar handler calls `fitView({ padding: { left: "20px", right: "20px", top: "80px" } })` (`CanvasControlsDropdown.tsx`), so the fit is width-driven: `(1000 − 40)/1090 ≈ 0.881` against the `0.880331` measured live, agreeing to the rounding of the quoted span (`960 / 0.880331 = 1090.5` flow px). Either figure is a factor of ~2.3 away from the bound (#1094) |
 | Fit View centering | union box inside the pane rect (1 px tolerance) AND \|union center − pane center\| ≤ 4 px on both axes AND both node titles visible |
-| Fit View idempotence | second `fit_view` click leaves the `transform` string byte-identical |
+| Fit View idempotence | second `fit_view` click leaves the `transform` string byte-identical — conditional on no node being **selected** between the clicks, since the handler's right padding jumps to `340px` when the inspection panel is open with a selection; this spec never selects a node |
 | Toolbar collapsed | `main_canvas_controls` visible; `fit_view`/`zoom_in`/`zoom_out`/`reset_zoom` `count() === 0` |
 | Toolbar expanded | all four controls visible after clicking `canvas_controls_dropdown`; `fit_view` and `reset_zoom` enabled |
 | Toolbar Fit View wired | nodes NOT contained before the click; after it the transform differs, every node is inside the pane, and `zoom_in`/`zoom_out` are both enabled |
