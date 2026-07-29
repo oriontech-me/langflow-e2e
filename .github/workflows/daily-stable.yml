@@ -724,9 +724,17 @@ jobs:
       # Reports only — it sets no gate. The @stable auto-removal below keeps its
       # own guards untouched; consuming this attribution to exempt collateral
       # failures from the tag mutation is #1031, under its own rules.
+      #
+      # continue-on-error: the two steps that follow and matter most on a red day
+      # — `Auto-remove @stable from hard failures` and `Create issue on failure` —
+      # carry NO always(), so they run under the implicit success() of every step
+      # before them. A throw in this diagnostic would therefore SKIP the umbrella
+      # issue it exists to improve. The script swallows its own errors too; this is
+      # the second layer, for the case the failure is the `node` invocation itself.
       - name: Report mid-run backend outages
         id: liveness
         if: always()
+        continue-on-error: true
         run: node scripts/report-backend-outages.mjs
         env:
           LIVENESS_DIR: all-liveness

@@ -278,3 +278,21 @@ test("the CLI reports NOT MEASURED when no liveness artifact was downloaded", ()
   assert.match(outputs, /^measured=false$/m);
   assert.match(outputs, /^wedged=false$/m);
 });
+
+// The load-bearing contract: the merge job's `Auto-remove @stable from hard
+// failures` and `Create issue on failure` steps have no always(), so ANY red step
+// before them skips the umbrella issue. A malformed summary must therefore
+// degrade, never exit non-zero.
+test("the CLI exits 0 on a malformed summary instead of failing the merge job", () => {
+  const dir = mkdtempSync(join(tmpdir(), "liveness-report-"));
+  const liveness = join(dir, "all-liveness");
+  mkdirSync(liveness, { recursive: true });
+  // `files` as a string, not an array — enough to throw inside attribute().
+  writeFileSync(join(liveness, "backend-liveness.json"), JSON.stringify({ ...shard3, files: FILE_A }));
+
+  const stdout = execFileSync(process.execPath, [SCRIPT], {
+    encoding: "utf8",
+    env: { ...process.env, LIVENESS_DIR: liveness, PLAYWRIGHT_JSON: join(dir, "absent.json") },
+  });
+  assert.match(stdout, /reporter error \(ignored\)/);
+});

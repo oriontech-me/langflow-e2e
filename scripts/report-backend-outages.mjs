@@ -24,6 +24,12 @@
 // missing artifact yields `measured=false`, which must never be read as "no
 // wedge happened" — the distinction a silent diagnostic would erase.
 //
+// "Never fails the run" is ENFORCED, not merely intended: the entry point below
+// swallows every throw, and the workflow step carries continue-on-error. Both
+// halves matter, because the merge job's `Auto-remove @stable from hard failures`
+// and `Create issue on failure` steps have no always() — a red step here would
+// skip the umbrella issue this reporter is meant to improve.
+//
 // Inputs (env):
 //   LIVENESS_DIR      directory of per-shard summary JSONs (default all-liveness)
 //   PLAYWRIGHT_JSON   merged Playwright JSON report (default results.json)
@@ -312,5 +318,17 @@ function isMainModule() {
 }
 
 if (isMainModule()) {
-  main();
+  try {
+    main();
+  } catch (err) {
+    // A diagnostic must never be the reason a step goes red — same contract as
+    // scripts/watch-backend.mjs. Here the stakes are higher than losing the
+    // section: the merge job's `Auto-remove @stable from hard failures` and
+    // `Create issue on failure` steps carry no always(), so they run under the
+    // implicit success() of every step before them. A throw here would SKIP the
+    // umbrella issue on a red daily — this reporter exists to make that issue
+    // more useful, not to delete it. The step also carries continue-on-error as
+    // a second layer.
+    console.log(`[liveness] reporter error (ignored): ${err?.stack || err}`);
+  }
 }
