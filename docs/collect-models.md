@@ -49,20 +49,11 @@ surface (the #505 lesson).
 
 ## Step by step *(required)*
 
-1. Navigate to Settings → Model Providers
-2. For each configured provider (OpenAI, Anthropic, Google):
-   a. Click the provider entry to open its configuration panel
-   b. If an API key is present in the environment and the panel is visible, enter the key and click Save / Replace
-   c. Wait for model toggles to load; enable any that are unchecked
-   d. Record each model name paired with the provider
-3. Write the collected model list to `data/models.json`
-4. For each provider, call its API directly to confirm the key is active. The
-   probe walks the collected catalog in preference order rather than trusting a
-   single lead model, so one gated/preview model cannot disable a whole provider
-   (#570). It stops early on the first model that validates — or, when the SAME
-   error repeats 3× in a row, on the conclusion that the error does not depend on
-   the model at all (#1011; see Validation criterion).
-5. **Probe the build axis** (#900), in two layers, before the records are written:
+1. **Probe the BUILD axis first** (#900), on a still-idle backend. The order is
+   load-bearing — see *The build axis must run BEFORE the UI load* in the Notes. This
+   step needs only the component registry: not `models.json`, not the keys. Two
+   layers:
+
    a. **Catalog.** One `GET /api/v1/all` for every provider at once. Each provider
       declares the exact component keys it needs (chat + embeddings); a key absent
       from the registry means its distribution is not installed.
@@ -72,6 +63,19 @@ surface (the #505 lesson).
       20 s budget. On timeout the job is **cancelled** and that component is
       recorded `unknown`. The flow is deleted in a `finally`. A registry hit does
       **not** prove the component can build — see the contract table below.
+2. Navigate to Settings → Model Providers
+3. For each configured provider (OpenAI, Anthropic, Google):
+   a. Click the provider entry to open its configuration panel
+   b. If an API key is present in the environment and the panel is visible, enter the key and click Save / Replace
+   c. Wait for model toggles to load; enable any that are unchecked
+   d. Record each model name paired with the provider
+4. Write the collected model list to `data/models.json`
+5. **Probe the KEY axis:** for each provider, call its API directly to confirm the
+   key is active. The probe walks the collected catalog in preference order rather
+   than trusting a single lead model, so one gated/preview model cannot disable a
+   whole provider (#570). It stops early on the first model that validates — or, when
+   the SAME error repeats 3× in a row, on the conclusion that the error does not
+   depend on the model at all (#1011; see Validation criterion).
 6. Write the provider status records to `data/providers.json`, merging both axes:
    a build-axis failure records `inactive` with a reason that names the missing
    **layer** (distribution vs. runtime package) and, when Langflow reports it, the
@@ -314,6 +318,27 @@ hiding the package under a warm worker changes nothing.
 **Do not "simplify" this back to one layer.** Each layer catches a shape the other
 cannot, and which shape a given provider produces is decided upstream, without
 notice, by where a maintainer happens to put an `import`.
+
+### The build axis must run BEFORE the UI load
+
+`collect-models` saves three provider keys through the Settings UI, and each save
+makes Langflow validate the provider and fetch its model list. On the single-worker
+CI backend that is enough load to wedge it — `pr-validation.yml` and
+`daily-stable.yml` both carry a dedicated *"Wait for the backend to recover from the
+collect-models load"* step immediately after this spec for exactly that reason
+(#922/#927/#1044).
+
+The build probe was first placed *after* that load, concurrently with the key probe.
+Measured on PR #1051's CI run, twice: **every** component timed out at 20 s — several
+on the `POST` that merely *starts* the build — so the axis reported `unknown` for all
+three providers and delivered no signal at all, while gunicorn logged two
+`WORKER TIMEOUT`s. Locally, against an idle backend, the same probe takes ~9 s.
+
+The probe depends on nothing the UI collection produces — not `models.json`, not the
+saved keys, only the component registry. So it runs first, on an idle backend. **Do
+not move it back after the collection**; the failure is not subtle but it is silent
+in the sense that matters: the axis degrades to `unknown` and the run still goes
+green.
 
 ### The `unknown` state is not decoration — it is a CI regression made permanent
 

@@ -1,10 +1,10 @@
 // Test spec that runs this helper: tests/collect-models.spec.ts
-import type { APIRequestContext, Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import path from "path";
 import fs from "fs";
 import { SettingsPage } from "../../pages/SettingsPage";
 import { providerConfigMap, type Provider } from "./provider-config";
-import { probeBuildAxis } from "./probe-component-buildable";
+import { probeBuildAxis, type ProviderVerdict } from "./probe-component-buildable";
 
 const DATA_DIR = path.join(__dirname, "data");
 const PROVIDERS_PATH = path.join(DATA_DIR, "providers.json");
@@ -298,18 +298,14 @@ export async function validateProviderWithFallback(
 // mostly-idle HTTP, and the key probe is network-bound too.
 async function collectProviders(
   models: ModelRecord[],
-  request: APIRequestContext,
+  buildAxis: Record<string, ProviderVerdict>,
 ): Promise<ProviderRecord[]> {
-  console.log("Validating providers via API (key axis) and build probe (build axis)...");
+  console.log("Validating providers via API (key axis)...");
 
-  const knownProviders = Object.keys(providerConfigMap) as Provider[];
-  const [results, buildAxis] = await Promise.all([
-    Promise.all([
-      validateProviderWithFallback("openai", rankCandidates("openai", modelsFor(models, "openai")), validateOpenAI),
-      validateProviderWithFallback("anthropic", rankCandidates("anthropic", modelsFor(models, "anthropic")), validateAnthropic),
-      validateProviderWithFallback("google", rankCandidates("google", modelsFor(models, "google")), validateGoogle),
-    ]),
-    probeBuildAxis(request, knownProviders),
+  const results = await Promise.all([
+    validateProviderWithFallback("openai", rankCandidates("openai", modelsFor(models, "openai")), validateOpenAI),
+    validateProviderWithFallback("anthropic", rankCandidates("anthropic", modelsFor(models, "anthropic")), validateAnthropic),
+    validateProviderWithFallback("google", rankCandidates("google", modelsFor(models, "google")), validateGoogle),
   ]);
 
   const merged = results.map((r) => {
@@ -461,12 +457,26 @@ export async function collectAll(page: Page): Promise<void> {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  // Step 1: Collect models from UI via Settings
+  // Step 1: BUILD axis first, on a still-idle backend.
+  //
+  // Order is load-bearing, not cosmetic (#900). Step 2 saves three provider keys
+  // through the Settings UI, and each save makes Langflow validate the provider and
+  // fetch its model list — enough load on the single-worker CI backend that
+  // `pr-validation.yml` carries a dedicated "Wait for the backend to recover from
+  // the collect-models load" step after this spec (#922/#927/#1044). Running the
+  // build probe after that load put it at the worst possible moment: on PR #1051's
+  // CI run every component timed out, several on the POST that merely STARTS the
+  // build, so the axis reported `unknown` for all three providers and produced no
+  // signal at all. The probe needs only the component registry — not models.json,
+  // not the keys — so it can and must run before that load.
+  const knownProviders = Object.keys(providerConfigMap) as Provider[];
+  const buildAxis = await probeBuildAxis(page.request, knownProviders);
+
+  // Step 2: Collect models from UI via Settings
   const models = await collectModels(page);
 
-  // Step 2: Validate providers on both axes — key (provider API, falling back
-  // across candidate models) and build (this image can instantiate the component)
-  const providers = await collectProviders(models, page.request);
+  // Step 3: Validate the key axis and merge both verdicts
+  const providers = await collectProviders(models, buildAxis);
   fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
   console.log(`providers.json saved with ${providers.length} providers.`);
 
