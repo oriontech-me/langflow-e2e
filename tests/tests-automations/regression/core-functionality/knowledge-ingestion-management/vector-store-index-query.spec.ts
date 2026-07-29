@@ -61,10 +61,10 @@ const createdKbNames: string[] = [];
 // knowledge-ingestion specs).
 test.describe.configure({ mode: "serial" });
 
-// Google embeds every chunk into the Knowledge Base, so gate on provider HEALTH rather than on
-// the mere presence of the env var: a key that exists but is drained blocks
-// the backend past gunicorn's 300s timeout and kills the shard's Langflow
-// worker (#1029).
+// Google embeds every chunk into the Knowledge Base, so gate on provider HEALTH
+// rather than on the mere presence of the env var: a key that exists but is
+// drained blocks the backend past gunicorn's 300s timeout and kills the shard's
+// Langflow worker (#1029).
 const gate = providerSkipGate("google");
 test.skip(gate.skip, gate.reason);
 

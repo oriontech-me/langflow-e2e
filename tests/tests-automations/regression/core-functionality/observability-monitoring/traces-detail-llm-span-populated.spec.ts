@@ -66,12 +66,11 @@ function languageModelNodeId(): string {
 test.describe("Single trace — populated LLM span (OpenAI)", () => {
   test.describe.configure({ mode: "serial" });
 
-  // A real LLM call is the whole point of this spec — without a key the
-  // tokenUsage / modelName / latencyMs values can never populate.
-  // A real LLM call is the whole point of this spec, so gate on provider HEALTH rather than on
-  // the mere presence of the env var: a key that exists but is drained blocks
-  // the backend past gunicorn's 300s timeout and kills the shard's Langflow
-  // worker (#1029).
+  // A real LLM call is the whole point of this spec — without one the tokenUsage /
+  // modelName / latencyMs values can never populate. So gate on provider HEALTH,
+  // not on the mere presence of the env var: a key that exists but is drained
+  // blocks the backend past gunicorn's 300s timeout and kills the shard's
+  // Langflow worker (#1029).
   const gate = providerSkipGate("openai");
   test.skip(gate.skip, gate.reason);
 

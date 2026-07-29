@@ -12,16 +12,17 @@ test(
   { tag: ["@release", "@workspace", "@components"] },
 
   async ({ page }) => {
-    // Three real builds run below, so gate on provider HEALTH rather than on
-    // the mere presence of the env var: a key that exists but is drained blocks
-    // the backend past gunicorn's 300s timeout and kills the shard's Langflow
-    // worker (#1029).
-    const gate = providerSkipGate("openai");
-    test.skip(gate.skip, gate.reason);
-
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
     }
+
+    // Three real builds run below, so gate on provider HEALTH rather than on
+    // the mere presence of the env var: a key that exists but is drained blocks
+    // the backend past gunicorn's 300s timeout and kills the shard's Langflow
+    // worker (#1029). After the .env load, so a key that lives only in .env is
+    // visible to the gate on a local run.
+    const gate = providerSkipGate("openai");
+    test.skip(gate.skip, gate.reason);
 
     await awaitBootstrapTest(page);
 
