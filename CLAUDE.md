@@ -34,8 +34,9 @@ ANTHROPIC_API_KEY=
 Start a Langflow instance before running tests:
 
 ```bash
-./scripts/start-langflow-docker.sh           # Docker (nightly by default)
-./scripts/start-langflow-docker.sh 1.5.1     # Specific version
+./scripts/start-langflow-docker.sh           # Docker — nightly (langflowai/langflow-nightly:latest)
+./scripts/start-langflow-docker.sh 1.5.1     # Docker — a released version (langflowai/langflow)
+LANGFLOW_IMAGE=langflowai/langflow:latest ./scripts/start-langflow-docker.sh   # any exact image
 ./scripts/start-langflow-pip.sh              # Via pip (local dev)
 ./scripts/stop-langflow-docker.sh            # Stop Docker instance
 ```

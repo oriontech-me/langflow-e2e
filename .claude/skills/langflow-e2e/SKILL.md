@@ -198,40 +198,36 @@ interleaving; the JSON stats caught it.
 
 ```bash
 cp .env.example .env        # set PLAYWRIGHT_BASE_URL, superuser creds, API keys
-./scripts/start-langflow-docker.sh           # Docker — see nightly-vs-stable trap below
-./scripts/start-langflow-docker.sh 1.5.1     # specific stable version
+./scripts/start-langflow-docker.sh           # Docker — nightly (the image CI runs)
+./scripts/start-langflow-docker.sh 1.5.1     # specific released version
 ./scripts/start-langflow-pip.sh              # via pip (local dev)
 ./scripts/stop-langflow-docker.sh            # stop Docker instance
 ```
 
 An instance must be up (default `http://localhost:7860`) before running.
 
-> **Trap — `start-langflow-docker.sh` does NOT run nightly.** Despite the "nightly
-> by default" claim in CLAUDE.md, the script hardcodes
-> `IMAGE="langflowai/langflow:${tag}"` with `tag` defaulting to `latest` — that is
-> the **stable** repo (`langflowai/langflow:latest` → e.g. 1.10.1), a *different
-> Docker repo* from nightly (`langflowai/langflow-nightly`). No tag arg makes the
-> script pull nightly (`langflowai/langflow:nightly-latest` doesn't exist). Running
-> it blindly silently downgrades the instance to stable and your tests validate the
-> wrong build. To (re)start on **nightly**, run the image directly with the script's
-> flags:
-> ```bash
-> docker rm -f langflow-e2e-runner
-> docker run -d --name langflow-e2e-runner -p 7860:7860 \
->   -e LANGFLOW_AUTO_LOGIN=true -e LANGFLOW_SUPERUSER=langflow \
->   -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 -e LANGFLOW_DEACTIVATE_TRACING=true \
->   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true -e LANGFLOW_WORKERS=1 \
->   langflowai/langflow-nightly:latest
-> ```
-> `-e LANGFLOW_WORKERS=1` caps the backend to one worker. Langflow defaults to
+> **Which image you get.** With no argument the script starts
+> `langflowai/langflow-nightly:latest` — the image CI runs — and refreshes that
+> moving tag before starting, so a stale local copy cannot silently take over. A
+> version argument (`1.5.1`) resolves against the **released** repo
+> `langflowai/langflow`, because the nightly repo keeps only recent dev tags; for
+> anything else pass an exact reference,
+> `LANGFLOW_IMAGE=langflowai/langflow:latest ./scripts/start-langflow-docker.sh`.
+> Until #1076 the repository was hardcoded to `langflowai/langflow`, so the script
+> could not reach the nightly at all and silently validated the wrong build — if
+> you find a hand-rolled `docker run` in an older doc or issue, that is the
+> workaround it needed.
+> The script prints the running version on success; confirm any time with
+> `curl -s localhost:7860/api/v1/version` — the nightly package reports
+> `"package":"Langflow Nightly"` and a `.devNN` version.
+>
+> `LANGFLOW_WORKERS` defaults to 1 in the script. Langflow itself defaults to
 > `(2*cpu)+1` workers, each inheriting the full in-memory state; on a small local
 > Docker VM (~4 GB, no per-container limit) several heavy workers exhaust memory
 > and the kernel SIGKILLs one mid-build — surfacing as `ERR_EMPTY_RESPONSE` / a
 > node run that never completes when running the knowledge/agent specs (#773).
-> One worker is plenty locally (heavy specs run `--workers=1`); drop the flag /
-> raise it on a beefier box.
-> Always confirm with `curl -s localhost:7860/api/v1/version` — the nightly package
-> reports `"package":"Langflow Nightly"` and a `.devNN` version.
+> One worker is plenty locally (heavy specs run `--workers=1`); raise it on a
+> beefier box with `LANGFLOW_WORKERS=4 ./scripts/start-langflow-docker.sh`.
 >
 > **Trap — the nightly image ships `LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false`.** With
 > the flag off (the image default, seen from ~1.11.0.dev42), custom-component
@@ -256,18 +252,14 @@ docker inspect --format '{{.Id}}' langflowai/langflow-nightly:latest  # ...vs fr
 ```
 
 If the ids differ (or `docker pull` reports a new digest), the running instance
-is **stale** — restart it on the fresh image before testing. **Do not use
-`start-langflow-docker.sh` for this** (it pulls stable — see the trap above); run
-the nightly image directly:
+is **stale** — restart it on the fresh image before testing:
 
 ```bash
-docker rm -f langflow-e2e-runner
-docker run -d --name langflow-e2e-runner -p 7860:7860 \
-  -e LANGFLOW_AUTO_LOGIN=true -e LANGFLOW_SUPERUSER=langflow \
-  -e LANGFLOW_SUPERUSER_PASSWORD=langflow123 -e LANGFLOW_DEACTIVATE_TRACING=true \
-  -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true -e LANGFLOW_WORKERS=1 \
-  langflowai/langflow-nightly:latest
+./scripts/start-langflow-docker.sh    # pulls nightly:latest, then restarts on it
 ```
+
+The script refreshes the moving tag itself, so step 2 above is only needed to
+*detect* staleness in an instance you want to keep running.
 
 `-e LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true` is required — the nightly image
 defaults it to `false`, which hides `sidebar-custom-component-button` and makes
