@@ -801,7 +801,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 413 `test()` calls carrying the `@stable` tag, distributed across 167 spec
+> 414 `test()` calls carrying the `@stable` tag, distributed across 167 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1107,6 +1107,7 @@
 - [x] playground opens with chat textarea pre-filled from ChatInput Input Text → `playground-input-text-prefill.spec.ts`
 - [x] creating a new session re-applies the Input Text pre-fill → `playground-input-text-prefill.spec.ts`
 - [x] pre-filled value is sent as the first message of the session → `playground-input-text-prefill.spec.ts`
+- [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
 - [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
 - [x] message-logs-option must open the Session Logs modal for the active session → `playground-message-logs.spec.ts`
