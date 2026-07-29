@@ -642,16 +642,12 @@ test(
 
     await adjustScreenView(page, { numberOfZoomOut: 3 });
 
-    // Explicit postcondition gate, kept from the pre-#1087 sequence. It no longer
-    // CLOSES anything — adjustScreenView leaves the menu closed by reading the
-    // trigger's `data-state` (#1053) — it ASSERTS that it did, and fails here,
-    // naming the canvas controls, instead of ~60 lines down as "<html> intercepts
-    // pointer events" on the mcp-server-dropdown click. That is the failure this
-    // test actually hit (#576), so the gate is worth its one locator call.
-    //
-    // The `keyboard.press("Escape")` that preceded it is deliberately gone: it
-    // would close a menu the helper had failed to close and hide that regression
-    // — the quiet workaround #997 exists to remove.
+    // Postcondition gate kept from the pre-#1087 sequence: adjustScreenView already
+    // leaves the menu closed by reading the trigger's `data-state` (#1053), so this
+    // only ASSERTS that it did — failing here, naming the canvas controls, instead
+    // of ~60 lines down as "<html> intercepts pointer events" on the
+    // mcp-server-dropdown click (#576). The `keyboard.press("Escape")` that used to
+    // precede it is gone on purpose: it would mask that regression (#997).
     await expect(page.getByTestId("zoom_out")).toBeHidden();
 
     await openAddMcpServerModal(page);
