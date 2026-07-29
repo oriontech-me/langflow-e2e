@@ -801,7 +801,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 410 `test()` calls carrying the `@stable` tag, distributed across 167 spec
+> 411 `test()` calls carrying the `@stable` tag, distributed across 167 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1056,6 +1056,7 @@
 
 #### core-functionality/model-provider/
 - [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
+- [x] configured Anthropic selects a Claude model in the Agent and executes the flow → `anthropic-provider.spec.ts`
 - [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
 - [x] configured Google selects a Gemini model in the Agent and executes the flow → `google-provider.spec.ts`
