@@ -1,4 +1,3 @@
-import type { Route } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -7,19 +6,6 @@ async function openPlaygroundWithMessage(
   page: any,
   messageText: string,
 ): Promise<void> {
-  await page.route("**/api/v1/run/**", async (route: Route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        outputs: [
-          { outputs: [{ results: { message: { text: "Bot reply" } } }] },
-        ],
-        session_id: "msg-edit-session",
-      }),
-    });
-  });
-
   await page.getByTestId("playground-btn-flow-io").click();
   await page.waitForSelector('[data-testid="input-chat-playground"]', {
     timeout: 15000,
@@ -31,6 +17,12 @@ async function openPlaygroundWithMessage(
   await page.waitForSelector('[data-testid="div-chat-message"]', {
     timeout: 15000,
   });
+
+  // The user bubble appears while the flow run is still executing, and a message
+  // update issued mid-run is rejected ("Error updating messages.") — the flake
+  // behind #1062. Gate on the run being finished: stop hidden AND send visible.
+  await expect(page.getByTestId("button-stop")).toBeHidden({ timeout: 60000 });
+  await expect(page.getByTestId("button-send")).toBeVisible({ timeout: 60000 });
 }
 
 async function hoverMessageAndClickEdit(
@@ -96,11 +88,9 @@ test.describe("Playground Message Edit", () => {
     }
   });
 
-  // Quarantined for #1062 — recurrent flake (2026-07-20 / 07-29): hover does
-  // not reveal the edit button.
-  test.fixme(
+  test(
     "edit user message — hover reveals edit button and saved changes replace original text",
-    { tag: ["@release", "@playground"] },
+    { tag: ["@release", "@playground", "@stable"] },
     async ({ page }) => {
       await test.step("set up flow", async () => {
         createdFlowId = await setupPlayground(page);
