@@ -458,6 +458,45 @@ jobs:
             sleep 5
           done
 
+      # Mid-run backend liveness (#1030). The gate above only proves the backend
+      # is alive when Playwright STARTS. On the heavy shards the single worker
+      # keeps wedging DURING the run: on run 30444299314 gunicorn killed it 7
+      # times on shard 3 and 10 times on shard 4, spread evenly across ~30
+      # minutes of specs. Those kills are visible only in the service container
+      # log, and only 60-120 s AFTER the event loop actually stalled
+      # (LANGFLOW_WORKER_TIMEOUT=120, #1048) — so an outage window inferred from
+      # them is 60-120 s wide, and at that wedge frequency such windows cover
+      # 33-73% of the shard. Any failure "correlates" with one by chance, which
+      # is why the wedge kept costing a full triage cycle to attribute.
+      #
+      # Measuring from inside fixes the resolution: probe the same URL the specs
+      # use every 2 s, and two consecutive failures bound an outage to ~4 s.
+      #
+      # DIAGNOSTIC ONLY — it never fails a step and never aborts the shard.
+      # Aborting was this issue's original proposal and the data rejected it:
+      # shard 4 wedged ten times and still passed 101 specs, so an abort would
+      # discard far more coverage than it saves.
+      - name: Start the backend liveness recorder (shard ${{ matrix.shard }})
+        # Force bash for `disown` — the container's default shell is sh (dash).
+        # Same reason as the port-forward step above.
+        shell: bash
+        run: |
+          nohup node scripts/watch-backend.mjs > /tmp/liveness.log 2>&1 &
+          echo "$!" > /tmp/liveness.pid
+          disown
+          echo "Backend liveness recorder started (pid $(cat /tmp/liveness.pid))."
+        env:
+          WATCH_URL: http://localhost:7860/api/v1/version
+          WATCH_OUT: backend-liveness.jsonl
+          WATCH_INTERVAL_MS: "2000"
+          # A wedged worker ACCEPTS the connection and never answers, so the
+          # probe needs its own deadline — without it the recorder would hang
+          # exactly when it has something to record.
+          WATCH_TIMEOUT_MS: "4000"
+          # Backstop so a recorder that outlives its kill cannot idle for the
+          # job's whole lifetime. Well above any observed shard duration (~40 min).
+          WATCH_MAX_SECONDS: "5400"
+
       - name: Run @stable tests (shard ${{ matrix.shard }})
         # Sharded run. The reporter list is NOT overridden on the CLI: setting
         # PW_SHARD_FILE_LEVEL selects the sharded reporter shape in
@@ -487,6 +526,52 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+
+      # always(): the liveness data is most valuable precisely when the shard
+      # went red, and a shard killed by its own timeout still leaves a probe log
+      # worth summarizing. WATCH_FILES carries this shard's spec list into the
+      # summary because the MERGED report has no shard column — without it the
+      # merge job could blame shard 3's outage for a shard-4 failure (#1030).
+      - name: Summarize backend liveness (shard ${{ matrix.shard }})
+        if: always()
+        shell: bash
+        run: |
+          # SIGTERM is the recorder's normal exit path: it stops after the
+          # current probe. `|| true` so a recorder that already died (or never
+          # started) cannot fail this step.
+          if [ -f /tmp/liveness.pid ]; then
+            kill "$(cat /tmp/liveness.pid)" 2>/dev/null || true
+          fi
+          # Let the in-flight probe land before reading the log — a probe can be
+          # mid-append when the signal arrives.
+          sleep 3
+          mkdir -p liveness
+          node scripts/watch-backend.mjs --summarize
+          # Ship the raw probe log too: the summary answers "when and how long",
+          # the log answers "what did the backend say", which is what a forensic
+          # pass on a new wedge shape needs.
+          cp backend-liveness.jsonl liveness/ 2>/dev/null || true
+          echo "--- recorder stdout (tail) ---"
+          tail -n 5 /tmp/liveness.log 2>/dev/null || true
+        env:
+          WATCH_OUT: backend-liveness.jsonl
+          WATCH_SUMMARY: liveness/backend-liveness.json
+          WATCH_LABEL: ${{ matrix.shard }}
+          WATCH_FILES: ${{ matrix.files }}
+
+      - name: Upload backend liveness (shard ${{ matrix.shard }})
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: liveness-${{ matrix.shard }}
+          path: liveness/
+          retention-days: 7
+          # NOT `error` (unlike the blob upload): a shard that died before the
+          # recorder ever wrote a line has no liveness data, and a missing
+          # diagnostic must not turn into a red step. The merge job reports the
+          # absence as `measured=false`, which it renders as UNKNOWN — never as
+          # a healthy backend.
+          if-no-files-found: warn
 
       # Resolve the ACTUAL Langflow version running in the service container.
       # The image tag is just `:latest` (or an RC/stable tag), so it never
@@ -544,6 +629,21 @@ jobs:
           # not recurse). The per-shard blob zips are uniquely named
           # (report-<hash>-<shard>.zip), so flattening cannot collide.
           merge-multiple: true
+
+      # Liveness summaries from every shard (#1030). Deliberately WITHOUT
+      # merge-multiple: each shard names its file `backend-liveness.json`, so
+      # flattening would have them overwrite each other. The reader recurses into
+      # the per-artifact subdirectories instead.
+      # continue-on-error: no shard ever uploading liveness data (an old shard
+      # job, a run that died in prep) must not fail the merge — the reporter
+      # renders that as UNKNOWN, which is the honest verdict.
+      - name: Download shard liveness data
+        uses: actions/download-artifact@v7
+        if: always()
+        continue-on-error: true
+        with:
+          pattern: liveness-*
+          path: all-liveness
 
       - name: Guard — every expected shard produced a blob
         id: shardguard
@@ -615,8 +715,25 @@ jobs:
         env:
           PLAYWRIGHT_JSON: results.json
 
+      # Name the wedge (#1030). Runs after the merge so it can attribute failing
+      # attempts to the outages measured on their OWN shard, and before the
+      # umbrella issue so the section can lead the body: a wedged run has to
+      # announce the wedge, not a list of collateral specs that reads as
+      # per-test rot.
+      #
+      # Reports only — it sets no gate. The @stable auto-removal below keeps its
+      # own guards untouched; consuming this attribution to exempt collateral
+      # failures from the tag mutation is #1031, under its own rules.
+      - name: Report mid-run backend outages
+        id: liveness
+        if: always()
+        run: node scripts/report-backend-outages.mjs
+        env:
+          LIVENESS_DIR: all-liveness
+          PLAYWRIGHT_JSON: results.json
+
       - name: Upload Playwright report (full, heavy)
-        id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)
+        id: upload_report                   # ← full report: index.html + data/ + trace/ attachments (~380 MB)
         uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -829,6 +946,11 @@ jobs:
           RUN_UNREADABLE: ${{ steps.runguard.outputs.unreadable }}
           RUN_ERRORS: ${{ steps.runguard.outputs.report_errors }}
           RUN_FIRST_ERROR: ${{ steps.runguard.outputs.first_error }}
+          # In-run backend liveness (#1030). Rendered on EVERY umbrella issue,
+          # not only on a wedged run: "the backend answered every probe" rules
+          # the wedge out for the triager, and "not measured" says the state is
+          # unknown. Only silence would be misleading.
+          LIVENESS_MD: ${{ steps.liveness.outputs.summary_md }}
         with:
           script: |
             const today = new Date().toISOString().split('T')[0];
@@ -873,6 +995,12 @@ jobs:
                     '3. If the test is incorrect or outdated: remove the `@stable` tag from the test and open a fix PR',
                     '4. If it is a Langflow regression: flag it to the team and monitor upstream',
                   ];
+            // The liveness section leads the body when the backend went down:
+            // the cause has to be the first thing read, ahead of the per-test
+            // material, or triage starts from the collateral specs again
+            // (#1030). Empty when the reporting step produced no output at all.
+            const liveness = (process.env.LIVENESS_MD || '').trim();
+            const livenessSection = liveness ? [liveness, ''] : [];
             // The title is what gets scanned in the issue list, so an empty run
             // must not claim that tests failed — none ran.
             const title = empty
@@ -889,6 +1017,7 @@ jobs:
                 `- **Langflow version:** \`${image}\``,
                 `- **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
                 '',
+                ...livenessSection,
                 ...section,
                 '',
                 '/cc @Victor-w-Madeira @daniellicnerski1 @rafaelgiln',
