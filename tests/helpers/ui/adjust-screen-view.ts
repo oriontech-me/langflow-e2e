@@ -1,6 +1,10 @@
 import type { Page } from "@playwright/test";
+import {
+  CANVAS_CONTROLS,
+  closeCanvasControls,
+  openCanvasControls,
+} from "./canvas-controls";
 
-const CONTROLS = "canvas_controls_dropdown";
 const FIT_VIEW = "fit_view";
 const ZOOM_OUT = "zoom_out";
 const VIEWPORT = ".react-flow__viewport";
@@ -52,54 +56,6 @@ async function waitForViewportSettled(page: Page): Promise<void> {
 }
 
 /**
- * Leaves the canvas-controls menu CLOSED — whoever opened it.
- *
- * The postcondition is what the callers need, and it is deliberately not
- * expressed as a toggle. An open canvas-controls menu is a documented click
- * interceptor for the next canvas action (#576), so "close it if it is open"
- * is correct on every path; "click the trigger again" is only correct while
- * the menu happens to be open, and silently *opens* one otherwise.
- *
- * Radix renders the trigger with `data-state="open" | "closed"` (verified on
- * Nightly 1.12.0.dev7), which answers the question directly. If that attribute
- * ever disappears we fall back to intent — close only what this call opened —
- * which is still safe: it can leave a pre-existing menu open, but it can never
- * open one.
- *
- * That fallback is ANNOUNCED rather than silent, and the warning is the point.
- * "Close only what this call opened" is precisely the fix #997 proposed and this
- * helper rejects, so degrading into it un-fixes the already-open case (#576's
- * leftover interceptor) — and no test can catch that, because the unit test for
- * this branch asserts the fallback as correct behaviour. If the attribute moves
- * off the element carrying the testid, the only signal will be this line.
- */
-async function closeCanvasControls(
-  page: Page,
-  openedByThisCall: boolean,
-): Promise<void> {
-  const controls = page.getByTestId(CONTROLS);
-  const state = await controls
-    .getAttribute("data-state", { timeout: 1000 })
-    .catch(() => null);
-
-  if (state === null) {
-    console.warn(
-      `⚠️  [adjustScreenView] "${CONTROLS}" exposed no \`data-state\` — falling ` +
-        `back to closing only what this call opened. A menu that was ALREADY ` +
-        `open stays open and will intercept the next canvas click (#576). This ` +
-        `is the behaviour #997 rejected: find where Radix now carries the ` +
-        `open/closed state and read it there.`,
-    );
-  }
-
-  const isOpen = state === null ? openedByThisCall : state === "open";
-
-  if (isOpen) {
-    await controls.click({ force: true, timeout: 1000 });
-  }
-}
-
-/**
  * Fits the canvas to the flow, optionally zooms out, and returns with the
  * canvas-controls menu closed.
  *
@@ -112,7 +68,7 @@ async function closeCanvasControls(
  * That layout is a property of the current UI, not a contract: the day Langflow
  * surfaces the fit-view control directly on the canvas, `fit_view` is present
  * with the menu closed. This helper must not open a menu in that case — see
- * `closeCanvasControls` and issue #997.
+ * `./canvas-controls` and issue #997.
  *
  * What it deliberately does NOT do is survive a *partial* migration — fit-view
  * moved out, zoom-out left behind. Zooming out would then need a menu this call
@@ -129,20 +85,11 @@ export async function adjustScreenView(
     numberOfZoomOut?: number;
   } = {},
 ) {
-  await page.waitForSelector(`[data-testid="${CONTROLS}"]`, {
+  await page.waitForSelector(`[data-testid="${CANVAS_CONTROLS}"]`, {
     timeout: 30000,
   });
 
-  // Tracked separately from the `fit_view` probe below: they coincide today,
-  // but only because opening immediately follows the probe. `closeCanvasControls`
-  // asks "did THIS call open the menu", and that question must keep its own
-  // answer if anything is ever inserted between the two.
-  let openedByThisCall = false;
-
-  if ((await page.getByTestId(FIT_VIEW).count()) === 0) {
-    await page.getByTestId(CONTROLS).click();
-    openedByThisCall = true;
-  }
+  const openedByThisCall = await openCanvasControls(page, FIT_VIEW);
 
   await page.getByTestId(FIT_VIEW).click();
   await waitForViewportSettled(page);
@@ -156,9 +103,9 @@ export async function adjustScreenView(
     throw new Error(
       `[adjustScreenView] "${ZOOM_OUT}" is not rendered. On the build this ` +
         `helper was written against, the canvas controls live inside the ` +
-        `"${CONTROLS}" menu, so this means "${FIT_VIEW}" was reachable with ` +
-        `that menu closed — a Langflow layout change (#997). Zooming out needs ` +
-        `the menu open; teach this helper how the new layout exposes the ` +
+        `"${CANVAS_CONTROLS}" menu, so this means "${FIT_VIEW}" was reachable ` +
+        `with that menu closed — a Langflow layout change (#997). Zooming out ` +
+        `needs the menu open; teach this helper how the new layout exposes the ` +
         `controls rather than reintroducing a blind toggle.`,
     );
   }
@@ -173,5 +120,5 @@ export async function adjustScreenView(
     }
   }
 
-  await closeCanvasControls(page, openedByThisCall);
+  await closeCanvasControls(page, openedByThisCall, "adjustScreenView");
 }
