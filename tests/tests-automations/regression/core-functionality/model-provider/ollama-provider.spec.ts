@@ -9,6 +9,7 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
 
 /**
  * Ollama provider path (QA-CHECKLIST §7.6 "Configure and execute flow with
@@ -102,13 +103,23 @@ async function resetOllamaProviderVariable(request: APIRequestContext): Promise<
   }
 }
 
+// Waits until the playground turn has FULLY completed, on the model-agnostic
+// signal used across the playground specs: the bot bubble mounted, then the
+// generating indicator cleared (`button-stop` hidden, `button-send` back).
+//
+// The previous version probed the Stop button with `isVisible({ timeout:
+// 10000 })` and, when it did not show up in time, skipped the wait entirely —
+// falling straight into the caller's 60s wait for the reply. On a CI runner,
+// where `llama3.2:1b` inference on shared CPU is an order of magnitude slower
+// than locally, that is precisely how the run was declared finished before it
+// had produced anything: daily 2026-07-15 failed 3/3 on
+// `div-chat-message not found` after ~100s (#931).
 async function waitForRunToFinish(page: Page): Promise<void> {
-  const stopButton = page.getByRole("button", { name: "Stop" });
-  const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
-  if (stopVisible) {
-    // Local CPU inference is slow — allow the small model a wide window.
-    await expect(stopButton).toBeHidden({ timeout: 180000 });
-  }
+  // The bubble mounts when the turn BEGINS, so this also rules out the
+  // "checked completion before generation started" race (#354).
+  await expect(page.getByTestId("div-chat-message")).toHaveCount(1, { timeout: 180000 });
+  await expect(page.getByTestId("button-stop")).toBeHidden({ timeout: 240000 });
+  await expect(page.getByTestId("button-send").last()).toBeVisible({ timeout: 30000 });
 }
 
 test.describe.configure({ mode: "serial" });
@@ -161,10 +172,25 @@ test.describe("Ollama Provider", () => {
           validatePromise,
           persistPromise,
         ]);
-        // validate-provider 2xx = Langflow validated the URL against the
-        // LIVE local instance; variables 2xx = the URL is persisted.
+        // validate-provider 2xx = the endpoint answered; variables 2xx = the
+        // URL is persisted.
         expect(validateResp.ok()).toBe(true);
         expect(persistResp.ok()).toBe(true);
+
+        // The BODY is what proves Langflow reached the live instance: the
+        // endpoint answers HTTP 200 with `{ valid: false, error: … }` for a URL
+        // it could not reach (measured on 1.12.0.dev9 with the SSRF allowlist
+        // absent), so the status alone is a weak assert. Without this the
+        // failure surfaces only as the persistence waiter timing out at 60s,
+        // naming nothing (#931).
+        const validateBody = (await validateResp.json()) as {
+          valid?: boolean;
+          error?: string | null;
+        };
+        expect(
+          validateBody.valid,
+          `validate-provider rejected the base URL: ${validateBody.error ?? "no reason given"}`,
+        ).toBe(true);
       });
     },
   );
@@ -173,6 +199,25 @@ test.describe("Ollama Provider", () => {
     "the Ollama component lists the local model live and executes the flow",
     { tag: ["@regression", "@model-provider", "@components", "@playground"] },
     async ({ page, request }) => {
+      // Local CPU inference on a shared CI runner is far slower than on a dev
+      // box (~13s locally vs. >100s in the daily), and the waits below are
+      // sized for it — the default 5-min budget would cut them short.
+      test.setTimeout(8 * 60 * 1000);
+
+      // Build-side pre-flight (#931). 1.12 moved the Ollama components into the
+      // separate `lfx-ollama` distribution (`lfx.components.ollama` is now a
+      // shim, removed at M4 — see #1040). When that distribution is missing from
+      // the image the component vanishes from the registry and the sidebar wait
+      // below dies after 30s naming nothing; this is what broke the daily on
+      // 2026-07-23/24. Unlike Groq/Mistral — absent by design, hence a skip
+      // (#1039) — `lfx-ollama` SHIPS in the stock nightly, so its absence is a
+      // packaging regression that must stay visible: fail, attributed, in ~1s.
+      const componentAvailable = await isProviderComponentAvailable(request, "ollama");
+      expect(
+        componentAvailable,
+        "Ollama component not exposed by this Langflow build — the `lfx-ollama` distribution that ships it is not installed (#931)",
+      ).toBe(true);
+
       const probe = await probeOllama(request);
       test.skip(!probe.reachable, probe.reason);
 
