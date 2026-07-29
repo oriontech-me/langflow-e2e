@@ -567,9 +567,11 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Context ID Isolation [${label}]`, () => {
-    test(
+    // Quarantined for #1060 — recurrent flake (2026-07-14 / 07-16 / 07-22): the
+    // context_id equality assertion fails intermittently.
+    test.fixme(
       "switching the agent's context_id re-tags new turns without touching previous ones",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
