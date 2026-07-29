@@ -311,8 +311,7 @@ function tableDialog(page: Page, title: "Headers" | "Body"): Locator {
 // UI / Canvas tests — verify component rendering and inspector fields
 // =============================================================================
 
-test(
-  "API Request component — renders on canvas with correct output and URL handles",
+test("API Request component — renders on canvas with correct output and URL handles",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -335,8 +334,7 @@ test(
   },
 );
 
-test(
-  "API Request component — inspector fields accept configured values",
+test("API Request component — inspector fields accept configured values",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -358,8 +356,7 @@ test(
   },
 );
 
-test(
-  "API Request component — invalid URL is accepted by field and run shows error notification",
+test("API Request component — invalid URL is accepted by field and run shows error notification",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     // Invalid URLs are accepted by the input field but rejected by the Pydantic HttpUrl
@@ -401,12 +398,11 @@ test(
 // Execution / Output tests — verify HTTP behavior and output Data structure
 // =============================================================================
 
-test(
-  // @stable restored (#462): the daily workflow now self-hosts a go-httpbin
-  // service and points ECHO_BASE_URL at its container IP, so this no longer
-  // depends on the public postman-echo endpoint that hard-failed the suite on
-  // external outages (daily 2026-07-01, weekly 2026-06-22).
-  "API Request component — GET request returns 200 and output Data contains all required fields",
+// @stable restored (#462): the daily workflow now self-hosts a go-httpbin
+// service and points ECHO_BASE_URL at its container IP, so this no longer
+// depends on the public postman-echo endpoint that hard-failed the suite on
+// external outages (daily 2026-07-01, weekly 2026-06-22).
+test("API Request component — GET request returns 200 and output Data contains all required fields",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -435,8 +431,7 @@ test(
   },
 );
 
-test(
-  "API Request component — POST method executes POST verb and returns 200",
+test("API Request component — POST method executes POST verb and returns 200",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -464,8 +459,7 @@ test(
   },
 );
 
-test(
-  "API Request component — PUT method executes PUT verb and returns 200",
+test("API Request component — PUT method executes PUT verb and returns 200",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -495,8 +489,7 @@ test(
   },
 );
 
-test(
-  "API Request component — PATCH method executes PATCH verb and returns 200",
+test("API Request component — PATCH method executes PATCH verb and returns 200",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -526,8 +519,7 @@ test(
   },
 );
 
-test(
-  "API Request component — DELETE method executes DELETE verb and returns 200",
+test("API Request component — DELETE method executes DELETE verb and returns 200",
   { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -557,8 +549,7 @@ test(
   },
 );
 
-test(
-  "API Request component — non-2xx HTTP response propagates status_code without crashing",
+test("API Request component — non-2xx HTTP response propagates status_code without crashing",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -581,8 +572,7 @@ test(
   },
 );
 
-test(
-  "API Request component — query parameters embedded in URL are sent and echoed",
+test("API Request component — query parameters embedded in URL are sent and echoed",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -607,8 +597,7 @@ test(
 // Headers / Body / cURL tests
 // =============================================================================
 
-test(
-  "API Request component — inspector headers table accepts key + value cell entries",
+test("API Request component — inspector headers table accepts key + value cell entries",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -650,8 +639,7 @@ test(
   },
 );
 
-test(
-  "API Request component — cURL tab switches mode and field accepts a cURL command",
+test("API Request component — cURL tab switches mode and field accepts a cURL command",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -685,8 +673,7 @@ test(
   },
 );
 
-test(
-  "API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200",
+test("API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -746,8 +733,7 @@ test(
   },
 );
 
-test(
-  "API Request component — body table accepts key + value cell entries when method is POST",
+test("API Request component — body table accepts key + value cell entries when method is POST",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -821,8 +807,7 @@ test(
   },
 );
 
-test(
-  "API Request component — flow state persists in database after autosave (URL, method, headers)",
+test("API Request component — flow state persists in database after autosave (URL, method, headers)",
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     const expectedUrl = `${ECHO_BASE}/get?persist=true`;

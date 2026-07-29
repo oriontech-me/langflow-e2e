@@ -15,8 +15,7 @@ async function addApiRequestComponent(page: any) {
   await page.waitForSelector('[data-testid="popover-anchor-input-url_input"]', { timeout: 15000 });
 }
 
-test(
-  "API Request component performs GET to httpbin and returns built successfully",
+test("API Request component performs GET to httpbin and returns built successfully",
   { tag: ["@release", "@regression"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -40,8 +39,7 @@ test(
   },
 );
 
-test(
-  "API Request component — cURL mode POST with JSON body",
+test("API Request component — cURL mode POST with JSON body",
   { tag: ["@release", "@regression"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -132,8 +130,7 @@ test(
   },
 );
 
-test(
-  "API Request component — include_httpx_metadata=true adds request headers to output",
+test("API Request component — include_httpx_metadata=true adds request headers to output",
   { tag: ["@release", "@regression"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -165,8 +162,7 @@ test(
   },
 );
 
-test(
-  "API Request component — timeout error returns status_code 500 with error field",
+test("API Request component — timeout error returns status_code 500 with error field",
   { tag: ["@release", "@regression"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
@@ -197,8 +193,7 @@ test(
   },
 );
 
-test(
-  "API Request component — URL mode POST via method dropdown returns 200",
+test("API Request component — URL mode POST via method dropdown returns 200",
   { tag: ["@release", "@regression"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
