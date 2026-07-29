@@ -53,8 +53,8 @@ Four independent tests:
    buttons — proving the toolbar entry is wired, not decorative. Collapsing the
    dropdown removes all four from the DOM again and it can be re-expanded. The
    collapse click is `force: true`: while open, the Radix popover overlay covers
-   the trigger and a normal click fails Playwright's hit-test (same forced click
-   as `loop-component.spec.ts` / `mcp-server.spec.ts`).
+   the trigger and a normal click fails Playwright's hit-test (the same forced
+   click `closeCanvasControls` issues in `helpers/ui/canvas-controls.ts`).
 4. **Scroll to navigate canvas** — a mouse wheel over the pane navigates the
    canvas by zooming **anchored at the pointer**: `deltaY > 0` strictly decreases
    the scale, `deltaY < 0` restores it, and in both directions the flow-space

@@ -640,18 +640,18 @@ test(
     );
     await page.getByTestId("add-component-button-lf-starter_project").click();
 
-    await page.getByTestId("canvas_controls_dropdown").click();
+    await adjustScreenView(page, { numberOfZoomOut: 3 });
 
-    await page.getByTestId("fit_view").click();
-
-    await zoomOut(page, 3);
-
-    // zoomOut() already toggles the canvas-controls menu closed. The previous
-    // extra click({ force: true }) here re-opened it, leaving the Radix zoom
-    // menu overlay on screen where it intercepted the mcp-server-dropdown click
-    // ("<html> intercepts pointer events"). Ensure the menu is fully closed
-    // before interacting with the MCP node.
-    await page.keyboard.press("Escape");
+    // Explicit postcondition gate, kept from the pre-#1087 sequence. It no longer
+    // CLOSES anything — adjustScreenView leaves the menu closed by reading the
+    // trigger's `data-state` (#1053) — it ASSERTS that it did, and fails here,
+    // naming the canvas controls, instead of ~60 lines down as "<html> intercepts
+    // pointer events" on the mcp-server-dropdown click. That is the failure this
+    // test actually hit (#576), so the gate is worth its one locator call.
+    //
+    // The `keyboard.press("Escape")` that preceded it is deliberately gone: it
+    // would close a menu the helper had failed to close and hide that regression
+    // — the quiet workaround #997 exists to remove.
     await expect(page.getByTestId("zoom_out")).toBeHidden();
 
     await openAddMcpServerModal(page);
@@ -698,15 +698,10 @@ test(
 
     await page.getByTestId("fetch-0-option").click();
 
-    // Wait for canvas controls to be visible before adjusting view
-    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-      state: "visible",
-      timeout: 10000,
-    });
-    await page.getByTestId("canvas_controls_dropdown").click();
-
-    await page.getByTestId("fit_view").click();
-    await page.getByTestId("canvas_controls_dropdown").click({ force: true });
+    // Fit view only — no zoom step here. The helper waits on
+    // `canvas_controls_dropdown` itself (30 s), which subsumes the explicit
+    // 10 s wait this sequence used to open with.
+    await adjustScreenView(page, { numberOfZoomOut: 0 });
 
     await page.waitForSelector('[data-testid="int_int_max_length"]', {
       state: "visible",
