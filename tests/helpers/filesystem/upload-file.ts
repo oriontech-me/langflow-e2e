@@ -4,6 +4,7 @@ import { expect } from "../../fixtures/fixtures";
 import { generateRandomFilename } from "./generate-filename";
 import { resolveAssetPath } from "./resolve-asset-path";
 import { unselectNodes } from "../ui/unselect-nodes";
+import { adjustScreenView } from "../ui/adjust-screen-view";
 
 // Function to get the correct mimeType based on file extension
 function getMimeType(extension: string): string {
@@ -33,13 +34,19 @@ function getMimeType(extension: string): string {
 }
 
 export async function uploadFile(page: Page, fileName: string) {
+  // Kept ahead of `adjustScreenView` (whose own canvas gate is 30 s) so the
+  // generous budget this helper has always had for the canvas to mount is not
+  // silently cut for the file-upload specs.
   await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
     timeout: 100000,
   });
 
-  await page.getByTestId("canvas_controls_dropdown").click();
-  await page.getByTestId("fit_view").click();
-  await page.getByTestId("canvas_controls_dropdown").click({ force: true });
+  // Was three hand-rolled lines doing open → fit_view → toggle-closed, which is
+  // exactly this call. The toggle was UNCONDITIONAL, so a menu left open by a
+  // sibling helper made the first click CLOSE it, `fit_view` vanish, and this
+  // helper die on a click timeout (#1053). No zoom-out: the previous code never
+  // zoomed either.
+  await adjustScreenView(page, { numberOfZoomOut: 0 });
 
   try {
     await page
