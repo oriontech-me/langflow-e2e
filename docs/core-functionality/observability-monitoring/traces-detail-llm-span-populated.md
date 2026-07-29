@@ -38,7 +38,7 @@ Langflow emits **two** spans of `type === "llm"` for a single model call:
 
 **`describe("Single trace — populated LLM span (OpenAI)")` — `mode: "serial"`**
 
-The whole describe block is `test.skip`-ped when `OPENAI_API_KEY` is absent — without a real LLM call the populated values can never exist.
+The whole describe block is `test.skip`-ped when OpenAI cannot serve a live call — `OPENAI_API_KEY` absent, or the provider recorded `inactive` in `providers.json` (`providerSkipGate("openai")`, #1029). Without a real LLM call the populated values can never exist, and with a drained key the call hangs the shard's Langflow worker instead of failing.
 
 **`beforeAll` (shared setup)**
 1. Get a bearer token via `getAuthToken(request)`
@@ -98,7 +98,7 @@ External services: **OpenAI** (`OPENAI_API_KEY`) — one `gpt-4o-mini` call per 
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
 - The configured superuser must be able to issue a token via `getAuthToken`
-- `OPENAI_API_KEY` set in the environment — the describe block skips entirely without it
+- `OPENAI_API_KEY` set in the environment **and** OpenAI recorded `active` in `providers.json` by `collect-models` — the describe block skips entirely otherwise (#1029)
 
 ---
 

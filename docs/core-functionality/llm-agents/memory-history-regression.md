@@ -45,7 +45,7 @@ Does not require an API key. Validates only the canvas structure.
 
 **Test 2 — message history context retention suite**
 
-Requires `OPENAI_API_KEY`. Groups behavior validations in `test.step` with `expect.soft`.
+Requires OpenAI usable — `OPENAI_API_KEY` set **and** the provider recorded `active` in `providers.json` (`providerSkipGate("openai")`, #1029). Groups behavior validations in `test.step` with `expect.soft`.
 
 1. Load the Memory Chatbot template and configure OpenAI via `setupLanguageModelOpenAI`:
    - If `model_model` is not visible (providers not configured): click the "Setup Provider" button (no data-testid) → select `provider-item-OpenAI` → fill the API key with `pressSequentially` → click "Save" → wait for the "Replace" button to appear → enable a **single** preferred model toggle (`llm-toggle-{model}`, with `scrollIntoViewIfNeeded`) → close with Escape → wait for `model_model` to appear. Enabling only one model (not every toggle) is deliberate: the OpenAI bundle now lists 45+ models and the trailing toggles render off the scroll viewport, so clicking each one timed out on a non-visible element (issue #569); one enabled model is all the dropdown needs
@@ -60,7 +60,7 @@ Requires `OPENAI_API_KEY`. Groups behavior validations in `test.step` with `expe
 
 **Test 3 — session isolation: new session has no context from previous session**
 
-Requires `OPENAI_API_KEY`. Kept separate because it is destructive (creates a new session).
+Requires OpenAI usable — same `providerSkipGate("openai")` gate as Test 2 (#1029). Kept separate because it is destructive (creates a new session).
 
 1. Load the template, configure the API key **and pin the Agent model via API** (same `openConfiguredPlayground` path as Test 2 — see Test 2 step 2)
 2. Open the Playground, send `"My name is Bob..."`
@@ -104,7 +104,7 @@ Requires `OPENAI_API_KEY`. Kept separate because it is destructive (creates a ne
 ## Preconditions *(optional)*
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
-- `OPENAI_API_KEY` defined in `.env` for Tests 2 and 3
+- `OPENAI_API_KEY` defined in `.env` **and** OpenAI recorded `active` by `collect-models`, for Tests 2 and 3 (#1029)
 - Run with `--workers=1` to avoid flow conflicts
 
 ---
