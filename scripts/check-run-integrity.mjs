@@ -101,16 +101,54 @@ export function testsTotal(report) {
   );
 }
 
+// Did at least one shard abort before running its assigned tests?
+//
+// A top-level report `error` is the signal, and it is exact — measured against
+// Playwright 1.58 blob reports for the three cases the daily can produce (#1058):
+//
+//   shard ran its tests          → no top-level error
+//   shard ABORTED in globalSetup → top-level error (the preflight throw)
+//   shard legitimately had no    → no top-level error
+//     file to run, tolerated by
+//     `--pass-with-no-tests`
+//
+// The third case is why this cannot be inferred from a zero test count: the
+// workflow deliberately shards N ways over fewer files, so an empty shard is
+// normal. And the errors survive `merge-reports`, so the merged report answers
+// the question without per-shard artifacts.
+export function aborted(report) {
+  return (report?.errors || []).length > 0;
+}
+
 export function analyze(report) {
   // `null` = the report could not be read/parsed at all. Treated as empty, with
-  // no error signatures to show, so the caller still fails loudly.
+  // no error signatures to show, so the caller still fails loudly. `aborted` is
+  // false here on purpose: nothing was observed, so claiming an abort would name
+  // the wrong cause — `unreadable` already carries that verdict.
   if (!report) {
-    return { empty: true, testsTotal: 0, reportErrors: 0, signatures: [], unreadable: true };
+    return {
+      empty: true,
+      aborted: false,
+      partial: false,
+      testsTotal: 0,
+      reportErrors: 0,
+      signatures: [],
+      unreadable: true,
+    };
   }
   const total = testsTotal(report);
   const signatures = errorSignatures(report);
+  const didAbort = aborted(report);
   return {
     empty: total === 0,
+    aborted: didAbort,
+    // The #1058 gap, and the reason `empty` alone was not enough: SOME shards
+    // aborted while others ran. On run 30444299314 shards 1 and 2 died in the
+    // credentials preflight with zero tests while 3 and 4 executed 205 between
+    // them — so `stats` was non-empty, `empty` was false, every guard went green,
+    // and ~184 tests silently never ran behind a report that looked like an
+    // ordinary 10-failure day.
+    partial: didAbort && total > 0,
     testsTotal: total,
     reportErrors: (report.errors || []).length,
     signatures,
@@ -141,6 +179,16 @@ function main() {
     for (const sig of result.signatures.slice(0, 4)) {
       console.log(`[integrity]   ${displaySignature(sig)}`);
     }
+  } else if (result.partial) {
+    console.log(
+      `[integrity] PARTIAL run: ${result.testsTotal} test result(s), but ` +
+        `${result.reportErrors} top-level report error(s) — at least one shard ` +
+        `aborted before running its tests, so the recorded totals are ` +
+        `UNDER-COUNTED (#1058).`,
+    );
+    for (const sig of result.signatures.slice(0, 4)) {
+      console.log(`[integrity]   ${displaySignature(sig)}`);
+    }
   } else {
     console.log(
       `[integrity] ${result.testsTotal} test result(s) in ${reportPath}` +
@@ -153,6 +201,8 @@ function main() {
       process.env.GITHUB_OUTPUT,
       [
         `empty=${result.empty}`,
+        `aborted=${result.aborted}`,
+        `partial=${result.partial}`,
         `unreadable=${result.unreadable}`,
         `tests_total=${result.testsTotal}`,
         `report_errors=${result.reportErrors}`,

@@ -21,9 +21,12 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
+  degradeProviders,
+  providersForEnvKeys,
   readProviderHealth,
   toSkipGate,
   unavailableReason,
+  writeProviderHealth,
   type ProviderHealthRecord,
 } from "./provider-health";
 
@@ -243,4 +246,100 @@ test("readProviderHealth parses a real providers.json shape", () => {
   const records = readProviderHealth(file);
   assert.equal(records?.length, 3);
   assert.equal(records?.find((r) => r.provider === "google")?.status, "inactive");
+});
+
+// --- Pre-flight degradation (issue #1058) -----------------------------------
+//
+// What rides on these: the credentials pre-flight in globalSetup used to `throw`
+// in CI when a provider key was present in the env but missing as a Langflow
+// global variable, killing the entire shard over one provider. It now records the
+// provider unusable and lets the rest of the shard run. If that recording is
+// wrong in either direction the fix backfires — too permissive and the spec makes
+// a live call against a key Langflow does not have (the #1029 worker-kill class),
+// too aggressive and it erases the more actionable reason collect-models measured.
+
+test("providersForEnvKeys maps an env key back to its provider", () => {
+  assert.deepEqual(providersForEnvKeys(["GOOGLE_API_KEY"]), ["google"]);
+  assert.deepEqual(providersForEnvKeys(["OPENAI_API_KEY", "ANTHROPIC_API_KEY"]).sort(), [
+    "anthropic",
+    "openai",
+  ]);
+  assert.deepEqual(providersForEnvKeys(["NOT_A_PROVIDER_KEY"]), []);
+});
+
+test("degradeProviders marks an ACTIVE provider inactive with the given reason", () => {
+  const records: ProviderHealthRecord[] = [
+    { provider: "openai", model: "gpt-4o-mini", status: "active", error: null },
+    { provider: "google", model: "gemini-2.5-flash", status: "active", error: null },
+  ];
+
+  const out = degradeProviders(records, ["google"], "never imported");
+
+  assert.equal(out.find((r) => r.provider === "google")?.status, "inactive");
+  assert.equal(out.find((r) => r.provider === "google")?.error, "never imported");
+  assert.equal(out.find((r) => r.provider === "google")?.model, null);
+  // Untouched providers keep running — that is the whole point of the change.
+  assert.deepEqual(out.find((r) => r.provider === "openai"), records[0]);
+});
+
+test("degradeProviders NEVER overwrites an existing inactive reason", () => {
+  // collect-models measured WHY the key is dead ("monthly spending cap"), which is
+  // strictly more actionable for triage than the pre-flight's structural note.
+  const records: ProviderHealthRecord[] = [
+    { provider: "google", model: null, status: "inactive", error: SPEND_CAP },
+  ];
+
+  const out = degradeProviders(records, ["google"], "never imported");
+
+  assert.equal(out[0].error, SPEND_CAP);
+});
+
+test("degradeProviders creates a record for a provider that has none", () => {
+  // Absence means "no signal" to readProviderHealth and callers fail OPEN, so
+  // leaving it absent would let the specs run against a key Langflow lacks.
+  const out = degradeProviders(null, ["google"], "never imported");
+
+  assert.equal(out.length, 1);
+  assert.equal(out[0].provider, "google");
+  assert.equal(out[0].status, "inactive");
+});
+
+test("degradeProviders does not mutate its input", () => {
+  const records: ProviderHealthRecord[] = [
+    { provider: "google", model: "gemini-2.5-flash", status: "active", error: null },
+  ];
+  degradeProviders(records, ["google"], "never imported");
+  assert.equal(records[0].status, "active", "the caller's array must be untouched");
+});
+
+test("the degraded record drives the existing skip gate", () => {
+  // End-to-end through the gate the specs actually consult: degrading is only
+  // useful if unavailableReason then reports it.
+  const out = degradeProviders(
+    [{ provider: "google", model: "gemini-2.5-flash", status: "active", error: null }],
+    ["google"],
+    "GOOGLE_API_KEY was never imported as a Langflow global variable",
+  );
+
+  const reason = unavailableReason(["google"], out, { GOOGLE_API_KEY: "set" } as NodeJS.ProcessEnv);
+  assert.match(String(reason), /never imported as a Langflow global variable/);
+});
+
+test("writeProviderHealth round-trips through readProviderHealth", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "provider-health-"));
+  const file = path.join(dir, "nested", "providers.json");
+  const records = degradeProviders(null, ["google"], "never imported");
+
+  assert.equal(writeProviderHealth(records, file), true, "must create missing parent dirs");
+  assert.deepEqual(readProviderHealth(file), records);
+});
+
+test("writeProviderHealth reports failure instead of throwing", () => {
+  // It runs from globalSetup: a write failure must never become the reason the
+  // suite cannot start. The caller says so out loud instead of assuming success.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "provider-health-"));
+  const asDir = path.join(dir, "providers.json");
+  fs.mkdirSync(asDir); // a directory where the file should go — write must fail
+
+  assert.equal(writeProviderHealth([], asDir), false);
 });
