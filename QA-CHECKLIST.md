@@ -799,7 +799,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 413 `test()` calls carrying the `@stable` tag, distributed across 167 spec
+> 414 `test()` calls carrying the `@stable` tag, distributed across 167 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1224,6 +1224,7 @@
 - [x] User should be able to interact notifications tab → `notifications.spec.ts`
 - [x] right-clicking a component selects it and opens its options menu → `right-click-dropdown.spec.ts`
 - [x] an item picked from the right-click menu acts on that component → `right-click-dropdown.spec.ts`
+- [x] right-clicking the canvas background opens no menu and dismisses an open one → `right-click-dropdown.spec.ts`
 - [x] Settings General section loads and shows its header → `settings-general-section.spec.ts`
 - [x] Settings Messages section is accessible → `settings-general-section.spec.ts`
 - [x] Settings Shortcuts section is accessible and lists shortcuts → `settings-general-section.spec.ts`
