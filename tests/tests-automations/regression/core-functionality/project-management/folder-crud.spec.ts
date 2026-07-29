@@ -1,6 +1,10 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import {
+  createProjectThroughSidebar,
+  renameProjectThroughSidebar,
+} from "../../../../helpers/flows/create-project-through-sidebar";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
 import { MainPage } from "../../../../pages/MainPage";
@@ -22,40 +26,60 @@ import { MainPage } from "../../../../pages/MainPage";
 test(
   "creates, renames and deletes an empty project folder via the UI",
   { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
-  async ({ page }) => {
+  async ({ page, request }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
     const mainPage = new MainPage(page);
     const renamedFolder = `crud-folder-${Date.now()}`;
+    let createdId: string | undefined;
+    let createdName = "";
 
-    await test.step("Create a new folder from the sidebar", async () => {
-      await mainPage.addProject();
-      await expect(page.getByTestId("sidebar-nav-New Project")).toBeVisible({
-        timeout: 15000,
+    try {
+      await test.step("Create a new folder from the sidebar", async () => {
+        // `createProjectThroughSidebar` returns the name the backend assigned —
+        // "New Project" only while that name is free, `New Project (N)`
+        // otherwise. Asserting on the literal `sidebar-nav-New Project` was a
+        // bet on the instance having no other folder by that name (#1023).
+        const created = await createProjectThroughSidebar(page);
+        createdId = created.id;
+        createdName = created.name;
       });
-    });
 
-    await test.step("Rename the folder to a unique name", async () => {
-      await mainPage.renameProject("New Project", renamedFolder);
-      // Asserting on the unique renamed entry is enough to prove the rename
-      // committed. We deliberately do NOT assert that "New Project" is gone:
-      // several specs create folders via the UI in parallel against the same
-      // backend, so a generic "New Project" entry from another worker may
-      // legitimately exist at the same time.
-      await expect(
-        page.getByTestId(`sidebar-nav-${renamedFolder}`),
-      ).toBeVisible({ timeout: 15000 });
-    });
-
-    await test.step("Delete the folder", async () => {
-      await mainPage.deleteProject(renamedFolder);
-      await expect(page.getByText("Project deleted successfully")).toBeVisible({
-        timeout: 15000,
+      await test.step("Rename the folder to a unique name", async () => {
+        await renameProjectThroughSidebar(page, createdName, renamedFolder);
+        // Asserting on the unique renamed entry is enough to prove the rename
+        // committed. We deliberately do NOT assert that "New Project" is gone:
+        // several specs create folders via the UI in parallel against the same
+        // backend, so a generic "New Project" entry from another worker may
+        // legitimately exist at the same time.
+        await expect(
+          page.getByTestId(`sidebar-nav-${renamedFolder}`),
+        ).toBeVisible({ timeout: 15000 });
       });
-      await expect(
-        page.getByTestId(`sidebar-nav-${renamedFolder}`),
-      ).not.toBeVisible({ timeout: 10000 });
-    });
+
+      await test.step("Delete the folder", async () => {
+        await mainPage.deleteProject(renamedFolder);
+        await expect(
+          page.getByText("Project deleted successfully"),
+        ).toBeVisible({ timeout: 15000 });
+        await expect(
+          page.getByTestId(`sidebar-nav-${renamedFolder}`),
+        ).not.toBeVisible({ timeout: 10000 });
+      });
+    } finally {
+      // The UI delete above is the assertion, NOT the cleanup (#1023): the
+      // sidebar entry disappears optimistically while `DELETE
+      // /api/v1/projects/{id}` can answer 500 under contention (#965/LE-2020),
+      // leaving the folder on the instance for every later run to trip over.
+      // `deleteProject` retries the 500 and treats 404 (the happy path) as done.
+      if (createdId) {
+        await deleteProject(request, createdId, {
+          headers: { Authorization: await getAuthToken(request) },
+        }).catch((error) => {
+          console.warn(`⚠️ Orphan project left behind (${createdId}): ${error}`);
+        });
+      }
+    }
   },
 );
 
