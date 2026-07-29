@@ -726,9 +726,11 @@ jobs:
       # announce the wedge, not a list of collateral specs that reads as
       # per-test rot.
       #
-      # Reports only — it sets no gate. The @stable auto-removal below keeps its
-      # own guards untouched; consuming this attribution to exempt collateral
-      # failures from the tag mutation is #1031, under its own rules.
+      # Reports only — it sets no gate. The @stable auto-removal below decides the
+      # tag on the failure's OWN error signature (#1031), not on this table: the
+      # honesty note in the section explains why overlap with an outage window is
+      # a lead and not a verdict. The only thing that crosses over is the `wedged`
+      # output, passed to the auto-remove action to word its exemption.
       #
       # continue-on-error: the two steps that follow and matter most on a red day
       # — `Auto-remove @stable from hard failures` and `Create issue on failure` —
@@ -922,6 +924,11 @@ jobs:
       # mass-failure guard inside the action leaves everything untouched when too
       # many tests fail at once (infra, not per-test rot). Scheduled runs only —
       # a manual dispatch must never mutate the test source.
+      # On top of the guard, #1031: a hard failure whose last error is
+      # transport-level (apiRequestContext timeout, ECONNREFUSED, the globalSetup
+      # `is not reachable`) is wedge collateral, not per-test rot, and is exempted
+      # INDEPENDENTLY of the threshold. The guard only ever covered the WIDE
+      # wedge; a wedge costing ≤5 tests used to strip their tags with no review.
       # Gated on shardguard.complete: an incomplete merge (a dead shard) yields an
       # under-counted results.json, so never mutate the @stable tag on partial data.
       # ALSO gated on runguard.empty (#1012): a report with zero tests carries no
@@ -937,6 +944,18 @@ jobs:
           playwright_json: results.json
           max_auto_remove: "5"
           run_label: "daily #${{ github.run_id }}"
+          # #1030's verdict, for WORDING only. The infra-signature exemption
+          # inside the action stands on the failure's own error, so it still
+          # applies when this is empty — which is the run where the backend
+          # state is least known and the exemption matters most.
+          #
+          # Gated on `measured`: a run whose shards uploaded NO liveness artifact
+          # also emits `wedged=false`, and forwarding that bare would have the
+          # auto-removal block claim the recorder "measured no outage" over a run
+          # where it measured nothing. That is the exact misreading
+          # report-backend-outages.mjs warns about ("must never be read as no
+          # outage"), so unmeasured has to arrive as "" (unknown), not "false".
+          backend_wedged: ${{ steps.liveness.outputs.measured == 'true' && steps.liveness.outputs.wedged || '' }}
 
       # Open the umbrella triage issue on failure — scheduled runs ONLY, aligned
       # with the history / auto-remove steps above. A manual dispatch is itself a

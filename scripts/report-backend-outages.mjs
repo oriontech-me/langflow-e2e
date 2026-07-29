@@ -17,8 +17,13 @@
 // on daily run 30444299314 the heavy shards were unreachable for 33-73% of
 // their span. At that coverage "the failure landed inside an outage" is close to
 // a coin flip, so the section states the share next to the count and calls the
-// overlap a lead, never a verdict. Turning overlap into a tag decision is #1031's
-// job, under its own rules.
+// overlap a lead, never a verdict.
+//
+// #1031 settled the tag decision elsewhere for exactly that reason: it exempts a
+// failure from @stable auto-removal on its OWN error signature (a transport-level
+// error is never a product assertion — scripts/lib/infra-signatures.ts), not on
+// overlap with these windows. The only value that crosses over is the `wedged`
+// output, which the auto-remove action uses to word its exemption.
 //
 // This step REPORTS. It never fails the run and never gates the @stable tag: a
 // missing artifact yields `measured=false`, which must never be read as "no
