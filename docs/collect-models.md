@@ -9,9 +9,27 @@
 This is a utility spec — not a regression assertion test. It exists to populate two local data files used by LLM agent and model-provider specs as preconditions:
 
 - `tests/helpers/provider-setup/data/models.json` — list of models available per provider (collected from Settings → Model Providers UI)
-- `tests/helpers/provider-setup/data/providers.json` — provider status (`active` / `inactive`) validated via real API calls
+- `tests/helpers/provider-setup/data/providers.json` — provider status (`active` / `inactive`), validated on two independent axes: the raw API key works, **and** the running Langflow build can actually instantiate that provider's component
 
 If this spec is not run before the LLM agent specs, those specs fall back to a hardcoded model and may skip or fail due to missing provider configuration.
+
+### The two axes, and why the second one exists (#900)
+
+A provider is only usable when **both** hold, and they fail independently:
+
+| Axis | Question | Failure it catches |
+|---|---|---|
+| **Key** | does the provider's own cloud API accept this key? | drained credit, revoked key, spend cap |
+| **Build** | can *this Langflow image* instantiate the provider's component? | the component's distribution or its `langchain-*` runtime package is missing from the image |
+
+Before #900 only the first was checked. The key probe calls the provider's API
+**directly, upstream of Langflow**, so a perfectly valid key on an image that
+cannot build the model recorded a false `active` — and the real failure surfaced
+tens of layers downstream as a generic node-build timeout. It cost a full triage
+cycle each time it happened: #898 (`langchain-google-genai`, upstream LE-1974,
+~17 Google `@stable` specs) and #907 (`langchain-groq` / `langchain-mistralai`,
+upstream LE-1987). The build axis converts that into one attributed failure at
+collect time.
 
 ---
 
@@ -44,7 +62,18 @@ surface (the #505 lesson).
    (#570). It stops early on the first model that validates — or, when the SAME
    error repeats 3× in a row, on the conclusion that the error does not depend on
    the model at all (#1011; see Validation criterion).
-5. Write the provider status records to `data/providers.json`
+5. **Probe the build axis** (#900), in two layers, before the records are written:
+   a. **Catalog.** One `GET /api/v1/all` for every provider at once. Each provider
+      declares the exact component keys it needs (chat + embeddings); a key absent
+      from the registry means its distribution is not installed.
+   b. **Buildability.** Every component that passed (a) is placed in **one**
+      throwaway flow and built via `POST /api/v1/build/{flow_id}/flow`. The flow is
+      deleted in a `finally`. A registry hit does **not** prove the component can
+      build — see the contract table below.
+6. Write the provider status records to `data/providers.json`, merging both axes:
+   a build-axis failure records `inactive` with a reason that names the missing
+   **layer** (distribution vs. runtime package) and, when Langflow reports it, the
+   exact module
 
 ---
 
@@ -67,6 +96,48 @@ contract; the SPEC now verifies the outcome):
 A provider with a key that genuinely fails its probe (e.g. a model the
 account cannot access) is a legitimate `inactive` — recorded, logged, not a
 test failure.
+
+### The build axis — what makes it force-failable
+
+- **A provider whose component is missing from the registry is `inactive`**, with a
+  reason naming the *distribution* layer. Distinctive observable: the provider's
+  declared component key is absent from `GET /api/v1/all`.
+- **A provider whose component IS in the registry but cannot build is `inactive`**,
+  with a reason naming the *runtime package* layer. Distinctive observable: the
+  vertex's `errorMessage` carries a packaging signature
+  (`No module named '<pkg>'` / `not installed in this environment` /
+  `Could not import`), as opposed to any other build error.
+- **A credentials error is a PASS on this axis, not a failure.** It proves the
+  client class was imported and constructed — the probe got as far as rejecting a
+  blank key, which is exactly what "the package is present" looks like. Treating it
+  as a failure would make the gate permanently red.
+- **A build-axis `inactive` fails the spec loudly, on its own assert.** Every reason
+  this axis writes is stamped with a `build axis: ` prefix, and a dedicated step —
+  *"this Langflow build can instantiate every provider's component"* — asserts that
+  no provider carries one. It is deliberately **not** folded into the existing
+  "every env-keyed provider is ACTIVE" check: that check skips any provider whose
+  env key is unset, but an unbuildable component is a broken **image**, a verdict
+  that does not depend on whether anyone configured a key. Without the separate
+  step, a run without `ANTHROPIC_API_KEY` would let a genuinely unbuildable
+  Anthropic component pass in silence — the very silent-skip class this issue
+  removes. (A packaging reason also fails the env-keyed check, since it does not
+  match `BILLING_OR_QUOTA`; the two overlap for keyed providers and only the new
+  step covers unkeyed ones.)
+- **The probe fails OPEN on its own infrastructure.** An unreachable registry, a
+  build endpoint error, or a probe timeout leaves the key-axis verdict untouched and
+  logs a warning. The gate must never convert a runner-side hiccup into an
+  `inactive` provider — the same rule `readProviderHealth` and
+  `TRANSIENT_TRANSPORT` (#1011) already encode.
+
+### No paid call, ever
+
+Every `SecretStrInput` on the probed components is neutralised before the build
+(`value: ""`, `load_from_db: false`). This is load-bearing, not hygiene: the
+registry template ships `api_key` as `{ value: "OPENAI_API_KEY", load_from_db:
+true }`, so an un-neutralised probe would load the **global variable
+`collect-models` itself just saved** and the default `text_output` output would
+invoke the model for real. Measured on 1.12.0.dev8 with the neutralisation in
+place: all five components fail on missing credentials, none reaches the network.
 
 ### Who consumes the recorded health
 
@@ -137,6 +208,22 @@ exists to prevent. Two consequences, both load-bearing:
 - `src/frontend/src/pages/SettingsPage/pages/GlobalVariablesPage/index.tsx` — Settings navigation; if the `sidebar-nav-Model Providers` testid changes, the spec cannot reach the provider list
 - `src/frontend/src/components/core/modelProviderTag/` — provider list items (testids like `provider-item-OpenAI`) and model toggles (`llm-toggle-*`); any rename breaks model collection
 - `src/frontend/src/components/ui/button` — Save / Replace button labels; if these change the API key save step is silently skipped and `models.json` ends up empty
+- `GET /api/v1/all` — the component registry the catalog layer reads. It returns
+  `{ category: { ComponentType: template } }`; note the **`component_display_names`
+  pseudo-category**, a lowercased echo of every type that the probe must skip so a
+  component is not counted twice
+- `POST /api/v1/build/{flow_id}/flow` + `GET /api/v1/build/{job_id}/events` — the
+  build layer. It requires a **persisted** flow (passing `data` inline against a
+  random UUID returns `404 Flow with id … not found`), which is why the probe
+  creates and deletes one
+- The component keys themselves — `ext:openai:OpenAIModelComponent@official`,
+  `ext:openai:OpenAIEmbeddingsComponent@official`,
+  `ext:anthropic:AnthropicModelComponent@official`,
+  `ext:google:GoogleGenerativeAIComponent@official`,
+  `ext:google:GoogleGenerativeAIEmbeddingsComponent@official`. These are the
+  1.12 `lfx-bundles` per-vendor names (#1040); a rename upstream makes the catalog
+  layer report the provider absent, which is a loud failure by design rather than a
+  silent pass
 
 ---
 
@@ -145,7 +232,19 @@ exists to prevent. Two consequences, both load-bearing:
 - Does not assert that specific models are returned — only that the collection and file-write succeed
 - Does not validate provider responses in detail — only checks HTTP status 2xx vs non-2xx
 - Does not configure providers that lack an API key in the environment
-- **Does not verify Langflow can BUILD a provider's model — only that the raw API key works.** The status probe calls the provider's own API directly, upstream of Langflow, so it cannot detect a missing server-side integration package. A nightly that ships without `langchain-google-genai` still records google `active` here, yet every Google chat/embedding build inside Langflow raises an `ImportError` and the affected `@stable` specs fail downstream as a misleading node-build timeout (root cause + impact: [#898]; upstream: LE-1974). A faithful check would have to build a Language Model flow per provider and inspect the error — no standalone endpoint triggers the class import (`/api/v1/models/*` return static metadata only) — so that build-probe hardening was deferred to [#900].
+- **Does not prove the model produces a good answer.** The build axis stops at "the
+  component instantiates"; whether Langflow's Agent can actually drive the settled
+  model is the `agent-*` family's job (the #570 lesson — `gpt-5.6` passed the key
+  probe and returned empty replies through the Agent).
+- **Does not cover providers outside `providerConfigMap`.** Groq and Mistral are
+  deliberately not bundled in the image (product decision, #1039); they are gated
+  per-spec by `isProviderComponentAvailable` instead. Keeping them out of this gate
+  is what makes a *declared per-provider expectation map* unnecessary — every
+  provider this spec knows about is one the image is expected to ship, so "component
+  missing" is unambiguously a failure here.
+- **Does not detect a package that is present but broken at call time.** An
+  incompatible `langchain-*` version that imports cleanly and fails on `invoke`
+  (the #643 class) builds fine and passes this axis.
 
 ---
 
@@ -164,6 +263,48 @@ exists to prevent. Two consequences, both load-bearing:
 ---
 
 ## Notes *(optional)*
+
+### Why the catalog check alone is NOT enough (measured, 1.12.0.dev8)
+
+The obvious cheap design — "scan `GET /api/v1/all`, done" — is wrong, and the
+reason is an upstream implementation detail that varies **per component**: where
+the `langchain-*` import sits. Read from the installed sources in the running
+container:
+
+| Component | `langchain-*` import site | Package missing ⇒ |
+|---|---|---|
+| `OpenAIModelComponent` | module level (`from langchain_openai import ChatOpenAI`) | module fails to import → **absent from the registry** |
+| `OpenAIEmbeddingsComponent` | module level | absent |
+| `GoogleGenerativeAIComponent` | module level, transitively via `lfx.base.models.google_generative_ai_model` | absent |
+| `GoogleGenerativeAIEmbeddingsComponent` | module level | absent |
+| `AnthropicModelComponent` | **lazy, inside `build_model()`** | **registers normally, fails at BUILD** |
+
+So the failure mode #1039 first hit on Groq is **not** a Groq quirk — among the
+three providers this spec covers, Anthropic has exactly that shape today.
+
+Proven end to end rather than reasoned about: hiding
+`site-packages/langchain_anthropic` and restarting the backend leaves
+`ext:anthropic:AnthropicModelComponent@official` **present** in `/api/v1/all` (the
+catalog layer returns *available* — a false positive) while the build layer
+reports
+
+```
+No module named 'langchain_anthropic'. This flow needs a Python package that is
+not installed in this environment.
+```
+
+A restart is required to observe it: the import is cached in `sys.modules`, so
+hiding the package under a warm worker changes nothing.
+
+**Do not "simplify" this back to one layer.** Each layer catches a shape the other
+cannot, and which shape a given provider produces is decided upstream, without
+notice, by where a maintainer happens to put an `import`.
+
+### Cost
+
+All five components build in **one** flow, as disconnected vertices — one create,
+one build, one delete. Measured: **~9 s wall**, zero paid calls. Building them
+per-provider instead would multiply the flow round-trips for no added signal.
 
 - In CI (`daily-stable.yml`) this spec runs as a dedicated **Collect models** step before the `@stable` suite, ensuring `models.json` is on disk before Playwright's collection phase. The step uses `continue-on-error: true` so a missing API key does not block the rest of the run.
 - **Double-run in the daily (analyzed, benign):** with `@stable` the spec ALSO runs inside the suite. The in-suite run re-saves the same keys (the exact flow `openai-provider`/`google-provider` test 1 already exercise in-suite) and rewrites the JSONs with equivalent content; workers read the files at module load, so a mid-suite rewrite does not change already-collected test targets.

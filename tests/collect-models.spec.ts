@@ -5,6 +5,7 @@ import { expect, test } from "./fixtures/fixtures";
 import { collectAll } from "./helpers/provider-setup/collect-models";
 import type { ProviderRecord } from "./helpers/provider-setup/collect-models";
 import { providerConfigMap, type Provider } from "./helpers/provider-setup";
+import { isBuildAxisReason } from "./helpers/provider-setup/probe-component-buildable";
 
 /**
  * Utility spec that populates the provider data files every LLM spec depends
@@ -77,6 +78,29 @@ test(
           expect(p.error, `probe error recorded for env-keyed inactive provider "${p.provider}"`).toBeTruthy();
         }
       }
+    });
+
+    await test.step("this Langflow build can instantiate every provider's component", async () => {
+      // The BUILD axis (#900), asserted independently of the key axis below.
+      //
+      // Why this is not redundant with the env-keyed check that follows: that one
+      // skips every provider whose env key is unset. A component that cannot be
+      // built is a broken IMAGE, and that verdict does not depend on whether
+      // anyone configured a key — so without this step, running without (say)
+      // ANTHROPIC_API_KEY would let an unbuildable Anthropic component pass in
+      // silence. That is the same silent-skip class the whole issue removes.
+      //
+      // It is also never downgraded: a packaging gap is a broken environment, not
+      // a transient billing/quota outage, so it must fail loud every time.
+      const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
+      const unbuildable = providers.filter((p) => isBuildAxisReason(p.error));
+      expect(
+        unbuildable.map((p) => p.provider),
+        `provider component(s) this Langflow build cannot instantiate — the image is ` +
+          `missing a distribution or a langchain-* package, and every spec parametrized ` +
+          `on them would fail downstream as a generic node-build timeout: ` +
+          unbuildable.map((p) => `${p.provider} — ${p.error}`).join(" | "),
+      ).toEqual([]);
     });
 
     await test.step("every env-keyed provider is ACTIVE (transient billing/quota outages warn, don't fail)", async () => {
