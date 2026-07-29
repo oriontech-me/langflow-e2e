@@ -7,6 +7,11 @@ test.skip(
   { tag: ["@release", "@workspace", "@api"] },
 
   async ({ page }) => {
+    // Left on env-var presence (#1029 audit): the enclosing `test.skip(...)` above
+    // makes this body unreachable — the test is permanently skipped pending the
+    // voice-assistant vs text-to-voice review in the TODO. It can never reach a
+    // provider call, so it cannot wedge a shard. Whoever un-skips it must swap
+    // this for `providerSkipGate("openai")`.
     test.skip(
       !process?.env?.OPENAI_API_KEY,
       "OPENAI_API_KEY required to run this test",

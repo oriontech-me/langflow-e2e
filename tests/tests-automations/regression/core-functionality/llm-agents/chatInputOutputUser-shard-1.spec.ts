@@ -5,19 +5,21 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 test(
   "user must be able to see output inspection",
   { tag: ["@release", "@components", "@agents"] },
   async ({ page }) => {
-    test.skip(
-      !process?.env?.OPENAI_API_KEY,
-      "OPENAI_API_KEY required to run this test",
-    );
-
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
     }
+
+    // Real completions run below, so gate on provider HEALTH, not on the env var
+    // alone — a drained key would block the backend past gunicorn's 300s timeout
+    // and kill the shard's Langflow worker (#1029).
+    const gate = providerSkipGate("openai");
+    test.skip(gate.skip, gate.reason);
 
     await awaitBootstrapTest(page);
 

@@ -4,19 +4,23 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { initialGPTsetup } from "../../../helpers/other/initialGPTsetup";
+import { providerSkipGate } from "../../../helpers/provider-setup/provider-health";
 
 test(
   "freeze must work correctly",
   { tag: ["@release", "@api", "@components"] },
   async ({ page }) => {
-    test.skip(
-      !process?.env?.OPENAI_API_KEY,
-      "OPENAI_API_KEY required to run this test",
-    );
-
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
     }
+
+    // Two real builds and a playground reply run below, so gate on provider
+    // HEALTH rather than on the mere presence of the env var: a key that exists
+    // but is drained blocks the backend past gunicorn's 300s timeout and kills
+    // the shard's Langflow worker (#1029). After the .env load, so a key that
+    // lives only in .env is visible to the gate on a local run.
+    const gate = providerSkipGate("openai");
+    test.skip(gate.skip, gate.reason);
 
     const promptText = "answer as you are a dog";
     const newPromptText = "answer as you are a bird";

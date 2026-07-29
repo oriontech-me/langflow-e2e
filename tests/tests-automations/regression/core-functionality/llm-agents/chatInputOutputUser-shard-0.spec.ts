@@ -11,6 +11,7 @@ import {
 } from "../../../../helpers/ui/open-advanced-options";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 // Capture every flow THIS page creates from its POST /api/v1/flows → 201
 // responses and delete them id-scoped in afterEach (repo convention, #490/#681).
@@ -47,14 +48,15 @@ test(
   "user must be able to send an image on chat",
   { tag: ["@release", "@workspace", "@components"] },
   async ({ page }) => {
-    test.skip(
-      !process?.env?.OPENAI_API_KEY,
-      "OPENAI_API_KEY required to run this test",
-    );
-
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
     }
+
+    // Real completions run below, so gate on provider HEALTH, not on the env var
+    // alone — a drained key would block the backend past gunicorn's 300s timeout
+    // and kill the shard's Langflow worker (#1029).
+    const gate = providerSkipGate("openai");
+    test.skip(gate.skip, gate.reason);
 
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);

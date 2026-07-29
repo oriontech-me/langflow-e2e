@@ -7,6 +7,7 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { setupLanguageModelOpenAI } from "../../../helpers/provider-setup/setup-language-model-openai";
+import { providerSkipGate } from "../../../helpers/provider-setup/provider-health";
 
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
@@ -152,10 +153,13 @@ test(
   "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
   { tag: ["@stable", "@release", "@components", "@templates", "@playground"] },
   async ({ page }) => {
-    test.skip(
-      !process.env.OPENAI_API_KEY,
-      "OPENAI_API_KEY required to execute the Language Model component in the Research Translation Loop template",
-    );
+    // Two sequential real completions run below (one per ArXiv paper, under an
+    // 8-minute budget), so gate on provider HEALTH rather than on the mere
+    // presence of the env var: a key that exists but is drained blocks the
+    // backend past gunicorn's 300s timeout and kills the shard's Langflow
+    // worker (#1029).
+    const gate = providerSkipGate("openai");
+    test.skip(gate.skip, gate.reason);
 
     // Override the global 5-minute cap: this flow makes 2 sequential LLM calls
     // (one per ArXiv paper) which can take 3-4 minutes on CI infrastructure.

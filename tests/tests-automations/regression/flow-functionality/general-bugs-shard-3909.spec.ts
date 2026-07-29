@@ -7,6 +7,15 @@ test(
   "user must be able to create a new flow clicking on New Flow button",
   { tag: ["@release", "@mainpage"] },
   async ({ page }) => {
+    // Left on env-var presence (#1029 audit): this test only asserts that the
+    // per-node run buttons RENDER (`button_run_chat output`, `button_run_language
+    // model`, …) after creating a project and opening Basic Prompting. It never
+    // clicks one, so no completion is driven and a dead key cannot produce the
+    // hung request that wedges a shard.
+    //
+    // As in lock-flow.spec.ts, the gate reads as vestigial — nothing here consumes
+    // OPENAI_API_KEY. Dropping it would make the test run where it currently
+    // skips, a behaviour change left to whoever revisits this spec.
     test.skip(
       !process?.env?.OPENAI_API_KEY,
       "OPENAI_API_KEY required to run this test",

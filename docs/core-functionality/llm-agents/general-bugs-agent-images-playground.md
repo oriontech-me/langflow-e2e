@@ -25,7 +25,7 @@ and the spec ran clean at `--retries=0`.
 
 The spec contains **1 test** — `"user must be able to send images in the playground with the agent component"`.
 
-Requires `OPENAI_API_KEY` (vision-capable `gpt-4o-mini`); skips when the key is absent. OpenAI is used (not Anthropic) so the test actually runs in the weekly workflow, which provides `OPENAI_API_KEY`.
+Requires `OPENAI_API_KEY` (vision-capable `gpt-4o-mini`) **and** OpenAI recorded `active` in `providers.json`; skips otherwise via `providerSkipGate("openai")` (#1029 — a key that exists but is drained used to run the multimodal completion anyway and hang the shard's Langflow worker). OpenAI is used (not Anthropic) so the test actually runs in the weekly workflow, which provides `OPENAI_API_KEY`.
 
 1. Load the **Simple Agent** template via the canonical `SimpleAgentTemplatePage.load({ provider: "openai" })` — it opens the templates modal through the correct entry point, waits for the canvas to actually load (`canvas_controls_dropdown`), then configures the OpenAI provider. With no explicit model it selects a resilient default (`gpt-4o-mini`, vision-capable on the Agent component). The returned flow id is captured for teardown; `load()` deliberately does **not** pre-clean other flows (removed in #553 — it was wiping flows other parallel workers were using)
 2. (Provider setup is part of step 1's `load()` — the centralized path: open `model_model` → `manage-model-providers` → select `provider-item-OpenAI` → fill the `sk-...` key → save → enable model toggles → select model)
@@ -67,7 +67,7 @@ Requires `OPENAI_API_KEY` (vision-capable `gpt-4o-mini`); skips when the key is 
 ## Preconditions *(optional)*
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
-- `OPENAI_API_KEY` defined in `.env` — without it the test skips
+- `OPENAI_API_KEY` defined in `.env` **and** OpenAI recorded `active` by `collect-models` — otherwise the test skips (#1029; `IGNORE_PROVIDER_HEALTH=1` overrides a stale local `providers.json`)
 - Run with `--workers=1` to avoid flow conflicts
 
 ---

@@ -63,8 +63,12 @@ a packaging change.
 ### Bundle/key guard
 
 The Knowledge component is core, so **no bundle presence guard is needed**. The
-spec **skips** only when `GOOGLE_API_KEY` is not configured (the embedding model
-needs a live key), matching the provider-key skips elsewhere in the suite.
+spec **skips** when Google cannot serve a live call (the embedding model needs a
+live key) — either `GOOGLE_API_KEY` is unset, or `collect-models` recorded the
+provider `inactive` in `providers.json`. The gate is `providerSkipGate("google")`
+(`helpers/provider-setup/provider-health.ts`), matching the provider-health skips
+elsewhere in the suite: gating on the env var alone let a drained key through, and
+the resulting hung call killed the shard's Langflow worker (#1029).
 
 ## Validation criterion (concrete, distinctive)
 
@@ -107,8 +111,8 @@ is both sharp and deterministic.
 (`@files`: knowledge-ingestion surface — functional. `@components`:
 canvas-component configuration. `@stable`/`@release` cross-cutting. Second §5.2
 RAG spec, builds on #673; created `@stable` after deterministic validation on the
-fresh nightly. Core Knowledge component — no bundle guard; skips cleanly only when
-`GOOGLE_API_KEY` is absent.)
+fresh nightly. Core Knowledge component — no bundle guard; skips cleanly when
+Google is unusable — key absent or recorded `inactive`.)
 
 ---
 
@@ -117,7 +121,10 @@ fresh nightly. Core Knowledge component — no bundle guard; skips cleanly only 
 Two tests, one shared fixture flow (`Chat Input → Split Text → Knowledge[Ingest]`
 + `Knowledge[Retrieve]`), imported via the API with a unique flow name per run.
 
-**Guard (both tests):** skip if `GOOGLE_API_KEY` is unset.
+**Guard (both tests):** skip if Google cannot serve a live call — `GOOGLE_API_KEY`
+unset, or the provider recorded `inactive` in `providers.json`
+(`providerSkipGate("google")`, #1029). `IGNORE_PROVIDER_HEALTH=1` overrides a stale
+local `providers.json`.
 
 **Setup (each test):**
 1. Create a fresh KB via `POST /api/v1/knowledge_bases` — unique name per run,
@@ -162,7 +169,9 @@ Two tests, one shared fixture flow (`Chat Input → Split Text → Knowledge[Ing
   `top_k = 1`, `search_query` = the embedding-topic query). Both Knowledge nodes'
   `knowledge_base` is a placeholder (`__KB_NAME__`) the spec replaces per run.
   Built live on the canvas and exported on 1.11.0.dev38.
-- `GOOGLE_API_KEY` — required (the KB embeds each chunk with `models/gemini-embedding-001`).
+- `GOOGLE_API_KEY` — required (the KB embeds each chunk with
+  `models/gemini-embedding-001`), **and** Google recorded `active` in
+  `providers.json` by `collect-models` (#1029).
 - Knowledge Base API: `POST /api/v1/knowledge_bases` (create),
   `GET /api/v1/knowledge_bases/{name}` (chunk count),
   `DELETE /api/v1/knowledge_bases/{name}` (scoped cleanup).
@@ -190,7 +199,8 @@ Two tests, one shared fixture flow (`Chat Input → Split Text → Knowledge[Ing
 ## Preconditions
 
 - Langflow running at `PLAYWRIGHT_BASE_URL` (auto_login).
-- `GOOGLE_API_KEY` configured in `.env` (else both tests skip).
+- `GOOGLE_API_KEY` configured in `.env` **and** Google recorded `active` by
+  `collect-models` (else both tests skip — #1029).
 
 ---
 

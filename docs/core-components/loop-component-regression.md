@@ -41,7 +41,9 @@ If any of these tests fails, the Loop component is broken in the product: either
 5. Verify that `button_run_loop` is still accessible and `title-Loop` is still visible with a single node on the canvas
 
 **Test 3 — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers**
-1. Skip the test if `OPENAI_API_KEY` is not set in the environment
+1. Skip the test when OpenAI cannot serve a live call — `OPENAI_API_KEY` unset, or
+   the provider recorded `inactive` in `providers.json`
+   (`providerSkipGate("openai")`, #1029)
 2. Navigate to "All Templates" and wait for the `template-research-translation-loop` card
 3. Click the template and wait for `title-Loop` to appear
 4. Verify that there are edges on the canvas (confirms template wiring)
@@ -103,7 +105,7 @@ If any of these tests fails, the Loop component is broken in the product: either
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
 - Tests 1 and 2 do not need an API key (no LLM execution)
-- Test 3 requires `OPENAI_API_KEY` in the environment; it is skipped gracefully when the key is absent. The test configures the Language Model component via the "Setup Provider" UI before executing the flow — the template ships unconfigured and fails with "A model selection is required" without this step
+- Test 3 requires `OPENAI_API_KEY` in the environment **and** OpenAI recorded `active` in `providers.json` by `collect-models`; it is skipped gracefully otherwise (`providerSkipGate("openai")` — #1029; the two sequential completions under an 8-minute budget are exactly the shape that hangs a shard's worker when the key is drained). The test configures the Language Model component via the "Setup Provider" UI before executing the flow — the template ships unconfigured and fails with "A model selection is required" without this step
 - Tests run in `serial` mode to avoid 400 errors from parallel autosave ("flow must be unique")
 
 ---
@@ -120,7 +122,7 @@ If any of these tests fails, the Loop component is broken in the product: either
 
 - Test 3 configures the Language Model component before running the Playground — the template ships without a provider selected, causing "A model selection is required" if the setup step is skipped
 - Test 3 reads the streamed response with `toContainText(/title/i, { timeout: 240000 })` rather than a one-shot `textContent()` read — `toContainText` re-evaluates as tokens stream in, so it never samples a partially-streamed message. The earlier one-shot read fired on the first streamed token and made the "title" assertion intermittently fail (flake tracked in #356). The test-level timeout is set to 8 minutes via `test.setTimeout` — the template makes 2 sequential model calls (one per ArXiv article) which can take 3-4 minutes on CI infrastructure; the global 5-minute cap is insufficient for this flow
-- The test is skipped automatically (not failed) when `OPENAI_API_KEY` is absent, so it does not block local runs without API keys
+- The test is skipped automatically (not failed) when OpenAI is unusable — key absent, or recorded `inactive` — so it does not block local runs without API keys. Set `IGNORE_PROVIDER_HEALTH=1` to override a stale local `providers.json`
 - The validation criterion counts occurrences of "title" (case-insensitive) in the aggregated LLM response; the threshold is ≥ 1 because the LLM produces a free-form output and may echo "title" in only one of the N responses — checking ≥ N would couple the assertion to non-deterministic LLM formatting
 - `allowFlowErrors()` is required in Test 2 to disable the automatic flow error monitor injected by the fixture
 - **Test 4 daily-#744 timeout was environmental, not a product/wait defect (#751):** the daily on 2026-07-14 hit a 60s `waitForSelector("text=built successfully")` timeout on the `loop-exit-condition.json` flow (`CreateList → Loop → TypeConverter → ChatOutput`, no LLM). Root-cause on the current nightly proved the product healthy: the flow builds in ~0.1s via `POST /api/v1/build/{id}/flow` with every vertex `valid:true`. That daily was a mass-failure run (296 passed / 27 hard-failed / 27 flaky across unrelated areas — traces, agents, custom-component, mcp), i.e. shared-instance saturation. No code change to Test 4; `@stable` kept per `CONTRIBUTING.md` (quarantine only if it reproduces on a clean, non-saturated daily)

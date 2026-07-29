@@ -6,6 +6,7 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
 import { setupGoogle } from "../../../../helpers/provider-setup/setup-google";
 import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 import { hideInspectorPanel } from "../../../../helpers/ui/hide-inspector-panel";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -16,9 +17,15 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 // - the multi-provider tests use Google instead of Anthropic — same contract
 //   (a second provider answers; a switch persists), and the suite holds a
 //   funded GOOGLE_API_KEY (no Anthropic credits available; Save/validation
-//   requires a real funded key). They skip without the env key — the
+//   requires a real funded key). They skip when the provider is unusable — the
 //   daily-stable workflow needs the GOOGLE_API_KEY secret for them to run
 //   in CI (flagged on the PR).
+//
+// Every test here drives a REAL completion, so each gates on provider HEALTH
+// (`providerSkipGate`), not on the mere presence of the env key (#1029). A key
+// that exists but is drained used to pass the old gate and block the backend
+// past gunicorn's 300s timeout, killing the shard's Langflow worker — the
+// Google tests below did exactly that on run 30374528125.
 // - the "Manage Model Providers" test lost its if-wrapping: every step is a
 //   hard assertion against live-scouted testids.
 
@@ -69,10 +76,8 @@ test.describe("Language Model Component Regression", () => {
     "language model must respond with OpenAI provider",
     { tag: ["@stable", "@release", "@components", "@model-provider"] },
     async ({ page }) => {
-      test.skip(
-        !process?.env?.OPENAI_API_KEY,
-        "OPENAI_API_KEY required to run this test",
-      );
+      const gate = providerSkipGate("openai");
+      test.skip(gate.skip, gate.reason);
 
       await openBasicPrompting(page);
 
@@ -131,10 +136,8 @@ test.describe("Language Model Component Regression", () => {
     "language model must respond with Google provider",
     { tag: ["@stable", "@release", "@components", "@model-provider"] },
     async ({ page }) => {
-      test.skip(
-        !process?.env?.GOOGLE_API_KEY,
-        "GOOGLE_API_KEY required to run this test",
-      );
+      const gate = providerSkipGate("google");
+      test.skip(gate.skip, gate.reason);
 
       await openBasicPrompting(page);
 
@@ -214,10 +217,10 @@ test.describe("Language Model Component Regression", () => {
     "language model provider switch from OpenAI to Google must persist",
     { tag: ["@stable", "@release", "@components", "@model-provider"] },
     async ({ page }) => {
-      test.skip(
-        !process?.env?.OPENAI_API_KEY || !process?.env?.GOOGLE_API_KEY,
-        "OPENAI_API_KEY and GOOGLE_API_KEY required to run this test",
-      );
+      // Both providers are driven here, so a dead key on EITHER one wedges the
+      // test — gate on both.
+      const gate = providerSkipGate("openai", "google");
+      test.skip(gate.skip, gate.reason);
 
       await openBasicPrompting(page);
 

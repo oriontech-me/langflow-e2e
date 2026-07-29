@@ -59,8 +59,10 @@ burst on nightly `1.12.0.dev6`.
 ## Preconditions *(optional)*
 
 - Langflow running at `PLAYWRIGHT_BASE_URL`.
-- `OPENAI_API_KEY` set — the flow is the Simple Agent template driven through
-  `initialGPTsetup` (the test skips without the key).
+- `OPENAI_API_KEY` set **and** OpenAI recorded `active` in `providers.json` by
+  `collect-models` — the flow is the Simple Agent template driven through
+  `initialGPTsetup`, and the test skips when either is missing
+  (`providerSkipGate("openai")`, #1029).
 - Run with `--workers=1` for local validation (agent-family convention —
   named template loads collide under parallelism).
 
