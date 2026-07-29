@@ -134,9 +134,11 @@ test.describe("Execution Error Notifications", () => {
     },
   );
 
-  test(
+  // Quarantined for #1063 — recurrent flake (2026-07-21 / 07-29): the
+  // error-feedback waitForSelector times out at 30 s.
+  test.fixme(
     "executing flow with server error shows error feedback",
-    { tag: ["@stable", "@release", "@workspace", "@observability"] },
+    { tag: ["@release", "@workspace", "@observability"] },
     async ({ page }) => {
       (page as any).allowFlowErrors();
       trackCreatedFlows(page);

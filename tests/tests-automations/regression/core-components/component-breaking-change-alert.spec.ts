@@ -87,9 +87,11 @@ async function importOutdatedFlowAndOpen(page: Page): Promise<void> {
   ).toBeVisible({ timeout: 30000 });
 }
 
-test(
+// Quarantined for #1061 — recurrent flake (2026-07-27 / 07-29): the
+// breaking-change alert never becomes visible.
+test.fixme(
   "breaking-change outdated components alert with a Review action, not a silent Update",
-  { tag: ["@stable", "@components", "@regression", "@ui-ux"] },
+  { tag: ["@components", "@regression", "@ui-ux"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 

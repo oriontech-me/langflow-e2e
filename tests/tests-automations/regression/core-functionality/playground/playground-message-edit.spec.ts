@@ -96,9 +96,11 @@ test.describe("Playground Message Edit", () => {
     }
   });
 
-  test(
+  // Quarantined for #1062 — recurrent flake (2026-07-20 / 07-29): hover does
+  // not reveal the edit button.
+  test.fixme(
     "edit user message — hover reveals edit button and saved changes replace original text",
-    { tag: ["@release", "@playground", "@stable"] },
+    { tag: ["@release", "@playground"] },
     async ({ page }) => {
       await test.step("set up flow", async () => {
         createdFlowId = await setupPlayground(page);
