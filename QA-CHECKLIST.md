@@ -733,9 +733,9 @@
 - [x] Expand/collapse group → `core-components/nested-grouping-regression.spec.ts`
 
 #### 15.7 Freeze and State
-- [-] Freeze component
-- [-] Freeze path
-- [-] Unfreeze component
+- [x] Freeze component — a frozen component serves its cached output instead of recomputing → `flow-functionality/freeze-and-state.spec.ts`
+- [x] Freeze path — freezing a component also freezes every component upstream of it → `flow-functionality/freeze-and-state.spec.ts`
+- [x] Unfreeze component — releases the whole path and the component recomputes → `flow-functionality/freeze-and-state.spec.ts`
 
 #### 15.8 Sticky Notes
 - [x] Add sticky note — the `canvas-add-note-button` canvas control places a note at the default 280×140 and the flow gains a node with `type: "noteNode"` → `ui-ux/sticky-notes.spec.ts`
