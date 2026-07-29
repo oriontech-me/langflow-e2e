@@ -42,7 +42,11 @@
 //   WATCH_URL          probe target (default http://localhost:7860/api/v1/version)
 //   WATCH_OUT          JSONL probe log (default backend-liveness.jsonl)
 //   WATCH_SUMMARY      summary path, --summarize only (default backend-liveness.json)
-//   WATCH_INTERVAL_MS  probe period (default 2000)
+//   WATCH_INTERVAL_MS  probe period (default 2000) — the sleep is interval minus
+//                      the probe's own duration, so a probe that burns the full
+//                      timeout relaxes the cadence to ~WATCH_TIMEOUT_MS. The
+//                      resolution DURING an outage is therefore the timeout, not
+//                      the interval
 //   WATCH_TIMEOUT_MS   per-probe deadline (default 4000) — a wedged backend
 //                      accepts the TCP connection and never answers, so without
 //                      this the probe would hang instead of recording a failure

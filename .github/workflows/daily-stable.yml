@@ -470,7 +470,9 @@ jobs:
       # is why the wedge kept costing a full triage cycle to attribute.
       #
       # Measuring from inside fixes the resolution: probe the same URL the specs
-      # use every 2 s, and two consecutive failures bound an outage to ~4 s.
+      # use every 2 s while it answers — a failed probe burns its whole 4 s
+      # deadline, so the cadence relaxes to ~4 s exactly while down — and two
+      # consecutive failures bound an outage to ~4 s instead of 120.
       #
       # DIAGNOSTIC ONLY — it never fails a step and never aborts the shard.
       # Aborting was this issue's original proposal and the data rejected it:
@@ -494,8 +496,11 @@ jobs:
           # exactly when it has something to record.
           WATCH_TIMEOUT_MS: "4000"
           # Backstop so a recorder that outlives its kill cannot idle for the
-          # job's whole lifetime. Well above any observed shard duration (~40 min).
-          WATCH_MAX_SECONDS: "5400"
+          # job's whole lifetime. Well above any observed shard duration (~40 min)
+          # and BELOW the job's timeout-minutes: 90 — at 90 min it would only ever
+          # be reached after the runner had already killed the job, making it dead
+          # configuration rather than a backstop.
+          WATCH_MAX_SECONDS: "3600"
 
       - name: Run @stable tests (shard ${{ matrix.shard }})
         # Sharded run. The reporter list is NOT overridden on the CLI: setting
@@ -739,9 +744,14 @@ jobs:
         env:
           LIVENESS_DIR: all-liveness
           PLAYWRIGHT_JSON: results.json
+          # Without the expected count the reporter can only speak about shards
+          # that uploaded data: "2 measured shard(s)" reads the same whether the
+          # run had 2 shards or 4, so a shard whose job died before writing a
+          # summary would disappear instead of reading as UNKNOWN.
+          SHARD_TOTAL: ${{ needs.prep.outputs.shard_total }}
 
       - name: Upload Playwright report (full, heavy)
-        id: upload_report                   # ← full report: index.html + data/ + trace/ attachments (~380 MB)
+        id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)
         uses: actions/upload-artifact@v7
         if: always()
         with:

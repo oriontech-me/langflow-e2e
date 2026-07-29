@@ -172,16 +172,45 @@ test("attribute counts an attempt that merely overlaps the window edge", () => {
 test("renderSection distinguishes NOT MEASURED from a clean backend", () => {
   const unmeasured = renderSection(attribute([], []));
   assert.match(unmeasured, /Not measured/);
-  assert.doesNotMatch(unmeasured, /no mid-run outage/);
+  assert.doesNotMatch(unmeasured, /No mid-run outage/);
 
   const clean = renderSection(attribute([shard4], collectAttempts(report)));
-  assert.match(clean, /no mid-run outage/);
-  assert.match(clean, /not\*\* wedge collateral/);
+  assert.match(clean, /No mid-run outage measured/);
+  assert.match(clean, /answered \*\*every\*\* probe/);
+});
+
+// The clean verdict's failure mode: `outageCount` excludes runs below minProbes,
+// so a shard that timed out on thirty isolated probes used to render as "answered
+// every probe". Under a saturated single worker that is the expected shape, not a
+// corner case.
+test("renderSection refuses to clear a shard that had discarded blips", () => {
+  const blippy = { ...shard4, failedProbes: 30, ignoredBlips: 30 };
+  const md = renderSection(attribute([blippy], collectAttempts(report)));
+  assert.match(md, /No mid-run outage measured/);
+  assert.match(md, /30 single-probe failure\(s\) were discarded/);
+  assert.match(md, /did \*\*not\*\* answer/);
+  // It must NOT clear the run's failures on the strength of outageCount alone.
+  assert.doesNotMatch(md, /answered \*\*every\*\* probe/);
+  assert.doesNotMatch(md, /are not wedge collateral/);
+});
+
+test("renderSection counts a shard that uploaded nothing at all", () => {
+  // Two of four shards reported; the other two never wrote a summary. "2 measured
+  // shard(s)" alone would read as a complete picture.
+  const md = renderSection(attribute([shard3, shard4], collectAttempts(report)), { shardTotal: 4 });
+  assert.match(md, /2 shard\(s\) uploaded no liveness artifact at all/);
+  assert.match(md, /\*\*unknown\*\*/);
+  const clean = renderSection(attribute([shard4], collectAttempts(report)), { shardTotal: 4 });
+  assert.match(clean, /1 of 4 measured shard\(s\)/);
+  assert.match(clean, /3 shard\(s\) uploaded no liveness artifact/);
 });
 
 test("renderSection names the wedge, tabulates each shard, and prints the down-share caveat", () => {
   const md = renderSection(attribute([shard3, shard4], collectAttempts(report)));
-  assert.match(md, /Langflow worker went down mid-run/);
+  assert.match(md, /backend stopped answering mid-run/);
+  // The measurement is taken through the specs' own forward, so the section must
+  // not overclaim which component died.
+  assert.match(md, /a dead socat would read the same way/);
   assert.match(md, /\| 3 \| 1 \| 2 min \(20%\)/);
   // The caveat is mandatory: at high down-share, overlap is chance, not proof.
   assert.match(md, /lead, not a/);
@@ -255,6 +284,7 @@ test("the CLI aggregates a directory of shard summaries and writes step outputs"
   assert.match(outputs, /^shards_measured=2$/m);
   assert.match(outputs, /^outages_total=1$/m);
   assert.match(outputs, /^collateral_attempts=2$/m);
+  assert.match(outputs, /^blips_total=0$/m);
   assert.match(outputs, new RegExp(`^summary_md<<${MD_DELIMITER}$`, "m"));
   assert.match(readFileSync(summaryPath, "utf8"), /Backend liveness/);
 });
