@@ -20,6 +20,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   PROVIDER_COMPONENTS,
+  aggregateVerdict,
   buildAxisReason,
   isBuildAxisReason,
   isPackagingError,
@@ -221,6 +222,48 @@ test("isBuildAxisReason: a key-axis error is not a build-axis reason", () => {
   );
   assert.equal(isBuildAxisReason("OPENAI_API_KEY not set"), false);
   assert.equal(isBuildAxisReason(null), false);
+});
+
+// ─── aggregateVerdict ─────────────────────────────────────────────────────────
+
+test("aggregateVerdict: every component built ⇒ ok", () => {
+  assert.deepEqual(
+    aggregateVerdict([
+      { key: "a", state: "ok" },
+      { key: "b", state: "ok" },
+    ]),
+    { state: "ok" },
+  );
+});
+
+test("aggregateVerdict: a packaging failure wins over everything else", () => {
+  const v = aggregateVerdict([
+    { key: "a", state: "unknown", message: "timed out" },
+    { key: "b", state: "packaging", message: MISSING_MODULE },
+  ]);
+  assert.equal(v.state, "failed");
+  assert.match(v.reason ?? "", /runtime package/i);
+  assert.match(v.reason ?? "", /^build axis: /);
+});
+
+test("aggregateVerdict: a component that could not be probed is UNKNOWN, never ok", () => {
+  // The CI regression this exists for: on PR #1051's first run the probe timed
+  // out and still logged "✅" for all three providers, because fail-open and real
+  // success produced identical output. An unproven component must read as
+  // unproven — that is the whole difference between a gate and ceremony.
+  const v = aggregateVerdict([
+    { key: "a", state: "ok" },
+    { key: "b", state: "unknown", message: "build did not finish within the probe budget" },
+  ]);
+  assert.equal(v.state, "unknown");
+  assert.match(v.reason ?? "", /b/);
+});
+
+test("aggregateVerdict: an UNKNOWN reason is not stamped as a build-axis failure", () => {
+  // `unknown` must not reach providers.json as an inactive reason — the probe
+  // could not run, which says nothing about the provider. Only `failed` does.
+  const v = aggregateVerdict([{ key: "a", state: "unknown", message: "timed out" }]);
+  assert.equal(isBuildAxisReason(v.reason), false);
 });
 
 // ─── PROVIDER_COMPONENTS ──────────────────────────────────────────────────────

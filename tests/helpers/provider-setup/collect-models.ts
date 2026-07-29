@@ -314,7 +314,11 @@ async function collectProviders(
 
   const merged = results.map((r) => {
     const axis = buildAxis[r.provider];
-    if (axis && !axis.ok) {
+    // Only a PROVEN build failure overrides the key verdict. `unknown` (the probe
+    // could not reach a verdict) must not: it says nothing about the provider, and
+    // writing it as `inactive` would turn a runner-side hiccup into a hard gate
+    // failure plus the silent downstream skips this mechanism exists to prevent.
+    if (axis && axis.state === "failed") {
       // Recorded even when the key is fine: the specs parametrized on this
       // provider cannot run either way, and the reason must name the layer that
       // is missing rather than blaming the key.

@@ -168,18 +168,75 @@ export function isBuildAxisReason(error: string | null | undefined): boolean {
   return !!error && error.startsWith(BUILD_AXIS_PREFIX);
 }
 
-// ─── I/O ──────────────────────────────────────────────────────────────────────
+/** One component's outcome. `unknown` means the probe could not reach a verdict. */
+export interface ComponentVerdict {
+  key: string;
+  state: "ok" | "packaging" | "unknown";
+  message?: string;
+}
 
-export interface BuildAxisResult {
-  /** false only on a PROVEN packaging gap; a probe that could not run is `true`. */
-  ok: boolean;
+export interface ProviderVerdict {
+  state: "ok" | "failed" | "unknown";
+  /** Only set for `failed` — this is what lands in providers.json. */
   reason?: string;
 }
 
-interface BuildVertexOutcome {
-  componentKey: string;
-  errorMessage: string;
+/**
+ * Folds a provider's per-component outcomes into one verdict.
+ *
+ * `unknown` is a first-class state, NOT a synonym for ok. On PR #1051's first CI
+ * run the probe timed out and still logged `✅` for all three providers, because
+ * fail-open and real success produced identical output — the exact blind spot this
+ * issue exists to remove, reintroduced one layer up. An unproven component now
+ * reads as unproven everywhere: in the log, and by being excluded from the
+ * `build axis: ` stamp so it can never reach providers.json as an inactive reason.
+ *
+ * A proven packaging failure outranks an unknown: one component we could not probe
+ * does not make another component's hard evidence go away.
+ */
+export function aggregateVerdict(verdicts: ComponentVerdict[]): ProviderVerdict {
+  const broken = verdicts.find((v) => v.state === "packaging");
+  if (broken) {
+    return {
+      state: "failed",
+      reason: buildAxisReason({
+        layer: "runtime-package",
+        component: broken.key,
+        message: broken.message ?? "no error message recorded",
+      }),
+    };
+  }
+  const unproven = verdicts.filter((v) => v.state === "unknown");
+  if (unproven.length > 0) {
+    return {
+      state: "unknown",
+      reason:
+        `not proven — ${unproven.length} component(s) could not be built within the ` +
+        `probe budget: ${unproven.map((v) => `${v.key} (${v.message ?? "no detail"})`).join(", ")}`,
+    };
+  }
+  return { state: "ok" };
 }
+
+// ─── I/O ──────────────────────────────────────────────────────────────────────
+
+/**
+ * Per-component build budget. Measured on 1.12.0.dev8: an isolated component
+ * builds in 0.9–3.3 s, so 20 s is ~6× the slowest.
+ *
+ * Deliberately PER COMPONENT rather than one budget for the batch. On PR #1051's
+ * first CI run all five were built in a single request; it exceeded the budget and
+ * the whole axis fell back to fail-open, yielding no signal about any provider.
+ * Isolated builds bound the damage to the component that is actually slow and
+ * still return real verdicts for the rest — and the log then NAMES the slow one,
+ * which a batched probe cannot do.
+ */
+const BUILD_TIMEOUT_MS = 20000;
+
+/** Ceiling for the whole axis, so a systematically slow backend cannot hold the run. */
+const TOTAL_BUDGET_MS = 90000;
+
+const HTTP_TIMEOUT_MS = 20000;
 
 /**
  * Strips every secret field so the build cannot make a billable call.
@@ -203,97 +260,6 @@ function neutraliseSecrets(template: Record<string, unknown>): void {
   }
 }
 
-/**
- * Builds every given component as a disconnected vertex of ONE throwaway flow and
- * returns the ones that failed with a packaging error.
- *
- * One flow rather than one per provider: the vertices are independent, so a single
- * create/build/delete covers all of them (~9 s measured, against ~5 round-trips
- * otherwise). The build endpoint requires a PERSISTED flow — passing `data` inline
- * against a random UUID returns `404 Flow with id ... not found` — hence the
- * create, and hence the `finally` that deletes it.
- */
-async function buildComponents(
-  request: APIRequestContext,
-  auth: string,
-  registry: Record<string, Record<string, unknown>>,
-  componentKeys: string[],
-): Promise<BuildVertexOutcome[]> {
-  const headers = auth ? { Authorization: auth } : undefined;
-  const nodeIdToKey = new Map<string, string>();
-  const nodes = componentKeys.map((key, i) => {
-    const template = JSON.parse(
-      JSON.stringify(findTemplate(registry, key)),
-    ) as Record<string, unknown>;
-    neutraliseSecrets(template);
-    const id = `build-probe-${i}`;
-    nodeIdToKey.set(id, key);
-    return {
-      id,
-      type: "genericNode",
-      position: { x: i * 400, y: 0 },
-      data: { id, type: (template.name as string) ?? key, node: template },
-    };
-  });
-
-  const graph = { nodes, edges: [] };
-  const created = await request.post("/api/v1/flows/", {
-    headers,
-    data: { name: `build-probe-${Date.now()}`, description: "collect-models build axis (#900)", data: graph },
-    timeout: 30000,
-  });
-  if (!created.ok()) throw new Error(`flow create failed: HTTP ${created.status()}`);
-  const flowId = (await created.json()).id as string;
-
-  try {
-    const started = await request.post(`/api/v1/build/${flowId}/flow?log_builds=false`, {
-      headers,
-      data: { data: graph },
-      timeout: 30000,
-    });
-    if (!started.ok()) throw new Error(`build start failed: HTTP ${started.status()}`);
-    const jobId = (await started.json()).job_id as string;
-
-    // 60s against ~9s measured for all five components. Deliberately tight: this
-    // runs in the daily's `Collect models` PRE-FLIGHT, which shares its Langflow
-    // container with the @stable shard and has a history of wedging it (#922/#927,
-    // and #1011 where an over-eager pre-flight cost the entire run). Because the
-    // whole probe fails OPEN, an expired timeout degrades to "no build signal" and
-    // a warning — never to a blocked pre-flight or an inactive provider — so
-    // erring on the short side is the safe direction.
-    const events = await request.get(`/api/v1/build/${jobId}/events`, {
-      headers,
-      timeout: 60000,
-    });
-    if (!events.ok()) throw new Error(`build events failed: HTTP ${events.status()}`);
-
-    const outcomes: BuildVertexOutcome[] = [];
-    for (const line of (await events.text()).split("\n")) {
-      if (!line.trim()) continue;
-      let event: any;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        continue; // a partial frame is not a verdict — ignore it
-      }
-      if (event?.event !== "end_vertex") continue;
-      const buildData = event.data?.build_data;
-      const key = nodeIdToKey.get(buildData?.id);
-      if (!key) continue;
-      for (const output of Object.values(buildData?.data?.outputs ?? {})) {
-        const errorMessage = (output as any)?.message?.errorMessage;
-        if (typeof errorMessage === "string" && errorMessage) {
-          outcomes.push({ componentKey: key, errorMessage });
-        }
-      }
-    }
-    return outcomes;
-  } finally {
-    // Always — a probe must never leak a flow onto the instance under test.
-    await request.delete(`/api/v1/flows/${flowId}`, { headers, timeout: 30000 }).catch(() => {});
-  }
-}
-
 function findTemplate(
   registry: Record<string, Record<string, unknown>>,
   key: string,
@@ -308,78 +274,172 @@ function findTemplate(
 }
 
 /**
+ * Builds ONE component and classifies the outcome.
+ *
+ * `stop_component_id` restricts the build to that single vertex — verified on
+ * 1.12.0.dev8, where each call emitted exactly one `end_vertex` for the requested
+ * node. On timeout the job is CANCELLED: without that, the client stops waiting
+ * while the server keeps building, which is what wedged the backend on PR #1051's
+ * first CI run (gunicorn `WORKER TIMEOUT`, then a 120 s unreachable backend for
+ * the next step). Stopping waiting and stopping working must be the same act.
+ */
+async function buildOne(
+  request: APIRequestContext,
+  headers: Record<string, string> | undefined,
+  flowId: string,
+  graph: unknown,
+  nodeId: string,
+  key: string,
+): Promise<ComponentVerdict> {
+  let jobId: string | undefined;
+  try {
+    const started = await request.post(
+      `/api/v1/build/${flowId}/flow?log_builds=false&stop_component_id=${nodeId}`,
+      { headers, data: { data: graph }, timeout: HTTP_TIMEOUT_MS },
+    );
+    if (!started.ok()) return { key, state: "unknown", message: `build start HTTP ${started.status()}` };
+    jobId = (await started.json()).job_id as string;
+
+    const events = await request.get(`/api/v1/build/${jobId}/events`, {
+      headers,
+      timeout: BUILD_TIMEOUT_MS,
+    });
+    if (!events.ok()) return { key, state: "unknown", message: `events HTTP ${events.status()}` };
+
+    for (const line of (await events.text()).split("\n")) {
+      if (!line.trim()) continue;
+      let event: any;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue; // a partial frame is not a verdict
+      }
+      if (event?.event !== "end_vertex") continue;
+      for (const output of Object.values(event.data?.build_data?.data?.outputs ?? {})) {
+        const errorMessage = (output as any)?.message?.errorMessage;
+        if (typeof errorMessage === "string" && isPackagingError(errorMessage)) {
+          return { key, state: "packaging", message: errorMessage };
+        }
+      }
+    }
+    // Built, or failed for a reason that is NOT packaging (a credentials error is
+    // the expected shape here and PROVES the client class was constructed).
+    return { key, state: "ok" };
+  } catch (e: any) {
+    if (jobId) {
+      // Best-effort: stop the server-side work we just abandoned.
+      await request
+        .post(`/api/v1/build/${jobId}/cancel`, { headers, timeout: 10000 })
+        .catch(() => {});
+    }
+    return { key, state: "unknown", message: e?.message?.split("\n")[0] ?? String(e) };
+  }
+}
+
+/**
  * Runs both layers and returns a verdict per provider.
  *
- * FAILS OPEN on its own infrastructure. An unreachable registry, a build endpoint
- * error or a timeout returns `ok: true` for everyone and logs a warning: the gate
- * must never convert a runner-side hiccup into an `inactive` provider, which
- * would be a hard failure of collect-models plus the silent downstream skips the
- * whole mechanism exists to prevent. Same rule `readProviderHealth` (#1029) and
- * `TRANSIENT_TRANSPORT` (#1011) already encode.
+ * FAILS OPEN on its own infrastructure — but never SILENTLY. An unreachable
+ * registry or an unbuildable-within-budget component yields `unknown`, which is
+ * logged as `⚠️` and never written to providers.json: the gate must not convert a
+ * runner-side hiccup into an `inactive` provider, and it must not report an
+ * unproven component as proven either. Reporting `✅` on fail-open is exactly what
+ * PR #1051's first CI run did, and it made a timed-out probe indistinguishable
+ * from a passing one.
  */
 export async function probeBuildAxis(
   request: APIRequestContext,
   providers: readonly Provider[],
-): Promise<Record<string, BuildAxisResult>> {
-  const results: Record<string, BuildAxisResult> = {};
-  for (const provider of providers) results[provider] = { ok: true };
+): Promise<Record<string, ProviderVerdict>> {
+  const results: Record<string, ProviderVerdict> = {};
+  const started = Date.now();
+  let flowId: string | undefined;
+  const headers: Record<string, string> | undefined = undefined;
 
   try {
     const auth = await getAuthToken(request);
+    const authHeaders = auth ? { Authorization: auth } : undefined;
     const res = await request.get("/api/v1/all", {
-      headers: auth ? { Authorization: auth } : undefined,
-      timeout: 30000,
+      headers: authHeaders,
+      timeout: HTTP_TIMEOUT_MS,
     });
     if (!res.ok()) throw new Error(`registry unreachable: HTTP ${res.status()}`);
     const registry = (await res.json()) as Record<string, Record<string, unknown>>;
 
-    // Layer 1 — catalog.
-    const stillPresent: string[] = [];
+    // Layer 1 — catalog. One request, every provider.
+    const toBuild: { provider: Provider; key: string; nodeId: string }[] = [];
     for (const provider of providers) {
       const keys = PROVIDER_COMPONENTS[provider] ?? [];
       const missing = missingComponentKeys(registry, keys);
       if (missing.length > 0) {
-        results[provider] = { ok: false, reason: buildAxisReason({ layer: "distribution", missing }) };
+        results[provider] = {
+          state: "failed",
+          reason: buildAxisReason({ layer: "distribution", missing }),
+        };
         continue;
       }
-      stillPresent.push(...keys);
-    }
-    if (stillPresent.length === 0) return results;
-
-    // Layer 2 — buildability, for whatever survived layer 1.
-    // Logged BEFORE the build so the step is observable even if the build hangs:
-    // a probe whose success is indistinguishable from a probe that never ran is
-    // the #505 class of blind spot this whole mechanism exists to remove.
-    console.log(`   build axis: building ${stillPresent.length} component(s) with no API key — ${stillPresent.join(", ")}`);
-    const outcomes = await buildComponents(request, auth, registry, stillPresent);
-    for (const provider of providers) {
-      if (!results[provider].ok) continue;
-      const keys = PROVIDER_COMPONENTS[provider] ?? [];
-      const broken = outcomes.find(
-        (o) => keys.includes(o.componentKey) && isPackagingError(o.errorMessage),
-      );
-      if (broken) {
-        results[provider] = {
-          ok: false,
-          reason: buildAxisReason({
-            layer: "runtime-package",
-            component: broken.componentKey,
-            message: broken.errorMessage,
-          }),
-        };
+      for (const key of keys) {
+        toBuild.push({ provider, key, nodeId: `build-probe-${toBuild.length}` });
       }
     }
+    if (toBuild.length === 0) return results;
+
+    // Layer 2 — buildability. ONE flow holds every surviving component as a
+    // disconnected vertex; `stop_component_id` then builds them one at a time.
+    const nodes = toBuild.map(({ key, nodeId }) => {
+      const template = JSON.parse(JSON.stringify(findTemplate(registry, key))) as Record<string, unknown>;
+      neutraliseSecrets(template);
+      return {
+        id: nodeId,
+        type: "genericNode",
+        position: { x: 0, y: 0 },
+        data: { id: nodeId, type: (template.name as string) ?? key, node: template },
+      };
+    });
+    const graph = { nodes, edges: [] };
+
+    const created = await request.post("/api/v1/flows/", {
+      headers: authHeaders,
+      data: {
+        name: `build-probe-${Date.now()}`,
+        description: "collect-models build axis (#900)",
+        data: graph,
+      },
+      timeout: HTTP_TIMEOUT_MS,
+    });
+    if (!created.ok()) throw new Error(`flow create failed: HTTP ${created.status()}`);
+    flowId = (await created.json()).id as string;
+
+    const verdicts = new Map<Provider, ComponentVerdict[]>();
+    for (const { provider, key, nodeId } of toBuild) {
+      const verdict =
+        Date.now() - started > TOTAL_BUDGET_MS
+          ? ({ key, state: "unknown", message: "total probe budget exhausted" } as ComponentVerdict)
+          : await buildOne(request, authHeaders, flowId, graph, nodeId, key);
+      const list = verdicts.get(provider) ?? [];
+      list.push(verdict);
+      verdicts.set(provider, list);
+    }
+    for (const [provider, list] of verdicts) results[provider] = aggregateVerdict(list);
   } catch (e: any) {
-    console.warn(
-      `⚠️  build-axis probe could not run (${e?.message ?? e}) — keeping the key-axis ` +
-        `verdict for every provider. This is a fail-open by design (#900).`,
-    );
-    for (const provider of providers) results[provider] = { ok: true };
+    const message = e?.message?.split("\n")[0] ?? String(e);
+    for (const provider of providers) {
+      results[provider] ??= { state: "unknown", reason: `probe could not run — ${message}` };
+    }
+  } finally {
+    if (flowId) {
+      // Always — a probe must never leak a flow onto the instance under test.
+      await request.delete(`/api/v1/flows/${flowId}`, { headers, timeout: HTTP_TIMEOUT_MS }).catch(() => {});
+    }
   }
 
   for (const provider of providers) {
-    const r = results[provider];
-    console.log(`   build axis: ${r.ok ? "✅" : "❌"} ${provider}${r.ok ? "" : ` — ${r.reason}`}`);
+    const r = (results[provider] ??= { state: "unknown", reason: "probe produced no verdict" });
+    const icon = r.state === "ok" ? "✅" : r.state === "failed" ? "❌" : "⚠️";
+    console.log(
+      `   build axis: ${icon} ${provider}${r.state === "ok" ? "" : ` — ${r.reason}`}` +
+        (r.state === "unknown" ? " [NOT PROVEN — this run gives no build signal for it]" : ""),
+    );
   }
   return results;
 }

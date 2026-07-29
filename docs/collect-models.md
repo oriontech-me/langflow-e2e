@@ -66,10 +66,12 @@ surface (the #505 lesson).
    a. **Catalog.** One `GET /api/v1/all` for every provider at once. Each provider
       declares the exact component keys it needs (chat + embeddings); a key absent
       from the registry means its distribution is not installed.
-   b. **Buildability.** Every component that passed (a) is placed in **one**
-      throwaway flow and built via `POST /api/v1/build/{flow_id}/flow`. The flow is
-      deleted in a `finally`. A registry hit does **not** prove the component can
-      build — see the contract table below.
+   b. **Buildability.** Every component that passed (a) goes into **one** throwaway
+      flow as a disconnected vertex, and each is then built **individually** via
+      `POST /api/v1/build/{flow_id}/flow?stop_component_id=<node>`, with its own
+      20 s budget. On timeout the job is **cancelled** and that component is
+      recorded `unknown`. The flow is deleted in a `finally`. A registry hit does
+      **not** prove the component can build — see the contract table below.
 6. Write the provider status records to `data/providers.json`, merging both axes:
    a build-axis failure records `inactive` with a reason that names the missing
    **layer** (distribution vs. runtime package) and, when Langflow reports it, the
@@ -123,11 +125,15 @@ test failure.
   removes. (A packaging reason also fails the env-keyed check, since it does not
   match `BILLING_OR_QUOTA`; the two overlap for keyed providers and only the new
   step covers unkeyed ones.)
-- **The probe fails OPEN on its own infrastructure.** An unreachable registry, a
-  build endpoint error, or a probe timeout leaves the key-axis verdict untouched and
-  logs a warning. The gate must never convert a runner-side hiccup into an
-  `inactive` provider — the same rule `readProviderHealth` and
-  `TRANSIENT_TRANSPORT` (#1011) already encode.
+- **The probe fails OPEN on its own infrastructure — but never SILENTLY.** An
+  unreachable registry, a build-endpoint error, or a component that does not build
+  within its budget yields a third state, **`unknown`**, distinct from both `ok` and
+  `failed`. It leaves the key-axis verdict untouched, is never written to
+  `providers.json`, and is logged as `⚠️ … [NOT PROVEN — this run gives no build
+  signal for it]`. The gate must never convert a runner-side hiccup into an
+  `inactive` provider (the rule `readProviderHealth` and `TRANSIENT_TRANSPORT`
+  (#1011) already encode) **and must never report an unproven component as
+  proven** — see *The `unknown` state is not decoration* below.
 
 ### No paid call, ever
 
@@ -212,10 +218,19 @@ exists to prevent. Two consequences, both load-bearing:
   `{ category: { ComponentType: template } }`; note the **`component_display_names`
   pseudo-category**, a lowercased echo of every type that the probe must skip so a
   component is not counted twice
-- `POST /api/v1/build/{flow_id}/flow` + `GET /api/v1/build/{job_id}/events` — the
-  build layer. It requires a **persisted** flow (passing `data` inline against a
-  random UUID returns `404 Flow with id … not found`), which is why the probe
-  creates and deletes one
+- `POST /api/v1/build/{flow_id}/flow` + `GET /api/v1/build/{job_id}/events` +
+  `POST /api/v1/build/{job_id}/cancel` — the build layer. Three properties it
+  depends on, all measured rather than assumed:
+  - it requires a **persisted** flow (passing `data` inline against a random UUID
+    returns `404 Flow with id … not found`), which is why the probe creates and
+    deletes one;
+  - `stop_component_id=<node>` restricts the build to that single vertex — verified
+    on 1.12.0.dev8, where each call emitted exactly one `end_vertex`, for the
+    requested node;
+  - `event_delivery` defaults to **`polling`**, and the events `GET` is a
+    **long-poll**: it blocks until the build finishes and then returns the whole
+    event list at once. There is no incremental read to lean on, which is why the
+    budget is enforced per component and paired with `cancel`
 - The component keys themselves — `ext:openai:OpenAIModelComponent@official`,
   `ext:openai:OpenAIEmbeddingsComponent@official`,
   `ext:anthropic:AnthropicModelComponent@official`,
@@ -300,11 +315,36 @@ hiding the package under a warm worker changes nothing.
 cannot, and which shape a given provider produces is decided upstream, without
 notice, by where a maintainer happens to put an `import`.
 
+### The `unknown` state is not decoration — it is a CI regression made permanent
+
+The first CI run of this mechanism (PR #1051) built all five components in **one**
+request. It exceeded the budget, the axis fell back to fail-open — and still logged
+`build axis: ✅ openai / ✅ anthropic / ✅ google`, because fail-open and real
+success produced identical output. The probe had proven nothing and said everything
+was fine. Two things went wrong, both now fixed and both worth stating plainly
+because they are easy to reintroduce:
+
+1. **Fail-open must never look like a pass.** A verdict the probe could not reach
+   is `unknown`, printed as `⚠️ … [NOT PROVEN]`, never `✅`. A gate whose failure
+   mode is indistinguishable from its success is ceremony.
+2. **Stopping waiting and stopping working must be the same act.** The client gave
+   up at its timeout while the server kept building; gunicorn hit `WORKER TIMEOUT`
+   and the next CI step found the backend unreachable for 120 s. The probe now
+   `POST`s to `/api/v1/build/{job_id}/cancel` on timeout.
+
+The batching was the third mistake: one over-budget component discarded the signal
+for *all* of them, and the log could not even name which one was slow.
+
 ### Cost
 
-All five components build in **one** flow, as disconnected vertices — one create,
-one build, one delete. Measured: **~9 s wall**, zero paid calls. Building them
-per-provider instead would multiply the flow round-trips for no added signal.
+One flow holds every component as a disconnected vertex; `stop_component_id` then
+builds them **one at a time**, each with its own 20 s budget. Measured on
+1.12.0.dev8, isolated: 1.5 s / 1.5 s / 3.3 s / 1.3 s / 0.9 s — **~9 s total**, zero
+paid calls, same as the batched version but with per-component attribution and a
+bounded blast radius. A 90 s ceiling covers the whole axis.
+
+Do not re-batch it to "save a round trip". The round trips are not the cost; losing
+the ability to say *which* component failed to build is.
 
 - In CI (`daily-stable.yml`) this spec runs as a dedicated **Collect models** step before the `@stable` suite, ensuring `models.json` is on disk before Playwright's collection phase. The step uses `continue-on-error: true` so a missing API key does not block the rest of the run.
 - **Double-run in the daily (analyzed, benign):** with `@stable` the spec ALSO runs inside the suite. The in-suite run re-saves the same keys (the exact flow `openai-provider`/`google-provider` test 1 already exercise in-suite) and rewrites the JSONs with equivalent content; workers read the files at module load, so a mid-suite rewrite does not change already-collected test targets.
