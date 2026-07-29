@@ -26,6 +26,23 @@ on a clamped viewport "zoom in raises the scale" is untestable. The tests assert
 the behavior of the controls, not this entry state; test 3 is the one that uses
 it, as a free "displaced viewport" to prove Fit View acts.
 
+**Wait strategy — why a plain "the transform stopped changing" poll is not enough
+(#1094).** React Flow commits a viewport change in one frame (measured: the
+transform still holds its pre-click value at `t+0` after the `fit_view` click and
+carries the fitted value by `t+100ms`), and Playwright's `expect.poll` runs its
+callback immediately. A settle poll seeded with a transform read *before* the
+action therefore compares the pre-action value against itself on its first tick,
+reports "settled" and hands back the **stale** viewport — which is how this spec
+read `scale(2)` out of a Fit View that had already fitted to `0.880331`. Whether
+the commit landed before that first read depends on CDP round-trip timing, so the
+same code passed in CI and failed locally. So `waitForViewportSettled` takes an
+optional predicate: every step whose action *must* move the viewport waits for a
+transform that both **differs from the pre-action one** and then holds, and
+`normalizeViewport` waits on its real postcondition (the nodes contained in the
+pane) rather than on "something changed". Only the two steps where no change is
+expected — editor hydration and the second, idempotent `fit_view` click — use the
+bare settle.
+
 Four independent tests:
 
 1. **Zoom in / Zoom out** — `zoom_in` multiplies the viewport scale by `1.2` per
@@ -81,6 +98,7 @@ part of test 3's enabled-controls assertion), and the minimap.
 | Zoom-out clamp | `zoom_out` becomes `disabled` with scale exactly `0.25`; `zoom_in` still enabled |
 | Zoom-in clamp | `zoom_in` becomes `disabled` with scale exactly `2`; `zoom_out` still enabled |
 | Fit View precondition | at scale `2` the nodes' union box is NOT contained in the pane rect |
+| Fit View scale | the fitted scale is strictly below `maxZoom` (`2`). Sound for this fixture, not an accident of the pane: the two nodes span `1090 × 315` flow px, so the unclamped fit is `min(1000/1090, 672/315) ≈ 0.92` — measured `0.880331` live, a factor of 2.3 away from the bound (#1094) |
 | Fit View centering | union box inside the pane rect (1 px tolerance) AND \|union center − pane center\| ≤ 4 px on both axes AND both node titles visible |
 | Fit View idempotence | second `fit_view` click leaves the `transform` string byte-identical |
 | Toolbar collapsed | `main_canvas_controls` visible; `fit_view`/`zoom_in`/`zoom_out`/`reset_zoom` `count() === 0` |
@@ -147,13 +165,15 @@ the editor's event poll.
      (scale `2`, at least one click landed).
   2. Measure the union box of `.react-flow__node` against the
      `.react-flow__pane` rect — assert it overflows (precondition).
-  3. Click `fit_view`.
+  3. Record the transform, click `fit_view`, and wait for a transform that
+     differs from the recorded one and then holds (see *Wait strategy*).
   4. Re-measure the union box and the pane rect; read `title-Chat Input` and
      `title-Chat Output` visibility; read the transform string.
   5. Click `fit_view` again; read the transform string.
-- **Validation:** after step 3 the union box is inside the pane (1 px tolerance),
-  its center is within 4 px of the pane center on both axes, both titles are
-  visible, and the step-5 transform is identical to the step-4 one.
+- **Validation:** after step 3 the fitted scale is strictly below `2`, the union
+  box is inside the pane (1 px tolerance), its center is within 4 px of the pane
+  center on both axes, both titles are visible, and the step-5 transform is
+  identical to the step-4 one.
 
 ### 15.5.3 Fit View is reachable from the canvas controls toolbar [-]
 
@@ -201,4 +221,4 @@ the editor's event poll.
 
 ## Last validated
 
-1.12.x (nightly `1.12.0.dev6`)
+1.12.x (nightly `1.12.0.dev9`; originally authored against `1.12.0.dev6`)
