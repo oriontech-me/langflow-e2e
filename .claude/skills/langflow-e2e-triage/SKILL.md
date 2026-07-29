@@ -185,8 +185,8 @@ When `guard_tripped` is true the day is a mass-failure day (mostly collateral).
 **Split the clusters:** **cross-day-recurrent** ones (same test+signature on
 other non-adjacent dailies — durable) are created/enriched as usual;
 **today-only collateral** is **noted, not filed** (aggregated with counts) and
-left under the umbrella, which **stays open** (Phase 7). `@stable` is **kept**
-on everything. Full rule + wording: `references/issue-templates.md` →
+recorded in the umbrella's closing comment — the umbrella still **closes** at
+the end of triage (Phase 7). `@stable` is **kept** on everything. Full rule + wording: `references/issue-templates.md` →
 *Guard-Tripped Rule*.
 
 ### Phase 4 — FLAKES
@@ -270,11 +270,11 @@ Only after the user approves the plan:
    opened), **leave the umbrella open** and tell the user exactly what remains
    — never close on a half-done triage. Only when all are satisfied:
    `gh issue close <umbrella_issue>`.
-   **Exception — guard-tripped run:** do **not** close the umbrella; it is the
-   standing record of the day's noted-not-filed collateral (Phase 3). Leave it
-   **open** with a comment to recheck on the next clean daily (which closes it
-   or promotes a persistent cluster). Durable clusters created/enriched this
-   run are still linked here.
+   **A guard-tripped run is not an exception:** the umbrella closes there too,
+   with the day's noted-not-filed collateral (Phase 3) listed in the closing
+   comment. The standing record is `reports/daily-history.jsonl` — recurrence is
+   recomputed from it on every triage, so a collateral cluster that persists is
+   re-detected and filed by a later run's triage without an issue left open.
 
 Report back to the user in PT-BR with the final list of issue numbers/URLs
 created or enriched, each quarantine PR opened (and any quarantine left
@@ -333,9 +333,10 @@ run is indistinguishable from a broken post, so every terminal path posts:
   "Nothing to triage — no red run found / history stale." note and stop.
 - **Guard-tripped mass-failure day** → still post the plan (durable cross-day
   clusters as create/enrich rows; today-only collateral as **note** rows), and
-  state descriptively that the guard tripped (count + threshold), that
-  `@stable` was left in place, and that the umbrella will stay **open** as the
-  collateral record (Phase 3 + Phase 7; guard rule in `references/issue-templates.md`).
+  state descriptively that the guard tripped (count + threshold) and that
+  `@stable` was left in place. The umbrella still closes at the end of triage,
+  carrying the collateral in its closing comment (Phase 3 + Phase 7; guard rule
+  in `references/issue-templates.md`).
 
 ### `--phase execute` (triggered by an approved "pode abrir" comment)
 
