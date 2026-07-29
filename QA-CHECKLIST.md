@@ -46,6 +46,7 @@
 - [-] Google Generative AI Provider Setup → `helpers/provider-setup/setup-google.ts`
 - [-] Provider Map (`providerSetupMap`) — central registration point → `helpers/provider-setup/index.ts`
 - [-] Provider validation via API (credit, valid key) → `helpers/provider-setup/collect-models.ts`
+- [-] Provider build-axis probe (registry key present + component instantiates) → `helpers/provider-setup/probe-component-buildable.ts`
 - [-] Collection of available models via UI (Settings → Model Providers) → `helpers/provider-setup/collect-models.ts`
 - [-] `providers.json` — status of each provider (active/inactive + reason) → `data/providers.json`
 - [-] `models.json` — list of models per provider → `data/models.json`
@@ -384,6 +385,7 @@
 
 #### 7.1 Provider Collection and Validation
 - [x] Validate API keys of all providers via real call → `collect-models.spec.ts`
+- [x] Validate the running build can instantiate each provider's component (registry + build, not just the key) → `collect-models.spec.ts`
 - [x] Collect available models per provider via UI → `collect-models.spec.ts`
 - [x] Inactive providers appear as skipped in tests with reason → `agent-component-regression.spec.ts`
 - [x] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`

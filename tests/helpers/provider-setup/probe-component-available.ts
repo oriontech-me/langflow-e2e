@@ -41,8 +41,13 @@ import { getAuthToken } from "../auth/get-auth-token";
 // KNOWN LIMITATION: the match is a substring, so a short token can hit a
 // neighbouring component type (`openai` also matches `OpenAI Compatible`). Fine
 // for the current callers, whose tokens (`groq`, `mistral`) are unambiguous.
-// Lifting this probe into the `collect-models` gate needs an explicit
-// provider -> component-key map instead (#900).
+//
+// SCOPE — this probe stays the per-spec gate for providers that are NOT bundled
+// in the image (groq, mistral — #1039). The providers `collect-models` validates
+// go through `probe-component-buildable.ts` instead (#900), which uses exact
+// registry keys rather than this substring match AND adds the build layer this
+// one cannot supply: a registry hit does not prove the component builds, as the
+// trap above describes.
 export async function isProviderComponentAvailable(
   request: APIRequestContext,
   providerToken: string,
