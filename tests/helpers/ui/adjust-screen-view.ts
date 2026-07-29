@@ -1,6 +1,8 @@
 import type { Page } from "@playwright/test";
 
 const CONTROLS = "canvas_controls_dropdown";
+const FIT_VIEW = "fit_view";
+const ZOOM_OUT = "zoom_out";
 const VIEWPORT = ".react-flow__viewport";
 
 /**
@@ -25,6 +27,10 @@ async function waitForViewportSettled(page: Page): Promise<void> {
   while (Date.now() < deadline) {
     // Short per-read timeout: the default actionTimeout (20 s) would turn a
     // missing viewport into a 20 s stall instead of a poll that just retries.
+    // The catch covers an absent viewport AND a strict-mode violation (should a
+    // build ever render two of them); either way the loop simply runs out its
+    // budget and the helper degrades to the 500 ms sleep this replaced — never
+    // worse than the previous behaviour, but silently so.
     const current = await viewport
       .getAttribute("style", { timeout: 200 })
       .catch(() => null);
@@ -78,6 +84,13 @@ async function closeCanvasControls(
  * surfaces the fit-view control directly on the canvas, `fit_view` is present
  * with the menu closed. This helper must not open a menu in that case — see
  * `closeCanvasControls` and issue #997.
+ *
+ * What it deliberately does NOT do is survive a *partial* migration — fit-view
+ * moved out, zoom-out left behind. Zooming out would then need a menu this call
+ * had no reason to open, and guessing at a layout no build has shipped is how a
+ * helper on 108 specs grows an untestable branch. It throws instead, naming the
+ * cause: a loud, attributed failure is the whole point of #997, whose bug was
+ * dormant precisely because it failed quietly.
  */
 export async function adjustScreenView(
   page: Page,
@@ -91,17 +104,38 @@ export async function adjustScreenView(
     timeout: 30000,
   });
 
-  const fitViewHidden = (await page.getByTestId("fit_view").count()) === 0;
+  // Tracked separately from the `fit_view` probe below: they coincide today,
+  // but only because opening immediately follows the probe. `closeCanvasControls`
+  // asks "did THIS call open the menu", and that question must keep its own
+  // answer if anything is ever inserted between the two.
+  let openedByThisCall = false;
 
-  if (fitViewHidden) {
+  if ((await page.getByTestId(FIT_VIEW).count()) === 0) {
     await page.getByTestId(CONTROLS).click();
+    openedByThisCall = true;
   }
 
-  await page.getByTestId("fit_view").click();
+  await page.getByTestId(FIT_VIEW).click();
   await waitForViewportSettled(page);
 
+  if (
+    numberOfZoomOut > 0 &&
+    (await page.getByTestId(ZOOM_OUT).count()) === 0
+  ) {
+    // Fail here rather than on a 1 s `isDisabled` timeout inside the loop, whose
+    // message says nothing about why the control is missing.
+    throw new Error(
+      `[adjustScreenView] "${ZOOM_OUT}" is not rendered. On the build this ` +
+        `helper was written against, the canvas controls live inside the ` +
+        `"${CONTROLS}" menu, so this means "${FIT_VIEW}" was reachable with ` +
+        `that menu closed — a Langflow layout change (#997). Zooming out needs ` +
+        `the menu open; teach this helper how the new layout exposes the ` +
+        `controls rather than reintroducing a blind toggle.`,
+    );
+  }
+
   for (let i = 0; i < numberOfZoomOut; i++) {
-    const zoomOutButton = page.getByTestId("zoom_out");
+    const zoomOutButton = page.getByTestId(ZOOM_OUT);
 
     if (await zoomOutButton.isDisabled({ timeout: 1000 })) {
       break;
@@ -110,5 +144,5 @@ export async function adjustScreenView(
     }
   }
 
-  await closeCanvasControls(page, fitViewHidden);
+  await closeCanvasControls(page, openedByThisCall);
 }
