@@ -126,6 +126,48 @@ async function triggerGroupMutation(page: Page): Promise<void> {
   await expect(groupBtn).toBeHidden({ timeout: 5000 });
 }
 
+// Reads the persisted shape of the flow. Canvas mutations are autosaved on a
+// debounce, so every backend assertion below polls through this rather than
+// reading once — an immediate GET after grouping still returns the two
+// ungrouped nodes.
+// `showNode` is normalised to null when absent: a freshly created GroupNode
+// carries NO showNode key at all (the node literal in `reactflowUtils` sets
+// only id/type/node/position), and the key only appears once the user toggles
+// collapse or expand. Reporting it as null rather than undefined keeps the
+// assertions below non-vacuous — `toEqual` ignores undefined properties.
+async function readPersistedNodes(
+  page: Page,
+  flowId: string,
+): Promise<Array<{ type?: string; showNode: boolean | null; hasInnerFlow: boolean }>> {
+  const authToken = await getAuthToken(page.request);
+  const res = await page.request.get(`/api/v1/flows/${flowId}`, {
+    headers: authToken ? { Authorization: authToken } : {},
+  });
+  if (!res.ok()) return [];
+  const body = (await res.json()) as {
+    data?: {
+      nodes?: Array<{
+        data?: { type?: string; showNode?: boolean; node?: { flow?: unknown } };
+      }>;
+    };
+  };
+  return (body.data?.nodes ?? []).map((n) => ({
+    type: n.data?.type,
+    showNode: n.data?.showNode ?? null,
+    hasInnerFlow: n.data?.node?.flow != null,
+  }));
+}
+
+// Opens the Group node's right-click toolbar. The toolbar is a dropdown
+// rendered per node; reopening it is required between state changes because
+// collapsing swaps the Minimize entry for Expand.
+async function openGroupToolbar(page: Page): Promise<void> {
+  await page.getByTestId("title-Group").click({ button: "right" });
+  await expect(page.getByTestId("group-button-modal")).toBeVisible({
+    timeout: 5000,
+  });
+}
+
 test.describe("Nested / Grouping", () => {
   let createdFlowId: string | null = null;
 
@@ -206,6 +248,126 @@ test.describe("Nested / Grouping", () => {
         await expect(page.getByTestId("title-Group")).toHaveCount(0);
         await expect(page.getByTestId("title-Prompt Template")).toBeVisible();
         await expect(page.getByTestId("title-Language Model")).toBeVisible();
+      });
+    },
+  );
+
+  test(
+    "a Group node collapses and expands from its toolbar, and the state is persisted",
+    {
+      tag: ["@release", "@regression", "@components", "@workspace"],
+    },
+    async ({ page }) => {
+      let expandedHeight = 0;
+
+      await test.step("Create a 2-node non-IO flow and group both nodes into a single Group", async () => {
+        createdFlowId = await createTwoNodeFlow(page);
+        await selectAllNodesBoxDrag(page);
+        await triggerGroupMutation(page);
+        await expect(page.locator(".react-flow__node")).toHaveCount(1, {
+          timeout: 8000,
+        });
+        await expect(page.getByTestId("title-Group")).toBeVisible();
+      });
+
+      await test.step("Wait for the grouped shape to reach the backend and record the expanded height", async () => {
+        // Server truth, not just the canvas: one GroupNode carrying the
+        // encapsulated sub-flow. Polled because autosave is debounced.
+        // showNode is null here — a new Group is expanded by DEFAULT, with no
+        // explicit flag, so the collapse below is what first writes the key.
+        await expect
+          .poll(async () => readPersistedNodes(page, createdFlowId!), {
+            timeout: 20000,
+            message: "the grouped flow should reach the backend",
+          })
+          .toEqual([
+            { type: "GroupNode", showNode: null, hasInnerFlow: true },
+          ]);
+
+        const box = await page.locator(".react-flow__node").boundingBox();
+        expect(box, "the Group node must be on screen").not.toBeNull();
+        expandedHeight = box!.height;
+
+        // The group's field rows are what collapsing hides.
+        await expect(page.getByTestId("title-input")).toBeVisible();
+        await expect(page.getByTestId("title-language model")).toBeVisible();
+      });
+
+      await test.step("Collapse the Group from its right-click toolbar", async () => {
+        await openGroupToolbar(page);
+        // Expanded state offers Minimize and not Expand — the two entries are
+        // mutually exclusive, which is what distinguishes a real state change
+        // from a re-render.
+        await expect(page.getByTestId("expand-button-modal")).toHaveCount(0);
+        await page.getByTestId("minimize-button-modal").click();
+      });
+
+      await test.step("Assert the collapsed Group: fields hidden, handles inert, node shorter", async () => {
+        await expect(page.getByTestId("title-input")).toHaveCount(0, {
+          timeout: 10000,
+        });
+        await expect(page.getByTestId("title-language model")).toHaveCount(0);
+        // The Group itself stays on the canvas — collapsed, not removed.
+        await expect(page.getByTestId("title-Group")).toBeVisible();
+
+        // Every handle is marked no-show while collapsed, so nothing can be
+        // wired into a collapsed group.
+        const handles = page.locator(".react-flow__handle");
+        await expect(handles).not.toHaveCount(0);
+        await expect(handles).toHaveCount(
+          await page.locator(".react-flow__handle.no-show").count(),
+        );
+
+        await expect
+          .poll(
+            async () => (await page.locator(".react-flow__node").boundingBox())?.height ?? 0,
+            { timeout: 10000, message: "the collapsed Group should be shorter" },
+          )
+          .toBeLessThan(expandedHeight);
+      });
+
+      await test.step("Assert the collapse was persisted", async () => {
+        await expect
+          .poll(async () => readPersistedNodes(page, createdFlowId!), {
+            timeout: 20000,
+            message: "showNode should persist as false after collapsing",
+          })
+          .toEqual([
+            { type: "GroupNode", showNode: false, hasInnerFlow: true },
+          ]);
+      });
+
+      await test.step("Expand the Group again from its right-click toolbar", async () => {
+        await openGroupToolbar(page);
+        // Collapsed state offers Expand and not Minimize.
+        await expect(page.getByTestId("minimize-button-modal")).toHaveCount(0);
+        await page.getByTestId("expand-button-modal").click();
+      });
+
+      await test.step("Assert the expanded Group restored its fields and live handles", async () => {
+        await expect(page.getByTestId("title-input")).toBeVisible({
+          timeout: 10000,
+        });
+        await expect(page.getByTestId("title-language model")).toBeVisible();
+        await expect(page.locator(".react-flow__handle.no-show")).toHaveCount(0);
+
+        await expect
+          .poll(
+            async () => (await page.locator(".react-flow__node").boundingBox())?.height ?? 0,
+            { timeout: 10000, message: "the expanded Group should regain its height" },
+          )
+          .toBeGreaterThan(expandedHeight / 2);
+      });
+
+      await test.step("Assert the expansion was persisted", async () => {
+        await expect
+          .poll(async () => readPersistedNodes(page, createdFlowId!), {
+            timeout: 20000,
+            message: "showNode should persist as true after expanding",
+          })
+          .toEqual([
+            { type: "GroupNode", showNode: true, hasInnerFlow: true },
+          ]);
       });
     },
   );

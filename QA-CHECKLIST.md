@@ -728,9 +728,9 @@
 - [~] Minimap — feature flag-gated
 
 #### 15.6 Grouping
-- [-] Create component group
-- [-] Ungroup components
-- [-] Expand/collapse group
+- [x] Create component group → `core-components/nested-grouping-regression.spec.ts`
+- [x] Ungroup components → `core-components/nested-grouping-regression.spec.ts`
+- [x] Expand/collapse group → `core-components/nested-grouping-regression.spec.ts`
 
 #### 15.7 Freeze and State
 - [-] Freeze component

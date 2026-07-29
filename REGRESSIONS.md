@@ -36,17 +36,18 @@ issue that carries the evidence. Both shapes are allowed; what is not allowed is
 a reference that does not resolve.
 
 <!-- REGRESSIONS:START -->
-**Regressions caught:** 6 — **Open:** 3 · **Fixed:** 3
+**Regressions caught:** 7 — **Open:** 4 · **Fixed:** 3
 
-**By severity:** High 2 · Medium 4 · Low 0
+**By severity:** High 2 · Medium 5 · Low 0
 
-**By area:** model-provider 2 · api 1 · auth 1 · flows 1 · mcp 1
+**By area:** model-provider 2 · api 1 · auth 1 · core-components 1 · flows 1 · mcp 1
 <!-- REGRESSIONS:END -->
 
 ## Ledger
 
 | Found | Area / Test | Regression | Severity | Detected by | Upstream | Status | Fixed in | Report |
 |-------|-------------|------------|----------|-------------|----------|--------|----------|--------|
+| 2026-07-28 | core-components · nested-grouping-regression.spec.ts | Grouping two connected non-IO components raises a false `Error while updating the Component` notification although the grouping fully succeeds — the `PATCH /api/v1/flows/{id}` that persists the grouped shape returns `200`, the console logs no error and no request fails, yet the message persists in the Notifications panel until dismissed by hand. Deterministic; reproduced independently in a manual browser session | Medium | #942 spec validation | [LE-2045](https://datastax.jira.com/browse/LE-2045) | Open | — | docs/upstream-bugs/UPSTREAM-BUG-group-cosmetic-error-toast.md |
 | 2026-07-27 | api · api-folders-crud.spec.ts | `DELETE /api/v1/projects/{id}` answers `500` (`sqlite3.OperationalError: database is locked`) instead of `204` while any other write is in flight, and the project survives. Not new — stable 1.10.3 emits the same instant `500` — but 1.12 raises the rate ~7× (6 % → 44 % at 2 concurrent clients, A/B/A/B) and flips the mode: 1.10.3 blocks and mostly honours the contract, 1.12 gives up in 0.03 s. Sibling write endpoints (`POST /projects`, `POST /flows`, `DELETE /flows`) survive the identical contention | Medium | daily 07-22 + 07-27 · #962 → #965 | [LE-2020](https://datastax.jira.com/browse/LE-2020) | Open | — | docs/upstream-bugs/UPSTREAM-BUG-project-delete-500-under-contention.md |
 | 2026-07-27 | flows · run-flow.spec.ts | "New Flow" click is silently dropped when the flows list has not painted its cards yet — no navigation, no modal, no console error, and the button then stops being actionable until a reload. Introduced in 1.10.1 by langflow#12575; 1.10.0 opened the templates modal and created nothing | Medium | daily 07-27 · #962 → #966 | [LE-2019](https://datastax.jira.com/browse/LE-2019) | Open | — | docs/upstream-bugs/UPSTREAM-BUG-new-flow-dead-click.md |
 | 2026-07-24 | mcp · mcp-server-resources.spec.ts | MCP `resources/read` crashes with `AttributeError: 'str' object has no attribute 'hex'` — the project server advertises a flow file it cannot itself read (worked on 1.11.0) | Medium | #948 spec validation | [LE-2012](https://datastax.jira.com/browse/LE-2012) | Open | — | docs/upstream-bugs/UPSTREAM-BUG-mcp-resources-read-uuid-hex.log |
