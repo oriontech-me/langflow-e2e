@@ -721,13 +721,13 @@ test(
     // parser ran (the cURL fill above is what populated it). Asserting it directly
     // is the precondition the run relies on (an empty URL would fail validation).
     await page.getByTestId("tab_0_url").click();
-    await page.waitForFunction(
-      (expectedUrl) => {
-        const el = document.getElementById(
-          "popover-anchor-input-url_input",
-        ) as HTMLInputElement | null;
-        return el !== null && el.value === expectedUrl;
-      },
+    // Selected by `data-testid`, never by DOM `id`: LE-2037 (langflow#14312)
+    // scopes node-parameter DOM ids by nodeId (`<id>-<nodeId>`) while leaving
+    // `data-testid` unscoped, so a DOM-`id` lookup here would silently resolve
+    // to nothing on any build carrying that fix. `toHaveValue` also reports the
+    // value it actually saw, where the `waitForFunction` this replaces could only
+    // report a bare timeout.
+    await expect(page.getByTestId("popover-anchor-input-url_input")).toHaveValue(
       `${ECHO_BASE}/get`,
       { timeout: 10000 },
     );

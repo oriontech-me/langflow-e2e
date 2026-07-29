@@ -61,24 +61,49 @@ test(
       state: "visible",
     });
 
-    // Fill cURL command with POST + JSON body
+    // Fill cURL command with POST + JSON body.
+    //
+    // Filling the cURL command triggers the parser, which re-renders the
+    // component template via `POST /api/v1/custom_component/update`. Wait for
+    // that round-trip so the parsed URL has been written into the field state
+    // before reading it — switching tabs beforehand unmounts the textarea and
+    // loses the pending parse, leaving the URL field empty. Same causal waiter
+    // as the sibling spec in
+    // `core-components/api-request-component-regression.spec.ts`.
+    const curlRefresh = page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/v1/custom_component/update") &&
+        r.request().method() === "POST",
+      { timeout: 15000 },
+    );
     await page.getByTestId("textarea_str_curl_input").click();
     await page.getByTestId("textarea_str_curl_input").fill(
       `curl -X POST https://httpbin.org/post -H "Content-Type: application/json" -d '{"langflow": "regression-test", "status": "ok"}'`,
     );
+    await curlRefresh;
 
     // Wait for the cURL to be parsed: URL field must be auto-populated.
     // The parsing is async (debounced), so we must wait before running,
     // otherwise the backend receives an empty URL and fails validation.
-    await page.waitForFunction(
-      () => {
-        const urlInput = document.getElementById(
-          "popover-anchor-input-url_input",
-        ) as HTMLInputElement | null;
-        return urlInput !== null && urlInput.value === "https://httpbin.org/post";
-      },
+    //
+    // The URL input is only mounted while the URL tab is active — the cURL tab
+    // unmounts it — so switch tabs to observe the parsed value. This still
+    // proves the parser ran: the cURL fill above is what populated the field.
+    // Same handling as the sibling spec in
+    // `core-components/api-request-component-regression.spec.ts`.
+    await page.getByTestId("tab_0_url").click();
+    // Selected by `data-testid`, never by DOM `id` — see LE-2037 /
+    // langflow#14312: node-parameter DOM ids are scoped by nodeId
+    // (`<id>-<nodeId>`), `data-testid` is not, so a DOM-`id` lookup here would
+    // silently resolve to nothing on any build carrying that fix.
+    await expect(page.getByTestId("popover-anchor-input-url_input")).toHaveValue(
+      "https://httpbin.org/post",
       { timeout: 10000 },
     );
+
+    // Switch back to the cURL tab so the run exercises the cURL-mode path,
+    // which is what this test is about.
+    await page.getByTestId("tab_1_curl").click();
     // Brief pause to let React flush all derived state (method, body) after the URL update.
     await page.waitForTimeout(300);
 
