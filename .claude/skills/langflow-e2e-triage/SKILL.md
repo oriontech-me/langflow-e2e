@@ -192,16 +192,23 @@ recorded in the umbrella's closing comment — the umbrella still **closes** at
 the end of triage (Phase 7). Full rule + wording: `references/issue-templates.md` →
 *Guard-Tripped Rule*.
 
-**The guard adds a deliverable, it does not remove one** (`CONTRIBUTING.md`):
+**The guard adds a deliverable, it does not remove one** (`CONTRIBUTING.md` →
+*@stable lifecycle*, and its *Mass-failure guard* note):
 
-- **Decide whether the day was environmental** and say so, with evidence, on
-  every issue this run produces. This verdict is mandatory on a guard day —
-  it is what the reader needs to weigh any cluster filed from it.
+- **Decide whether the day was environmental** and say so, with evidence, as the
+  run's verdict — it belongs to the triage (the umbrella records it) and is
+  carried into every issue this run produces, so a reader can weigh the cluster
+  without re-reading the umbrella. Mandatory on a guard day. It is a claim about
+  **the day**, never a cause asserted for a cluster: the descriptive rule still
+  holds (`references/issue-templates.md` → *Guard-Tripped Rule*, rules 2–3), and
+  a day judged environmental does not make every failure on it collateral.
 - **Hard failures:** the workflow's automatic `@stable` removal is suppressed,
   so the tags are still in place. If the verdict is **not** environmental,
-  **manually quarantine** the real hard failures (Phase 7 step 3). If it **is**,
-  keep `@stable` and say why — quarantine only if one reproduces on a clean,
-  non-guarded daily.
+  **manually quarantine** the real hard failures — **record the exact spec path +
+  line here**, exactly as Phase 4 does for a flake, and carry each one into the
+  plan (Phase 6) as its own row; it is executed only in Phase 7 step 3, behind
+  its own confirmation. If the verdict **is** environmental, keep `@stable` and
+  say why — quarantine only if one reproduces on a clean, non-guarded daily.
 - **Recurrent flakes: unaffected.** The guard governs hard failures only; it is
   **not** an exemption from the flake criterion. A flake with `actionable: true`
   is quarantined exactly as on any other day (Phase 4).
@@ -243,9 +250,14 @@ it to the user in PT-BR:
 | 1 | ... | hard-failure / flake / skip | create / enrich / note | new issue title, or existing #NNN |
 
 Below the table, list the **quarantines the triage requires** (remove `@stable`
-+ add `test.fixme`) as a separate block — one line per recurrent flake
-(`spec/path.spec.ts:line`). Hard failures are auto-removed by the workflow, so
-do **not** list them.
++ add `test.fixme`) as a separate block — one line per test
+(`spec/path.spec.ts:line`), each labelled with what put it there (`flake` /
+`hard-failure, guard day`). Every actionable recurrent flake (Phase 4) goes in
+the block. Hard failures normally do **not**: the workflow already auto-removed
+their tag. The exception is a **guard-tripped** day, where the workflow removed
+nothing — there, each hard failure the Phase-3 verdict judged
+**non-environmental** gets its own row too. If the block is empty, say so
+explicitly rather than omitting it.
 
 Then **wait for explicit approval of the issue plan** ("pode abrir" or
 equivalent). This approval covers issue create/enrich/close **only** — it does
@@ -270,8 +282,9 @@ Only after the user approves the plan:
 2. For each **enrich** row: `gh issue comment` on the matched existing issue,
    per the same reference's *Enrich vs Create Rule*. Match on the **normalized
    signature**, not on a description of the symptom.
-3. **Quarantines — separate authorization, one at a time.** For each recurrent
-   flake in the removals block: show the **exact diff** (drop `@stable` **and**
+3. **Quarantines — separate authorization, one at a time.** For **every row of
+   the removals block** (Phase 6) — a recurrent flake, or a guard-day hard
+   failure — show the **exact diff** (drop `@stable` **and**
    wrap the test as `test.fixme(<reason + issue #>)`, at `spec:line`) and ask
    for a **distinct** confirmation (e.g. "pode colocar o teste X em
    quarentena?"). Only on an explicit yes, open the quarantine PR (branch off
@@ -357,9 +370,10 @@ run is indistinguishable from a broken post, so every terminal path posts:
   clusters as create/enrich rows; today-only collateral as **note** rows), and
   state descriptively that the guard tripped (count + threshold), that the
   workflow left `@stable` in place on the hard failures, and the **environmental
-  verdict** for the day (Phase 3 — mandatory on a guard day). Any hard failure
-  the verdict does not cover, and every recurrent flake, is listed in the
-  quarantine block as a manual/local TODO — CI never edits code, so a guard day
+  verdict** for the day (Phase 3 — mandatory on a guard day). Every recurrent
+  flake, plus every hard failure that verdict judged **non-environmental**, is
+  listed in the quarantine block (Phase 6) as a manual/local TODO with its
+  `spec:line` — CI never edits code, so a guard day
   does not turn those rows off, it only means a human still owes them. The
   umbrella still closes at the end of triage, carrying the collateral in its
   closing comment (Phase 3 + Phase 7; guard rule in

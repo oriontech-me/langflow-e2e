@@ -196,7 +196,7 @@ A checkbox list of concrete acceptance criteria. Format:
 
 - [ ] Root cause confirmed per spec (product regression vs. test/wait-strategy vs. environment) with evidence on the current nightly.
 - [ ] Each spec passes reliably (multiple clean `--retries=0` runs), fixing waits/flow as needed.
-- [ ] **Quarantine lifted** in the fix PR — remove `test.fixme` **and** restore `@stable` (both were applied at triage as prevention for recurrent flakes; hard failures had only `@stable` auto-removed). Re-validate per `CONTRIBUTING.md` before lifting. *(On a guard-tripped mass-failure day nothing was quarantined — then there is nothing to lift unless the cluster later reproduces on a clean daily and is quarantined.)*
+- [ ] **Quarantine lifted** in the fix PR — remove `test.fixme` **and** restore `@stable` (both were applied at triage as prevention for recurrent flakes; hard failures had only `@stable` auto-removed, or were quarantined manually on a guard-tripped day judged non-environmental). Re-validate per `CONTRIBUTING.md` before lifting. *(Nothing to lift only where nothing was quarantined — e.g. a hard failure on a guard-tripped day whose verdict was environmental, which keeps its tag until it reproduces on a clean daily.)*
 - [ ] If the root cause is a **product (Langflow) regression**: recorded as such here, and this issue stays **open** until the upstream fix lands in `langflowai/langflow-nightly:latest` (or the `release-1.x.x` branch), is re-validated there, and `@stable` is restored — not on a test-side mute.
 ```
 
@@ -204,7 +204,7 @@ Rules:
 - Boxes are checkable (`- [ ]`)
 - Each item is a single, verifiable outcome
 - Include validation steps from `CONTRIBUTING.md` if the fix touches product code
-- **Lifting the quarantine is always a deliverable** whenever a test was quarantined at triage (the normal case) — "done" includes removing `test.fixme` and putting `@stable` back after the fix. Only a guard-tripped day, where nothing was quarantined, has nothing to lift.
+- **Lifting the quarantine is always a deliverable** whenever a test was quarantined at triage (the normal case) — "done" includes removing `test.fixme` and putting `@stable` back after the fix. The one case with nothing to lift is a test that was never quarantined: a hard failure on a guard-tripped day whose verdict was **environmental** (a recurrent flake is quarantined on a guard day like any other — see *Quarantine mechanism* → *Scope*).
 - A **product regression** closes only when the product is fixed where the suite runs (nightly / release branch), not on a test-side workaround
 
 ---
@@ -252,7 +252,7 @@ Investigate all paths independently, **product as prime suspect first**: on the 
 - [ ] Each spec passes reliably (multiple clean `--retries=0` runs), fixing waits/flow as needed.
 - [ ] `@stable` was **left in place** (not confirmed a durable break; likely wave collateral) — if any is later fixed with a code change, re-validate per `CONTRIBUTING.md`.
 
-Note: `@stable` was **kept** on these three (the mass-failure guard tripped and the driver for this cluster is not confirmed non-environmental). Quarantine only if the failure reproduces on a clean (non-wave) daily.
+Note: `@stable` was **kept** on these three (the mass-failure guard tripped and the triage's verdict on the day is environmental — see above). Quarantine only if the failure reproduces on a clean (non-wave) daily.
 
 ---
 
@@ -383,7 +383,7 @@ When a daily run trips the mass-failure guard (`guard_tripped: true` in the dail
 
 **0. Decide which clusters get a dedicated issue at all — this is the guard-day split:**
 
-   - **Cross-day-recurrent clusters** (the same test + error signature also failed on other, *non-adjacent* dailies — `recurrence.same_signature` true with dates beyond today) reproduce on days that were **not** mass-failure days, so they are **durable** signals, not pure collateral. These **do** get a dedicated issue (create) or enrich their existing tracker — following rules 1–3 below.
+   - **Cross-day-recurrent clusters** (the same test + error signature also failed on other, *non-adjacent* dailies — `recurrence.same_signature` true with dates beyond today) reproduce on days that were **not** mass-failure days, so they are **durable** signals, not pure collateral. These **do** get a dedicated issue (create) or enrich their existing tracker — following rules 1–4 below.
    - **Today-only collateral** (failed only on this run, no cross-day recurrence) does **not** get a dedicated issue. Filing one is a throwaway tracker for what most likely vanishes when the instance recovers — the same reason a first-occurrence flake is noted, not filed. Instead, **note** it in the triage proposal (aggregated, with counts) and record it in the umbrella's closing comment.
    - **Close the umbrella anyway.** A guard-tripped run is **not** an exception to the normal close-at-end-of-triage rule: the collateral having no dedicated issue is not a reason to keep an issue open for it. List it in the closing comment and close. The standing record is `reports/daily-history.jsonl` — every triage recomputes recurrence from that file over a 30-day window, so a collateral cluster that persists is re-detected on a later run and filed then. Leaving umbrellas open instead accumulates stale rows in the `daily-failure` list that the Phase-2 dedup has to read on every subsequent triage.
 
@@ -399,19 +399,19 @@ Dedicated issues you **do** open on a guard day (the cross-day-recurrent ones) m
    - Name the plausible environmental cause (saturation, API outage, etc.)
    - Do not conclude it is the cause — only that it is consistent and must be ruled out
 
-3. **State what happened to `@stable`, and why.** When the guard trips the triage scripts auto-remove nothing, so the tags survive by default — but "the guard tripped" is not on its own a reason to leave them. What decides it is rule 4's verdict, and the issue records the outcome either way:
+3. **State the day's environmental verdict.** On a guard-tripped day, deciding whether the day was environmental is a **mandatory deliverable** of the triage (`CONTRIBUTING.md` → *@stable lifecycle*: "the triage gains one extra deliverable"), not an optional observation — it is what rule 4 turns on, and what a reader needs to weigh a cluster filed from a mass-failure run. Give the evidence, and keep it separable from rule 2: rule 2 forbids asserting an environmental cause **for this cluster**; rule 3 requires a verdict on **the day**. They are different claims, and a day judged environmental does not make every failure on it collateral.
+
+   ```markdown
+   The triage verdict on the day is that it **was environmental**: 6 of the 10 hard failures are a 20 s timeout on `GET /api/v1/auto_login` in shards where every provider was green and the health gate had already passed, and two further shards executed zero tests after a preflight abort.
+   ```
+
+4. **State what happened to `@stable`, and why.** When the guard trips the triage scripts auto-remove nothing, so the tags survive by default — but "the guard tripped" is not on its own a reason to leave them. What decides it is rule 3's verdict, and the issue records the outcome either way:
 
    ```markdown
    Note: `@stable` was **kept** on these three (the mass-failure guard tripped and the day's verdict is environmental — see above). Quarantine only if the failure reproduces on a clean (non-wave) daily.
    ```
 
    If the verdict is **not** environmental, the opposite is recorded — the tests were **manually quarantined** at triage (`@stable` removed **+** `test.fixme`), since the workflow did not do it.
-
-4. **State the day's environmental verdict.** On a guard-tripped day, deciding whether the day was environmental is a **mandatory deliverable** of the triage (`CONTRIBUTING.md`), not an optional observation — it is what rule 3 turns on, and what a reader needs to weigh a cluster filed from a mass-failure run. Give the evidence, and keep it separable from rule 2: rule 2 forbids asserting an environmental cause **for this cluster**; rule 4 requires a verdict on **the day**. They are different claims, and a day judged environmental does not make every failure on it collateral.
-
-   ```markdown
-   The triage verdict on the day is that it **was environmental**: 6 of the 10 hard failures are a 20 s timeout on `GET /api/v1/auto_login` in shards where every provider was green and the health gate had already passed, and two further shards executed zero tests after a preflight abort.
-   ```
 
 > **Recurrent flakes are outside all of this.** Rules 3–4 govern **hard failures**, which are the only thing the guard's suppression touches. A flake meeting the recurrence criterion is quarantined on a guard day exactly as on any other — see *Quarantine mechanism* → *Scope*.
 
