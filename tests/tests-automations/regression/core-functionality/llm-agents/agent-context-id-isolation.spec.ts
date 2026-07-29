@@ -227,6 +227,28 @@ async function patchContextId(
   expect(patchRes.status()).toBe(200);
 }
 
+// Read the context_id currently stored on the given node types.
+async function readContextIds(
+  request: APIRequestContext,
+  bearer: string,
+  flowId: string,
+  nodeTypes: string[],
+): Promise<Record<string, unknown>> {
+  const res = await request.get(`/api/v1/flows/${flowId}`, {
+    headers: { Authorization: bearer },
+  });
+  expect(res.status()).toBe(200);
+  const flow = await res.json();
+  const values: Record<string, unknown> = {};
+  for (const node of flow.data?.nodes ?? []) {
+    const type = node.data?.type;
+    if (nodeTypes.includes(type)) {
+      values[type] = node.data?.node?.template?.context_id?.value;
+    }
+  }
+  return values;
+}
+
 // Set the task on the ChatInput node (the Playground prompt pre-fills from it;
 // typing into the Playground races an async default re-injection).
 async function setChatInputText(page: Page, text: string): Promise<void> {
@@ -237,6 +259,45 @@ async function setChatInputText(page: Page, text: string): Promise<void> {
   await field.click();
   await field.fill(text);
   await field.blur();
+}
+
+const CONTEXT_NODE_TYPES = ["Agent", "ChatInput", "ChatOutput"];
+const CONTEXT_WRITE_ATTEMPTS = 3;
+
+// Put the flow in the state a turn needs — context_id switched AND the task
+// seeded — and only return once the SERVER confirms the context on every node.
+//
+// The write is an API PATCH, but the editor keeps firing its own debounced
+// PATCH /api/v1/flows/{id} with the store's snapshot after a playground turn.
+// That autosave can be issued after ours and land last (the endpoint has no
+// version check), silently reverting the switch: the next turn then runs under
+// the OLD context and the isolation assert fails for a defect that does not
+// exist — the #1060 flake, reproduced locally with the frontend PATCH going out
+// 23 ms after ours and finishing 20 ms behind it. Re-patch while the server
+// still disagrees; if the editor wins every attempt, fail HERE naming the
+// reverted write instead of downstream as fake cross-tagging.
+async function prepareTurn(
+  page: Page,
+  request: APIRequestContext,
+  bearer: string,
+  flowId: string,
+  contextId: string,
+  task: string,
+): Promise<void> {
+  let stored: Record<string, unknown> = {};
+  for (let attempt = 1; attempt <= CONTEXT_WRITE_ATTEMPTS; attempt++) {
+    await patchContextId(request, bearer, flowId, CONTEXT_NODE_TYPES, contextId);
+    await page.reload();
+    await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', { timeout: 30000 });
+    await setChatInputText(page, task);
+    await waitForFlowSaveSettled(page);
+
+    stored = await readContextIds(request, bearer, flowId, CONTEXT_NODE_TYPES);
+    if (CONTEXT_NODE_TYPES.every((type) => stored[type] === contextId)) return;
+  }
+  throw new Error(
+    `context_id "${contextId}" was reverted by the editor autosave on ${CONTEXT_WRITE_ATTEMPTS} consecutive attempts — stored: ${JSON.stringify(stored)}`,
+  );
 }
 
 async function waitForAgentToFinish(page: Page): Promise<void> {
@@ -567,11 +628,9 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Context ID Isolation [${label}]`, () => {
-    // Quarantined for #1060 — recurrent flake (2026-07-14 / 07-16 / 07-22): the
-    // context_id equality assertion fails intermittently.
-    test.fixme(
+    test(
       "switching the agent's context_id re-tags new turns without touching previous ones",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -592,11 +651,7 @@ for (const { label, options, skipReason } of targets) {
         const flowId = await resolveLiveFlowId(request, bearer, createdFlowIds);
 
         await test.step("set context_id = CTX-A on Agent + Chat Input + Chat Output, run turn 1", async () => {
-          await patchContextId(request, bearer, flowId, ["Agent", "ChatInput", "ChatOutput"], contextA);
-          await page.reload();
-          await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', { timeout: 30000 });
-          await setChatInputText(page, task1);
-          await waitForFlowSaveSettled(page);
+          await prepareTurn(page, request, bearer, flowId, contextA, task1);
           await openPlaygroundAndSend(page, task1);
         });
 
@@ -605,11 +660,7 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("switch context_id to CTX-B, run turn 2 in the same session", async () => {
           await page.keyboard.press("Escape"); // close the playground modal
-          await patchContextId(request, bearer, flowId, ["Agent", "ChatInput", "ChatOutput"], contextB);
-          await page.reload();
-          await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', { timeout: 30000 });
-          await setChatInputText(page, task2);
-          await waitForFlowSaveSettled(page);
+          await prepareTurn(page, request, bearer, flowId, contextB, task2);
           await openPlaygroundAndSend(page, task2);
         });
 

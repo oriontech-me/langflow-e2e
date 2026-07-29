@@ -1,6 +1,6 @@
 # Agent context_id — switching isolates history between contexts
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev7`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev8`)
 
 ---
 
@@ -97,15 +97,32 @@ surface; `@components` — Message History node drives the read-side assert;
 
 1. Load the Simple Agent template (provider/model from `models.json`/`.env`).
 2. Set `context_id = CTX-A` (unique per run) on the **Agent**, **Chat Input**
-   and **Chat Output** nodes (same advanced-field path as #487).
+   and **Chat Output** nodes (same advanced-field path as #487), and **confirm
+   the write survived** before running the turn (see the confirmed-write note
+   below).
 3. Seed the ChatInput with nonce N1; open the Playground, send, wait.
-4. Switch `context_id` to `CTX-B` on the same three nodes; seed nonce N2;
-   send a second turn in the same playground session.
+4. Switch `context_id` to `CTX-B` on the same three nodes — again **confirmed**
+   — seed nonce N2; send a second turn in the same playground session.
 5. **Assert (monitor API):** N1 → its session's turn-1 messages ALL carry
    `context_id === CTX-A` and none carry `CTX-B`; N2 → turn-2 messages ALL
    carry `CTX-B` and none carry `CTX-A`. Message sets are keyed by nonce, so
    the two turns are disjoint by construction.
 6. No `allowFlowErrors`.
+
+> **Confirmed-write setup (#1060).** The `context_id` write is an API PATCH on
+> the flow's nodes, and the editor keeps firing its own debounced
+> `PATCH /api/v1/flows/{id}` carrying the store's snapshot after a playground
+> turn. That autosave can be *issued* after our PATCH and land last — the
+> endpoint has no version check — silently reverting the switch, so the next
+> turn runs under the OLD context and the test reports a cross-tagging failure
+> that never happened. Reproduced locally at ~8% (1/12 `--retries=0` runs);
+> the daily's parallel shards widen the window, which is why every recorded
+> occurrence fell on a saturated day. Each turn's setup is therefore
+> **PATCH → reload → set the ChatInput → drain the autosave → read the flow
+> back**, retried while the server still disagrees, and the turn only runs
+> once the server confirms the intended context on all three nodes. If the
+> editor wins three times in a row the test fails as an explicit **setup**
+> error naming the reverted write — never as a fake isolation defect.
 
 ---
 
@@ -130,10 +147,16 @@ persisted/rendered data — no model judgment anywhere.
   seeding block separate "seed failed" from "isolation broken".
 - **Unique CTX-A/CTX-B/session per run** — monitor rows persist across flow
   deletion; per-run identifiers pin every lookup to THIS run.
+- **Setup failures are distinguishable from contract failures** — a reverted
+  `context_id` write fails in the setup step naming the reversion, so a
+  frontend/backend write race can never masquerade as broken isolation
+  (#1060).
 - **Force-failure checks** (CONTRIBUTING §2): M1 — test 1 asserts a `B-*`
   sentinel present in the `CTX-A` retrieval (inverted negative) ⇒ must fail;
   M2 — test 1 expects a never-seeded sentinel ⇒ must fail; M3 — test 2
-  expects turn-2 messages tagged `CTX-A` (stale context) ⇒ must fail.
+  expects turn-2 messages tagged `CTX-A` (stale context) ⇒ must fail; M4 —
+  test 2's confirmed-write gate targets a context the flow never receives
+  ⇒ must fail in setup, proving the gate is live.
 
 ---
 
