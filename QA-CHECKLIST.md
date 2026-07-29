@@ -801,7 +801,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 414 `test()` calls carrying the `@stable` tag, distributed across 167 spec
+> 410 `test()` calls carrying the `@stable` tag, distributed across 167 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -888,7 +888,6 @@
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input — sender_name override is reflected in the Playground chat message → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input/Output — default sender_name is 'User' on input and 'AI' on output → `chat-input-output-component-regression.spec.ts`
-- [x] breaking-change outdated components alert with a Review action, not a silent Update → `component-breaking-change-alert.spec.ts`
 - [x] reviewing a single breaking change warns about disconnection and defaults to a backup → `component-breaking-change-alert.spec.ts`
 - [x] Review All flags every outdated component as breaking and pre-selects none → `component-breaking-change-alert.spec.ts`
 - [x] Should delete a single component with the Backspace key → `componentDelete.spec.ts`
@@ -1004,7 +1003,6 @@
 - [x] agent run persists every session message tagged with the custom context_id → `agent-context-id-continuity.spec.ts`
 - [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
 - [x] mirrored context-scoped retrievals return only their own context's messages → `agent-context-id-isolation.spec.ts`
-- [x] switching the agent's context_id re-tags new turns without touching previous ones → `agent-context-id-isolation.spec.ts`
 - [x] toggle ON (default): agent's date tool returns today's date → `agent-current-date-tool.spec.ts`
 - [x] toggle OFF: the date tool is removed from the agent's toolkit → `agent-current-date-tool.spec.ts`
 - [x] model refusal does not crash the component → `agent-empty-refusal-response.spec.ts`
@@ -1106,7 +1104,6 @@
 - [x] playground opens with chat textarea pre-filled from ChatInput Input Text → `playground-input-text-prefill.spec.ts`
 - [x] creating a new session re-applies the Input Text pre-fill → `playground-input-text-prefill.spec.ts`
 - [x] pre-filled value is sent as the first message of the session → `playground-input-text-prefill.spec.ts`
-- [x] edit user message — hover reveals edit button and saved changes replace original text → `playground-message-edit.spec.ts`
 - [x] cancel message edit — original text is preserved → `playground-message-edit.spec.ts`
 - [x] message edited in playground is reflected in Session Logs → `playground-message-edit.spec.ts`
 - [x] message-logs-option must open the Session Logs modal for the active session → `playground-message-logs.spec.ts`
@@ -1211,7 +1208,6 @@
 - [x] wheel scroll navigates the canvas anchored at the pointer → `canvas-zoom-navigation.spec.ts`
 - [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
 - [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
-- [x] executing flow with server error shows error feedback → `execution-error-notification.spec.ts`
 - [x] user must see on handle click the possibility connections → `filterSidebar.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
