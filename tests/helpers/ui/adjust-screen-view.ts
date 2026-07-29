@@ -16,8 +16,19 @@ const VIEWPORT = ".react-flow__viewport";
  * on every one of this helper's dependent specs.
  *
  * Two consecutive identical reads count as settled, so the common case costs
- * one extra poll (~50 ms). The 500 ms cap keeps the worst case no slower than
- * the sleep it replaces, should a future build ever animate the transition.
+ * one extra poll (~50 ms). The cap bounds the worst case at roughly the 500 ms
+ * sleep this replaced — not exactly: a read that burns its 200 ms timeout just
+ * before the deadline, plus the trailing 50 ms wait, overshoots to ~750 ms.
+ *
+ * THE TWO-EQUAL-READS RULE IS LOAD-BEARING ON `fitView()` BEING UNANIMATED.
+ * With an instantaneous transform, two equal reads can only mean "already
+ * final". Animate the transition and that stops being true — two 50 ms samples
+ * can coincide mid-movement (a paused frame, an eased segment, a duration under
+ * the sample interval) and the poll would return on a transform that is still
+ * travelling. The 500 ms cap does NOT cover that: it bounds how long this waits,
+ * not whether what it settled on is final. If a future build animates the
+ * canvas controls, this function needs a different stop condition — poll for a
+ * stable read over a minimum span, or wait on React Flow's own transition end.
  */
 async function waitForViewportSettled(page: Page): Promise<void> {
   const viewport = page.locator(VIEWPORT);
@@ -54,6 +65,13 @@ async function waitForViewportSettled(page: Page): Promise<void> {
  * ever disappears we fall back to intent — close only what this call opened —
  * which is still safe: it can leave a pre-existing menu open, but it can never
  * open one.
+ *
+ * That fallback is ANNOUNCED rather than silent, and the warning is the point.
+ * "Close only what this call opened" is precisely the fix #997 proposed and this
+ * helper rejects, so degrading into it un-fixes the already-open case (#576's
+ * leftover interceptor) — and no test can catch that, because the unit test for
+ * this branch asserts the fallback as correct behaviour. If the attribute moves
+ * off the element carrying the testid, the only signal will be this line.
  */
 async function closeCanvasControls(
   page: Page,
@@ -63,6 +81,17 @@ async function closeCanvasControls(
   const state = await controls
     .getAttribute("data-state", { timeout: 1000 })
     .catch(() => null);
+
+  if (state === null) {
+    console.warn(
+      `⚠️  [adjustScreenView] "${CONTROLS}" exposed no \`data-state\` — falling ` +
+        `back to closing only what this call opened. A menu that was ALREADY ` +
+        `open stays open and will intercept the next canvas click (#576). This ` +
+        `is the behaviour #997 rejected: find where Radix now carries the ` +
+        `open/closed state and read it there.`,
+    );
+  }
+
   const isOpen = state === null ? openedByThisCall : state === "open";
 
   if (isOpen) {

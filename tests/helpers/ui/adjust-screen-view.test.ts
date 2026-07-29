@@ -129,8 +129,18 @@ function fakeCanvas({
     waitForSelector: async () => undefined,
     waitForTimeout: async () => undefined,
     getByTestId: (testId: string) => locator(testId),
-    locator: () => ({
+    // The selector is CHECKED, not ignored. A fake that answers for any argument
+    // would pass every test here with a typo in `.react-flow__viewport`, while in
+    // production every read rejects and the settle loop silently burns its whole
+    // budget — i.e. the 500 ms sleep this helper replaced, at full price. Same
+    // class as `requireRendered` above: the fake must not flatter the helper.
+    locator: (selector: string) => ({
       getAttribute: async () => {
+        if (selector !== ".react-flow__viewport") {
+          throw new Error(
+            `locator.getAttribute: Timeout 200ms exceeded — no element matches ${selector}`,
+          );
+        }
         const style =
           viewportStyles[
             Math.min(state.viewportReads, viewportStyles.length - 1)
@@ -199,28 +209,64 @@ test("never opens the menu when fit-view is reachable on the canvas", async () =
   assert.equal(canvas.menuOpen, false);
 });
 
-test("falls back to intent when the trigger exposes no data-state", async () => {
+/**
+ * Runs `fn` with `console.warn` captured, returning what it emitted.
+ *
+ * The fallback below is the one branch whose CORRECTNESS cannot be asserted —
+ * it is the behaviour #997 rejected, kept only because it can never open a menu.
+ * So what gets pinned instead is that it announces itself: the warning is the
+ * only signal that the helper stopped reading the real open/closed state.
+ */
+async function captureWarnings(fn: () => Promise<void>): Promise<string[]> {
+  const original = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.map(String).join(" "));
+  };
+  try {
+    await fn();
+  } finally {
+    console.warn = original;
+  }
+  return warnings;
+}
+
+test("falls back to intent when the trigger exposes no data-state, and says so", async () => {
   const opened = fakeCanvas({
     layout: "in-dropdown",
     menuOpen: false,
     exposesDataState: false,
   });
-  await adjustScreenView(opened.page);
+  const warnings = await captureWarnings(() => adjustScreenView(opened.page));
   assert.equal(opened.triggerClicks, 2, "closes what it opened");
   assert.equal(opened.menuOpen, false);
+
+  // Degrading into #997's boolean must never be silent: no other test can catch
+  // it, because this very test asserts the fallback as acceptable behaviour.
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.match(warnings[0], /adjustScreenView/);
+  assert.match(warnings[0], /data-state/);
+  assert.match(warnings[0], /#997/);
 
   const untouched = fakeCanvas({
     layout: "on-canvas",
     menuOpen: false,
     exposesDataState: false,
   });
-  await adjustScreenView(untouched.page);
+  await captureWarnings(() => adjustScreenView(untouched.page));
   assert.equal(
     untouched.triggerClicks,
     0,
     "without a state signal it must still never OPEN a menu",
   );
   assert.equal(untouched.menuOpen, false);
+});
+
+test("the normal path warns about nothing", async () => {
+  // The warning is only worth anything if it does not cry wolf on 108 specs.
+  const canvas = fakeCanvas({ layout: "in-dropdown", menuOpen: false });
+  const warnings = await captureWarnings(() => adjustScreenView(canvas.page));
+  assert.deepEqual(warnings, []);
 });
 
 test("throws, naming the cause, on a partial layout migration", async () => {
