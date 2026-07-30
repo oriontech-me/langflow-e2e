@@ -152,19 +152,31 @@ place: all five components fail on missing credentials, none reaches the network
 ### Who consumes the recorded health
 
 Writing `inactive` is only half the mechanism — a spec has to obey it. Two kinds
-of spec do:
+of spec do, and since #1043 **both go through
+`tests/helpers/provider-setup/provider-health.ts`**, which is the single
+implementation of the rule:
 
 - **Provider-parametrized** specs (the `agent-*` family, `mcp-client-agent`) build
-  their target list from `models.json` and drop a target whose provider is
-  `inactive`, quoting the recorded reason.
-- **Provider-hardcoded** specs gate through
-  `providerSkipGate(...)` in `tests/helpers/provider-setup/provider-health.ts`
-  (#1029). That helper is the single implementation of the rule: missing env key
-  first, then the recorded `inactive` reason. It **fails open** when
-  `providers.json` is absent or unparseable — a fresh clone has no file (it is
-  gitignored) and CI is allowed to run with a failed `Collect models` step (#980),
-  so "no signal" must never skip the suite. `IGNORE_PROVIDER_HEALTH=1` overrides a
-  stale local file.
+  their target list from `models.json` and call `providerSkipReasons()` for the
+  `provider → reason` map, dropping a target whose provider is `inactive` and
+  quoting the recorded reason. Each of them used to carry its own inlined copy of
+  that map (18 of them, already drifted); #1043 deleted the copies.
+- **Provider-hardcoded** specs gate through `providerSkipGate(...)` (#1029), which
+  adds one precedence rule the map does not need: a missing env key is reported
+  before a recorded `inactive`, because without the key the provider cannot be
+  configured at all.
+
+Both **fail open** when `providers.json` is absent or unparseable — a fresh clone
+has no file (it is gitignored) and CI is allowed to run with a failed
+`Collect models` step (#980), so "no signal" must never skip the suite. And both
+honour `IGNORE_PROVIDER_HEALTH=1`, which overrides a stale local file.
+
+> **The escape hatch is local-only, and it is now blunter than it was.** The
+> variable is set in no workflow, script or config — only ever exported by hand.
+> Before #1043 it affected the hardcoded specs alone; it now also un-skips every
+> provider-parametrized target. Since these specs load `.env` whenever `CI` is
+> unset, leaving `IGNORE_PROVIDER_HEALTH=1` in a `.env` file will send the whole
+> agent family at a dead key on your next local run.
 
 Before #1029 the hardcoded specs gated on env-var presence, so a key that existed
 but was drained still made the live call. On run 30374528125 that hung two Google

@@ -154,20 +154,10 @@ import fs from "fs";
 import { test, expect } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { hasProviderEnvKeys, type Provider } from "../../../../helpers/provider-setup";
-import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
+import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
-
-// Read inactive providers to display as skipped in output
-function getProviderSkipReasons(): Map<string, string> {
-  const jsonPath = path.resolve(__dirname, "../../../../helpers/provider-setup/data/providers.json");
-  if (!fs.existsSync(jsonPath)) return new Map();
-  const records = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ProviderRecord[];
-  return new Map(
-    records.filter((r) => r.status === "inactive").map((r) => [r.provider, `Provider "${r.provider}" inactive — ${r.error}`])
-  );
 }
 
 // Read models and apply the .env strategy
@@ -175,7 +165,9 @@ function getTestTargets() {
   const jsonPath = path.resolve(__dirname, "../../../../helpers/provider-setup/data/models.json");
   if (!fs.existsSync(jsonPath)) return [];
   const allModels = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-  const skipReasons = getProviderSkipReasons();
+  // Inactive providers, so their targets report as skipped with the collected
+  // reason. Never inline this — one shared implementation (#1043).
+  const skipReasons = providerSkipReasons();
   // apply strategy filter (see agent-component-regression.spec.ts for full implementation)
   return allModels.map((m: any) => ({
     label: `${m.provider} / ${m.model}`,

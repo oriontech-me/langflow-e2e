@@ -361,6 +361,20 @@ test("writeProviderHealth reports failure instead of throwing", () => {
 
 const QUIET = { ...ALL_KEYS_SET } as NodeJS.ProcessEnv;
 
+/** Collects `console.warn` output emitted while `run` executes. */
+function captureWarnings(run: () => void): string[] {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => warnings.push(args.map(String).join(" "));
+  try {
+    run();
+  } finally {
+    console.warn = original;
+  }
+  return warnings;
+}
+
+
 test("maps every inactive provider to its collected reason", () => {
   const reasons = providerSkipReasons(RUN_30374528125, QUIET);
   assert.deepEqual([...reasons.keys()], ["google"]);
@@ -423,4 +437,46 @@ test("providerSkipReasons does not depend on env keys being set", () => {
   // folding it in here would change which targets skip vs. fail.
   const reasons = providerSkipReasons(RUN_30374528125, {} as NodeJS.ProcessEnv);
   assert.deepEqual([...reasons.keys()], ["google"]);
+});
+
+test("with no records argument it READS providers.json", () => {
+  // The zero-argument form is the only one the 18 call sites use, and nothing bound
+  // it to the file: changing the parameter's default to `null` left every one of
+  // these tests green while silently disabling the gate for the whole agent family —
+  // #1029's failure mode, restored by a one-word edit. `jsonPath` is the same
+  // test-only seam `readProviderHealth` / `writeProviderHealth` already take.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "provider-skip-reasons-"));
+  const file = path.join(dir, "providers.json");
+  writeProviderHealth(RUN_30374528125, file);
+
+  const reasons = providerSkipReasons(undefined, QUIET, file);
+  assert.equal(reasons.get("google"), `Provider "google" inactive — ${SPEND_CAP}`);
+});
+
+test("an armed escape hatch does not even read the file", () => {
+  // Ordering, not micro-optimisation: it documents that the hatch short-circuits
+  // before any I/O, so a missing file cannot make the hatch warn.
+  const warnings = captureWarnings(() =>
+    providerSkipReasons(undefined, { ...QUIET, IGNORE_PROVIDER_HEALTH: "1" } as NodeJS.ProcessEnv, path.join(os.tmpdir(), "does-not-exist-1043", "providers.json")),
+  );
+  assert.deepEqual(warnings, []);
+});
+
+test("only the exact value \"1\" arms the escape hatch here too", () => {
+  // `unavailableReason` has this test; without a parallel one the two entry points
+  // can drift on the value contract — the very drift this dedupe removed.
+  const reasons = providerSkipReasons(RUN_30374528125, {
+    ...QUIET,
+    IGNORE_PROVIDER_HEALTH: "true",
+  } as NodeJS.ProcessEnv);
+  assert.equal(reasons.size, 1, "a truthy-looking value must not disable the gate");
+});
+
+test("a missing providers.json says so, instead of looking healthy in silence", () => {
+  // Kept from the majority of the copies it replaced: this runs at collection time,
+  // and a local run with no providers.json should say why every provider looks fine.
+  // Two of the copies were silent; the warn is now uniform.
+  const warnings = captureWarnings(() => providerSkipReasons(null, QUIET));
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /collect-models\.spec\.ts/);
 });
