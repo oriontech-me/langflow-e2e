@@ -3,7 +3,11 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folders";
 import { convertTestName } from "../../../../helpers/filesystem/convert-test-name";
+import { deleteProject } from "../../../../helpers/flows/delete-project";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
+
+/** The name test 1 renames its first project to. */
+const RENAMED_PROJECT = "renamed_project";
 
 /**
  * Address an MCP server row on the Settings → MCP Servers page **by name**.
@@ -22,6 +26,38 @@ const mcpServerRow = (page: Page, name: string) =>
     .getByTestId(/^mcp_server_name_\d+$/)
     .filter({ hasText: new RegExp(`^${name}$`) });
 
+/**
+ * Delete any leftover `renamed_project` before the test renames a project to it.
+ *
+ * `cleanOldFolders` only removes folders named "New Project*", so an attempt
+ * that dies between the rename (step 4) and the delete (step 5) leaves
+ * `renamed_project` on the shared superuser account. The next attempt then hits
+ * `UNIQUE constraint failed: folder.user_id, folder.name` on its own rename —
+ * a 500 that makes the retry fail for a reason the first attempt did not have,
+ * so the retries stop being independent evidence. Observed on PR #1135's CI run
+ * (3/3 attempts red, two of them on the leftover rather than the original
+ * defect).
+ *
+ * API rather than the sidebar: this is teardown of the *previous* run, so it
+ * must not depend on the UI state the test is about to assert on. `deleteProject`
+ * treats 404 as the desired end state and retries the #965 contention 500.
+ */
+const removeLeftoverRenamedProject = async (page: Page) => {
+  const response = await page.request.get("/api/v1/projects/");
+  if (!response.ok()) return;
+
+  // The /api/v1/projects/ response shape varies (sometimes a bare array,
+  // sometimes `{ folders: [...] }`); mcp-server.spec.ts normalizes the same way.
+  const raw = await response.json();
+  const projects: Array<{ id: string; name: string }> = Array.isArray(raw)
+    ? raw
+    : (raw.folders ?? []);
+
+  for (const project of projects.filter((p) => p.name === RENAMED_PROJECT)) {
+    await deleteProject(page.request, project.id);
+  }
+};
+
 test(
   "user must be able to see starter projects for mcp servers",
   { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
@@ -33,6 +69,7 @@ test(
     });
 
     await cleanOldFolders(page);
+    await removeLeftoverRenamedProject(page);
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
@@ -49,12 +86,16 @@ test(
 
     await expect(mcpServerRow(page, "lf-starter_project")).toHaveCount(1);
 
-    expect(
-      await page.getByText("lf-new_project", { exact: true }).count(),
-    ).toBe(1);
-    expect(
-      await page.getByText("lf-new_project_1", { exact: true }).count(),
-    ).toBe(1);
+    // toHaveCount, not `expect(await ....count())`: the MCP-server row is
+    // written by the backend as a side effect of the project write, so it can
+    // lag the navigation. A bare .count() reads the DOM once and fails on that
+    // lag; toHaveCount polls until the expectation timeout (#1135).
+    await expect(page.getByText("lf-new_project", { exact: true })).toHaveCount(
+      1,
+    );
+    await expect(
+      page.getByText("lf-new_project_1", { exact: true }),
+    ).toHaveCount(1);
 
     await page.getByTestId("icon-ChevronLeft").first().click();
 
@@ -74,7 +115,7 @@ test(
           .last()
           .click();
         await page.getByText("Rename", { exact: true }).last().click();
-        await page.getByTestId("input-project").last().fill("renamed_project");
+        await page.getByTestId("input-project").last().fill(RENAMED_PROJECT);
         await page.keyboard.press("Enter");
         await page.waitForTimeout(1000);
       });
@@ -83,9 +124,9 @@ test(
 
     await expect(mcpServerRow(page, "lf-starter_project")).toHaveCount(1);
 
-    expect(
-      await page.getByText("lf-renamed_project", { exact: true }).count(),
-    ).toBe(1);
+    await expect(
+      page.getByText("lf-renamed_project", { exact: true }),
+    ).toHaveCount(1);
 
     //delete a folder
 
@@ -106,9 +147,9 @@ test(
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
     await expect(mcpServerRow(page, "lf-starter_project")).toHaveCount(1);
-    expect(
-      await page.getByText("lf-renamed_project", { exact: true }).count(),
-    ).toBe(0);
+    await expect(
+      page.getByText("lf-renamed_project", { exact: true }),
+    ).toHaveCount(0);
   },
 );
 

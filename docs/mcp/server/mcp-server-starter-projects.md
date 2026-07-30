@@ -50,7 +50,8 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 
 **Test 1 — starter projects & folder CRUD**
 
-1. Bootstrap (skip modal); `cleanOldFolders` to start from a known project set.
+1. Bootstrap (skip modal); `cleanOldFolders` to start from a known project set,
+   then delete any leftover `renamed_project` via the API — see **Notes**.
 2. Settings → **MCP Servers**: assert exactly one server row is named
    `lf-starter_project`, addressed **by name** (`mcp_server_name_<index>` filtered
    on the exact name) rather than by position — see **Notes**.
@@ -84,15 +85,21 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 
 ## Guarding against false positives *(how)*
 
-- **Exact-name counts** (`.count()` === 1 / === 0 on `getByText(..., {exact:true})`)
-  instead of "visible", so a stale or partially-matching row cannot pass.
+- **Exact-name counts** (`toHaveCount(1)` / `toHaveCount(0)` on
+  `getByText(..., {exact:true})`) instead of "visible", so a stale or
+  partially-matching row cannot pass.
+- **Auto-retrying counts** — every count assertion is `await expect(...)
+  .toHaveCount(n)`, never `expect(await ....count())`. The MCP-server row is
+  written by the backend as a side effect of the project write and can lag the
+  navigation; a single DOM read turns that lag into a failure (#1135).
 - **Starter-project presence** re-checked after every mutation, so a project
   operation that silently drops the starter project's server cannot pass.
 - **Row-scoped locator** — the starter-project assert filters the
   `mcp_server_name_<index>` server rows on the exact name, so matching text
   elsewhere on the page (a heading, a tooltip, an error string) cannot satisfy it.
-- **`cleanOldFolders`** normalizes the starting project set so the add/rename/
-  delete counts are deterministic.
+- **`cleanOldFolders` + leftover-`renamed_project` sweep** normalize the starting
+  project set so the add/rename/delete counts are deterministic, and so a failed
+  attempt cannot change what the next one measures.
 - **Force-failure check** (CONTRIBUTING §2) run during VERIFY on the name/count
   assertions of each test.
 
@@ -153,7 +160,19 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
   *projects*, and this is an internal server (`langflow_internal: True`), not a
   project-derived one.
 - Test 1 mutates project folders; `cleanOldFolders` in setup keeps the counts
-  deterministic across reruns. Runs `--workers=1` in CI (shared project state).
+  deterministic across reruns. It shares the superuser account with everything
+  else in the run — CI runs `workers: 2` (`playwright.config.ts`), and nothing
+  pins this file to serial, so the counts must tolerate concurrent flow/project
+  activity. They do, because every one of them is scoped to a name this spec
+  owns (`lf-new_project*`, `lf-renamed_project`, `lf-starter_project`).
+- **Leftover `renamed_project` is swept in setup (#1135).** `cleanOldFolders`
+  only deletes folders named "New Project*", so an attempt that dies between the
+  rename (step 4) and the delete (step 5) leaves `renamed_project` on the
+  account. The next attempt's rename then hits `UNIQUE constraint failed:
+  folder.user_id, folder.name` → **500**, and fails for a reason the first
+  attempt never had — retries stop being independent evidence. Setup now deletes
+  any leftover by id via `deleteProject` before the rename. The sweep is in
+  *setup*, not teardown, so it also heals a run that was killed outright.
 - No standalone flows are created that need id-scoped cleanup — the artifacts are
   **projects/folders**, created and then renamed/deleted within the test; the
   duplicate-server test adds a server registration, not a flow.
