@@ -163,10 +163,96 @@ def test_the_rendered_report_leads_with_the_unaccounted_phase():
     )
 
     assert "## Result: FAILED" in body
-    assert "## Unaccounted phases" in body
-    assert body.index("## Unaccounted phases") < body.index("### Phase: latest")
+    assert "## Unaccounted failures" in body
+    assert body.index("## Unaccounted failures") < body.index("### Phase: latest")
     # The runner's own verdict is shown next to the phase it belongs to.
     assert "runner outcome: `failure`" in body
+
+
+# ── The job-status half of the same defect (#1141) ────────────────────────────
+#
+# The exact shape of a run whose nightly never came up: `latest` fully recorded and
+# passing, phases 2 and 3 never reached, so the runner hands over empty outcomes for
+# them. Before the fix this rendered `Result: PASSED` into an issue titled "Failed".
+NIGHTLY_NEVER_BOOTED_STATE = {
+    "phases": {
+        "latest": {
+            "steps": {"auth": {"status": "pass"}, "execute_flow": {"status": "pass"}}
+        }
+    }
+}
+
+
+def test_a_red_job_with_no_phase_failure_is_not_a_pass():
+    """The #1141 regression: the failing step is one no phase covers."""
+    verdict = gr.assess(
+        NIGHTLY_NEVER_BOOTED_STATE, {"latest": "success"}, job="failure"
+    )
+
+    assert verdict["result"] == gr.RESULT_FAILED, (
+        "a red job whose report found nothing wrong must not print PASSED — the "
+        "failure is real and lives outside every phase this report can see"
+    )
+    assert len(verdict["integrity"]) == 1
+    assert "outside every phase" in verdict["integrity"][0]
+    assert "Read the job log" in verdict["integrity"][0]
+
+
+def test_the_same_state_still_passes_when_the_job_is_green():
+    """Guards against the fix reddening healthy runs: only the job status differs."""
+    for job in ("success", None):
+        verdict = gr.assess(
+            NIGHTLY_NEVER_BOOTED_STATE, {"latest": "success"}, job=job
+        )
+        assert verdict["result"] == gr.RESULT_PASSED, job
+        assert verdict["integrity"] == []
+
+
+def test_a_cancelled_job_is_not_a_pass():
+    verdict = gr.assess(
+        NIGHTLY_NEVER_BOOTED_STATE, {"latest": "success"}, job="cancelled"
+    )
+
+    assert verdict["result"] == gr.RESULT_FAILED
+    assert "`cancelled`" in verdict["integrity"][0]
+
+
+def test_a_red_job_is_not_reported_twice_when_a_phase_already_owns_the_failure():
+    """The phase-level message attributes the failure; this one cannot. Don't add noise."""
+    recorded = {"phases": {"nightly_api": {"steps": {"flow": {"status": "fail"}}}}}
+    verdict = gr.assess(recorded, {"nightly_api": "failure"}, job="failure")
+
+    assert verdict["result"] == gr.RESULT_FAILED
+    assert verdict["integrity"] == []
+    assert len(verdict["failures"]) == 1
+
+    # Same for an unaccounted phase: run #115's job was red too.
+    verdict = gr.assess(
+        RUN_115_STATE,
+        {"latest": "success", "nightly_api": "success", "nightly_ui": "failure"},
+        job="failure",
+    )
+    assert len(verdict["integrity"]) == 1
+    assert "nightly_ui" in verdict["integrity"][0]
+
+
+def test_job_status_is_parsed_from_the_env():
+    assert gr.job_status({"JOB_STATUS": "Failure"}) == "failure"  # GitHub casing varies
+    assert gr.job_status({"JOB_STATUS": "  success  "}) == "success"
+    # An unset or blank value must read as "unknown", never as a status.
+    assert gr.job_status({}) is None
+    assert gr.job_status({"JOB_STATUS": "   "}) is None
+
+
+def test_the_rendered_report_states_both_verdicts():
+    """The pair that contradicted each other in the issue body, side by side."""
+    body = gr.generate_report(
+        NIGHTLY_NEVER_BOOTED_STATE, {"latest": "success"}, job="failure"
+    )
+
+    assert "**Job status (runner):** `failure`" in body
+    assert "## Result: FAILED" in body
+    assert "## Unaccounted failures" in body
 
 
 def test_the_rendered_report_still_lists_every_step():

@@ -219,12 +219,19 @@ jobs:
       # opened an issue titled "Failed" whose body said PASSED for exactly that
       # reason — `test_05_execute_flow_ui` died on a Playwright timeout before it
       # could write its own verdict.
+      #
+      # `JOB_STATUS` closes the other half (#1141): only these three steps carry an
+      # `id`, so a failure in the steps BETWEEN them — resolving/installing/booting
+      # the nightly, or the alembic migration timing out — left phases 2 and 3
+      # unrun, their outcomes empty, and the report saying PASSED on a red job. The
+      # job's own status covers those steps, and any step added here later.
       - name: Generate report
         if: always()
         env:
           PHASE_OUTCOME_latest: ${{ steps.phase_latest.outcome }}
           PHASE_OUTCOME_nightly_api: ${{ steps.phase_nightly_api.outcome }}
           PHASE_OUTCOME_nightly_ui: ${{ steps.phase_nightly_ui.outcome }}
+          JOB_STATUS: ${{ job.status }}
         run: python tests/github-workflows/migration/generate_report.py
 
       - name: Print report

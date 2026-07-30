@@ -23,6 +23,22 @@ against what the phase actually recorded. A phase the runner says failed, that
 recorded no failure, is reported as a crash — never as a pass. A phase that was
 supposed to run and is missing from the state entirely is reported as incomplete.
 Nothing here can conclude "passed" from missing data.
+
+## Why the job's own status is reconciled too (#1141)
+
+Only three steps carry an `id`, so `PHASE_OUTCOME_*` covers only the three
+verification phases. The steps **between** them — resolving, installing, booting
+the nightly, and waiting out the alembic migration — carry none, and a failure
+there reproduced the #1120 symptom by a different route: the job goes red, phases 2
+and 3 never run (so their outcomes arrive empty and are not declared), the state
+file holds a fully-passing `latest` phase, and the report printed `Result: PASSED`
+into an issue titled *"Failed"*. A migration that never completes is precisely what
+this workflow exists to catch, and it landed in that gap.
+
+So the workflow also hands over `JOB_STATUS` (`job.status`). A red job whose report
+found nothing wrong is itself an integrity problem: the failure is real and lives
+outside every phase this report can see. Reconciling the job status covers the
+steps that exist today *and* any added later, which per-step `id`s would not.
 """
 
 import json
@@ -46,6 +62,13 @@ STATUS_ICON = {
 # `PHASE_OUTCOME_<phase>=success|failure|skipped|cancelled` — GitHub's
 # `steps.<id>.outcome` vocabulary, passed straight through.
 PHASE_OUTCOME_PREFIX = "PHASE_OUTCOME_"
+
+# The job's own status at the time the report is generated, from `job.status`
+# (`success|failure|cancelled`). The report step runs under `if: always()`, so this
+# is the runner's verdict on everything that happened before it — including the
+# steps no `PHASE_OUTCOME_*` covers.
+JOB_STATUS_VAR = "JOB_STATUS"
+JOB_STATUS_NOT_OK = {"failure", "cancelled"}
 
 RESULT_FAILED = "FAILED"
 RESULT_PASSED = "PASSED"
@@ -81,13 +104,24 @@ def declared_outcomes(environ=None) -> dict:
     return out
 
 
-def assess(state: dict, declared: dict) -> dict:
+def job_status(environ=None) -> Optional[str]:
+    """The runner's verdict on the job so far, from `JOB_STATUS`. `None` if unset."""
+    env = os.environ if environ is None else environ
+    value = (env.get(JOB_STATUS_VAR) or "").strip().lower()
+    return value or None
+
+
+def assess(state: dict, declared: dict, job: Optional[str] = None) -> dict:
     """Decide the overall result, and surface anything that makes the report untrustworthy.
 
     Returns `{"result", "failures", "warnings", "integrity"}`. `integrity` holds
     mismatches between what the runner observed and what the phase recorded — the
     #1120 class. Those count as failures: a report that cannot account for a phase
     must not claim that phase passed.
+
+    `job` is the runner's verdict on the whole job (`job.status`). It catches the
+    #1141 case: a failure in a step no phase covers, which otherwise left the report
+    saying `PASSED` on a red run.
     """
     phases = state.get("phases", {}) or {}
 
@@ -132,6 +166,18 @@ def assess(state: dict, declared: dict) -> dict:
             "verified nothing. Treated as a failure rather than an empty pass."
         )
 
+    # #1141: the job is red but nothing above accounts for it — the failing step is
+    # one this report does not cover. Only reported when there is no attribution yet;
+    # a phase that already owns the failure says it better than this can.
+    if job in JOB_STATUS_NOT_OK and not failures and not integrity:
+        integrity.append(
+            f"- **(outside every phase)**: the runner reports this job `{job}`, but no "
+            f"verification phase recorded or was declared a failure — so the cause is a "
+            f"step this report does not cover (resolving, installing or booting the "
+            f"nightly, or the alembic migration timing out). Read the job log; this "
+            f"report cannot attribute it."
+        )
+
     if failures or integrity:
         result = RESULT_FAILED
     elif warnings:
@@ -160,14 +206,18 @@ def format_step(name: str, step: dict) -> str:
     return line
 
 
-def generate_report(state: dict, declared: Optional[dict] = None) -> str:
+def generate_report(
+    state: dict, declared: Optional[dict] = None, job: Optional[str] = None
+) -> str:
     if declared is None:
         declared = declared_outcomes()
+    if job is None:
+        job = job_status()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     latest_digest = load_digest("/tmp/latest-digest.txt")
     nightly_digest = load_digest("/tmp/nightly-digest.txt")
 
-    verdict = assess(state, declared)
+    verdict = assess(state, declared, job)
 
     lines = [
         "# Langflow Migration Test Report",
@@ -175,6 +225,12 @@ def generate_report(state: dict, declared: Optional[dict] = None) -> str:
         f"**Flow:** {state.get('flow_name', 'N/A')} (`{state.get('flow_id', 'N/A')}`)",
         f"**Latest digest:** `{latest_digest[-20:]}`",
         f"**Nightly digest:** `{nightly_digest[-20:]}`",
+    ]
+    # Stated in the header so a reader comparing the issue title to the body can see
+    # both verdicts at once — the pair that contradicted each other in #1120/#1141.
+    if job:
+        lines.append(f"**Job status (runner):** `{job}`")
+    lines += [
         "",
         f"## Result: {verdict['result']}",
         "",
@@ -184,7 +240,7 @@ def generate_report(state: dict, declared: Optional[dict] = None) -> str:
     # trusted at face value — burying it below the per-step tables is how run #115
     # read as a pass.
     if verdict["integrity"]:
-        lines.append("## Unaccounted phases")
+        lines.append("## Unaccounted failures")
         lines.append("")
         lines.extend(verdict["integrity"])
         lines.append("")
