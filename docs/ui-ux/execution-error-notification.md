@@ -1,6 +1,6 @@
 # Execution Error Notifications — Network / Server Errors During Flow Execution
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -57,14 +57,18 @@ promotion bullet in scope.
 
 ## Step by step *(required)*
 
-Shared setup (`setupChatFlow`): bootstrap the app (`awaitBootstrapTest`), open a
-blank flow, add **Chat Output** and **Chat Input**, connect ChatInput source →
-ChatOutput target. Every created flow id is captured from its
-`POST /api/v1/flows → 201` response and deleted id-scoped in `afterEach`.
-`page.allowFlowErrors()` is set because each test intentionally fails a run.
+Shared setup (`setupPlayground`, the repo-wide helper): create the blank flow over
+the API, navigate straight to `/flow/{id}`, add **Chat Output** and **Chat Input**,
+connect ChatInput source → ChatOutput target. It returns the flow id, which is
+deleted id-scoped in `afterEach`. `page.allowFlowErrors()` is set because each
+test intentionally fails a run.
+
+The helper deliberately does **not** enter through the home page → "New Flow" →
+templates modal → `blank-flow` path; that entry point is what made this file flake
+(see Notes → *Sidebar entry race*).
 
 **Network-error test (`@stable`):**
-1. Run `setupChatFlow`
+1. Run `setupPlayground`
 2. Open the playground (`playground-btn-flow-io`); wait for
    `input-chat-playground`
 3. Route `**/api/v2/workflows` to `route.abort("timedout")` (transport failure)
@@ -147,13 +151,39 @@ assertion (e.g. asserting the wrong error text) fails deterministically.
 - **Assert the persistent dropdown, not the toast.** The slide-in build-error
   toast auto-dismisses; the notification-dropdown entry persists. Asserting the
   dropdown avoids the toast-fade race (same lesson as #695).
-- **Server-error status = 503, not 500.** The fixture's global response monitor
-  (`fixtures.ts`) flags any real backend `400/404/422/500` on the shared
-  instance. The server-error test mocks a 5xx, so it uses **503** — outside that
-  monitored set — to exercise the same "Workflow run failed" path without
-  registering a false instance error. The network-error and loading-state tests
-  are inherently clean (a transport abort yields no HTTP response; a held-open
-  request stays pending), so only the server-error test needed this.
-- **Flow cleanup.** `setupChatFlow` creates a flow per test; ids are captured
-  from `POST /api/v1/flows → 201` (a bare `page.url()` races the bootstrap
-  flow's stale id — #490/#681) and deleted in `afterEach`.
+- **Server-error status = 503.** The status was originally chosen to sit outside
+  the fixture monitor's then-exact set of `400/404/422/500`. Since #1084 that
+  evasion no longer works — the policy covers every 4xx/5xx on an `/api/` route —
+  so the test declares its own mocked response via `page.allowHttpErrors()`
+  instead, which is what keeps it out of the advisory log. It stays **503**
+  because that status drives the same "Workflow run failed" path (live-confirmed
+  on 1.11.0.dev41). The network-error and loading-state tests are inherently clean
+  (a transport abort yields no HTTP response; a held-open request stays pending),
+  so only the server-error test needs the declaration.
+- **Flow cleanup.** `setupPlayground` creates exactly one flow per test and
+  returns its id, which `afterEach` deletes id-scoped. The previous local
+  `setupChatFlow` had to capture the id from a `POST /api/v1/flows → 201`
+  response because the UI path created *two* flows and a bare `page.url()` raced
+  the bootstrap flow's stale id (#490/#681); creating over the API removes both
+  the second write and the capture.
+- **Sidebar entry race (#1063) — why the UI entry path was dropped.** This file
+  was quarantined for a recurrent flake in which
+  `[data-testid="sidebar-search-input"]` was present in the DOM but never became
+  visible, timing out the setup at 30 s before the test's own subject ran. Root
+  cause, confirmed in the served 1.12.0.dev10 bundle: `FlowPage` mounts the whole
+  `FlowSidebarComponent` inside a `display: none` wrapper while the welcome
+  overlay is open (`isWelcomeOpen ? "none" : "contents"`), which is exactly the
+  empty-bounding-box condition Playwright reports as `hidden`. The old entry path
+  walked into that window: "New Flow" calls `openWelcome(flowA)` **before**
+  navigating (deliberate, so the overlay paints on the first frame), and
+  `openNewFlowTemplatesModal`'s "Browse more templates" dismissal does **not**
+  close the welcome — `handleBrowseMore` only opens the templates modal. So the
+  welcome stayed open behind the modal, and clicking `blank-flow` (which creates
+  a *second* flow, flowB) left it open until `FlowBuilderWelcomeMount` observed
+  `currentFlowId !== openedForFlowId` and closed it. That close depends on a
+  multi-hop async settle — navigate → flow load → store update → placeholder
+  delete → re-render — which nothing in the test drives, so under parallel CI
+  load it could exceed the 30 s budget and always recovered on retry. Creating
+  the flow over the API and navigating directly never calls `openWelcome`, so the
+  sidebar is never hidden and the race is gone rather than re-budgeted. The
+  condition is latent in every spec that still enters via `blank-flow`.

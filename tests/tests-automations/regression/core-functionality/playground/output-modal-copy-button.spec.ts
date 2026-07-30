@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { setupBlankFlow } from "../../../../helpers/flows/setup-blank-flow";
 import { expandFocusedNode } from "../../../../helpers/ui/expand-focused-node";
 
 test.describe("Output Modal — Copy Button", () => {
@@ -8,15 +9,20 @@ test.describe("Output Modal — Copy Button", () => {
 
   let createdFlowId: string | null = null;
 
-  test.afterEach(async ({ page }) => {
-    if (createdFlowId) {
-      // Navigate to home before deleting to stop background browser requests
-      // for the current flow; without this, pending polling GETs complete
-      // after the DELETE and trigger spurious 404 fixture errors.
-      await page.goto("/");
-      await deleteFlow(page.request, createdFlowId);
-      createdFlowId = null;
-    }
+  test.afterEach(async ({ page, request }) => {
+    if (!createdFlowId) return;
+    const id = createdFlowId;
+    createdFlowId = null;
+    // Navigate to home before deleting to stop background browser requests
+    // for the current flow; without this, pending polling GETs complete
+    // after the DELETE and trigger spurious 404 fixture errors.
+    await page.goto("/");
+    // Explicit bearer: under AUTO_LOGIN a bare request context is
+    // unauthenticated, so an unheadered DELETE 401s and silently leaks the flow.
+    const bearer = await getAuthToken(request);
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
   });
 
   test(
@@ -24,29 +30,34 @@ test.describe("Output Modal — Copy Button", () => {
     { tag: ["@stable", "@release", "@workspace", "@playground"] },
     async ({ page }) => {
       await test.step("create blank flow and capture flow id", async () => {
-        await awaitBootstrapTest(page);
-
-        const flowCreationPromise = page.waitForResponse(
-          (resp) =>
-            resp.url().includes("/api/v1/flows") &&
-            resp.request().method() === "POST" &&
-            resp.status() === 201,
-          { timeout: 15000 },
-        );
-
-        await page.getByTestId("blank-flow").click();
-
-        const creationResponse = await flowCreationPromise;
-        const flowData = await creationResponse.json();
-        // Capture id before asserting format so afterEach can still clean up
-        // if the regex assertion fails on an unexpected id shape.
-        createdFlowId = flowData.id ?? null;
-        expect(flowData.id, "flow creation response missing id").toMatch(
+        // setupBlankFlow creates the flow over the API and navigates to it,
+        // instead of the home page → "New Flow" → templates modal →
+        // `blank-flow` path this step used to drive. That path is what made this
+        // spec flake (#1063): "New Flow" opens the welcome overlay before
+        // navigating, and while it is open FlowPage mounts the whole
+        // FlowSidebarComponent inside a `display: none` wrapper — so the
+        // `sidebar-search-input` fill below raced an element that was in the DOM
+        // with an empty box. Creating over the API never opens the overlay.
+        createdFlowId = await setupBlankFlow(page);
+        expect(createdFlowId, "created flow id has an unexpected shape").toMatch(
           /^[0-9a-f-]{36}$/,
         );
       });
 
       await test.step("add Chat Input and fill its value", async () => {
+        // Gate on write permission having RESOLVED before adding: useAddComponent
+        // bails out SILENTLY while `useIsFlowReadOnly` is true, which it is for
+        // the whole time the effective-permissions query is in flight. The
+        // header's flow-name button is disabled by the same expression, so its
+        // enabled state is an exact observable for "the add will register".
+        // Without this the add is dropped with no error and the count assertion
+        // below fails without naming the cause.
+        await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
+          timeout: 30000,
+        });
+        await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+          timeout: 30000,
+        });
         await page.getByTestId("sidebar-search-input").fill("chat input");
         await page
           .getByTestId("input_outputChat Input")

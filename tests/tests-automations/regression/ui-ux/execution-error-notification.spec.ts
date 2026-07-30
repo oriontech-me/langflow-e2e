@@ -4,11 +4,9 @@ import {
   test,
   type PageWithErrorHooks,
 } from "../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { zoomOut } from "../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { setupPlayground } from "../../../helpers/flows/setup-playground";
 
 // Playground execution on 1.11 runs through POST /api/v2/workflows (SSE), NOT
 // the retired /api/v1/build/{id}/flow path — the mocks below intercept that
@@ -16,82 +14,31 @@ import { deleteFlow } from "../../../helpers/flows/delete-flow";
 // "Workflow run failed" / "Failed to fetch" entry in the notifications dropdown.
 const WORKFLOWS_ENDPOINT = "**/api/v2/workflows";
 
-// Capture every flow THIS page creates from its POST /api/v1/flows → 201
-// responses and delete them id-scoped in afterEach. awaitBootstrapTest runs
-// first, so a bare page.url() capture races the bootstrap flow's stale id
-// (#490/#681); the response ids are authoritative and worker-safe.
-const createdFlowIds: string[] = [];
-
-function trackCreatedFlows(page: Page): void {
-  page.on("response", (resp) => {
-    if (
-      resp.url().includes("/api/v1/flows") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201
-    ) {
-      resp
-        .json()
-        .then((body: { id?: string }) => {
-          if (body?.id) createdFlowIds.push(body.id);
-        })
-        .catch(() => {});
-    }
-  });
-}
+// setupPlayground creates exactly ONE flow per test, over the API, and returns
+// its id — so cleanup is id-scoped without intercepting POST /api/v1/flows.
+//
+// The local setupChatFlow this replaces entered through the home page → "New
+// Flow" → templates modal → `blank-flow` path, which is what made this file
+// flake (#1063): while the welcome overlay is open, FlowPage mounts the whole
+// FlowSidebarComponent inside a `display: none` wrapper, so
+// `sidebar-search-input` sits in the DOM with an empty box — exactly what
+// Playwright reports as `hidden`. "New Flow" opens that overlay BEFORE
+// navigating and "Browse more templates" does not close it, so the setup raced a
+// multi-hop settle it did not drive. Creating the flow over the API never calls
+// `openWelcome`, so the sidebar is never hidden. Full chain in the spec doc.
+let createdFlowId: string | null = null;
 
 test.afterEach(async ({ request }) => {
-  if (createdFlowIds.length === 0) return;
+  if (!createdFlowId) return;
+  const id = createdFlowId;
+  createdFlowId = null;
+  // Explicit bearer: under AUTO_LOGIN a bare request context is unauthenticated,
+  // so an unheadered DELETE 401s and silently leaks the flow.
   const bearer = await getAuthToken(request);
-  for (const id of createdFlowIds.splice(0)) {
-    await deleteFlow(request, id, {
-      headers: { Authorization: bearer },
-    }).catch(() => {});
-  }
+  await deleteFlow(request, id, {
+    headers: { Authorization: bearer },
+  }).catch(() => {});
 });
-
-async function setupChatFlow(page: Page): Promise<void> {
-  await awaitBootstrapTest(page);
-  await page.waitForSelector('[data-testid="blank-flow"]', { timeout: 30000 });
-  await page.getByTestId("blank-flow").click();
-
-  // Add ChatOutput first (hover → click add button)
-  await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-    timeout: 30000,
-  });
-  await page.getByTestId("sidebar-search-input").fill("chat output");
-  await page.waitForSelector('[data-testid="input_outputChat Output"]', {
-    timeout: 30000,
-  });
-  await page
-    .getByTestId("input_outputChat Output")
-    .hover()
-    .then(async () => {
-      await page.getByTestId("add-component-button-chat-output").click();
-    });
-
-  await zoomOut(page, 2);
-
-  // Add ChatInput via drag to a different position to avoid overlap
-  await page.getByTestId("sidebar-search-input").fill("chat input");
-  await page.waitForSelector('[data-testid="input_outputChat Input"]', {
-    timeout: 30000,
-  });
-  await page
-    .getByTestId("input_outputChat Input")
-    .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-      targetPosition: { x: 100, y: 100 },
-    });
-
-  await adjustScreenView(page);
-
-  // Connect ChatInput source → ChatOutput target
-  await page
-    .getByTestId("handle-chatinput-noshownode-chat message-source")
-    .click();
-  await page
-    .getByTestId("handle-chatoutput-noshownode-inputs-target")
-    .click();
-}
 
 async function openPlayground(page: Page): Promise<void> {
   await page.getByTestId("playground-btn-flow-io").click();
@@ -112,8 +59,7 @@ test.describe("Execution Error Notifications", () => {
     async ({ page }) => {
       // The run is intercepted and aborted on purpose — allow the flow error.
       (page as any).allowFlowErrors();
-      trackCreatedFlows(page);
-      await setupChatFlow(page);
+      createdFlowId = await setupPlayground(page);
       await openPlayground(page);
 
       // Abort the execution request at the transport layer (dropped connection
@@ -138,19 +84,19 @@ test.describe("Execution Error Notifications", () => {
     },
   );
 
-  // Quarantined for #1063 — recurrent flake (2026-07-21 / 07-29): the
-  // error-feedback waitForSelector times out at 30 s.
-  test.fixme(
+  // Quarantine lifted in #1063: the 30 s timeout was in the shared setup's
+  // sidebar-entry wait, not in this test's error-feedback assertion. The setup
+  // no longer walks through the welcome overlay, so the condition is gone.
+  test(
     "executing flow with server error shows error feedback",
-    { tag: ["@release", "@workspace", "@observability"] },
+    { tag: ["@stable", "@release", "@workspace", "@observability"] },
     async ({ page }) => {
       const hooks = page as PageWithErrorHooks;
       hooks.allowFlowErrors();
       // The mocked 5xx below is this test's own fixture, not a finding — declare
       // it so it stays out of the advisory error log (#1084).
       hooks.allowHttpErrors();
-      trackCreatedFlows(page);
-      await setupChatFlow(page);
+      createdFlowId = await setupPlayground(page);
       await openPlayground(page);
 
       // Return a 5xx from the execution endpoint (server-side failure). 503 was
@@ -184,8 +130,7 @@ test.describe("Execution Error Notifications", () => {
     "flow run button shows loading state during execution",
     { tag: ["@release", "@workspace", "@observability"] },
     async ({ page }) => {
-      trackCreatedFlows(page);
-      await setupChatFlow(page);
+      createdFlowId = await setupPlayground(page);
       await openPlayground(page);
 
       // Hold the execution request open so the in-progress state is observable.
