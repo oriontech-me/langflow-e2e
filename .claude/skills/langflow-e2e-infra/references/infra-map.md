@@ -15,7 +15,7 @@ before acting; this list drifts.
 | `pr-validation.yml` | Every PR: `tsc --noEmit` + ESLint + QA-CHECKLIST guard + impacted-specs gate | `#741`, `#873`, `#892` |
 | `adaptive-impacted.yml` | Runs the impacted-tests subset for a PR | `scripts/impacted-tests.ts`; `CONTRIBUTING.md` → Adaptive impacted-tests |
 | `manual.yml` | Parameterized manual run (Docker tag / URL, suite, grep) | use to dry-run a workflow-adjacent change |
-| `file-watcher.yml` | Detects upstream Langflow changes in critical paths; opens revalidation issue | `CONTRIBUTING.md` → Monitored areas |
+| `file-watcher.yml` | Detects upstream Langflow changes in monitored paths; opens revalidation issue. `workflow_dispatch` only (9da85fa) | `scripts/watch-upstream-areas.mjs` (area table + `lfx` decision record + fail-closed guard, `#1092`) |
 | `triage-dispatch.yml` | Automates daily-failure triage dispatch behind an approval gate | `#785/#786/#787`, `#819` |
 | `update-coverage-summary.yml` | Regenerates QA-CHECKLIST generated blocks on merge to `main` | `scripts/coverage-summary.ts`, `stable-tests.ts` |
 | `migration-test.yml` / `migration-fresh-install.yml` / `migration-upgrade-with-flows.yml` | Langflow version-migration checks (latest → nightly) | `migration-test` label |

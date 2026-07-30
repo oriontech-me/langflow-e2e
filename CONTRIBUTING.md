@@ -469,29 +469,31 @@ The guide is the human-language specification of the automated tests. Keeping it
 
 ### How the team learns that a test needs review
 
-`file-watcher.yml` runs every day at 05:00 BRT and checks whether there were commits in the official Langflow repository in the last 24h in critical paths. When changes are detected, it automatically opens an issue in this repository.
+`file-watcher.yml` checks whether the official Langflow repository received commits in monitored paths within a window (`since`, default 24h) and opens an issue in this repository when it finds any. It is **`workflow_dispatch` only** — the schedule was disabled in `9da85fa`, so it reports nothing until someone dispatches it; widen `since` when the last dispatch was a while ago.
 
 **The issue reports:**
 - Which functional area changed
 - The exact command to run the affected tests
-- Which section of `QA_CHECKLIST.md` to review
+- Which section of `QA-CHECKLIST.md` to review
 
 ### Monitored areas
 
-| Area | Monitored paths | Affected tags |
-|---|---|---|
-| Routes & Feature Flags | `routes.tsx`, `feature-flags.ts` | all |
-| Authentication | `api/v1/login.py`, `services/auth/` | `@auth` |
-| Flow CRUD & Canvas | `api/v1/flows.py`, `FlowPage/` | `@project-management` |
-| Flow Execution | `api/v1/endpoints.py`, `processing/` | `@api` |
-| Model Providers & LLM | `ModelProvidersPage/`, `providerConstants.ts` | `@model-provider @agents` |
-| Agents & Agentic Flows | `agentic/`, `base/agents/` | `@agents` |
-| Playground & Chat | `pages/Playground/`, `api/v1/chat.py` | `@playground` |
-| Settings & Global Variables | `SettingsPage/`, `api/v1/variable.py` | `@settings` |
-| MCP Server | `MCPServersPage/`, `api/v1/mcp.py` | `@mcp` |
-| Tracing & Monitoring | `api/v1/traces.py`, `services/tracing/` | `@observability` |
-| Database Models | `services/database/models/`, `alembic/` | `@api` |
-| Component Input Types | `parameterRenderComponent/`, `inputs/` | `@ui-ux` |
+The area table is **not duplicated here** — it lives in `scripts/watch-upstream-areas.mjs` (13 areas → paths, tags, checklist sections) and is printed by:
+
+```bash
+node scripts/watch-upstream-areas.mjs --mode=areas
+```
+
+Two rules govern it (issue #1092):
+
+- **A path that cannot be evaluated is a failure, not a pass.** The workflow runs `--mode=check` before the sweep; a monitored path missing from the upstream checkout fails the job by name. Before the guard, `git log -- <gone-path>` printed nothing and read as "nothing changed" — which is how `constants/flow_constants.tsx` sat dead in the list after upstream moved it.
+- **Every `src/lfx/` subtree is classified exactly once**, either mapped to an area or recorded as out of scope with a reason (`LFX_CLASSIFICATION` in the same file). A subtree that appears upstream and matches no entry fails the guard, so the next step of Langflow's `lfx` migration forces a decision instead of widening a blind spot — the omission that let #1091 through, where the change that broke all six stdio registrations landed in `src/lfx/src/lfx/base/mcp/security.py`.
+
+When you add or repoint a path, run the guard locally against a Langflow clone:
+
+```bash
+node scripts/watch-upstream-areas.mjs --mode=check --root /path/to/langflow
+```
 
 ### What to do when a file-watcher issue arrives
 
