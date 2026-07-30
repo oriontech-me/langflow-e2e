@@ -809,7 +809,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 424 `test()` calls carrying the `@stable` tag, distributed across 168 spec
+> 422 `test()` calls carrying the `@stable` tag, distributed across 167 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1003,7 +1003,6 @@
 - [x] user should not be able to upload a file larger than the limit → `limit-file-size-upload.spec.ts`
 - [x] Full RAG pipeline grounds the model answer on the retrieved chunk → `rag-pipeline.spec.ts`
 - [x] Split Text splits an ingested document into the expected number of chunks → `split-text-chunking.spec.ts`
-- [x] upload a file through the Read File component and read its content → `upload-via-component.spec.ts`
 - [x] Knowledge Base indexes the ingested document chunks (available for query) → `vector-store-index-query.spec.ts`
 - [x] Knowledge Base query returns the relevant chunk for the prompt → `vector-store-index-query.spec.ts`
 
@@ -1203,7 +1202,6 @@
 #### mcp/client/
 - [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
 - [x] configures MCP server via JSON, selects echo tool, runs it, and verifies output → `mcp-client-regression.spec.ts`
-- [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
 
