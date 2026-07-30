@@ -12,20 +12,24 @@ import { deleteFlow } from "../../../helpers/flows/delete-flow";
 // tree, Tab walks into the results, and Space / Enter add the focused component.
 //
 // Rewritten from the inherited version, which pressed Tab three times blindly and
-// then asserted only a node COUNT: the live focus order is
-// sidebar-options-trigger -> disclosure-<category> -> first result card, so one
-// extra focusable element upstream would have moved Space onto another control
-// with the test still green. Here the Tab walk stops on the expected testid and
-// each added node is asserted by TYPE. The inherited version also opened a blank
-// flow through the UI and never deleted it.
+// then asserted only a node COUNT: one extra focusable element upstream would
+// have moved Space onto another control with the test still green. Here the Tab
+// walk stops on the expected testid and each added node is asserted by TYPE. The
+// inherited version also opened a blank flow through the UI and never deleted it.
 
-// Focus targets in the filtered result list.
+// The result card is the observable of the FILTER, not a focus target: on the
+// 1.12 line it carries no tabIndex. The keyboard affordance is the per-result
+// "Add <name> to canvas" button, the same handle the rest of the suite uses to
+// add from the sidebar (helpers/flows/add-component-from-sidebar.ts). See the
+// spec doc -> "The keyboard affordance moved (upstream, 1.12 line) — #1124".
 const CHAT_INPUT_CARD = "input_output_chat input_draggable";
-const CHAT_OUTPUT_CARD = "input_output_chat output_draggable";
+const CHAT_INPUT_ADD = "add-component-button-chat-input";
+const CHAT_OUTPUT_ADD = "add-component-button-chat-output";
 // A component that must not survive the "chat" query.
 const NON_MATCHING_CARD = "models_and_agentsPrompt Template";
-// Bounded Tab walk: the live order needs 3 presses, so this only runs out when
-// the card is unreachable by keyboard — which is the failure being tested.
+// Bounded Tab walk: the live order needs 3 presses (sidebar-options-trigger ->
+// disclosure-<category> -> the add button), so this only runs out when the
+// component is unreachable by keyboard — which is the failure being tested.
 const MAX_TAB_PRESSES = 10;
 
 /** The `data-testid` of the currently focused element, if it has one. */
@@ -45,6 +49,29 @@ async function tabUntilFocused(page: Page, testId: string): Promise<number> {
     `"${testId}" never received focus within ${MAX_TAB_PRESSES} Tab presses ` +
       `(last focused: ${await focusedTestId(page)})`,
   );
+}
+
+/**
+ * Presses `/` until the sidebar search holds focus.
+ *
+ * Bounded on purpose: a shortcut that is really unbound never focuses the field,
+ * so the step still fails — the retry only absorbs a keypress lost to the race
+ * between the canvas click and the hotkey under CI load (#1124, second symptom).
+ * It never presses while the field already has focus: the hotkey does not fire
+ * from form tags, so a second press would type "/" into it and defeat the
+ * empty-value assertion that follows.
+ */
+async function focusSearchWithSlash(page: Page): Promise<void> {
+  const search = page.getByTestId("sidebar-search-input");
+
+  await expect(async () => {
+    const alreadyFocused = await search.evaluate(
+      (el) => el === document.activeElement,
+    );
+    if (!alreadyFocused) await page.keyboard.press("/");
+
+    await expect(search).toBeFocused({ timeout: 2000 });
+  }).toPass({ timeout: 20000, intervals: [250, 500, 1000, 2000] });
 }
 
 test.describe("ui-ux — keyboard component search", () => {
@@ -77,7 +104,7 @@ test.describe("ui-ux — keyboard component search", () => {
   });
 
   test("user can search and add components using keyboard shortcuts",
-    { tag: ["@workspace", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@ui-ux"] },
     async ({ page }) => {
       const search = page.getByTestId("sidebar-search-input");
       const nodes = page.locator(".react-flow__node");
@@ -87,9 +114,8 @@ test.describe("ui-ux — keyboard component search", () => {
           .locator(".react-flow__pane")
           .click({ position: { x: 500, y: 350 } });
 
-        await page.keyboard.press("/");
+        await focusSearchWithSlash(page);
 
-        await expect(search).toBeFocused({ timeout: 10000 });
         // The shortcut must not land in the field as text.
         await expect(search).toHaveValue("");
       });
@@ -104,7 +130,7 @@ test.describe("ui-ux — keyboard component search", () => {
       });
 
       await test.step("Tab reaches the first result and Space adds it", async () => {
-        await tabUntilFocused(page, CHAT_INPUT_CARD);
+        await tabUntilFocused(page, CHAT_INPUT_ADD);
         await page.keyboard.press("Space");
 
         await expect(nodes).toHaveCount(1, { timeout: 15000 });
@@ -118,7 +144,10 @@ test.describe("ui-ux — keyboard component search", () => {
 
       await test.step("Tab reaches the next result and Enter adds it", async () => {
         await search.click();
-        await tabUntilFocused(page, CHAT_OUTPUT_CARD);
+        // ChatInput is a singleton: now that one is on the canvas its entry is
+        // disabled and stops rendering an add button, so this walk costs the
+        // same number of presses the Chat Input one did.
+        await tabUntilFocused(page, CHAT_OUTPUT_ADD);
         await page.keyboard.press("Enter");
 
         await expect(nodes).toHaveCount(2, { timeout: 15000 });
