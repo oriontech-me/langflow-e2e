@@ -28,7 +28,7 @@ on:
         required: false
         default: ""
       recover_timeout_s:
-        description: "Seconds to wait for the backend to answer after Collect models before failing the shard (#1011). Empty = 300."
+        description: "Seconds to wait for the backend to answer after Collect models before failing the shard (#1011). Empty = 420, the shared default of ./.github/actions/wait-for-backend (#1045)."
         required: false
         default: ""
 
@@ -397,60 +397,39 @@ jobs:
       # process-wide WEDGED — container alive, event loop blocked, requests simply
       # not answered (#922, #927). globalSetup polls for 120 s and then throws, so
       # a wedge that outlasts that window costs the ENTIRE shard and reports itself
-      # as a preflight error with no mention of what caused it.
-      # This gate does two things the preflight cannot:
-      #   1. gives the wedge a longer window to clear BEFORE Playwright starts, and
-      #   2. when it does not clear, fails with the real cause named here, in its
-      #      own step, instead of 40 specs' worth of container time and a
-      #      globalSetup stack trace.
-      # It polls with a SHORT per-request timeout over a long deadline, the shape
-      # #928 established: a hung request must fail fast so the loop can keep
-      # polling across the wedge instead of burning the budget on one GET.
-      # Honest about its limits: whether the backend recovers is not guaranteed.
-      # It was first measured on 2026-07-28 (#1019) — not by this gate, and not by
-      # pr-validation's copy either, which did not exist yet. The measurement came
-      # out of the service container's own log on a pr-validation job that died in
-      # globalSetup: same image, same sweep. gunicorn raised WORKER TIMEOUT
-      # ~3.5 min after the sweep ended, SIGKILLed the worker, and the replacement
-      # had finished startup 214 s after the preflight began polling (inferred
-      # from that startup log — nothing was polling by then to observe a 200).
-      # globalSetup's 120 s missed it by 94 s; this step's 300 s would not have,
-      # though only just: 223 s of budget spent, all of it gunicorn's own timer.
-      # So recovery is real and observed, not merely hoped for — but it is one
-      # measurement, and attribution is still what the gate buys unconditionally.
-      # pr-validation's copy widened the deadline to 420 s for that margin and
-      # decodes curl's exit code in its error; #1045 unifies the two.
+      # as a preflight error with no mention of what caused it. The gate does two
+      # things the preflight cannot: it gives the wedge a longer window to clear
+      # BEFORE Playwright starts, and when it does not clear it fails with the real
+      # cause named, in its own step, instead of 40 specs' worth of container time
+      # and a globalSetup stack trace.
+      #
+      # Shared implementation since #1045 — this was the first of four copies (see
+      # the action for what diverged and why one of them lacked a gate entirely).
+      # Two things changed for the daily when it adopted the shared version, both
+      # ported from pr-validation's copy: the failure now names WHICH state it
+      # observed (refused → dead vs accepted-and-unanswered → the #922/#927 wedge)
+      # rather than hedging "wedged or dead", and a heartbeat keeps a step that can
+      # legitimately sit for 5-7 min from reading as hung.
+      #
+      # Recovery is real and observed, not merely hoped for: on 2026-07-28 (#1019)
+      # the service container's log showed gunicorn raising WORKER TIMEOUT ~3.5 min
+      # after a sweep, SIGKILLing the worker, and the replacement serving requests
+      # 214 s after polling began — 94 s past globalSetup's 120 s budget. That is
+      # what the deadline is sized against; attribution is what the gate buys
+      # unconditionally, on every run, whether or not the backend comes back.
       - name: Wait for the backend to recover from the collect-models load
-        shell: bash
-        env:
-          # Generous: a wedge is worth waiting out when the alternative is losing
-          # a ~20 min run. The recover_timeout_s dispatch input shortens it for a
-          # validation run without editing the file; empty on schedule → 300.
-          RECOVER_TIMEOUT_S: ${{ inputs.recover_timeout_s || '300' }}
-          # Only for the log line below — the run is NOT gated on it (see the
-          # Collect models step: a drained key must not kill unrelated specs).
-          COLLECT_MODELS_OUTCOME: ${{ steps.collect_models.outcome }}
-        run: |
-          # Surface the pre-flight's own verdict here, where a reader is already
-          # looking. Without this the step's failure is buried in its log and the
-          # resulting skips look unexplained (the silent-erosion class of #570).
-          if [ "$COLLECT_MODELS_OUTCOME" = "failure" ]; then
-            echo "::warning::Collect models FAILED (outcome=$COLLECT_MODELS_OUTCOME). The run continues by design, but providers.json/models.json may be stale or incomplete, so provider-parameterized specs can skip. Check that step's log for which provider is down."
-          fi
-          deadline=$(( $(date +%s) + RECOVER_TIMEOUT_S ))
-          attempt=0
-          while :; do
-            attempt=$((attempt + 1))
-            if curl -sf --connect-timeout 5 --max-time 8 http://localhost:7860/api/v1/version >/dev/null 2>&1; then
-              echo "Backend answered /api/v1/version on attempt $attempt — proceeding to the @stable run."
-              exit 0
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::Langflow did not answer /api/v1/version within ${RECOVER_TIMEOUT_S}s after the Collect models step (${attempt} attempts). The backend is wedged or dead, so the @stable run would abort in globalSetup with zero tests. This is the post-collect-models wedge (#922/#927/#1011), NOT a per-test failure."
-              exit 1
-            fi
-            sleep 5
-          done
+        uses: ./.github/actions/wait-for-backend
+        with:
+          # 420 s for every lane since #1045 (the number's evidence is in the
+          # action). The recover_timeout_s dispatch input still shortens it for a
+          # validation run without editing this file; empty on schedule → 420.
+          timeout_s: ${{ inputs.recover_timeout_s || '420' }}
+          next_step_label: "the @stable run"
+          attribution: "NOT a per-test failure"
+          # Reported, never gated on — a drained key must not kill unrelated
+          # specs (#980), but a silent provider skip must not go unexplained
+          # either (#570).
+          collect_models_outcome: ${{ steps.collect_models.outcome }}
 
       # Mid-run backend liveness (#1030). The gate above only proves the backend
       # is alive when Playwright STARTS. On the heavy shards the single worker

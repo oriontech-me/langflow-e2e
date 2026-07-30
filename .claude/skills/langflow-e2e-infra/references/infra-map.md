@@ -21,6 +21,20 @@ before acting; this list drifts.
 | `migration-test.yml` / `migration-fresh-install.yml` / `migration-upgrade-with-flows.yml` | Langflow version-migration checks (latest → nightly) | `migration-test` label |
 | `build-ollama-image.yml` | Builds the Ollama image used by provider specs | — |
 
+## Composite actions (`.github/actions/`)
+
+Where a mechanism is shared by more than one lane. Check here before adding a step
+to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
+
+| Action | Role | Notes / owner doc |
+|---|---|---|
+| `setup-playwright` | Node + deps + browser install for a lane | — |
+| `run-e2e` | Runs a suite and uploads the report | used by `manual.yml` |
+| `wait-for-backend` | Post-collect-models health gate: waits out the wedge, else fails naming the state | `scripts/wait-for-backend.mjs`; `#1011/#1019/#1044/#1045` — adopted by daily/pr/manual/weekly |
+| `resolve-echo-endpoint` | Points `ECHO_BASE_URL` at the lane's `go-httpbin` service | `scripts/resolve-echo-endpoint.mjs`; `#1128` |
+| `guard-dedicated-issue` | Validates a `daily-failure` issue against the dedicated-issue contract | `#1035/#1037` |
+| `auto-remove-stable` | Auto-removes `@stable` from hard failures | `scripts/remove-stable-from-failures.ts`, `#476` |
+
 ## Scripts (`scripts/`)
 
 | Script | Role |
@@ -38,6 +52,8 @@ before acting; this list drifts.
 | `remove-stable-from-failures.ts` | Auto-removes `@stable` from hard failures (`#476`) |
 | `format-auto-remove-summary.mjs` | Formats the auto-remove summary comment |
 | `validate-spec-deps.ts` | Validates a spec's declared external dependencies |
+| `wait-for-backend.mjs` | The post-collect-models health gate's polling loop, behind `.github/actions/wait-for-backend`. Classifies the failure (dead / wedged / HTTP / wiring) instead of hedging (`#1045`) |
+| `watch-backend.mjs` | In-run backend liveness recorder + `--summarize` (diagnostic only, never fails a shard) (`#1030/#1048`) |
 
 ## `playwright.config.ts` knobs
 

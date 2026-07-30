@@ -203,60 +203,22 @@ jobs:
       # Short per-request timeout over a long deadline (#928): a hung request must
       # fail fast so the loop keeps polling across the wedge.
       #
-      # This is the FOURTH copy of this loop (daily-stable, pr-validation, here,
-      # and the one weekly-stable still lacks). #1045 extracts them into
-      # `.github/actions/wait-for-backend`; adopt it here when it lands rather
-      # than letting this drift on its own.
+      # Shared implementation since #1045 (`.github/actions/wait-for-backend`),
+      # which is what this step's own comment asked for while it was the fourth
+      # inline copy. The deadline this lane measured is now the shared default: its
+      # validation dispatch (run 30422284968) took 260 s to clear — 87% of the
+      # 300 s the daily used to allow.
+      #
+      # `base_url` matters HERE and nowhere else: this workflow can target a
+      # Langflow that is not the job's service container (an external URL input),
+      # so the gate must probe whatever `detect-target` resolved.
       - name: Wait for the backend to recover from the collect-models load
-        shell: bash
-        env:
-          BASE_URL: ${{ needs.detect-target.outputs.base_url }}
-          COLLECT_MODELS_OUTCOME: ${{ steps.collect_models.outcome }}
-          # 420 s, matching pr-validation.yml rather than daily-stable.yml's 300 s
-          # — this run's own measurement (30422284968) took 260 s to clear, 87% of
-          # a 300 s budget. Parameterized like the other two copies so the value
-          # lives in one place instead of being repeated in the error message.
-          RECOVER_TIMEOUT_S: "420"
-        run: |
-          if [ "$COLLECT_MODELS_OUTCOME" = "failure" ]; then
-            echo "::warning::Collect models FAILED. The run continues by design (#980), but providers.json/models.json may be stale or incomplete, so provider-parameterized specs can skip. Check that step's log for which provider is down."
-          fi
-          deadline=$(( $(date +%s) + RECOVER_TIMEOUT_S ))
-          attempt=0
-          rc=0
-          while :; do
-            attempt=$((attempt + 1))
-            # `|| rc=$?` keeps the non-zero exit from tripping `bash -e` AND
-            # preserves curl's code, which is the one datum that distinguishes the
-            # two states this step exists to attribute (decoded at the deadline).
-            rc=0
-            curl -sf --connect-timeout 5 --max-time 8 "${BASE_URL%/}/api/v1/version" >/dev/null 2>&1 || rc=$?
-            if [ "$rc" -eq 0 ]; then
-              echo "Backend answered /api/v1/version on attempt $attempt — proceeding to the tests."
-              exit 0
-            fi
-            # Heartbeat every ~6 attempts (~30 s when refused, ~78 s when each GET
-            # hangs for the full --max-time). This step legitimately sat silent for
-            # 4 min 20 s on the validation dispatch, and a manual run is the one a
-            # human watches live — without this it reads as hung.
-            if [ $((attempt % 6)) -eq 0 ]; then
-              echo "Still waiting: attempt $attempt, last curl exit=$rc, $(( deadline - $(date +%s) ))s left of ${RECOVER_TIMEOUT_S}s."
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              # 7 = connection refused (nothing listening → the backend is DEAD or
-              # never came back); 28 = timeout (connection accepted, no answer →
-              # the WEDGE shape of #922/#927). Naming it here saves the next reader
-              # a dig through the container log.
-              case "$rc" in
-                7) diag="connection refused — the backend is DEAD or never came back";;
-                28) diag="connection accepted but unanswered within 8s — the WEDGE shape of #922/#927";;
-                *) diag="last curl exit code $rc";;
-              esac
-              echo "::error::Langflow did not answer /api/v1/version within ${RECOVER_TIMEOUT_S}s after the Collect models step (${attempt} attempts; ${diag}). The backend is wedged or dead, so the run would abort in globalSetup with zero tests. This is the post-collect-models wedge (#922/#927/#1011), NOT a failure of the tests you dispatched."
-              exit 1
-            fi
-            sleep 5
-          done
+        uses: ./.github/actions/wait-for-backend
+        with:
+          base_url: ${{ needs.detect-target.outputs.base_url }}
+          next_step_label: "the run"
+          attribution: "NOT a failure of the tests you dispatched"
+          collect_models_outcome: ${{ steps.collect_models.outcome }}
 
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e

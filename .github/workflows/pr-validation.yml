@@ -467,61 +467,23 @@ jobs:
       # cannot cover this: gunicorn itself only noticed ~3.5 min in, and the
       # container reads healthy that whole time.
       #
-      # Polls with a SHORT per-request timeout over a long deadline (the #928
-      # shape): a hung request must fail fast so the loop keeps polling across the
-      # wedge instead of burning the budget on one GET. Runs only when Collect
-      # models ran — with no sweep there is no wedge to wait out, and an unrelated
-      # startup failure is globalSetup's to report.
+      # Shared implementation since #1045 (`.github/actions/wait-for-backend`) —
+      # the deadline, the heartbeat and the curl-exit-code decoding this copy
+      # pioneered now apply to the daily and manual lanes too, and weekly-stable
+      # finally has a gate at all. Runs only when Collect models ran: with no sweep
+      # there is no wedge to wait out, an unrelated startup failure is
+      # globalSetup's to report, and an LLM-free PR must not be billed for the wait.
       - name: Wait for the backend to recover from the collect-models load
         if: needs.detect-specs.outputs.needs_models == 'true'
-        shell: bash
-        env:
-          # 420 s, deliberately ABOVE daily-stable.yml's 300 s. The one measured
-          # recovery consumed 223 s — 74% of a 300 s budget — and every second of
-          # it was gunicorn's own timer: the wedge has to outlast WORKER TIMEOUT
-          # (~3.5 min), then the SIGKILL, then ~12 s of Langflow startup. A
-          # slightly slower restart blows 300 s, and this is the workflow where
-          # over-waiting is nearly free: the extra 120 s is only ever spent on a
-          # run that is already going red, inside a job with timeout-minutes: 60.
-          # The daily still says 300 s — changing it was outside #1019's scope;
-          # #1045 unifies both behind one composite action and settles the number.
-          RECOVER_TIMEOUT_S: "420"
-        run: |
-          deadline=$(( $(date +%s) + RECOVER_TIMEOUT_S ))
-          attempt=0
-          rc=0
-          while :; do
-            attempt=$((attempt + 1))
-            # `|| rc=$?` keeps the non-zero exit from tripping `bash -e` AND
-            # preserves curl's code, which is the one datum that distinguishes the
-            # two states this step exists to attribute (decoded at the deadline).
-            rc=0
-            curl -sf --connect-timeout 5 --max-time 8 http://localhost:7860/api/v1/version >/dev/null 2>&1 || rc=$?
-            if [ "$rc" -eq 0 ]; then
-              echo "Backend answered /api/v1/version on attempt $attempt — proceeding to the impacted specs."
-              exit 0
-            fi
-            # Heartbeat every ~6 attempts (~30 s when refused, ~78 s when each GET
-            # hangs for the full --max-time). Without it a step that can legitimately
-            # sit for 7 min prints nothing and reads as hung.
-            if [ $((attempt % 6)) -eq 0 ]; then
-              echo "Still waiting: attempt $attempt, last curl exit=$rc, $(( deadline - $(date +%s) ))s left of ${RECOVER_TIMEOUT_S}s."
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              # 7 = connection refused (nothing listening → the backend is DEAD or
-              # never came back); 28 = timeout (connection accepted, no answer →
-              # the WEDGE shape of #922/#927). Naming it here saves the next reader
-              # a dig through the container log.
-              case "$rc" in
-                7) diag="connection refused — the backend is DEAD or never came back up";;
-                28) diag="connection accepted but unanswered within 8s — the WEDGE shape of #922/#927";;
-                *) diag="last curl exit code $rc";;
-              esac
-              echo "::error::Langflow did not answer /api/v1/version within ${RECOVER_TIMEOUT_S}s after the Collect models step (${attempt} attempts; ${diag}). The impacted-specs run would abort in globalSetup with zero tests. This is the post-collect-models wedge (#922/#927/#1011/#1019), NOT a failure of the specs this PR touches."
-              exit 1
-            fi
-            sleep 5
-          done
+        uses: ./.github/actions/wait-for-backend
+        with:
+          # Deadline comes from the action's default (420 s) — this lane is where
+          # that number was argued for and it is now every lane's.
+          next_step_label: "the impacted-specs run"
+          attribution: "NOT a failure of the specs this PR touches"
+          # No collect_models_outcome: unlike the daily and manual lanes, the step
+          # here is a HARD gate (not `continue-on-error`), so a failed sweep has
+          # already reddened the job and there is no surviving run to warn about.
 
       - name: Run impacted specs
         env:
