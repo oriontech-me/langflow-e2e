@@ -1,5 +1,26 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../../helpers/ui/open-advanced-options";
+import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
+
+// Id-scoped flow cleanup, via the shared tracker (#1108). This file had NONE: all
+// four tests reach the canvas through `awaitBootstrapTest` + the `blank-flow`
+// click, so every run leaked. Measured with the tracker disabled: one orphan per
+// test, i.e. four per full run of this file, kept for good. Never a name-scoped or
+// delete-all sweep — that deletes flows other parallel workers are driving (#553).
+let flows: ReturnType<typeof trackCreatedFlows>;
+
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
+
+test.afterEach(async ({ request }) => {
+  await flows.cleanup(request);
+  flows.dispose();
+});
 
 // Reusable helper: navigate to a blank flow and add the API Request component.
 // Waits until the URL input in the inspector is ready.
@@ -88,36 +109,33 @@ test(
   async ({ page }) => {
     await addApiRequestComponent(page);
 
-    // The headers field is rendered as a key-value table in the inspector.
-    // Look for the label "Headers" which appears above the key-value input widget.
-    const headersLabel = page.getByText(/^headers$/i).first();
+    // `headers` is an ADVANCED field, so it is not on the node body — measured on
+    // 1.12.0.dev9 via `GET /api/v1/all`: `template.headers.advanced === true`
+    // while `url_input` and `method` are false. Scouted on the same build, the
+    // node carries no header-related `data-testid` at all; the field lives in the
+    // node inspector panel, which `parameters-button` opens (#1136).
+    //
+    // The previous version searched the node for a `/^headers$/i` label and, on
+    // missing it, clicked a `/advanced/i` button — a control the nightly replaced
+    // with this panel around dev46 — so it had been failing on every run of a
+    // spec no lane happens to execute (`@release`, never `@stable`).
+    await openAdvancedOptions(page);
 
-    // If not immediately visible, try opening an "Advanced" section first
-    const isHeadersVisible = await headersLabel
-      .isVisible({ timeout: 3000 })
-      .catch(() => false);
+    // Asserted by exact testid, never by a `/.*headers.*/` regex: the page also
+    // renders `app-header` and `chat-header-more-menu`, so a substring match
+    // would report success with the headers field absent — the false-positive
+    // shape `CONTRIBUTING.md` warns about, and the reason this test could not
+    // have failed honestly either way (#1136).
+    await expect(page.getByTestId("inspector-param-headers")).toBeVisible({
+      timeout: 15000,
+    });
 
-    if (!isHeadersVisible) {
-      const advancedBtn = page
-        .getByRole("button", { name: /advanced/i })
-        .first();
-      const advancedExists = await advancedBtn
-        .isVisible({ timeout: 3000 })
-        .catch(() => false);
-      if (advancedExists) {
-        await advancedBtn.click();
-        await page.waitForTimeout(300);
-      }
-    }
+    // The field is a key-value table, and the panel exposes its editor plus the
+    // add-to-node toggle every advanced input gets. Both prove the field is
+    // genuinely wired, not just a label rendered by the panel.
+    await expect(page.getByTestId("inspector-api-headers")).toBeVisible();
+    await expect(page.getByTestId("inspector-add-headers")).toBeVisible();
 
-    // The headers label (or an "Add" button for the headers table) must now be present
-    const headersPresent =
-      (await page.getByText(/^headers$/i).first().isVisible({ timeout: 5000 }).catch(() => false)) ||
-      (await page.getByTestId(/.*headers.*/).first().isVisible({ timeout: 2000 }).catch(() => false));
-
-    expect(
-      headersPresent,
-      "Headers field or section should be visible in the API Request component inspector",
-    ).toBe(true);
+    await closeAdvancedOptions(page);
   },
 );
