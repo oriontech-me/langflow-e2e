@@ -51,13 +51,38 @@ const createdFlowIds: string[] = [];
 // otherwise a body that resolves after `afterEach` starts is dropped and its
 // flow leaks for good (the last test in a worker has no later hook to sweep it).
 const pendingCaptures: Promise<void>[] = [];
+// Creations that FAILED, captured from the same listener (#1114).
+//
+// Two flows have to be created before this file's setup can do anything: the
+// "New Flow" click inside `awaitBootstrapTest` navigates to a freshly-created
+// flow (hence the welcome overlay it reconciles), and the `blank-flow` click
+// creates a second one. When one of those POSTs answers 5xx, nothing fails at
+// the POST — the fixture logs it and the run continues — and the visible symptom
+// lands several steps later as an editor that mounted without a usable sidebar.
+// The test then reports a hidden `sidebar-search-input`, which reads like a
+// selector or product regression and is neither. Recording the failure here is
+// what lets `addApiRequestComponent` point at it — see `withFlowCreationCause`
+// for why it points rather than concludes.
+//
+// Reset in `beforeEach`, NOT drained in `afterEach`: the teardown returns early
+// when no flow was created, which is exactly the case this array exists for.
+const failedFlowCreations: string[] = [];
 
 test.beforeEach(({ page }) => {
+  failedFlowCreations.length = 0;
   page.on("response", (resp) => {
-    if (resp.request().method() !== "POST" || resp.status() !== 201) return;
+    if (resp.request().method() !== "POST") return;
     // The creation endpoint itself only — `/flows/batch/` and `/flows/upload/`
     // also answer 201, but with a list body that carries no top-level `id`.
     if (!/^\/api\/v1\/flows\/?$/.test(new URL(resp.url()).pathname)) return;
+    if (resp.status() >= 400) {
+      // Status only, recorded synchronously: the body is what the fixture
+      // already prints on its `🚨 Backend Error` line, and reading it here would
+      // land a tick later than the setup step that needs to consult this.
+      failedFlowCreations.push(`${resp.status()} ${resp.statusText()}`);
+      return;
+    }
+    if (resp.status() !== 201) return;
     pendingCaptures.push(
       resp
         .json()
@@ -71,7 +96,6 @@ test.beforeEach(({ page }) => {
 
 test.afterEach(async ({ page, request }, testInfo) => {
   await Promise.allSettled(pendingCaptures.splice(0));
-  if (createdFlowIds.length === 0) return;
 
   // Record the failing state before the navigation below.
   //
@@ -82,6 +106,11 @@ test.afterEach(async ({ page, request }, testInfo) => {
   // `screenshot` to `off` outside CI (playwright.config.ts), so locally this
   // attachment is the ONLY failure artifact, and the annotation puts the flow id
   // in the report where a reader does not have to dig for it.
+  //
+  // This runs BEFORE the "nothing to clean up" bail below, deliberately (#1114).
+  // It used to sit after it, so the one scenario where the artifact matters most
+  // — a test that failed precisely BECAUSE no flow was created — was the one
+  // scenario that produced no screenshot and no annotation.
   if (testInfo.status !== testInfo.expectedStatus) {
     try {
       testInfo.annotations.push({
@@ -96,6 +125,9 @@ test.afterEach(async ({ page, request }, testInfo) => {
       // The page may already be gone — the cleanup below is what matters.
     }
   }
+
+  // Nothing was created, so there is nothing to navigate away from or delete.
+  if (createdFlowIds.length === 0) return;
 
   // Take the page off the flow canvas BEFORE deleting anything, unconditionally
   // — same shape as the folder specs (#1023/#1103), which is where the rationale
@@ -140,15 +172,77 @@ test.afterEach(async ({ page, request }, testInfo) => {
 // NON-advanced fields (url_input, method) rendered on the node body. Advanced
 // fields are not on the body — see `addFieldToNodeBody` below.
 async function addApiRequestComponent(page: Page) {
-  await awaitBootstrapTest(page);
-  await page.getByTestId("blank-flow").click();
-  await page.waitForSelector('[data-testid="sidebar-search-input"]', { timeout: 10000 });
-  await page.getByTestId("sidebar-search-input").click();
-  await page.getByTestId("sidebar-search-input").fill("API Request");
-  await page.waitForSelector('[data-testid="add-component-button-api-request"]', { timeout: 10000 });
-  await page.getByTestId("add-component-button-api-request").click();
-  // Wait for the URL field on the node body as the "component is mounted" signal
-  await page.waitForSelector('[data-testid="popover-anchor-input-url_input"]', { timeout: 15000 });
+  try {
+    await awaitBootstrapTest(page);
+    await page.getByTestId("blank-flow").click();
+    await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+      timeout: 10000,
+    });
+    await page.getByTestId("sidebar-search-input").click();
+    await page.getByTestId("sidebar-search-input").fill("API Request");
+    await expect(
+      page.getByTestId("add-component-button-api-request"),
+    ).toBeVisible({ timeout: 10000 });
+    await page.getByTestId("add-component-button-api-request").click();
+    // Wait for the URL field on the node body as the "component is mounted" signal
+    await expect(
+      page.getByTestId("popover-anchor-input-url_input"),
+    ).toBeVisible({ timeout: 15000 });
+  } catch (error) {
+    // Every gate above depends on a flow having been created, so when one of the
+    // creating POSTs failed the timeout that surfaces here names a symptom, not
+    // the cause — measured, the sidebar input is present but HIDDEN, so the
+    // report reads "waiting for sidebar-search-input" with 8 resolutions to a
+    // hidden element and no mention of the 5xx three log lines up (#1114).
+    throw withFlowCreationCause(error);
+  }
+}
+
+// Prefix a setup failure with the flow creation that probably explains it,
+// keeping the original message (and with it Playwright's call log) intact.
+// Returns the error untouched when no creation failed — the setup can break for
+// its own reasons, and this must not claim otherwise.
+//
+// Deliberately a HINT and not a verdict. An earlier draft asserted the flow was
+// "never created", which is not something a failed POST proves: both
+// `awaitBootstrapTest` and `openNewFlowTemplatesModal` retry, so a 500 can be
+// absorbed and a later attempt can succeed. Measured at 5 workers — a run with 7
+// creation 500s in which every test that actually failed did so on the echo
+// endpoint, not on a missing flow. Claiming otherwise would have swapped one
+// misattribution for another, which is the whole thing this is meant to fix.
+function withFlowCreationCause(error: unknown): Error {
+  const original = error instanceof Error ? error : new Error(String(error));
+  if (failedFlowCreations.length === 0) return original;
+  // Aggregate by status with a count. `awaitBootstrapTest` retries the modal up
+  // to 5 times and `openNewFlowTemplatesModal` re-clicks up to 3 times per
+  // attempt, so one broken backend produces dozens of identical entries —
+  // measured, 60 of them — and listing each is noise that buries the message.
+  const counts = new Map<string, number>();
+  for (const status of failedFlowCreations) {
+    counts.set(status, (counts.get(status) ?? 0) + 1);
+  }
+  const summary = [...counts]
+    .map(([status, n]) => (n > 1 ? `${status} ×${n}` : status))
+    .join(", ");
+  return new Error(
+    `FLOW CREATION FAILED during this test's setup: POST /api/v1/flows/ ` +
+      `answered ${summary}. Every step of this setup depends on an editor ` +
+      `mounted over a real flow, so the failure quoted below is probably a SIDE ` +
+      `EFFECT of that rather than a selector or product regression — the last ` +
+      `time this was seen it surfaced as a HIDDEN \`sidebar-search-input\`, ` +
+      `three log lines from its cause (#1114). Response bodies are on the ` +
+      `"🚨 Backend Error" lines above.\n\n` +
+      `Read this as a strong hint, NOT as proof: \`awaitBootstrapTest\` and ` +
+      `\`openNewFlowTemplatesModal\` both retry, so a failed creation can be ` +
+      `absorbed and a later attempt can succeed — measured, a run with 7 ` +
+      `creation 500s where every actual failure was the echo endpoint's. Check ` +
+      `the original failure below before concluding.\n\n` +
+      `Locally the creation 5xx itself is write contention from concurrent ` +
+      `creation (#1114): this file creates two flows per test, so at ` +
+      `Playwright's default worker count ~10 land at once. It is green at 1–2 ` +
+      `workers, which is what CI uses — re-run with \`--workers=2\`.\n\n` +
+      `Original failure: ${original.message}`,
+  );
 }
 
 // Move an ADVANCED parameter onto the node body so its widget can be driven
