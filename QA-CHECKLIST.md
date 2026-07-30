@@ -809,7 +809,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 423 `test()` calls carrying the `@stable` tag, distributed across 167 spec
+> 424 `test()` calls carrying the `@stable` tag, distributed across 168 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1236,6 +1236,7 @@
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
+- [x] user can search and add components using keyboard shortcuts → `keyboardComponentSearch.spec.ts`
 - [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
 - [x] the main menu lists every item, reports the running version and links out → `main-menu-actions.spec.ts`
 - [x] the main menu's Settings action navigates to the Settings page → `main-menu-actions.spec.ts`
