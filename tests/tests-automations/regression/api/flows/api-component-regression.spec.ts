@@ -46,17 +46,47 @@ test.beforeEach(({ page }) => {
 test.afterEach(async ({ page, request }, testInfo) => {
   await Promise.allSettled(pendingCaptures.splice(0));
   if (createdFlowIds.length === 0) return;
-  // Leave the editor first: the open canvas polls GET /flows/{id}/events, and
-  // deleting the flow mid-poll 404s (logged by the fixture's error monitor).
+
+  // Record the failing state before the navigation below.
   //
-  // On success only. Playwright captures the on-failure screenshot while tearing
-  // down the page fixture, which happens AFTER this hook — navigating away on a
-  // failing test would archive a picture of the home page instead of the canvas
-  // that actually failed. A noisy 404 log line is a far cheaper price than an
-  // undiagnosable failure artifact.
-  if (testInfo.status === testInfo.expectedStatus) {
-    await page.goto("/").catch(() => {});
+  // This is NOT rescuing Playwright's own screenshot from the navigation —
+  // measured on 1.58.2, `screenshot: only-on-failure` is captured before this
+  // hook runs, and `test-failed-1.png` still shows the canvas with `about:blank`
+  // navigated unconditionally. It is worth capturing anyway: the config sets
+  // `screenshot` to `off` outside CI (playwright.config.ts), so locally this
+  // attachment is the ONLY failure artifact, and the annotation puts the flow id
+  // in the report where a reader does not have to dig for it.
+  if (testInfo.status !== testInfo.expectedStatus) {
+    try {
+      testInfo.annotations.push({
+        type: "url-at-teardown",
+        description: page.url(),
+      });
+      await testInfo.attach("page-at-teardown", {
+        body: await page.screenshot({ fullPage: true }),
+        contentType: "image/png",
+      });
+    } catch {
+      // The page may already be gone — the cleanup below is what matters.
+    }
   }
+
+  // Take the page off the flow canvas BEFORE deleting anything, unconditionally
+  // — same shape as the folder specs (#1023/#1103), which is where the rationale
+  // is documented in full: an editor left mounted over a flow that is being
+  // deleted keeps asking for it and 404s, the fixture logs each one as
+  // `🚨 Backend Error`, and the deterministic pipeline's VALIDATE gate hard-stops
+  // on those.
+  //
+  // Honest scope for THIS file: that 404 does not currently reproduce here. A
+  // probe forcing a failure after the component run — editor mounted, flow
+  // deleted underneath it — logged zero backend errors either way, because the
+  // build's event stream is already closed by then. So this is defensive and
+  // consistent with the rest of the suite, not a fix for observed noise.
+  // `about:blank` rather than `/` so the teardown adds no backend traffic of its
+  // own.
+  await page.goto("about:blank").catch(() => {});
+
   // `page.request` carries only browser cookies, so the flows API answers 401 —
   // pass the bearer token explicitly.
   const bearer = await getAuthToken(request);
