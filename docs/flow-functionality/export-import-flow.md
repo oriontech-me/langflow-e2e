@@ -1,6 +1,6 @@
 # Flow Functionality — Export and Import Flow
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -32,8 +32,11 @@ If these break, users cannot share flows, back them up, or restore previously ex
    proof the node-add autosave persisted, replacing the quiet-window guard
    (`waitForFlowSaveSettled` resolves after 700 ms of silence even when the
    debounced PATCH hasn't fired yet — the #384 loophole)
-3. Return to main page and open the three-dot menu **of the created flow's own
-   card**: `list-card` filtered by `flow-name-{id}` → `home-dropdown-menu`
+3. Return to the main page with `leaveFlowEditor(page)` — the `icon-ChevronLeft`
+   click plus its home assertion, wrapped so the exit survives the
+   `SaveChangesModal` deadlock (#1153) — then open the three-dot menu **of the
+   created flow's own card**: `list-card` filtered by `flow-name-{id}` →
+   `home-dropdown-menu`
    inside it. Never `nth(0)`: the home sorts by `updated_at` DESC, so under
    parallel CI the first card is whatever flow a neighbor worker touched last
    — exporting it produced the `nodes: []` failures (#518; export serializes
@@ -73,6 +76,7 @@ If these break, users cannot share flows, back them up, or restore previously ex
 - `src/frontend/src/components/core/flowEditorComponents/` — flow editor header, export modal
 - `src/backend/base/langflow/api/v1/flows.py` — flow export/import endpoints
 - `tests/helpers/ui/simulate-drag-and-drop.ts` — `simulateDragAndDrop` helper
+- `tests/helpers/flows/leave-flow-editor.ts` — the editor exit: drains in-flight flow saves, clicks `icon-ChevronLeft`, and distinguishes the #1153 blocker deadlock from a swallowed click. It depends on upstream `src/frontend/src/pages/FlowPage/index.tsx` (`useBlocker` / `handleSave`), `src/frontend/src/modals/saveChangesModal/index.tsx`, and the `flow.unsavedChangesTitle` string in `src/frontend/src/locales/en.json` — if that title is reworded the dialog stops being recognised and every deadlock silently reclassifies as a swallowed click
 - `tests/assets/flows/collection.json` — multi-flow JSON used as import fixture
 - `data-testid="home-dropdown-menu"` — three-dot menu on flow cards
 - `data-testid="btn-download-json"` — download/export menu item
