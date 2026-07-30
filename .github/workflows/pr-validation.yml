@@ -280,12 +280,35 @@ jobs:
           # it their setup times out. Mirrors daily-stable.yml, which keeps
           # tracing ON for exactly these specs.
           LANGFLOW_DEACTIVATE_TRACING: ${{ contains(needs.detect-specs.outputs.specs, 'observability-monitoring') && 'false' || 'true' }}
+          # Let Langflow reach the sibling go-httpbin service below (#1128). Its
+          # SSRF layer blocks private addresses unless pre-authorized, and the
+          # API Request component's validators.url() rejects a single-label host
+          # — so ECHO_BASE_URL is a raw container IP and the RFC-1918 ranges are
+          # authorized by CIDR rather than by a fixed address the Docker network
+          # assigns per run. Same set as daily-stable.yml (#462).
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s
           --health-timeout 10s
           --health-retries 10
           --health-start-period 90s
+      # Self-hosted echo endpoint for the API Request and agent-fetch-tool specs.
+      # Without it this lane calls public httpbin.org / postman-echo.com and reds
+      # on their outages: PR #1133 lost three specs to an httpbin 504 while its
+      # own diff touched none of them, and the log read like a product failure
+      # (#1128; earlier recurrences #383/#407/#462/#639).
+      #
+      # This job runs on the RUNNER HOST, not in a container, so the service
+      # alias is not resolvable here — `resolve-echo-endpoint` reads the
+      # container IP with `docker inspect` instead, probes the published port,
+      # and hands Langflow the IP. Tag has NO `v` prefix (#639).
+      # No healthcheck: the scratch-based image ships no shell or curl, so the
+      # action's poll is the healthcheck.
+      go-httpbin:
+        image: ghcr.io/mccutchen/go-httpbin:2.23.1
+        ports:
+          - 8080:8080
 
     steps:
       - uses: actions/checkout@v7
@@ -299,6 +322,20 @@ jobs:
 
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
+
+      # Before ANY spec runs, including collect-models: point the echo-dependent
+      # specs at the sibling go-httpbin service instead of the public internet
+      # (#1128). `mode: fail` is deliberate and is the one place this lane differs
+      # from the daily: a PR is the lane a human is waiting on, so a silent
+      # fallback to public httpbin.org — which is what reded PR #1133 and read as
+      # a product failure — is worse than a named infra failure it can be
+      # re-dispatched from. The daily keeps `warn`, where a day of coverage
+      # outweighs strictness.
+      - name: Resolve echo endpoint
+        uses: ./.github/actions/resolve-echo-endpoint
+        with:
+          mode: fail
+          in_container: "false"
 
       # Collect provider/model data BEFORE the impacted specs, mirroring
       # daily-stable.yml. Without this, `models.json` is absent (it is

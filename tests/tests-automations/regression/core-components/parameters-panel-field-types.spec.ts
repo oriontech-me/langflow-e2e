@@ -198,6 +198,9 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
         "add-component-button-api-request",
         "title-url",
       );
+      // Not routed through ECHO_BASE_URL (#1128): this test asserts field
+      // PERSISTENCE via the API and never runs the component, so nothing ever
+      // requests this host. A literal keeps the assertion readable.
       const url = "https://httpbin.org/get";
       await page.getByTestId("popover-anchor-input-url_input").fill(url);
       await page.getByTestId("popover-anchor-input-url_input").blur();
@@ -239,6 +242,8 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
       );
       // The cURL multiline field only renders under the cURL tab.
       await page.getByTestId("tab_1_curl").click();
+      // Same as the url_input test above: persistence only, no outbound call, so
+      // this literal is not an external dependency (#1128).
       const curl = "curl https://httpbin.org/post -X POST";
       await page.getByTestId("textarea_str_curl_input").fill(curl);
       await page.getByTestId("textarea_str_curl_input").blur();
