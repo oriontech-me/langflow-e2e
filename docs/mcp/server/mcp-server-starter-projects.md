@@ -29,7 +29,9 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 `@release` `@workspace` `@components` `@mcp` `@stable` (both tests)
 
 - `@stable` — promoted under #948 after repeated clean `--workers=1 --retries=0`
-  runs on nightly 1.12.0.dev4 and a per-test force-failure check.
+  runs on nightly 1.12.0.dev4 and a per-test force-failure check. Auto-removed
+  from test 1 by the daily workflow on 2026-07-30 and restored under #1123 after
+  the positional-addressing fix (see **Notes**).
 - `@workspace` — project/folder management; `@components`/`@mcp` — MCP servers
   settings; `@release` — happy-path MCP-server surfacing.
 
@@ -49,15 +51,16 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 **Test 1 — starter projects & folder CRUD**
 
 1. Bootstrap (skip modal); `cleanOldFolders` to start from a known project set.
-2. Settings → **MCP Servers**: assert `mcp_server_name_0` contains
-   `lf-starter_project`.
+2. Settings → **MCP Servers**: assert exactly one server row is named
+   `lf-starter_project`, addressed **by name** (`mcp_server_name_<index>` filtered
+   on the exact name) rather than by position — see **Notes**.
 3. Add two projects (`add-project-button` ×2); back on MCP Servers, assert
-   `lf-starter_project` still first, and `lf-new_project` / `lf-new_project_1`
+   `lf-starter_project` is still listed, and `lf-new_project` / `lf-new_project_1`
    each appear exactly once.
 4. **Rename** the first "New Project" folder to `renamed_project`; on MCP Servers
-   assert `lf-renamed_project` appears exactly once (and starter still first).
+   assert `lf-renamed_project` appears exactly once (and starter still listed).
 5. **Delete** the renamed project; on MCP Servers assert `lf-renamed_project`
-   count is 0 (and starter still first).
+   count is 0 (and starter still listed).
 
 **Test 2 — duplicate MCP server rejected**
 
@@ -72,9 +75,10 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 ## Validation criterion *(required)*
 
 - **Test 1:** the MCP Servers page mirrors project-folder state at each step —
-  `lf-starter_project` always first; added projects appear by name (count 1);
-  a renamed project's server appears as `lf-renamed_project`; a deleted project's
-  server disappears (count 0).
+  a server row named exactly `lf-starter_project` is present (count 1) at every
+  step; added projects appear by name (count 1); a renamed project's server
+  appears as `lf-renamed_project`; a deleted project's server disappears
+  (count 0). **Row order is not part of the contract** — see **Notes**.
 - **Test 2:** re-adding an already-registered server surfaces exactly one
   "Server already exists." error (no silent success, no duplicate rows).
 
@@ -82,7 +86,11 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 
 - **Exact-name counts** (`.count()` === 1 / === 0 on `getByText(..., {exact:true})`)
   instead of "visible", so a stale or partially-matching row cannot pass.
-- **Ordering assert** (`mcp_server_name_0` first) re-checked after every mutation.
+- **Starter-project presence** re-checked after every mutation, so a project
+  operation that silently drops the starter project's server cannot pass.
+- **Row-scoped locator** — the starter-project assert filters the
+  `mcp_server_name_<index>` server rows on the exact name, so matching text
+  elsewhere on the page (a heading, a tooltip, an error string) cannot satisfy it.
 - **`cleanOldFolders`** normalizes the starting project set so the add/rename/
   delete counts are deterministic.
 - **Force-failure check** (CONTRIBUTING §2) run during VERIFY on the name/count
@@ -92,6 +100,9 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 
 ## What this test does not cover *(optional)*
 
+- The **row order** of the MCP Servers list, and the internal `langflow-agentic`
+  server Langflow injects into every user's list (see **Notes**) — neither is part
+  of the §14.1 contract, so neither is asserted.
 - MCP tool **selection/config** in the flow tab — `mcp-server-tab.spec.ts`.
 - MCP-server tool **execution** / **resources** over the protocol —
   `mcp-server-protocol.spec.ts` / `mcp-server-resources.spec.ts`.
@@ -101,7 +112,7 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 
 ## External dependencies *(required)*
 
-- Settings → MCP Servers page (`mcp_server_name_0`, `add-mcp-server-button-page`,
+- Settings → MCP Servers page (`mcp_server_name_<index>`, `add-mcp-server-button-page`,
   `add-mcp-server-button`, `json-input`) via `helpers/ui/go-to-settings.ts`
   (`navigateSettingsPages`).
 - Project folder CRUD (`add-project-button`, `more-options-button_<name>`,
@@ -116,6 +127,9 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 
 - If projects stop mapping 1:1 to MCP servers, or the `lf-` server-name prefix
   changes.
+- If Langflow starts **sorting** the MCP Servers list, or stops injecting
+  `langflow-agentic` (i.e. `agentic_experience` defaults back to off) — either
+  would change what row order means, though this test no longer depends on it.
 - If the MCP Servers settings page testids or the add-server modal change.
 - If the duplicate-server error copy ("Server already exists.") changes.
 
@@ -123,6 +137,21 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 
 ## Notes *(optional)*
 
+- **Row position is deliberately NOT asserted (#1123).** Test 1 originally read
+  `mcp_server_name_0` and expected the starter project. Langflow upstream enabled
+  the agentic experience by default (`agentic_experience: bool = True`, langflow
+  commit `d4d5592c1c` / langflow#14244, 2026-07-24), and with that flag on,
+  `auto_configure_agentic_mcp_server()` injects an internal server named
+  `langflow-agentic` into **every** user's MCP configuration at startup. Measured
+  on the nightly line, that row is created ~10 s **before** the starter project's
+  server, and `GET /api/v2/mcp/servers` orders by `created_at` while the page
+  renders that order with no sort — so `langflow-agentic` is permanently row 0 and
+  the positional assert failed deterministically. The starter project itself was
+  **not** renamed or dropped (`lf-starter_project` is still listed, at index 1),
+  so the §14.1 premise is intact and the fix is to address the row by name.
+  `cleanOldFolders` cannot and should not remove `langflow-agentic` — it deletes
+  *projects*, and this is an internal server (`langflow_internal: True`), not a
+  project-derived one.
 - Test 1 mutates project folders; `cleanOldFolders` in setup keeps the counts
   deterministic across reruns. Runs `--workers=1` in CI (shared project state).
 - No standalone flows are created that need id-scoped cleanup — the artifacts are
@@ -136,3 +165,11 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
   fail the test (only `flow_error` fails; `http_error` is log-only). The test's
   assertions do not depend on that call. Import switched to `fixtures/fixtures.ts`
   under #948 to gain this monitoring; the 500 is peripheral/pre-existing.
+- **Second ambient 500 on the same endpoint (test 2, logged, not failing):**
+  re-validating on the 1.12 nightly line under #1123, the logged
+  `500 … /api/v2/mcp/servers/lf-starter_project` carried
+  `{"detail":"Server already exists."}` — i.e. test 2's duplicate-add is
+  *correctly* rejected, but the rejection answers **500 instead of 409**. That is
+  the status-code defect tracked in #991, not a failure of this test: the UI still
+  surfaces the "Server already exists." message the test asserts. Kept log-only
+  here; #991 owns the status-code contract.

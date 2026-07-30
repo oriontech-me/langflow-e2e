@@ -1,12 +1,30 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folders";
 import { convertTestName } from "../../../../helpers/filesystem/convert-test-name";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 
+/**
+ * Address an MCP server row on the Settings → MCP Servers page **by name**.
+ *
+ * Row order is not part of the §14.1 contract and must not be asserted (#1123):
+ * with `agentic_experience` enabled by default upstream, Langflow injects an
+ * internal `langflow-agentic` server that is created before the starter
+ * project's, and the page renders `GET /api/v2/mcp/servers` (ordered by
+ * `created_at`) with no sort — so index 0 is not the starter project.
+ *
+ * Filtering the `mcp_server_name_<index>` rows keeps the assertion scoped to the
+ * server list, so matching text elsewhere on the page cannot satisfy it.
+ */
+const mcpServerRow = (page: Page, name: string) =>
+  page
+    .getByTestId(/^mcp_server_name_\d+$/)
+    .filter({ hasText: new RegExp(`^${name}$`) });
+
 test(
   "user must be able to see starter projects for mcp servers",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     //starter mcp project
 
@@ -18,9 +36,7 @@ test(
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
-    expect(await page.getByTestId("mcp_server_name_0").textContent()).toContain(
-      "lf-starter_project",
-    );
+    await expect(mcpServerRow(page, "lf-starter_project")).toHaveCount(1);
 
     await page.getByTestId("icon-ChevronLeft").first().click();
 
@@ -31,9 +47,7 @@ test(
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
-    expect(await page.getByTestId("mcp_server_name_0").textContent()).toContain(
-      "lf-starter_project",
-    );
+    await expect(mcpServerRow(page, "lf-starter_project")).toHaveCount(1);
 
     expect(
       await page.getByText("lf-new_project", { exact: true }).count(),
@@ -67,9 +81,7 @@ test(
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
-    expect(await page.getByTestId("mcp_server_name_0").textContent()).toContain(
-      "lf-starter_project",
-    );
+    await expect(mcpServerRow(page, "lf-starter_project")).toHaveCount(1);
 
     expect(
       await page.getByText("lf-renamed_project", { exact: true }).count(),
@@ -93,9 +105,7 @@ test(
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
-    expect(await page.getByTestId("mcp_server_name_0").textContent()).toContain(
-      "lf-starter_project",
-    );
+    await expect(mcpServerRow(page, "lf-starter_project")).toHaveCount(1);
     expect(
       await page.getByText("lf-renamed_project", { exact: true }).count(),
     ).toBe(0);
