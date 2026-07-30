@@ -1,40 +1,31 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { renameFlow } from "../../../../helpers/flows/rename-flow";
+import {
+  trackCreatedFlows,
+  type FlowTracker,
+} from "../../../../helpers/flows/track-created-flows";
 
 // Every flow this test creates (bootstrap + the Basic Prompting template) is
 // tracked by id and deleted in afterEach — id-scoped, never a name or wipe
 // sweep, which would kill flows other parallel workers are driving (#553).
 // The app can fire more than one flows POST per creation; only one persists and
 // deleting a transient id 404s harmlessly (deleteFlow treats 404 as done).
-const createdFlowIds: string[] = [];
+// Shared implementation, so this file cannot drift from the other 50 (#1108).
+let flows: FlowTracker;
 
-test.afterEach(async ({ page }) => {
-  for (const id of createdFlowIds.splice(0)) {
-    await deleteFlow(page.request, id);
-  }
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
+
+test.afterEach(async ({ request }) => {
+  await flows.cleanup(request);
 });
 
 test(
   "user should be able to edit flow name and see it reflected in the main page listing",
   { tag: ["@stable", "@release", "@workspace", "@regression"] },
   async ({ page }) => {
-    page.on("response", (resp) => {
-      if (
-        resp.url().includes("/api/v1/flows") &&
-        resp.request().method() === "POST" &&
-        resp.status() === 201
-      ) {
-        resp
-          .json()
-          .then((body: { id?: string }) => {
-            if (body?.id) createdFlowIds.push(body.id);
-          })
-          .catch(() => {}); // non-JSON / batch payloads
-      }
-    });
-
     await awaitBootstrapTest(page);
 
     await page.getByRole("heading", { name: "Basic Prompting" }).click();

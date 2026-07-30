@@ -1,54 +1,36 @@
-import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { renameFlow } from "../../../../helpers/flows/rename-flow";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
-import { deleteFlow } from "../../../../helpers/flows/delete-flow";
-import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import {
+  trackCreatedFlows,
+  type FlowTracker,
+} from "../../../../helpers/flows/track-created-flows";
 
 // Capture every flow THIS page creates from its POST /api/v1/flows → 201
 // responses, and delete them id-scoped in afterEach. The canvas URL id races
 // the bootstrap flow's stale id (blank-flow opens behind the templates modal),
 // so a bare page.url() capture deleted the wrong flow and leaked the renamed
 // one; the response ids are authoritative. Only ids this page created are
-// captured, so it stays safe under parallel workers.
-const createdFlowIds: string[] = [];
-
-function trackCreatedFlows(page: Page): void {
-  page.on("response", (resp) => {
-    if (
-      resp.url().includes("/api/v1/flows") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201
-    ) {
-      resp
-        .json()
-        .then((body: { id?: string }) => {
-          if (body?.id) createdFlowIds.push(body.id);
-        })
-        .catch(() => {});
-    }
-  });
-}
+// captured, so it stays safe under parallel workers. Shared implementation, so
+// this file cannot drift from the other 50 (#1108).
+let flows: FlowTracker;
 
 const OVERLONG = "Flow Name Test ".repeat(70); // > every field cap on 1.11
 const DESCRIPTION_CAP = 250; // enforced maxLength of input-flow-description
 
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
+
 test.afterEach(async ({ request }) => {
-  if (createdFlowIds.length === 0) return;
-  const bearer = await getAuthToken(request);
-  for (const id of createdFlowIds.splice(0)) {
-    await deleteFlow(request, id, {
-      headers: { Authorization: bearer },
-    }).catch(() => {});
-  }
+  await flows.cleanup(request);
 });
 
 test(
   "flow settings enforce character limits and persist name & description",
   { tag: ["@stable", "@release", "@workspace"] },
   async ({ page }) => {
-    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
     await test.step("open a blank flow", async () => {

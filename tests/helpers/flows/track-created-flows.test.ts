@@ -1,0 +1,307 @@
+// Unit tests for the shared flow-cleanup tracker (issue #1108).
+// Run with: npm run test:units
+//
+// What rides on this helper: it is the only thing standing between the suite and a
+// database that accumulates every flow every test creates. A defect here surfaces
+// as someone else's random failure — a `/flows` list slow enough to time out, a
+// name-scoped lookup matching a leftover — never as a failing test of its own,
+// which is exactly the class `CONTRIBUTING.md` → *Unit tests* says to cover here.
+//
+// The four behaviours these tests pin are the four axes on which the 51 hand-copied
+// versions had drifted. Each one is a real leak or a real silence:
+//
+//   1. bodies are settled before cleanup — 45 copies dropped an id that resolved a
+//      tick late, and the last test in a worker has no later hook to sweep it;
+//   2. the URL match is the exact creation endpoint — `/flows/batch/` and
+//      `/flows/upload/` also answer 201;
+//   3. the page leaves the canvas BEFORE the delete — a mounted editor 404s on the
+//      flow it is polling (#1023/#1103);
+//   4. a failed delete is reported, not swallowed — 48 copies wrote
+//      `.catch(() => {})` over the one signal `deleteFlow` exists to raise.
+//
+// The fakes below are the whole point of the narrow `TrackedPage` /
+// `TrackedResponse` types: the tracker drives real `deleteFlow` and real
+// `getAuthToken` against a fake `APIRequestContext`, so the integration is covered
+// without a browser or a backend.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import type { APIRequestContext } from "@playwright/test";
+import {
+  flowIdFrom,
+  isFlowCreateUrl,
+  trackCreatedFlows,
+  type TrackedPage,
+  type TrackedResponse,
+} from "./track-created-flows";
+
+const BASE = "http://localhost:7860";
+
+/** A `page` that records what the tracker does to it. */
+function fakePage() {
+  let listener: ((response: TrackedResponse) => void) | undefined;
+  const navigations: string[] = [];
+  let detached = false;
+  const page = {
+    on: (event: string, fn: unknown) => {
+      if (event === "response") listener = fn as typeof listener;
+      return page;
+    },
+    off: (event: string, fn: unknown) => {
+      if (event === "response" && fn === listener) detached = true;
+      return page;
+    },
+    goto: async (url: string) => {
+      navigations.push(url);
+      return null;
+    },
+  };
+  return {
+    page: page as unknown as TrackedPage,
+    navigations,
+    isDetached: () => detached,
+    emit: (response: TrackedResponse) => listener?.(response),
+  };
+}
+
+/** A 201 response for `POST /api/v1/flows/`, with a controllable body delay. */
+function creationResponse(
+  id: string | undefined,
+  {
+    url = `${BASE}/api/v1/flows/`,
+    method = "POST",
+    status = 201,
+    delayTicks = 0,
+    body,
+  }: {
+    url?: string;
+    method?: string;
+    status?: number;
+    delayTicks?: number;
+    body?: unknown;
+  } = {},
+): TrackedResponse {
+  return {
+    url: () => url,
+    status: () => status,
+    statusText: () => (status === 201 ? "Created" : "Internal Server Error"),
+    request: () => ({ method: () => method }),
+    json: async () => {
+      for (let i = 0; i < delayTicks; i++) await Promise.resolve();
+      return body !== undefined ? body : { id };
+    },
+  };
+}
+
+/** A `request` that answers auto_login and records the DELETEs it receives. */
+function fakeRequest({
+  failFor = new Set<string>(),
+  status = 500,
+  token = "tok-123",
+}: { failFor?: Set<string>; status?: number; token?: string | null } = {}) {
+  const deletes: Array<{ url: string; auth?: string }> = [];
+  const request = {
+    get: async (url: string) => {
+      assert.equal(url, "/api/v1/auto_login", "the tracker must not call other GETs");
+      return {
+        ok: () => token !== null,
+        status: () => (token === null ? 500 : 200),
+        json: async () => ({ access_token: token }),
+      };
+    },
+    delete: async (url: string, options?: { headers?: Record<string, string> }) => {
+      deletes.push({ url, auth: options?.headers?.Authorization });
+      const id = url.split("/").pop() ?? "";
+      const failed = failFor.has(id);
+      return {
+        ok: () => !failed,
+        status: () => (failed ? status : 204),
+        statusText: () => (failed ? "Server Error" : "No Content"),
+        text: async () => (failed ? "boom" : ""),
+      };
+    },
+  };
+  return { request: request as unknown as APIRequestContext, deletes };
+}
+
+// ─── The URL match (axis 2) ──────────────────────────────────────────────────
+
+test("only the exact creation endpoint is a flow creation", () => {
+  assert.equal(isFlowCreateUrl(`${BASE}/api/v1/flows/`), true);
+  assert.equal(isFlowCreateUrl(`${BASE}/api/v1/flows`), true);
+  assert.equal(isFlowCreateUrl(`${BASE}/api/v1/flows/?folder_id=x`), true, "a query string is not part of the path");
+  // These answer 201 too, with a list body carrying no top-level id.
+  assert.equal(isFlowCreateUrl(`${BASE}/api/v1/flows/batch/`), false);
+  assert.equal(isFlowCreateUrl(`${BASE}/api/v1/flows/upload/`), false);
+  assert.equal(isFlowCreateUrl(`${BASE}/api/v1/flows/abc-123`), false);
+  assert.equal(isFlowCreateUrl("not a url"), false);
+});
+
+test("a body without a usable id yields no id", () => {
+  assert.equal(flowIdFrom({ id: "abc" }), "abc");
+  for (const body of [undefined, null, {}, { id: "" }, { id: 7 }, [{ id: "a" }]]) {
+    assert.equal(flowIdFrom(body), undefined, `unexpected id for ${JSON.stringify(body)}`);
+  }
+});
+
+// ─── Capture ─────────────────────────────────────────────────────────────────
+
+test("captures the created flow ids, ignoring everything else", async () => {
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+
+  emit(creationResponse("flow-1"));
+  emit(creationResponse("flow-2"));
+  emit(creationResponse("ignored", { method: "GET" }));
+  emit(creationResponse("ignored", { url: `${BASE}/api/v1/flows/batch/` }));
+  emit(creationResponse("ignored", { status: 200 }));
+  await flows.settle();
+
+  assert.deepEqual(flows.ids(), ["flow-1", "flow-2"]);
+});
+
+test("the same id observed twice is captured once", async () => {
+  // A replayed or redirected response would otherwise queue two DELETEs; the
+  // second one 404s, which `deleteFlow` treats as done — hiding a real double
+  // creation behind noise instead of surfacing it.
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  emit(creationResponse("flow-1"));
+  await flows.settle();
+  assert.deepEqual(flows.ids(), ["flow-1"]);
+});
+
+test("a failed creation POST is recorded synchronously, without its body", async () => {
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse(undefined, { status: 500 }));
+  // No settle: the point is that this is available immediately, before the setup
+  // step that consults it (#1114).
+  assert.deepEqual(flows.failedCreations(), ["500 Internal Server Error"]);
+  assert.deepEqual(flows.ids(), []);
+});
+
+// ─── Axis 1: settle before cleanup — the permanent-leak case ─────────────────
+
+test("cleanup settles a body that resolves AFTER teardown starts", async () => {
+  // The defect in 45 of the 51 copies: `resp.json()` resolves a tick later, so an
+  // id could land after `afterEach` had already read the array — and the flow leaks
+  // for good, because the last test in a worker has no later hook.
+  const { page, emit } = fakePage();
+  const { request, deletes } = fakeRequest();
+  const flows = trackCreatedFlows(page);
+
+  emit(creationResponse("slow-flow", { delayTicks: 5 }));
+  assert.deepEqual(flows.ids(), [], "precondition: the id has not landed yet");
+
+  const result = await flows.cleanup(request);
+  assert.deepEqual(result.deleted, ["slow-flow"]);
+  assert.deepEqual(
+    deletes.map((d) => d.url),
+    ["/api/v1/flows/slow-flow"],
+  );
+});
+
+// ─── Axis 3: leave the canvas before deleting ───────────────────────────────
+
+test("navigates to about:blank BEFORE issuing any delete", async () => {
+  const { page, emit, navigations } = fakePage();
+  const flows = trackCreatedFlows(page);
+  const order: string[] = [];
+  const request = {
+    get: async () => ({ ok: () => true, status: () => 200, json: async () => ({ access_token: "t" }) }),
+    delete: async (url: string) => {
+      order.push(`delete:${url}`);
+      return { ok: () => true, status: () => 204, statusText: () => "", text: async () => "" };
+    },
+  } as unknown as APIRequestContext;
+
+  const trackedPage = page as unknown as { goto: (url: string) => Promise<null> };
+  const originalGoto = trackedPage.goto.bind(trackedPage);
+  trackedPage.goto = async (url: string) => {
+    order.push(`goto:${url}`);
+    return originalGoto(url);
+  };
+
+  emit(creationResponse("flow-1"));
+  await flows.cleanup(request);
+
+  assert.deepEqual(navigations, ["about:blank"]);
+  assert.deepEqual(order, ["goto:about:blank", "delete:/api/v1/flows/flow-1"]);
+});
+
+test("nothing was created, so nothing is navigated away from", async () => {
+  const { page, navigations } = fakePage();
+  const { request, deletes } = fakeRequest();
+  const result = await trackCreatedFlows(page).cleanup(request);
+  assert.deepEqual(result, { deleted: [], failed: [] });
+  assert.deepEqual(navigations, [], "a teardown with no flows must add no navigation");
+  assert.deepEqual(deletes, [], "and no auth call or DELETE");
+});
+
+// ─── Axis 4: a failed delete is reported, never swallowed ───────────────────
+
+test("a failed delete is reported and does not stop the other deletes", async () => {
+  const { page, emit } = fakePage();
+  const { request, deletes } = fakeRequest({ failFor: new Set(["flow-2"]), status: 403 });
+  const flows = trackCreatedFlows(page);
+
+  emit(creationResponse("flow-1"));
+  emit(creationResponse("flow-2"));
+  emit(creationResponse("flow-3"));
+  const result = await flows.cleanup(request);
+
+  assert.deepEqual(result.deleted, ["flow-1", "flow-3"]);
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0].id, "flow-2");
+  assert.match(result.failed[0].error, /403/);
+  assert.equal(deletes.length, 3, "one failure must not abort the sweep");
+});
+
+test("cleanup never throws, so it cannot fail an otherwise-green test", async () => {
+  const { page, emit } = fakePage();
+  const { request } = fakeRequest({ failFor: new Set(["flow-1"]), status: 422 });
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  await flows.cleanup(request); // must not reject
+});
+
+// ─── Auth, idempotence, lifecycle ───────────────────────────────────────────
+
+test("the delete carries the bearer token, not just browser cookies", async () => {
+  // `page.request` alone answers 401 on the flows API — the reason every copy
+  // fetched a token in its teardown.
+  const { page, emit } = fakePage();
+  const { request, deletes } = fakeRequest({ token: "abc" });
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  await flows.cleanup(request);
+  assert.equal(deletes[0].auth, "Bearer abc");
+});
+
+test("a second cleanup is a no-op instead of a second round of deletes", async () => {
+  const { page, emit } = fakePage();
+  const { request, deletes } = fakeRequest();
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  await flows.cleanup(request);
+  await flows.cleanup(request);
+  assert.equal(deletes.length, 1);
+});
+
+test("reset clears both lists for the next test", async () => {
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  emit(creationResponse(undefined, { status: 500 }));
+  await flows.settle();
+  flows.reset();
+  assert.deepEqual(flows.ids(), []);
+  assert.deepEqual(flows.failedCreations(), []);
+});
+
+test("dispose detaches the listener it attached", () => {
+  const { page, isDetached } = fakePage();
+  trackCreatedFlows(page).dispose();
+  assert.equal(isDetached(), true);
+});
