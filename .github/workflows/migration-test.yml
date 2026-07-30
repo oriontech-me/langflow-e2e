@@ -299,8 +299,16 @@ jobs:
             /tmp/latest-digest.txt
             /tmp/nightly-digest.txt
 
+      # Scoped to the default branch (#1145). This step used to fire on ANY green
+      # run, so a `workflow_dispatch` on a branch closed the issue that tracks a bug
+      # still present on `main`. It happened for real: run #117, dispatched on the
+      # #1143 fix branch, closed #1143 while the fix was still unmerged and `main`
+      # still carried the racy assertion. Dispatching on a branch is the recommended
+      # way to prove changes to this workflow — #1139, #1141 and #1143 could only be
+      # proven that way — so the practice that produces the best evidence must not
+      # silently write to the tracker.
       - name: Close issue on success
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/github-script@v9
         with:
           script: |
@@ -332,6 +340,10 @@ jobs:
               });
             }
 
+      # Deliberately NOT scoped to the default branch (#1145): a red branch run is
+      # worth filing — that is exactly how #1143 was found, by dispatching on a
+      # branch. The body names the ref and the event instead, so a reader can tell a
+      # branch experiment from a `main` failure rather than assuming the latter.
       - name: Create or update issue on failure
         if: failure()
         uses: actions/github-script@v9
@@ -354,6 +366,8 @@ jobs:
 
             const body = [
               `## Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
+              '',
+              `**Ref:** \`${context.ref}\` · **Event:** \`${context.eventName}\``,
               '',
               report,
               '',
@@ -743,8 +757,9 @@ jobs:
             /tmp/run-target.json
           retention-days: 30
 
+      # Same default-branch scope as the API job above (#1145).
       - name: Close issue on success
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/github-script@v9
         with:
           script: |
@@ -789,6 +804,8 @@ jobs:
             });
             const body = [
               `## Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
+              '',
+              `**Ref:** \`${context.ref}\` · **Event:** \`${context.eventName}\``,
               '',
               `docker-compose migration test failed. Source: \`langflowai/langflow:latest\` → Target: \`langflowai/langflow-nightly:latest\`.`,
               `Compose file: pinned to upstream main of \`langflow-ai/langflow/docker_example/docker-compose.yml\`.`,
