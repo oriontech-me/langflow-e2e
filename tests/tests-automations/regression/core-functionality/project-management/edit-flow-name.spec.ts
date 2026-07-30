@@ -1,42 +1,80 @@
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { renameFlow } from "../../../../helpers/flows/rename-flow";
-import {
-  trackCreatedFlows,
-  type FlowTracker,
-} from "../../../../helpers/flows/track-created-flows";
+import { createFlowFromStarter } from "../../../../helpers/flows/create-flow-from-starter";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
-// Every flow this test creates (bootstrap + the Basic Prompting template) is
-// tracked by id and deleted in afterEach — id-scoped, never a name or wipe
-// sweep, which would kill flows other parallel workers are driving (#553).
-// The app can fire more than one flows POST per creation; only one persists and
-// deleting a transient id 404s harmlessly (deleteFlow treats 404 as done).
-// Shared implementation, so this file cannot drift from the other 50 (#1108).
-let flows: FlowTracker;
+// Id of the flow this file creates, so afterEach deletes exactly it — id-scoped,
+// never a name or wipe sweep, which would kill flows other parallel workers are
+// driving (#553). The shared `trackCreatedFlows` helper is deliberately NOT used
+// here: it captures ids from page-level `POST /api/v1/flows` → 201 responses, and
+// `createFlowFromStarter` creates through `page.request`, which emits no
+// page-level response events at all — that tracker would collect nothing and leak
+// the flow (the #1147 lesson).
+const createdFlowIds: string[] = [];
 
-test.beforeEach(({ page }) => {
-  flows = trackCreatedFlows(page);
-});
+/**
+ * Open a flow addressed by id and wait until the editor is ready to be driven.
+ *
+ * `page.goto`, not a click on the home grid's `list-card-open-button`: the cards
+ * other parallel workers leave behind overlap the target's absolute-inset open
+ * button and intercept a hit-tested click, which lands without navigating
+ * (#580/#588). A full document load also has no SPA hop left to race.
+ *
+ * The `menu_bar_display` gate is the write-permission barrier: upstream disables
+ * that button while the effective-permissions query is in flight, and everything
+ * the test does next mutates the flow (#1005).
+ */
+async function openFlowById(page: Page, flowId: string): Promise<void> {
+  await page.goto(`/flow/${flowId}`);
+  await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
+    timeout: 30000,
+  });
+  await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
+    timeout: 30000,
+  });
+}
 
-test.afterEach(async ({ request }) => {
-  // `strict`, because this file's pre-#1108 teardown called `deleteFlow` with no
-  // `.catch()` — a failed cleanup FAILED the test. Migrating it onto the helper's
-  // default (log and continue) would trade that red for a warning line nothing
-  // asserts on, so the contract is kept.
-  //
-  // Optional-chained: Playwright runs `afterEach` even when `beforeEach` never did
-  // (a page-fixture setup failure), and a bare call would then bury the real error
-  // under `Cannot read properties of undefined`.
-  await flows?.cleanup(request, { strict: true });
+test.afterEach(async ({ page, request }) => {
+  const ids = createdFlowIds.splice(0);
+  if (ids.length === 0) return;
+  // Leave the canvas BEFORE deleting. The editor keeps refetching the flow it has
+  // open, so deleting it out from under an open editor turns those refetches into
+  // `404 GET /api/v1/flows/{id}` on the run's backend-error log — advisory noise
+  // that makes the log less trustworthy for everyone reading it (#1084). This is
+  // the same reason `trackCreatedFlows.cleanup` navigates first (#1108).
+  // Playwright captures the failure screenshot before `afterEach` runs, so this
+  // navigation cannot destroy the artefact of a failing test.
+  await page.goto("/").catch(() => {});
+  // Explicit bearer: under AUTO_LOGIN a bare request context is unauthenticated,
+  // so an unheadered DELETE 401s and silently leaks the flow.
+  const bearer = await getAuthToken(request);
+  for (const id of ids) {
+    await deleteFlow(request, id, {
+      headers: bearer ? { Authorization: bearer } : undefined,
+    });
+  }
 });
 
 test(
   "user should be able to edit flow name and see it reflected in the main page listing",
   { tag: ["@stable", "@release", "@workspace", "@regression"] },
   async ({ page }) => {
-    await awaitBootstrapTest(page);
-
-    await page.getByRole("heading", { name: "Basic Prompting" }).click();
+    // Copy the Basic Prompting starter graph into a flow of this worker's own,
+    // over the API. The templates-modal path this replaces ("New Flow" → welcome
+    // overlay → Browse more → click the shared card) creates a blank placeholder
+    // flow first and then navigates to a SECOND one, and nothing downstream waited
+    // for that hop — so the rename helper would drive the placeholder, behind the
+    // welcome overlay, mid-navigation (#1005). Keeping the real starter graph is
+    // deliberate: it is what exposes the mount autosave the #995 clobber rides on.
+    const flowId = await createFlowFromStarter(
+      page.request,
+      "Basic Prompting",
+      `edit-flow-name ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    );
+    createdFlowIds.push(flowId);
+    await openFlowById(page, flowId);
 
     const names = [
       Math.random().toString(36).substring(2, 15),
@@ -62,18 +100,9 @@ test(
         timeout: 30000,
       });
 
-      // Re-open the flow by clicking its name in the listing — required so the next
-      // iteration starts inside the editor with renameFlow() targeting the flow header.
-      // The /flows a11y refactor (Langflow #13891) makes the card content
-      // pointer-events-none; open the flow via the card's overlay button.
-      await page
-        .getByTestId("list-card")
-        .filter({
-          has: page.getByTestId("flow-name-div").filter({ hasText: targetName }),
-        })
-        .getByTestId("list-card-open-button")
-        .first()
-        .click();
+      // Re-open the SAME flow so the next iteration starts inside the editor,
+      // addressed by id rather than by a name-filtered card click (#1005).
+      await openFlowById(page, flowId);
     }
   },
 );

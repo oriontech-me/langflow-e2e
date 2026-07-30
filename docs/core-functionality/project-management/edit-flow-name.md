@@ -26,10 +26,17 @@ in editor-local state.
 
 ## Step by step *(required)*
 
-0. Install a `POST /api/v1/flows` → 201 listener so every flow the test creates
-   is tracked by id and deleted in `afterEach` (id-scoped cleanup, #553).
-1. Bootstrap the session (`awaitBootstrapTest(page)`).
-2. Open the **Basic Prompting** starter flow.
+0. Track the flow this test creates by id and delete it in `afterEach`
+   (id-scoped cleanup, #553). The id comes back from `createFlowFromStarter`,
+   which creates over `page.request` and therefore emits no page-level response
+   event a `POST /api/v1/flows` → 201 listener could observe (#1147).
+1. `createFlowFromStarter(page.request, "Basic Prompting", <unique name>)` —
+   copy the **Basic Prompting** starter graph into a uniquely-named flow of this
+   worker's own, over the REST API. Not a click on the shared template card: see
+   *The template-entry race* below.
+2. `openFlowById(page, flowId)` — `page.goto('/flow/{id}')`, wait for
+   `canvas_controls_dropdown`, then gate on `menu_bar_display` being **enabled**
+   (write permission resolved).
 3. For each of two random target names:
    1. `renameFlow(page, { flowName: targetName })` — rename via the flow header
       settings modal; then `renameFlow(page)` (read-only) asserts the committed
@@ -41,9 +48,12 @@ in editor-local state.
       refetch + render (web-first, 30 s). This replaced a fixed 3 s
       `waitForSelector` that raced the refetch under parallel load
       (recurring flaky, issue #410).
-   5. Re-open the flow via the `list-card` `list-card-open-button` overlay button
-      (the `/flows` a11y refactor, Langflow #13891, made the card content
-      `pointer-events-none`), so the next iteration starts inside the editor.
+   5. Re-open the SAME flow with `openFlowById(page, flowId)`, so the next
+      iteration starts inside the editor. Addressed by id, never by a
+      name-filtered `list-card-open-button` click: on the shared home grid the
+      cards other parallel workers leave behind overlap the target's
+      absolute-inset open button and intercept a hit-tested click
+      (#580/#588/#1005).
 
 ---
 
@@ -57,10 +67,12 @@ in editor-local state.
 
 ## External dependencies *(required)*
 
-- **Basic Prompting** starter template must be available on the fresh instance.
-- Testids: `icon-ChevronLeft`, `home-dropdown-menu`, `list-card`,
-  `flow-name-div`, `list-card-open-button`, and the flow-header rename controls
-  used by `renameFlow` (`flow_name`, flow-settings name input).
+- **Basic Prompting** starter template must be available on the fresh instance —
+  read through `GET /api/v1/flows/` (the starter row, `user_id === null`) rather
+  than clicked in the templates modal.
+- Testids: `canvas_controls_dropdown`, `icon-ChevronLeft`, `home-dropdown-menu`,
+  and the flow-header rename controls used by `renameFlow` (`menu_bar_display`,
+  `flow_name`, flow-settings name input, `save-flow-settings`).
 - No LLM or provider API key required — the flow is never executed.
 
 ---
@@ -97,3 +109,46 @@ prevent — an autosave *issued after* our PATCH, from a store that has not yet
 received our response — is absorbed by re-applying the rename once, with a
 `console.warn`. The closing assertion is unconditional, so a rename that never
 persists still fails.
+
+### The template-entry race (issue #1005)
+
+The residual ~7% this test carried after #995 was never one flake. Measured on a
+clean `1.12.0.dev10` instance, 36 runs at `--workers=4`, it surfaced as **four**
+distinct signatures — and three of them shared one cause that lives in the
+test's ENTRY, not in `renameFlow`:
+
+| Signature | Where it landed |
+|---|---|
+| `flow_name.hover()` → `<html> intercepts pointer events` | `rename-flow.ts` |
+| `flow_name` not found | `rename-flow.ts` |
+| `save-flow-settings` stays disabled, then the dialog unmounts | `rename-flow.ts` |
+| `home-dropdown-menu` not found after `icon-ChevronLeft` | this spec |
+
+The old entry was `awaitBootstrapTest` → templates modal → click the shared
+**Basic Prompting** card, with **nothing waiting for the navigation that click
+starts**. "New Flow" eagerly creates a blank *placeholder* flow and opens the
+welcome overlay on it; picking a template then creates a SECOND flow and
+navigates to that one. `renameFlow` opens with `waitForFlowSaveSettled` (700 ms
+of PATCH silence) and an assertion that `flow_name` is visible — both of which
+are already satisfied *by the placeholder's header*. So the helper would start
+driving the wrong flow, mid-navigation, with the welcome overlay still painted
+over the canvas. The hover call log proves it: the resolved span reads
+`New Flow`, `<html>` intercepts the pointer, and the element then detaches.
+
+Addressing the flow by id removes the whole class: `createFlowFromStarter` copies
+the starter graph into a uniquely-named flow over the API (no placeholder, no
+overlay, no collision with the parallel workers clicking the same shared card —
+the reason that helper exists, #684), and `page.goto('/flow/{id}')` lands on it
+with a full document load, so there is no SPA hop left to race. The flow still
+carries the real Basic Prompting graph, so the #995 autosave exposure above is
+preserved.
+
+The fourth signature is **not** fixed here and is not a test defect: clicking
+`icon-ChevronLeft` can leave the editor stuck behind `SaveChangesModal` —
+"Flow has unsaved changes" / "Saving your changes…" — which in autosave mode
+renders as a button-less spinner (`loading` hardcoded `true`, no confirm/cancel
+text) and can deadlock. The success toast fires on the same line as
+`blocker.proceed()`, so proceed *was* called and the route still did not change
+(`handleSave`'s `setTimeout` captures a stale blocker, and `saveFlow()` has no
+`.catch()`). A human escapes via the dialog's X; the test cannot. Tracked
+separately — masking it inside this spec would hide a product defect.
