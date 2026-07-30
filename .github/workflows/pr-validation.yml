@@ -164,6 +164,9 @@ jobs:
       full_suite: ${{ steps.diff.outputs.full_suite }}
       impacted_total: ${{ steps.diff.outputs.impacted_total }}
       dropped_count: ${{ steps.diff.outputs.dropped_count }}
+      # True when no spec imports the diff but this lane runs what changed, so the
+      # lane runs a fixed canary set instead of skipping (#1159).
+      canary: ${{ steps.diff.outputs.canary }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -204,6 +207,42 @@ jobs:
           STABLE=$(jq -r '.stableSelected' /tmp/impacted.json)
 
           echo "Impacted specs: $TOTAL ($DIRECT direct, $((TOTAL - DIRECT)) transitive); running ${TOTAL:-0} minus $DROPPED dropped"
+
+          # A CI-ONLY diff imports into no spec, so the resolver above honestly
+          # returns zero and this lane used to skip — proving the change PARSES,
+          # never that it RUNS (#1159). PR #1157 rewired four workflows onto a new
+          # composite action with every check green and the E2E lane `skipping`;
+          # the action had executed nowhere at merge time, and a bad `uses:` path
+          # would have surfaced first as the next daily failing in a step unrelated
+          # to any spec.
+          #
+          # `ci-change-coverage.mjs` answers the other half: does the PR LANE run
+          # what changed? It derives that from the YAML (a workflow's `scripts/x`
+          # refs and its `uses: ./.github/actions/y`, plus each action's own refs),
+          # so a new action wired in here is covered the day it lands.
+          #   canary   → the PR lane's own wiring changed: run a 3-spec set so the
+          #              lane boots Langflow and walks pre-flight → health gate →
+          #              Playwright for real
+          #   dispatch → the surface belongs to another lane; name the workflows to
+          #              dispatch instead of implying coverage
+          CANARY=false
+          if [ "$TOTAL" -eq 0 ]; then
+            node scripts/ci-change-coverage.mjs --stdin --format=json < /tmp/changed.txt > /tmp/ci-coverage.json \
+              || { echo "::error::CI-change classification failed — treating as undecidable rather than as 'no CI change'."; exit 1; }
+            VERDICT=$(jq -r .verdict /tmp/ci-coverage.json)
+            jq -r '.reasons[] | "  " + .' /tmp/ci-coverage.json
+            case "$VERDICT" in
+              canary)
+                CANARY=true
+                SPECS=$(jq -r '.canarySpecs | join(" ")' /tmp/ci-coverage.json)
+                echo "::warning::CI-only change to a surface THIS lane runs ($(jq -r '.ciFiles | join(", ")' /tmp/ci-coverage.json)). No spec imports it, so the lane runs the canary instead of skipping (#1159)."
+                ;;
+              dispatch)
+                echo "::warning::CI-only change to $(jq -r '.ciFiles | join(", ")' /tmp/ci-coverage.json), which THIS lane does not run — nothing here proves it works. Dispatch $(jq -r '.dispatchWorkflows | join(", ")' /tmp/ci-coverage.json) on this branch before merging (#1159)."
+                ;;
+            esac
+          fi
+
           echo "Running: ${SPECS:-<none>}"
 
           {
@@ -212,6 +251,22 @@ jobs:
             echo "- resolved by import graph: **$TOTAL** ($DIRECT direct, $((TOTAL - DIRECT)) transitive)"
             echo "- running in this PR: **$((TOTAL - DROPPED))** (of which \`@stable\`: $STABLE)"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Same rule as the cap and the suite-wide signal: whatever this lane does
+          # or does not cover is stated in the summary, never inferred from a green
+          # check (#1012).
+          if [ "$CANARY" = "true" ]; then
+            {
+              echo "- 🐤 **CI-only change** — no spec imports it, so the lane runs the canary to prove the wiring boots:"
+              jq -r '.canarySpecs[] | "  - `" + . + "`"' /tmp/ci-coverage.json
+              echo "  This proves the lane RUNS, not that the changed behaviour is correct."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f /tmp/ci-coverage.json ] && [ "$(jq -r .verdict /tmp/ci-coverage.json)" = "dispatch" ]; then
+            {
+              echo "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:"
+              jq -r '.dispatchWorkflows[] | "  - `" + . + "`"' /tmp/ci-coverage.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
           # A fixture/config change governs every spec. Say so loudly instead of
           # letting a bounded subset read as full coverage.
@@ -249,7 +304,24 @@ jobs:
           # regression, the ui-ux message-history spec, which reaches the
           # resolvers indirectly through initialGPTsetup — #946), and leaves
           # LLM-free specs (e.g. mcp/server/*) out.
+          # A canary run INVERTS this trade deliberately. The canary specs need no
+          # model data, so the rule above would skip `Collect models` — and with it
+          # the post-collect-models health gate, which is `if: needs_models`. The
+          # canary would then prove nothing about the very sequence it exists to
+          # prove: #1045's action would have been skipped by the run meant to cover
+          # it. So a canary run performs the sweep, and the two consequences are
+          # neutralised where they would otherwise bite:
+          #   - `Collect models` becomes non-fatal (see its `continue-on-error`), so
+          #     a drained provider key cannot block a CI-only PR — the same trade
+          #     the daily makes (#980), for the same reason: nothing in the canary
+          #     consumes that key;
+          #   - the credential pre-flight is skipped for the run itself (#884), for
+          #     the same reason.
           NEEDS_MODELS=false
+          if [ "$CANARY" = "true" ]; then
+            NEEDS_MODELS=true
+            echo "Canary run: forcing the Collect models sweep so the health gate is exercised (#1159)."
+          fi
           for f in $SPECS; do
             case "$f" in
               tests/tests-automations/regression/core-functionality/llm-agents/*|tests/tests-automations/regression/core-functionality/model-provider/*)
@@ -260,7 +332,10 @@ jobs:
             fi
           done
           echo "Needs provider models: $NEEDS_MODELS"
-          echo "needs_models=$NEEDS_MODELS" >> "$GITHUB_OUTPUT"
+          {
+            echo "needs_models=$NEEDS_MODELS"
+            echo "canary=$CANARY"
+          } >> "$GITHUB_OUTPUT"
 
   e2e:
     name: Run impacted E2E specs
@@ -392,6 +467,12 @@ jobs:
       # PR whose specs never use that provider (#915/#910/#911 class).
       - name: Collect models
         if: needs.detect-specs.outputs.needs_models == 'true'
+        # Fatal on a normal LLM PR (a spec that needs models must not run without
+        # them), NON-fatal on a canary run: there the sweep exists only so the
+        # health gate below has something to gate, and nothing in the canary
+        # consumes a provider key — so a drained key must not block a CI-only PR
+        # (#1159). Same trade the daily makes for the same reason (#980).
+        continue-on-error: ${{ needs.detect-specs.outputs.canary == 'true' }}
         env:
           CI: "true"
           # This run is what IMPORTS the provider credentials into Langflow, so
@@ -496,7 +577,13 @@ jobs:
           # skip. Nothing in an LLM-free run consumes those credentials, so the
           # check has nothing to protect there: skip it exactly when the import
           # step was skipped, and keep it enforced for LLM runs.
-          PREFLIGHT_SKIP_CREDENTIALS: ${{ needs.detect-specs.outputs.needs_models == 'true' && '0' || '1' }}
+          #
+          # A canary run is the third case (#1159): the sweep DID run, but only to
+          # exercise the health gate, and it is allowed to fail. Enforcing the
+          # credential pre-flight there would let a drained provider key kill a
+          # CI-only PR through the back door — the canary specs make no LLM call at
+          # all, so there is nothing for the check to protect.
+          PREFLIGHT_SKIP_CREDENTIALS: ${{ needs.detect-specs.outputs.needs_models == 'true' && needs.detect-specs.outputs.canary != 'true' && '0' || '1' }}
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}

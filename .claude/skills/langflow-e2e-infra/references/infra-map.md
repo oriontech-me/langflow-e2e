@@ -54,6 +54,7 @@ to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
 | `validate-spec-deps.ts` | Validates a spec's declared external dependencies |
 | `wait-for-backend.mjs` | The post-collect-models health gate's polling loop, behind `.github/actions/wait-for-backend`. Classifies the failure (dead / wedged / HTTP / wiring) instead of hedging (`#1045`) |
 | `watch-backend.mjs` | In-run backend liveness recorder + `--summarize` (diagnostic only, never fails a shard) (`#1030/#1048`) |
+| `ci-change-coverage.mjs` | Decides what a CI-only diff gets on a PR: `canary` (the PR lane runs what changed → fixed 3-spec set), `dispatch` (another lane's surface → name it), `none`. Reachability derived from the YAML, not hardcoded (`#1159`) |
 
 ## `playwright.config.ts` knobs
 
