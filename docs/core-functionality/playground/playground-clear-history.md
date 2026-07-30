@@ -1,6 +1,6 @@
 # Playground — Clear History & Session Delete
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -25,7 +25,9 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 **Test 1 — clear chat on Default session must remove messages but keep the session**
 
-1. Create a blank flow with ChatInput connected to ChatOutput (echo setup, no LLM required)
+1. Build the flow with the shared `setupPlayground` helper: it creates the flow over
+   the API, navigates straight to `/flow/{id}`, and wires ChatInput → ChatOutput
+   (echo setup, no LLM required). It returns the flow id for id-scoped cleanup
 2. Open the Playground via `playground-btn-flow-io`
 3. Send a message ("Hello from test") and confirm it appears as `div-chat-message`
 4. Open the Default session menu via `chat-header-more-menu` (using `evaluate` to bypass framer-motion overlay)
@@ -35,7 +37,7 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 **Test 2 — deleting a user-created session must remove it and return to Default session**
 
-1. Create the same ChatInput → ChatOutput flow and open the Playground
+1. Build the same ChatInput → ChatOutput flow (`setupPlayground`) and open the Playground
 2. Click `new-chat` to create a new session
 3. Send a message ("Message in new session") in the new session
 4. Open the session menu via `chat-header-more-menu` and click `delete-session-option`
@@ -86,5 +88,22 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 ## Notes *(optional)*
 
-- Tests run in `serial` mode to prevent race conditions from `cleanAllFlows` deleting flows mid-execution
+- Tests run in `serial` mode because Test 2 asserts a session **count** in the
+  playground sidebar, which a concurrent sibling on the same flow would perturb.
+  Cleanup is id-scoped — this file never calls `cleanAllFlows`, so it cannot
+  delete a parallel worker's flow (#465/#515). The earlier note claiming
+  `cleanAllFlows` was the reason for serial mode was stale.
+- **Sidebar entry race (#1063).** Both tests previously built the flow through the
+  home page → "New Flow" → templates modal → `blank-flow` path, and flaked because
+  `FlowPage` mounts the whole `FlowSidebarComponent` inside a `display: none`
+  wrapper while the welcome overlay is open — so `sidebar-search-input` sat in the
+  DOM with an empty bounding box, which Playwright reports as `hidden`. "New Flow"
+  opens that overlay **before** navigating and "Browse more templates" does not
+  close it, so the setup raced a multi-hop settle it did not drive. `setupPlayground`
+  creates the flow over the API and never opens the overlay, so the condition is
+  gone rather than re-budgeted. Full chain in `docs/ui-ux/execution-error-notification.md`.
+- Cleanup passes an explicit bearer from `getAuthToken`: under AUTO_LOGIN a bare
+  request context is unauthenticated, so an unheadered `DELETE` 401s and silently
+  leaks the flow.
+- `evaluate((el) => el.click())` is intentional: the menu trigger sits inside an `AnimatedConditional` that may have an overlapping sibling div during the animation, making coordinate-based clicks unreliable
 - `evaluate((el) => el.click())` is intentional: the menu trigger sits inside an `AnimatedConditional` that may have an overlapping sibling div during the animation, making coordinate-based clicks unreliable

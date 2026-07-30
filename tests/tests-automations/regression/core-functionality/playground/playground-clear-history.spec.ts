@@ -1,9 +1,8 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { zoomOut } from "../../../../helpers/ui/zoom-out";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 
 /**
  * Session behavior confirmed from source (chat-header.tsx):
@@ -21,71 +20,20 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
  *   - Shows "Rename" (rename-session-option) only when session has at least 1 message
  *   - Never shows clear-chat-option
  *
- * Serial mode is required: both tests share the Langflow backend.
- * cleanAllFlows in afterEach deletes ALL flows — parallel execution causes race conditions.
+ * Serial mode is required: both tests share the Langflow backend, and the second
+ * test asserts a session COUNT in the playground sidebar, which a concurrent
+ * sibling on the same flow would perturb. Cleanup is id-scoped (never
+ * `cleanAllFlows`), so it does not delete a parallel worker's flow (#465/#515).
+ *
+ * The graph (ChatInput → ChatOutput) is built by the shared `setupPlayground`
+ * helper, which creates the flow over the API and navigates straight to
+ * `/flow/{id}`. The local `setupChatFlow` it replaces entered via the home page →
+ * "New Flow" → templates modal → `blank-flow` path, which is what made this file
+ * flake (#1063): while the welcome overlay is open, FlowPage mounts the whole
+ * FlowSidebarComponent inside a `display: none` wrapper, so
+ * `sidebar-search-input` is in the DOM with an empty box — what Playwright
+ * reports as `hidden`. Going through the API never opens that overlay.
  */
-
-async function setupChatFlow(page: Page): Promise<string> {
-  await awaitBootstrapTest(page);
-  await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-
-  const flowCreationPromise = page.waitForResponse(
-    (resp) =>
-      resp.url().includes("/api/v1/flows") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201,
-    { timeout: 15000 },
-  );
-
-  await page.getByTestId("blank-flow").click();
-
-  // Add Chat Output via button
-  await page.getByTestId("sidebar-search-input").fill("chat output");
-  await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
-    timeout: 30000,
-  });
-  await page
-    .getByTestId("input_outputChat Output")
-    .hover()
-    .then(async () => {
-      await page.getByTestId("add-component-button-chat-output").click();
-    });
-
-  await zoomOut(page, 2);
-
-  // Add Chat Input via drag to avoid node overlap
-  await page.getByTestId("sidebar-search-input").fill("chat input");
-  await expect(page.getByTestId("input_outputChat Input")).toBeVisible({
-    timeout: 30000,
-  });
-  await page
-    .getByTestId("input_outputChat Input")
-    .dragTo(page.locator('//*[@id="react-flow-id"]'), {
-      targetPosition: { x: 100, y: 100 },
-    });
-
-  await adjustScreenView(page);
-
-  await expect(page.locator(".react-flow__node")).toHaveCount(2, {
-    timeout: 10000,
-  });
-
-  // Connect Chat Input → Chat Output
-  await page
-    .getByTestId("handle-chatinput-noshownode-chat message-source")
-    .click();
-  await page
-    .getByTestId("handle-chatoutput-noshownode-inputs-target")
-    .click();
-
-  await expect(page.locator(".react-flow__edge")).toHaveCount(1, {
-    timeout: 8000,
-  });
-
-  const creationResponse = await flowCreationPromise;
-  const flowData = await creationResponse.json();
-  return (flowData.id as string) ?? "";
-}
 
 async function sendMessage(page: Page, text: string): Promise<void> {
   await page.getByTestId("input-chat-playground").last().fill(text);
@@ -99,12 +47,19 @@ test.describe.configure({ mode: "serial" });
 test.describe("Playground – Clear History & Session Delete", () => {
   let createdFlowId: string | null = null;
 
-  test.afterEach(async ({ page }) => {
-    if (createdFlowId) {
-      await page.goto("/");
-      await deleteFlow(page.request, createdFlowId);
-      createdFlowId = null;
-    }
+  test.afterEach(async ({ page, request }) => {
+    if (!createdFlowId) return;
+    const id = createdFlowId;
+    createdFlowId = null;
+    // Leave the editor first: its background polling for the current flow would
+    // otherwise complete after the DELETE and log spurious 404s.
+    await page.goto("/");
+    // Explicit bearer: under AUTO_LOGIN a bare request context is
+    // unauthenticated, so an unheadered DELETE 401s and silently leaks the flow.
+    const bearer = await getAuthToken(request);
+    await deleteFlow(request, id, {
+      headers: { Authorization: bearer },
+    }).catch(() => {});
   });
 
   test(
@@ -112,7 +67,7 @@ test.describe("Playground – Clear History & Session Delete", () => {
     { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
-        createdFlowId = await setupChatFlow(page);
+        createdFlowId = await setupPlayground(page);
         await page.getByTestId("playground-btn-flow-io").click();
         await expect(page.getByTestId("button-send")).toBeVisible({
           timeout: 15000,
@@ -156,7 +111,7 @@ test.describe("Playground – Clear History & Session Delete", () => {
     { tag: ["@stable", "@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step("Set up ChatInput → ChatOutput flow and open playground", async () => {
-        createdFlowId = await setupChatFlow(page);
+        createdFlowId = await setupPlayground(page);
         await page.getByTestId("playground-btn-flow-io").click();
         await expect(page.getByTestId("button-send")).toBeVisible({
           timeout: 15000,
