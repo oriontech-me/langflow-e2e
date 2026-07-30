@@ -147,8 +147,17 @@ The fourth signature is **not** fixed here and is not a test defect: clicking
 `icon-ChevronLeft` can leave the editor stuck behind `SaveChangesModal` —
 "Flow has unsaved changes" / "Saving your changes…" — which in autosave mode
 renders as a button-less spinner (`loading` hardcoded `true`, no confirm/cancel
-text) and can deadlock. The success toast fires on the same line as
-`blocker.proceed()`, so proceed *was* called and the route still did not change
-(`handleSave`'s `setTimeout` captures a stale blocker, and `saveFlow()` has no
-`.catch()`). A human escapes via the dialog's X; the test cannot. Tracked
-separately — masking it inside this spec would hide a product defect.
+text) and deadlocks.
+
+`FlowPage.handleSave` calls `saveFlow()` with **no `.catch()`**, so a save that
+fails or never settles leaves `proceed` false, the 1200 ms `setTimeout` finds it
+false and does nothing, and the dialog has no dismissal path left. Reproduced
+deterministically on 1.12.0.dev10 by aborting every flow-save PATCH: the modal
+appears, never clears in 30 s, the URL stays on `/flow/{id}`, and the dialog
+renders **zero** buttons — so the user is stranded too, not just the test.
+
+The toast visible in the natural failure screenshot is `success.changesSaved`
+("Changes saved successfully"), fired by the **rename** modal — not
+`flow.savedSuccessfully` ("Flow saved successfully!"), the one `handleSave`
+fires next to `blocker.proceed()`. Tracked separately — masking it inside this
+spec would hide a product defect.
