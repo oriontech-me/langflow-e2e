@@ -60,7 +60,7 @@ The two tests are **not** serial: they drive independent flows with unique gener
 
 **afterEach (both cases)**
 
-1. Navigate to `/` so the unmounted editor stops polling a flow about to be deleted — gated on the test having passed, because Playwright captures the on-failure screenshot after user hooks and navigating would archive the home page instead of the failed canvas.
+1. Navigate to `/` so the mounted editor stops polling a flow about to be deleted (#1023/#1103) — **unconditionally**, including on failure. On `@playwright/test` 1.58.2 (the pinned version) the `only-on-failure` screenshot is captured *before* the `afterEach` hooks run, not during the page-fixture teardown — measured on #1105, where a `goto` in this hook still left `test-failed-1.png` showing the canvas. Gating the navigation on the test having passed would protect no artifact and only reintroduce the teardown 404.
 2. `deleteFlow(request, id, { headers: { Authorization: bearer } })` for each flow created, id-scoped — never a global wipe (#553). A failed delete is logged, not swallowed.
 
 ---

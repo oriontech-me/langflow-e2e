@@ -40,18 +40,20 @@ const CANVAS_ROOT_ID = "react-flow-id";
 // parallel workers are actively driving (#553).
 const createdFlowIds: string[] = [];
 
-test.afterEach(async ({ page, request }, testInfo) => {
+test.afterEach(async ({ page, request }) => {
   if (createdFlowIds.length === 0) return;
-  // Leave the editor so the unmounted flow page stops polling a flow we are
-  // about to delete (a mid-poll delete 404s, which the fixture logs).
+  // Leave the editor BEFORE deleting, so the mounted flow page stops polling a
+  // flow that is about to disappear (a mid-poll delete 404s, which the fixture
+  // logs as a backend error — see the run on this spec's own PR).
   //
-  // On success only: Playwright captures the on-failure screenshot while tearing
-  // down the page fixture, which runs AFTER this hook, so navigating away on a
-  // failing test would archive a picture of the home page instead of the canvas
-  // whose ids collided.
-  if (testInfo.status === testInfo.expectedStatus) {
-    await page.goto("/").catch(() => {});
-  }
+  // Unconditional, including on failure: with `@playwright/test` 1.58.2 (the
+  // pinned version) the `only-on-failure` screenshot is captured BEFORE the
+  // afterEach hooks run, not during the page-fixture teardown — measured on
+  // #1105, where a `goto` here still left `test-failed-1.png` showing the
+  // canvas. Gating the navigation on the test having passed would therefore
+  // protect nothing and only reintroduce the teardown 404 that #1023/#1103
+  // exist to avoid.
+  await page.goto("/").catch(() => {});
   // `page.request` carries only browser cookies and the flows API answers 401 to
   // those, so pass the bearer token explicitly.
   const bearer = await getAuthToken(request);
