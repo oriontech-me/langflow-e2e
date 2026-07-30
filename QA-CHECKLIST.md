@@ -779,7 +779,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
-| `core-components/` — Core Components | 85 | 81 | 3 | 0 | 1 |
+| `core-components/` — Core Components | 87 | 83 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
@@ -793,7 +793,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **472** | **375 (79%)** | **80 (17%)** | **11 (2%)** | **6 (1%)** |
+| **TOTAL** | **474** | **377 (80%)** | **80 (17%)** | **11 (2%)** | **6 (1%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -809,7 +809,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 424 `test()` calls carrying the `@stable` tag, distributed across 168 spec
+> 426 `test()` calls carrying the `@stable` tag, distributed across 169 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -820,6 +820,8 @@
 - [x] direct is distinct from the job_id path: streaming delivery returns a job_id → `api-build-direct-response.spec.ts`
 - [x] polling is the two-step path: POST returns a job_id shell (no inline events) → `api-build-polling-response.spec.ts`
 - [x] the poll loop drains the build to completion across repeated GET /events calls → `api-build-polling-response.spec.ts`
+- [x] API Request component — include_httpx_metadata=true adds request headers to output → `api-component-regression.spec.ts`
+- [x] API Request component — timeout error returns status_code 500 with error field → `api-component-regression.spec.ts`
 - [x] POST /api/v1/custom_component returns valid component structure → `api-custom-component-creation.spec.ts`
 - [x] POST /api/v1/custom_component with invalid code returns error → `api-custom-component-creation.spec.ts`
 - [x] GET /api/v1/all includes component types → `api-custom-component-creation.spec.ts`
