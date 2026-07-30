@@ -72,6 +72,45 @@ jobs:
       - name: Lint
         run: npm run lint:ci
 
+  # The repo's own Python code had no lane at all, which is how `generate_report.py`
+  # shipped a report that said `Result: PASSED` on a run whose UI phase had failed
+  # (#1120, run #115). The two `test:units` / `test:scripts` lanes only cover
+  # TypeScript and `.mjs`, so nothing here was verifiable before merge.
+  python-units:
+    name: Python unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install --quiet pytest
+
+      - name: Migration helper unit tests
+        run: |
+          # `test_ui_migration.py` is excluded, not missing: it drives a real browser
+          # against a migrated Langflow and belongs to migration-test.yml. Everything
+          # else under this path is a plain unit test, so a new one is picked up
+          # without touching this workflow.
+          #
+          # Fail loudly on an empty selection, like the two Node lanes do — a unit
+          # lane that silently runs nothing is worse than no lane (#1012's rule).
+          COUNT=$(python -m pytest tests/github-workflows/migration \
+            --ignore=tests/github-workflows/migration/test_ui_migration.py \
+            --collect-only -q 2>/dev/null | grep -cE '::' || true)
+          if [ "${COUNT:-0}" -eq 0 ]; then
+            echo "::error::no Python unit tests were collected — this lane would have passed without verifying anything."
+            exit 1
+          fi
+          echo "collected $COUNT Python unit test(s)"
+          python -m pytest tests/github-workflows/migration \
+            --ignore=tests/github-workflows/migration/test_ui_migration.py -v
+
   checklist-guard:
     name: QA-CHECKLIST guard
     runs-on: ubuntu-latest

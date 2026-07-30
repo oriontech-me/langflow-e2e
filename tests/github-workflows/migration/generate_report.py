@@ -1,8 +1,36 @@
-"""Generate a markdown migration test report from the collected state."""
+"""Generate a markdown migration test report from the collected state.
+
+## Why the verdict is not just "did anything record a failure" (#1120)
+
+Run #115 opened an issue titled *"Langflow Migration Test Failed"* whose body said
+**`Result: PASSED`**, with every listed step green. Both were accurate about what
+they measured, and that is the defect:
+
+- `Verify migration via UI (Playwright)` failed — `test_05_execute_flow_ui` died on
+  a 30 s `Locator.click` timeout.
+- A pytest test that **crashes** never reaches its own `_save_results()`, so it
+  writes **no** `fail` entry. The old verdict scanned the state file for a `fail`
+  status, found none, and printed `Result: PASSED`.
+
+So the report read the **absence of a failure record as evidence of success** — and
+the one situation where the report matters most is exactly the one that records
+nothing. A reader who trusts the first line of the body draws the opposite of the
+truth.
+
+The fix is to stop inferring. The workflow now tells this script the outcome of
+each verification step (`PHASE_OUTCOME_<phase>`), and the script **reconciles** that
+against what the phase actually recorded. A phase the runner says failed, that
+recorded no failure, is reported as a crash — never as a pass. A phase that was
+supposed to run and is missing from the state entirely is reported as incomplete.
+Nothing here can conclude "passed" from missing data.
+"""
 
 import json
 import os
 from datetime import datetime, timezone
+# `Optional`, not `dict | None`: CI runs 3.12 but the file is also imported by the
+# unit tests on whatever interpreter a developer has, and macOS still ships 3.9.
+from typing import Optional
 
 STATE_FILE = os.environ.get("STATE_FILE", "/tmp/migration-test-state.json")
 REPORT_FILE = os.environ.get("REPORT_FILE", "/tmp/migration-report.md")
@@ -13,6 +41,15 @@ STATUS_ICON = {
     "warn": "WARN",
     "skip": "SKIP",
 }
+
+# Per-phase step outcomes handed in by the workflow, as
+# `PHASE_OUTCOME_<phase>=success|failure|skipped|cancelled` — GitHub's
+# `steps.<id>.outcome` vocabulary, passed straight through.
+PHASE_OUTCOME_PREFIX = "PHASE_OUTCOME_"
+
+RESULT_FAILED = "FAILED"
+RESULT_PASSED = "PASSED"
+RESULT_PASSED_WARN = "PASSED (with warnings)"
 
 
 def load_state() -> dict:
@@ -31,6 +68,85 @@ def load_digest(path: str) -> str:
         return "unknown"
 
 
+def declared_outcomes(environ=None) -> dict:
+    """Phase name → runner outcome, from the `PHASE_OUTCOME_<phase>` variables."""
+    env = os.environ if environ is None else environ
+    out = {}
+    for key, value in env.items():
+        if not key.startswith(PHASE_OUTCOME_PREFIX):
+            continue
+        phase = key[len(PHASE_OUTCOME_PREFIX) :]
+        if phase and value and value.strip():
+            out[phase] = value.strip().lower()
+    return out
+
+
+def assess(state: dict, declared: dict) -> dict:
+    """Decide the overall result, and surface anything that makes the report untrustworthy.
+
+    Returns `{"result", "failures", "warnings", "integrity"}`. `integrity` holds
+    mismatches between what the runner observed and what the phase recorded — the
+    #1120 class. Those count as failures: a report that cannot account for a phase
+    must not claim that phase passed.
+    """
+    phases = state.get("phases", {}) or {}
+
+    failures = []
+    warnings = []
+    integrity = []
+
+    for phase_name, phase_data in phases.items():
+        for step_name, step_data in (phase_data.get("steps", {}) or {}).items():
+            status = (step_data or {}).get("status")
+            detail = str((step_data or {}).get("detail", "no detail"))[:200]
+            if status == "fail":
+                failures.append(f"- **{phase_name}/{step_name}**: {detail}")
+            elif status == "warn":
+                warnings.append(f"- **{phase_name}/{step_name}**: {detail}")
+
+    for phase_name, outcome in sorted(declared.items()):
+        recorded_steps = (phases.get(phase_name) or {}).get("steps", {}) or {}
+        recorded_fail = any(
+            (s or {}).get("status") == "fail" for s in recorded_steps.values()
+        )
+
+        if outcome == "failure" and not recorded_fail:
+            # The #1120 case: the step died before it could write its own verdict.
+            integrity.append(
+                f"- **{phase_name}**: the runner reports this phase FAILED, but it recorded no "
+                f"failing step — it crashed before writing its result "
+                f"({len(recorded_steps)} step(s) recorded). Read the job log for the real cause; "
+                f"this report cannot attribute it."
+            )
+        elif outcome in {"success", "failure"} and phase_name not in phases:
+            integrity.append(
+                f"- **{phase_name}**: the runner ran this phase (outcome `{outcome}`) but it is "
+                f"absent from the state file, so nothing about it was verified."
+            )
+
+    # A state file with no phases at all is the strongest form of the same problem:
+    # it used to render as a clean PASS.
+    if not phases:
+        integrity.append(
+            "- **(all phases)**: the state file records no phases at all, so this report "
+            "verified nothing. Treated as a failure rather than an empty pass."
+        )
+
+    if failures or integrity:
+        result = RESULT_FAILED
+    elif warnings:
+        result = RESULT_PASSED_WARN
+    else:
+        result = RESULT_PASSED
+
+    return {
+        "result": result,
+        "failures": failures,
+        "warnings": warnings,
+        "integrity": integrity,
+    }
+
+
 def format_step(name: str, step: dict) -> str:
     icon = STATUS_ICON.get(step.get("status", ""), "?")
     line = f"| {icon} | {name} |"
@@ -44,67 +160,57 @@ def format_step(name: str, step: dict) -> str:
     return line
 
 
-def generate_report(state: dict) -> str:
+def generate_report(state: dict, declared: Optional[dict] = None) -> str:
+    if declared is None:
+        declared = declared_outcomes()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     latest_digest = load_digest("/tmp/latest-digest.txt")
     nightly_digest = load_digest("/tmp/nightly-digest.txt")
 
+    verdict = assess(state, declared)
+
     lines = [
-        f"# Langflow Migration Test Report",
+        "# Langflow Migration Test Report",
         f"**Date:** {now}",
         f"**Flow:** {state.get('flow_name', 'N/A')} (`{state.get('flow_id', 'N/A')}`)",
         f"**Latest digest:** `{latest_digest[-20:]}`",
         f"**Nightly digest:** `{nightly_digest[-20:]}`",
         "",
+        f"## Result: {verdict['result']}",
+        "",
     ]
 
-    # Overall result
-    all_statuses = []
-    for phase_data in state.get("phases", {}).values():
-        for step in phase_data.get("steps", {}).values():
-            all_statuses.append(step.get("status", ""))
+    # Right under the verdict, because it is the reason the verdict cannot be
+    # trusted at face value — burying it below the per-step tables is how run #115
+    # read as a pass.
+    if verdict["integrity"]:
+        lines.append("## Unaccounted phases")
+        lines.append("")
+        lines.extend(verdict["integrity"])
+        lines.append("")
 
-    has_fail = "fail" in all_statuses
-    has_warn = "warn" in all_statuses
-    if has_fail:
-        lines.append("## Result: FAILED")
-    elif has_warn:
-        lines.append("## Result: PASSED (with warnings)")
-    else:
-        lines.append("## Result: PASSED")
-    lines.append("")
-
-    # Phase details — only show failures and warnings in detail
     for phase_name, phase_data in state.get("phases", {}).items():
         duration = phase_data.get("duration_s", "?")
-        lines.append(f"### Phase: {phase_name} ({duration}s)")
+        outcome = declared.get(phase_name)
+        suffix = f" — runner outcome: `{outcome}`" if outcome else ""
+        lines.append(f"### Phase: {phase_name} ({duration}s){suffix}")
         lines.append("")
         lines.append("| Status | Step | Detail |")
         lines.append("|--------|------|--------|")
 
-        for step_name, step_data in phase_data.get("steps", {}).items():
+        for step_name, step_data in (phase_data.get("steps", {}) or {}).items():
             lines.append(format_step(step_name, step_data))
 
         lines.append("")
 
-    # Failures summary
-    failures = []
-    warnings = []
-    for phase_name, phase_data in state.get("phases", {}).items():
-        for step_name, step_data in phase_data.get("steps", {}).items():
-            if step_data.get("status") == "fail":
-                failures.append(f"- **{phase_name}/{step_name}**: {step_data.get('detail', 'no detail')[:200]}")
-            elif step_data.get("status") == "warn":
-                warnings.append(f"- **{phase_name}/{step_name}**: {step_data.get('detail', 'no detail')[:200]}")
-
-    if failures:
+    if verdict["failures"]:
         lines.append("## Failures")
-        lines.extend(failures)
+        lines.extend(verdict["failures"])
         lines.append("")
 
-    if warnings:
+    if verdict["warnings"]:
         lines.append("## Warnings")
-        lines.extend(warnings)
+        lines.extend(verdict["warnings"])
         lines.append("")
 
     return "\n".join(lines)
