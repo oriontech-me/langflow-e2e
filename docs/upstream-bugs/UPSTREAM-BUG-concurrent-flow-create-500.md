@@ -111,3 +111,15 @@ unexplained `waitForURL` timeout. The helper now posts an explicit unique name, 
 takes the de-duplication branch out of play entirely. That is a workaround for our own
 writes only: any spec that creates a flow through the UI while another worker does the
 same remains exposed until this is fixed upstream.
+
+`loadTemplateByName` is the other exposed path (#1002) and it **cannot** take the
+same workaround: the flow is created by the SPA when a template is picked, and the
+modal journey it drives is itself the subject of
+`create-flow-from-template.spec.ts` (including its name assertion), so the name is
+not ours to choose. Two shared names collide there — the `New Flow` the entry point
+creates on its own, and the template's own name, since many specs load the same
+template. It therefore **retries the pick** when the creation POST answers non-2xx,
+recovers a lost navigation by going to `/flow/<id>`, and reports the creation status
+instead of a bare selector timeout. Still reproducible on **1.12.0.dev9** — 2 of 4
+simultaneous same-name POSTs fail, 6 of 8 — so the retry is a survival mechanism,
+not a fix.
