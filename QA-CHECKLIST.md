@@ -145,6 +145,7 @@
 - [x] Edit slider → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit tab component → `core-components/parameters-panel-field-types.spec.ts`
 - [-] Visibility toggle of a connected input is disabled (tooltip "Cannot change visibility of connected handles") and re-enables once the edge is deleted → `flow-functionality/general-bugs-hidden-input-edges.spec.ts`
+- [-] Two nodes on the canvas exposing the same field name render distinct DOM ids, while `data-testid` stays unscoped so both nodes remain selectable (LE-2037 / langflow#14312 — awaiting the fix on the 1.12 line before `@stable`) → `core-components/duplicate-dom-ids-regression.spec.ts`
 
 #### 2.2 Tool Mode
 - [x] Enable Tool Mode on a component → `core-components/tool-mode.spec.ts`
