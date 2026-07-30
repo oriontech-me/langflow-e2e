@@ -45,8 +45,8 @@ jobs:
           # Cap how long ONE wedge can cost (#1048) — see daily-stable.yml for the
           # full reasoning and the measurement. Applied here too, while this
           # workflow is disabled, so re-enabling the documented fallback does not
-          # bring back a 300 s outage per wedge. Note this workflow still lacks the
-          # #1011 health gate (tracked in #1045).
+          # bring back a 300 s outage per wedge. The #1011 health gate this
+          # workflow used to lack landed with #1045 — see the step below.
           LANGFLOW_WORKER_TIMEOUT: "120"
           # Nightly image defaults LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false
           # (custom-component creation disabled → sidebar button hidden, API
@@ -122,12 +122,28 @@ jobs:
           exit 1
 
       - name: Collect models
+        id: collect_models
         run: npx playwright test tests/collect-models.spec.ts --reporter=line
         continue-on-error: true
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      # The #1011 health gate, which this workflow lacked entirely until #1045 —
+      # harmless while it is disabled, a latent hole the day it is re-enabled as
+      # the documented fallback to daily-stable.yml. The sweep above can leave the
+      # shared backend WEDGED (container alive, event loop blocked, requests
+      # unanswered — #922/#927); globalSetup then polls 120 s and throws a preflight
+      # timeout that names nothing. Wait it out here, and fail with the real cause
+      # when it does not clear. Full rationale, and the measurements the deadline is
+      # sized against, in the action.
+      - name: Wait for the backend to recover from the collect-models load
+        uses: ./.github/actions/wait-for-backend
+        with:
+          next_step_label: "the @stable run"
+          attribution: "NOT a per-test failure"
+          collect_models_outcome: ${{ steps.collect_models.outcome }}
 
       - name: Run @stable tests
         run: npx playwright test --grep "@stable" --pass-with-no-tests --reporter=html,github,json

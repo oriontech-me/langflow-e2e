@@ -1,0 +1,96 @@
+name: "Wait for the backend to recover from the collect-models load"
+description: >-
+  The post-collect-models health gate (#1011), as ONE implementation. Poll
+  Langflow's /api/v1/version between the `Collect models` sweep and the test run:
+  wait out the process-wide wedge the sweep can leave behind (#922/#927), and when
+  it does not clear, fail in this step with the real cause named instead of
+  letting globalSetup report an unattributed 120 s preflight timeout.
+  Before #1045 this loop was copy-pasted into daily-stable.yml, pr-validation.yml
+  and manual.yml — three copies that had already diverged on the deadline, the
+  heartbeat, the failure attribution and the pre-flight warning — while
+  weekly-stable.yml, the documented fallback, carried no gate at all.
+  The loop itself lives in `scripts/wait-for-backend.mjs`, exercised against all
+  four backend states (healthy / dead / wedged / wedged-then-recovers) by
+  `npm run test:scripts` — the wedge cannot be reproduced in CI on demand.
+  Requires the repo checked out and `node` on PATH (every calling lane has both).
+  Put the caller's own `if:` on the step: this gate is only meaningful when the
+  sweep actually ran.
+
+inputs:
+  base_url:
+    description: >-
+      Langflow base URL, with or without a trailing slash. `manual.yml` passes a
+      dispatched external URL here; every other lane uses the service container.
+    required: false
+    default: "http://localhost:7860/"
+  timeout_s:
+    description: >-
+      Total deadline. Default 420 s, the number #1045 settled on for every lane.
+      The evidence: the two measured recoveries consumed 223 s (#1019, daily
+      image) and 260 s (#1044's manual validation dispatch) — 74% and 87% of the
+      300 s the daily used to allow — and every second of both was gunicorn's own
+      timer (WORKER TIMEOUT, then SIGKILL, then ~12 s of Langflow startup). A
+      slightly slower restart blows 300 s. Over-waiting is close to free by
+      construction: the extra time is only ever spent on a lane already headed for
+      a red, and it is bounded well below every caller's `timeout-minutes`.
+    required: false
+    default: "420"
+  next_step_label:
+    description: >-
+      What runs after this gate, used in both the success line and the failure
+      message ("<label> would abort in globalSetup with zero tests").
+    required: false
+    default: "the test run"
+  attribution:
+    description: >-
+      The lane-specific closing clause of the ::error::. Its job is to stop the
+      failure being read as a product bug: on a PR the useful wording is "NOT a
+      failure of the specs this PR touches", on a dispatch "NOT a failure of the
+      tests you dispatched".
+    required: false
+    default: "NOT a per-test failure"
+  collect_models_outcome:
+    description: >-
+      `steps.<id>.outcome` of the `Collect models` step, where that step is
+      `continue-on-error`. A `failure` is surfaced here as a ::warning::, where a
+      reader is already looking — the run is deliberately NOT gated on it (#980),
+      but silent provider skips are the erosion #570 exists to prevent.
+    required: false
+    default: ""
+  probe_timeout_ms:
+    description: >-
+      Per-probe deadline. Short by design (the #928 shape): a hung request must
+      fail fast so the loop keeps polling across the wedge instead of burning the
+      whole budget on one GET.
+    required: false
+    default: "8000"
+  interval_s:
+    description: "Sleep between attempts."
+    required: false
+    default: "5"
+  heartbeat_every:
+    description: >-
+      Log a heartbeat every N attempts (0 disables it). A step that can legitimately
+      sit for 5-7 min must not read as hung — the improvement #1044 parked on
+      pr-validation's copy alone.
+    required: false
+    default: "6"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Wait for the backend to recover from the collect-models load
+      shell: bash
+      env:
+        WAIT_BASE_URL: ${{ inputs.base_url }}
+        WAIT_TIMEOUT_S: ${{ inputs.timeout_s }}
+        WAIT_NEXT_STEP_LABEL: ${{ inputs.next_step_label }}
+        WAIT_ATTRIBUTION: ${{ inputs.attribution }}
+        WAIT_COLLECT_MODELS_OUTCOME: ${{ inputs.collect_models_outcome }}
+        WAIT_PROBE_TIMEOUT_MS: ${{ inputs.probe_timeout_ms }}
+        WAIT_INTERVAL_S: ${{ inputs.interval_s }}
+        WAIT_HEARTBEAT_EVERY: ${{ inputs.heartbeat_every }}
+      # Relative to the workspace, matching how `guard-dedicated-issue` and
+      # `resolve-echo-endpoint` invoke their own scripts — the calling job has
+      # already checked out the repo.
+      run: node scripts/wait-for-backend.mjs
