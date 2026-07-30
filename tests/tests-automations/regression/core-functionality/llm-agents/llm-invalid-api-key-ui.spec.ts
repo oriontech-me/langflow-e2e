@@ -1,4 +1,8 @@
-import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  expect,
+  test,
+  type PageWithErrorHooks,
+} from "../../../../fixtures/fixtures";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
@@ -19,7 +23,13 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
     async ({ page }) => {
       // This test intentionally injects an HTTP 500 on the run endpoint, so the
       // fixture's backend-error monitor will see it — allow it explicitly.
-      (page as any).allowFlowErrors();
+      // `allowFlowErrors()` alone never covered the HTTP side: it gates flow
+      // execution errors only, so the mocked 500 was logged as a backend error
+      // on every run of this spec regardless. `allowHttpErrors()` is what the
+      // comment above always meant (#1084).
+      const hooks = page as PageWithErrorHooks;
+      hooks.allowFlowErrors();
+      hooks.allowHttpErrors();
       createdFlowId = await setupPlayground(page);
 
       // Open Playground first so initialization build calls are not intercepted
@@ -81,7 +91,13 @@ test.describe("LLM Invalid API Key UI Error Display", () => {
     async ({ page }) => {
       // This test intentionally injects an HTTP 500 on the run endpoint, so the
       // fixture's backend-error monitor will see it — allow it explicitly.
-      (page as any).allowFlowErrors();
+      // `allowFlowErrors()` alone never covered the HTTP side: it gates flow
+      // execution errors only, so the mocked 500 was logged as a backend error
+      // on every run of this spec regardless. `allowHttpErrors()` is what the
+      // comment above always meant (#1084).
+      const hooks = page as PageWithErrorHooks;
+      hooks.allowFlowErrors();
+      hooks.allowHttpErrors();
       createdFlowId = await setupPlayground(page);
 
       // Open Playground first so initialization build calls are not intercepted

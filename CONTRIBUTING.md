@@ -52,7 +52,9 @@ test.describe("Area or feature name", () => {
 });
 ```
 
-> Always import from `fixtures` — never directly from Playwright. The base fixture adds automatic backend error monitoring.
+> Always import from `fixtures` — never directly from Playwright. The base fixture adds
+> backend error monitoring: flow execution errors **fail** the test, HTTP errors are
+> **logged only** (step 5 below explains why that distinction matters).
 
 **4. Use existing helpers and pages**
 
@@ -257,8 +259,22 @@ npx playwright test path/to/test.spec.ts --debug
 
 The base fixture prints backend errors automatically. Look for:
 
-- `🚨 Backend Error:` — unexpected HTTP error
-- `🚨 Flow Error Detected` — silent failure in flow execution
+- `🚨 Backend Error:` — unexpected HTTP error. **Logged, never fails the test** (#1084)
+- `🚨 Flow Error Detected` — silent failure in flow execution. **Fails the test** unless
+  the spec called `page.allowFlowErrors()`
+
+Because an HTTP error cannot fail a test, **this step is the only thing standing between a
+real backend 500 and a green run** — the fixture prints
+`⚠️  N HTTP error(s) detected — ADVISORY` to say so out loud. Treat any line under it as a
+finding to explain, not noise to scroll past.
+
+Which responses reach that log is decided by `tests/fixtures/http-error-policy.ts` (every
+4xx/5xx on an `/api/` route, minus documented exemptions: auth endpoints, and the external
+Langflow Store which is unreachable from CI). If your spec drives an endpoint into a 4xx/5xx
+**on purpose** — including mocking one with `page.route` — call `page.allowHttpErrors()` so
+the deliberate error stays out of the log instead of teaching readers to ignore it. Adding an
+endpoint to the exemption list makes it invisible to all 235 specs, so it needs a reason that
+survives review; run with `PW_HTTP_ERROR_DEBUG=1` to see what is currently being ignored.
 
 **6. Update the checklist**
 

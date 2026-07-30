@@ -84,7 +84,7 @@ Do not restate the current wave here — it changes every cycle; follow the poin
 
 ### Test Infrastructure
 
-- **`tests/fixtures/fixtures.ts`** — Always import `test` from here, never directly from Playwright. It extends the base `test` with automatic backend HTTP error monitoring (4xx/5xx) and flow execution error detection. Provides `page.allowFlowErrors()` for tests that intentionally trigger failures.
+- **`tests/fixtures/fixtures.ts`** — Always import `test` from here, never directly from Playwright. It extends the base `test` with backend HTTP error monitoring and flow execution error detection. **The two are not equally strong, and the difference decides how much a green run is worth (#1084):** a `flow_error` **fails** the test; an `http_error` is **logged and never fails it**, on any path, for any endpoint — so the only thing between a real backend 500 and a green test is a human reading the log (checklist step 4 below, `CONTRIBUTING.md` step 5). Which responses reach that log is decided by `tests/fixtures/http-error-policy.ts` — every 4xx/5xx on an `/api/` route except the documented exemptions (auth endpoints; the external Langflow Store, unreachable in CI). It genuinely covers 4xx/5xx now; before #1084 it matched four exact codes and silently missed 401/403/405/409/502/503, which is why `execution-error-notification` could mock a 503 specifically to slip past it. Escape hatches: `page.allowFlowErrors()` for tests that provoke execution failures, `page.allowHttpErrors()` for tests that drive an endpoint into a 4xx/5xx on purpose (keeps the advisory log trustworthy). `PW_HTTP_ERROR_DEBUG=1` prints what the policy ignored, with reasons.
 
 - **`tests/pages/`** — Page Object Model (POM). `BasePage.ts` provides common navigation; `FlowEditorPage.ts`, `PlaygroundPage.ts`, `MainPage.ts`, `LoginPage.ts`, `SidebarComponent.ts` provide feature-specific selectors and actions.
 
@@ -137,7 +137,7 @@ importable, `testMatch`/discovery gotchas — in `CONTRIBUTING.md` → **Unit te
 1. Run with full trace (`--trace=on`) and verify steps match screenshots
 2. Force a failure to confirm no false positives
 3. Walk through in debug mode (`--debug`)
-4. Confirm no backend errors logged (`🚨 Backend Error:`)
+4. Confirm no backend errors logged (`🚨 Backend Error:`) — **this step is a real gate, not a formality: an HTTP error never fails the test on its own** (#1084)
 5. Update `QA-CHECKLIST.md` coverage symbols
 
 **PR review checklist** — request changes if any of these are missing:
