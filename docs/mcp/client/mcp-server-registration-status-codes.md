@@ -1,6 +1,6 @@
 # MCP v2 Server Registration — HTTP Status Codes
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -13,22 +13,22 @@ server-registration endpoints (`/api/v2/mcp/servers/{name}`). It asserts the
 - `POST` an already-registered server name → **409 Conflict**
 - `DELETE` a non-existent server → **404 Not Found**
 
-> **This test is a known-defect watchdog (issue #396) and is EXPECTED TO FAIL
-> against current Langflow builds.** `api/v2/mcp.py` currently returns **500**
-> for both conditions ("Server already exists." / "Server not found."). The
-> intentional failure is the formal record — captured in `reports/daily-history.jsonl`,
-> the QA Platform, and the `[Daily Failure]` issue — that the suite detected the
-> defect. On the first daily failure the workflow auto-removes `@stable` from
-> these tests (so they stop running); once upstream returns the correct codes,
-> restore `@stable` and they become forward regression guards. A reviewer should
-> **not** treat the red as a mistake — see the **Tags** section.
+> **These were known-defect watchdogs (#396, #633, #991) and are not any more.**
+> From 1.5.0 until 2026-07-27 `api/v2/mcp.py` returned **500** for both conditions
+> ("Server already exists." / "Server not found."), so both tests failed by design
+> and `@stable` was auto-removed on 2026-07-10. Upstream fixed it in
+> langflow-ai/langflow#14005 (merged 2026-07-27) — verified on Nightly
+> **1.12.0.dev10**, source-confirmed in the image. `@stable` is restored and the
+> tests are now **forward regression guards**: a failure here is a regression of
+> that upstream fix, not the historical red.
 
 Why 409/404 are the correct codes is not just REST theory — it is Langflow's own
 convention: 409 for uniqueness conflicts (`flows_helpers.py` "Name must be
 unique", `authz_*`, `deployments`, and the sibling project-scoped MCP endpoint
 `api/v1/projects_mcp_helpers.py` which already returns 409 for a duplicate server
-name), and 404 for missing resources (145+ call sites). The 500s in
-`api/v2/mcp.py` are the anomaly.
+name), and 404 for missing resources (145+ call sites). The 500s
+`api/v2/mcp.py` used to return were the anomaly; it now matches the convention its
+own sibling endpoint already followed.
 
 ---
 
@@ -36,12 +36,15 @@ name), and 404 for missing resources (145+ call sites). The 500s in
 
 Both tests: `@mcp` `@regression` `@api` `@stable`.
 
-`@stable` is intentional: these tests must run in the daily workflow so the
-defect is formally recorded and the eventual upstream fix is detected. Because
-the tests fail by design against the buggy nightly, the daily's
-`auto-remove-stable` step will strip `@stable` on the first run — that is the
-intended lifecycle, not a regression. Restore `@stable` once Langflow returns
-409/404 (tracked in #396).
+`@stable` is restored as of #991, after the upstream fix landed. Promotion
+evidence: 10/10 clean executions (5 bursts x 2 tests, `--workers=1 --retries=0`)
+against Nightly 1.12.0.dev10, plus a force-fail of all four assertions (both
+status codes and both `detail` matchers) — each mutation failed exactly one test.
+
+Historical note, so a reader does not mistake the record for a defect: between
+2026-07-10 and #991 these tests carried no `@stable` and ran in no lane. That is
+also why nobody noticed the upstream fix for three days — a watchdog outside the
+daily watches nothing.
 
 ---
 
@@ -52,14 +55,14 @@ intended lifecycle, not a regression. Restore `@stable` once Langflow returns
 1. Get an auth token (`GET /api/v1/auto_login`)
 2. Pre-clean: `DELETE /api/v2/mcp/servers/{name}` (remove any leftover)
 3. `POST /api/v2/mcp/servers/{name}` with `{ "url": "http://localhost:1/mcp" }` → expect **200**
-4. `POST` the same name again → expect **409 Conflict** *(currently 500 — fails by design)*
+4. `POST` the same name again → expect **409 Conflict**
 5. Cleanup: `DELETE` the server
 
 **Test 2 — delete missing → 404**
 
 1. Get an auth token
 2. Guard: `DELETE` the (unique, never-registered) name to ensure absence
-3. `DELETE /api/v2/mcp/servers/{name}` → expect **404 Not Found** *(currently 500 — fails by design)*
+3. `DELETE /api/v2/mcp/servers/{name}` → expect **404 Not Found**
 
 ---
 

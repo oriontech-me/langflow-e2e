@@ -11,15 +11,22 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 //   • POST an already-registered name  → 409 Conflict  (duplicate resource)
 //   • DELETE a non-existent server      → 404 Not Found
 //
-// KNOWN-DEFECT WATCHDOG (issue #396): on current Langflow builds these endpoints
-// return **500** for both conditions (`api/v2/mcp.py` — "Server already exists."
-// / "Server not found."), so these tests are EXPECTED TO FAIL against the
-// nightly until the defect is fixed upstream. That failure is intentional and is
-// the formal, dated record (reports/daily-history.jsonl + QA Platform + daily-failure
-// issue) that the suite detected the bug. On the first daily failure the daily
-// workflow auto-removes `@stable` from these tests; once upstream returns the
-// correct codes, restore `@stable` and the tests become forward regression
-// guards.
+// HISTORY — these were expected-red watchdogs, and they are not any more (#991).
+// From 1.5.0 (upstream PR langflow-ai/langflow#8388) until 2026-07-27,
+// `api/v2/mcp.py` answered **500** for both conditions ("Server already exists."
+// / "Server not found."), so both tests failed by design against the nightly and
+// `@stable` was auto-removed on 2026-07-10 (daily #29087610824). That red was the
+// formal, dated record that the suite detected the defect — see #396, #633, #991.
+//
+// Upstream fixed it in langflow-ai/langflow#14005 (merged 2026-07-27, a
+// concurrency fix that also corrected these two status codes). Verified on
+// Langflow Nightly **1.12.0.dev10**: 409 and 404 are returned, source-confirmed
+// in the image (`api/v2/mcp.py` raises 404 at the delete path and 409 at the
+// duplicate path), 10/10 clean test executions, every assertion force-failed.
+//
+// So the direction of these tests has INVERTED: they no longer document a bug we
+// are waiting on, they protect a contract that is now correct. A failure here is a
+// REGRESSION — read it as new, not as the known-defect red it used to be.
 //
 // Why 409/404 are the correct codes (not just REST theory): Langflow itself uses
 //   • 409 for uniqueness conflicts — `flows_helpers.py` ("Name must be unique"),
@@ -28,7 +35,8 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 //     duplicate server name;
 //   • 404 for missing resources — 145+ call sites across the API. (Langflow
 //     resolves a missing DELETE to 404, not an idempotent 204/200.)
-// The 500s in `api/v2/mcp.py` are the anomaly.
+// The 500s `api/v2/mcp.py` used to return were the anomaly; it now matches the
+// convention its own sibling endpoint already followed.
 //
 // Each assertion checks BOTH the status code AND the response `detail`: a status
 // alone can pass for the wrong reason — e.g. a renamed/removed route makes the
@@ -37,8 +45,12 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 // pass to the intended code path.
 //
 // Pure `page.request` (APIRequestContext) is used deliberately: it runs outside
-// the browser page, so the intentional 5xx does NOT trip the fixture's
-// `page.on("response")` backend-error monitor — no `allowFlowErrors()` needed.
+// the browser page, so the deliberate error statuses do NOT reach the fixture's
+// `page.on("response")` backend-error monitor — no `allowHttpErrors()` needed.
+// This matters more since #1084 widened that monitor from four exact codes to
+// every 4xx/5xx on an `/api/` route: the 409 and 404 these tests provoke on
+// purpose are now monitored statuses, and `page.request` traffic is what keeps
+// them out of the advisory log.
 
 // Unique, collision-proof names. Worker index + timestamp disambiguate parallel
 // workers; the random UUID also rules out two independent invocations sharing the
@@ -69,7 +81,7 @@ async function readDetail(resp: {
 test.describe("MCP v2 server registration — HTTP status codes", () => {
   test(
     "registering an already-existing MCP server returns 409 Conflict",
-    { tag: ["@mcp", "@regression", "@api"] },
+    { tag: ["@mcp", "@regression", "@api", "@stable"] },
     async ({ page }) => {
       const authHeader = await getAuthToken(page.request);
       expect(
@@ -112,8 +124,9 @@ test.describe("MCP v2 server registration — HTTP status codes", () => {
           });
           expect(
             second.status(),
-            "Duplicate MCP server registration must return 409 Conflict " +
-              "(Langflow currently returns 500 — issue #396)",
+            "Duplicate MCP server registration must return 409 Conflict. " +
+              "A 500 here is a REGRESSION of langflow-ai/langflow#14005 (see #991), " +
+              "not the known defect this test used to document",
           ).toBe(409);
           expect(
             await readDetail(second),
@@ -130,7 +143,7 @@ test.describe("MCP v2 server registration — HTTP status codes", () => {
 
   test(
     "deleting a non-existent MCP server returns 404 Not Found",
-    { tag: ["@mcp", "@regression", "@api"] },
+    { tag: ["@mcp", "@regression", "@api", "@stable"] },
     async ({ page }) => {
       const authHeader = await getAuthToken(page.request);
       expect(
@@ -147,8 +160,9 @@ test.describe("MCP v2 server registration — HTTP status codes", () => {
         const resp = await page.request.delete(path, { headers });
         expect(
           resp.status(),
-          "Deleting a non-existent MCP server must return 404 Not Found " +
-            "(Langflow currently returns 500 — issue #396)",
+          "Deleting a non-existent MCP server must return 404 Not Found. " +
+            "A 500 here is a REGRESSION of langflow-ai/langflow#14005 (see #991), " +
+            "not the known defect this test used to document",
         ).toBe(404);
         // Guard against a route-level 404 (bare "Not Found") masquerading as the
         // resource-level "Server not found." — a renamed/removed endpoint would
