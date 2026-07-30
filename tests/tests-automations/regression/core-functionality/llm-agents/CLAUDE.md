@@ -34,9 +34,19 @@ await new SimpleAgentTemplatePage(page).load(options);
 ### 3. Parameterize the test by model (project standard)
 
 ```typescript
-import { getTestTargets } from "../../../../helpers/provider-setup"; // or inline as in agent-component-regression.spec.ts
+import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
 
-for (const { label, options, skipReason } of targets) {
+// The target list is built per spec from models.json — copy the `getTestTargets()`
+// in agent-component-regression.spec.ts. The inactive-provider skip map is NOT:
+// it is one shared implementation, and inlining a copy of it is the drift #1043
+// removed from 18 specs.
+function getTestTargets(): TestTarget[] {
+  const skipReasons = providerSkipReasons();
+  // ... filter models.json by MODEL_TEST_ID / MODEL_TEST_PROVIDER, then attach
+  // skipReasons.get(provider) as each target's skipReason
+}
+
+for (const { label, options, skipReason } of getTestTargets()) {
   test.describe.serial(`My Test [${label}]`, () => {
     test("should ...", async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");
@@ -46,7 +56,7 @@ for (const { label, options, skipReason } of targets) {
 }
 ```
 
-This automatically creates one describe per model — the test runs for each model in `models.json`, respecting the `MODEL_TEST_ID` and `MODEL_TEST_PROVIDER` variables from `.env` (by priority).
+This automatically creates one describe per model — the test runs for each model in `models.json`, respecting the `MODEL_TEST_ID` and `MODEL_TEST_PROVIDER` variables from `.env` (by priority). The full pattern, including the strategy filter, is in `CONTRIBUTING.md` → **Model parameterization pattern**.
 
 ### 4. Handle MODEL_NOT_AVAILABLE
 
