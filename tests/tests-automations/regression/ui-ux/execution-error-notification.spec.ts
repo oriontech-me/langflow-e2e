@@ -1,5 +1,9 @@
 import type { Page } from "@playwright/test";
-import { expect, test } from "../../../fixtures/fixtures";
+import {
+  expect,
+  test,
+  type PageWithErrorHooks,
+} from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
@@ -140,17 +144,21 @@ test.describe("Execution Error Notifications", () => {
     "executing flow with server error shows error feedback",
     { tag: ["@release", "@workspace", "@observability"] },
     async ({ page }) => {
-      (page as any).allowFlowErrors();
+      const hooks = page as PageWithErrorHooks;
+      hooks.allowFlowErrors();
+      // The mocked 5xx below is this test's own fixture, not a finding — declare
+      // it so it stays out of the advisory error log (#1084).
+      hooks.allowHttpErrors();
       trackCreatedFlows(page);
       await setupChatFlow(page);
       await openPlayground(page);
 
-      // Return a 5xx from the execution endpoint (server-side failure). Uses
-      // 503, not 500: the fixture's global response monitor flags real backend
-      // errors on 400/404/422/500 (see fixtures.ts) and would treat this mocked
-      // 500 as an instance error. 503 is an equally valid server failure that
-      // drives the same "Workflow run failed" path without tripping the monitor
-      // on the shared instance. Live-confirmed on 1.11.0.dev41.
+      // Return a 5xx from the execution endpoint (server-side failure). 503 was
+      // originally chosen to slip past the fixture's monitor, which only matched
+      // 400/404/422/500 — that filter now covers every 4xx/5xx, so the evasion
+      // no longer works and `allowHttpErrors()` above is what keeps the mocked
+      // response out of the log (#1084). The status stays 503 because it drives
+      // the same "Workflow run failed" path, live-confirmed on 1.11.0.dev41.
       await page.route(WORKFLOWS_ENDPOINT, async (route) => {
         await route.fulfill({
           status: 503,
