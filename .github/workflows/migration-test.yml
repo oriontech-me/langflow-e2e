@@ -127,7 +127,12 @@ jobs:
       - name: Wait for Langflow latest
         run: python tests/github-workflows/migration/wait_for_langflow.py
 
+      # `id`s on the three verification steps feed `steps.<id>.outcome` to the report
+      # below. That is what lets the report reconcile "what the runner observed"
+      # against "what the phase recorded", instead of inferring success from the
+      # absence of a failure record — see the Generate report step (#1120).
       - name: Create flow, configure and execute on latest
+        id: phase_latest
         run: python tests/github-workflows/migration/setup_latest.py
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -188,11 +193,17 @@ jobs:
 
       # ── Phase 3: Verify Migration ─────────────────────────────
       - name: Verify migration via API
+        id: phase_nightly_api
         run: python tests/github-workflows/migration/verify_migration_api.py
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
+      # Deliberately NOT `continue-on-error`: that would mark the step's conclusion
+      # as success and the job would stop failing, which is what the issue-opening
+      # condition below keys on. The report step reads `steps.*.outcome` under
+      # `if: always()`, which is available for a failed step anyway (#1120).
       - name: Verify migration via UI (Playwright)
+        id: phase_nightly_ui
         run: pytest tests/github-workflows/migration/test_ui_migration.py -v --tracing=retain-on-failure --output=test-results
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -202,8 +213,18 @@ jobs:
         if: always()
         run: kill "$(cat /tmp/langflow.pid)" 2>/dev/null || true
 
+      # The outcomes are what stop the report inferring success from silence
+      # (#1120): a phase the runner saw fail, that recorded no failing step, is
+      # reported as a crash rather than rendered as `Result: PASSED`. Run #115
+      # opened an issue titled "Failed" whose body said PASSED for exactly that
+      # reason — `test_05_execute_flow_ui` died on a Playwright timeout before it
+      # could write its own verdict.
       - name: Generate report
         if: always()
+        env:
+          PHASE_OUTCOME_latest: ${{ steps.phase_latest.outcome }}
+          PHASE_OUTCOME_nightly_api: ${{ steps.phase_nightly_api.outcome }}
+          PHASE_OUTCOME_nightly_ui: ${{ steps.phase_nightly_ui.outcome }}
         run: python tests/github-workflows/migration/generate_report.py
 
       - name: Print report

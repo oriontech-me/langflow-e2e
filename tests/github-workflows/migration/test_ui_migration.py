@@ -8,7 +8,6 @@ Tests:
 5. Execute the flow from the Playground UI
 """
 
-import json
 import os
 import re
 import time
@@ -16,20 +15,23 @@ import time
 import pytest
 from playwright.sync_api import Page, expect
 
+from . import state_store
+
 STATE_FILE = os.environ.get("STATE_FILE", "/tmp/migration-test-state.json")
+
+PHASE = "nightly_ui"
 
 
 def save_ui_state(results: dict):
-    """Append UI test results to the shared state file."""
-    try:
-        with open(STATE_FILE) as f:
-            state = json.load(f)
-    except FileNotFoundError:
-        state = {"phases": {}}
+    """Merge this test's results into the shared state file's `nightly_ui` phase.
 
-    state["phases"]["nightly_ui"] = results
-    with open(STATE_FILE, "w") as f:
-        json.dump(state, f, indent=2)
+    Merges rather than assigns (#1120). `setup` below is an autouse fixture, so
+    pytest hands each test method a fresh `self.results`; the previous
+    `state["phases"]["nightly_ui"] = results` therefore erased every step recorded
+    before it. Run #115 ran six UI tests and the report showed one row. The contract
+    and its unit tests live in `state_store.py`.
+    """
+    state_store.save_phase(PHASE, results, state_file=STATE_FILE)
 
 
 class TestMigrationUI:
@@ -224,92 +226,72 @@ class TestMigrationUI:
         self.page.screenshot(path="test-results/after-update-components.png")
 
     def test_05_execute_flow_ui(self):
-        """Execute the flow from the Playground UI."""
+        """Execute the flow from the Playground UI.
+
+        ## Selectors (#1120)
+
+        Every locator below is one the TypeScript suite drives against live Langflow
+        — `playground-btn-flow-io` (81 call sites), `input-chat-playground` (125),
+        `button-send` (74), `button-stop` (18), `div-chat-message` (51). The previous
+        version invented its own and two of them matched nothing:
+
+        - `[data-testid='playground-btn']` — never existed.
+        - `button[data-testid='send-button']` — never existed either, so the
+          `button:has(svg):near(textarea)` fallback clicked some *other* svg button
+          near the textarea and `click()` timed out after 30 s. That is the failure
+          that opened this issue.
+
+        ## No conditional bypasses
+
+        The old body was a chain of `if count() > 0 and is_visible(): … else:
+        status="skip"; return`, and its final verdict could only be `pass` or
+        `warn` — so a Playground that never rendered, or a flow that answered
+        nothing, was recorded as a non-failure. This test now fails when the
+        Playground does not open, when the reply never arrives, or when the reply is
+        empty.
+        """
         self.page.goto(f"{self.base_url}/flow/{self.flow_id}", wait_until="networkidle")
-        self.page.wait_for_timeout(3000)
 
-        # Click the "Playground" button to open the playground panel
-        playground_btn = self.page.locator(
-            "button:has-text('Playground'), [data-testid='playground-btn']"
-        )
-        if playground_btn.count() > 0 and playground_btn.first.is_visible():
-            playground_btn.first.click()
-            self.page.wait_for_timeout(2000)
-
-        # Find the chat input
-        chat_input = self.page.locator(
-            "textarea[placeholder*='Send'], "
-            "textarea[placeholder*='message'], "
-            "textarea[placeholder*='Type'], "
-            "input[placeholder*='Send'], "
-            "input[placeholder*='message']"
+        # Open the Playground. A migrated flow that cannot open its Playground is a
+        # migration failure, so this is asserted, not probed.
+        self.page.get_by_test_id("playground-btn-flow-io").click(timeout=30_000)
+        expect(self.page.get_by_test_id("button-send").last).to_be_visible(
+            timeout=30_000
         )
 
-        if chat_input.count() == 0 or not chat_input.first.is_visible():
-            self.results["steps"]["execute_flow_ui"] = {
-                "status": "skip",
-                "detail": "Could not find chat input in Playground",
-            }
-            self._save_results()
-            self.page.screenshot(path="test-results/playground-no-input.png")
-            return
+        question = "Hello, what is 2+2?"
+        self.page.get_by_test_id("input-chat-playground").last.fill(question)
+        self.page.get_by_test_id("button-send").last.click()
 
-        # Type a message
-        chat_input.first.fill("Hello, what is 2+2?")
-        self.page.wait_for_timeout(500)
+        # The user's own bubble proves the send landed — the step the old version
+        # could not tell apart from a click that did nothing. Langflow renders it as
+        # `chat-message-User-<text>`, verified on 1.12.0.dev9.
+        # `.last`, not the bare locator: the session keeps its history, so asking the
+        # same question twice resolves to several bubbles and strict mode rejects it.
+        expect(
+            self.page.get_by_test_id(f"chat-message-User-{question}").last
+        ).to_be_visible(timeout=30_000)
 
-        # Send the message (press Enter or click send button)
-        send_btn = self.page.locator(
-            "button[data-testid='send-button'], "
-            "button[aria-label*='send' i], "
-            "button:has(svg):near(textarea)"
-        )
-
-        if send_btn.count() > 0 and send_btn.first.is_visible():
-            send_btn.first.click()
-        else:
-            chat_input.first.press("Enter")
-
-        # Wait for response (look for a new message bubble or loading indicator)
-        self.page.wait_for_timeout(3000)
-
-        # Wait for loading to finish (up to 60s for LLM response)
-        loading = self.page.locator(
-            "[class*='loading' i], [class*='spinner' i], "
-            "[class*='animate-spin']"
-        )
-        try:
-            if loading.count() > 0 and loading.first.is_visible():
-                loading.first.wait_for(state="hidden", timeout=60_000)
-        except Exception:
-            pass
-
-        self.page.wait_for_timeout(2000)
-
-        # Check for error messages in playground
-        error_in_playground = self.page.locator(
-            ".playground-error, [class*='error' i]:near(textarea)"
-        )
-        has_error = False
-        error_text = ""
-
-        # Check for the response message
-        messages = self.page.locator(
-            "[class*='message' i], [data-testid*='message'], "
-            "[class*='chat-message'], [class*='markdown']"
-        )
+        # Then the reply. Waited on directly rather than via `button-stop`
+        # disappearing: `to_be_hidden` is satisfied by an element that never
+        # existed, so a run that never started would have passed that check —
+        # the same read-absence-as-success mistake this issue is about.
+        reply = self.page.get_by_test_id("div-chat-message").last
+        expect(reply).to_be_visible(timeout=120_000)
+        reply_text = reply.inner_text().strip()
 
         self.page.screenshot(path="test-results/playground-result.png")
 
-        msg_count = messages.count()
-        got_response = msg_count > 1  # At least the user message + bot response
-
         self.results["steps"]["execute_flow_ui"] = {
-            "status": "pass" if got_response else "warn",
-            "message_count": msg_count,
-            "got_response": got_response,
+            "status": "pass" if reply_text else "fail",
+            "detail": reply_text[:200] if reply_text else "the reply bubble rendered empty",
         }
         self._save_results()
+
+        assert reply_text, (
+            "the Playground rendered a reply bubble with no text — the flow ran but "
+            "produced nothing after migration"
+        )
 
     def test_06_execute_flow_api_post_update(self):
         """Execute the flow via API after component updates."""
