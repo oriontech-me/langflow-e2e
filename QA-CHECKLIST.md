@@ -223,6 +223,8 @@
 - [x] cURL parser auto-fills URL field and executes the GET, returning 200 → `core-components/api-request-component-regression.spec.ts`
 - [x] Body table accepts key + value cell entries when method is POST (body field is `advanced=True` and hidden by inspector while method is GET) → `core-components/api-request-component-regression.spec.ts`
 - [x] Flow state (URL, method, headers row) persists in database after autosave and rehydrates on reload → `core-components/api-request-component-regression.spec.ts`
+- [x] `include_httpx_metadata=true` adds the outgoing request headers as a top-level `headers` key in the output Data (advanced field, added to the node body via the inspector) → `api/flows/api-component-regression.spec.ts`
+- [x] Request timeout shorter than the endpoint's delay returns `status_code` 500 with an `error` field instead of raising (advanced field, added to the node body via the inspector) → `api/flows/api-component-regression.spec.ts`
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`

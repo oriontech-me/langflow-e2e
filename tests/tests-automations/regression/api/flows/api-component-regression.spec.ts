@@ -2,14 +2,39 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../../helpers/ui/open-advanced-options";
+
+// Echo endpoint for the two `@stable` tests in this file — same knob the rest of
+// the suite uses (#383/#407/#462).
+//
+// A test that runs in `daily-stable.yml` must not depend on a public third-party
+// service: httpbin.org returned 5xx on three separate runs, which is why
+// `@stable` was removed from the API Request tests (#383), why they were
+// decoupled (#409), and why it recurred with postman-echo (#462). The daily
+// self-hosts a go-httpbin container and points `ECHO_BASE_URL` at its IP, so on
+// CI these two never leave the runner's network. `/get` and `/delay/{n}` — the
+// only paths used here — exist on postman-echo, on go-httpbin and on httpbin.
+//
+// Scoped deliberately to the `@stable` pair (#1107): the three `@release`-only
+// tests below keep their hardcoded httpbin.org URLs. Migrating those, and
+// retiring this legacy spec into the consolidated one, is tracked separately —
+// the line drawn here is that whatever enters the daily lane cannot depend on a
+// public endpoint.
+const ECHO_BASE = (
+  process.env.ECHO_BASE_URL ??
+  process.env.HTTPBIN_BASE_URL ??
+  "https://postman-echo.com"
+).replace(/\/$/, "");
 
 // Target of the cURL-mode test. Named because it is asserted three times — in
 // the parse waiter's response body, in the mounted URL field, and in the echoed
 // output — and all three must agree for the assertion chain to mean anything.
 //
-// Still httpbin.org, like the rest of this file: the migration to the
-// `ECHO_BASE_URL` knob the rest of the suite uses (#383/#407) is pre-existing
-// debt tracked separately, not part of this change.
+// Still httpbin.org: that test is `@release`-only, so it is out of the daily
+// lane and out of the scope drawn above.
 const CURL_TARGET_URL = "https://httpbin.org/post";
 
 // Capture every flow each test's page creates from its POST /api/v1/flows → 201
@@ -110,7 +135,9 @@ test.afterEach(async ({ page, request }, testInfo) => {
 });
 
 // Reusable helper: create blank flow and add the API Request component.
-// After this call the inspector panel is open with all component fields visible.
+// After this call the component node is on the canvas and selected, with its
+// NON-advanced fields (url_input, method) rendered on the node body. Advanced
+// fields are not on the body — see `addFieldToNodeBody` below.
 async function addApiRequestComponent(page: any) {
   await awaitBootstrapTest(page);
   await page.getByTestId("blank-flow").click();
@@ -119,8 +146,66 @@ async function addApiRequestComponent(page: any) {
   await page.getByTestId("sidebar-search-input").fill("API Request");
   await page.waitForSelector('[data-testid="add-component-button-api-request"]', { timeout: 10000 });
   await page.getByTestId("add-component-button-api-request").click();
-  // Inspector opens automatically; wait for the URL field as signal
+  // Wait for the URL field on the node body as the "component is mounted" signal
   await page.waitForSelector('[data-testid="popover-anchor-input-url_input"]', { timeout: 15000 });
+}
+
+// Move an ADVANCED parameter onto the node body so its widget can be driven
+// (#1107). `timeout` and `include_httpx_metadata` are declared `advanced=True`
+// upstream (`lfx/components/data_source/api_request.py`), and since the nightly
+// replaced the "Controls" modal with the node inspector side-panel an advanced
+// parameter has no widget anywhere until it is added to the body: the panel
+// itself only MANAGES parameters (add / remove / expose-to-API rows), it does
+// not edit their values. So `int_int_timeout` /
+// `toggle_bool_include_httpx_metadata` simply do not exist in the DOM on a
+// freshly added node — which is exactly how both tests below used to fail.
+//
+// Same pattern the sibling spec already uses for the headers/body tables
+// (`core-components/api-request-component-regression.spec.ts` →
+// `addTableFieldToBody`): select the node, open the inspector, click
+// `inspector-add-<field>`, close the inspector. Kept local to this file rather
+// than shared, mirroring that sibling.
+//
+// The post-condition is asserted here, not left to the caller: if the add
+// silently no-ops, this fails naming the field instead of surfacing as an
+// opaque timeout on the widget several lines later.
+async function addFieldToNodeBody(page: any, field: string, widgetTestId: string) {
+  await page.getByTestId("title-API Request").click();
+  await openAdvancedOptions(page);
+  await page.getByTestId(`inspector-add-${field}`).click();
+  await closeAdvancedOptions(page);
+  await expect(page.getByTestId(widgetTestId)).toBeVisible({ timeout: 10000 });
+}
+
+// Read the component's output Data as a PARSED object, from the open output
+// dialog.
+//
+// Why not `textContent` of the editor: the output renders in a virtualized code
+// editor, so only the visible lines exist in the DOM and the text is truncated
+// — it cannot be parsed. The copy button yields the whole payload; this is the
+// same mechanism the sibling spec's `runOnce` uses, and `playwright.config.ts`
+// already grants the clipboard permissions it needs.
+//
+// Why parsed rather than substring matching: a substring cannot tell a
+// TOP-LEVEL key from one nested inside the echoed response body. That is not
+// hypothetical — it silently defused the `include_httpx_metadata` assertion
+// below (#1107); see the comment there.
+async function readOutputJson(page: any): Promise<Record<string, any>> {
+  const dialog = page
+    .locator('[role="dialog"]')
+    .filter({ has: page.getByTestId("copy-output-button") });
+  const copyButton = dialog.getByTestId("copy-output-button");
+  await expect(copyButton).toBeVisible({ timeout: 10000 });
+  // The clipboard persists across tests in a worker, so clear it first —
+  // otherwise the poll below can return a previous test's output immediately.
+  await page.evaluate(() => navigator.clipboard.writeText(""));
+  let clipboard = "";
+  await expect(async () => {
+    await copyButton.click();
+    clipboard = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clipboard.length).toBeGreaterThan(0);
+  }).toPass({ timeout: 15000 });
+  return JSON.parse(clipboard);
 }
 
 test("API Request component performs GET to httpbin and returns built successfully",
@@ -258,15 +343,27 @@ test("API Request component — cURL mode POST with JSON body",
 );
 
 test("API Request component — include_httpx_metadata=true adds request headers to output",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
-    await page.getByTestId("popover-anchor-input-url_input").fill("https://httpbin.org/get");
+    await page.getByTestId("popover-anchor-input-url_input").fill(`${ECHO_BASE}/get`);
 
-    // Enable include_httpx_metadata toggle — adds outgoing request headers to output
-    await page.waitForSelector('[data-testid="toggle_bool_include_httpx_metadata"]', { timeout: 10000 });
-    await page.getByTestId("toggle_bool_include_httpx_metadata").click();
+    // Enable include_httpx_metadata toggle — adds outgoing request headers to output.
+    // Advanced field: put it on the node body first (#1107).
+    await addFieldToNodeBody(
+      page,
+      "include_httpx_metadata",
+      "toggle_bool_include_httpx_metadata",
+    );
+    const httpxToggle = page.getByTestId("toggle_bool_include_httpx_metadata");
+    // Assert the switch actually flips. Without this the causal link is
+    // assumed: a click that no-ops would surface as the "headers" assertion
+    // failing at the end, which reads as a product regression rather than as
+    // the test failing to set the flag it is testing.
+    await expect(httpxToggle).toHaveAttribute("aria-checked", "false");
+    await httpxToggle.click();
+    await expect(httpxToggle).toHaveAttribute("aria-checked", "true");
 
     await page.getByTestId("button_run_api request").click();
     await page.waitForSelector("text=built successfully", { timeout: 30000 });
@@ -275,30 +372,50 @@ test("API Request component — include_httpx_metadata=true adds request headers
     await page.getByTestId("output-inspection-api response-apirequest").click();
     await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
 
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog.getByText('"status_code": 200')).toBeVisible();
-
-    // With include_httpx_metadata=True, the output includes a "headers" key with outgoing request headers.
-    // The virtualized editor may not render all lines; use textContent to check the full output.
-    const editorContent = await dialog.locator("[role='textbox']").evaluate((el) => el.textContent ?? "");
-    expect(editorContent).toContain('"headers"');
-    // Langflow sets a User-Agent header identifying itself
-    expect(editorContent).toContain("Langflow");
+    // Assert on the PARSED output, not on a substring of the rendered text.
+    //
+    // `include_httpx_metadata=True` makes the component add the outgoing request
+    // headers as a TOP-LEVEL `headers` key (`api_request.py` →
+    // `metadata.update({"headers": headers})`). The base metadata is
+    // `source` / `status_code` / `response_headers` / `result`, and `result`
+    // carries the echo service's OWN `"headers"` object — so the previous
+    // `toContain('"headers"')` on the editor text matched the echoed body and
+    // passed with the flag OFF. Measured on 1.12.0.dev9 (#1107): top-level keys
+    // are `[source, status_code, response_headers, result, headers]` with the
+    // flag on versus `[source, status_code, response_headers, result]` with it
+    // off, i.e. the key's presence at the top level is the flag's only
+    // deterministic observable. Same trap the sibling spec documents for
+    // `status_code` in `isTransientOutput`.
+    const output = await readOutputJson(page);
+    expect(output.status_code).toBe(200);
+    expect(Object.keys(output)).toContain("headers");
+    // Independent of the flag, and kept from the original assertion: Langflow
+    // identifies itself to the endpoint, which the echo service reflects back
+    // inside `result.headers`. Scoped to that object so it can no longer be
+    // confused with the top-level metadata asserted above.
+    expect(JSON.stringify(output.result?.headers ?? {})).toContain("Langflow");
 
     await page.keyboard.press("Escape");
   },
 );
 
 test("API Request component — timeout error returns status_code 500 with error field",
-  { tag: ["@release", "@regression"] },
+  { tag: ["@stable", "@release", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
     // Set a very short timeout (3s) and point at an endpoint that delays 10s —
     // the component should catch the exception and return status_code 500.
-    await page.getByTestId("int_int_timeout").fill("3");
+    // Advanced field: put it on the node body first (#1107).
+    await addFieldToNodeBody(page, "timeout", "int_int_timeout");
+    const timeoutField = page.getByTestId("int_int_timeout");
+    await timeoutField.fill("3");
     await page.keyboard.press("Tab");
-    await page.getByTestId("popover-anchor-input-url_input").fill("https://httpbin.org/delay/10");
+    // The whole test hinges on this value: with the upstream default (30s) the
+    // 10s delay below completes and the run returns 200, so a fill that did not
+    // land would turn this into a false negative on the 500 assertion.
+    await expect(timeoutField).toHaveValue("3");
+    await page.getByTestId("popover-anchor-input-url_input").fill(`${ECHO_BASE}/delay/10`);
 
     await page.getByTestId("button_run_api request").click();
 
@@ -310,11 +427,15 @@ test("API Request component — timeout error returns status_code 500 with error
     await page.getByTestId("output-inspection-api response-apirequest").click();
     await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
 
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog.getByText('"status_code": 500')).toBeVisible();
-
-    const editorContent = await dialog.locator("[role='textbox']").evaluate((el) => el.textContent ?? "");
-    expect(editorContent).toContain('"error"');
+    // Parsed, for the same reason as the test above: `status_code` and `error`
+    // must be asserted at the TOP LEVEL of the output Data. A substring match on
+    // the rendered text would also accept them nested inside the echoed body —
+    // which is how a sibling assertion in this file silently stopped testing its
+    // feature (#1107). This is now `@stable`, so the daily reads it as release
+    // signal and the assertion has to be exact.
+    const output = await readOutputJson(page);
+    expect(output.status_code).toBe(500);
+    expect(Object.keys(output)).toContain("error");
 
     await page.keyboard.press("Escape");
   },
