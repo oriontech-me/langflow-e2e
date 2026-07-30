@@ -1,6 +1,6 @@
 # Flow Functionality — Flow Rename via Header
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -26,6 +26,13 @@ API test: `@release` `@workspace` `@api` `@stable`
 
 ### UI test — `flow can be renamed via the header edit`
 
+0. Capture every flow this test creates — the bootstrap flow and the blank flow —
+   by id from their `POST /api/v1/flows` → 201 responses (`trackCreatedFlows`),
+   and delete them id-scoped in `afterEach`. Id-scoped, never a name or wipe
+   sweep, which would kill flows other parallel workers are driving (#553).
+   Added in #1154: this test leaked one flow per run, and accumulated flows are
+   what make another worker's residual card overlap a target's absolute-inset
+   `list-card-open-button` and swallow a hit-tested click (#580/#588).
 1. Bootstrap the app and wait for the `blank-flow` card
 2. Click `blank-flow` to enter the editor; wait for `sidebar-search-input` to confirm the canvas loaded
 3. Generate a unique name `My Renamed Flow ${Date.now()}` and call `renameFlow(page, { flowName })` (helper opens the modal, fills the input, clicks save, dismisses the toast, and waits for the header DOM to update via `waitForFunction`)
@@ -47,6 +54,7 @@ The UI test must:
 
 - Emit at least one explicit `expect()` (`flow_name` `toHaveText(newName)`) — the helper's internal `waitForFunction` is defensive but is not visible to the test runner, so the explicit `expect` is the framework-visible guard
 - Use a unique name per run (`Date.now()` suffix) to avoid colliding with persisted flows from prior runs
+- Leave no flow behind: the `afterEach` discards every id the tracker captured, so the instance's flow count returns to its pre-run value even when the test fails
 
 The API test must assert **all** of:
 
@@ -62,6 +70,7 @@ The API test must assert **all** of:
 
 - `tests/helpers/flows/rename-flow.ts` — opens the rename modal, fills `input-flow-name`, clicks `save-flow-settings`, dismisses the "Changes saved successfully" toast, and waits for the `flow_name` DOM to commit via `waitForFunction`
 - `tests/helpers/auth/get-auth-token.ts` — issues a Bearer token from the configured superuser credentials
+- `tests/helpers/flows/track-created-flows.ts` — captures the UI test's created flow ids from the page's `POST /api/v1/flows` → 201 responses and deletes them id-scoped in `afterEach`. It does **not** see the API test's flow: that one is created through the `request` fixture, which emits no page-level response events (#1147), so the API test keeps its own `finally` `DELETE`
 - `src/frontend/src/components/headerComponent/` — renders the `flow_name` header that opens the rename modal
 - `src/backend/base/langflow/api/v1/flows.py` — owns `POST/PATCH/GET/DELETE /api/v1/flows`; the round-trip in the API test exercises this endpoint directly
 

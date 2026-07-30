@@ -3,12 +3,45 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import {
+  trackCreatedFlows,
+  type FlowTracker,
+} from "../../../helpers/flows/track-created-flows";
 
 const FLOW_BASE = {
   description: "Flow rename test",
   data: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
   is_component: false,
 };
+
+// The UI test below created a flow per run and never deleted it, so every run of
+// this file left one behind (#1154). Accumulated flows are not cosmetic: they are
+// what makes another worker's residual card overlap a target's absolute-inset
+// `list-card-open-button` and swallow a hit-tested click (#580/#588).
+//
+// The sibling API test keeps its own `finally` DELETE. It creates through the
+// `request` fixture, a separate `APIRequestContext` that emits no page-level
+// response events, so this tracker cannot see that flow (#1147) — two cleanup
+// paths here is the correct shape, not a leftover.
+let flows: FlowTracker | undefined;
+
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
+
+test.afterEach(async ({ request }) => {
+  const tracker = flows;
+  // Null out BEFORE awaiting. `flows?.` alone only protects the FIRST test in a
+  // worker: for a later test whose `beforeEach` threw, the binding still holds
+  // the PREVIOUS test's tracker, and the optional chain waves it through. (The
+  // three pre-#1154 adopters declare `flows` non-nullable, which also makes
+  // their `?.` a guard TypeScript treats as dead.)
+  flows = undefined;
+  // Default (log and continue), not `strict`: this file had no teardown at all
+  // before, so failing an otherwise-green test on a cleanup blip would be a new
+  // contract rather than a preserved one. The failure is still printed.
+  await tracker?.cleanup(request);
+});
 
 test.describe("Flow Rename via Header", () => {
   test(
