@@ -24,7 +24,8 @@ docs/superpowers/
 .playwright-mcp/
 .worktrees/
 
-# Artefatos gerados localmente — cada dev gera via collect-models.spec.ts
+# Locally generated artifacts — every dev produces their own by running
+# collect-models.spec.ts against their instance.
 tests/helpers/provider-setup/data/models.json
 tests/helpers/provider-setup/data/providers.json
 
