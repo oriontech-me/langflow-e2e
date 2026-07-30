@@ -39,6 +39,29 @@ async function focusedTestId(page: Page): Promise<string | null> {
   );
 }
 
+/**
+ * Diagnostic for the way this walk is most likely to break again: an image that
+ * predates the 1.12 a11y change, where the result CARD wrapper is the tab stop
+ * and the add button is out of the tab order (#1124). The nightly image is built
+ * from a release branch (`release-1.12.0` at the time of writing) while upstream
+ * `main` still carries the old shape, so the pin moving to a branch cut from
+ * `main` is enough to bring the old DOM back — with the exact failure signature
+ * of #1124. Naming it in the error saves triage from re-deriving it.
+ *
+ * Returns "" on a build that has the change, so a genuine keyboard regression
+ * reads as one.
+ */
+async function legacyTabStopHint(page: Page): Promise<string> {
+  const legacyTabStops = await page
+    .locator('[data-testid$="_draggable"][tabindex="0"]')
+    .count();
+
+  return legacyTabStops > 0
+    ? ` — the result card wrapper is the tab stop and the add button is not: ` +
+        `this build predates the 1.12 a11y change (#1124), not a regression.`
+    : "";
+}
+
 /** Presses Tab until `testId` holds focus; fails if it never does. */
 async function tabUntilFocused(page: Page, testId: string): Promise<number> {
   for (let presses = 1; presses <= MAX_TAB_PRESSES; presses++) {
@@ -47,7 +70,8 @@ async function tabUntilFocused(page: Page, testId: string): Promise<number> {
   }
   throw new Error(
     `"${testId}" never received focus within ${MAX_TAB_PRESSES} Tab presses ` +
-      `(last focused: ${await focusedTestId(page)})`,
+      `(last focused: ${await focusedTestId(page)})` +
+      (await legacyTabStopHint(page)),
   );
 }
 

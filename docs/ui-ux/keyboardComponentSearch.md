@@ -57,6 +57,15 @@ stop guarding the a11y contract upstream just shipped. Consequence, stated
 explicitly: against a **1.11.x** image this spec fails at step 3 — expected, not
 a regression, until the change reaches a release line.
 
+**That failure names itself.** Upstream's nightly image is built from a pinned
+release branch (`release-1.12.0`) while upstream `main` still carries the old
+shape, so the pin moving to a branch cut from `main` would reproduce #1124's exact
+signature. When the walk runs out of presses it therefore checks whether a
+`…_draggable` wrapper is still a tab stop (`tabindex="0"`) and, if so, appends
+*"this build predates the 1.12 a11y change (#1124), not a regression"* to the
+error. On a build that has the change the hint is empty, so a genuine keyboard
+regression still reads as one.
+
 ### Chat Input is a singleton — the second walk is shorter
 
 `ChatInput` is constrained to one instance per flow
