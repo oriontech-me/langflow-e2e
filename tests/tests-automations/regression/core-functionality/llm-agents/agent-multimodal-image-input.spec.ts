@@ -5,6 +5,8 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
@@ -37,11 +39,23 @@ if (!process.env.CI) {
 const IMAGE_PATH = "tests/assets/media/chain.png";
 const IMAGE_ALT = "chain.png";
 const PROMPT = "what is this image? describe it";
-// chain.png is a chain/links graphic; a vision model describes it with one of
-// these tokens. `chain` is the most image-specific — the negative control keys
-// on it.
-const DESCRIBES_IMAGE = /chain|link|logo|inkscape/i;
+// chain.png is a chain/links graphic. The predicate must only match words that
+// require having SEEN it — measured replies: "two vertical metal chains", "a
+// stylized vector illustration of two chains".
+//
+// `link` was in this set and made the test unfalsifiable (#964): with NO image
+// attached the model answers "please upload an image or provide a link to one",
+// which matched — so the test passed while proving nothing about the image ever
+// reaching the model (verified by force-failure: 1 passed with the image
+// detached). Word-bounded `chain(s)` only.
+const DESCRIBES_IMAGE = /\bchains?\b|\binkscape\b/i;
 const IMAGE_SPECIFIC = /chain/i;
+// The two ways this test's real failure looks — the model says it got no image,
+// or that it cannot do images at all (the recurrent #964 signature on the
+// retired `gemini-2.5-flash`). Asserted separately so the failure names itself
+// instead of surfacing as "pattern not found".
+const NO_IMAGE_REACHED_MODEL =
+  /(cannot|can not|can't|unable to|not able to)[\s\S]{0,40}(interpret|describe|process|analy[sz]e|see|view)|did not (provide|attach|include)|no image (was )?(provided|attached|included)|please (upload|provide|attach|share)/i;
 
 interface ModelRecord {
   provider: string;
@@ -57,19 +71,35 @@ interface TestTarget {
 // Non-vision / non-chat model families to exclude when resolving a vision model.
 const NON_VISION = /gemma|embedding|tts|audio|whisper|realtime|image|customtools|moderation|search/i;
 
-// Per-provider preference for a fast, vision-capable chat model.
+// Fallback preference per provider, used only when the settled model cannot be
+// used (see resolveVisionModel). Alias/undated patterns only — a hardcoded dated
+// id goes stale the moment the provider retires it (#886, #964).
 const VISION_PREFS: Record<string, RegExp[]> = {
   openai: [/^gpt-4o-mini$/, /^gpt-4o$/, /^gpt-4\.1(-mini)?$/, /gpt-4o/, /^gpt-5.*mini$/, /^gpt-5/],
-  google: [/^gemini-2\.5-flash$/, /^gemini-3\.5-flash$/, /^gemini-flash-latest$/, /gemini.*flash/, /gemini/],
+  google: [/^gemini-flash-latest$/, /gemini.*flash/, /gemini/],
   anthropic: [/^claude-3-5-sonnet/, /^claude-3-5-haiku/, /^claude-3-7/, /claude-3\.?5/, /claude-3/, /claude/],
 };
 
 // Resolve a vision-capable model for a provider from its models.json entries.
+//
+// **Settled-first (#964).** `collect-models` probes the provider's catalog with
+// real calls and promotes the model it actually validated to the front of that
+// provider's entries; models.json still lists the ones it rejected. Preferring a
+// hardcoded id over that settled model pins a model nobody validated: this spec
+// asked for `^gemini-2.5-flash$` first, which Google has retired ("no longer
+// available to new users") — collect-models skipped it as gated and settled on
+// `gemini-3.5-flash`, while the spec kept resolving the retired id. Locally that
+// 404s ("Flow build failed"); in CI, on a key that still reaches it, the agent
+// answered that it cannot interpret images at all (#964, dailies 2026-07-20 /
+// 07-22 / 07-27). So: take the settled model, and fall back to the preference
+// scan only when it is not usable for vision.
 function resolveVisionModel(provider: string, models: ModelRecord[]): string | undefined {
-  const candidates = models
-    .filter((m) => m.provider === provider)
-    .map((m) => m.model)
-    .filter((m) => !NON_VISION.test(m));
+  const providerModels = models.filter((m) => m.provider === provider).map((m) => m.model);
+  const candidates = providerModels.filter((m) => !NON_VISION.test(m));
+
+  const settled = providerModels[0];
+  if (settled && !NON_VISION.test(settled)) return settled;
+
   const prefs = VISION_PREFS[provider] ?? [/.*/];
   for (const pref of prefs) {
     const hit = candidates.find((m) => pref.test(m));
@@ -152,7 +182,29 @@ function getTestTargets(): TestTarget[] {
   });
 }
 
+// Flows created by the template load are tracked here and deleted BY ID in
+// afterEach. `SimpleAgentTemplatePage.load()` does NO cleanup (post-#553
+// contract: never a global cleanAllFlows, which races parallel workers), so
+// without this every run left one "Simple Agent" behind (#964). The app can fire
+// more than one flows POST per load — only one persists, and deleting a transient
+// id 404s harmlessly (deleteFlow treats 404 as done).
+const createdFlowIds: string[] = [];
+
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {}); // non-JSON / batch payloads
+    }
+  });
   try {
     await new SimpleAgentTemplatePage(page).load(options);
   } catch (e: any) {
@@ -161,12 +213,38 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
   }
 }
 
+test.afterEach(async ({ request }) => {
+  if (createdFlowIds.length === 0) return;
+  const bearer = await getAuthToken(request);
+  for (const id of createdFlowIds.splice(0)) {
+    await deleteFlow(request, id, { headers: { Authorization: bearer } });
+  }
+});
+
 async function waitForAgentToFinish(page: Page): Promise<void> {
   const stopButton = page.getByRole("button", { name: "Stop" });
   const stopVisible = await stopButton.isVisible({ timeout: 10000 }).catch(() => false);
   if (stopVisible) {
     await expect(stopButton).toBeHidden({ timeout: 120000 });
   }
+}
+
+// The agent's rendered reply, anchored to the AI chat bubble.
+//
+// `.markdown.prose` alone is NOT the reply (#964): the canvas renders 6 of them
+// on this template — the Simple Agent sticky note is one — so `.last()` silently
+// matched the sticky note whenever no reply rendered, and a hard build failure
+// ("Error calling model 'gemini-2.5-flash' (Not Found): 404") was reported as a
+// content mismatch against the template's help text. Anchoring on the AI bubble
+// (`chat-message-AI-<text>`, the 1.12 container) makes a missing reply fail as a
+// missing reply.
+async function agentReply(page: Page) {
+  const bubble = page.locator('[data-testid^="chat-message-AI-"]').last();
+  await expect(
+    bubble,
+    "no AI chat message rendered — the agent produced no reply (check the flow build error)",
+  ).toBeVisible({ timeout: 60000 });
+  return bubble.locator(".markdown.prose").last();
 }
 
 // Set the ChatInput node's "Input Text" on the canvas. The Playground chat input
@@ -209,21 +287,19 @@ async function openPlayground(page: Page, attachImage: boolean): Promise<void> {
 
 const targets = getTestTargets();
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template.
-// File-level serial mode prevents parallel provider blocks from wiping each
-// other's flows.
+// Serial: each provider block loads the Simple Agent template and runs it, and
+// the Playground work is heavy enough that concurrent provider blocks starve the
+// single backend. (It does NOT protect against flow wiping — load() deletes
+// nothing; teardown is the id-scoped afterEach above.)
 test.describe.configure({ mode: "serial" });
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Multimodal Image Input [${label}]`, () => {
-    // Quarantined for #964 — recurrent flake (2026-07-20 / 07-22 / 07-27): the
-    // agent answers that it cannot interpret images instead of describing the
-    // one delivered through the input handle.
-    test.fixme(
+    test(
       "image via input handle is described by the agent",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -243,11 +319,16 @@ for (const { label, options, skipReason } of targets) {
         await test.step("assert the vision model described the image content", async () => {
           // The image reached the model via ChatInput → Agent.input: the reply
           // describes the actual image (chain/links), not a generic answer.
-          const response = page.locator(".markdown.prose").last();
+          const response = await agentReply(page);
           await expect(response).toContainText(DESCRIBES_IMAGE, { timeout: 60000 });
-          const text = await response.textContent();
+          const text = (await response.textContent()) ?? "";
+          // The image reached the model at all — this is the #964 signature.
+          expect(
+            text,
+            "the agent replied that it received no image / cannot process images — the attached image did not reach the model",
+          ).not.toMatch(NO_IMAGE_REACHED_MODEL);
           // Secondary guard against a one-word answer.
-          expect((text ?? "").length).toBeGreaterThan(50);
+          expect(text.length).toBeGreaterThan(50);
         });
       },
     );
@@ -274,7 +355,7 @@ for (const { label, options, skipReason } of targets) {
         await test.step("assert the response does not describe a chain", async () => {
           // With no image the model cannot describe the chain — so the keyword
           // only appears in Test 1 because the image was actually processed.
-          const response = page.locator(".markdown.prose").last();
+          const response = await agentReply(page);
           await expect(response).toBeVisible({ timeout: 60000 });
           const text = (await response.textContent()) ?? "";
           expect(text.length).toBeGreaterThan(0);
