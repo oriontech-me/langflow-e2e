@@ -809,7 +809,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 425 `test()` calls carrying the `@stable` tag, distributed across 169 spec
+> 426 `test()` calls carrying the `@stable` tag, distributed across 169 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1231,6 +1231,7 @@
 - [x] wheel scroll navigates the canvas anchored at the pointer → `canvas-zoom-navigation.spec.ts`
 - [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
 - [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
+- [x] executing flow with server error shows error feedback → `execution-error-notification.spec.ts`
 - [x] user must see on handle click the possibility connections → `filterSidebar.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
