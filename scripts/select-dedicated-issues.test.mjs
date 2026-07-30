@@ -12,10 +12,15 @@
 // (`date -u -d '-1 minute' +%Y-%m-%dT%H:%M:%SZ`).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import {
   isAtOrAfter,
   selectDedicatedIssues,
 } from "./select-dedicated-issues.mjs";
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const readWorkflow = (name) => fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", name), "utf8");
 
 // The four dedicated issues the 2026-07-30 triage actually created, plus that
 // day's umbrella — the data this selection was verified against by hand.
@@ -142,4 +147,61 @@ test("an empty list is handled without throwing, and still warns", () => {
   assert.equal(result.scanned, 0);
   assert.equal(result.oldestScanned, null);
   assert.match(result.warnings.join(" "), /NOTHING selected/);
+});
+
+// ── Agent-path wiring ───────────────────────────────────────────────────────
+//
+// The selection above is only reached if the step that calls it is still wired
+// into `triage-dispatch.yml`'s `execute` job, in the right place, with the right
+// window. That wiring has NEVER executed: every triage-dispatch run to date is a
+// `propose` (the `execute` job needs a red daily plus a human "pode abrir"), so
+// nothing but these assertions stands between a broken wiring and a green log.
+
+test("the execute job stamps the window BEFORE the agent runs", () => {
+  // Order is the whole contract: a timestamp taken after the agent would exclude
+  // every issue the agent had already created, and the sweep would check zero
+  // while reporting success.
+  const text = readWorkflow("triage-dispatch.yml").split("\n");
+  const execute = text.findIndex((l) => l.startsWith("  execute:"));
+  assert.ok(execute > -1, "no `execute` job");
+
+  const stamp = text.findIndex((l, i) => i > execute && l.includes("id: started"));
+  const agent = text.findIndex((l, i) => i > execute && l.includes("anthropics/claude-code-action"));
+  const guard = text.findIndex((l, i) => i > execute && l.includes("uses: ./.github/actions/guard-dedicated-issue"));
+
+  assert.ok(stamp > -1 && agent > -1 && guard > -1, "stamp, agent or guard step missing from the execute job");
+  assert.ok(stamp < agent, "the window must be stamped BEFORE the agent creates the issues");
+  assert.ok(agent < guard, "the guard must run AFTER the agent, or there is nothing to check yet");
+});
+
+test("the guard's since input is bound to the stamped window, not to a literal", () => {
+  const text = readWorkflow("triage-dispatch.yml");
+  assert.match(text, /since: \$\{\{ steps\.started\.outputs\.at \}\}/);
+  // The stamp's own shape is load-bearing: `select-dedicated-issues` parses it as
+  // an instant, and the minute of slack absorbs runner/API clock skew.
+  assert.match(text, /date -u -d '-1 minute' \+%Y-%m-%dT%H:%M:%SZ/);
+});
+
+test("the guard reports without blocking, and runs even when the agent died", () => {
+  // `if: always()` — a triage that failed mid-way can still have created issues,
+  // and those are precisely the ones worth checking. `continue-on-error` — a
+  // malformed issue still carries evidence, so it gets a comment, not a red job.
+  const lines = readWorkflow("triage-dispatch.yml").split("\n");
+  const guard = lines.findIndex((l) => l.includes("uses: ./.github/actions/guard-dedicated-issue"));
+  const block = lines.slice(Math.max(0, guard - 4), guard + 4).join("\n");
+  assert.match(block, /if: always\(\)/);
+  assert.match(block, /continue-on-error: true/);
+});
+
+test("the sweep path has an on-demand entry, so it is not only provable by coincidence", () => {
+  // #1037's actual blocker: the sweep could only ever run inside a live `execute`,
+  // an event that has not occurred once. `issue-contract-guard.yml` accepts a
+  // `since` dispatch so the identical composite action can be exercised on real
+  // issues from a branch, dry-run by default.
+  const text = readWorkflow("issue-contract-guard.yml");
+  assert.match(text, /^ {6}since:$/m, "no `since` dispatch input");
+  assert.match(text, /since: \$\{\{ inputs\.since \}\}/, "the since input is not passed to the action");
+  // Both inputs at once would silently check the issue and ignore the window.
+  assert.match(text, /Reject an ambiguous dispatch/);
+  assert.match(text, /dry_run:[\s\S]*default: true/, "a dispatch must not mutate issues unless asked");
 });
