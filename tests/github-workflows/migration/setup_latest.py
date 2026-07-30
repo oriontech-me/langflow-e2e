@@ -54,9 +54,11 @@ def main():
         "node_types": node_types,
     }
 
-    # 2b. Ensure the model component has a model selected. A starter may ship an
-    # empty model_name/provider (the unified Language Model requires an explicit
-    # selection — otherwise the build fails "A model selection is required", #905).
+    # 2b. Ensure the model component has a model selected. A starter may ship
+    # with no selection (the unified Language Model requires an explicit
+    # selection — otherwise the build fails "A model selection is required", #905;
+    # since 1.11.1 the selection is the `model` field, not the legacy
+    # provider/model_name overrides — #1004).
     patched = ensure_model_selected(template)
     phase["steps"]["ensure_model"] = {"status": "pass", "patched_nodes": patched}
     if patched:
