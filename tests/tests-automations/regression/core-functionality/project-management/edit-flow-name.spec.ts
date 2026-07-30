@@ -19,7 +19,15 @@ test.beforeEach(({ page }) => {
 });
 
 test.afterEach(async ({ request }) => {
-  await flows.cleanup(request);
+  // `strict`, because this file's pre-#1108 teardown called `deleteFlow` with no
+  // `.catch()` — a failed cleanup FAILED the test. Migrating it onto the helper's
+  // default (log and continue) would trade that red for a warning line nothing
+  // asserts on, so the contract is kept.
+  //
+  // Optional-chained: Playwright runs `afterEach` even when `beforeEach` never did
+  // (a page-fixture setup failure), and a bare call would then bury the real error
+  // under `Cannot read properties of undefined`.
+  await flows?.cleanup(request, { strict: true });
 });
 
 test(

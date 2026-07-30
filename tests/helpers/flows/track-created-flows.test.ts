@@ -10,14 +10,17 @@
 // The four behaviours these tests pin are the four axes on which the 51 hand-copied
 // versions had drifted. Each one is a real leak or a real silence:
 //
-//   1. bodies are settled before cleanup — 45 copies dropped an id that resolved a
-//      tick late, and the last test in a worker has no later hook to sweep it;
+//   1. bodies are settled before cleanup — 50 of the 51 copies dropped an id that
+//      resolved a tick late, and the last test in a worker has no later hook;
 //   2. the URL match is the exact creation endpoint — `/flows/batch/` and
 //      `/flows/upload/` also answer 201;
 //   3. the page leaves the canvas BEFORE the delete — a mounted editor 404s on the
 //      flow it is polling (#1023/#1103);
-//   4. a failed delete is reported, not swallowed — 48 copies wrote
-//      `.catch(() => {})` over the one signal `deleteFlow` exists to raise.
+//   4. a failed delete is reported, not swallowed — the copies that wrote
+//      `.catch(() => {})` buried the one signal `deleteFlow` exists to raise. That
+//      axis is three-way, though (swallow / log / throw), and no count for it is
+//      restated here — see the implementation's header. `{ strict: true }` is what
+//      keeps a spec that used to FAIL on a failed cleanup failing.
 //
 // The fakes below are the whole point of the narrow `TrackedPage` /
 // `TrackedResponse` types: the tracker drives real `deleteFlow` and real
@@ -184,7 +187,7 @@ test("a failed creation POST is recorded synchronously, without its body", async
 // ─── Axis 1: settle before cleanup — the permanent-leak case ─────────────────
 
 test("cleanup settles a body that resolves AFTER teardown starts", async () => {
-  // The defect in 45 of the 51 copies: `resp.json()` resolves a tick later, so an
+  // The defect in 50 of the 51 copies: `resp.json()` resolves a tick later, so an
   // id could land after `afterEach` had already read the array — and the flow leaks
   // for good, because the last test in a worker has no later hook.
   const { page, emit } = fakePage();
@@ -304,4 +307,155 @@ test("dispose detaches the listener it attached", () => {
   const { page, isDetached } = fakePage();
   trackCreatedFlows(page).dispose();
   assert.equal(isDetached(), true);
+});
+
+// ─── strict mode: the third shape of the failed-delete axis ─────────────────
+
+test("strict re-throws a failed delete, for a spec whose teardown used to fail", () => {
+  // 13 of the 51 copies let `deleteFlow` throw, which fails the teardown — the
+  // strongest of the three signals, and chosen deliberately in some files
+  // ("Cleanup is load-bearing here … so the throw is intentionally NOT swallowed").
+  // Migrating one of those onto the default would trade a red test for a warning
+  // line nothing asserts on.
+  const { page, emit } = fakePage();
+  const { request } = fakeRequest({ failFor: new Set(["flow-1"]), status: 422 });
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  return assert.rejects(() => flows.cleanup(request, { strict: true }), /422/);
+});
+
+test("strict still logs and records before re-throwing", async () => {
+  const { page, emit } = fakePage();
+  const { request } = fakeRequest({ failFor: new Set(["flow-1"]), status: 422 });
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  await flows.cleanup(request, { strict: true }).catch(() => {});
+  // The captured id is cleared either way, so a retried teardown does not re-delete.
+  assert.deepEqual(flows.ids(), []);
+});
+
+test("strict is opt-in — the default never throws", async () => {
+  const { page, emit } = fakePage();
+  const { request } = fakeRequest({ failFor: new Set(["flow-1"]), status: 422 });
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  const result = await flows.cleanup(request); // must not reject
+  assert.equal(result.failed.length, 1);
+});
+
+// ─── An unobtainable token is named, not silently degraded ──────────────────
+
+test("a getAuthToken failure is reported as itself, not as a flow problem", async () => {
+  // `get-auth-token.ts` forbids degrading into the empty-token fallback (#1086):
+  // callers would carry on unauthenticated and fail somewhere far less diagnosable.
+  // `cleanup` still may not throw, so the failure has to be NAMED on the result —
+  // otherwise a backend wedged during teardown (#1077) produces one 401 per flow and
+  // a report that blames the flows.
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+  const request = {
+    get: async () => {
+      throw new Error("apiRequestContext.get: Timeout 20000ms exceeded.");
+    },
+    delete: async () => ({
+      ok: () => false,
+      status: () => 401,
+      statusText: () => "Unauthorized",
+      text: async () => "",
+    }),
+  } as unknown as APIRequestContext;
+
+  emit(creationResponse("flow-1"));
+  const result = await flows.cleanup(request);
+
+  assert.match(String(result.authError), /Timeout 20000ms/);
+  assert.equal(result.failed.length, 1, "the delete was still attempted");
+});
+
+test("no token in an auth-less environment is not an auth ERROR", async () => {
+  // `getAuthToken` RETURNS "" when the endpoint answers non-ok — that is an
+  // environment without auth, not an outage, and it must not be reported as one.
+  const { page, emit } = fakePage();
+  const { request, deletes } = fakeRequest({ token: null });
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  const result = await flows.cleanup(request);
+  assert.equal(result.authError, undefined);
+  assert.equal(deletes[0].auth, undefined, "no Authorization header is sent");
+});
+
+// ─── The remaining unpinned guards ──────────────────────────────────────────
+
+test("a successful capture leaves failedCreations EMPTY", async () => {
+  // `failedCreations()` is what a setup step reads to attribute its own failure
+  // (#1114). A false positive there makes a spec blame a 5xx that never happened.
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  await flows.settle();
+  assert.deepEqual(flows.failedCreations(), []);
+});
+
+test("a 4xx creation is recorded too, not only a 5xx", async () => {
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+  emit({
+    url: () => `${BASE}/api/v1/flows/`,
+    status: () => 422,
+    statusText: () => "Unprocessable Entity",
+    request: () => ({ method: () => "POST" }),
+    json: async () => ({}),
+  });
+  assert.deepEqual(flows.failedCreations(), ["422 Unprocessable Entity"]);
+});
+
+test("failedCreations hands out a copy, not the live array", async () => {
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse(undefined, { status: 500 }));
+  flows.failedCreations().push("injected");
+  assert.deepEqual(flows.failedCreations(), ["500 Internal Server Error"]);
+});
+
+test("a page that is already gone does not break the teardown", async () => {
+  // The teardown-after-crash path: `page.goto` on a closed page REJECTS.
+  const { page, emit } = fakePage();
+  (page as unknown as { goto: () => Promise<never> }).goto = async () => {
+    throw new Error("Target page, context or browser has been closed");
+  };
+  const { request, deletes } = fakeRequest();
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  const result = await flows.cleanup(request);
+  assert.deepEqual(result.deleted, ["flow-1"], "the delete must still happen");
+  assert.equal(deletes.length, 1);
+});
+
+test("a body that cannot be parsed drops that id instead of breaking the sweep", async () => {
+  const { page, emit } = fakePage();
+  const { request } = fakeRequest();
+  const flows = trackCreatedFlows(page);
+  emit({
+    url: () => `${BASE}/api/v1/flows/`,
+    status: () => 201,
+    statusText: () => "Created",
+    request: () => ({ method: () => "POST" }),
+    json: async () => {
+      throw new Error("Response body is unavailable for redirect responses");
+    },
+  });
+  emit(creationResponse("flow-2"));
+  const result = await flows.cleanup(request);
+  assert.deepEqual(result.deleted, ["flow-2"]);
+});
+
+test("settle() drains the queue, so a later cleanup does not re-await it", async () => {
+  const { page, emit } = fakePage();
+  const { request, deletes } = fakeRequest();
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1", { delayTicks: 3 }));
+  await flows.settle();
+  assert.deepEqual(flows.ids(), ["flow-1"]);
+  await flows.cleanup(request);
+  assert.deepEqual(deletes.map((d) => d.url), ["/api/v1/flows/flow-1"]);
 });

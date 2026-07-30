@@ -24,7 +24,12 @@ test.beforeEach(({ page }) => {
 });
 
 test.afterEach(async ({ request }) => {
-  await flows.cleanup(request);
+  // Optional-chained: Playwright runs `afterEach` even when `beforeEach` never did
+  // (a page-fixture setup failure), and a bare call would then bury the real error
+  // under `Cannot read properties of undefined`. Not `strict` — this file's
+  // pre-#1108 teardown swallowed a failed delete, so log-and-continue IS its
+  // contract, now with the failure visible instead of silent.
+  await flows?.cleanup(request);
 });
 
 test(

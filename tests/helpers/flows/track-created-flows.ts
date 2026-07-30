@@ -7,16 +7,24 @@
 // actively driving. With no shared implementation every copy drifted, and a fix to
 // one reached none of the other 50.
 //
-// Four axes drifted; #1108 carries the per-axis counts, and re-measuring them on
-// this branch's merge base reproduces the shape: of the 51 files, **one** uses a
-// `Set`, **one** settles its pending body reads, **two** navigate off the canvas
-// before deleting, and **four** match the creation endpoint by exact pathname. (The
-// `deleteFlow` error-handling axis does not re-measure cleanly — the call is wrapped
-// three different ways across the files — so the issue's split is the reference for
-// that one, not a number restated here.)
+// Four axes re-measure cleanly against this branch's merge base: of the 51 files,
+// **one** uses a `Set`, **one** settles its pending body reads (so 50 can drop an id
+// that resolves a tick late), **two** navigate off the canvas before deleting, and
+// **four** match the creation endpoint by exact pathname. On each of those this
+// helper takes the strict option unconditionally.
 //
-// This helper takes the STRICTEST option on every axis, for the reasons below. It
-// is deliberately opt-in per spec rather than a fixture: `tests/fixtures/**` is
+// The fifth axis — what happens to a failed `deleteFlow` — is **three**-way, not the
+// two-way split the issue's table describes, and no query I tried reproduced a
+// defensible count, so none is restated here. The shapes are: swallow it
+// (`.catch(() => {})`), log it, or let it THROW and fail the teardown. Throwing is
+// the strongest signal of the three and some files choose it deliberately
+// (`component-breaking-change-alert.spec.ts`: "Cleanup is load-bearing here … so the
+// throw is intentionally NOT swallowed"), so `cleanup` defaults to log-and-return
+// per the issue's instruction and takes `{ strict: true }` for those callers. A
+// migration must not silently downgrade a spec that was failing on a failed cleanup.
+//
+// This is a helper, deliberately opt-in per spec, rather than a fixture:
+// `tests/fixtures/**` is
 // suite-wide for `impacted-specs-by-import.mjs`, so a fixture would resolve to
 // every spec and demand a full `manual.yml` run on each change (#1054).
 
@@ -76,6 +84,23 @@ export interface FlowCleanupResult {
   deleted: string[];
   /** Ids whose DELETE failed, with the first line of the error. */
   failed: Array<{ id: string; error: string }>;
+  /**
+   * Set when the token could not be obtained, so the DELETEs below ran on the
+   * browser session alone. Reported separately because a 401 that follows is THAT,
+   * not a problem with the flow — see the note at the call site.
+   */
+  authError?: string;
+}
+
+export interface FlowCleanupOptions {
+  /**
+   * Re-throw the first failed `deleteFlow` instead of logging it.
+   *
+   * For the specs whose cleanup is load-bearing and which failed their teardown on a
+   * failed delete BEFORE this helper existed — migrating one of those without this
+   * would trade a red test for a warning line nothing asserts on.
+   */
+  strict?: boolean;
 }
 
 export interface FlowTracker {
@@ -95,10 +120,13 @@ export interface FlowTracker {
   reset(): void;
   /**
    * Settle, navigate off the canvas, then delete every captured flow id-scoped.
-   * Never throws: a failed delete is logged and returned, so it cannot fail an
-   * otherwise-green test while still being visible.
+   * Never throws unless `{ strict: true }`: by default a failed delete is logged and
+   * returned, so it cannot fail an otherwise-green test while still being visible.
    */
-  cleanup(request: APIRequestContext): Promise<FlowCleanupResult>;
+  cleanup(
+    request: APIRequestContext,
+    options?: FlowCleanupOptions,
+  ): Promise<FlowCleanupResult>;
   /** Detach the response listener. */
   dispose(): void;
 }
@@ -162,7 +190,10 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
       pending.length = 0;
     },
     dispose: () => page.off("response", onResponse),
-    async cleanup(request: APIRequestContext): Promise<FlowCleanupResult> {
+    async cleanup(
+      request: APIRequestContext,
+      { strict = false }: FlowCleanupOptions = {},
+    ): Promise<FlowCleanupResult> {
       await settle();
       const result: FlowCleanupResult = { deleted: [], failed: [] };
       const captured = [...ids];
@@ -186,8 +217,27 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
 
       // `page.request` carries only browser cookies, so the flows API answers 401 —
       // pass the bearer explicitly.
-      const bearer = await getAuthToken(request).catch(() => "");
-      const options = bearer ? { headers: { Authorization: bearer } } : undefined;
+      //
+      // The throw is CAUGHT but never turned into an empty token silently, which is
+      // what `get-auth-token.ts` forbids (#1086: "it must never degrade into the
+      // empty-token fallback — the callers would carry on unauthenticated and fail
+      // somewhere far less diagnosable"). `cleanup` still may not throw, so the
+      // failure is named here and carried on the result: without this, a backend
+      // wedged during teardown (#1077) produces a `401` per flow and a report that
+      // blames the flows.
+      let options: { headers: Record<string, string> } | undefined;
+      let authError: string | undefined;
+      try {
+        const bearer = await getAuthToken(request);
+        options = bearer ? { headers: { Authorization: bearer } } : undefined;
+      } catch (error) {
+        authError = (error as Error)?.message?.split("\n")[0] ?? String(error);
+        result.authError = authError;
+        console.warn(
+          `⚠️  cleanup: no auth token — the deletes below run on the browser session ` +
+            `alone, so a 401 here is THAT and not the flow (#1086/#1077): ${authError}`,
+        );
+      }
 
       for (const id of captured) {
         try {
@@ -202,6 +252,7 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
           const message = (error as Error)?.message?.split("\n")[0] ?? String(error);
           result.failed.push({ id, error: message });
           console.warn(`⚠️  cleanup: flow ${id} was NOT deleted — ${message}`);
+          if (strict) throw error;
         }
       }
       return result;
