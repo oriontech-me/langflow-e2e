@@ -137,10 +137,17 @@ test(
         "the upload response must carry the file id",
       ).toBeTruthy();
       createdFileIds.push(uploaded.id as string);
+      // Equality, not just presence: the stem is random, so the server's
+      // uniqueness branch must not have fired. Asserting it keeps the
+      // unique-name guard falsifiable — the testids below are still built from
+      // the response (the server is the authority on the stored name), and
+      // without this the spec would silently follow a rename instead of
+      // reporting that the account already holds a colliding row. Same
+      // assertion as file-types-upload.spec.ts.
       expect(
         uploaded.name,
-        "the upload response must carry the stored name",
-      ).toBeTruthy();
+        "the upload must keep its per-run unique stem — a rename means the shared account already holds a colliding row (#1125)",
+      ).toBe(stem);
       uploadedName = uploaded.name as string;
 
       // The uploaded file appears in My Files, pre-selected. The visible row is

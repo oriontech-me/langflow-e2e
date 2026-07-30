@@ -71,7 +71,11 @@ together with the determinism fix below.)
    (`Promise.all([page.waitForEvent("filechooser"), click])` → `setFiles`).
    Gate on the upload landing server-side (`POST /api/v2/files` with a `< 300`
    status) and keep the response's `id` + `name` for the cleanup and the
-   name-derived testids.
+   name-derived testids. Both fields are asserted rather than read optionally:
+   the `id` is the only handle `afterEach` has (losing it leaks the upload into
+   the shared account — the residue this spec was broken by), and the `name`
+   must **equal** the stem, so a rename fails loudly instead of being followed
+   silently.
 5. Assert the file appears (`file-item-<stem>`) **and that the app registered it
    as selected** — `checkbox-<stem>` with `data-state="checked"`. This is the
    load-bearing gate (#1125): the rendered row and the modal's internal
@@ -170,7 +174,10 @@ seeding one `test-file` row before the run, on 1.12.0.dev10.
 Two independent guards keep the spec deterministic:
 
 1. the upload name is a fresh random stem per run, so the collision branch is
-   never entered, and the testids come from the **response's** `name`;
+   never entered, and the testids come from the **response's** `name`. That
+   guard is itself checked — the run asserts `response.name === stem`, so a
+   collision (residue, a stem clash, or a future server-side normalization) is
+   reported instead of absorbed by the response-derived testids;
 2. the confirm click waits for `checkbox-<stem>` to read `data-state="checked"`,
    which proves the app's selection and the rendered row agree on the file path
    (the earlier gate — a `waitForResponse` on the POST plus a visible row — is
