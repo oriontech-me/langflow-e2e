@@ -25,25 +25,31 @@ export interface LoadSimpleAgentOptions {
 /**
  * How long the guard waits for the binding to appear in the persisted flow.
  *
- * Deliberately left at the pre-#1072 value. The recorded flakes are load-induced —
- * all four settled on a retry — and the relief for that belongs to the saturation
- * work (#1077), not here: a bigger number would only make a genuinely stuck
- * binding cost longer before it is reported. Two mechanisms were tried and
- * rejected instead of inflating it:
+ * Deliberately left at the pre-#1072 value. Of the four occurrences the caret line
+ * of each run's `results.json` pins on this guard, three recovered on a retry; the
+ * fourth hard-failed on 2026-07-22, a day the daily recorded 22 hard failures in
+ * total. Both readings point at the environment rather than at this number, and the
+ * relief for that belongs to the saturation work (#1077) — a bigger budget here
+ * would only make a genuinely stuck binding cost longer before it is reported. Two
+ * mechanisms were tried and rejected instead of inflating it:
  *
  *  - **An autosave barrier** (`waitForFlowSaveSettled` before the check). It
  *    cannot work from here: it is attached AFTER the model click, and the rebind
  *    chain is a 300 ms `mutateTemplate` debounce → `POST
- *    /api/v1/custom_component/update` → a second 300 ms autosave debounce, so the
- *    earliest `PATCH /api/v1/flows/{id}` is ~600 ms + one round trip away. With
- *    nothing in flight at attach time the helper's 700 ms quiet window simply
- *    expires first — measured locally, it resolved at ~0.7 s on a settle that
- *    completed at 1.5 s, having tracked no request at all. On a saturated backend
- *    (the flake's condition) it degenerates further, into a 700 ms sleep.
- *  - **Waiting on the rebind POST itself.** It has to be armed before the click,
- *    i.e. inside every provider-setup helper, and it answers before the autosave
- *    that this guard reads — so it would add a moving part to four files without
- *    removing the wait that actually matters.
+ *    /api/v1/custom_component/update` → the editor's autosave debounce, which is
+ *    `GET /api/v1/config.auto_saving_interval` and answers **1000** on the running
+ *    nightly (the 300 ms in `wait-for-flow-save-settled.ts` is only the store's
+ *    pre-fetch default). The earliest `PATCH /api/v1/flows/{id}` is therefore
+ *    ~1.3 s + a round trip away, while the helper's quiet window is 700 ms with
+ *    nothing in flight at attach time — so it expires first. Measured locally: it
+ *    resolved at ~0.7 s on a settle that completed at 1.5 s, having tracked no
+ *    request at all. Under load it degenerates into a 700 ms sleep.
+ *  - **Waiting on the rebind POST itself** (armable in `load()` before the setup
+ *    call, so no change to the setup helpers). The disqualifier is that the same
+ *    POST has ALREADY fired once when the Agent node mounted — the `api_key`
+ *    prefill — so a single `waitForResponse` resolves on the prefill, not on the
+ *    rebind, and telling them apart means inspecting bodies for a value this guard
+ *    can read directly from the flow.
  */
 const CREDENTIAL_SETTLE_TIMEOUT_MS = 20_000;
 
@@ -88,10 +94,10 @@ export class SimpleAgentTemplatePage extends BasePage {
     await adjustScreenView(this.page);
     await providerSetupMap[provider](this.page, model);
 
-    // #751: on the 1.11 unified model selector, opening the Agent model dropdown
-    // auto-binds the node's `api_key` to the DEFAULT credential (e.g.
-    // ANTHROPIC_API_KEY); picking the target provider's model rebinds it to that
-    // provider's credential ASYNCHRONOUSLY. A caller that opens the Playground
+    // #751: on the 1.11+ unified model selector the Agent node prefills its
+    // `api_key` with the DEFAULT credential (ANTHROPIC_API_KEY) when it MOUNTS —
+    // not when the dropdown opens; picking the target provider's model rebinds it
+    // to that provider's credential ASYNCHRONOUSLY. A caller that opens the Playground
     // and sends a message before the rebind settles builds the selected model
     // with the wrong provider's key — surfacing as
     // "Flow build failed: Incorrect API key provided" and a `div-chat-message`
@@ -130,8 +136,8 @@ export class SimpleAgentTemplatePage extends BasePage {
    * the in-memory store, and `modelInputComponent.spec.ts` already reads it — but
    * it only covers the axis that is not the risk. The risk #751 exists for is the
    * credential, and that has no non-modal surface: on the running nightly the
-   * Agent's `api_key` is `show: true, advanced: true` (check it with
-   * `GET /api/v1/all` → `Agent.template.api_key`), so reading it off the canvas
+   * Agent's `api_key` is `show: true, advanced: true` (check it with `GET
+   * /api/v1/all` → `.models_and_agents.Agent.template.api_key`), so reading it off the canvas
    * means opening the node's advanced-settings modal — an extra interaction on the
    * very canvas whose state is being measured. One persisted read covers both axes
    * and is the only observable that PROVES the rebind instead of proxying it.
@@ -164,7 +170,11 @@ export class SimpleAgentTemplatePage extends BasePage {
         });
         if ((res.status() === 401 || res.status() === 403) && !triedAuthFallback) {
           triedAuthFallback = true;
-          const auth = await getAuthToken(this.page.request);
+          // No inner retry budget: this loop IS the retry, and `getAuthToken`'s
+          // default `[2000, 8000, 20000]` backoff plus its per-attempt request
+          // timeout would add ~110 s inside a single iteration, past this guard's
+          // own deadline. One attempt, then the outer loop decides.
+          const auth = await getAuthToken(this.page.request, { retryDelaysMs: [] });
           if (auth) {
             // Said out loud on purpose: a green run is not evidence that the
             // cookie path worked — the fallback would carry it silently. This
@@ -179,9 +189,16 @@ export class SimpleAgentTemplatePage extends BasePage {
           }
         }
         if (res.ok()) {
+          // Parse BEFORE counting the read. A 2xx whose body does not parse (a
+          // truncated response from a recycling worker, a proxy's HTML) throws
+          // here; marking the read as successful first would leave `probe` null
+          // with `everRead` true and make the guard report "the flow was read and
+          // carries no Agent node" about a body it never parsed — the exact
+          // conflation `read-failed` exists to prevent.
+          const body = await res.json();
           reads++;
           everRead = true;
-          probe = readAgentCredentialProbe(await res.json());
+          probe = readAgentCredentialProbe(body);
           lastReadError = undefined;
           if (
             classifyCredentialSettle(probe, expectedCredential, expected.model) ===

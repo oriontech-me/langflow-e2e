@@ -3,10 +3,11 @@
 //
 // `SimpleAgentTemplatePage.load()` ends on a guard added by #751: it blocks until
 // the Agent node is bound to the provider the caller asked for. On the 1.11+
-// unified model selector (`ModelInput`), opening the model dropdown auto-binds
-// `api_key` to the DEFAULT credential (`ANTHROPIC_API_KEY`); picking the target
-// provider's model rebinds it, and both the rebind and the selection reach the
-// database through the editor's debounced autosave `PATCH /api/v1/flows/{id}`.
+// unified model selector (`ModelInput`), the node prefills `api_key` with the
+// DEFAULT credential (`ANTHROPIC_API_KEY`) when it MOUNTS — not when the dropdown
+// opens; picking the target provider's model rebinds it, and both the rebind and the
+// selection reach the database through the editor's debounced autosave
+// `PATCH /api/v1/flows/{id}`.
 //
 // The guard used to be a blind poll with a bare `expect(...).toBe(credential)`
 // inside, so when it ran out the whole report carried was:
@@ -151,9 +152,14 @@ export function readAgentCredentialProbe(
  * (`agent-max-iterations.spec.ts:255`) could never have been this guard's
  * expected/received mismatch: for anthropic the mismatch is unreachable.
  *
- * `expectedModel` is optional — a caller may let the provider-setup helper pick
- * the first available model, leaving no name to compare. Every parametrized agent
- * spec does pass one, so the model axis is available in the common case.
+ * `expectedModel` is optional — a caller may let the provider-setup helper pick the
+ * first available model, leaving no name to compare. Most agent specs are
+ * parametrized from `models.json` and do pass one, but three load without a model
+ * (`model-provider-model-toggle`, `general-bugs-agent-images-playground`,
+ * `agent-model-connection-isolation`), and so does any spec whose `models.json`
+ * came back empty. For those the model axis is simply unavailable — see
+ * `CREDENTIAL_PENDING_NO_MODEL_GUIDANCE`, which is what keeps the reported
+ * guidance from claiming a check that did not happen.
  *
  * Gating on the model is only sound because a pinned model is never silently
  * substituted on this path: `setup-openai`, `setup-anthropic` and `setup-google`
@@ -225,10 +231,15 @@ const VERDICT_GUIDANCE: Record<
     "THIRD provider is a real misbinding, not slowness. Compare the observed " +
     "credential against the provider before concluding load.",
   "model-not-applied":
-    "A DIFFERENT model is persisted, so the provider-setup step selected something " +
-    "other than what was asked for — waiting longer cannot fix it. Look at the " +
-    "provider setup helper for this provider (dropdown intercepted, option " +
-    "missing from the list, panel still animating), not at the save path.",
+    "A DIFFERENT model is persisted than the one requested. TWO states look like " +
+    "this and the observed model tells them apart: the provider-setup step selected " +
+    "the wrong option (waiting cannot fix it — look at the setup helper: dropdown " +
+    "intercepted, option missing, panel still animating), OR nothing was saved " +
+    "after the click at all, leaving the node's mount-time prefill in place — on a " +
+    "google/openai load that prefill IS `ANTHROPIC_API_KEY` plus the default " +
+    "Claude model, so this verdict is also what a wedged save path (#1077) looks " +
+    "like. If the observed pair is exactly that default, suspect the save, not the " +
+    "click.",
   "nothing-persisted":
     "No model is persisted at all, so nothing carried the selection. Two causes " +
     "fit and this guard cannot separate them: the model click never registered " +
@@ -243,6 +254,35 @@ const VERDICT_GUIDANCE: Record<
     "here says anything about the credential. Treat the read error above as the " +
     "finding (a wedged or recycling backend, #1077), not the binding.",
 };
+
+/**
+ * `credential-pending` with no pinned model.
+ *
+ * The verdict is the same — the credential is not there — but its usual guidance
+ * ("the requested model IS applied, so the selection registered") asserts something
+ * that was never checked: with no `expectedModel` the model axis is unavailable, so
+ * ANY wrong-credential read with a non-empty model list lands on that verdict.
+ * Three specs load without pinning a model (`model-provider-model-toggle`,
+ * `general-bugs-agent-images-playground`, `agent-model-connection-isolation`), plus
+ * any spec whose `models.json` came back empty.
+ */
+const CREDENTIAL_PENDING_NO_MODEL_GUIDANCE =
+  "The credential is missing from the persisted flow, and the caller pinned no " +
+  "model — so nothing here says whether the model selection registered. Read the " +
+  "`observed` models against what the provider-setup helper would have picked " +
+  "before concluding. The rebind is computed by " +
+  "`POST /api/v1/custom_component/update` and persisted by the editor's debounced " +
+  "autosave; a saturated backend delays both (#1077).";
+
+/** The guidance for this failure, including the cases the verdict alone cannot carry. */
+function guidanceFor(failure: CredentialSettleFailure): string {
+  if (failure.verdict === "credential-pending" && !failure.expectedModel) {
+    return CREDENTIAL_PENDING_NO_MODEL_GUIDANCE;
+  }
+  return VERDICT_GUIDANCE[
+    failure.verdict as Exclude<CredentialSettleVerdict, "settled">
+  ];
+}
 
 /**
  * The failure message the guard raises. Spelled out rather than left to a bare
@@ -282,6 +322,6 @@ export function formatCredentialSettleFailure(
     ...(lastReadError ? [`  last read err  ${lastReadError}`] : []),
     ``,
     `  verdict        ${verdict}`,
-    `                 ${VERDICT_GUIDANCE[verdict as Exclude<CredentialSettleVerdict, "settled">]}`,
+    `                 ${guidanceFor(failure)}`,
   ].join("\n");
 }

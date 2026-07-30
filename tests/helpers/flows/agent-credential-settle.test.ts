@@ -72,6 +72,16 @@ const flowWithAgent = (credential: string, modelValue: unknown) => ({
 
 // ─── readAgentCredentialProbe — against the real payload shape ───────────────
 
+test("the fixture itself uses the real array-of-objects shape", () => {
+  // Without this, the pair (fixture, implementation) can be reverted TOGETHER to
+  // the string shape and every other test still passes — which is exactly the
+  // inert state described in this file's header. The fixture is the property.
+  const value = MODEL_VALUE_SHAPE("gpt-4o-mini");
+  assert.ok(Array.isArray(value), "model.value must be an array");
+  assert.equal(typeof value[0], "object");
+  assert.equal(value[0]?.name, "gpt-4o-mini");
+});
+
 test("reads the credential and the SELECTED model names off the real shape", () => {
   const probe = readAgentCredentialProbe(
     flowWithAgent("OPENAI_API_KEY", MODEL_VALUE_SHAPE("gpt-4o-mini")),
@@ -339,4 +349,34 @@ test("a guard that never read the flow reports UNKNOWN, not an absent Agent node
 test("no-agent-node is reported only for a flow that WAS read", () => {
   const message = failure({ probe: null, verdict: "no-agent-node" });
   assert.equal(field(message, "observed"), "the flow was read and carries no Agent node");
+  assert.ok(
+    message.includes("did not instantiate as expected"),
+    "the verdict needs guidance of its own, not an empty line",
+  );
+});
+
+test("model-not-applied covers the wedged save path, not only a wrong click", () => {
+  // Verified on 1.12.0.dev10: the Agent's mount-time prefill persists
+  // ANTHROPIC_API_KEY plus the default Claude model, so on a google/openai load a
+  // save path that never lands leaves EXACTLY this state. Guidance that sends the
+  // reader to the setup helper only would misdirect every wedged load (#1077).
+  const message = failure({
+    verdict: "model-not-applied",
+    probe: probeOf("ANTHROPIC_API_KEY", ["claude-opus-5"]),
+  });
+  assert.ok(message.includes("setup helper"), message);
+  assert.ok(message.includes("prefill"), message);
+  assert.ok(message.includes("#1077"), message);
+});
+
+test("credential-pending with NO pinned model does not claim the selection registered", () => {
+  // Reachable from the three specs that call load({ provider }) with no model, and
+  // from any spec whose models.json came back empty. The usual guidance asserts
+  // "the requested model IS applied" — nothing checked that here.
+  const message = failure({ expectedModel: undefined });
+  assert.ok(
+    !message.includes("The requested model IS applied"),
+    "must not assert a check that could not run:\n" + message,
+  );
+  assert.ok(message.includes("pinned no model"), message);
 });
