@@ -807,7 +807,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 423 `test()` calls carrying the `@stable` tag, distributed across 168 spec
+> 424 `test()` calls carrying the `@stable` tag, distributed across 168 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1024,6 +1024,7 @@
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
 - [x] agent selects the Web Search tool for a search prompt → `agent-multi-tool-selection.spec.ts`
+- [x] image via input handle is described by the agent → `agent-multimodal-image-input.spec.ts`
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
 - [x] a small n_messages truncates retrieval to the most recent messages → `agent-n-messages-limit.spec.ts`
 - [x] causal control — a large n_messages retrieves the full seeded history → `agent-n-messages-limit.spec.ts`
