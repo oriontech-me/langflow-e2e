@@ -6,7 +6,7 @@ import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 
 test(
   "user must be able to see starter projects for mcp servers",
-  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     //starter mcp project
 

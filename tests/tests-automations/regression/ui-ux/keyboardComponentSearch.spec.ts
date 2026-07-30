@@ -77,7 +77,7 @@ test.describe("ui-ux — keyboard component search", () => {
   });
 
   test("user can search and add components using keyboard shortcuts",
-    { tag: ["@stable", "@workspace", "@ui-ux"] },
+    { tag: ["@workspace", "@ui-ux"] },
     async ({ page }) => {
       const search = page.getByTestId("sidebar-search-input");
       const nodes = page.locator(".react-flow__node");
