@@ -1,6 +1,6 @@
 # Provider Management — modal, provider count, components, add/remove API key
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -70,9 +70,13 @@ nightly, per test file.
 
 ## Step by step *(required)*
 
-Live-scouted testids (dev33): `provider-list`, `provider-item-<Name>` (8
-providers: Google Generative AI, OpenAI, Anthropic, IBM WatsonX, Ollama,
-OpenAI Compatible, OpenRouter, vLLM), `provider-search-input`,
+Live-scouted testids (dev33; re-scouted on 1.12.0.dev9): `provider-list`,
+`provider-item-<Name>` — 8 providers on 1.11 (Google Generative AI, OpenAI,
+Anthropic, IBM WatsonX, Ollama, OpenAI Compatible, OpenRouter, vLLM), **9 on
+1.12** (`Azure AI Foundry` added). `GET /api/v1/models/providers` returns a
+wider set (11 on dev9 — it also lists Groq and Azure OpenAI, which the page
+does not render); the page, not the API, is the contract here.
+`provider-search-input`,
 `provider-variable-input-<VAR>` (e.g. `OPENAI_API_KEY`, `OPENROUTER_API_KEY`),
 `model-provider-selection`, `model-search-input`, `llm-toggle-<model>`,
 `embeddings-toggle-<model>`; Save/Cancel/Confirm buttons (by role+name);
@@ -82,7 +86,10 @@ configured providers show a **"N models"** suffix in their list item and a
 
 **`modelProviderModal.spec.ts`**
 1. *Provider list renders* — Settings → Model Providers; assert `provider-list`
-   visible and the 8 known `provider-item-*` present.
+   visible and the 8 known `provider-item-*` present. **This spec owns the
+   by-name contract**: a known provider silently dropping from the page fails
+   here. Providers added after 1.11 (`Azure AI Foundry`) are deliberately not
+   pinned — a new catalog entry is not a regression.
 2. *Provider detail opens* — click `provider-item-OpenRouter` (unconfigured):
    assert its `provider-variable-input-OPENROUTER_API_KEY` becomes visible.
 3. *Configured provider shows model selection* — click `provider-item-OpenAI`
@@ -91,7 +98,21 @@ configured providers show a **"N models"** suffix in their list item and a
 
 **`model-provider-modal-actions.spec.ts`**
 1. *Page opens with description and provider count* — assert the description
-   text and `provider-item-*` count ≥ 8 (§7.5 "Available provider count").
+   text and `provider-item-*` count **≥ `MIN_PROVIDER_COUNT` (8)** (§7.5
+   "Available provider count").
+
+   > **Count contract: floor, not exact** (decided on issue #993). The
+   > assertion is `toBeGreaterThanOrEqual`, never `toHaveCount` — the risk this
+   > test exists to catch is *the provider list failing to render*, not Langflow
+   > shipping a new provider. An exact count couples the suite to the live
+   > catalog and breaks on unrelated additions: it was authored as
+   > `toHaveCount(8)`, went red when 1.11 shipped a 9th provider (#704 → #721,
+   > which closed with `@stable` off and the assertion untouched), and was still
+   > red on 1.12.0.dev9 (9 items: the 1.11 eight plus `Azure AI Foundry`).
+   > `MIN_PROVIDER_COUNT` stays at the 1.11 baseline of **8** — a page rendering
+   > fewer providers than 1.11 did is a real shrink. By-name coverage is not
+   > lost: `modelProviderModal.spec.ts` pins each known provider individually,
+   > so a provider disappearing still fails there.
 2. *Invalid key is rejected* — OpenRouter detail → fill
    `provider-variable-input-OPENROUTER_API_KEY` with a fake key → Save →
    assert the item does **not** gain the "models" suffix AND the API confirms
@@ -151,8 +172,10 @@ sidebar entry to the canonical **Language Model** component:
 ## Validation criterion *(required)*
 
 Every test asserts a **specific, live-scouted observable** (testid visibility,
-exact count, API state) with no conditional bypass: each one fails when its
-behavior breaks (verified by force-failure during promotion). The §7.5
+count floor, API state) with no conditional bypass: each one fails when its
+behavior breaks (verified by force-failure during promotion). Counts are
+asserted as a **floor against the 1.11 baseline**, never as an exact match —
+see the #993 note under `model-provider-modal-actions.spec.ts` above. The §7.5
 behaviors — modal, provider count, component configuration, add key (real
 accepted / fake rejected), remove key — are each pinned by at least one test.
 

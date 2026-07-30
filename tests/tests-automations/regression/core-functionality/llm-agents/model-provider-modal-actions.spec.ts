@@ -11,6 +11,9 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 // backend actually rejected the key — scouted live: a fake key creates no
 // global variable and no "N models" badge.
 
+// The provider list floor: the unified catalog shipped 8 providers on 1.11
+// (1.12 renders 9 — `Azure AI Foundry` was added). Asserted as a MINIMUM, never
+// an exact count — see the count-contract note below.
 const MIN_PROVIDER_COUNT = 8;
 
 async function openModelProviders(page: any): Promise<void> {
@@ -23,12 +26,9 @@ async function openModelProviders(page: any): Promise<void> {
 }
 
 test.describe("Model Provider Modal Actions", () => {
-  // @stable removed by daily triage #704 — provider count assertion fails
-  // deterministically (hardcoded 8, live catalog now 9 on 1.11.0.dev41).
-  // Restore once reconciled — see #721.
   test(
     "page opens with its description and the available provider count",
-    { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
     async ({ page }) => {
       await openModelProviders(page);
 
@@ -36,11 +36,18 @@ test.describe("Model Provider Modal Actions", () => {
         page.getByText("Configure AI model providers and manage their API keys."),
       ).toBeVisible({ timeout: 10000 });
 
-      // §7.5 "Available provider count" — the unified catalog ships 8
-      // providers on 1.11; fewer means the list regressed.
-      await expect(
-        page.locator('[data-testid^="provider-item-"]'),
-      ).toHaveCount(MIN_PROVIDER_COUNT, { timeout: 10000 });
+      // §7.5 "Available provider count" — a FLOOR, decided on issue #993. The
+      // regression this guards is the provider list failing to render (or
+      // shrinking below what 1.11 shipped), not Langflow adding a provider. An
+      // exact `toHaveCount` couples the suite to the live catalog: it went red
+      // when the 9th provider landed (#704 → #721, closed with @stable off and
+      // the assertion untouched) and was still red on 1.12.0.dev9. Per-provider
+      // presence is pinned by `modelProviderModal.spec.ts`, so nothing is lost.
+      const providerItems = page.locator('[data-testid^="provider-item-"]');
+      await expect(providerItems.first()).toBeVisible({ timeout: 10000 });
+      await expect
+        .poll(() => providerItems.count(), { timeout: 10000 })
+        .toBeGreaterThanOrEqual(MIN_PROVIDER_COUNT);
     },
   );
 
