@@ -1,40 +1,29 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import {
   closeAdvancedOptions,
   openAdvancedOptions,
 } from "../../../helpers/ui/open-advanced-options";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
 
-// Capture every flow each test's page creates from its POST /api/v1/flows → 201
-// responses and delete them id-scoped in afterEach (repo convention, #490/#681).
+// Every flow this file creates comes from `setupBlankFlow` inside
+// `addApiRequestComponent`, which pushes the id here; afterEach deletes them
+// id-scoped (repo convention, #490/#681). This replaced a `page.on("response")`
+// interception of POST /api/v1/flows → 201: the flow is now created through
+// `page.request`, which does not emit page-level response events, so the
+// interception would have collected nothing and leaked every flow (#1147).
 const createdFlowIds: string[] = [];
-
-test.beforeEach(({ page }) => {
-  page.on("response", (resp) => {
-    if (
-      resp.url().includes("/api/v1/flows") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201
-    ) {
-      resp
-        .json()
-        .then((body: { id?: string }) => {
-          if (body?.id) createdFlowIds.push(body.id);
-        })
-        .catch(() => {});
-    }
-  });
-});
 
 test.afterEach(async ({ request }) => {
   if (createdFlowIds.length === 0) return;
+  // Explicit bearer: under AUTO_LOGIN a bare request context is
+  // unauthenticated, so an unheadered DELETE 401s and silently leaks the flow.
   const bearer = await getAuthToken(request);
   for (const id of createdFlowIds.splice(0)) {
     await deleteFlow(request, id, {
@@ -93,10 +82,34 @@ async function addTableFieldToBody(page: Page, field: "headers" | "body") {
 }
 
 // Helper: create a blank flow and add the API Request component to the canvas.
-// After this call the component node is visible on the canvas.
-async function addApiRequestComponent(page: Page) {
-  await awaitBootstrapTest(page);
-  await page.getByTestId("blank-flow").click();
+// After this call the component node is visible on the canvas. Returns the
+// created flow's id (the caller needs it in the persistence test).
+//
+// The flow is created over the REST API and opened from the dashboard
+// (`setupBlankFlow`) instead of through home page → "New Flow" → templates modal
+// → `blank-flow`. That UI path leaves the welcome overlay OPEN behind the modal
+// ("Browse more templates" only sets `isTemplatesOpen`, it never calls
+// `close()`), and while it is open FlowPage mounts the whole
+// FlowSidebarComponent inside a `display: none` wrapper — so the
+// `sidebar-search-input` fill below raced an element that was in the DOM with an
+// empty bounding box, which Playwright reports as `hidden` (#1147, root-caused
+// on #1063). Creating over the API never opens the overlay.
+async function addApiRequestComponent(page: Page): Promise<string> {
+  const flowId = await setupBlankFlow(page);
+  createdFlowIds.push(flowId);
+  // Gate on write permission having RESOLVED before adding: useAddComponent
+  // bails out SILENTLY while `useIsFlowReadOnly` is true, which it is for the
+  // whole time the effective-permissions query is in flight. The header's
+  // flow-name button is disabled by the same expression, so its enabled state is
+  // an exact observable for "the add will register". Without this the add is
+  // dropped with no error and the node-count assertions fail without naming the
+  // cause.
+  await expect(page.getByTestId("menu_bar_display")).toBeEnabled({
+    timeout: 30000,
+  });
+  await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
+    timeout: 30000,
+  });
   await page.getByTestId("sidebar-search-input").fill("API Request");
   await expect(
     page.getByTestId("add-component-button-api-request"),
@@ -113,6 +126,7 @@ async function addApiRequestComponent(page: Page) {
   await expect(page.getByTestId("title-API Request")).toBeVisible({
     timeout: 15000,
   });
+  return flowId;
 }
 
 // The output Data object the component returns is JSON. A transient upstream
@@ -816,16 +830,17 @@ test("API Request component — flow state persists in database after autosave (
     let flowId = "";
 
     await test.step("Configure URL, method and a header on a new flow", async () => {
-      await addApiRequestComponent(page);
-      // Match against the pathname rather than `split("/").slice(-1)` so a
-      // trailing slash / query string / hash on the route doesn't silently
-      // turn `flowId` into a non-UUID and make the persistence test fail for
-      // a routing change unrelated to the behavior under test.
-      const flowIdMatch = new URL(page.url()).pathname.match(
-        /\/flow\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/,
+      // `setupBlankFlow` created the flow, so its id is known up front — no need
+      // to parse it back out of the route (which is what this step used to do
+      // when the flow came from the `blank-flow` UI path, #1147). Assert the
+      // editor really is on that flow: everything below is configured through
+      // this page and then polled by id, so a mismatch would silently poll a
+      // flow nobody edited.
+      flowId = await addApiRequestComponent(page);
+      expect(flowId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
       );
-      expect(flowIdMatch).not.toBeNull();
-      flowId = flowIdMatch![1];
+      expect(new URL(page.url()).pathname).toContain(`/flow/${flowId}`);
 
       const urlInput = page.getByTestId("popover-anchor-input-url_input");
       await expect(urlInput).toBeVisible({ timeout: 10000 });
