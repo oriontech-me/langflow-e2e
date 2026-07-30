@@ -272,13 +272,31 @@ class TestMigrationUI:
             self.page.get_by_test_id(f"chat-message-User-{question}").last
         ).to_be_visible(timeout=30_000)
 
-        # Then the reply. Waited on directly rather than via `button-stop`
-        # disappearing: `to_be_hidden` is satisfied by an element that never
-        # existed, so a run that never started would have passed that check —
-        # the same read-absence-as-success mistake this issue is about.
+        # Then the reply — waited on by its TEXT, not by its presence (#1143).
+        # Run #116 failed here against a healthy product: `div-chat-message` is
+        # rendered the moment the machine message is created, so `to_be_visible`
+        # resolved against a bubble still holding its loading dot and `inner_text()`
+        # read `''` ~1.5 s after send. The artifact screenshot showed the stream
+        # mid-flight, and `execute_flow_api_post_update` answered the same flow on
+        # the same nightly seconds later.
+        #
+        # Still not waited on via `button-stop` disappearing: `to_be_hidden` is
+        # satisfied by an element that never existed, so a run that never started
+        # would pass that check — the read-absence-as-success mistake of #1120.
         reply = self.page.get_by_test_id("div-chat-message").last
-        expect(reply).to_be_visible(timeout=120_000)
-        reply_text = reply.inner_text().strip()
+        expect(reply).to_have_text(re.compile(r"\S"), timeout=120_000)
+
+        # Let the stream settle so the recorded detail is the whole reply instead of
+        # its first tokens — a truncated reply in the report reads like a broken one.
+        # Bounded, and it cannot mask a failure: a stream that produced no text at
+        # all has already failed the assertion above.
+        reply_text = ""
+        for _ in range(30):
+            current = reply.inner_text().strip()
+            if current and current == reply_text:
+                break
+            reply_text = current
+            self.page.wait_for_timeout(500)
 
         self.page.screenshot(path="test-results/playground-result.png")
 
