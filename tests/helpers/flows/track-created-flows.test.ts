@@ -334,6 +334,52 @@ test("strict still logs and records before re-throwing", async () => {
   assert.deepEqual(flows.ids(), []);
 });
 
+test("strict finishes the sweep BEFORE throwing, so nothing leaks behind the throw", async () => {
+  // The captured ids are taken out of the tracker at the top of `cleanup`, so a throw
+  // on the FIRST failure leaves the rest neither deleted nor tracked — a permanent
+  // leak in the mode whose entire premise is that cleanup is load-bearing. Every id
+  // must be attempted; the failure is raised afterwards.
+  const { page, emit } = fakePage();
+  const { request, deletes } = fakeRequest({ failFor: new Set(["flow-1"]), status: 422 });
+  const flows = trackCreatedFlows(page);
+
+  emit(creationResponse("flow-1"));
+  emit(creationResponse("flow-2"));
+  emit(creationResponse("flow-3"));
+
+  await assert.rejects(() => flows.cleanup(request, { strict: true }), /422/);
+  assert.deepEqual(
+    deletes.map((d) => d.url),
+    [
+      "/api/v1/flows/flow-1",
+      "/api/v1/flows/flow-2",
+      "/api/v1/flows/flow-3",
+    ],
+    "the two flows after the failing one must still be deleted",
+  );
+});
+
+test("strict aggregates when more than one delete fails, naming every id", async () => {
+  const { page, emit } = fakePage();
+  const { request } = fakeRequest({ failFor: new Set(["flow-1", "flow-3"]), status: 403 });
+  const flows = trackCreatedFlows(page);
+
+  emit(creationResponse("flow-1"));
+  emit(creationResponse("flow-2"));
+  emit(creationResponse("flow-3"));
+
+  await assert.rejects(
+    () => flows.cleanup(request, { strict: true }),
+    (error: unknown) => {
+      assert.ok(error instanceof AggregateError, "several failures aggregate");
+      assert.equal(error.errors.length, 2);
+      assert.match(error.message, /flow-1/);
+      assert.match(error.message, /flow-3/);
+      return true;
+    },
+  );
+});
+
 test("strict is opt-in — the default never throws", async () => {
   const { page, emit } = fakePage();
   const { request } = fakeRequest({ failFor: new Set(["flow-1"]), status: 422 });
@@ -351,6 +397,10 @@ test("a getAuthToken failure is reported as itself, not as a flow problem", asyn
   // `cleanup` still may not throw, so the failure has to be NAMED on the result —
   // otherwise a backend wedged during teardown (#1077) produces one 401 per flow and
   // a report that blames the flows.
+  //
+  // `authRetryDelaysMs: []` for the reason the option exists: `getAuthToken` retries a
+  // THROWN request on the real `[2000, 8000, 20000]` backoff, so without it this one
+  // test sleeps 30 s and becomes the critical path of a lane that gates every PR.
   const { page, emit } = fakePage();
   const flows = trackCreatedFlows(page);
   const request = {
@@ -366,10 +416,34 @@ test("a getAuthToken failure is reported as itself, not as a flow problem", asyn
   } as unknown as APIRequestContext;
 
   emit(creationResponse("flow-1"));
-  const result = await flows.cleanup(request);
+  const result = await flows.cleanup(request, { authRetryDelaysMs: [] });
 
   assert.match(String(result.authError), /Timeout 20000ms/);
   assert.equal(result.failed.length, 1, "the delete was still attempted");
+});
+
+test("the auth backoff is getAuthToken's own unless a test overrides it", async () => {
+  // The override must stay opt-in: a spec that does not pass it has to keep the full
+  // budget, which is what survives a backend wedged during teardown (#1077).
+  const { page, emit } = fakePage();
+  const flows = trackCreatedFlows(page);
+  let attempts = 0;
+  const request = {
+    get: async () => {
+      attempts++;
+      throw new Error("apiRequestContext.get: Timeout 20000ms exceeded.");
+    },
+    delete: async () => ({
+      ok: () => true,
+      status: () => 204,
+      statusText: () => "No Content",
+      text: async () => "",
+    }),
+  } as unknown as APIRequestContext;
+
+  emit(creationResponse("flow-1"));
+  await flows.cleanup(request, { authRetryDelaysMs: [] });
+  assert.equal(attempts, 1, "an empty budget means one attempt, no sleeping");
 });
 
 test("no token in an auth-less environment is not an auth ERROR", async () => {

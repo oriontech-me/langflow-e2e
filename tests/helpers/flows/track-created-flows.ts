@@ -94,13 +94,24 @@ export interface FlowCleanupResult {
 
 export interface FlowCleanupOptions {
   /**
-   * Re-throw the first failed `deleteFlow` instead of logging it.
+   * Fail the teardown on a failed `deleteFlow` instead of only logging it.
    *
    * For the specs whose cleanup is load-bearing and which failed their teardown on a
    * failed delete BEFORE this helper existed — migrating one of those without this
    * would trade a red test for a warning line nothing asserts on.
+   *
+   * The throw happens AFTER the whole sweep, never on the first failure: see the note
+   * at the throw site.
    */
   strict?: boolean;
+  /**
+   * Override `getAuthToken`'s retry backoff. **Unit tests only** — a spec must not set
+   * it, because the default budget is what survives a backend wedged during teardown
+   * (#1077). It exists so the unit lane can exercise the auth-failure path without
+   * sleeping through the real `[2000, 8000, 20000]`, which cost the PR-gating lane
+   * 30 s per run.
+   */
+  authRetryDelaysMs?: number[];
 }
 
 export interface FlowTracker {
@@ -122,6 +133,7 @@ export interface FlowTracker {
    * Settle, navigate off the canvas, then delete every captured flow id-scoped.
    * Never throws unless `{ strict: true }`: by default a failed delete is logged and
    * returned, so it cannot fail an otherwise-green test while still being visible.
+   * Either way every captured id is attempted — one failure never skips the rest.
    */
   cleanup(
     request: APIRequestContext,
@@ -192,7 +204,7 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
     dispose: () => page.off("response", onResponse),
     async cleanup(
       request: APIRequestContext,
-      { strict = false }: FlowCleanupOptions = {},
+      { strict = false, authRetryDelaysMs }: FlowCleanupOptions = {},
     ): Promise<FlowCleanupResult> {
       await settle();
       const result: FlowCleanupResult = { deleted: [], failed: [] };
@@ -228,7 +240,11 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
       let options: { headers: Record<string, string> } | undefined;
       let authError: string | undefined;
       try {
-        const bearer = await getAuthToken(request);
+        // `retryDelaysMs: undefined` keeps `getAuthToken`'s own default budget — only
+        // the unit lane passes a value.
+        const bearer = await getAuthToken(request, {
+          retryDelaysMs: authRetryDelaysMs,
+        });
         options = bearer ? { headers: { Authorization: bearer } } : undefined;
       } catch (error) {
         authError = (error as Error)?.message?.split("\n")[0] ?? String(error);
@@ -239,6 +255,7 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
         );
       }
 
+      const errors: unknown[] = [];
       for (const id of captured) {
         try {
           await deleteFlow(request, id, options);
@@ -251,9 +268,27 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
           // failing an otherwise-green test.
           const message = (error as Error)?.message?.split("\n")[0] ?? String(error);
           result.failed.push({ id, error: message });
+          errors.push(error);
           console.warn(`⚠️  cleanup: flow ${id} was NOT deleted — ${message}`);
-          if (strict) throw error;
         }
+      }
+
+      // `strict` throws only once the sweep is over. Throwing on the first failure
+      // would abort it — and since `captured` was already taken OUT of the tracker,
+      // the remaining flows would be neither deleted nor tracked: a permanent leak,
+      // in the mode whose whole point is that cleanup is load-bearing. (That was the
+      // pre-#1108 behaviour of the copies that let `deleteFlow` throw, and it is the
+      // one thing this helper does NOT preserve on purpose.) The first error is
+      // re-thrown as itself so its `deleteFlow` message survives; several failures
+      // aggregate, naming every id the teardown left behind.
+      if (strict && errors.length > 0) {
+        if (errors.length === 1) throw errors[0];
+        throw new AggregateError(
+          errors,
+          `Flow cleanup failed for ${result.failed.length} flows: ${result.failed
+            .map((f) => `${f.id} (${f.error})`)
+            .join("; ")}`,
+        );
       }
       return result;
     },
