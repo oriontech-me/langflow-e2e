@@ -174,18 +174,74 @@ export function unavailableReason(
 
   for (const provider of providers) {
     const record = records.find((r) => r.provider === provider);
-    if (record?.status === "inactive") {
-      // The reason lands in the Playwright report — it is the whole product of a
-      // skip, so it must never read `inactive — null`. `collect-models` always
-      // fills `error` for an inactive record today, but the field is nullable and
-      // a hand-edited or future-schema file must still produce a usable line.
-      return `Provider "${provider}" inactive — ${
-        record.error ?? "no reason recorded by collect-models"
-      }`;
-    }
+    if (record?.status === "inactive") return inactiveReason(record);
   }
 
   return undefined;
+}
+
+/**
+ * The skip line for one `inactive` record.
+ *
+ * The reason lands in the Playwright report — it is the whole product of a skip, so
+ * it must never read `inactive — null`. `collect-models` always fills `error` for an
+ * inactive record today, but the field is nullable and a hand-edited or
+ * future-schema file must still produce a usable line.
+ */
+function inactiveReason(record: ProviderHealthRecord): string {
+  return `Provider "${record.provider}" inactive — ${
+    record.error ?? "no reason recorded by collect-models"
+  }`;
+}
+
+/**
+ * Every `inactive` provider and why, as `provider → reason` (issue #1043).
+ *
+ * The shape the provider-**parametrized** specs consume: they build one test target
+ * per `models.json` entry and need the reason for the target's provider, whichever
+ * that turns out to be — unlike the hardcoded specs, which know their providers up
+ * front and use `providerSkipGate`. Seventeen `agent-*.spec.ts` files plus
+ * `mcp-client-agent.spec.ts` carried a byte-similar copy of this, and
+ * `mcp-client-agent-gemini-tool-regression.spec.ts` a single-provider variant; #1029's
+ * audit found them already diverged (one silent where the others warn, one naming a
+ * `collect-providers.spec.ts` that does not exist), and every change to the skip
+ * contract had to be made in twenty places.
+ *
+ * Three deliberate differences from those copies, all of them the contract this
+ * module already owns elsewhere:
+ *
+ *  - `IGNORE_PROVIDER_HEALTH=1` empties the map, so the escape hatch for a stale
+ *    local `providers.json` now works for the parametrized specs too. It did not
+ *    before, which made a local run of the agent family unrunnable off a days-old
+ *    file even though `providerSkipGate` honoured the same variable.
+ *  - a nullable `error` produces "no reason recorded by collect-models" instead of
+ *    the literal `inactive — null`.
+ *  - the file is read once through `readProviderHealth`, which fails OPEN on an
+ *    absent or unparseable file (a fresh clone has none — it is gitignored).
+ *
+ * The `console.warn` on a missing file is kept from the majority of the copies: this
+ * runs at collection time, and a local run with no `providers.json` should say why
+ * every provider looks healthy.
+ */
+export function providerSkipReasons(
+  records: ProviderHealthRecord[] | null = readProviderHealth(),
+  env: NodeJS.ProcessEnv = process.env,
+): Map<string, string> {
+  const reasons = new Map<string, string>();
+  if (env.IGNORE_PROVIDER_HEALTH === "1") return reasons;
+  if (!records) {
+    console.warn(
+      "providers.json not found or unreadable — run collect-models.spec.ts first. " +
+        "Skipping provider pre-validation.",
+    );
+    return reasons;
+  }
+  for (const record of records) {
+    if (record.status === "inactive") {
+      reasons.set(record.provider, inactiveReason(record));
+    }
+  }
+  return reasons;
 }
 
 /**

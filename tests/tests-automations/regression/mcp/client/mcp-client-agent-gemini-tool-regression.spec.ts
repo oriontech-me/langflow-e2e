@@ -1,11 +1,10 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import type { Page, APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { hasProviderEnvKeys, missingProviderEnvKeys } from "../../../../helpers/provider-setup";
-import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
+import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
 import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
@@ -61,21 +60,6 @@ const MCP_JSON_CONFIG = JSON.stringify({
 const PROVIDER = "google" as const;
 const ECHO_PAYLOAD = "hello mcp";
 
-// Google provider inactive-status reason from providers.json (collect-models),
-// mirroring the sibling specs' skip contract.
-function getGoogleSkipReason(): string | undefined {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/providers.json",
-  );
-  if (!fs.existsSync(jsonPath)) return undefined;
-  const records = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ProviderRecord[];
-  const record = records.find((r) => r.provider === PROVIDER);
-  return record?.status === "inactive"
-    ? `Provider "${PROVIDER}" inactive — ${record.error}`
-    : undefined;
-}
-
 let createdFlowId: string | undefined;
 
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
@@ -130,7 +114,7 @@ async function fetchPersistedAgentTurn(
   return { replyText, echoToolUseCount };
 }
 
-const skipReason = getGoogleSkipReason();
+const skipReason = providerSkipReasons().get(PROVIDER);
 const geminiModel = resolveGeminiModel();
 
 test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${geminiModel ?? "default"}]`, () => {

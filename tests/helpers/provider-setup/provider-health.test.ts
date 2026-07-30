@@ -22,6 +22,7 @@ import * as os from "os";
 import * as path from "path";
 import {
   degradeProviders,
+  providerSkipReasons,
   providersForEnvKeys,
   readProviderHealth,
   toSkipGate,
@@ -342,4 +343,84 @@ test("writeProviderHealth reports failure instead of throwing", () => {
   fs.mkdirSync(asDir); // a directory where the file should go — write must fail
 
   assert.equal(writeProviderHealth([], asDir), false);
+});
+
+// ─── providerSkipReasons — the parametrized specs' gate (issue #1043) ─────────
+//
+// What rides on this function: 18 provider-parametrized spec files build one test
+// target per `models.json` entry and consult this map for the target's provider. Too
+// permissive and a target runs a live call against a dead key — the failure mode
+// #1029 exists to prevent (on run 30374528125 that killed the shard's only Langflow
+// worker six times and cost 14 collateral timeouts). Too strict and the whole agent
+// family skips, which reads as green.
+//
+// It replaced a byte-similar copy inlined in each of those files. The copies did NOT
+// honour `IGNORE_PROVIDER_HEALTH` and printed `inactive — null` for a nullable
+// error; both are corrected here, so these tests are also the record of the
+// behaviour change.
+
+const QUIET = { ...ALL_KEYS_SET } as NodeJS.ProcessEnv;
+
+test("maps every inactive provider to its collected reason", () => {
+  const reasons = providerSkipReasons(RUN_30374528125, QUIET);
+  assert.deepEqual([...reasons.keys()], ["google"]);
+  assert.equal(reasons.get("google"), `Provider "google" inactive — ${SPEND_CAP}`);
+});
+
+test("an active provider is absent from the map, not present with an empty reason", () => {
+  // The call sites do `skipReasons.get(provider)` and pass the result straight to
+  // `test.skip(!!reason, reason)`. An empty-string entry would skip nothing but
+  // would report a blank reason if the shape ever changed; absence is the contract.
+  const reasons = providerSkipReasons(RUN_30374528125, QUIET);
+  assert.equal(reasons.has("openai"), false);
+  assert.equal(reasons.get("anthropic"), undefined);
+});
+
+test("no health signal fails OPEN — an empty map, never a blanket skip", () => {
+  // providers.json is gitignored, so a fresh clone and any targeted local run
+  // legitimately have none, and CI may run with a failed `Collect models` (#980).
+  for (const records of [null, []]) {
+    assert.equal(providerSkipReasons(records, QUIET).size, 0);
+  }
+});
+
+test("IGNORE_PROVIDER_HEALTH=1 empties the map", () => {
+  // The escape hatch for a STALE local providers.json. `providerSkipGate` has
+  // honoured it since #1029; the inlined copies this replaced did not, so a local
+  // run of the agent family was unrunnable off a days-old file.
+  const reasons = providerSkipReasons(RUN_30374528125, {
+    ...QUIET,
+    IGNORE_PROVIDER_HEALTH: "1",
+  } as NodeJS.ProcessEnv);
+  assert.equal(reasons.size, 0);
+});
+
+test("a nullable error still produces a usable line, never `inactive — null`", () => {
+  const reasons = providerSkipReasons(
+    [{ provider: "google", model: null, status: "inactive", error: null }],
+    QUIET,
+  );
+  assert.equal(
+    reasons.get("google"),
+    'Provider "google" inactive — no reason recorded by collect-models',
+  );
+  assert.ok(!String(reasons.get("google")).includes("null"));
+});
+
+test("the map and the hardcoded gate report the SAME reason for the same record", () => {
+  // The two entry points must not drift: a spec parametrized over google and a spec
+  // hardcoding google should quote the same line in the report.
+  const reasons = providerSkipReasons(RUN_30374528125, QUIET);
+  assert.equal(
+    reasons.get("google"),
+    unavailableReason(["google"], RUN_30374528125, QUIET),
+  );
+});
+
+test("providerSkipReasons does not depend on env keys being set", () => {
+  // Deliberate parity with the copies it replaced: this gate reports COLLECTED
+  // health only. A missing env key is `unavailableReason`'s precedence rule, and
+  // folding it in here would change which targets skip vs. fail.
+  const reasons = providerSkipReasons(RUN_30374528125, {} as NodeJS.ProcessEnv);
+  assert.deepEqual([...reasons.keys()], ["google"]);
 });
