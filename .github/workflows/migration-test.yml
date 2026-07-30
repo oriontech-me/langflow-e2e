@@ -516,6 +516,33 @@ jobs:
 
           [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]] && {
             echo "::error::No witness template found — /api/v1/flows/ and /api/v1/starter-projects/ both returned nothing usable"; exit 1; }
+
+          # Select a model on the witness (#1004). Starters ship the model
+          # component with NO selection, so the source smoke below used to die on
+          # "A model selection is required" — every run since 2026-07-23.
+          # Since 1.11.1 the selection lives in the required `model` field
+          # (`type: model`); `provider`/`model_name` are only advanced OVERRIDES of
+          # it, and writing them while `model` is empty is rejected with "Model
+          # name/provider overrides require a built-in model selection". So set
+          # `model` as a plain string when the field exists, and fall back to the
+          # legacy pair for older builds. Verified against langflow:1.11.1 and
+          # langflow-nightly 1.12.0.dev9: unpatched 500, patched 200 on both.
+          # `api_key` takes the NAME of the Credential Langflow auto-imports from
+          # the OPENAI_API_KEY env var (asserted a few lines above).
+          TEMPLATE=$(echo "$TEMPLATE" | jq --arg m "${WITNESS_MODEL:-gpt-4o-mini}" --arg key "OPENAI_API_KEY" '
+            (.data.nodes[]?
+              | select((.data.type // "") | test("^(LanguageModelComponent|OpenAIModel)$"))
+              | .data.node.template) |= (
+                (if has("model") then
+                   (if ((.model.value // "") == "") then .model.value = $m else . end)
+                 else
+                   (if ((.model_name.value // "") == "") then .model_name.value = $m else . end)
+                   | (if ((.provider.value // "") == "") then .provider.value = "OpenAI" else . end)
+                 end)
+                | (if (has("api_key") and ((.api_key.value // "") == "")) then .api_key.value = $key else . end)
+              )')
+          echo "Witness model selection: $(echo "$TEMPLATE" | jq -c '[.data.nodes[]? | select((.data.type // "") | test("LanguageModelComponent|OpenAIModel")) | .data.node.template | {model: .model.value, model_name: .model_name.value}]')"
+
           FLOW_PAYLOAD=$(echo "$TEMPLATE" | jq '{
             name: ((.name // "Simple Agent") + " — migration witness"),
             description: "compose migration witness",
