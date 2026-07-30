@@ -126,7 +126,17 @@ test(
       const uploaded: { id?: string; name?: string } = await (
         await uploadDone
       ).json();
-      if (uploaded.id) createdFileIds.push(uploaded.id);
+      // Both fields are load-bearing, so neither is treated as optional: `id`
+      // is the only handle the afterEach cleanup has — dropping it silently
+      // leaks the upload into the shard's shared account, which is the very
+      // residue that broke this spec (#1125) — and `name` is what every testid
+      // below is built from. Register the id before asserting anything else, so
+      // a later failure still cleans up.
+      expect(
+        uploaded.id,
+        "the upload response must carry the file id",
+      ).toBeTruthy();
+      createdFileIds.push(uploaded.id as string);
       expect(
         uploaded.name,
         "the upload response must carry the stored name",
