@@ -13,7 +13,7 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
-import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
+import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
 
 /**
  * Agent multimodal image input (QA-CHECKLIST §6.5, "Image passed via input
@@ -108,25 +108,6 @@ function resolveVisionModel(provider: string, models: ModelRecord[]): string | u
   return candidates[0];
 }
 
-function getProviderSkipReasons(): Map<string, string> {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/providers.json",
-  );
-  if (!fs.existsSync(jsonPath)) {
-    console.warn("providers.json not found — run collect-models.spec.ts first. Skipping provider pre-validation.");
-    return new Map();
-  }
-  const records = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ProviderRecord[];
-  const reasons = new Map<string, string>();
-  for (const r of records) {
-    if (r.status === "inactive") {
-      reasons.set(r.provider, `Provider "${r.provider}" inactive — ${r.error}`);
-    }
-  }
-  return reasons;
-}
-
 function getModelsFromJson(): ModelRecord[] {
   const jsonPath = path.resolve(
     __dirname,
@@ -142,7 +123,7 @@ function getModelsFromJson(): ModelRecord[] {
 // One target per active provider, each with a resolved vision-capable model.
 // A provider with no vision model is skipped with a reason.
 function getTestTargets(): TestTarget[] {
-  const skipReasons = getProviderSkipReasons();
+  const skipReasons = providerSkipReasons();
   const allModels = getModelsFromJson();
 
   if (allModels.length === 0) {

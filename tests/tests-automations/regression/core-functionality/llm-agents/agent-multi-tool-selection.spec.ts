@@ -13,7 +13,7 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
-import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
+import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
 
 /**
  * Agent multi-tool selection (QA-CHECKLIST §6.2 "Agent with multiple
@@ -84,25 +84,6 @@ interface TestTarget {
   skipReason?: string;
 }
 
-function getProviderSkipReasons(): Map<string, string> {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/providers.json",
-  );
-  if (!fs.existsSync(jsonPath)) {
-    console.warn("providers.json not found — run collect-models.spec.ts first. Skipping provider pre-validation.");
-    return new Map();
-  }
-  const records = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ProviderRecord[];
-  const reasons = new Map<string, string>();
-  for (const r of records) {
-    if (r.status === "inactive") {
-      reasons.set(r.provider, `Provider "${r.provider}" inactive — ${r.error}`);
-    }
-  }
-  return reasons;
-}
-
 function getModelsFromJson(): ModelRecord[] {
   const jsonPath = path.resolve(
     __dirname,
@@ -116,7 +97,7 @@ function getModelsFromJson(): ModelRecord[] {
 }
 
 function getTestTargets(): TestTarget[] {
-  const skipReasons = getProviderSkipReasons();
+  const skipReasons = providerSkipReasons();
 
   if (process.env.MODEL_TEST_ID) {
     const model = process.env.MODEL_TEST_ID;
