@@ -1,3 +1,4 @@
+import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -138,7 +139,7 @@ test.afterEach(async ({ page, request }, testInfo) => {
 // After this call the component node is on the canvas and selected, with its
 // NON-advanced fields (url_input, method) rendered on the node body. Advanced
 // fields are not on the body — see `addFieldToNodeBody` below.
-async function addApiRequestComponent(page: any) {
+async function addApiRequestComponent(page: Page) {
   await awaitBootstrapTest(page);
   await page.getByTestId("blank-flow").click();
   await page.waitForSelector('[data-testid="sidebar-search-input"]', { timeout: 10000 });
@@ -169,7 +170,11 @@ async function addApiRequestComponent(page: any) {
 // The post-condition is asserted here, not left to the caller: if the add
 // silently no-ops, this fails naming the field instead of surfacing as an
 // opaque timeout on the widget several lines later.
-async function addFieldToNodeBody(page: any, field: string, widgetTestId: string) {
+async function addFieldToNodeBody(
+  page: Page,
+  field: string,
+  widgetTestId: string,
+) {
   await page.getByTestId("title-API Request").click();
   await openAdvancedOptions(page);
   await page.getByTestId(`inspector-add-${field}`).click();
@@ -181,7 +186,7 @@ async function addFieldToNodeBody(page: any, field: string, widgetTestId: string
 // body-level portals, so scope to the dialog that actually holds the output copy
 // button — an unscoped locator is non-deterministic (same reasoning as the
 // sibling spec's `outputDialog`).
-function outputDialog(page: any) {
+function outputDialog(page: Page): Locator {
   return page
     .locator('[role="dialog"]')
     .filter({ has: page.getByTestId("copy-output-button") });
@@ -190,7 +195,7 @@ function outputDialog(page: any) {
 // Close the output dialog between run attempts and assert it actually closed, so
 // a stuck-open dialog surfaces here instead of as an obscured-click timeout on
 // the next run.
-async function closeOutputDialog(page: any): Promise<void> {
+async function closeOutputDialog(page: Page): Promise<void> {
   const dialog = outputDialog(page);
   if (!(await dialog.isVisible().catch(() => false))) return;
   await page.keyboard.press("Escape");
@@ -210,7 +215,7 @@ async function closeOutputDialog(page: any): Promise<void> {
 // TOP-LEVEL key from one nested inside the echoed response body. That is not
 // hypothetical — it silently defused the `include_httpx_metadata` assertion
 // below (#1107); see the comment there.
-async function readOutputJson(page: any): Promise<Record<string, any>> {
+async function readOutputJson(page: Page): Promise<Record<string, unknown>> {
   const dialog = outputDialog(page);
   const copyButton = dialog.getByTestId("copy-output-button");
   await expect(copyButton).toBeVisible({ timeout: 10000 });
@@ -223,7 +228,18 @@ async function readOutputJson(page: any): Promise<Record<string, any>> {
     clipboard = await page.evaluate(() => navigator.clipboard.readText());
     expect(clipboard.length).toBeGreaterThan(0);
   }).toPass({ timeout: 15000 });
-  return JSON.parse(clipboard);
+  try {
+    return JSON.parse(clipboard) as Record<string, unknown>;
+  } catch (error) {
+    // The component always emits a JSON Data object here, so a parse failure
+    // means the copy button yielded something else. Report WHAT it yielded — a
+    // bare SyntaxError names neither the payload nor this helper.
+    throw new Error(
+      `The output dialog copied a payload that is not JSON: ` +
+        `${(error as Error).message}. ` +
+        `Payload (first 500 chars): ${clipboard.slice(0, 500)}`,
+    );
+  }
 }
 
 // Run the component, open its output and return the PARSED output Data, retrying
@@ -247,15 +263,23 @@ async function readOutputJson(page: any): Promise<Record<string, any>> {
 // attempts and throws — it never returns a degraded output for the caller's
 // assertions to interpret (#383's rule).
 async function runAndReadOutput(
-  page: any,
-  isTransient: (output: Record<string, any>) => boolean,
-): Promise<Record<string, any>> {
+  page: Page,
+  isTransient: (output: Record<string, unknown>) => boolean,
+): Promise<Record<string, unknown>> {
   const maxAttempts = 3;
   const durationBadge = page.getByTestId("node_duration_api request");
+  // The signal for a build that hard-errored. Measured, not assumed: a URL the
+  // backend rejects outright leaves the node with NO status testid at all —
+  // neither `node_duration_api request` nor any `node_status_icon_*` — so there
+  // is nothing on the node to wait for. What does render is the inline
+  // "Flow build failed" container carrying the reason, which is the same generic
+  // failure signal `observability-monitoring/flow-error-message.spec.ts` uses.
+  // `.first()` because it renders in both a toast and the inline container.
+  const buildFailed = page.getByText("Flow build failed").first();
   const inspectButton = page.getByTestId(
     "output-inspection-api response-apirequest",
   );
-  let output: Record<string, any> = {};
+  let output: Record<string, unknown> = {};
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await page.getByTestId("button_run_api request").click();
@@ -263,7 +287,34 @@ async function runAndReadOutput(
     // successfully" toast: a toast left over from the previous attempt would let
     // this one proceed against stale state. The badge is re-created per run.
     await expect(durationBadge).toBeHidden();
-    await expect(durationBadge).toBeVisible({ timeout: 45000 });
+    // Race the badge against the build-failure signal. A build that hard-errors
+    // never produces a duration badge, so waiting on the badge alone burns the
+    // whole 45 s and then reports `element(s) not found` — naming the badge
+    // instead of the error.
+    await expect(durationBadge.or(buildFailed)).toBeVisible({ timeout: 45000 });
+    if (!(await durationBadge.isVisible())) {
+      // Deliberately NOT retried: a hard build error is not a transient echo
+      // failure, and re-running it three times only delays the same verdict.
+      //
+      // The reason renders next to the signal rather than inside it, so slice it
+      // out of the page text instead of guessing at a container. It is worth the
+      // reach: on a rejected URL this reports "SSRF Protection: DNS resolution
+      // failed for …", i.e. the actual cause, in the message itself.
+      const pageText = (
+        await page
+          .locator("body")
+          .innerText()
+          .catch(() => "")
+      ).replace(/\s+/g, " ");
+      const start = pageText.indexOf("Flow build failed");
+      throw new Error(
+        `The API Request build FAILED on attempt ${attempt}, so the component ` +
+          `produced no output Data to read. ` +
+          (start >= 0
+            ? `On screen: ${pageText.slice(start, start + 300)}`
+            : `The failure signal was gone by the time it was read; see the trace.`),
+      );
+    }
     // Kept as an assertion in its own right: the component catches an HTTP
     // failure and returns an error Data object instead of raising, so even the
     // timeout path must report a successful build.
@@ -298,7 +349,7 @@ async function runAndReadOutput(
 // `status_code: 500`). A `!output.error` here would therefore classify the
 // component's own timeout — the thing the timeout test asserts — as a transient
 // and burn all three attempts on it.
-function isUpstreamServerError(output: Record<string, any>): boolean {
+function isUpstreamServerError(output: Record<string, unknown>): boolean {
   const code = Number(output.status_code);
   return Number.isInteger(code) && code >= 500 && !("error" in output);
 }
@@ -493,10 +544,29 @@ test("API Request component — include_httpx_metadata=true adds request headers
     expect(output).not.toHaveProperty("error");
     expect(Object.keys(output)).toContain("headers");
     // Independent of the flag, and kept from the original assertion: Langflow
-    // identifies itself to the endpoint, which the echo service reflects back
-    // inside `result.headers`. Scoped to that object so it can no longer be
-    // confused with the top-level metadata asserted above.
-    expect(JSON.stringify(output.result?.headers ?? {})).toContain("Langflow");
+    // identifies itself to the endpoint (`User-Agent: Langflow/1.0`, the default
+    // value of the component's `headers` table upstream), which the echo service
+    // reflects back inside `result.headers`. Scoped to that object so it can no
+    // longer be confused with the top-level metadata asserted above.
+    //
+    // Asserted as a stringify-substring rather than by reading the header key,
+    // ON PURPOSE — the two endpoints this test can run against disagree on the
+    // shape: postman-echo (the default) emits a lowercase key with a string
+    // value, `{"user-agent": "Langflow/1.0"}`, while go-httpbin (what the daily
+    // points `ECHO_BASE_URL` at) emits Go's canonical casing with array values,
+    // `{"User-Agent": ["Langflow/1.0"]}`. A keyed read needs per-endpoint
+    // normalization; the substring does not care. Do not "improve" this into
+    // `headers["user-agent"]` — it would pass locally and fail only on CI.
+    //
+    // The presence check is separate so a changed echo shape reports as the
+    // missing key it is, instead of as `"{}" does not contain "Langflow"`.
+    const echoedHeaders = (output.result as { headers?: unknown } | undefined)
+      ?.headers;
+    expect(
+      echoedHeaders,
+      "the echo service returned no result.headers — its response shape changed",
+    ).toBeDefined();
+    expect(JSON.stringify(echoedHeaders)).toContain("Langflow");
 
     await page.keyboard.press("Escape");
   },
