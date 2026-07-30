@@ -65,9 +65,13 @@ test.afterEach(async ({ request }) => {
   await deleteUploadedFiles(request, bearer);
 });
 
-test(
+// Quarantined for #1125 — recurrent flake (dailies 2026-07-23, 2026-07-30):
+// the uploaded file item `file-item-test-file` never renders within 15 s, even
+// though the upload POST is awaited. Lifting the quarantine and restoring
+// @stable is a deliverable of #1125.
+test.fixme(
   "upload a file through the Read File component and read its content",
-  { tag: ["@stable", "@release", "@files", "@components"] },
+  { tag: ["@release", "@files", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
