@@ -69,6 +69,12 @@ test(
     const urlInput = page.getByTestId("popover-anchor-input-url_input");
     await expect(urlInput).toBeVisible();
 
+    // Scoped OUT of the ECHO_BASE_URL migration on purpose (#1128): this test
+    // never runs the component, so the string is only ever typed into a field and
+    // read back. No request is made to this host by anything — the suite included
+    // — so it is not an external dependency and routing it through the
+    // self-hosted echo would buy nothing. Any literal URL would do; it stays as
+    // it is so the field under test keeps a realistic value.
     await urlInput.fill("https://httpbin.org/get");
     await expect(urlInput).toHaveValue("https://httpbin.org/get");
   },

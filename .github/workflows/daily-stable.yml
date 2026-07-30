@@ -336,32 +336,26 @@ jobs:
       # Request component runs validators.url() on the URL and REJECTS a
       # single-label host (http://go-httpbin:8080 fails), but ACCEPTS a raw IP —
       # so ECHO_BASE_URL is built from the container IP, not the service name.
-      # The IP is stable within the job (same Docker network as the langflow
-      # service, which reaches it directly), and it is pre-authorized by the
-      # RFC-1918 CIDRs in LANGFLOW_SSRF_ALLOWED_HOSTS above. Exported to
-      # $GITHUB_ENV so the test step (and collect-models) inherit it; the specs
-      # fall back to postman-echo.com only if ECHO_BASE_URL is unset. Fail-soft:
-      # if go-httpbin never comes up we log and skip the export, leaving the
-      # public default in place rather than breaking the whole daily suite.
+      # The IP is pre-authorized by the RFC-1918 CIDRs in
+      # LANGFLOW_SSRF_ALLOWED_HOSTS above, and is exported to $GITHUB_ENV so the
+      # test step (and collect-models) inherit it.
+      #
+      # The logic moved into a shared action (#1128): it lived here only, so
+      # pr-validation, nightly and manual kept calling the public host and reding
+      # on its outages. `in_container: true` because this job runs INSIDE the
+      # Playwright image and can resolve the service alias — the host-based lanes
+      # cannot, and read the IP from `docker inspect` instead.
+      #
+      # `mode: warn` keeps THIS lane's behaviour exactly as it was: fail-soft, on
+      # the same reasoning as `Collect models` below (#980) — a day of coverage
+      # for the dozens of specs that never touch the echo outweighs strictness.
+      # The PR/nightly/manual lanes use `fail`, where a silent public fallback
+      # would make a third party's outage read as a product failure.
       - name: Resolve go-httpbin endpoint
-        shell: bash
-        run: |
-          IP="$(getent hosts go-httpbin | awk '{print $1}' | head -1)"
-          if [ -z "$IP" ]; then
-            echo "::warning::Could not resolve go-httpbin service; ECHO_BASE_URL left unset (specs use postman-echo.com)."
-            exit 0
-          fi
-          echo "go-httpbin resolved to $IP"
-          # Wait for the echo server to answer before the tests need it.
-          for i in $(seq 1 20); do
-            if curl -sf --max-time 5 "http://$IP:8080/get" >/dev/null 2>&1; then
-              echo "ECHO_BASE_URL=http://$IP:8080" >> "$GITHUB_ENV"
-              echo "ECHO_BASE_URL=http://$IP:8080 is up."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::warning::go-httpbin at $IP:8080 did not answer; ECHO_BASE_URL left unset (specs use postman-echo.com)."
+        uses: ./.github/actions/resolve-echo-endpoint
+        with:
+          mode: warn
+          in_container: "true"
 
       # `continue-on-error` stays: a drained provider key must not kill a day of
       # coverage for the dozens of specs that never touch that provider — the

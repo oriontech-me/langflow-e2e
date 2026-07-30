@@ -8,22 +8,25 @@ import {
   openAdvancedOptions,
 } from "../../../../helpers/ui/open-advanced-options";
 
-// Echo endpoint for the two `@stable` tests in this file — same knob the rest of
-// the suite uses (#383/#407/#462).
+// Echo endpoint for every test in this file — same knob the rest of the suite
+// uses (#383/#407/#462).
 //
-// A test that runs in `daily-stable.yml` must not depend on a public third-party
-// service: httpbin.org returned 5xx on three separate runs, which is why
-// `@stable` was removed from the API Request tests (#383), why they were
-// decoupled (#409), and why it recurred with postman-echo (#462). The daily
-// self-hosts a go-httpbin container and points `ECHO_BASE_URL` at its IP, so on
-// CI these two never leave the runner's network. `/get` and `/delay/{n}` — the
-// only paths used here — exist on postman-echo, on go-httpbin and on httpbin.
+// No test may depend on a public third-party service: httpbin.org returned 5xx on
+// three separate runs, which is why `@stable` was removed from the API Request
+// tests (#383), why they were decoupled (#409), and why it recurred with
+// postman-echo (#462). CI self-hosts a go-httpbin container and points
+// `ECHO_BASE_URL` at its IP, so these calls never leave the runner's network.
+// `/get`, `/post` and `/delay/{n}` — the only paths used here — exist on
+// postman-echo, on go-httpbin and on httpbin.
 //
-// Scoped deliberately to the `@stable` pair (#1107): the three `@release`-only
-// tests below keep their hardcoded httpbin.org URLs. Migrating those, and
-// retiring this legacy spec into the consolidated one, is tracked separately —
-// the line drawn here is that whatever enters the daily lane cannot depend on a
-// public endpoint.
+// The `@release`-only tests below used to keep hardcoded httpbin.org URLs, on
+// the reasoning that only the daily lane needed protecting. That line did not
+// hold (#1128): PR #1133 lost three of these to an httpbin 504 while its own
+// diff touched none of them, and the failure read as a product error rather than
+// a third party being down. Every test in this file now goes through ECHO_BASE,
+// and the self-hosted service is wired into pr-validation, nightly and manual as
+// well as the daily. Retiring this legacy spec into the consolidated one is still
+// tracked separately.
 const ECHO_BASE = (
   process.env.ECHO_BASE_URL ??
   process.env.HTTPBIN_BASE_URL ??
@@ -34,9 +37,10 @@ const ECHO_BASE = (
 // the parse waiter's response body, in the mounted URL field, and in the echoed
 // output — and all three must agree for the assertion chain to mean anything.
 //
-// Still httpbin.org: that test is `@release`-only, so it is out of the daily
-// lane and out of the scope drawn above.
-const CURL_TARGET_URL = "https://httpbin.org/post";
+// Resolved from ECHO_BASE like everything else in this file (#1128): the test
+// runs the component, so this is a real outbound call, and the assertion chain
+// includes the echoed `source` — which agrees with whatever host ECHO_BASE names.
+const CURL_TARGET_URL = `${ECHO_BASE}/post`;
 
 // Capture every flow each test's page creates from its POST /api/v1/flows → 201
 // responses and delete them id-scoped in afterEach (repo convention, #490/#681).
@@ -454,7 +458,7 @@ test("API Request component performs GET to httpbin and returns built successful
     await addApiRequestComponent(page);
 
     // Configure the URL field (in the inspector panel on the right)
-    await page.getByTestId("popover-anchor-input-url_input").fill("https://httpbin.org/get");
+    await page.getByTestId("popover-anchor-input-url_input").fill(`${ECHO_BASE}/get`);
 
     // Run the component
     await page.getByTestId("button_run_api request").click();
@@ -467,7 +471,7 @@ test("API Request component performs GET to httpbin and returns built successful
     await page.getByTestId("output-inspection-api response-apirequest").click();
     await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
     await expect(page.locator('[role="dialog"]').getByText('"status_code": 200')).toBeVisible();
-    await expect(page.locator('[role="dialog"]').getByText('"source": "https://httpbin.org/get"')).toBeVisible();
+    await expect(page.locator('[role="dialog"]').getByText(`"source": "${ECHO_BASE}/get"`)).toBeVisible();
     await page.keyboard.press("Escape");
   },
 );
@@ -565,18 +569,33 @@ test("API Request component — cURL mode POST with JSON body",
     await page.getByTestId("output-inspection-api response-apirequest").click();
     await page.waitForSelector('[role="dialog"]', { timeout: 10000 });
 
-    const dialog = page.locator('[role="dialog"]');
-    await expect(dialog.getByText('"status_code": 200')).toBeVisible();
-    await expect(
-      dialog.getByText(`"source": "${CURL_TARGET_URL}"`),
-    ).toBeVisible();
+    // Read the output through the copy button, not the rendered editor (#1128).
+    //
+    // This used to scrape `textContent` off the virtualized code editor, on the
+    // belief that `evaluate()` returns the whole document. It does not — only the
+    // RENDERED lines are in the DOM. Measured while pointing this test at the
+    // self-hosted go-httpbin: the textContent was 617 characters, cut off
+    // mid-token inside `"Host": [`, with the echoed payload never in it. The
+    // assertion had been passing only because httpbin.org's response happened to
+    // be short enough for the payload to land inside the rendered window; the
+    // same server's response formatted one line per header value pushed it out.
+    // An assertion that depends on how much of a response fits on screen proves
+    // nothing about whether the body was sent.
+    //
+    // `readOutputJson` copies the full output Data to the clipboard and parses
+    // it, so this now reads the whole document regardless of rendering.
+    const output = await readOutputJson(page);
+    expect(output.status_code).toBe(200);
+    expect(output.source).toBe(CURL_TARGET_URL);
 
-    // The output is rendered in a virtualized code editor — only visible lines appear in the DOM,
-    // and JSON string values display with escaped quotes (e.g. \"langflow\").
-    // Use evaluate() to get the full textContent and search for the payload tokens unquoted.
-    const editorContent = await dialog.locator("[role='textbox']").evaluate((el) => el.textContent ?? "");
-    expect(editorContent).toContain("langflow");
-    expect(editorContent).toContain("regression-test");
+    // Shape-agnostic on purpose: the echoed body lands under `json` on
+    // httpbin/go-httpbin and under `data` on postman-echo, and ECHO_BASE may
+    // point at any of the three. Serializing the echoed result and looking for
+    // the payload tokens proves the cURL body round-tripped without pinning the
+    // test to one echo server's response schema.
+    const echoed = JSON.stringify(output.result ?? output);
+    expect(echoed).toContain("langflow");
+    expect(echoed).toContain("regression-test");
 
     await page.keyboard.press("Escape");
   },
@@ -715,7 +734,7 @@ test("API Request component — URL mode POST via method dropdown returns 200",
   async ({ page }) => {
     await addApiRequestComponent(page);
 
-    await page.getByTestId("popover-anchor-input-url_input").fill("https://httpbin.org/post");
+    await page.getByTestId("popover-anchor-input-url_input").fill(`${ECHO_BASE}/post`);
 
     // Change HTTP method from GET to POST using the method dropdown
     await page.getByTestId("dropdown_str_method").click();
@@ -735,7 +754,7 @@ test("API Request component — URL mode POST via method dropdown returns 200",
 
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog.getByText('"status_code": 200')).toBeVisible();
-    await expect(dialog.getByText('"source": "https://httpbin.org/post"')).toBeVisible();
+    await expect(dialog.getByText(`"source": "${ECHO_BASE}/post"`)).toBeVisible();
 
     await page.keyboard.press("Escape");
   },

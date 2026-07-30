@@ -39,7 +39,10 @@ jobs:
           # Ollama runs as a sibling service; without the allowlist the
           # nightly's SSRF protection 400s the Ollama component's model-list
           # fetch (private address) — see ollama-provider.spec.ts (#583).
-          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama"
+          # The CIDRs cover the go-httpbin service below, reached by raw
+          # container IP because validators.url() rejects a single-label host
+          # (#462/#1128); the IP is per-run, so authorize the ranges.
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s
@@ -62,6 +65,15 @@ jobs:
           --health-timeout 5s
           --health-retries 10
           --health-start-period 20s
+      # Self-hosted echo endpoint for the API Request and agent-fetch-tool specs,
+      # so this lane stops calling public httpbin.org / postman-echo.com and
+      # stops reddening on their outages (#1128, earlier #383/#407/#462/#639).
+      # Tag has NO `v` prefix (#639). No healthcheck: the scratch-based image
+      # ships no shell, so the resolve step's poll is the healthcheck.
+      go-httpbin:
+        image: ghcr.io/mccutchen/go-httpbin:2.23.1
+        ports:
+          - 8080:8080
 
     # The job runs on the runner host: it reaches Ollama via the mapped port;
     # Langflow reaches it via the job network's service hostname.
@@ -83,6 +95,17 @@ jobs:
 
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
+
+      # Point the echo-dependent specs at the sibling go-httpbin service (#1128).
+      # `mode: fail` rather than the daily's `warn`: this lane's whole output is
+      # "did the nightly build regress?", and answering that from public
+      # httpbin.org means a third-party outage opens a regression issue against
+      # Langflow. A named infra failure is the honest alternative.
+      - name: Resolve echo endpoint
+        uses: ./.github/actions/resolve-echo-endpoint
+        with:
+          mode: fail
+          in_container: "false"
 
       - name: Run E2E tests
         run: |
