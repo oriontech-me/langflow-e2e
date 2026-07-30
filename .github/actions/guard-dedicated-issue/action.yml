@@ -79,9 +79,32 @@ runs:
         if [ -n "$IN_ISSUE" ]; then
           echo "$IN_ISSUE" > "$work/numbers.txt"
         else
-          gh issue list --repo "$REPO" --label daily-failure --state open \
-            --limit 100 --json number,createdAt \
-            --jq "[.[] | select(.createdAt >= \"$IN_SINCE\")] | .[].number" > "$work/numbers.txt"
+          # `--state all`, not `open` (#1037): the sweep must still check an issue
+          # closed between its creation and this step, and — measured on
+          # 2026-07-30 — scoping to open issues made the umbrella drop out by
+          # STATE, so the title-based exclusion the contract actually relies on
+          # never ran. The window must hand the umbrella over and let the
+          # validator classify it.
+          #
+          # The window itself lives in a tested script rather than inline jq: this
+          # step is `continue-on-error` on a path that only fires on a human
+          # "pode abrir" after a red daily, so a window that selects NOTHING used
+          # to produce a green job and one ambiguous log line. The script prints
+          # the mechanics (window, scanned, oldest scanned, in-window) and warns
+          # on every condition worth checking; `npm run test:scripts` covers it.
+          gh issue list --repo "$REPO" --label daily-failure --state all \
+            --limit 100 --json number,createdAt,title > "$work/issues.json"
+
+          set +e
+          node scripts/select-dedicated-issues.mjs --since "$IN_SINCE" --limit 100 \
+            --json-file "$work/issues.json" > "$work/selection.json"
+          select_code=$?
+          set -e
+          if [ "$select_code" -ne 0 ]; then
+            echo "::error::the contract guard could not build its issue list (select-dedicated-issues exited $select_code). Treating as a guard failure, not an empty sweep."
+            exit 1
+          fi
+          jq -r '.selected[]' "$work/selection.json" > "$work/numbers.txt"
         fi
 
         checked=0
@@ -152,6 +175,15 @@ runs:
         echo "invalid_count=$invalid" >> "$GITHUB_OUTPUT"
         echo "guard_error_count=$errors" >> "$GITHUB_OUTPUT"
         echo "Contract guard: $checked checked, $invalid invalid, $errors unevaluable."
+
+        # The second way this sweep can check nothing while looking healthy
+        # (#1037): the window selected issues, but every one of them was skipped —
+        # e.g. only the umbrella matched. `0 checked` then means "the contract was
+        # never enforced", which must not read the same as "all good".
+        if [ -z "$IN_ISSUE" ] && [ "$checked" -eq 0 ]; then
+          selected_count=$(wc -l < "$work/numbers.txt" | tr -d ' ')
+          echo "::warning::the contract was enforced on ZERO issues (window selected ${selected_count}). Either the run created no dedicated issue, or every candidate was skipped — confirm against the issues the run created before reading this as a pass (#1037)."
+        fi
 
         # An issue the guard could not evaluate is not a pass. The caller runs this
         # with continue-on-error (report, do not block), so failing here surfaces a
