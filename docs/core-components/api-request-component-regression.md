@@ -1,6 +1,6 @@
 # API Request Component — Rendering, Inspector, HTTP Methods, cURL Mode and Error Paths
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev7`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev9`; the cURL test re-validated on `1.11.1` as well, which already carries langflow#14312)
 
 ---
 
@@ -75,7 +75,7 @@ For each of GET, POST, PUT, PATCH, DELETE:
 
 ### 13. `cURL mode parses command, auto-fills URL, executes GET and returns 200`
 - Switches to the cURL tab **before** touching the URL field (pre-filling `url_input` would mask a regression in the cURL parser by letting the run fall back to the URL-tab path).
-- Fills the cURL command and waits for the parser to auto-populate `url_input` with `https://postman-echo.com/get`. The `waitForFunction` directly proves the parser ran.
+- Fills the cURL command and waits for the parser to auto-populate `url_input` with `https://postman-echo.com/get`. Asserting that value directly proves the parser ran. The field is reached with `getByTestId("popover-anchor-input-url_input")` and asserted with the web-first `toHaveValue` — **never** by DOM `id`: langflow#14312 (LE-2037) scopes node-parameter DOM ids by `nodeId` (`<id>-<nodeId>`) while deliberately leaving `data-testid` unscoped, so a `document.getElementById` read here resolves to nothing on any build carrying that fix, and reports a bare timeout instead of the value it saw.
 - Runs the component and asserts the output Data contains `200`, the echoed URL, and the structural keys.
 
 ### 14. `body table accepts key + value cell entries when method is POST`

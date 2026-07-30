@@ -3,6 +3,15 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 
+// Target of the cURL-mode test. Named because it is asserted three times — in
+// the parse waiter's response body, in the mounted URL field, and in the echoed
+// output — and all three must agree for the assertion chain to mean anything.
+//
+// Still httpbin.org, like the rest of this file: the migration to the
+// `ECHO_BASE_URL` knob the rest of the suite uses (#383/#407) is pre-existing
+// debt tracked separately, not part of this change.
+const CURL_TARGET_URL = "https://httpbin.org/post";
+
 // Capture every flow each test's page creates from its POST /api/v1/flows → 201
 // responses and delete them id-scoped in afterEach (repo convention, #490/#681).
 // Both flow-creating steps here — `awaitBootstrapTest` and the `blank-flow`
@@ -11,38 +20,62 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 // Never a name-scoped or delete-all cleanup: that wipes flows other parallel
 // workers are actively driving (#553).
 const createdFlowIds: string[] = [];
+// Each capture reads a response body asynchronously, so the id lands in the
+// array a tick later. Hold those reads and settle them before cleaning up —
+// otherwise a body that resolves after `afterEach` starts is dropped and its
+// flow leaks for good (the last test in a worker has no later hook to sweep it).
+const pendingCaptures: Promise<void>[] = [];
 
 test.beforeEach(({ page }) => {
   page.on("response", (resp) => {
-    if (
-      resp.url().includes("/api/v1/flows") &&
-      resp.request().method() === "POST" &&
-      resp.status() === 201
-    ) {
+    if (resp.request().method() !== "POST" || resp.status() !== 201) return;
+    // The creation endpoint itself only — `/flows/batch/` and `/flows/upload/`
+    // also answer 201, but with a list body that carries no top-level `id`.
+    if (!/^\/api\/v1\/flows\/?$/.test(new URL(resp.url()).pathname)) return;
+    pendingCaptures.push(
       resp
         .json()
         .then((body: { id?: string }) => {
           if (body?.id) createdFlowIds.push(body.id);
         })
-        .catch(() => {});
-    }
+        .catch(() => {}),
+    );
   });
 });
 
-test.afterEach(async ({ page, request }) => {
+test.afterEach(async ({ page, request }, testInfo) => {
+  await Promise.allSettled(pendingCaptures.splice(0));
   if (createdFlowIds.length === 0) return;
   // Leave the editor first: the open canvas polls GET /flows/{id}/events, and
   // deleting the flow mid-poll 404s (logged by the fixture's error monitor).
-  await page.goto("/").catch(() => {});
+  //
+  // On success only. Playwright captures the on-failure screenshot while tearing
+  // down the page fixture, which happens AFTER this hook — navigating away on a
+  // failing test would archive a picture of the home page instead of the canvas
+  // that actually failed. A noisy 404 log line is a far cheaper price than an
+  // undiagnosable failure artifact.
+  if (testInfo.status === testInfo.expectedStatus) {
+    await page.goto("/").catch(() => {});
+  }
   // `page.request` carries only browser cookies, so the flows API answers 401 —
   // pass the bearer token explicitly.
   const bearer = await getAuthToken(request);
   for (const id of createdFlowIds.splice(0)) {
+    // `deleteFlow` throws on purpose so a failed cleanup is visible (it already
+    // absorbs 404-as-done and one transient 5xx). Don't let that failure fail an
+    // otherwise-green test, but never silently swallow it either: a 401/403/422
+    // here means the leak this cleanup exists to prevent is back.
     await deleteFlow(
       request,
       id,
       bearer ? { headers: { Authorization: bearer } } : undefined,
-    ).catch(() => {});
+    ).catch((error: unknown) => {
+      console.warn(
+        `⚠️  cleanup: flow ${id} was NOT deleted — ${
+          (error as Error)?.message?.split("\n")[0] ?? error
+        }`,
+      );
+    });
   }
 });
 
@@ -107,48 +140,65 @@ test("API Request component — cURL mode POST with JSON body",
     // Fill cURL command with POST + JSON body.
     //
     // Filling the cURL command triggers the parser, which re-renders the
-    // component template via `POST /api/v1/custom_component/update`. Wait for
-    // that round-trip so the parsed URL has been written into the field state
-    // before reading it — switching tabs beforehand unmounts the textarea and
-    // loses the pending parse, leaving the URL field empty. Same causal waiter
-    // as the sibling spec in
-    // `core-components/api-request-component-regression.spec.ts`.
-    const curlRefresh = page.waitForResponse(
-      (r) =>
-        r.url().includes("/api/v1/custom_component/update") &&
-        r.request().method() === "POST",
+    // component template via `POST /api/v1/custom_component/update`. Gate on
+    // that response actually carrying the PARSED url_input, not merely on "an
+    // update happened": the `tab_1_curl` click above fires its own update for
+    // the `mode` field (declared `real_time_refresh`), and that one answers with
+    // url_input still empty. A waiter matching any update can resolve on the
+    // mode response instead, and the `tab_0_url` click below — which shares the
+    // same per-node debounce key — would then cancel the still-pending parse,
+    // leaving the field permanently empty. Measured on 1.11.1: update #1 (mode)
+    // returns `url_input: ""`, update #2 (parse) returns the URL.
+    const curlParsed = page.waitForResponse(
+      async (r) => {
+        if (
+          !r.url().includes("/api/v1/custom_component/update") ||
+          r.request().method() !== "POST"
+        ) {
+          return false;
+        }
+        try {
+          const body = (await r.json()) as {
+            template?: { url_input?: { value?: string } };
+          };
+          return body?.template?.url_input?.value === CURL_TARGET_URL;
+        } catch {
+          return false;
+        }
+      },
       { timeout: 15000 },
     );
     await page.getByTestId("textarea_str_curl_input").click();
     await page.getByTestId("textarea_str_curl_input").fill(
-      `curl -X POST https://httpbin.org/post -H "Content-Type: application/json" -d '{"langflow": "regression-test", "status": "ok"}'`,
+      `curl -X POST ${CURL_TARGET_URL} -H "Content-Type: application/json" -d '{"langflow": "regression-test", "status": "ok"}'`,
     );
-    await curlRefresh;
+    await curlParsed;
 
-    // Wait for the cURL to be parsed: URL field must be auto-populated.
-    // The parsing is async (debounced), so we must wait before running,
-    // otherwise the backend receives an empty URL and fails validation.
+    // The parser must have auto-populated url_input from the command — an empty
+    // URL would fail backend validation on the run below.
     //
-    // The URL input is only mounted while the URL tab is active — the cURL tab
-    // unmounts it — so switch tabs to observe the parsed value. This still
+    // The URL input is only mounted while the URL tab is active (the cURL tab
+    // unmounts it), so switch tabs to observe the parsed value. This still
     // proves the parser ran: the cURL fill above is what populated the field.
-    // Same handling as the sibling spec in
-    // `core-components/api-request-component-regression.spec.ts`.
     await page.getByTestId("tab_0_url").click();
     // Selected by `data-testid`, never by DOM `id` — see LE-2037 /
     // langflow#14312: node-parameter DOM ids are scoped by nodeId
     // (`<id>-<nodeId>`), `data-testid` is not, so a DOM-`id` lookup here would
     // silently resolve to nothing on any build carrying that fix.
     await expect(page.getByTestId("popover-anchor-input-url_input")).toHaveValue(
-      "https://httpbin.org/post",
+      CURL_TARGET_URL,
       { timeout: 10000 },
     );
 
-    // Switch back to the cURL tab so the run exercises the cURL-mode path,
-    // which is what this test is about.
-    await page.getByTestId("tab_1_curl").click();
-    // Brief pause to let React flush all derived state (method, body) after the URL update.
-    await page.waitForTimeout(300);
+    // Deliberately NOT switching back to the cURL tab before running. The
+    // backend's `make_api_request` reads url_input / method / headers / body;
+    // `mode` and `curl_input` are consumed only by `update_build_config` at
+    // design time, so the run is identical in either tab and the switch would
+    // add no coverage. It would add a `real_time_refresh` round-trip for `mode`,
+    // debounced ~300 ms per node — i.e. one landing around the moment the run
+    // starts, re-parsing the template mid-build for nothing. What proves cURL
+    // mode here is that the parse populated these fields, which the assertion
+    // above and the echoed output below both confirm.
 
     // Run the component
     await page.getByTestId("button_run_api request").click();
@@ -162,7 +212,9 @@ test("API Request component — cURL mode POST with JSON body",
 
     const dialog = page.locator('[role="dialog"]');
     await expect(dialog.getByText('"status_code": 200')).toBeVisible();
-    await expect(dialog.getByText('"source": "https://httpbin.org/post"')).toBeVisible();
+    await expect(
+      dialog.getByText(`"source": "${CURL_TARGET_URL}"`),
+    ).toBeVisible();
 
     // The output is rendered in a virtualized code editor — only visible lines appear in the DOM,
     // and JSON string values display with escaped quotes (e.g. \"langflow\").
