@@ -812,6 +812,71 @@ test("TOKENS_SUPPRESS_HISTORY as an empty string (the daily's own scheduled-run 
   );
 });
 
+// --- #1211: dated price bands must be selected against the SAME date that
+// lands on the history line's own `date` field, so a line's USD and its date
+// can never disagree.
+const DATED_PRICES = JSON.stringify({
+  "claude-sonnet-5": [
+    { since: "2026-01-01", inputPerMillion: 2.0, outputPerMillion: 10.0 },
+    { since: "2026-09-01", inputPerMillion: 3.0, outputPerMillion: 15.0 },
+  ],
+});
+const DATED_PROBE = JSON.stringify({
+  trace_id: "dated-1",
+  flow_id: "f1",
+  total_tokens: 2_000_000,
+  models: [
+    {
+      model: "claude-sonnet-5",
+      prompt_tokens: 1_000_000,
+      completion_tokens: 1_000_000,
+      total_tokens: 2_000_000,
+      calls: 1,
+    },
+  ],
+});
+
+test("summarize prices a dated-band model with the introductory rate before the `since` boundary, matching RUN_DATE on the history line (#1211)", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${DATED_PROBE}\n`,
+    "prices.json": DATED_PRICES,
+  });
+  const env = { ...baseEnv, RUN_DATE: "2026-08-31" };
+  await summarize({ env, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.date, "2026-08-31");
+  // $2/M input + $10/M output, 1M + 1M tokens = $12.
+  assert.equal(line.totals.usd_estimated, 12);
+  assert.deepEqual(line.unpriced_models, []);
+});
+
+test("summarize prices the same dated-band model with the standard rate on/after the `since` boundary (#1211)", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${DATED_PROBE}\n`,
+    "prices.json": DATED_PRICES,
+  });
+  const env = { ...baseEnv, RUN_DATE: "2026-09-01" };
+  await summarize({ env, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.date, "2026-09-01");
+  // $3/M input + $15/M output, 1M + 1M tokens = $18.
+  assert.equal(line.totals.usd_estimated, 18);
+  assert.deepEqual(line.unpriced_models, []);
+});
+
+test("summarize names a model unpriced (never guesses the newest band) when RUN_DATE predates every recorded band (#1211)", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${DATED_PROBE}\n`,
+    "prices.json": DATED_PRICES,
+  });
+  const env = { ...baseEnv, RUN_DATE: "2025-01-01" }; // before the earliest band
+  await summarize({ env, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.deepEqual(line.unpriced_models, ["claude-sonnet-5"]);
+  assert.equal(line.totals.usd_estimated, 0, "a FLOOR of 0, never a guessed dollar figure");
+  assert.equal(line.totals.total_tokens, 2_000_000, "tokens are still counted");
+});
+
 test("a history-append failure is logged and summarize still resolves 0", async () => {
   const fs2 = fakeFs(
     { "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`, "prices.json": PRICES },
