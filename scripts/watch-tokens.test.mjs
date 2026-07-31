@@ -11,7 +11,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { flattenSpans, spanModelUsage, collectOnce, parseProbeLines, poll } from "./watch-tokens.mjs";
+import { flattenSpans, spanModelUsage, collectOnce, parseProbeLines, poll, summarize } from "./watch-tokens.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
 
@@ -203,4 +203,140 @@ test("the entry point exits 0 when run directly, even against an unreachable bac
   });
   const code = await new Promise((resolve) => child.on("exit", resolve));
   assert.equal(code, 0);
+});
+
+// --- summarize(): join, price, anomaly-check and append the run's history line ---
+//
+// The filesystem is faked at the readFile/listDir/writeFile/appendFile boundary
+// (design's injected-I/O rule) so these tests run with no disk access at all.
+function fakeFs(files) {
+  const written = {};
+  const appended = {};
+  return {
+    written,
+    appended,
+    readFile: (p) => {
+      if (!(p in files)) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return files[p];
+    },
+    listDir: (dir) => Object.keys(files).filter((p) => p.startsWith(`${dir}/`)),
+    writeFile: (p, text) => (written[p] = text),
+    appendFile: (p, text) => (appended[p] = (appended[p] || "") + text),
+  };
+}
+
+const PROBE_LINE = JSON.stringify({
+  trace_id: "t1",
+  flow_id: "f1",
+  start_time: "2026-07-31T13:35:38Z",
+  status: "ok",
+  total_tokens: 88,
+  models: [
+    { model: "gpt-4o-mini", prompt_tokens: 40, completion_tokens: 48, total_tokens: 88, calls: 1 },
+  ],
+});
+const ATTRIB_LINE = JSON.stringify({
+  trace_id: "t1",
+  flow_id: "f1",
+  test: "agent suite",
+  file: "tests-automations/regression/core-functionality/llm-agents/x.spec.ts",
+});
+const PRICES = JSON.stringify({ "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 } });
+
+const baseEnv = {
+  TOKENS_DIR: "all-tokens",
+  TOKENS_HISTORY: "reports/token-history.jsonl",
+  TOKENS_PRICES: "prices.json",
+  TOKENS_SUMMARY_MD: "summary.md",
+  WORKFLOW: "daily-stable",
+  GITHUB_RUN_ID: "42",
+  GITHUB_SERVER_URL: "https://github.com",
+  GITHUB_REPOSITORY: "oriontech-me/langflow-e2e",
+  LANGFLOW_IMAGE: "langflowai/langflow-nightly:latest",
+  RUN_DATE: "2026-07-31",
+  TESTS_TOTAL: "466",
+};
+
+test("summarize writes one history line joining probes with attribution", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "all-tokens/token-attrib-1.jsonl": `${ATTRIB_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  assert.equal(await summarize({ env: baseEnv, ...fs2, log: () => {} }), 0);
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.version, 1);
+  assert.equal(line.workflow, "daily-stable");
+  assert.equal(line.run_id, "42");
+  assert.equal(line.totals.total_tokens, 88);
+  assert.equal(line.by_spec.length, 1);
+  assert.equal(line.unattributed.traces, 0);
+  assert.match(fs2.written["summary.md"], /Token consumption/);
+});
+
+test("a run with zero traces writes NO history line and says why", async () => {
+  const fs2 = fakeFs({ "prices.json": PRICES });
+  assert.equal(await summarize({ env: baseEnv, ...fs2, log: () => {} }), 0);
+  assert.equal(fs2.appended["reports/token-history.jsonl"], undefined);
+  assert.match(fs2.written["summary.md"], /no traces recorded/i);
+  // The absence must never read as "the run spent nothing".
+  assert.doesNotMatch(fs2.written["summary.md"], /\$0\.00 total/);
+});
+
+test("a zero-test run (infra abort) writes no history line", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TESTS_TOTAL: "0" };
+  assert.equal(await summarize({ env, ...fs2, log: () => {} }), 0);
+  assert.equal(fs2.appended["reports/token-history.jsonl"], undefined);
+  assert.match(fs2.written["summary.md"], /zero tests/i);
+});
+
+test("an unpriced model makes the summary say the dollar figure is a floor", async () => {
+  const probe = JSON.stringify({
+    trace_id: "t9",
+    flow_id: "f9",
+    total_tokens: 1851,
+    models: [
+      { model: "gemini-flash-latest", prompt_tokens: 30, completion_tokens: 1821, total_tokens: 1851, calls: 1 },
+    ],
+  });
+  const fs2 = fakeFs({ "all-tokens/token-probes-1.jsonl": `${probe}\n`, "prices.json": PRICES });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.deepEqual(line.unpriced_models, ["gemini-flash-latest"]);
+  assert.match(fs2.written["summary.md"], /floor/i);
+});
+
+test("probe files from several shards are merged and deduped by trace", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "all-tokens/token-probes-2.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.totals.traces, 1);
+});
+
+test("anomalies land in the history line when the baseline supports them", async () => {
+  const history = Array.from({ length: 5 }, () =>
+    JSON.stringify({ totals: { usd_estimated: 0.000001 }, by_spec: [] }),
+  ).join("\n");
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+    "reports/token-history.jsonl": `${history}\n`,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.anomalies.length, 1);
+  assert.equal(line.anomalies[0].scope, "run");
+});
+
+test("summarize never throws on a missing probe directory", async () => {
+  const fs2 = fakeFs({ "prices.json": PRICES });
+  assert.equal(await summarize({ env: { ...baseEnv, TOKENS_DIR: "nope" }, ...fs2, log: () => {} }), 0);
 });

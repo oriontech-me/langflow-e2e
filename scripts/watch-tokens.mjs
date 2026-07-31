@@ -26,7 +26,10 @@
 //
 // Pure, dependency-free ESM so CI runs it with plain `node` (no ts-node).
 import fs from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { aggregate } from "./lib/token-cost.mjs";
+import { detectAnomalies } from "./lib/token-anomaly.mjs";
 
 const DEFAULTS = {
   base: "http://localhost:7860",
@@ -205,9 +208,190 @@ export async function poll({ fetchImpl = fetch, env = process.env, log = console
   return 0;
 }
 
+const usd = (n) => (n === null || n === undefined ? "n/a" : `$${(Math.round(n * 100) / 100).toFixed(2)}`);
+
+// Mirrors token-cost.mjs's loadPrices() validation exactly, but reads through the
+// caller-supplied `readFile` rather than fs directly. loadPrices() always hits the
+// real filesystem, which would make the price table the one input the summarizer's
+// fake-fs tests could never override; routing it through the injected reader keeps
+// production behaviour identical (the default readFile wraps the same
+// fs.readFileSync) while making the summarizer fully testable without a disk.
+function parsePrices(raw) {
+  const prices = {};
+  for (const [model, entry] of Object.entries(JSON.parse(raw))) {
+    if (model.startsWith("_")) continue; // "_comment"
+    const input = Number(entry?.inputPerMillion);
+    const output = Number(entry?.outputPerMillion);
+    if (!Number.isFinite(input) || !Number.isFinite(output)) continue;
+    prices[model] = { inputPerMillion: input, outputPerMillion: output };
+  }
+  return prices;
+}
+
+// Injected I/O so the summarizer is unit-testable without a filesystem: CI passes
+// none of these and gets the real fs.
+const realIo = {
+  readFile: (p) => fs.readFileSync(p, "utf8"),
+  listDir: (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).map((f) => path.join(dir, f)) : []),
+  writeFile: (p, text) => fs.writeFileSync(p, text),
+  appendFile: (p, text) => fs.appendFileSync(p, text),
+};
+
+export async function summarize({
+  env = process.env,
+  readFile = realIo.readFile,
+  listDir = realIo.listDir,
+  writeFile = realIo.writeFile,
+  appendFile = realIo.appendFile,
+  log = console.log,
+} = {}) {
+  const dir = env.TOKENS_DIR || "all-tokens";
+  const attribDir = env.TOKENS_ATTRIB_DIR || dir;
+  const historyPath = env.TOKENS_HISTORY || "reports/token-history.jsonl";
+  const summaryPath = env.TOKENS_SUMMARY_MD || env.GITHUB_STEP_SUMMARY;
+
+  const read = (p) => {
+    try {
+      return readFile(p);
+    } catch {
+      return "";
+    }
+  };
+
+  const probesById = new Map();
+  for (const file of listDir(dir).filter((f) => f.includes("token-probes"))) {
+    for (const probe of parseProbeLines(read(file))) probesById.set(probe.trace_id, probe);
+  }
+  const attributions = [];
+  for (const file of listDir(attribDir).filter((f) => f.includes("token-attrib"))) {
+    for (const rec of parseProbeLines(read(file))) attributions.push(rec);
+  }
+
+  const lines = [];
+  const testsTotal = Number(env.TESTS_TOTAL);
+  const zeroTestRun = Number.isFinite(testsTotal) && testsTotal === 0;
+
+  if (!probesById.size || zeroTestRun) {
+    // Both cases are silences, and a silence must never read as "nothing was spent"
+    // (#1012's rule applied to cost). No history line is written either way: a
+    // zero would enter the baseline and lower the bar for every future anomaly.
+    const why = zeroTestRun
+      ? "the run executed zero tests (infra abort) — no cost line written"
+      : "no traces recorded — tracing may be disabled on the target (LANGFLOW_DEACTIVATE_TRACING), or the run made no LLM call";
+    lines.push("## Token consumption", "", `⚠️ ${why}.`, "");
+    writeSummary(writeFile, summaryPath, lines.join("\n"), log);
+    log(`token summary: ${why}`);
+    return 0;
+  }
+
+  let prices = {};
+  try {
+    prices = parsePrices(readFile(env.TOKENS_PRICES || "scripts/lib/model-prices.json"));
+  } catch (error) {
+    log(`token summary: price table unreadable (${error.message}) — reporting tokens only`);
+  }
+
+  const agg = aggregate({ probes: [...probesById.values()], attributions, prices });
+  const history = parseHistory(read(historyPath));
+  const runLine = {
+    version: 1,
+    date: env.RUN_DATE || new Date().toISOString().slice(0, 10),
+    workflow: env.WORKFLOW || "unknown",
+    run_id: env.GITHUB_RUN_ID || null,
+    run_url:
+      env.GITHUB_RUN_ID && env.GITHUB_REPOSITORY
+        ? `${env.GITHUB_SERVER_URL || "https://github.com"}/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}`
+        : null,
+    langflow_image: env.LANGFLOW_IMAGE || null,
+    totals: agg.totals,
+    by_model: agg.byModel,
+    by_spec: agg.bySpec,
+    unattributed: agg.unattributed,
+    unpriced_models: agg.unpricedModels,
+    anomalies: [],
+  };
+  runLine.anomalies = detectAnomalies({ run: runLine, history });
+
+  // Writing the history line is the summarizer's one durable side effect. Losing it
+  // to a bad path/full disk must degrade the run's cost visibility, not the run
+  // itself — same reasoning as poll()'s own appendFileSync guard above.
+  try {
+    appendFile(historyPath, `${JSON.stringify(runLine)}\n`);
+  } catch (error) {
+    log(`token summary: could not append the history line: ${error?.message || error}`);
+  }
+
+  const floor = agg.unpricedModels.length
+    ? ` (a FLOOR — ${agg.unpricedModels.length} model(s) have no price entry: ${agg.unpricedModels.join(", ")})`
+    : "";
+  lines.push(
+    "## Token consumption",
+    "",
+    `**${agg.totals.total_tokens.toLocaleString("en-US")} tokens** across ${agg.totals.traces} trace(s) — ${usd(agg.totals.usd_estimated)}${floor}`,
+    "",
+    "| Model | Calls | Prompt | Completion | Estimated |",
+    "|---|---:|---:|---:|---:|",
+    ...agg.byModel.map(
+      (m) => `| \`${m.model}\` | ${m.calls} | ${m.prompt_tokens} | ${m.completion_tokens} | ${usd(m.usd_estimated)} |`,
+    ),
+    "",
+    `Unattributed: ${agg.unattributed.traces} trace(s), ${agg.unattributed.total_tokens.toLocaleString("en-US")} tokens — ${agg.unattributed.reason}`,
+    "",
+  );
+  if (agg.bySpec.length) {
+    lines.push(
+      "| Spec | Traces | Tokens | Estimated |",
+      "|---|---:|---:|---:|",
+      ...agg.bySpec
+        .slice(0, 15)
+        .map((s) => `| \`${s.file}\` | ${s.traces} | ${s.total_tokens} | ${usd(s.usd_estimated)} |`),
+      "",
+    );
+    if (agg.bySpec.length > 15) lines.push(`…and ${agg.bySpec.length - 15} more spec(s) in the history file.`, "");
+  }
+  if (agg.mismatches.length) {
+    lines.push(
+      `⚠️ ${agg.mismatches.length} trace(s) whose own total disagrees with the sum of their model spans — reported, not reconciled.`,
+      "",
+    );
+  }
+  for (const a of runLine.anomalies) {
+    lines.push(`🔺 **${a.scope}** \`${a.key}\`: ${usd(a.run_usd)} vs a ${usd(a.baseline_usd)} baseline (${a.ratio}×).`);
+  }
+  writeSummary(writeFile, summaryPath, lines.join("\n"), log);
+  log(`token summary: ${agg.totals.total_tokens} tokens, ${usd(agg.totals.usd_estimated)}${floor}`);
+  return 0;
+}
+
+// Writing the step summary is best-effort: a bad TOKENS_SUMMARY_MD path (or none —
+// GITHUB_STEP_SUMMARY is unset outside CI) must not stop the summarizer, which is
+// diagnostic-only by contract.
+function writeSummary(writeFile, summaryPath, text, log) {
+  if (!summaryPath) return;
+  try {
+    writeFile(summaryPath, text);
+  } catch (error) {
+    log(`token summary: could not write the step summary: ${error?.message || error}`);
+  }
+}
+
+export function parseHistory(text) {
+  const lines = [];
+  for (const line of String(text || "").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      lines.push(JSON.parse(line));
+    } catch {
+      // A hand-edited or truncated history line must not stop the summary; the file
+      // is machine-written by contract (reports/README.md).
+    }
+  }
+  return lines;
+}
+
 async function main() {
   try {
-    const code = await poll();
+    const code = process.argv.includes("--summarize") ? await summarize() : await poll();
     return code === undefined ? 0 : code;
   } catch (error) {
     // Diagnostics never break the build.
