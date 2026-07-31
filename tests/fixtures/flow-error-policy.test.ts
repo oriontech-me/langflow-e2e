@@ -311,38 +311,38 @@ test("fixtures.ts consumes the policy instead of an inline filter", () => {
   assert.match(fixture, /from "\.\/flow-error-policy"/);
   assert.match(fixture, /runStreamSurface\(url, response\.request\(\)\.method\(\)\)/);
   assert.match(fixture, /classifyFlowError\(/);
-  // v1 must still fail the test, v2 must not (yet) — the staging this lands with.
-  assert.match(fixture, /const advisory = surface === "v2"/);
-  assert.match(fixture, /if \(!advisory && !allowFlowErrors\)/);
-  // THE invariant behind the v1 gate: only the v2 read may be tracked for the
-  // drain. Attaching a `.catch()` to the v1 read marks its rejection handled, and
-  // the gate silently degrades from "interrupts the test" to "fails its
-  // teardown". Measured: 238 ms vs 10 249 ms on a probe that waits 10 s after the
-  // error. This assertion exists because that regression shipped once already.
-  assert.match(fixture, /if \(surface === "v2"\) \{\s*\n\s*const tracked = bodyRead\.catch/);
+
+  // THE invariant behind the v1 gate, and the reason this assertion exists: the
+  // v1 body read must stay UNHANDLED. Attaching any `.catch()` to it marks its
+  // rejection handled and the gate silently degrades from "interrupts the test"
+  // to "fails its teardown" — measured at 238 ms vs 10 249 ms on a probe that
+  // waits 10 s after the error. That regressed once already (#1162), which is
+  // why it is pinned on the source rather than trusted to review.
+  assert.doesNotMatch(fixture, /bodyRead/);
+  assert.match(fixture, /if \(!allowFlowErrors\) \{/);
+  assert.match(fixture, /throw new Error\(errorMessage\)/);
+
+  // The two surfaces must reach a verdict by DIFFERENT routes (#1168). v1 still
+  // asks for the buffered body; v2 must not, because asking after the fact is
+  // the failure mode itself — a run stream outlives its test and Chromium has
+  // dropped the buffer by then.
+  assert.match(fixture, /if \(surface === "v1"\)/);
+  assert.match(fixture, /attachRunStreamCapture\(/);
+  assert.match(fixture, /runStreamCapture\.drain\(\)/);
+  // ...and the old machinery for waiting on a v2 read must not come back: it
+  // could not work, and a 10 s drain proved it (the resource is evicted, not
+  // slow).
+  assert.doesNotMatch(fixture, /pendingBodyReads/);
+  assert.doesNotMatch(fixture, /RUN_STREAM_READ_TIMEOUT_MS/);
+
   // Every give-up path must be accounted for, not silent.
-  assert.match(fixture, /unevaluatedStreams/);
+  assert.match(fixture, /countUnevaluated\(/);
+  assert.match(fixture, /capture unavailable/);
   // The inline URL list and the blanket event-stream skip are what #1162 is
-  // about; neither may come back. Note `text/event-stream` still appears in the
-  // fixture — it selects the longer read budget — so the assertion pins the two
-  // constructs that caused the miss, not the string.
+  // about; neither may come back.
   assert.doesNotMatch(fixture, /url\.includes\("\/build\/"\)/);
   assert.doesNotMatch(fixture, /streamingContentHints/);
   assert.match(fixture, /isUnreadableStream\(contentType\)/);
-  // An SSE body must not be bounded by the old 2 s, which could never see a run
-  // stream close, and teardown must wait for the reads it started.
-  assert.match(fixture, /RUN_STREAM_READ_TIMEOUT_MS/);
-  assert.match(fixture, /pendingBodyReads/);
-  // The long budget is v2-ONLY, and this pairs with the invariant above: the two
-  // together are what keeps a late verdict inside the test that caused it. Only
-  // v2 reads are drained (tracking a v1 read disarms its mid-test interrupt), so
-  // a v1 read with a 4-minute budget could resolve after teardown had already
-  // rendered its verdict — pushing into an array nobody reads again, or throwing
-  // outside the test. v1 keeps the pre-#1162 bound instead.
-  assert.match(
-    fixture,
-    /surface === "v2" && contentType\.includes\("text\/event-stream"\)/,
-  );
   // Advisories must NOT land in `errors`: its length is the `📋 Found N backend
   // error(s)` line, and that line is the human gate (#1084). Padding it with
   // entries that explicitly do not fail anything is the same log-noise problem
@@ -351,35 +351,28 @@ test("fixtures.ts consumes the policy instead of an inline filter", () => {
   assert.doesNotMatch(fixture, /flow_error_advisory/);
 });
 
-test("the v2 read budget stays under the per-test timeout it is derived from", () => {
-  // `RUN_STREAM_READ_TIMEOUT_MS` is hand-copied from `playwright.config.ts`'s
-  // `timeout`, in another file, with a margin for teardown. Nothing else would
-  // notice the two drifting apart: a budget at or above the test timeout can
-  // never fire, so the read would hang until Playwright killed the test and the
-  // "read timed out" accounting would silently stop working.
-  const fixture = fs.readFileSync(path.join(__dirname, "fixtures.ts"), "utf8");
-  const config = fs.readFileSync(
-    path.join(__dirname, "..", "..", "playwright.config.ts"),
+test("the capture never buffers the stream on the page's behalf", () => {
+  // `page.route` + `route.fetch()` is the obvious tee and the wrong one here:
+  // `APIResponse` has no streaming body accessor, so the fixture would have to
+  // hold the whole run before fulfilling, and the page would get it in one
+  // chunk at the end. That breaks incremental delivery for every playground
+  // spec — `playground-response-streaming-sse.spec.ts` asserts on it directly.
+  const capture = fs.readFileSync(
+    path.join(__dirname, "run-stream-capture.ts"),
     "utf8",
   );
-
-  const budget = fixture.match(/RUN_STREAM_READ_TIMEOUT_MS = ([\d_]+)/);
-  assert.ok(budget, "RUN_STREAM_READ_TIMEOUT_MS not found in fixtures.ts");
-  const budgetMs = Number(budget[1].replace(/_/g, ""));
-
-  const timeout = config.match(/timeout:\s*([\d\s*_]+?),/);
-  assert.ok(timeout, "no `timeout:` found in playwright.config.ts");
-  const timeoutMs = timeout[1]
-    .split("*")
-    .map((part) => Number(part.replace(/_/g, "").trim()))
-    .reduce((a, b) => a * b, 1);
-
-  assert.ok(
-    budgetMs < timeoutMs,
-    `the run-stream read budget (${budgetMs} ms) must stay below the per-test timeout (${timeoutMs} ms)`,
-  );
-  assert.ok(
-    timeoutMs - budgetMs >= 30_000,
-    `only ${timeoutMs - budgetMs} ms of teardown margin between the read budget and the test timeout — too tight to render a verdict`,
-  );
+  // Comments stripped first: the module's own docblock explains why
+  // `route.fulfill()` is the wrong tool, and a bare `doesNotMatch` over the raw
+  // file fails on that explanation rather than on any code.
+  const code = capture
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  assert.doesNotMatch(code, /page\.route\(/);
+  assert.doesNotMatch(code, /route\.fulfill\(/);
+  assert.match(capture, /Network\.streamResourceContent/);
+  // Chunks are concatenated as Buffers, never decoded one at a time: a chunk
+  // boundary can split a multi-byte character.
+  assert.match(capture, /Buffer\.concat\(/);
+  // A cancelled stream must still yield its bytes — that is the whole point.
+  assert.match(capture, /complete: false/);
 });
