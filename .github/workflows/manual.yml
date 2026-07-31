@@ -45,6 +45,7 @@ on:
           Playwright retries for the run. Empty = the config default (2 in CI).
           Set "0" to measure a spec honestly — a retry hides an intermittent
           failure, and the #1187 adoption gate is "passes 3/3 with no retries".
+          Honoured by BOTH target kinds (Docker and external URL).
         required: false
         default: ""
 
@@ -57,6 +58,26 @@ jobs:
       image_tag: ${{ steps.check.outputs.image_tag }}
       docker_image: ${{ steps.check.outputs.docker_image }}
     steps:
+      # A retry count the config cannot read is worse than no input at all: the
+      # dispatcher asked to measure a spec unamplified, and `Number("O")` is `NaN`,
+      # which Playwright resolves to its own default — the run would then hide the
+      # very intermittency the #1187 gate exists to expose, and say nothing. Both
+      # target jobs read this input, so the check belongs here, before either runs.
+      - name: Validate the retries input
+        if: github.event.inputs.retries != ''
+        env:
+          RETRIES: ${{ github.event.inputs.retries }}
+        run: |
+          case "$RETRIES" in
+            ''|*[!0-9]*)
+              echo "::error::retries=\"$RETRIES\" is not a non-negative integer. \
+          Leave it empty for the config default (2 in CI), or pass a number \
+          (\"0\" for the #1187 adoption gate)."
+              exit 1
+              ;;
+          esac
+          echo "retries=$RETRIES"
+
       - id: check
         run: |
           TARGET="${{ github.event.inputs.langflow_target }}"
@@ -279,6 +300,17 @@ jobs:
     if: needs.detect-target.outputs.use_docker == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 90
+
+    # `retries` is a dispatch input, not a Docker-lane input, so it is honoured on
+    # BOTH target kinds — set at job level for the same reason as in `e2e-docker`
+    # (`.github/actions/run-e2e` declares per-step `env`, which ADDS to the job
+    # environment rather than replacing it). Routing is the one input this job
+    # cannot honour, and it says so out loud in the first step below; `retries`
+    # has no such obstacle, and leaving it unset here would have been the silent
+    # half of the same failure — a dispatcher passing "0" to measure a spec would
+    # have got the config default and no indication of it.
+    env:
+      PLAYWRIGHT_RETRIES: ${{ github.event.inputs.retries }}
 
     steps:
       # Say NO out loud rather than running something else (#1012). This job targets
