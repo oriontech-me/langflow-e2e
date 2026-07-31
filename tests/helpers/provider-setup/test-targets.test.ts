@@ -187,6 +187,90 @@ test("a swept provider still honours the capability filter", () => {
   assert.deepEqual(labels(targets), ["openai / gpt-4o-mini"]);
 });
 
+test("a sweep whose capability filter empties a provider REPORTS it instead of vanishing", () => {
+  // The review's worst finding: the filter could empty the list and the branch
+  // returned [], so the spec declared zero tests, contributed nothing to the report,
+  // and read green under --pass-with-no-tests. The same catalog must not be
+  // "reported" on the default path and "invisible" on the sweep path (#570 / #1012).
+  const catalog = [
+    { provider: "openai", model: "text-embedding-3-small" },
+    { provider: "openai", model: "gpt-image-1" },
+  ];
+  const swept = resolveTestTargets({
+    tier: "tool-calling",
+    requires: "vision",
+    env: { MODEL_TEST_PROVIDER: "openai" },
+    models: catalog,
+    skipReasons: NO_SKIPS,
+  });
+  const byDefault = resolveTestTargets({
+    tier: "tool-calling",
+    requires: "vision",
+    env: {},
+    models: catalog,
+    skipReasons: NO_SKIPS,
+  });
+  assert.deepEqual(labels(swept), ["openai / (no vision model)"]);
+  assert.deepEqual(labels(swept), labels(byDefault), "the two paths must agree");
+  assert.equal(
+    swept[0].skipReason,
+    'Provider "openai" has no vision-capable model in models.json',
+  );
+});
+
+test("ALL_MODELS reports each emptied provider once, and keeps catalog order for the capable ones", () => {
+  const catalog = [
+    { provider: "openai", model: "gpt-4o-mini" },
+    { provider: "openai", model: "gpt-4o" },
+    { provider: "google", model: "gemini-embedding-001" },
+  ];
+  const targets = resolveTestTargets({
+    tier: "tool-calling",
+    requires: "vision",
+    env: { ALL_MODELS: "true" },
+    models: catalog,
+    skipReasons: NO_SKIPS,
+  });
+  assert.deepEqual(labels(targets), [
+    "openai / gpt-4o-mini",
+    "openai / gpt-4o",
+    "google / (no vision model)",
+  ]);
+});
+
+test("a pinned MODEL_TEST_ID that cannot serve the capability is REPORTED, not run", () => {
+  // The second review finding. The two capability specs had no MODEL_TEST_ID branch
+  // at all, so they could never be handed an unfit model; gaining one without this
+  // check would trade a silent skip for a misleading failure — a vision spec fed an
+  // embedding model fails in a way that reads as a product regression (#570).
+  const targets = resolveTestTargets({
+    tier: "tool-calling",
+    requires: "vision",
+    env: { MODEL_TEST_ID: "text-embedding-3-small" },
+    models: [{ provider: "openai", model: "text-embedding-3-small" }],
+    skipReasons: NO_SKIPS,
+  });
+  assert.equal(targets.length, 1);
+  assert.match(targets[0].skipReason ?? "", /cannot serve "vision"/);
+  assert.match(targets[0].skipReason ?? "", /pin a vision-capable model/);
+});
+
+test("a pinned id that DOES serve the capability carries no skip reason", () => {
+  const targets = resolve({ MODEL_TEST_ID: "gpt-4o-mini" }, { requires: "vision" });
+  assert.equal(targets[0].skipReason, undefined);
+});
+
+test("an inactive provider outranks an unfit pinned model — it is the deeper reason", () => {
+  const targets = resolveTestTargets({
+    tier: "tool-calling",
+    requires: "vision",
+    env: { MODEL_TEST_ID: "text-embedding-3-small" },
+    models: [{ provider: "openai", model: "text-embedding-3-small" }],
+    skipReasons: new Map([["openai", "OpenAI key drained"]]),
+  });
+  assert.equal(targets[0].skipReason, "OpenAI key drained");
+});
+
 test("ALL_MODELS=true sweeps every provider", () => {
   const targets = resolve({ ALL_MODELS: "true" });
   assert.equal(targets.length, CATALOG.length);
@@ -247,24 +331,59 @@ test("skipReason from provider health reaches every target and outranks the capa
   assert.equal(targets.find((t) => t.options.provider === "openai")?.skipReason, undefined);
 });
 
-test("an unreadable models.json degrades to the fallback instead of throwing at collection time", () => {
+test("an unreadable models.json THROWS — a missing file is a state, a corrupt one is undecidable", () => {
+  // The first version of this file asserted the opposite (degrade to the fallback),
+  // which was wrong in the direction this repo cares about: a corrupt catalog would
+  // silently run the first-provider fallback — a different suite than intended —
+  // while the report looked normal (#1035). The pre-#1184 copies threw here too
+  // (`JSON.parse` with no `try`), so this is a restoration, not a new rule.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "test-targets-"));
-  const bad = path.join(dir, "models.json");
-  fs.writeFileSync(bad, "{ not json");
-  const original = console.warn;
-  console.warn = () => {};
   try {
-    const targets = resolveTestTargets({
+    const bad = path.join(dir, "models.json");
+    fs.writeFileSync(bad, "{ not json");
+    assert.throws(() =>
+      resolveTestTargets({
+        tier: "tool-calling",
+        env: {},
+        skipReasons: NO_SKIPS,
+        catalogPath: bad,
+      }),
+    );
+
+    // A parseable payload of the wrong shape is equally undecidable.
+    fs.writeFileSync(bad, JSON.stringify({ openai: "gpt-4o-mini" }));
+    assert.throws(
+      () =>
+        resolveTestTargets({
+          tier: "tool-calling",
+          env: {},
+          skipReasons: NO_SKIPS,
+          catalogPath: bad,
+        }),
+      /must be an array of \{ provider, model \} records/,
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a MISSING models.json still degrades softly — the file is gitignored and the sweep is skippable", () => {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (msg: unknown) => void warnings.push(String(msg));
+  let targets: TestTarget[];
+  try {
+    targets = resolveTestTargets({
       tier: "tool-calling",
       env: {},
       skipReasons: NO_SKIPS,
-      catalogPath: bad,
+      catalogPath: path.join(os.tmpdir(), "definitely-absent-models.json"),
     });
-    assert.deepEqual(labels(targets), ["provider:openai (fallback)"]);
   } finally {
     console.warn = original;
-    fs.rmSync(dir, { recursive: true, force: true });
   }
+  assert.deepEqual(labels(targets), ["provider:openai (fallback)"]);
+  assert.ok(warnings.some((w) => /models\.json not found/.test(w)));
 });
 
 // ─── Structural guard: the provider-contract layer must stay unpinnable ──────
@@ -277,6 +396,10 @@ test("provider-contract specs read neither pin variable — this is what #1185 r
   const dir = path.join(
     __dirname,
     "../../tests-automations/regression/core-functionality/model-provider",
+  );
+  assert.ok(
+    fs.existsSync(dir),
+    `the provider-contract spec directory moved — update this guard, do not delete it: ${dir}`,
   );
   const specs = fs.readdirSync(dir).filter((f) => f.endsWith(".spec.ts"));
   assert.ok(specs.length >= 6, `expected the provider-contract specs, found ${specs.length}`);

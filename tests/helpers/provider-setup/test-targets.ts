@@ -175,13 +175,20 @@ function readCatalog(jsonPath: string = MODELS_PATH): ModelRecord[] {
     console.warn("models.json not found — run collect-models.spec.ts first.");
     return [];
   }
-  try {
-    const parsed = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-    return Array.isArray(parsed) ? (parsed as ModelRecord[]) : [];
-  } catch {
-    console.warn("models.json is unreadable — run collect-models.spec.ts first.");
-    return [];
+  // A MISSING file is a legitimate state — the sweep was skipped, or this is a fresh
+  // clone (the file is gitignored). A file that EXISTS but cannot be parsed is
+  // undecidable, and degrading it to the first-provider fallback would run a
+  // different suite than the one intended while reporting as normal (#1035). The
+  // pre-#1184 copies threw here too (`JSON.parse` with no `try`), so failing loud
+  // restores that rather than inventing it.
+  const parsed = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+  if (!Array.isArray(parsed)) {
+    throw new Error(
+      `${jsonPath} must be an array of { provider, model } records, got ` +
+        `${parsed === null ? "null" : typeof parsed}`,
+    );
   }
+  return parsed as ModelRecord[];
 }
 
 function modelsOf(provider: string, models: ModelRecord[]): string[] {
@@ -230,13 +237,21 @@ function targetFor(
   requires?: ModelCapability,
 ): TestTarget {
   const model = resolveModel(provider, models, requires);
-  const missing = requires ? CAPABILITY_MISSING_LABEL[requires] : "(no model)";
+  if (model === undefined) {
+    // Only reachable with a capability filter: providers are derived from the
+    // catalog, so every one of them has at least one entry.
+    const capability = requires as ModelCapability;
+    return {
+      label: `${provider} / ${CAPABILITY_MISSING_LABEL[capability]}`,
+      options: { provider: provider as Provider, model },
+      skipReason:
+        skipReasons.get(provider) ?? CAPABILITY_MISSING_REASON[capability](provider),
+    };
+  }
   return {
-    label: `${provider} / ${model ?? missing}`,
+    label: `${provider} / ${model}`,
     options: { provider: provider as Provider, model },
-    skipReason:
-      skipReasons.get(provider) ??
-      (model || !requires ? undefined : CAPABILITY_MISSING_REASON[requires](provider)),
+    skipReason: skipReasons.get(provider),
   };
 }
 
@@ -258,6 +273,20 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
   if (env.MODEL_TEST_ID) {
     const model = env.MODEL_TEST_ID;
     const record = allModels.find((m) => m.model === model);
+    // An explicitly pinned id is honoured as given rather than silently swapped for
+    // a capable one — but a model that cannot serve the declared capability must be
+    // REPORTED, not run. A vision spec handed a non-vision model fails in a way that
+    // reads as a product regression, which is the #570 trap. The pre-#1184 vision and
+    // markdown copies could not hit this because they had no MODEL_TEST_ID branch at
+    // all; gaining one without this check would trade a silent skip for a misleading
+    // failure.
+    const unfit =
+      requires && CAPABILITY_EXCLUDES[requires].test(model)
+        ? `MODEL_TEST_ID="${model}" cannot serve "${requires}" for this spec ` +
+          `(excluded model family). Pinned explicitly, so it is reported rather than ` +
+          `silently replaced — pin a ${requires}-capable model, or drop MODEL_TEST_ID ` +
+          `to let the resolver pick one.`
+        : undefined;
     if (!record) {
       // Never silent: this path returns a target with NO provider, which makes the
       // spec skip while the run stays green (#570 / #1012).
@@ -265,14 +294,16 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
         `MODEL_TEST_ID="${model}" not found in models.json — provider cannot be inferred. ` +
           `Run collect-models.spec.ts first, or set MODEL_TEST_PROVIDER.`,
       );
-      return [{ label: `model:${model}`, options: { model } }];
+      return [{ label: `model:${model}`, options: { model }, skipReason: unfit }];
     }
     const provider = record.provider as Provider;
     return [
       {
         label: `${provider} / ${model}`,
         options: { provider, model },
-        skipReason: skipReasons.get(provider),
+        // A dead provider outranks an unfit model: it is the more fundamental
+        // reason the target cannot run.
+        skipReason: skipReasons.get(provider) ?? unfit,
       },
     ];
   }
@@ -299,15 +330,31 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
   // 4. ALL_MODELS=true — the same sweep across every provider.
   const sweepProvider = env.MODEL_TEST_PROVIDER;
   if (sweepProvider || env.ALL_MODELS === "true") {
+    const scoped = allModels.filter((m) =>
+      sweepProvider ? m.provider === sweepProvider : true,
+    );
     const exclude = requires ? CAPABILITY_EXCLUDES[requires] : undefined;
-    return allModels
-      .filter((m) => (sweepProvider ? m.provider === sweepProvider : true))
-      .filter((m) => (exclude ? !exclude.test(m.model) : true))
-      .map((m) => ({
-        label: `${m.provider} / ${m.model}`,
-        options: { provider: m.provider as Provider, model: m.model },
-        skipReason: skipReasons.get(m.provider),
-      }));
+    const capable = scoped.filter((m) => (exclude ? !exclude.test(m.model) : true));
+    const targets: TestTarget[] = capable.map((m) => ({
+      label: `${m.provider} / ${m.model}`,
+      options: { provider: m.provider as Provider, model: m.model },
+      skipReason: skipReasons.get(m.provider),
+    }));
+
+    // A provider the capability filter emptied must still produce a REPORTED target,
+    // exactly as the default path below does. Without this it simply vanishes from the
+    // sweep: zero tests declared for that spec, nothing in the report, and green under
+    // `--pass-with-no-tests` — the silent-skip failure #570 and #1012 exist to prevent.
+    // The same catalog must not be "reported" on one code path and "invisible" on
+    // another. Appended rather than interleaved so the capable targets keep catalog
+    // order, which is what the pre-#1184 copies produced.
+    if (exclude) {
+      for (const provider of Array.from(new Set(scoped.map((m) => m.provider)))) {
+        if (capable.some((m) => m.provider === provider)) continue;
+        targets.push(targetFor(provider, scoped, skipReasons, requires));
+      }
+    }
+    return targets;
   }
 
   // 5. Default — one model per provider present in the catalog.

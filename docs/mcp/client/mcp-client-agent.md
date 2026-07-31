@@ -73,4 +73,13 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 
 - `SimpleAgentTemplatePage.load()` deletes all existing flows before loading the template. MCP server registration must happen after the template loads, as server data lives in a separate DB table and survives the cleanup.
 - The test is parameterized: one describe block is generated per active provider in `models.json`. Run with `--workers=1` to prevent parallel workers from deleting each other's flows.
+
+- **Test title changed in #1184 when `MODEL_TEST_ID` is set.** This spec used to carry its own copy of the target resolver, and that copy labelled the pinned target `model:<id>` rather than `<provider> / <id>`. Under the shared `resolveTestTargets()` it matches every other parametrized spec:
+
+  | | Describe title with `MODEL_TEST_ID=gpt-4o-mini` |
+  |---|---|
+  | Before | `MCP Client – Agent using MCPTools [model:gpt-4o-mini]` |
+  | After | `MCP Client – Agent using MCPTools [openai / gpt-4o-mini]` |
+
+  The new title is the better one — it names the provider, which the old one hid — but it is a **change of test identity**, and identity is the key for `results.json`, `spec-durations.json` and the Flakiness.io history. So this test's history on the pinned lanes starts fresh: `pr-validation.yml` pins today (#1169), and `daily-stable.yml` will once #1185 lands. Recorded here rather than discovered later from a duration outlier or a reset flake rate.
 - Handle testids for the connection step: `handle-mcp-shownode-toolset-right` (MCPTools output — normalized to `mcp`, not `mcp tools`) and `handle-agent-shownode-tools-left` (Agent tools input).
