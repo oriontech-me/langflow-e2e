@@ -25,11 +25,34 @@ export const UNATTRIBUTED_REASON =
 // (the summarizer's injected readFile, in particular) can reuse the exact same
 // rules without going through this module's hardcoded fs.readFileSync. Takes the
 // RAW file text (not a pre-parsed object) so both callers do the same JSON.parse.
+//
+// A model's value is one of two shapes (#1211):
+//   - a FLAT rate:   { inputPerMillion, outputPerMillion }               — the
+//     common case, kept exactly as-is so a maintainer never has to wrap an
+//     ordinary one-rate model in an array just to satisfy the schema, and so
+//     a model priced this way sees no behaviour change from before #1211.
+//   - DATED bands:   [{ since, inputPerMillion, outputPerMillion }, …]    — a
+//     rate that changed over time (a promotional rate, a price correction).
+//     `since` is a "YYYY-MM-DD" string; usdFor() picks the band effective on
+//     the caller's date. Each band is validated the same way a flat rate is
+//     (drop a non-numeric rate); a model whose bands are ALL invalid is
+//     dropped entirely, same policy as an invalid flat rate.
 export function parsePrices(raw) {
   const parsed = JSON.parse(raw);
   const prices = {};
   for (const [model, entry] of Object.entries(parsed)) {
     if (model.startsWith("_")) continue; // "_comment"
+    if (Array.isArray(entry)) {
+      const bands = entry
+        .map((band) => ({
+          since: typeof band?.since === "string" ? band.since : null,
+          inputPerMillion: Number(band?.inputPerMillion),
+          outputPerMillion: Number(band?.outputPerMillion),
+        }))
+        .filter((band) => Number.isFinite(band.inputPerMillion) && Number.isFinite(band.outputPerMillion));
+      if (bands.length) prices[model] = bands;
+      continue;
+    }
     const input = Number(entry?.inputPerMillion);
     const output = Number(entry?.outputPerMillion);
     if (!Number.isFinite(input) || !Number.isFinite(output)) continue;
@@ -42,16 +65,125 @@ export function loadPrices(filePath) {
   return parsePrices(fs.readFileSync(filePath, "utf8"));
 }
 
-export function usdFor(model, promptTokens, completionTokens, prices) {
-  const price = prices?.[model];
-  if (!price) return null;
+// Normalizes a raw price-table VALUE (flat rate or dated-bands array) into an
+// array of bands. A flat rate becomes a single band with `since: null`,
+// meaning "always effective" — selectBand() below treats it as the fallback
+// when no dated band covers the requested date.
+function toBands(entry) {
+  return Array.isArray(entry) ? entry : [{ since: null, ...entry }];
+}
+
+// Selects the band effective on `date` ("YYYY-MM-DD"): the DATED band with
+// the latest `since` that is still <= date, falling back to the undated
+// ("always") band when one exists. Returns null when NEITHER applies — a
+// model whose dated bands do not cover `date` (the run predates the earliest
+// recorded rate) is reported unknown, never guessed. Silently reusing the
+// newest band would misprice a run from before that rate is known to have
+// existed, and there is no honest way to tell "priced" from "assumed" after
+// the fact (#1211 — the same "never a stand-in for unknown" rule #1012
+// applies to prices applies here to dates).
+//
+// Pure: takes `date` as an argument, never reads the wall clock (design
+// constraint — a clock read in this module would break the scripts' unit-test
+// determinism; see this file's own structural guard in token-cost.test.mjs).
+function selectBand(bands, date) {
+  const dated = bands
+    .filter((band) => band.since)
+    .sort((a, b) => (a.since < b.since ? 1 : a.since > b.since ? -1 : 0)); // latest since first
+  if (date) {
+    for (const band of dated) {
+      if (band.since <= date) return band;
+    }
+  }
+  return bands.find((band) => !band.since) ?? null;
+}
+
+// A substring match is only ever SAFE when the leftover — whatever text sits
+// beyond the shorter of {model, key} — is recognizably version/alias noise
+// (a date, a snapshot suffix, "-latest", "-preview", "-search-preview", …)
+// rather than a DIFFERENT product's name. This is the fix for a review-round-2
+// defect (#1211): the naive rule ("either string contains the other") let
+// `gemini-2.5-flash-lite` match `gemini-2.5-flash` — `-lite` is a real,
+// separately-priced tier, not an alias — and silently priced a Lite call at
+// its more expensive non-Lite sibling's rate. A wrong number is strictly
+// worse than the honest `null` this whole issue exists to produce, so the
+// substring pass must refuse a match it cannot vouch for.
+//
+// The allow-list below was derived from the ids `collect-models` actually
+// rotates through (tests/helpers/provider-setup/data/models.json), not
+// invented: every observed leftover against this table's own keys is either
+// all-digits (a date: `-20250514`, or its parts: `-09`, `-2025`) or one of
+// "search" / "preview" (`-search-preview`, `-preview-09-2025`). "latest" is
+// included on the same reasoning even though no CURRENT id in the catalog
+// produces it as a leftover (gemini-flash-latest already matches by exact
+// key) — the original issue names "-latest" alongside "-preview" and a dated
+// suffix as the three suffix shapes this fix targets. Tier/size/modality
+// words seen in the same catalog (`-lite`, `-image`, `-preview-tts`) and the
+// family names the review named (`mini`, `nano`, `pro`, `max`, `opus`,
+// `sonnet`, `haiku`) are deliberately ABSENT: refusing them (→ null, named in
+// unpriced_models) is the correct, honest outcome, not a gap to fill in.
+const ALLOWED_SUFFIX_WORDS = new Set(["latest", "preview", "search"]);
+function isAllowedSuffix(leftover) {
+  if (!leftover.startsWith("-")) return false;
+  const segments = leftover.slice(1).split("-");
+  return segments.every((segment) => /^\d+$/.test(segment) || ALLOWED_SUFFIX_WORDS.has(segment));
+}
+
+// Resolves a model id to its price bands: an EXACT key match first (#1211 —
+// "no behaviour change for a model already priced by an exact key" is a
+// stated done-when, so this branch never falls through to substring logic),
+// then a substring match in both directions — a dated/preview/latest id
+// CONTAINS its family key (`claude-opus-4-20250514` ⊃ `claude-opus-4`), and a
+// short alias can be CONTAINED BY a longer, more specific key
+// (`gpt-4o` ⊂ `gpt-4o-2024-08-06`) — gated by isAllowedSuffix() above so a
+// tier/product suffix is never absorbed into a sibling's rate.
+//
+// Both directions are checked via `startsWith` (a PREFIX relationship), not
+// `includes` anywhere-in-the-string — every real suffix this module targets
+// (a date, `-latest`, `-preview`) is appended after the shared base, never
+// inserted in the middle, and `startsWith` is what makes computing "the
+// leftover" ($longer.slice(shorter.length)$) well-defined.
+//
+// Candidates are sorted LONGEST-KEY-FIRST — never object/iteration order —
+// so the most specific match always wins: `gpt-4o-mini-search-preview`
+// matches both `gpt-4o` (leftover `-mini-search-preview`, REFUSED — "mini" is
+// not allowed noise) and `gpt-4o-mini` (leftover `-search-preview`, allowed).
+// Even without the length sort, the suffix gate alone throws out the wrong
+// candidate here; the sort exists for the case where more than one candidate
+// survives the gate. A tie in key length falls back to a plain lexical sort
+// so the result never depends on which key the price table happened to
+// declare first.
+function resolveBands(model, prices) {
+  if (!model || !prices) return null;
+  if (prices[model]) return toBands(prices[model]);
+  const candidates = Object.keys(prices)
+    .filter((key) => {
+      if (model === key) return false;
+      const [shorter, longer] = model.length <= key.length ? [model, key] : [key, model];
+      if (!longer.startsWith(shorter)) return false;
+      return isAllowedSuffix(longer.slice(shorter.length));
+    })
+    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  return candidates.length ? toBands(prices[candidates[0]]) : null;
+}
+
+export function usdFor(model, promptTokens, completionTokens, prices, date) {
+  const bands = resolveBands(model, prices);
+  if (!bands) return null;
+  const band = selectBand(bands, date);
+  if (!band) return null;
   return (
-    (Number(promptTokens) || 0) * (price.inputPerMillion / 1e6) +
-    (Number(completionTokens) || 0) * (price.outputPerMillion / 1e6)
+    (Number(promptTokens) || 0) * (band.inputPerMillion / 1e6) +
+    (Number(completionTokens) || 0) * (band.outputPerMillion / 1e6)
   );
 }
 
-export function aggregate({ probes = [], attributions = [], prices = {} } = {}) {
+// `date` ("YYYY-MM-DD") is passed straight to usdFor()'s band selection
+// (#1211) — the caller (watch-tokens.mjs's summarize()) passes the SAME value
+// that lands on the history line's own `date` field, so a line's USD and its
+// date can never disagree. Omitted, a model priced only by dated bands
+// resolves to unpriced rather than guessing a band.
+export function aggregate({ probes = [], attributions = [], prices = {}, date } = {}) {
   const byTrace = new Map();
   for (const a of attributions) {
     if (a?.trace_id) byTrace.set(a.trace_id, a);
@@ -90,7 +222,7 @@ export function aggregate({ probes = [], attributions = [], prices = {} } = {}) 
       totals.prompt_tokens += prompt;
       totals.completion_tokens += completion;
 
-      const usd = usdFor(m.model, prompt, completion, prices);
+      const usd = usdFor(m.model, prompt, completion, prices, date);
       if (usd === null) unpriced.add(m.model);
       else traceUsd += usd;
 

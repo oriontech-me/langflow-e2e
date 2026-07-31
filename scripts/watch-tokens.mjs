@@ -379,11 +379,16 @@ export async function summarize({
     log(`token summary: price table unreadable (${error.message}) — reporting tokens only`);
   }
 
-  const agg = aggregate({ probes: [...probesById.values()], attributions, prices });
+  // Computed ONCE and threaded to both aggregate()'s date-scoped band selection
+  // (#1211) and the history line's own `date` field below — the two must never
+  // disagree, or a dated model's USD would be priced against a different date
+  // than the one the line claims it ran on.
+  const runDate = env.RUN_DATE || new Date().toISOString().slice(0, 10);
+  const agg = aggregate({ probes: [...probesById.values()], attributions, prices, date: runDate });
   const history = suppressHistory ? [] : parseHistory(read(historyPath));
   const runLine = {
     version: 1,
-    date: env.RUN_DATE || new Date().toISOString().slice(0, 10),
+    date: runDate,
     workflow: env.WORKFLOW || "unknown",
     run_id: env.GITHUB_RUN_ID || null,
     run_url:
