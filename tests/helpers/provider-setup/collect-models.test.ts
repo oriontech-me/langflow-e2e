@@ -18,6 +18,15 @@
 // so is the candidate ORDER of the Google/Anthropic catalogs — read out of that
 // run's `Shard 1/4` log. Two strings are synthesized because that run never
 // produced them; each says so where it is defined.
+//
+// That recorded order is a HISTORICAL snapshot, not the current ranking:
+// #1171 moved `CANDIDATE_PREFS.anthropic` to haiku-first, so
+// `rankCandidates("anthropic", ANTHROPIC_CATALOG)` now leads with
+// `claude-haiku-4-5` rather than `claude-sonnet-5`. That is deliberate — these
+// fixtures are INPUT to the fallback tests (which care about probe count and
+// error classification, not order), and freezing the run's real order is what
+// makes those tests reproduce the incident. The ordering assertions at the
+// bottom of this file call `rankCandidates` directly and are the live contract.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "fs";
