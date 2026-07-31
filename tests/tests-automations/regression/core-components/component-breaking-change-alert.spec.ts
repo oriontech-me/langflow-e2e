@@ -56,7 +56,23 @@ test.afterEach(async ({ request }) => {
 // mechanism the @stable import-invalid-json spec uses. The flow is renamed with a
 // unique per-run suffix so we wait for THIS dropped card, not a bootstrap-seeded
 // or sibling-test card.
+// The outdated/breaking diff is computed against the frontend's component
+// registry, fetched once at app bootstrap. Arm the wait BEFORE the app boots —
+// the response can land while the flows page is still rendering, and a waiter
+// attached afterwards would miss it and then block for its whole timeout.
+const REGISTRY_RE = /\/api\/v1\/all\b/;
+// The registry rebuild is the environment's cost, not the product's: the daily
+// pins the backend to one worker while two Playwright workers share it, so this
+// bound is deliberately generous. The assertion on the banner stays tight.
+const REGISTRY_TIMEOUT = 120000;
+
 async function importOutdatedFlowAndOpen(page: Page): Promise<void> {
+  const registryLoaded = page
+    .waitForResponse((r) => REGISTRY_RE.test(r.url()) && r.ok(), {
+      timeout: REGISTRY_TIMEOUT,
+    })
+    .catch(() => null);
+
   await awaitBootstrapTest(page, { skipModal: true });
   await expect(page.getByTestId("mainpage_title")).toBeVisible({
     timeout: 30000,
@@ -71,20 +87,54 @@ async function importOutdatedFlowAndOpen(page: Page): Promise<void> {
     dt.items.add(new File([d], "outdated_flow.json", { type: "application/json" }));
     return dt;
   }, content);
-  await page.getByTestId("cards-wrapper").dispatchEvent("drop", { dataTransfer });
 
-  const card = page.getByTestId("list-card").filter({ hasText: flowName });
-  await card.waitFor({ state: "visible", timeout: 30000 });
-  await card.click();
+  // Armed AFTER bootstrap on purpose: on an empty instance the bootstrap helper
+  // creates a "Basic Prompting" flow of its own, and that POST would otherwise
+  // be the one this waiter matched.
+  const imported = page.waitForResponse(
+    (r) =>
+      new URL(r.url()).pathname.replace(/\/$/, "") === "/api/v1/flows" &&
+      r.request().method() === "POST" &&
+      r.status() === 201,
+    { timeout: 60000 },
+  );
+  await page.getByTestId("cards-wrapper").dispatchEvent("drop", { dataTransfer });
+  const flowId = (await imported.then((r) => r.json())).id as string;
+
+  // Navigate by id instead of clicking the imported card. Clicking made the
+  // test depend on the flows LIST — its length, its order, and whatever the
+  // bootstrap helper is doing to it — and that dependency is what broke on
+  // 2026-07-27 and 07-29: on an empty instance the bootstrap creates a "Basic
+  // Prompting" flow from a template and bounces through it, and the click then
+  // opened THAT flow instead of the import. A flow with no outdated components
+  // shows no banner, so the wait expired with "element(s) not found" and the
+  // retry passed because the instance was no longer empty (#1061; the three
+  // failing error-contexts all show the Basic Prompting editor).
+  await page.goto(`/flow/${flowId}`);
+
+  // Opening the flow is what triggers the registry fetch — the editor mounting,
+  // not the app booting, asks for /api/v1/all. Wait on that DEPENDENCY rather
+  // than on the derived banner: the banner appears ≈ registry duration + 1 s
+  // (measured: an 8 s stall renders it at 8.9 s, a 20 s stall at 21.0 s), so a
+  // fixed window on the banner alone is a bet on how loaded the backend is.
+  if ((await registryLoaded) === null) {
+    throw new Error(
+      `the component registry (GET /api/v1/all) did not respond within ${REGISTRY_TIMEOUT}ms — the backend is the blocker, not the breaking-change alert`,
+    );
+  }
 
   // The outdated banner is the frontend's signal that the diff finished
   // computing. Gate on the count-agnostic regex (not a pinned literal) so the
   // shared helper does not silently re-pin the component count the tests
   // deliberately relaxed — matches both the _one ("component needs updates")
   // and _other ("components need updates") i18n plurals.
+  //
+  // 15 s, tighter than the 30 s it replaces: with the registry already in the
+  // store the banner is ~1 s away, so a missing banner is a real defect and
+  // should fail fast instead of hiding behind a long wait.
   await expect(
     page.getByText(/\d+ components? needs? updates?/i),
-  ).toBeVisible({ timeout: 30000 });
+  ).toBeVisible({ timeout: 15000 });
 }
 
 test(

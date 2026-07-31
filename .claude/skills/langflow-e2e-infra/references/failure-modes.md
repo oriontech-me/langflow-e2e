@@ -15,12 +15,21 @@ spikes; `expandFocusedNode` / modal clicks time out; not reproducible at
 
 **Levers:** shard the `@stable` suite across runners · isolate heavy live-LLM
 specs into a low-concurrency lane · cap workers per shard · reproduce locally with
-`--workers=N` before blaming the product.
+`--workers=N` before blaming the product · cap the **outage per wedge** with
+`LANGFLOW_WORKER_TIMEOUT` on the service container (async worker ⇒ the value
+watches the event-loop heartbeat, not request duration, so it bounds a blocked loop
+without killing a slow live-LLM build — #1048; Langflow's own docs get this
+backwards and advise raising it, so check the code, not `deployment-multi-worker.mdx`) ·
+**measure** the mid-run outage instead of inferring it (`scripts/watch-backend.mjs`
+probes the backend during each shard; `scripts/report-backend-outages.mjs` names the
+wedge in the umbrella issue — #1030). Do **not** reach for `--max-failures` or a
+detect-and-abort probe: on run 30444299314 the heavy shards wedged 7-10 times and
+still passed ~100 specs each, so aborting costs more coverage than it saves.
 
 **Docs:** `ISSUE-817-CI-RUNNER-SIZING.md`, `ISSUE-833-SHARDING-DESIGN.md`,
 `ISSUE-833-SHARDING-PLAN.md`; `@stable`-removal rules → `CONTRIBUTING.md` →
 *Tag @stable* / *Triage protocol*.
-**Issues/PRs:** #817 · #830 · #833 · #867 · #882 · #816 · #773 · #818 · PR #888.
+**Issues/PRs:** #817 · #830 · #833 · #867 · #882 · #816 · #773 · #818 · #1030 · #1048 · PR #888.
 
 **`@stable` verdict routing** (when someone wants to drop `@stable` over this):
 confirmed saturation (green at `--workers=1`, flakes at higher N) → **keep

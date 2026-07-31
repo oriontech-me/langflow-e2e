@@ -72,6 +72,45 @@ jobs:
       - name: Lint
         run: npm run lint:ci
 
+  # The repo's own Python code had no lane at all, which is how `generate_report.py`
+  # shipped a report that said `Result: PASSED` on a run whose UI phase had failed
+  # (#1120, run #115). The two `test:units` / `test:scripts` lanes only cover
+  # TypeScript and `.mjs`, so nothing here was verifiable before merge.
+  python-units:
+    name: Python unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install pytest
+        run: pip install --quiet pytest
+
+      - name: Migration helper unit tests
+        run: |
+          # `test_ui_migration.py` is excluded, not missing: it drives a real browser
+          # against a migrated Langflow and belongs to migration-test.yml. Everything
+          # else under this path is a plain unit test, so a new one is picked up
+          # without touching this workflow.
+          #
+          # Fail loudly on an empty selection, like the two Node lanes do — a unit
+          # lane that silently runs nothing is worse than no lane (#1012's rule).
+          COUNT=$(python -m pytest tests/github-workflows/migration \
+            --ignore=tests/github-workflows/migration/test_ui_migration.py \
+            --collect-only -q 2>/dev/null | grep -cE '::' || true)
+          if [ "${COUNT:-0}" -eq 0 ]; then
+            echo "::error::no Python unit tests were collected — this lane would have passed without verifying anything."
+            exit 1
+          fi
+          echo "collected $COUNT Python unit test(s)"
+          python -m pytest tests/github-workflows/migration \
+            --ignore=tests/github-workflows/migration/test_ui_migration.py -v
+
   checklist-guard:
     name: QA-CHECKLIST guard
     runs-on: ubuntu-latest
@@ -122,37 +161,134 @@ jobs:
       specs: ${{ steps.diff.outputs.specs }}
       has_specs: ${{ steps.diff.outputs.has_specs }}
       needs_models: ${{ steps.diff.outputs.needs_models }}
+      full_suite: ${{ steps.diff.outputs.full_suite }}
+      impacted_total: ${{ steps.diff.outputs.impacted_total }}
+      dropped_count: ${{ steps.diff.outputs.dropped_count }}
+      # True when no spec imports the diff but this lane runs what changed, so the
+      # lane runs a fixed canary set instead of skipping (#1159).
+      canary: ${{ steps.diff.outputs.canary }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - id: diff
-        name: List added/modified spec files in this PR
+        name: Resolve the specs this PR impacts
         env:
           BASE_REF: ${{ github.base_ref }}
+          # A helper change can reach half the suite (112 specs for #1052's
+          # diff), which is a daily-sized run on a PR. Bound it — and NEVER
+          # silently: the dropped set is printed and summarised (#1012's
+          # silent-cap rule). The E2E job's own budget is 60 min.
+          IMPACTED_SPEC_CAP: "20"
         run: |
           git fetch origin "$BASE_REF" --quiet
-          # The `:(glob)` magic prefix is load-bearing — do NOT "simplify" it away
-          # (issue #1016). Without it, git matches the pathspec with fnmatch and
-          # no FNM_PATHNAME, so `**` degrades to a plain `*` that carries no
-          # "zero or more directories" meaning, and the literal `/` after it must
-          # still match something. Every spec under a subdirectory matched (245 of
-          # them), while the one spec sitting directly under `tests/` never did:
-          # `tests/collect-models.spec.ts` — the @stable pre-flight utility every
-          # provider spec depends on, and thus the only spec exempt from PR-time
-          # E2E validation (surfaced by PR #1015, blast radius shown by #1007).
-          # `:(glob)` switches git to wildmatch with pathname semantics, where
-          # `/**/` genuinely means "zero or more directories", so the pattern now
-          # means what it always looked like it meant. Verified: 246 specs matched.
-          SPECS=$(git diff --name-only --diff-filter=d "origin/$BASE_REF"...HEAD -- ':(glob)tests/**/*.spec.ts' | tr '\n' ' ' | sed 's/ *$//')
-          echo "Changed specs: ${SPECS:-<none>}"
-          if [ -n "$SPECS" ]; then
-            echo "has_specs=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "has_specs=false" >> "$GITHUB_OUTPUT"
+          # Selection is by IMPORT GRAPH, not by changed-spec glob (#1054).
+          # Selecting only changed `*.spec.ts` let the highest-reach change the
+          # repo can receive pass with zero specs executed: PR #1052 changed a
+          # helper reached by 112 specs and PR #1088 one imported by 135 — both
+          # reported "skipping". The resolver walks importers TRANSITIVELY, so a
+          # helper behind a Page Object still selects the specs at the end of
+          # the chain (a direct-importers-only pass would have found 62 of
+          # #1052's 112 and read as coverage). A changed spec selects itself, so
+          # the old behaviour is a subset of this one — including
+          # `tests/collect-models.spec.ts`, the file directly under `tests/`
+          # that the `:(glob)` pathspec existed to catch (#1016/#1015/#1007).
+          git diff --name-only --diff-filter=d "origin/$BASE_REF"...HEAD > /tmp/changed.txt
+          echo "Changed files:"; sed 's/^/  /' /tmp/changed.txt
+          node scripts/impacted-specs-by-import.mjs --stdin --format=json --cap "$IMPACTED_SPEC_CAP" \
+            < /tmp/changed.txt > /tmp/impacted.json || { echo "::error::impacted-spec resolution failed"; exit 1; }
+
+          SPECS=$(jq -r '.selected | join(" ")' /tmp/impacted.json)
+          TOTAL=$(jq -r '.specs | length' /tmp/impacted.json)
+          DROPPED=$(jq -r '.dropped | length' /tmp/impacted.json)
+          FULL_SUITE=$(jq -r '.fullSuite' /tmp/impacted.json)
+          DIRECT=$(jq -r '.direct | length' /tmp/impacted.json)
+          STABLE=$(jq -r '.stableSelected' /tmp/impacted.json)
+
+          echo "Impacted specs: $TOTAL ($DIRECT direct, $((TOTAL - DIRECT)) transitive); running ${TOTAL:-0} minus $DROPPED dropped"
+
+          # A CI-ONLY diff imports into no spec, so the resolver above honestly
+          # returns zero and this lane used to skip — proving the change PARSES,
+          # never that it RUNS (#1159). PR #1157 rewired four workflows onto a new
+          # composite action with every check green and the E2E lane `skipping`;
+          # the action had executed nowhere at merge time, and a bad `uses:` path
+          # would have surfaced first as the next daily failing in a step unrelated
+          # to any spec.
+          #
+          # `ci-change-coverage.mjs` answers the other half: does the PR LANE run
+          # what changed? It derives that from the YAML (a workflow's `scripts/x`
+          # refs and its `uses: ./.github/actions/y`, plus each action's own refs),
+          # so a new action wired in here is covered the day it lands.
+          #   canary   → the PR lane's own wiring changed: run a 3-spec set so the
+          #              lane boots Langflow and walks pre-flight → health gate →
+          #              Playwright for real
+          #   dispatch → the surface belongs to another lane; name the workflows to
+          #              dispatch instead of implying coverage
+          CANARY=false
+          if [ "$TOTAL" -eq 0 ]; then
+            node scripts/ci-change-coverage.mjs --stdin --format=json < /tmp/changed.txt > /tmp/ci-coverage.json \
+              || { echo "::error::CI-change classification failed — treating as undecidable rather than as 'no CI change'."; exit 1; }
+            VERDICT=$(jq -r .verdict /tmp/ci-coverage.json)
+            jq -r '.reasons[] | "  " + .' /tmp/ci-coverage.json
+            case "$VERDICT" in
+              canary)
+                CANARY=true
+                SPECS=$(jq -r '.canarySpecs | join(" ")' /tmp/ci-coverage.json)
+                echo "::warning::CI-only change to a surface THIS lane runs ($(jq -r '.ciFiles | join(", ")' /tmp/ci-coverage.json)). No spec imports it, so the lane runs the canary instead of skipping (#1159)."
+                ;;
+              dispatch)
+                echo "::warning::CI-only change to $(jq -r '.ciFiles | join(", ")' /tmp/ci-coverage.json), which THIS lane does not run — nothing here proves it works. Dispatch $(jq -r '.dispatchWorkflows | join(", ")' /tmp/ci-coverage.json) on this branch before merging (#1159)."
+                ;;
+            esac
           fi
-          echo "specs=$SPECS" >> "$GITHUB_OUTPUT"
+
+          echo "Running: ${SPECS:-<none>}"
+
+          {
+            echo "### Impacted specs"
+            echo ""
+            echo "- resolved by import graph: **$TOTAL** ($DIRECT direct, $((TOTAL - DIRECT)) transitive)"
+            echo "- running in this PR: **$((TOTAL - DROPPED))** (of which \`@stable\`: $STABLE)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          # Same rule as the cap and the suite-wide signal: whatever this lane does
+          # or does not cover is stated in the summary, never inferred from a green
+          # check (#1012).
+          if [ "$CANARY" = "true" ]; then
+            {
+              echo "- 🐤 **CI-only change** — no spec imports it, so the lane runs the canary to prove the wiring boots:"
+              jq -r '.canarySpecs[] | "  - `" + . + "`"' /tmp/ci-coverage.json
+              echo "  This proves the lane RUNS, not that the changed behaviour is correct."
+            } >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f /tmp/ci-coverage.json ] && [ "$(jq -r .verdict /tmp/ci-coverage.json)" = "dispatch" ]; then
+            {
+              echo "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:"
+              jq -r '.dispatchWorkflows[] | "  - `" + . + "`"' /tmp/ci-coverage.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # A fixture/config change governs every spec. Say so loudly instead of
+          # letting a bounded subset read as full coverage.
+          if [ "$FULL_SUITE" = "true" ]; then
+            echo "::warning::This PR changes a suite-wide surface (fixtures / playwright.config / global hooks): ALL $TOTAL specs are impacted. PR CI runs a bounded subset — dispatch manual.yml on this branch for the full suite before merging."
+            echo "- ⚠️ **suite-wide change** — every spec is impacted; the PR run is a subset. Dispatch \`manual.yml\` on this branch for the full suite." >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$DROPPED" -gt 0 ]; then
+            echo "::warning::Capped at $IMPACTED_SPEC_CAP of $TOTAL impacted specs — $DROPPED not run in this PR (listed in the step log)."
+            echo "- ⚠️ capped at \`$IMPACTED_SPEC_CAP\` — **$DROPPED impacted specs were NOT run**:" >> "$GITHUB_STEP_SUMMARY"
+            jq -r '.dropped[] | "  - `" + . + "`"' /tmp/impacted.json >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          HAS_SPECS=false
+          if [ -n "$SPECS" ]; then HAS_SPECS=true; fi
+          {
+            echo "has_specs=$HAS_SPECS"
+            echo "specs=$SPECS"
+            echo "full_suite=$FULL_SUITE"
+            echo "impacted_total=$TOTAL"
+            echo "dropped_count=$DROPPED"
+          } >> "$GITHUB_OUTPUT"
 
           # Decide whether the impacted specs need provider model data. Only
           # LLM-dependent specs consume collect-models output (models.json), so
@@ -168,7 +304,24 @@ jobs:
           # regression, the ui-ux message-history spec, which reaches the
           # resolvers indirectly through initialGPTsetup — #946), and leaves
           # LLM-free specs (e.g. mcp/server/*) out.
+          # A canary run INVERTS this trade deliberately. The canary specs need no
+          # model data, so the rule above would skip `Collect models` — and with it
+          # the post-collect-models health gate, which is `if: needs_models`. The
+          # canary would then prove nothing about the very sequence it exists to
+          # prove: #1045's action would have been skipped by the run meant to cover
+          # it. So a canary run performs the sweep, and the two consequences are
+          # neutralised where they would otherwise bite:
+          #   - `Collect models` becomes non-fatal (see its `continue-on-error`), so
+          #     a drained provider key cannot block a CI-only PR — the same trade
+          #     the daily makes (#980), for the same reason: nothing in the canary
+          #     consumes that key;
+          #   - the credential pre-flight is skipped for the run itself (#884), for
+          #     the same reason.
           NEEDS_MODELS=false
+          if [ "$CANARY" = "true" ]; then
+            NEEDS_MODELS=true
+            echo "Canary run: forcing the Collect models sweep so the health gate is exercised (#1159)."
+          fi
           for f in $SPECS; do
             case "$f" in
               tests/tests-automations/regression/core-functionality/llm-agents/*|tests/tests-automations/regression/core-functionality/model-provider/*)
@@ -179,7 +332,10 @@ jobs:
             fi
           done
           echo "Needs provider models: $NEEDS_MODELS"
-          echo "needs_models=$NEEDS_MODELS" >> "$GITHUB_OUTPUT"
+          {
+            echo "needs_models=$NEEDS_MODELS"
+            echo "canary=$CANARY"
+          } >> "$GITHUB_OUTPUT"
 
   e2e:
     name: Run impacted E2E specs
@@ -205,6 +361,29 @@ jobs:
           # already default LANGFLOW_WORKERS=1 for this reason (#773) — the
           # service container was the one place missing it.
           LANGFLOW_WORKERS: "1"
+          # Cap how long ONE wedge can cost (#1048). Default is 300 s
+          # (`worker_timeout` in lfx runtime settings → gunicorn's `timeout`).
+          # LangflowUvicornWorker is ASYNC, so this is a heartbeat watchdog on the
+          # event loop, not a request deadline — build duration cannot trip it, and
+          # Langflow's published docs describe it wrongly. Mechanism, the docs
+          # caveat, and the startup measurement: see daily-stable.yml.
+          #
+          # This job is where the cost was measured. Run 30410211167 (PR #1042)
+          # burned two full 300 s outages: the post-collect-models wedge the health
+          # gate below had to wait out (227 s, cleared only by gunicorn's kill),
+          # and a second block starting within seconds of a failing Google call.
+          # Four worker kill/restart cycles in 26 min, and the collateral landed on
+          # specs that make no LLM call at all (general-bugs-shard-3909 timing out
+          # on `add-project-button`). A wedged worker never self-heals, so waiting
+          # 300 s buys nothing; at 120 the kill lands 60-120 s after the stall
+          # instead of 150-300 s.
+          #
+          # This BOUNDS the damage, it does not prevent it: a spec whose API call
+          # has a 20 s timeout still dies inside that window. Eliminating
+          # collateral needs the provider-heavy specs not to share the backend with
+          # unrelated ones (serialization / low-concurrency lane) — see #1048.
+          # Rollback is this one value.
+          LANGFLOW_WORKER_TIMEOUT: "120"
           # Nightly image defaults LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false
           # (custom-component creation disabled → sidebar button hidden, API
           # 403). Enable it so the custom-component specs exercise the feature.
@@ -215,12 +394,35 @@ jobs:
           # it their setup times out. Mirrors daily-stable.yml, which keeps
           # tracing ON for exactly these specs.
           LANGFLOW_DEACTIVATE_TRACING: ${{ contains(needs.detect-specs.outputs.specs, 'observability-monitoring') && 'false' || 'true' }}
+          # Let Langflow reach the sibling go-httpbin service below (#1128). Its
+          # SSRF layer blocks private addresses unless pre-authorized, and the
+          # API Request component's validators.url() rejects a single-label host
+          # — so ECHO_BASE_URL is a raw container IP and the RFC-1918 ranges are
+          # authorized by CIDR rather than by a fixed address the Docker network
+          # assigns per run. Same set as daily-stable.yml (#462).
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s
           --health-timeout 10s
           --health-retries 10
           --health-start-period 90s
+      # Self-hosted echo endpoint for the API Request and agent-fetch-tool specs.
+      # Without it this lane calls public httpbin.org / postman-echo.com and reds
+      # on their outages: PR #1133 lost three specs to an httpbin 504 while its
+      # own diff touched none of them, and the log read like a product failure
+      # (#1128; earlier recurrences #383/#407/#462/#639).
+      #
+      # This job runs on the RUNNER HOST, not in a container, so the service
+      # alias is not resolvable here — `resolve-echo-endpoint` reads the
+      # container IP with `docker inspect` instead, probes the published port,
+      # and hands Langflow the IP. Tag has NO `v` prefix (#639).
+      # No healthcheck: the scratch-based image ships no shell or curl, so the
+      # action's poll is the healthcheck.
+      go-httpbin:
+        image: ghcr.io/mccutchen/go-httpbin:2.23.1
+        ports:
+          - 8080:8080
 
     steps:
       - uses: actions/checkout@v7
@@ -234,6 +436,20 @@ jobs:
 
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
+
+      # Before ANY spec runs, including collect-models: point the echo-dependent
+      # specs at the sibling go-httpbin service instead of the public internet
+      # (#1128). `mode: fail` is deliberate and is the one place this lane differs
+      # from the daily: a PR is the lane a human is waiting on, so a silent
+      # fallback to public httpbin.org — which is what reded PR #1133 and read as
+      # a product failure — is worse than a named infra failure it can be
+      # re-dispatched from. The daily keeps `warn`, where a day of coverage
+      # outweighs strictness.
+      - name: Resolve echo endpoint
+        uses: ./.github/actions/resolve-echo-endpoint
+        with:
+          mode: fail
+          in_container: "false"
 
       # Collect provider/model data BEFORE the impacted specs, mirroring
       # daily-stable.yml. Without this, `models.json` is absent (it is
@@ -251,6 +467,12 @@ jobs:
       # PR whose specs never use that provider (#915/#910/#911 class).
       - name: Collect models
         if: needs.detect-specs.outputs.needs_models == 'true'
+        # Fatal on a normal LLM PR (a spec that needs models must not run without
+        # them), NON-fatal on a canary run: there the sweep exists only so the
+        # health gate below has something to gate, and nothing in the canary
+        # consumes a provider key — so a drained key must not block a CI-only PR
+        # (#1159). Same trade the daily makes for the same reason (#980).
+        continue-on-error: ${{ needs.detect-specs.outputs.canary == 'true' }}
         env:
           CI: "true"
           # This run is what IMPORTS the provider credentials into Langflow, so
@@ -326,61 +548,51 @@ jobs:
       # cannot cover this: gunicorn itself only noticed ~3.5 min in, and the
       # container reads healthy that whole time.
       #
-      # Polls with a SHORT per-request timeout over a long deadline (the #928
-      # shape): a hung request must fail fast so the loop keeps polling across the
-      # wedge instead of burning the budget on one GET. Runs only when Collect
-      # models ran — with no sweep there is no wedge to wait out, and an unrelated
-      # startup failure is globalSetup's to report.
+      # Shared implementation since #1045 (`.github/actions/wait-for-backend`) —
+      # the deadline, the heartbeat and the curl-exit-code decoding this copy
+      # pioneered now apply to the daily and manual lanes too, and weekly-stable
+      # finally has a gate at all. Runs only when Collect models ran: with no sweep
+      # there is no wedge to wait out, an unrelated startup failure is
+      # globalSetup's to report, and an LLM-free PR must not be billed for the wait.
       - name: Wait for the backend to recover from the collect-models load
         if: needs.detect-specs.outputs.needs_models == 'true'
-        shell: bash
-        env:
-          # 420 s, deliberately ABOVE daily-stable.yml's 300 s. The one measured
-          # recovery consumed 223 s — 74% of a 300 s budget — and every second of
-          # it was gunicorn's own timer: the wedge has to outlast WORKER TIMEOUT
-          # (~3.5 min), then the SIGKILL, then ~12 s of Langflow startup. A
-          # slightly slower restart blows 300 s, and this is the workflow where
-          # over-waiting is nearly free: the extra 120 s is only ever spent on a
-          # run that is already going red, inside a job with timeout-minutes: 60.
-          # The daily still says 300 s — changing it was outside #1019's scope;
-          # #1045 unifies both behind one composite action and settles the number.
-          RECOVER_TIMEOUT_S: "420"
-        run: |
-          deadline=$(( $(date +%s) + RECOVER_TIMEOUT_S ))
-          attempt=0
-          rc=0
-          while :; do
-            attempt=$((attempt + 1))
-            # `|| rc=$?` keeps the non-zero exit from tripping `bash -e` AND
-            # preserves curl's code, which is the one datum that distinguishes the
-            # two states this step exists to attribute (decoded at the deadline).
-            rc=0
-            curl -sf --connect-timeout 5 --max-time 8 http://localhost:7860/api/v1/version >/dev/null 2>&1 || rc=$?
-            if [ "$rc" -eq 0 ]; then
-              echo "Backend answered /api/v1/version on attempt $attempt — proceeding to the impacted specs."
-              exit 0
-            fi
-            # Heartbeat every ~6 attempts (~30 s when refused, ~78 s when each GET
-            # hangs for the full --max-time). Without it a step that can legitimately
-            # sit for 7 min prints nothing and reads as hung.
-            if [ $((attempt % 6)) -eq 0 ]; then
-              echo "Still waiting: attempt $attempt, last curl exit=$rc, $(( deadline - $(date +%s) ))s left of ${RECOVER_TIMEOUT_S}s."
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              # 7 = connection refused (nothing listening → the backend is DEAD or
-              # never came back); 28 = timeout (connection accepted, no answer →
-              # the WEDGE shape of #922/#927). Naming it here saves the next reader
-              # a dig through the container log.
-              case "$rc" in
-                7) diag="connection refused — the backend is DEAD or never came back up";;
-                28) diag="connection accepted but unanswered within 8s — the WEDGE shape of #922/#927";;
-                *) diag="last curl exit code $rc";;
-              esac
-              echo "::error::Langflow did not answer /api/v1/version within ${RECOVER_TIMEOUT_S}s after the Collect models step (${attempt} attempts; ${diag}). The impacted-specs run would abort in globalSetup with zero tests. This is the post-collect-models wedge (#922/#927/#1011/#1019), NOT a failure of the specs this PR touches."
-              exit 1
-            fi
-            sleep 5
-          done
+        uses: ./.github/actions/wait-for-backend
+        with:
+          # Deadline comes from the action's default (420 s) — this lane is where
+          # that number was argued for and it is now every lane's.
+          next_step_label: "the impacted-specs run"
+          attribution: "NOT a failure of the specs this PR touches"
+          # No collect_models_outcome: unlike the daily and manual lanes, the step
+          # here is a HARD gate (not `continue-on-error`), so a failed sweep has
+          # already reddened the job and there is no surviving run to warn about.
+
+      # Pin this lane to ONE provider's settled model (#1169). getTestTargets()
+      # parametrizes over one model per active provider, so every impacted agent
+      # spec runs an openai AND an anthropic AND a google variant here. That is
+      # daily-stable.yml's job — it is the lane that owes multi-provider coverage.
+      # This lane answers "does this PR break the specs it touches", which one
+      # provider settles, and the difference is not cosmetic: measured 2026-07-31,
+      # this workflow ran 141 times in 3.5 days, each model-needing run paying an
+      # anthropic variant on claude-sonnet-5 ($3/$15 per MTok) for assertions
+      # gpt-4o-mini ($0.15/$0.60) satisfies identically — 20-25x per token, with no
+      # prompt caching on the anthropic side. Both the CI secret and the local key
+      # drained inside that window (Anthropic credit is account-scoped, so they
+      # share one balance).
+      #
+      # Why a script (see its header for the full argument): MODEL_TEST_PROVIDER
+      # alone does not narrow the run, it runs the provider's ENTIRE catalog (the
+      # dedup branch is skipped) — so the two variables must be emitted as a pair,
+      # which this does. And the model must be the one collect-models settled on:
+      # a hardcoded id skips silently the day the CI project loses access, leaving
+      # a green PR that tested nothing (#570/#1012).
+      #
+      # Declines to pin — with a ::warning:: — when the provider is not active, so
+      # a drained openai key costs a costlier multi-provider run rather than zero
+      # coverage. Gated on needs_models for the same reason as the two steps above:
+      # with no sweep there is no settled model to read.
+      - name: Pin the lane to a single provider's settled model
+        if: needs.detect-specs.outputs.needs_models == 'true'
+        run: node scripts/select-pr-model-target.mjs --provider openai
 
       - name: Run impacted specs
         env:
@@ -393,7 +605,13 @@ jobs:
           # skip. Nothing in an LLM-free run consumes those credentials, so the
           # check has nothing to protect there: skip it exactly when the import
           # step was skipped, and keep it enforced for LLM runs.
-          PREFLIGHT_SKIP_CREDENTIALS: ${{ needs.detect-specs.outputs.needs_models == 'true' && '0' || '1' }}
+          #
+          # A canary run is the third case (#1159): the sweep DID run, but only to
+          # exercise the health gate, and it is allowed to fail. Enforcing the
+          # credential pre-flight there would let a drained provider key kill a
+          # CI-only PR through the back door — the canary specs make no LLM call at
+          # all, so there is nothing for the check to protect.
+          PREFLIGHT_SKIP_CREDENTIALS: ${{ needs.detect-specs.outputs.needs_models == 'true' && needs.detect-specs.outputs.canary != 'true' && '0' || '1' }}
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}

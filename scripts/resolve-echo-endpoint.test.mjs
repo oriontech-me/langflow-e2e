@@ -1,0 +1,257 @@
+// Unit tests for the echo-endpoint decision (#1128). Run with: npm run test:scripts
+//
+// Why these exist: the go-httpbin decoupling (#462/#639) shipped into one
+// workflow and the other three silently fell back to public httpbin.org, which is
+// how PR #1133 reded on a third party. Extending it means the same choice now runs
+// in two job topologies, and the two ways to get it wrong — a single-label host,
+// or loopback — fail as an unattributed component error rather than as a wiring
+// mistake. Both are asserted here instead of being discovered by a broken lane.
+//
+// The IPs are the real shapes: 172.18.0.2 is what Docker assigned the go-httpbin
+// container in the local topology probe, and 172.17.x/10.x are what GitHub's
+// `github_network_*` bridges hand out.
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  resolveEchoEndpoint,
+  isPrivateIpv4,
+  isLoopback,
+  isIpv4,
+} from "./resolve-echo-endpoint.mjs";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+test("host-based job: Langflow gets the container IP, the job probes the published port", () => {
+  // pr-validation / nightly / manual: no `container:`, so `getent` cannot resolve
+  // a service alias and the IP comes from `docker inspect`. The container IP is
+  // not reliably routable from the host on every platform (measured: it is not on
+  // macOS/Docker Desktop), so the job must probe loopback instead — while Langflow
+  // still needs the IP, because SSRF blocks loopback.
+  const r = resolveEchoEndpoint({
+    getentIp: "",
+    dockerIp: "172.18.0.2",
+    inContainer: false,
+    servicePort: 8080,
+    mappedPort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.langflowUrl, "http://172.18.0.2:8080");
+  assert.equal(r.probeUrl, "http://localhost:8080");
+  assert.match(r.strategy, /docker inspect/);
+  assert.deepEqual(r.warnings, []);
+});
+
+test("in-container job: one address serves both, which is today's daily behaviour", () => {
+  // daily-stable runs inside the Playwright image, on the job network, so it both
+  // resolves the alias and reaches the IP directly.
+  const r = resolveEchoEndpoint({
+    getentIp: "172.17.0.4",
+    dockerIp: "",
+    inContainer: true,
+    servicePort: 8080,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.langflowUrl, "http://172.17.0.4:8080");
+  assert.equal(r.probeUrl, "http://172.17.0.4:8080", "same network — probe the IP");
+  assert.match(r.strategy, /getent/);
+});
+
+test("a published port different from the service port is honoured", () => {
+  const r = resolveEchoEndpoint({
+    dockerIp: "10.1.2.3",
+    inContainer: false,
+    servicePort: 8080,
+    mappedPort: 18080,
+  });
+
+  assert.equal(r.langflowUrl, "http://10.1.2.3:8080", "Langflow talks to the container");
+  assert.equal(r.probeUrl, "http://localhost:18080", "the job talks to the host");
+});
+
+test("mode=fail refuses to fall back to the public host, and says why", () => {
+  // The #1128 condition. A PR is the lane a human is waiting on: a silent public
+  // fallback there produced a red that read like a product failure.
+  const r = resolveEchoEndpoint({ inContainer: false, mode: "fail" });
+
+  assert.equal(r.ok, false);
+  assert.equal(r.langflowUrl, null);
+  assert.ok(r.error, "an unavailable service must be reported, not shrugged off");
+  assert.match(r.error, /public httpbin\.org/);
+  assert.match(r.error, /#1128/);
+});
+
+test("mode=warn keeps the lane alive but names the exposure", () => {
+  // daily-stable's existing choice, kept: a day of coverage is worth more than
+  // strictness, but the log must not read like a healthy run.
+  const r = resolveEchoEndpoint({ inContainer: true, mode: "warn" });
+
+  assert.equal(r.ok, false);
+  assert.equal(r.error, null, "warn mode must not fail the lane");
+  assert.equal(r.warnings.length, 1);
+  assert.match(r.warnings[0], /PUBLIC default/);
+  assert.match(r.warnings[0], /#1128/);
+});
+
+test("a single-label host is rejected — validators.url() would reject it downstream", () => {
+  // The #462 trap: `http://go-httpbin:8080` resolves fine and still cannot be
+  // used, because the API Request component validates the URL before fetching.
+  const r = resolveEchoEndpoint({
+    getentIp: "go-httpbin",
+    inContainer: true,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, false);
+  assert.match(r.error, /not an IPv4 address/);
+  assert.match(r.error, /validators\.url\(\)/);
+});
+
+test("loopback is rejected for the Langflow address specifically", () => {
+  // Langflow's SSRF layer: "Hostname localhost resolves to blocked IP address(es):
+  // ::1, 127.0.0.1". Handing it loopback produces a 400 that reads like a
+  // component bug, so it is caught here with the real message quoted.
+  for (const ip of ["127.0.0.1", "127.1.1.1"]) {
+    const r = resolveEchoEndpoint({ dockerIp: ip, inContainer: false, mode: "fail" });
+    assert.equal(r.ok, false, ip);
+    assert.match(r.error, /SSRF/);
+  }
+});
+
+test("a public IP resolves but warns that the CIDR allowlist does not cover it", () => {
+  const r = resolveEchoEndpoint({
+    dockerIp: "203.0.113.7",
+    inContainer: false,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, true, "reachable is still usable");
+  assert.equal(r.warnings.length, 1);
+  assert.match(r.warnings[0], /LANGFLOW_SSRF_ALLOWED_HOSTS/);
+});
+
+test("on a host-based job a stray getent result is still usable, but flagged as unexpected", () => {
+  const r = resolveEchoEndpoint({
+    getentIp: "10.0.0.5",
+    dockerIp: "",
+    inContainer: false,
+    mode: "fail",
+  });
+
+  assert.equal(r.ok, true);
+  assert.equal(r.langflowUrl, "http://10.0.0.5:8080");
+  assert.match(r.strategy, /unexpected on a host-based job/);
+});
+
+test("isPrivateIpv4 covers the ranges the SSRF allowlist authorizes, and nothing else", () => {
+  for (const ip of ["10.0.0.1", "172.16.0.1", "172.31.255.254", "192.168.1.1", "172.18.0.2"]) {
+    assert.equal(isPrivateIpv4(ip), true, ip);
+  }
+  for (const ip of ["172.15.0.1", "172.32.0.1", "8.8.8.8", "192.169.0.1", "not-an-ip", ""]) {
+    assert.equal(isPrivateIpv4(ip), false, ip);
+  }
+});
+
+test("isIpv4 rejects out-of-range octets and hostnames", () => {
+  assert.equal(isIpv4("172.18.0.2"), true);
+  assert.equal(isIpv4("256.1.1.1"), false);
+  assert.equal(isIpv4("go-httpbin"), false);
+  assert.equal(isIpv4("httpbin.org"), false);
+});
+
+test("isLoopback covers every shape the SSRF error message named", () => {
+  for (const h of ["localhost", "127.0.0.1", "127.0.0.53", "::1"]) {
+    assert.equal(isLoopback(h), true, h);
+  }
+  assert.equal(isLoopback("172.18.0.2"), false);
+});
+
+// ── Portability guard: nothing the containerized lane runs may need `jq` ─────
+//
+// The 2026-07-31 daily executed ZERO tests. All four shards aborted in this very
+// action, because it parsed the decision with `jq` and
+// `mcr.microsoft.com/playwright:v1.58.2-noble` ships none — its Dockerfile installs
+// curl/wget/gpg/ca-certificates, nodejs and git/openssh-client, nothing more.
+//
+// The bug survived review because `pr-validation.yml` is `runs-on: ubuntu-latest`
+// with no `container:`, where `jq` is preinstalled: the PR lane CANNOT reach the
+// topology it broke. `daily-stable.yml` is the only lane whose jobs are all
+// containerized, and it is unattended. So the invariant has to be asserted here or
+// it is only ever discovered by a lost day of @stable coverage.
+//
+// The convention already held everywhere else — every `jq` call site in the repo
+// (pr-validation, adaptive-impacted, migration-test, guard-dedicated-issue) sits in
+// a host-based job, and daily-stable's own three container jobs use `node -e`
+// instead — it was simply never written down.
+
+// Comment lines are stripped first: this file and the action both DISCUSS `jq` at
+// length, and a guard that tripped on the word rather than the call would force the
+// explanation out of the code that needs it.
+function shellLines(yaml) {
+  return yaml
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .filter((l) => !/^\s*(#|description:)/.test(l));
+}
+
+function jqInvocations(yaml) {
+  // `--jq` is `gh`'s own built-in JSON filter, not the binary — `gh` implements it
+  // internally, so it stays available in a jq-less image and must not be flagged.
+  return shellLines(yaml).filter((l) => /(^|[\s|(`$])jq\b/.test(l) && !/--jq\b/.test(l));
+}
+
+const CONTAINERIZED_LANE = "daily-stable.yml";
+
+test(`${CONTAINERIZED_LANE} itself invokes no jq (all three of its jobs run in a container)`, () => {
+  const text = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", CONTAINERIZED_LANE), "utf8");
+  const lines = text.split("\n");
+
+  // Guard the premise too: if a job ever loses its `container:`, the reasoning above
+  // stops applying and this test should be revisited rather than quietly relaxed.
+  // Counted from the `jobs:` line down — 2-space keys also occur under `on:`
+  // (`schedule:`, `workflow_dispatch:`), which are not jobs.
+  const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+  assert.ok(jobsAt > -1, `no top-level jobs: block found in ${CONTAINERIZED_LANE}`);
+  const body = lines.slice(jobsAt + 1);
+  const jobs = body.filter((l) => /^ {2}[a-z][a-z0-9-]*:\s*$/.test(l)).length;
+  const containers = body.filter((l) => /^ {4}container:\s*$/.test(l)).length;
+
+  assert.ok(jobs > 0, "no jobs parsed — the guard would pass vacuously");
+  assert.equal(
+    containers,
+    jobs,
+    `every job in ${CONTAINERIZED_LANE} must be containerized for this guard's premise to hold (${containers} container: for ${jobs} jobs)`,
+  );
+  assert.deepEqual(jqInvocations(text), []);
+});
+
+test(`every composite action ${CONTAINERIZED_LANE} uses invokes no jq`, () => {
+  const lane = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", CONTAINERIZED_LANE), "utf8");
+  const used = [...new Set([...lane.matchAll(/uses:\s*\.\/(\.github\/actions\/[a-z-]+)/g)].map((m) => m[1]))];
+
+  // A guard that silently checks nothing is the failure mode #1035/#1037 called out.
+  assert.ok(used.length > 0, `no local composite actions found in ${CONTAINERIZED_LANE} — the guard would pass vacuously`);
+  assert.ok(
+    used.includes(".github/actions/resolve-echo-endpoint"),
+    "the action this guard exists for is no longer used by the containerized lane",
+  );
+
+  for (const action of used) {
+    const text = fs.readFileSync(path.join(REPO_ROOT, action, "action.yml"), "utf8");
+    assert.deepEqual(jqInvocations(text), [], `${action}/action.yml invokes jq, which the Playwright container lacks`);
+  }
+});
+
+test("the guard flags a real jq call and ignores a comment or gh --jq", () => {
+  // Proving the guard can fail: a guard never seen red is a guard nobody can trust.
+  assert.deepEqual(jqInvocations('        OK="$(echo "$D" | jq -r .ok)"').length, 1);
+  assert.deepEqual(jqInvocations("        jq -e . <<<\"$D\"").length, 1);
+  assert.deepEqual(jqInvocations("        # we deliberately avoid jq here"), []);
+  assert.deepEqual(jqInvocations("          gh issue view 1 --json title --jq .title"), []);
+});

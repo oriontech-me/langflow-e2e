@@ -16,6 +16,12 @@
  *    removed. A red day where everything fails is almost always infra (Langflow
  *    container didn't boot, network/model outage), not per-test rot, and must
  *    not quarantine the whole stable suite.
+ *  - Infra-signature exemption (#1031): a hard failure whose last error is a
+ *    transport-level error (see `scripts/lib/infra-signatures.ts`) is NOT
+ *    attributable to the spec that reported it — it is collateral of a wedged
+ *    backend (#1030/#1048). It is excluded from removal INDEPENDENTLY of the
+ *    mass-failure guard, which only covers the wide wedge; the narrow one (a
+ *    wedge costing ≤ MAX_AUTO_REMOVE tests) used to strip innocent tags.
  *
  * Editing is AST-located + text-spliced: the TypeScript compiler API finds the
  * exact `"@stable"` element inside the `test(...)` `{ tag: [...] }` array, and
@@ -29,17 +35,31 @@
 import * as fs from "fs";
 import * as path from "path";
 import * as ts from "typescript";
+import { classifyInfraError, stripAnsi } from "./lib/infra-signatures";
 
 const REPO_ROOT = path.resolve(__dirname, "..");
 const STABLE_TAG = "@stable";
 
 const reportPath = process.env.PLAYWRIGHT_JSON || "results.json";
 const MAX_AUTO_REMOVE = Number.parseInt(process.env.MAX_AUTO_REMOVE || "5", 10);
+/**
+ * Corroboration only, from `report-backend-outages.mjs`'s `wedged` output
+ * (#1030): "true" | "false" | "" (unmeasured / step skipped). It changes the
+ * WORDING of the exemption, never the decision — the exemption has to hold when
+ * the liveness recorder produced nothing, which is exactly the run where the
+ * backend state is least known.
+ */
+const BACKEND_WEDGED = process.env.BACKEND_WEDGED || "";
 
 interface Failure {
   title: string;
   file: string; // absolute path
   line: number; // 1-based test() line, as Playwright reports it
+  /**
+   * Last failed attempt's error, ANSI-stripped and UNtruncated; "" if none.
+   * Full text on purpose — it is what the infra-signature classifier reads.
+   */
+  error: string;
 }
 
 interface Removed {
@@ -54,6 +74,19 @@ interface Skipped {
   title: string;
   line: number;
   reason: string;
+}
+
+/** A hard failure the run cannot attribute to its spec (#1031). */
+interface Exempt {
+  file: string; // repo-relative
+  title: string;
+  line: number;
+  /** `InfraSignature.id` that matched, e.g. `api-request-timeout`. */
+  signature: string;
+  /** Why that signature cannot be the spec's own fault. */
+  why: string;
+  /** The matched error text, truncated for the issue body. */
+  error: string;
 }
 
 // ─── Parse hard failures out of the Playwright JSON report ───────────────────
@@ -77,6 +110,68 @@ function candidateBases(report: any): string[] {
   bases.push(path.join(REPO_ROOT, "tests"));
   bases.push(REPO_ROOT);
   return bases;
+}
+
+/** Max error characters carried into the result JSON / issue body. */
+const ERROR_MAX = 240;
+
+/**
+ * Shorten an error for the result JSON / issue body.
+ *
+ * DISPLAY ONLY. Classification always runs on the untruncated text: a wedge
+ * frequently surfaces as an assertion header whose `Cause:` line — the transport
+ * error — sits hundreds of characters in, under a Playwright call log. Truncating
+ * before `classifyInfraError` would silently un-exempt exactly those, which is
+ * the harm #1031 exists to prevent.
+ */
+export function truncateError(error: string): string {
+  return error.length > ERROR_MAX ? `${error.slice(0, ERROR_MAX)}…` : error;
+}
+
+/** One error object flattened to text: message (or thrown value) plus its stack. */
+function errorText(e: any): string {
+  const message = stripAnsi(e?.message || e?.value || "");
+  const stack = stripAnsi(e?.stack || "");
+  if (stack && !message.includes(stack)) return message ? `${message}\n${stack}` : stack;
+  return message || stack;
+}
+
+/**
+ * The error of the LAST failed attempt — the same result `build-run-payload.mjs`
+ * picks for `error_signature`, so the exemption and the history file talk about
+ * the same attempt. Last, not first: retries are what a wedge burns, and the
+ * final attempt is the one that decided the verdict.
+ *
+ * Unlike `firstErr` there, this keeps the whole message (plus the stack) rather
+ * than its first line — a transport error is often the *cause* line under an
+ * assertion header, and truncating to line one would hide it.
+ *
+ * It also keeps EVERY error of that attempt, not just the first. A `timedOut`
+ * result carries the `Test timeout of Xms exceeded` wrapper in `error` and the
+ * pending call — the transport error itself — in a later `errors[]` entry, which
+ * is precisely the shape "the test timed out while an API call hung".
+ */
+export function lastFailureError(test: any): string {
+  const results: any[] = Array.isArray(test?.results) ? test.results : [];
+  const lastFailed =
+    [...results].reverse().find((r) => r?.status !== "passed" && r?.status !== "skipped") ??
+    results[results.length - 1];
+  if (!lastFailed) return "";
+  const candidates = [
+    lastFailed.error,
+    ...(Array.isArray(lastFailed.errors) ? lastFailed.errors : []),
+  ];
+  // Playwright usually sets `error` to `errors[0]`, so dedup by text.
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const text = errorText(candidate);
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    parts.push(text);
+  }
+  return parts.join("\n");
 }
 
 export function collectHardFailures(reportFile: string): Failure[] {
@@ -107,7 +202,7 @@ export function collectHardFailures(reportFile: string): Failure[] {
       const line = spec?.line || spec?.location?.line || 0;
       for (const t of spec.tests || []) {
         if (t.status === "unexpected") {
-          failures.push({ title: spec.title, file, line });
+          failures.push({ title: spec.title, file, line, error: lastFailureError(t) });
         }
       }
     }
@@ -219,30 +314,74 @@ function spliceRange(
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 function main(): void {
-  const failures = collectHardFailures(reportPath);
+  const allFailures = collectHardFailures(reportPath);
+
+  // Partition BEFORE the guard, and report both sides in every branch (#1031).
+  // Doing it after would lose the collateral labelling on precisely the run that
+  // motivated this — the wide wedge, where the guard returns early.
+  const failures: Failure[] = [];
+  const exempt: Exempt[] = [];
+  for (const f of allFailures) {
+    const signature = classifyInfraError(f.error);
+    if (!signature) {
+      failures.push(f);
+      continue;
+    }
+    exempt.push({
+      file: path.relative(REPO_ROOT, f.file),
+      title: f.title,
+      line: f.line,
+      signature: signature.id,
+      why: signature.why,
+      error: truncateError(f.error),
+    });
+  }
 
   const result: {
     status: "removed" | "none" | "guard_tripped";
     threshold: number;
+    /** Every hard failure in the report, exempt ones included. */
     hardFailures: number;
+    /** Hard failures the run CAN attribute to their spec — the removal candidates. */
+    attributableFailures: number;
     removed: Removed[];
     skipped: Skipped[];
+    exempt: Exempt[];
+    /** "true" | "false" | "" — the #1030 liveness verdict, for wording only. */
+    backendWedged: string;
   } = {
     status: "none",
     threshold: MAX_AUTO_REMOVE,
-    hardFailures: failures.length,
+    hardFailures: allFailures.length,
+    attributableFailures: failures.length,
     removed: [],
     skipped: [],
+    exempt,
+    backendWedged: BACKEND_WEDGED,
   };
 
-  if (failures.length === 0) {
+  // Mass-failure guard: too many hard failures => treat as infra, remove nothing.
+  //
+  // Counts EVERY hard failure, not just the attributable ones. Netting the
+  // exempt ones out would make the mechanism strictly more aggressive than it
+  // is today: on run 30374528125 (19 failures, 14 with an infra signature) the
+  // guard trips and removes nothing, while an attributable-only count would
+  // remove 5 tags with no review. #1031 asks to protect innocent specs, not to
+  // widen auto-removal's reach — so the removal set here is always a subset of
+  // what the pre-#1031 script would have produced.
+  //
+  // Evaluated BEFORE the "nothing attributable" exit so `status` keeps meaning
+  // "would the guard have tripped": a wide wedge whose every failure is
+  // collateral is still a mass-failure day, and the triage skill's own
+  // `detectGuard` (which recomputes from `totals.failed`) would otherwise
+  // disagree with this field.
+  if (allFailures.length > MAX_AUTO_REMOVE) {
+    result.status = "guard_tripped";
     process.stdout.write(JSON.stringify(result));
     return;
   }
 
-  // Mass-failure guard: too many hard failures => treat as infra, remove nothing.
-  if (failures.length > MAX_AUTO_REMOVE) {
-    result.status = "guard_tripped";
+  if (failures.length === 0) {
     process.stdout.write(JSON.stringify(result));
     return;
   }

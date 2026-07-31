@@ -28,7 +28,7 @@ on:
         required: false
         default: ""
       recover_timeout_s:
-        description: "Seconds to wait for the backend to answer after Collect models before failing the shard (#1011). Empty = 300."
+        description: "Seconds to wait for the backend to answer after Collect models before failing the shard (#1011). Empty = 420, the shared default of ./.github/actions/wait-for-backend (#1045)."
         required: false
         default: ""
 
@@ -130,6 +130,44 @@ jobs:
           # process-wide, not worker contention. The retry cap and the health gate
           # below are the other two halves.
           LANGFLOW_WORKERS: "1"
+          # Cap how long ONE wedge can cost (#1048). Langflow's default is 300 s
+          # (`worker_timeout` in lfx runtime settings), handed straight to
+          # gunicorn's `timeout`. The worker class is LangflowUvicornWorker — an
+          # ASYNC worker — so that timeout is a heartbeat watchdog on the event
+          # loop, NOT a per-request deadline: it fires when the loop stops ticking
+          # (the #922/#927 wedge). Build DURATION cannot trip it — a component's
+          # sync method runs off the loop in a thread (`asyncio.to_thread` in
+          # `custom_component/component.py`, `_get_output_result`), so even a
+          # blocking provider call keeps the heartbeat ticking and an 8-minute
+          # live-LLM build is unaffected.
+          #
+          # Langflow's own docs contradict this: `deployment-multi-worker.mdx`
+          # calls the value "how long a worker may handle a single request" and
+          # says to RAISE it for long agent runs (its heavy-agent profile uses
+          # 600). The code above does not support that reading. Do NOT restore a
+          # higher value on the strength of those docs.
+          #
+          # Why lower it: a wedged worker does not recover on its own — in run
+          # 30410211167 gunicorn's kill is what restored service, twice, each
+          # time a full 300 s after the loop stopped (one block began within
+          # seconds of a failing Google call at 00:17:28 and was killed at
+          # 00:22:28). Waiting the default out buys nothing and every second of
+          # it is served to unrelated specs as a dead backend.
+          #
+          # What 120 buys, precisely: the kill lands 60-120 s after the loop
+          # stops, not at a fixed 120 — gunicorn hands the worker `timeout / 2`
+          # and uvicorn refreshes the heartbeat only that often, so detection
+          # costs up to one notify interval. The default's equivalent band is
+          # 150-300 s.
+          #
+          # Measured, not assumed: a probe container of this image started with
+          # LANGFLOW_WORKER_TIMEOUT=5 boots and serves /api/v1/version normally.
+          # Langflow's heavy init (components, starter projects, DB) runs in the
+          # PARENT process and gunicorn is launched afterwards with the app already
+          # built (`__main__.py`, progress step 6), so this ceiling does not bound
+          # startup — only a worker whose loop stops ticking once it is serving.
+          # Rollback is this one value.
+          LANGFLOW_WORKER_TIMEOUT: "120"
           # The nightly image ships LANGFLOW_ALLOW_CUSTOM_COMPONENTS=false (a
           # security default): custom-component creation is disabled, which
           # hides the sidebar "New Custom Component" button and makes
@@ -298,32 +336,26 @@ jobs:
       # Request component runs validators.url() on the URL and REJECTS a
       # single-label host (http://go-httpbin:8080 fails), but ACCEPTS a raw IP —
       # so ECHO_BASE_URL is built from the container IP, not the service name.
-      # The IP is stable within the job (same Docker network as the langflow
-      # service, which reaches it directly), and it is pre-authorized by the
-      # RFC-1918 CIDRs in LANGFLOW_SSRF_ALLOWED_HOSTS above. Exported to
-      # $GITHUB_ENV so the test step (and collect-models) inherit it; the specs
-      # fall back to postman-echo.com only if ECHO_BASE_URL is unset. Fail-soft:
-      # if go-httpbin never comes up we log and skip the export, leaving the
-      # public default in place rather than breaking the whole daily suite.
+      # The IP is pre-authorized by the RFC-1918 CIDRs in
+      # LANGFLOW_SSRF_ALLOWED_HOSTS above, and is exported to $GITHUB_ENV so the
+      # test step (and collect-models) inherit it.
+      #
+      # The logic moved into a shared action (#1128): it lived here only, so
+      # pr-validation, nightly and manual kept calling the public host and reding
+      # on its outages. `in_container: true` because this job runs INSIDE the
+      # Playwright image and can resolve the service alias — the host-based lanes
+      # cannot, and read the IP from `docker inspect` instead.
+      #
+      # `mode: warn` keeps THIS lane's behaviour exactly as it was: fail-soft, on
+      # the same reasoning as `Collect models` below (#980) — a day of coverage
+      # for the dozens of specs that never touch the echo outweighs strictness.
+      # The PR/nightly/manual lanes use `fail`, where a silent public fallback
+      # would make a third party's outage read as a product failure.
       - name: Resolve go-httpbin endpoint
-        shell: bash
-        run: |
-          IP="$(getent hosts go-httpbin | awk '{print $1}' | head -1)"
-          if [ -z "$IP" ]; then
-            echo "::warning::Could not resolve go-httpbin service; ECHO_BASE_URL left unset (specs use postman-echo.com)."
-            exit 0
-          fi
-          echo "go-httpbin resolved to $IP"
-          # Wait for the echo server to answer before the tests need it.
-          for i in $(seq 1 20); do
-            if curl -sf --max-time 5 "http://$IP:8080/get" >/dev/null 2>&1; then
-              echo "ECHO_BASE_URL=http://$IP:8080" >> "$GITHUB_ENV"
-              echo "ECHO_BASE_URL=http://$IP:8080 is up."
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::warning::go-httpbin at $IP:8080 did not answer; ECHO_BASE_URL left unset (specs use postman-echo.com)."
+        uses: ./.github/actions/resolve-echo-endpoint
+        with:
+          mode: warn
+          in_container: "true"
 
       # `continue-on-error` stays: a drained provider key must not kill a day of
       # coverage for the dozens of specs that never touch that provider — the
@@ -365,60 +397,83 @@ jobs:
       # process-wide WEDGED — container alive, event loop blocked, requests simply
       # not answered (#922, #927). globalSetup polls for 120 s and then throws, so
       # a wedge that outlasts that window costs the ENTIRE shard and reports itself
-      # as a preflight error with no mention of what caused it.
-      # This gate does two things the preflight cannot:
-      #   1. gives the wedge a longer window to clear BEFORE Playwright starts, and
-      #   2. when it does not clear, fails with the real cause named here, in its
-      #      own step, instead of 40 specs' worth of container time and a
-      #      globalSetup stack trace.
-      # It polls with a SHORT per-request timeout over a long deadline, the shape
-      # #928 established: a hung request must fail fast so the loop can keep
-      # polling across the wedge instead of burning the budget on one GET.
-      # Honest about its limits: whether the backend recovers is not guaranteed.
-      # It was first measured on 2026-07-28 (#1019) — not by this gate, and not by
-      # pr-validation's copy either, which did not exist yet. The measurement came
-      # out of the service container's own log on a pr-validation job that died in
-      # globalSetup: same image, same sweep. gunicorn raised WORKER TIMEOUT
-      # ~3.5 min after the sweep ended, SIGKILLed the worker, and the replacement
-      # had finished startup 214 s after the preflight began polling (inferred
-      # from that startup log — nothing was polling by then to observe a 200).
-      # globalSetup's 120 s missed it by 94 s; this step's 300 s would not have,
-      # though only just: 223 s of budget spent, all of it gunicorn's own timer.
-      # So recovery is real and observed, not merely hoped for — but it is one
-      # measurement, and attribution is still what the gate buys unconditionally.
-      # pr-validation's copy widened the deadline to 420 s for that margin and
-      # decodes curl's exit code in its error; #1045 unifies the two.
+      # as a preflight error with no mention of what caused it. The gate does two
+      # things the preflight cannot: it gives the wedge a longer window to clear
+      # BEFORE Playwright starts, and when it does not clear it fails with the real
+      # cause named, in its own step, instead of 40 specs' worth of container time
+      # and a globalSetup stack trace.
+      #
+      # Shared implementation since #1045 — this was the first of four copies (see
+      # the action for what diverged and why one of them lacked a gate entirely).
+      # Two things changed for the daily when it adopted the shared version, both
+      # ported from pr-validation's copy: the failure now names WHICH state it
+      # observed (refused → dead vs accepted-and-unanswered → the #922/#927 wedge)
+      # rather than hedging "wedged or dead", and a heartbeat keeps a step that can
+      # legitimately sit for 5-7 min from reading as hung.
+      #
+      # Recovery is real and observed, not merely hoped for: on 2026-07-28 (#1019)
+      # the service container's log showed gunicorn raising WORKER TIMEOUT ~3.5 min
+      # after a sweep, SIGKILLing the worker, and the replacement serving requests
+      # 214 s after polling began — 94 s past globalSetup's 120 s budget. That is
+      # what the deadline is sized against; attribution is what the gate buys
+      # unconditionally, on every run, whether or not the backend comes back.
       - name: Wait for the backend to recover from the collect-models load
+        uses: ./.github/actions/wait-for-backend
+        with:
+          # 420 s for every lane since #1045 (the number's evidence is in the
+          # action). The recover_timeout_s dispatch input still shortens it for a
+          # validation run without editing this file; empty on schedule → 420.
+          timeout_s: ${{ inputs.recover_timeout_s || '420' }}
+          next_step_label: "the @stable run"
+          attribution: "NOT a per-test failure"
+          # Reported, never gated on — a drained key must not kill unrelated
+          # specs (#980), but a silent provider skip must not go unexplained
+          # either (#570).
+          collect_models_outcome: ${{ steps.collect_models.outcome }}
+
+      # Mid-run backend liveness (#1030). The gate above only proves the backend
+      # is alive when Playwright STARTS. On the heavy shards the single worker
+      # keeps wedging DURING the run: on run 30444299314 gunicorn killed it 7
+      # times on shard 3 and 10 times on shard 4, spread evenly across ~30
+      # minutes of specs. Those kills are visible only in the service container
+      # log, and only 60-120 s AFTER the event loop actually stalled
+      # (LANGFLOW_WORKER_TIMEOUT=120, #1048) — so an outage window inferred from
+      # them is 60-120 s wide, and at that wedge frequency such windows cover
+      # 33-73% of the shard. Any failure "correlates" with one by chance, which
+      # is why the wedge kept costing a full triage cycle to attribute.
+      #
+      # Measuring from inside fixes the resolution: probe the same URL the specs
+      # use every 2 s while it answers — a failed probe burns its whole 4 s
+      # deadline, so the cadence relaxes to ~4 s exactly while down — and two
+      # consecutive failures bound an outage to ~4 s instead of 120.
+      #
+      # DIAGNOSTIC ONLY — it never fails a step and never aborts the shard.
+      # Aborting was this issue's original proposal and the data rejected it:
+      # shard 4 wedged ten times and still passed 101 specs, so an abort would
+      # discard far more coverage than it saves.
+      - name: Start the backend liveness recorder (shard ${{ matrix.shard }})
+        # Force bash for `disown` — the container's default shell is sh (dash).
+        # Same reason as the port-forward step above.
         shell: bash
-        env:
-          # Generous: a wedge is worth waiting out when the alternative is losing
-          # a ~20 min run. The recover_timeout_s dispatch input shortens it for a
-          # validation run without editing the file; empty on schedule → 300.
-          RECOVER_TIMEOUT_S: ${{ inputs.recover_timeout_s || '300' }}
-          # Only for the log line below — the run is NOT gated on it (see the
-          # Collect models step: a drained key must not kill unrelated specs).
-          COLLECT_MODELS_OUTCOME: ${{ steps.collect_models.outcome }}
         run: |
-          # Surface the pre-flight's own verdict here, where a reader is already
-          # looking. Without this the step's failure is buried in its log and the
-          # resulting skips look unexplained (the silent-erosion class of #570).
-          if [ "$COLLECT_MODELS_OUTCOME" = "failure" ]; then
-            echo "::warning::Collect models FAILED (outcome=$COLLECT_MODELS_OUTCOME). The run continues by design, but providers.json/models.json may be stale or incomplete, so provider-parameterized specs can skip. Check that step's log for which provider is down."
-          fi
-          deadline=$(( $(date +%s) + RECOVER_TIMEOUT_S ))
-          attempt=0
-          while :; do
-            attempt=$((attempt + 1))
-            if curl -sf --connect-timeout 5 --max-time 8 http://localhost:7860/api/v1/version >/dev/null 2>&1; then
-              echo "Backend answered /api/v1/version on attempt $attempt — proceeding to the @stable run."
-              exit 0
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::Langflow did not answer /api/v1/version within ${RECOVER_TIMEOUT_S}s after the Collect models step (${attempt} attempts). The backend is wedged or dead, so the @stable run would abort in globalSetup with zero tests. This is the post-collect-models wedge (#922/#927/#1011), NOT a per-test failure."
-              exit 1
-            fi
-            sleep 5
-          done
+          nohup node scripts/watch-backend.mjs > /tmp/liveness.log 2>&1 &
+          echo "$!" > /tmp/liveness.pid
+          disown
+          echo "Backend liveness recorder started (pid $(cat /tmp/liveness.pid))."
+        env:
+          WATCH_URL: http://localhost:7860/api/v1/version
+          WATCH_OUT: backend-liveness.jsonl
+          WATCH_INTERVAL_MS: "2000"
+          # A wedged worker ACCEPTS the connection and never answers, so the
+          # probe needs its own deadline — without it the recorder would hang
+          # exactly when it has something to record.
+          WATCH_TIMEOUT_MS: "4000"
+          # Backstop so a recorder that outlives its kill cannot idle for the
+          # job's whole lifetime. Well above any observed shard duration (~40 min)
+          # and BELOW the job's timeout-minutes: 90 — at 90 min it would only ever
+          # be reached after the runner had already killed the job, making it dead
+          # configuration rather than a backstop.
+          WATCH_MAX_SECONDS: "3600"
 
       - name: Run @stable tests (shard ${{ matrix.shard }})
         # Sharded run. The reporter list is NOT overridden on the CLI: setting
@@ -449,6 +504,52 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+
+      # always(): the liveness data is most valuable precisely when the shard
+      # went red, and a shard killed by its own timeout still leaves a probe log
+      # worth summarizing. WATCH_FILES carries this shard's spec list into the
+      # summary because the MERGED report has no shard column — without it the
+      # merge job could blame shard 3's outage for a shard-4 failure (#1030).
+      - name: Summarize backend liveness (shard ${{ matrix.shard }})
+        if: always()
+        shell: bash
+        run: |
+          # SIGTERM is the recorder's normal exit path: it stops after the
+          # current probe. `|| true` so a recorder that already died (or never
+          # started) cannot fail this step.
+          if [ -f /tmp/liveness.pid ]; then
+            kill "$(cat /tmp/liveness.pid)" 2>/dev/null || true
+          fi
+          # Let the in-flight probe land before reading the log — a probe can be
+          # mid-append when the signal arrives.
+          sleep 3
+          mkdir -p liveness
+          node scripts/watch-backend.mjs --summarize
+          # Ship the raw probe log too: the summary answers "when and how long",
+          # the log answers "what did the backend say", which is what a forensic
+          # pass on a new wedge shape needs.
+          cp backend-liveness.jsonl liveness/ 2>/dev/null || true
+          echo "--- recorder stdout (tail) ---"
+          tail -n 5 /tmp/liveness.log 2>/dev/null || true
+        env:
+          WATCH_OUT: backend-liveness.jsonl
+          WATCH_SUMMARY: liveness/backend-liveness.json
+          WATCH_LABEL: ${{ matrix.shard }}
+          WATCH_FILES: ${{ matrix.files }}
+
+      - name: Upload backend liveness (shard ${{ matrix.shard }})
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: liveness-${{ matrix.shard }}
+          path: liveness/
+          retention-days: 7
+          # NOT `error` (unlike the blob upload): a shard that died before the
+          # recorder ever wrote a line has no liveness data, and a missing
+          # diagnostic must not turn into a red step. The merge job reports the
+          # absence as `measured=false`, which it renders as UNKNOWN — never as
+          # a healthy backend.
+          if-no-files-found: warn
 
       # Resolve the ACTUAL Langflow version running in the service container.
       # The image tag is just `:latest` (or an RC/stable tag), so it never
@@ -506,6 +607,21 @@ jobs:
           # not recurse). The per-shard blob zips are uniquely named
           # (report-<hash>-<shard>.zip), so flattening cannot collide.
           merge-multiple: true
+
+      # Liveness summaries from every shard (#1030). Deliberately WITHOUT
+      # merge-multiple: each shard names its file `backend-liveness.json`, so
+      # flattening would have them overwrite each other. The reader recurses into
+      # the per-artifact subdirectories instead.
+      # continue-on-error: no shard ever uploading liveness data (an old shard
+      # job, a run that died in prep) must not fail the merge — the reporter
+      # renders that as UNKNOWN, which is the honest verdict.
+      - name: Download shard liveness data
+        uses: actions/download-artifact@v7
+        if: always()
+        continue-on-error: true
+        with:
+          pattern: liveness-*
+          path: all-liveness
 
       - name: Guard — every expected shard produced a blob
         id: shardguard
@@ -576,6 +692,38 @@ jobs:
         run: node scripts/check-run-integrity.mjs
         env:
           PLAYWRIGHT_JSON: results.json
+
+      # Name the wedge (#1030). Runs after the merge so it can attribute failing
+      # attempts to the outages measured on their OWN shard, and before the
+      # umbrella issue so the section can lead the body: a wedged run has to
+      # announce the wedge, not a list of collateral specs that reads as
+      # per-test rot.
+      #
+      # Reports only — it sets no gate. The @stable auto-removal below decides the
+      # tag on the failure's OWN error signature (#1031), not on this table: the
+      # honesty note in the section explains why overlap with an outage window is
+      # a lead and not a verdict. The only thing that crosses over is the `wedged`
+      # output, passed to the auto-remove action to word its exemption.
+      #
+      # continue-on-error: the two steps that follow and matter most on a red day
+      # — `Auto-remove @stable from hard failures` and `Create issue on failure` —
+      # carry NO always(), so they run under the implicit success() of every step
+      # before them. A throw in this diagnostic would therefore SKIP the umbrella
+      # issue it exists to improve. The script swallows its own errors too; this is
+      # the second layer, for the case the failure is the `node` invocation itself.
+      - name: Report mid-run backend outages
+        id: liveness
+        if: always()
+        continue-on-error: true
+        run: node scripts/report-backend-outages.mjs
+        env:
+          LIVENESS_DIR: all-liveness
+          PLAYWRIGHT_JSON: results.json
+          # Without the expected count the reporter can only speak about shards
+          # that uploaded data: "2 measured shard(s)" reads the same whether the
+          # run had 2 shards or 4, so a shard whose job died before writing a
+          # summary would disappear instead of reading as UNKNOWN.
+          SHARD_TOTAL: ${{ needs.prep.outputs.shard_total }}
 
       - name: Upload Playwright report (full, heavy)
         id: upload_report                     # ← full report: index.html + data/ + trace/ attachments (~380 MB)
@@ -675,8 +823,12 @@ jobs:
       # later daily. `needs.test.result == 'success'` does NOT cover that on its own —
       # the shard step runs with `--pass-with-no-tests`, so a run matching no @stable
       # test at all is GREEN with zero tests.
+      # ALSO gated on runguard.partial (#1058): durations extracted from a run where
+      # some shards aborted would record only the shards that ran, so the specs of a
+      # dead shard silently lose their timing and the partitioner mis-balances every
+      # later daily on stale data.
       - name: Refresh spec durations (green runs only)
-        if: needs.test.result == 'success' && github.event_name == 'schedule' && steps.runguard.outputs.empty == 'false'
+        if: needs.test.result == 'success' && github.event_name == 'schedule' && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
         run: node scripts/partition-shards.mjs extract results.json > reports/spec-durations.json
 
       # Long-lived run history: append one JSON line per scheduled run to
@@ -749,6 +901,11 @@ jobs:
       # mass-failure guard inside the action leaves everything untouched when too
       # many tests fail at once (infra, not per-test rot). Scheduled runs only —
       # a manual dispatch must never mutate the test source.
+      # On top of the guard, #1031: a hard failure whose last error is
+      # transport-level (apiRequestContext timeout, ECONNREFUSED, the globalSetup
+      # `is not reachable`) is wedge collateral, not per-test rot, and is exempted
+      # INDEPENDENTLY of the threshold. The guard only ever covered the WIDE
+      # wedge; a wedge costing ≤5 tests used to strip their tags with no review.
       # Gated on shardguard.complete: an incomplete merge (a dead shard) yields an
       # under-counted results.json, so never mutate the @stable tag on partial data.
       # ALSO gated on runguard.empty (#1012): a report with zero tests carries no
@@ -756,14 +913,31 @@ jobs:
       # 2026-07-28 this step ran on an empty report and only found nothing to do
       # by luck — the abort happened in globalSetup, before any test could be
       # recorded as failing, so the action's mass-failure guard was never reached.
+      # ALSO gated on runguard.partial (#1058). The same reasoning as `empty`, one
+      # granularity down: on run 30444299314 two of four shards aborted in the
+      # credentials preflight, so the report held 205 results against a ~380
+      # baseline. Mutating @stable on that report would judge tags by a report that
+      # never saw half the suite — and a spec cannot fail in a shard that never ran.
       - name: Auto-remove @stable from hard failures
         id: auto_remove
-        if: needs.test.result == 'failure' && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'true' && steps.runguard.outputs.empty == 'false'
+        if: needs.test.result == 'failure' && github.event_name == 'schedule' && steps.shardguard.outputs.complete == 'true' && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
         uses: ./.github/actions/auto-remove-stable
         with:
           playwright_json: results.json
           max_auto_remove: "5"
           run_label: "daily #${{ github.run_id }}"
+          # #1030's verdict, for WORDING only. The infra-signature exemption
+          # inside the action stands on the failure's own error, so it still
+          # applies when this is empty — which is the run where the backend
+          # state is least known and the exemption matters most.
+          #
+          # Gated on `measured`: a run whose shards uploaded NO liveness artifact
+          # also emits `wedged=false`, and forwarding that bare would have the
+          # auto-removal block claim the recorder "measured no outage" over a run
+          # where it measured nothing. That is the exact misreading
+          # report-backend-outages.mjs warns about ("must never be read as no
+          # outage"), so unmeasured has to arrive as "" (unknown), not "false".
+          backend_wedged: ${{ steps.liveness.outputs.measured == 'true' && steps.liveness.outputs.wedged || '' }}
 
       # Open the umbrella triage issue on failure — scheduled runs ONLY, aligned
       # with the history / auto-remove steps above. A manual dispatch is itself a
@@ -791,6 +965,17 @@ jobs:
           RUN_UNREADABLE: ${{ steps.runguard.outputs.unreadable }}
           RUN_ERRORS: ${{ steps.runguard.outputs.report_errors }}
           RUN_FIRST_ERROR: ${{ steps.runguard.outputs.first_error }}
+          # PARTIAL (#1058): SOME shards aborted while others ran, so the totals in
+          # this body are UNDER-COUNTED. Without saying so, the umbrella reads as an
+          # ordinary failure day — which is exactly how run 30444299314 reported ~184
+          # unexecuted tests as a routine 10-failure triage.
+          RUN_PARTIAL: ${{ steps.runguard.outputs.partial }}
+          RUN_TESTS: ${{ steps.runguard.outputs.tests_total }}
+          # In-run backend liveness (#1030). Rendered on EVERY umbrella issue,
+          # not only on a wedged run: "the backend answered every probe" rules
+          # the wedge out for the triager, and "not measured" says the state is
+          # unknown. Only silence would be misleading.
+          LIVENESS_MD: ${{ steps.liveness.outputs.summary_md }}
         with:
           script: |
             const today = new Date().toISOString().split('T')[0];
@@ -801,6 +986,8 @@ jobs:
             const unreadable = process.env.RUN_UNREADABLE === 'true';
             const runErrors = process.env.RUN_ERRORS || '0';
             const firstError = process.env.RUN_FIRST_ERROR || '';
+            const partial = process.env.RUN_PARTIAL === 'true';
+            const runTests = process.env.RUN_TESTS || '0';
             // Three shapes, most specific first.
             // 1. ZERO tests executed (#1012): there is no per-test evidence to
             //    triage, so say so instead of rendering the auto-removal line,
@@ -826,7 +1013,25 @@ jobs:
                         'any test starts. Known cause of this shape: the post-`collect-models` backend wedge — #1011.',
                       ]),
                 ]
-              : arStatus
+              : partial
+                ? [
+                    '### ⚠️ PARTIAL run — some shards never ran their tests',
+                    '',
+                    `The merged report carries **${runTests} test result(s)** but also **${runErrors} top-level report error(s)**.`,
+                    'A top-level error means a shard aborted before running the tests assigned to it, so',
+                    'the totals above are **UNDER-COUNTED** — the specs of the dead shard are neither',
+                    'passed nor failed, they simply never ran.',
+                    ...(firstError ? ['', '```', firstError, '```'] : []),
+                    '',
+                    '`@stable` auto-removal and the spec-duration refresh were **both skipped**: a tag must',
+                    'not be judged, nor a timing baseline rebuilt, on a report that never saw half the suite.',
+                    '',
+                    '**Triage the abort first.** Compare the recorded total against the last green run — a',
+                    'large drop is the abort, not a fix. The cause above is quoted from the shard that died;',
+                    'the shard logs hold the rest. Known cause of this shape: `Collect models` failing without',
+                    'importing a provider key as a Langflow global variable — #1058.',
+                  ]
+                : arStatus
                 ? ['### `@stable` auto-removal', '', arSummary]
                 : [
                     '### Next steps',
@@ -835,11 +1040,19 @@ jobs:
                     '3. If the test is incorrect or outdated: remove the `@stable` tag from the test and open a fix PR',
                     '4. If it is a Langflow regression: flag it to the team and monitor upstream',
                   ];
+            // The liveness section leads the body when the backend went down:
+            // the cause has to be the first thing read, ahead of the per-test
+            // material, or triage starts from the collateral specs again
+            // (#1030). Empty when the reporting step produced no output at all.
+            const liveness = (process.env.LIVENESS_MD || '').trim();
+            const livenessSection = liveness ? [liveness, ''] : [];
             // The title is what gets scanned in the issue list, so an empty run
             // must not claim that tests failed — none ran.
             const title = empty
               ? `[Daily Failure] @stable run executed ZERO tests on ${today} (${image})`
-              : `[Daily Failure] @stable tests failed on ${today} (${image})`;
+              : partial
+                ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
+                : `[Daily Failure] @stable tests failed on ${today} (${image})`;
             await github.rest.issues.create({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -851,6 +1064,7 @@ jobs:
                 `- **Langflow version:** \`${image}\``,
                 `- **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
                 '',
+                ...livenessSection,
                 ...section,
                 '',
                 '/cc @Victor-w-Madeira @daniellicnerski1 @rafaelgiln',
@@ -875,14 +1089,16 @@ jobs:
       # this whole mechanism exists to remove. `complete` keeps `== 'false'`: its
       # own absence is already covered, since a skipped shardguard means no blobs
       # were downloaded and runguard then sees no report at all.
-      - name: Fail scheduled run on an incomplete or empty report
-        if: always() && github.event_name == 'schedule' && (steps.shardguard.outputs.complete == 'false' || steps.runguard.outputs.empty != 'false')
+      - name: Fail scheduled run on an incomplete, empty or partial report
+        if: always() && github.event_name == 'schedule' && (steps.shardguard.outputs.complete == 'false' || steps.runguard.outputs.empty != 'false' || steps.runguard.outputs.partial == 'true')
         env:
           COMPLETE: ${{ steps.shardguard.outputs.complete }}
           RUN_EMPTY: ${{ steps.runguard.outputs.empty }}
+          RUN_PARTIAL: ${{ steps.runguard.outputs.partial }}
           RUN_UNREADABLE: ${{ steps.runguard.outputs.unreadable }}
           RUN_ERRORS: ${{ steps.runguard.outputs.report_errors }}
           RUN_TESTS: ${{ steps.runguard.outputs.tests_total }}
+          RUN_FIRST_ERROR: ${{ steps.runguard.outputs.first_error }}
         run: |
           if [ "$COMPLETE" = "false" ]; then
             echo "::error::Merge was incomplete (a shard produced no blob); results are under-counted. Failing the scheduled run so it is not mistaken for a clean pass."
@@ -891,6 +1107,8 @@ jobs:
             echo "::error::The merged report is missing or unparseable, so ZERO test results could be read. Check the 'Merge blob reports' step and the per-shard blob artifacts."
           elif [ "$RUN_EMPTY" = "true" ]; then
             echo "::error::ZERO tests executed — the shards aborted before the first test ($RUN_ERRORS top-level report error(s), tests_total=$RUN_TESTS). This is an INFRA abort, not a per-test failure: no spec failed and no @stable tag was touched. Triage the abort, not the tests (see #1011)."
+          elif [ "$RUN_PARTIAL" = "true" ]; then
+            echo "::error::PARTIAL run — $RUN_TESTS test result(s) recorded, but $RUN_ERRORS top-level report error(s) mean at least one shard aborted before running its tests. The totals are UNDER-COUNTED and the specs of that shard neither passed nor failed: they never ran. @stable auto-removal and the spec-duration refresh were skipped. Cause from the shard that died: $RUN_FIRST_ERROR (see #1058)."
           elif [ -z "$RUN_EMPTY" ]; then
             echo "::error::The report-integrity guard reported nothing (empty output is unset) — its verdict is UNKNOWN, so this run cannot be trusted as a clean pass. Check the 'Guard — merged report contains test results' step."
           fi

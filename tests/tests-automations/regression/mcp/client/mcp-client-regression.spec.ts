@@ -235,9 +235,13 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
     },
   );
 
-  test(
+  // Quarantined for #1126 — recurrent flake (dailies 2026-07-16, 2026-07-20,
+  // 2026-07-30): openBlankFlow's page.waitForURL times out after 30 s even
+  // though POST /api/v1/flows already returned 201. Lifting the quarantine and
+  // restoring @stable is a deliverable of #1126.
+  test.fixme(
     "unreachable HTTP server results in empty tool dropdown",
-    { tag: ["@mcp", "@regression", "@stable"] },
+    { tag: ["@mcp", "@regression"] },
     async ({ page }) => {
       const BAD_SERVER = BAD_SERVER_NAME;
 

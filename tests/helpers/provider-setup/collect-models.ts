@@ -4,6 +4,7 @@ import path from "path";
 import fs from "fs";
 import { SettingsPage } from "../../pages/SettingsPage";
 import { providerConfigMap, type Provider } from "./provider-config";
+import { probeBuildAxis, type ProviderVerdict } from "./probe-component-buildable";
 
 const DATA_DIR = path.join(__dirname, "data");
 const PROVIDERS_PATH = path.join(DATA_DIR, "providers.json");
@@ -134,19 +135,9 @@ function modelsFor(models: ModelRecord[], provider: string): string[] {
 // runs green on; the catalog order stays as the tail so a provider with
 // none of the preferred models still validates on whatever it exposes.
 //
-// KNOWN GAP — "active" means the key works, NOT that Langflow can BUILD the
-// model. The probe calls the provider's own API directly, upstream of
-// Langflow, so it cannot see a missing server-side integration package. On a
-// nightly that shipped without `langchain-google-genai`, google probed
-// `active` here while every Google chat/embedding build inside Langflow raised
-// `ImportError: Could not import '...google_generative_ai_model' ... Install
-// the missing package`, surfacing downstream only as a misleading node-build
-// timeout across ~17 @stable specs (agents + Google-embedding KB). Root cause
-// + impact map: #898; upstream ticket: LE-1974. A faithful check would have to
-// BUILD a Language Model flow per provider and inspect the error — there is no
-// standalone endpoint that triggers the class import (`/api/v1/models/*`
-// return static metadata only). That build-probe hardening was deferred to
-// #900; this note is the trap marker for the next triager.
+// SCOPE — this probe answers "does the KEY work", nothing more. Whether Langflow
+// can actually BUILD the provider's component is the separate build axis in
+// `probe-component-buildable.ts`, merged in by `collectProviders` below (#900).
 const CANDIDATE_PREFS: Record<string, RegExp[]> = {
   openai: [/^gpt-4o-mini$/, /^gpt-4o$/, /^gpt-4\.1(-mini|-nano)?$/, /^gpt-4/],
   google: [
@@ -298,8 +289,18 @@ export async function validateProviderWithFallback(
   };
 }
 
-async function collectProviders(models: ModelRecord[]): Promise<ProviderRecord[]> {
-  console.log("Validating providers via API...");
+// A provider is usable only when BOTH axes pass, and they fail independently:
+// the key axis asks whether the provider's cloud API accepts the key, the build
+// axis whether THIS Langflow image can instantiate the component. A build-axis
+// failure overrides an `active` key verdict — a working key on an image that
+// cannot build the model is precisely the false `active` that made #898 and #907
+// cost a triage cycle each. The two run concurrently: the build probe is ~9s of
+// mostly-idle HTTP, and the key probe is network-bound too.
+async function collectProviders(
+  models: ModelRecord[],
+  buildAxis: Record<string, ProviderVerdict>,
+): Promise<ProviderRecord[]> {
+  console.log("Validating providers via API (key axis)...");
 
   const results = await Promise.all([
     validateProviderWithFallback("openai", rankCandidates("openai", modelsFor(models, "openai")), validateOpenAI),
@@ -307,13 +308,28 @@ async function collectProviders(models: ModelRecord[]): Promise<ProviderRecord[]
     validateProviderWithFallback("google", rankCandidates("google", modelsFor(models, "google")), validateGoogle),
   ]);
 
-  for (const r of results) {
+  const merged = results.map((r) => {
+    const axis = buildAxis[r.provider];
+    // Only a PROVEN build failure overrides the key verdict. `unknown` (the probe
+    // could not reach a verdict) must not: it says nothing about the provider, and
+    // writing it as `inactive` would turn a runner-side hiccup into a hard gate
+    // failure plus the silent downstream skips this mechanism exists to prevent.
+    if (axis && axis.state === "failed") {
+      // Recorded even when the key is fine: the specs parametrized on this
+      // provider cannot run either way, and the reason must name the layer that
+      // is missing rather than blaming the key.
+      return { ...r, status: "inactive" as const, error: axis.reason ?? "build axis failed" };
+    }
+    return r;
+  });
+
+  for (const r of merged) {
     const icon = r.status === "active" ? "✅" : "❌";
     const detail = r.error ? ` — ${r.error}` : "";
     console.log(`${icon} ${r.provider} (${r.model ?? "no model"})${detail}`);
   }
 
-  return results;
+  return merged;
 }
 
 // ─── Model collection (UI navigation) ─────────────────────────────────────────
@@ -441,11 +457,26 @@ export async function collectAll(page: Page): Promise<void> {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  // Step 1: Collect models from UI via Settings
+  // Step 1: BUILD axis first, on a still-idle backend.
+  //
+  // Order is load-bearing, not cosmetic (#900). Step 2 saves three provider keys
+  // through the Settings UI, and each save makes Langflow validate the provider and
+  // fetch its model list — enough load on the single-worker CI backend that
+  // `pr-validation.yml` carries a dedicated "Wait for the backend to recover from
+  // the collect-models load" step after this spec (#922/#927/#1044). Running the
+  // build probe after that load put it at the worst possible moment: on PR #1051's
+  // CI run every component timed out, several on the POST that merely STARTS the
+  // build, so the axis reported `unknown` for all three providers and produced no
+  // signal at all. The probe needs only the component registry — not models.json,
+  // not the keys — so it can and must run before that load.
+  const knownProviders = Object.keys(providerConfigMap) as Provider[];
+  const buildAxis = await probeBuildAxis(page.request, knownProviders);
+
+  // Step 2: Collect models from UI via Settings
   const models = await collectModels(page);
 
-  // Step 2: Validate providers via API, falling back across candidate models
-  const providers = await collectProviders(models);
+  // Step 3: Validate the key axis and merge both verdicts
+  const providers = await collectProviders(models, buildAxis);
   fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
   console.log(`providers.json saved with ${providers.length} providers.`);
 

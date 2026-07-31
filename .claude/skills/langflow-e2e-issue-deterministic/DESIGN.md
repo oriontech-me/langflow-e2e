@@ -70,6 +70,8 @@ Type variations (same 6 classes as the prose skill):
 npx tsx pipeline/cli.ts next 493                    # validate state, run mechanical work, emit exact next instruction
 npx tsx pipeline/cli.ts complete 493 <step> --evidence <args>
 npx tsx pipeline/cli.ts escalate 493 debug --reason "…"   # park current phase, enter DEBUG from anywhere
+npx tsx pipeline/cli.ts artifacts 493 --run <run-id> [--filter "<title>"]   # per-attempt status/error from the failing run's own JSON artifact
+npx tsx pipeline/cli.ts repro-run 493 --spec <path> [--grep "<title>"] [--runs 10]   # DEBUG only: PRE-fix flake rate on the unmodified spec
 npx tsx pipeline/cli.ts status 493
 npx tsx pipeline/cli.ts abort 493 --reason "…"
 npx tsx pipeline/cli.ts metrics 493                 # benchmark summary (JSON)
@@ -150,6 +152,29 @@ prose skill / `langflow-e2e` references instead.
    `Closes #NNN` and the correct template; `roadmap` label present for wave issues.
    Post-merge instruction: verify the issue actually closed (the edited-`Fixes`
    GitHub quirk) and delete the branch.
+7. **Environment aborts are void, not verdicts** (#1082): `classifyRun` splits a
+   run into `clean | infra-void | real-failure` from its failure messages. A run
+   whose every failure carries an infra signature (`/api/v1/auto_login` timeout,
+   `socket hang up`, connection refused) is re-run and counted as neither; past
+   `PIPELINE_MAX_INFRA_VOIDS` (3) the phase stops naming the instance. A failure
+   the classifier cannot read stays a real failure — it can never silence a red.
+8. **Pre-fix flake rate** (#1082): for a flake-shaped issue, DEBUG completes only
+   with a `repro-run` baseline (≥5 runs on the unmodified spec) — or, when the
+   defect never reproduced, an explicit `evidence.mechanismProof`. Three clean
+   VALIDATE runs do not distinguish a fix from luck at single-digit flake rates.
+9. **One verdict per symptom row** (#1082): every `spec.ts:line` row in the
+   issue's table needs its own verdict; a row owned by another issue carries
+   `ownedBy:"#NNNN"` and must be referenced in the PR body.
+10. **Quarantine lift** (#1082): when the issue quarantined a test, VALIDATE
+    fails while a `test.fixme` survives in a touched spec, and (when the issue
+    asks for it) while a quarantined title lacks `@stable`. Correspondingly,
+    FORCE_FAIL requires red runs only for *runnable* titles — a muted test
+    cannot be force-failed, and demanding it would deadlock the phase.
+11. **Branch purity + CI verdict** (#1082): the PR gate diffs
+    `origin/main..HEAD` against the files SPECIFY/IMPLEMENT recorded (plus
+    `QA-CHECKLIST.md`), failing closed when the base ref cannot be resolved; and
+    it requires `ciVerdict: green | ambient-red`, where `ambient-red` must carry
+    the URL of a justification comment that actually exists on the PR.
 
 ## State file
 

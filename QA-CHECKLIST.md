@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-29
+> **Last updated:** 2026-07-31
 
 ---
 
@@ -46,6 +46,7 @@
 - [-] Google Generative AI Provider Setup → `helpers/provider-setup/setup-google.ts`
 - [-] Provider Map (`providerSetupMap`) — central registration point → `helpers/provider-setup/index.ts`
 - [-] Provider validation via API (credit, valid key) → `helpers/provider-setup/collect-models.ts`
+- [-] Provider build-axis probe (registry key present + component instantiates) → `helpers/provider-setup/probe-component-buildable.ts`
 - [-] Collection of available models via UI (Settings → Model Providers) → `helpers/provider-setup/collect-models.ts`
 - [-] `providers.json` — status of each provider (active/inactive + reason) → `data/providers.json`
 - [-] `models.json` — list of models per provider → `data/models.json`
@@ -103,7 +104,7 @@
 #### 1.3.1 Folder (Project) CRUD via API
 - [x] POST `/api/v1/projects/` → creates folder, returns id and name → `api/flows/api-folders-crud.spec.ts`
 - [x] GET `/api/v1/projects/` → lists folders including the created one → `api/flows/api-folders-crud.spec.ts`
-- [!] DELETE `/api/v1/projects/{id}` → returns 204 and the folder leaves the listing — quarantined (#965): under concurrent writes the endpoint answers **500** (`sqlite3.OperationalError: database is locked`) and the folder survives; measured 44% of deletes on `1.12.0.dev7` vs 6% on stable `1.10.3` at the same 2-client contention. Product defect filed as [LE-2020](https://datastax.jira.com/browse/LE-2020); the `204` assertion is unchanged → `api/flows/api-folders-crud.spec.ts`
+- [!] DELETE `/api/v1/projects/{id}` → returns 204 and the folder leaves the listing — quarantined (#965): under concurrent writes the endpoint answers **500** (`sqlite3.OperationalError: database is locked`) and the folder survives; measured 44% of deletes on `1.12.0.dev7` vs 6% on stable `1.10.3` at the same 2-client contention. Product defect filed as [LE-2020](https://datastax.jira.com/browse/LE-2020); the `204` assertion is unchanged. The same ticket also covers `PATCH /api/v1/flows/{id}` (§12.5, #932) — one root cause, two endpoints → `api/flows/api-folders-crud.spec.ts`
 
 #### 1.4 Components via API
 - [x] GET `/api/v1/all` → lists all available components → `api/flows/api-custom-component-creation.spec.ts`
@@ -144,6 +145,7 @@
 - [x] Edit slider → `core-components/parameters-panel-field-types.spec.ts`
 - [x] Edit tab component → `core-components/parameters-panel-field-types.spec.ts`
 - [-] Visibility toggle of a connected input is disabled (tooltip "Cannot change visibility of connected handles") and re-enables once the edge is deleted → `flow-functionality/general-bugs-hidden-input-edges.spec.ts`
+- [-] Two nodes on the canvas exposing the same field name render distinct DOM ids, while `data-testid` stays unscoped so both nodes remain selectable (LE-2037 / langflow#14312 — awaiting the fix on the 1.12 line before `@stable`) → `core-components/duplicate-dom-ids-regression.spec.ts`
 
 #### 2.2 Tool Mode
 - [x] Enable Tool Mode on a component → `core-components/tool-mode.spec.ts`
@@ -221,6 +223,8 @@
 - [x] cURL parser auto-fills URL field and executes the GET, returning 200 → `core-components/api-request-component-regression.spec.ts`
 - [x] Body table accepts key + value cell entries when method is POST (body field is `advanced=True` and hidden by inspector while method is GET) → `core-components/api-request-component-regression.spec.ts`
 - [x] Flow state (URL, method, headers row) persists in database after autosave and rehydrates on reload → `core-components/api-request-component-regression.spec.ts`
+- [x] `include_httpx_metadata=true` adds the outgoing request headers as a top-level `headers` key in the output Data (advanced field, added to the node body via the inspector) → `api/flows/api-component-regression.spec.ts`
+- [x] Request timeout shorter than the endpoint's delay returns `status_code` 500 with an `error` field instead of raising (advanced field, added to the node body via the inspector) → `api/flows/api-component-regression.spec.ts`
 
 #### 3.4 Webhook
 - [x] POST aceita JSON e text/plain retornando 202 com `status: "in progress"` → `core-components/webhook-component-regression.spec.ts`
@@ -267,6 +271,13 @@
 - [x] `operator=greater than` numeric routing → `core-components/if-else-component-regression.spec.ts`
 - [x] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than` → `core-components/if-else-component-regression.spec.ts`
 - [ ] `max_iterations` + `default_route` cycle break (not implementable as a standalone If-Else feedback loop on 1.12.x — Langflow forms graph cycles only via loop-aware target handles (`from_loop_target_handle`, `target_handle.type is None`) that `LoopComponent` ports provide; a feedback edge into the router's regular `match_text` field-input persists in the flow JSON but does not make the graph iterate (`is_cyclic` stays false, router runs once). `conditional_router.py`'s cycle-break only fires when the router already sits inside a Loop-created cycle. Confirmed live on 1.12.0.dev3; product finding filed upstream; #891, follow-up of #822)
+
+#### 3.9 Human Input (HITL, 1.11.0)
+- [ ] Human Input node config: default Approve/Reject branch handles, custom User Action creates a new handle, configured handles persist after save + reload → `core-components/human-input-node-config.spec.ts`
+
+#### 3.10 Data Operations (1.11.0)
+- [ ] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode → `core-components/data-operations-component.spec.ts`
+- [ ] Legacy operations components link/redirect to Data Operations (legacy flows keep working) → `core-components/data-operations-legacy-link.spec.ts`
 
 ---
 
@@ -384,6 +395,7 @@
 
 #### 7.1 Provider Collection and Validation
 - [x] Validate API keys of all providers via real call → `collect-models.spec.ts`
+- [x] Validate the running build can instantiate each provider's component (registry + build, not just the key) → `collect-models.spec.ts`
 - [x] Collect available models per provider via UI → `collect-models.spec.ts`
 - [x] Inactive providers appear as skipped in tests with reason → `agent-component-regression.spec.ts`
 - [x] Configure provider API key via Save Configuration (first setup) → `collect-models.spec.ts`
@@ -417,7 +429,7 @@
 - [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
 #### 7.6 Open-Source Providers
-- [x] Configure and execute flow with Ollama (local model) → `model-provider/ollama-provider.spec.ts`
+- [x] Configure and execute flow with Ollama (local model) → `model-provider/ollama-provider.spec.ts` (both halves `@stable` again after #931: the `lfx-ollama` packaging gap that broke it on 07-23/24 is fixed upstream, a build-side bundle pre-flight now fails attributed instead of timing out blind for 30 s, the run-completion wait was rebuilt on the `button-stop`/`button-send` signal — the 07-15 failure mode — and the test model is derived from the instance instead of a hardcoded tag that could skip silently. Restored on 4 consecutive green `manual.yml` runs on `1.12.0.dev9`, not on local evidence)
 - [-] Configure and execute flow with Groq → `model-provider/groq-provider.spec.ts` (automated but not validatable on the tested image: the Groq component ships in the `lfx-bundles` distribution, which `langflowai/langflow-nightly:latest` does not install, so the spec's availability pre-flight skips it on every run — `@stable` removed, see #1039)
 - [-] Configure and execute flow with Mistral → `model-provider/mistral-provider.spec.ts` (automated but not validatable on the tested image: same `lfx-bundles` packaging decision as Groq — `@stable` removed, see #1039)
 
@@ -426,6 +438,10 @@
 - [x] Maximum agent iterations → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
 - [x] Use of custom `context_id` for memory isolation → `agent-context-id-isolation.spec.ts`
 - [x] Output formatting (JSON via output_schema, Markdown, plain text) → `agent-structured-output.spec.ts`
+
+#### 7.8 Unified Provider Setup — 1.11.0 additions
+- [ ] OpenAI Compatible as a first-class unified model provider: setup with base URL + key, models discovered, usable by a flow → `core-functionality/model-provider/openai-compatible-provider-setup.spec.ts`
+- [ ] Azure AI Foundry in the unified provider setup: configuration accepts deployment names, provider appears configured (requires Azure credentials in CI) → `core-functionality/model-provider/azure-ai-foundry-provider-setup.spec.ts`
 
 ---
 
@@ -526,6 +542,9 @@
 #### 9.5 Structured Data Output
 - [x] JSON Data output renders as code block → `core-functionality/playground/playground-output-data.spec.ts`
 - [x] DataFrame output renders as Markdown table → `core-functionality/playground/playground-output-data.spec.ts`
+
+#### 9.6 Human-in-the-Loop (1.11.0)
+- [ ] Human Input pauses the run durably, decision card renders in the Playground, Approve routes only the approved branch and the run completes; Reject routes only the reject branch → `core-functionality/playground/human-input-pause-resume.spec.ts`
 
 ---
 
@@ -636,7 +655,7 @@
 #### 12.5 Flow Operations
 - [x] Lock flow — prevents editing → `flow-functionality/lock-flow.spec.ts`
 - [x] Unlock flow → `flow-functionality/flow-lock.spec.ts`
-- [!] Move flow between folders via API — quarantined (#932): `PATCH /api/v1/flows/{id}` returns `200` but the association read back is intermittently stale. Separate root cause from #965 — under contention the `PATCH` can 500, yet every `200` observed persisted the new `folder_id` (18/18) → `api/flows/api-folders-crud.spec.ts`
+- [!] Move flow between folders via API — quarantined (#932): under concurrent writes `PATCH /api/v1/flows/{id}` answers **500** (`sqlite3.OperationalError: database is locked` on `UPDATE flow SET folder_id`) and the flow does not move; 14/24 at 2 concurrent clients, 0/30 serial. **Same root cause as #965**, not a separate one — the daily artifact shows the failing assert is `expect(patchRes.status()).toBe(200)` receiving 500, not a stale `folder_id`. Product defect tracked under [LE-2020](https://datastax.jira.com/browse/LE-2020); the `200` assertion is unchanged → `api/flows/api-folders-crud.spec.ts`
 - [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [x] Save flow components as template → `core-components/saveComponents.spec.ts`
 
@@ -680,6 +699,11 @@
 - [x] Starter project with MCP → `mcp/server/mcp-server-starter-projects.spec.ts`
 - [x] Flow exposed as MCP server — verify generated endpoint → `mcp/server/mcp-server-protocol.spec.ts`
 - [x] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
+- [x] Register an external MCP server through the stdio form — `command` + `args` resolves the server's real tools into the MCPTools node → `mcp/server/mcp-server.spec.ts`
+- [x] Add-server modal fields persist across save → reopen-for-edit — stdio (name, command, 4 args, 2 env pairs) and HTTP/SSE (name, URL, 2 headers, 2 env pairs) → `mcp/server/mcp-server.spec.ts`
+- [x] Tool list refreshes when a registered server is edited to run a different package → `mcp/server/mcp-server.spec.ts`
+- [x] stdio `command` must be a single executable — a command with an embedded argument is refused and the same registration split into `command` + `args` is accepted (upstream hardening `#14073`; #1091) → `mcp/server/mcp-server.spec.ts`
+- [x] The project's own Streamable HTTP endpoint registers as an MCP server and exposes its flows as tools → `mcp/server/mcp-server.spec.ts`
 - [-] Resource exposed by server is accessible via URI — flow files are exposed as MCP resources: `resources/list` is `@stable`; `resources/read` blocked by a live Langflow regression on 1.12.x (`AttributeError: 'str' object has no attribute 'hex'`, filed upstream **LE-2012**) — kept as a guard, not promoted → `mcp/server/mcp-server-resources.spec.ts`
 - [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
@@ -733,9 +757,9 @@
 - [x] Expand/collapse group → `core-components/nested-grouping-regression.spec.ts`
 
 #### 15.7 Freeze and State
-- [-] Freeze component
-- [-] Freeze path
-- [-] Unfreeze component
+- [x] Freeze component — a frozen component serves its cached output instead of recomputing → `flow-functionality/freeze-and-state.spec.ts`
+- [x] Freeze path — freezing a component also freezes every component upstream of it → `flow-functionality/freeze-and-state.spec.ts`
+- [x] Unfreeze component — releases the whole path and the component recomputes → `flow-functionality/freeze-and-state.spec.ts`
 
 #### 15.8 Sticky Notes
 - [x] Add sticky note — the `canvas-add-note-button` canvas control places a note at the default 280×140 and the flow gains a node with `type: "noteNode"` → `ui-ux/sticky-notes.spec.ts`
@@ -768,22 +792,22 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
-| `core-components/` — Component Config | 26 | 23 | 3 | 0 | 0 |
-| `core-components/` — Core Components | 85 | 81 | 3 | 0 | 1 |
+| `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
+| `core-components/` — Core Components | 90 | 83 | 3 | 0 | 4 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
-| `core-functionality/model-provider/` | 31 | 29 | 2 | 0 | 0 |
+| `core-functionality/model-provider/` | 34 | 30 | 2 | 0 | 2 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 50 | 46 | 3 | 1 | 0 |
+| `core-functionality/playground/` | 51 | 46 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
-| `mcp/server/` | 7 | 5 | 1 | 0 | 1 |
-| `ui-ux/` — Canvas | 44 | 37 | 3 | 4 | 0 |
+| `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
+| `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **465** | **366 (79%)** | **82 (18%)** | **11 (2%)** | **6 (1%)** |
+| **TOTAL** | **480** | **377 (79%)** | **80 (17%)** | **11 (2%)** | **12 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -799,7 +823,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 414 `test()` calls carrying the `@stable` tag, distributed across 167 spec
+> 428 `test()` calls carrying the `@stable` tag, distributed across 170 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -810,6 +834,8 @@
 - [x] direct is distinct from the job_id path: streaming delivery returns a job_id → `api-build-direct-response.spec.ts`
 - [x] polling is the two-step path: POST returns a job_id shell (no inline events) → `api-build-polling-response.spec.ts`
 - [x] the poll loop drains the build to completion across repeated GET /events calls → `api-build-polling-response.spec.ts`
+- [x] API Request component — include_httpx_metadata=true adds request headers to output → `api-component-regression.spec.ts`
+- [x] API Request component — timeout error returns status_code 500 with error field → `api-component-regression.spec.ts`
 - [x] POST /api/v1/custom_component returns valid component structure → `api-custom-component-creation.spec.ts`
 - [x] POST /api/v1/custom_component with invalid code returns error → `api-custom-component-creation.spec.ts`
 - [x] GET /api/v1/all includes component types → `api-custom-component-creation.spec.ts`
@@ -1016,6 +1042,7 @@
 - [x] selecting 'Connect other models' clears the previously selected model → `agent-model-connection-isolation.spec.ts`
 - [x] agent selects the URL tool for a fetch prompt → `agent-multi-tool-selection.spec.ts`
 - [x] agent selects the Web Search tool for a search prompt → `agent-multi-tool-selection.spec.ts`
+- [x] image via input handle is described by the agent → `agent-multimodal-image-input.spec.ts`
 - [x] negative control — no image, no image-specific description → `agent-multimodal-image-input.spec.ts`
 - [x] a small n_messages truncates retrieval to the most recent messages → `agent-n-messages-limit.spec.ts`
 - [x] causal control — a large n_messages retrieves the full seeded history → `agent-n-messages-limit.spec.ts`
@@ -1039,6 +1066,7 @@
 - [x] OpenAI provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] Anthropic provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] a configured provider exposes the key edit surface (Replace, no raw input) → `model-provider-api-key.spec.ts`
+- [x] page opens with its description and the available provider count → `model-provider-modal-actions.spec.ts`
 - [x] an invalid API key is rejected and does not enable the provider → `model-provider-modal-actions.spec.ts`
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
@@ -1056,10 +1084,12 @@
 
 #### core-functionality/model-provider/
 - [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
+- [x] configured Anthropic selects a Claude model in the Agent and executes the flow → `anthropic-provider.spec.ts`
 - [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
 - [x] configured Google selects a Gemini model in the Agent and executes the flow → `google-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
+- [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
 - [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
@@ -1187,9 +1217,10 @@
 #### mcp/client/
 - [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
 - [x] configures MCP server via JSON, selects echo tool, runs it, and verifies output → `mcp-client-regression.spec.ts`
-- [x] unreachable HTTP server results in empty tool dropdown → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
+- [x] registering an already-existing MCP server returns 409 Conflict → `mcp-server-registration-status-codes.spec.ts`
+- [x] deleting a non-existent MCP server returns 404 Not Found → `mcp-server-registration-status-codes.spec.ts`
 
 #### mcp/server/
 - [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
@@ -1198,6 +1229,13 @@
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
+- [x] user must be able to change mode of MCP tools without any issues → `mcp-server.spec.ts`
+- [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
+- [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
+- [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
+- [x] mcp server tools should be refreshed when editing a server → `mcp-server.spec.ts`
+- [x] Streamable HTTP MCP server with server-everything should load tools correctly → `mcp-server.spec.ts`
+- [x] stdio command with an embedded argument is refused, and command plus args is accepted → `mcp-server.spec.ts`
 
 #### ui-ux/
 - [x] select and delete a flow → `actionsMainPage-shard-1.spec.ts`
@@ -1254,15 +1292,15 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
-| `core-components/` — Component Config | 3 | 0 |
-| `core-components/` — Core Components | 3 | 1 |
+| `core-components/` — Component Config | 4 | 0 |
+| `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 5 | 2 |
-| `core-functionality/model-provider/` | 2 | 0 |
-| `core-functionality/playground/` | 3 | 0 |
+| `core-functionality/model-provider/` | 2 | 2 |
+| `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
-| `ui-ux/` — Canvas | 3 | 0 |
+| `ui-ux/` — Canvas | 0 | 0 |
 
 ---
 

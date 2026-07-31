@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import {
   checkSpecDoc, checkQaDiff, checkForceFailCoverage,
   checkNoMutationMarkers, checkPrReadiness, BRANCH_RE,
+  checkQuarantineLifted, extractSymptomRows, checkSymptomCoverage,
+  symptomsOwnedElsewhere, checkDebugEvidence, checkBranchPurity, checkCiVerdict,
 } from './gates.ts'
 
 const GOOD_DOC = `# agent-tools spec
@@ -96,4 +98,161 @@ test('PR readiness checks branch, Closes line, roadmap label for wave issues', (
     branch: 'main', prBody: 'no closes', issue: 493, isWave: true, labels: [],
   })
   assert.equal(bad.length, 3)
+})
+
+// ---------- quarantine lift (#1082) ----------
+
+const QUARANTINE_BODY = `
+## Flake signal
+As prevention it was **quarantined** at triage in PR #1064 — \`@stable\` removed **and** \`test.fixme\` added.
+Lifting the quarantine after the fix (remove \`test.fixme\` + restore \`@stable\`) is a deliverable of this issue.
+The test is "switching the agent's context_id re-tags new turns".
+`
+
+test('checkQuarantineLifted is inert for an issue that never quarantined anything', () => {
+  const files = [{ file: 'a.spec.ts', entries: [{ title: 't', modifier: '.fixme', tags: [] }] }]
+  assert.deepEqual(checkQuarantineLifted('a plain new-spec issue', files), [])
+})
+
+test('checkQuarantineLifted flags a surviving test.fixme', () => {
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '.fixme', tags: ['@stable'] }],
+  }]
+  const problems = checkQuarantineLifted(QUARANTINE_BODY, files)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /test\.fixme still on/)
+})
+
+test('checkQuarantineLifted flags a missing @stable when the issue asks for it', () => {
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [{ title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@regression'] }],
+  }]
+  const problems = checkQuarantineLifted(QUARANTINE_BODY, files)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /@stable not restored/)
+})
+
+test('checkQuarantineLifted passes once fixme is gone and @stable is back', () => {
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [
+      { title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@stable', '@agents'] },
+      { title: 'an unrelated sibling the issue never names', modifier: '', tags: ['@regression'] },
+    ],
+  }]
+  assert.deepEqual(checkQuarantineLifted(QUARANTINE_BODY, files), [])
+})
+
+// ---------- symptom rows (#1082) ----------
+
+const TWO_ROW_BODY = `
+| Spec (line) | Waits for | Signature |
+|---|---|---|
+| \`tests-automations/regression/core-functionality/llm-agents/agent-context-id-isolation.spec.ts:570\` ("switching…") | the context_id | \`Object.is equality\` |
+| \`tests-automations/regression/core-functionality/llm-agents/agent-context-id-isolation.spec.ts:570\` ("… google / gemini") | the context_id | \`unknown\` |
+`
+
+test('extractSymptomRows pulls spec:line cells out of the issue table', () => {
+  assert.deepEqual(extractSymptomRows(TWO_ROW_BODY), [
+    'tests-automations/regression/core-functionality/llm-agents/agent-context-id-isolation.spec.ts:570',
+  ])
+  assert.deepEqual(extractSymptomRows('no table here'), [])
+})
+
+test('checkSymptomCoverage demands a verdict for every row', () => {
+  const rows = ['a.spec.ts:10', 'b.spec.ts:20']
+  const problems = checkSymptomCoverage(rows, [{ row: 'a.spec.ts:10', verdict: 'test-defect' }])
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /b\.spec\.ts:20/)
+})
+
+test('checkSymptomCoverage rejects an unknown verdict and a malformed ownedBy', () => {
+  const problems = checkSymptomCoverage(['a.spec.ts:10'], [
+    { row: 'a.spec.ts:10', verdict: 'vibes', ownedBy: '1030' },
+  ])
+  assert.equal(problems.length, 2)
+})
+
+test('checkSymptomCoverage accepts a row owned by another issue', () => {
+  assert.deepEqual(
+    checkSymptomCoverage(['a.spec.ts:10'], [{ row: 'a.spec.ts:10', verdict: 'transient-saturation', ownedBy: '#1030' }]),
+    [],
+  )
+  assert.deepEqual(symptomsOwnedElsewhere([{ ownedBy: '#1030' }, { verdict: 'test-defect' }]), ['#1030'])
+})
+
+// ---------- DEBUG evidence (#1082) ----------
+
+const BASE_DEBUG = {
+  issueBody: 'a plain fix issue', labels: [] as string[],
+  verdict: 'test-defect', summary: 'the editor autosave reverts the PATCH',
+  decision: undefined as unknown, symptoms: undefined as unknown,
+  mechanismProof: undefined as unknown,
+}
+
+test('checkDebugEvidence accepts a plain test-defect verdict', () => {
+  assert.deepEqual(checkDebugEvidence(BASE_DEBUG), [])
+})
+
+test('checkDebugEvidence requires the user decision for a non-test-defect verdict', () => {
+  const p = checkDebugEvidence({ ...BASE_DEBUG, verdict: 'langflow-regression' })
+  assert.equal(p.length, 1)
+  assert.match(p[0], /evidence\.decision/)
+})
+
+test('checkDebugEvidence demands a pre-fix rate on a flake issue', () => {
+  const p = checkDebugEvidence({ ...BASE_DEBUG, issueBody: 'recurrent flake, 3x same signature' })
+  assert.equal(p.length, 1)
+  assert.match(p[0], /repro-run/)
+})
+
+test('checkDebugEvidence accepts a measured flake baseline', () => {
+  const reproRate = { spec: 'a.spec.ts', runs: 12, failures: 1, voids: 2, signatures: ['x'], at: 'now' }
+  assert.deepEqual(checkDebugEvidence({ ...BASE_DEBUG, issueBody: 'flaky', reproRate }), [])
+})
+
+test('checkDebugEvidence wants a mechanism proof when the baseline never reproduced', () => {
+  const reproRate = { spec: 'a.spec.ts', runs: 10, failures: 0, voids: 0, signatures: [], at: 'now' }
+  const p = checkDebugEvidence({ ...BASE_DEBUG, issueBody: 'flaky', reproRate })
+  assert.equal(p.length, 1)
+  assert.match(p[0], /mechanismProof/)
+  assert.deepEqual(
+    checkDebugEvidence({ ...BASE_DEBUG, issueBody: 'flaky', reproRate, mechanismProof: 'request timeline shows the clobber' }),
+    [],
+  )
+})
+
+test('checkDebugEvidence rejects too small a baseline', () => {
+  const reproRate = { spec: 'a.spec.ts', runs: 2, failures: 1, voids: 0, signatures: [], at: 'now' }
+  const p = checkDebugEvidence({ ...BASE_DEBUG, issueBody: 'flaky', reproRate })
+  assert.match(p[0], /at least 5/)
+})
+
+// ---------- branch purity + CI verdict (#1082) ----------
+
+test('checkBranchPurity flags a file the pipeline never touched', () => {
+  const p = checkBranchPurity(
+    ['tests/a.spec.ts', 'scripts/start-langflow-docker.sh'],
+    ['tests/a.spec.ts', 'docs/a.md', 'QA-CHECKLIST.md'],
+  )
+  assert.equal(p.length, 1)
+  assert.match(p[0], /start-langflow-docker\.sh/)
+})
+
+test('checkBranchPurity fails closed when the base ref is unresolvable', () => {
+  assert.equal(checkBranchPurity(null, ['tests/a.spec.ts']).length, 1)
+})
+
+test('checkCiVerdict requires a real verdict', () => {
+  assert.match(checkCiVerdict({}, [])[0], /ciVerdict/)
+  assert.deepEqual(checkCiVerdict({ ciVerdict: 'green' }, []), [])
+})
+
+test('checkCiVerdict makes ambient-red carry a justification comment that exists', () => {
+  assert.match(checkCiVerdict({ ciVerdict: 'ambient-red' }, [])[0], /justificationCommentUrl/)
+  const url = 'https://github.com/o/r/pull/1080#issuecomment-1'
+  assert.match(checkCiVerdict({ ciVerdict: 'ambient-red', justificationCommentUrl: url }, [])[0], /not a comment/)
+  assert.deepEqual(checkCiVerdict({ ciVerdict: 'ambient-red', justificationCommentUrl: url }, [url]), [])
 })

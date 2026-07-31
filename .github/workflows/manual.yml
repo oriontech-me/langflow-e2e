@@ -88,7 +88,9 @@ jobs:
           # Ollama runs as a sibling service; without the allowlist the
           # nightly's SSRF protection 400s the component's model-list fetch
           # (private address) — see ollama-provider.spec.ts / its spec doc.
-          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama"
+          # The CIDRs cover the go-httpbin service below, reached by raw container
+          # IP because validators.url() rejects a single-label host (#462/#1128).
+          LANGFLOW_SSRF_ALLOWED_HOSTS: "ollama,172.16.0.0/12,10.0.0.0/8,192.168.0.0/16"
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s
@@ -112,6 +114,16 @@ jobs:
           --health-timeout 5s
           --health-retries 10
           --health-start-period 20s
+      # Self-hosted echo endpoint for the API Request and agent-fetch-tool specs
+      # (#1128). Only THIS job gets one: the `external URL` job below points at a
+      # Langflow that is not on this runner's Docker network, so it could never
+      # reach a service container here — that job keeps the public default, and
+      # the reason is recorded on it.
+      # Tag has NO `v` prefix (#639); no healthcheck (scratch image, no shell).
+      go-httpbin:
+        image: ghcr.io/mccutchen/go-httpbin:2.23.1
+        ports:
+          - 8080:8080
 
     # Reaches the services two ways: the test host uses the mapped port
     # (localhost), Langflow uses the job network's service hostname.
@@ -129,6 +141,14 @@ jobs:
       - run: npm ci
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
+      # Point the echo-dependent specs at the sibling go-httpbin service (#1128).
+      # `mode: fail`: a manual run exists to answer a specific question, and
+      # answering it against a public host that may be down wastes the dispatch.
+      - name: Resolve echo endpoint
+        uses: ./.github/actions/resolve-echo-endpoint
+        with:
+          mode: fail
+          in_container: "false"
       - name: Confirm the baked Ollama model is served
         run: |
           # The model ships inside the image — cheap readiness/sanity check,
@@ -136,14 +156,91 @@ jobs:
           curl -sf --retry 10 --retry-delay 3 --retry-connrefused \
             "$OLLAMA_BASE_URL/api/tags" | grep -q "$OLLAMA_TEST_MODEL" \
             && echo "model $OLLAMA_TEST_MODEL ready"
+
+      # Import the provider credentials into THIS run's Langflow container, the
+      # same way daily-stable.yml and pr-validation.yml do (#1055).
+      #
+      # Without it every dispatch died before the first test: the run below
+      # passes OPENAI_API_KEY, and the #884 pre-flight hard-fails in CI on a key
+      # that is present in the environment but absent from Langflow's global
+      # variables — which is exactly the state a container that never ran
+      # collect-models is in. The gate landed 2026-07-22 (#885) and this
+      # workflow's last dispatch before the bug surfaced was 2026-07-08, so no
+      # one had run it since.
+      #
+      # Dropping the key instead would NOT have been equivalent: the provider
+      # health gate fails OPEN when providers.json is absent
+      # (`readProviderHealth` → null, #1029), so the provider-hardcoded specs
+      # would run against a credential-less Langflow and fail with the
+      # misleading node_duration errors #884 exists to remove.
+      #
+      # Same three guards the other two workflows carry:
+      #  - PREFLIGHT_SKIP_CREDENTIALS: this run is what IMPORTS the keys, so the
+      #    pre-flight must not assert them first (chicken-and-egg);
+      #  - PLAYWRIGHT_RETRIES=0: a failing sweep must not re-walk the Model
+      #    Providers UI three times against a single backend (#1011);
+      #  - continue-on-error: a drained key must not kill the specs that never
+      #    touch that provider (#980).
+      - name: Collect models
+        id: collect_models
+        continue-on-error: true
+        run: npx playwright test tests/collect-models.spec.ts --reporter=line
+        env:
+          CI: "true"
+          PLAYWRIGHT_BASE_URL: ${{ needs.detect-target.outputs.base_url }}
+          PLAYWRIGHT_RETRIES: "0"
+          PREFLIGHT_SKIP_CREDENTIALS: "1"
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+
+      # The sweep above can leave the shared backend WEDGED — container alive,
+      # event loop blocked, requests unanswered (#922/#927). globalSetup polls
+      # 120 s and then throws, reporting a preflight error that names nothing, so
+      # wait it out here and, when it does not clear, fail with the real cause.
+      # Short per-request timeout over a long deadline (#928): a hung request must
+      # fail fast so the loop keeps polling across the wedge.
+      #
+      # Shared implementation since #1045 (`.github/actions/wait-for-backend`),
+      # which is what this step's own comment asked for while it was the fourth
+      # inline copy. The deadline this lane measured is now the shared default: its
+      # validation dispatch (run 30422284968) took 260 s to clear — 87% of the
+      # 300 s the daily used to allow.
+      #
+      # `base_url` matters HERE and nowhere else: this workflow can target a
+      # Langflow that is not the job's service container (an external URL input),
+      # so the gate must probe whatever `detect-target` resolved.
+      - name: Wait for the backend to recover from the collect-models load
+        uses: ./.github/actions/wait-for-backend
+        with:
+          base_url: ${{ needs.detect-target.outputs.base_url }}
+          next_step_label: "the run"
+          attribution: "NOT a failure of the tests you dispatched"
+          collect_models_outcome: ${{ steps.collect_models.outcome }}
+
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e
         with:
           base_url: ${{ needs.detect-target.outputs.base_url }}
           test_tag: ${{ github.event.inputs.test_tag }}
           test_grep: ${{ github.event.inputs.test_grep }}
+          # The same three keys the `Collect models` step above imported into this
+          # container. Passing only OpenAI made every anthropic/google-parameterized
+          # spec skip on `hasProviderEnvKeys`, so a dispatch could report success
+          # having run none of the specs it was aimed at (#967).
           openai_api_key: ${{ secrets.OPENAI_API_KEY }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          google_api_key: ${{ secrets.GOOGLE_API_KEY }}
 
+  # Scoped OUT of the go-httpbin decoupling (#1128), deliberately: this job points
+  # at a Langflow we do not host — a staging deployment, someone's tunnel — which
+  # is not on this runner's Docker network and therefore cannot reach a service
+  # container here. The echo-dependent specs consequently still call the public
+  # host in this job and remain exposed to its outages. Self-hosting for it would
+  # need a publicly reachable echo, which is a different (and larger) decision
+  # than the one #1128 asked for.
   e2e-url:
     name: E2E via URL (${{ github.event.inputs.langflow_target }})
     needs: detect-target
@@ -160,10 +257,25 @@ jobs:
       - run: npm ci
       - name: Install Playwright browsers
         uses: ./.github/actions/setup-playwright
+
+      # No provider key inputs at all, and no `collect-models` — deliberately
+      # different from the Docker job (#1055).
+      #
+      # This job targets an instance that already exists and that we do not own:
+      # a staging deployment, someone's tunnel. `collect-models` would WRITE our
+      # CI provider keys into that instance as global variables, which is not a
+      # side effect a test dispatch may have on a shared environment. Passing the
+      # key WITHOUT importing it is what broke this workflow in the first place —
+      # the #884 pre-flight hard-fails on a key present in the environment but
+      # absent from Langflow.
+      #
+      # So the target's OWN credentials govern. With no provider key in the
+      # environment the pre-flight has nothing to assert and skips the check, and
+      # the provider specs exercise whatever that instance is actually configured
+      # with — the honest thing to test against a deployment we do not control.
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e
         with:
           base_url: ${{ needs.detect-target.outputs.base_url }}
           test_tag: ${{ github.event.inputs.test_tag }}
           test_grep: ${{ github.event.inputs.test_grep }}
-          openai_api_key: ${{ secrets.OPENAI_API_KEY }}

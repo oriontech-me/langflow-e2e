@@ -52,7 +52,9 @@ test.describe("Area or feature name", () => {
 });
 ```
 
-> Always import from `fixtures` — never directly from Playwright. The base fixture adds automatic backend error monitoring.
+> Always import from `fixtures` — never directly from Playwright. The base fixture adds
+> backend error monitoring: flow execution errors **fail** the test, HTTP errors are
+> **logged only** (step 5 below explains why that distinction matters).
 
 **4. Use existing helpers and pages**
 
@@ -154,20 +156,10 @@ import fs from "fs";
 import { test, expect } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { hasProviderEnvKeys, type Provider } from "../../../../helpers/provider-setup";
-import type { ProviderRecord } from "../../../../helpers/provider-setup/collect-models";
+import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
-
-// Read inactive providers to display as skipped in output
-function getProviderSkipReasons(): Map<string, string> {
-  const jsonPath = path.resolve(__dirname, "../../../../helpers/provider-setup/data/providers.json");
-  if (!fs.existsSync(jsonPath)) return new Map();
-  const records = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ProviderRecord[];
-  return new Map(
-    records.filter((r) => r.status === "inactive").map((r) => [r.provider, `Provider "${r.provider}" inactive — ${r.error}`])
-  );
 }
 
 // Read models and apply the .env strategy
@@ -175,7 +167,9 @@ function getTestTargets() {
   const jsonPath = path.resolve(__dirname, "../../../../helpers/provider-setup/data/models.json");
   if (!fs.existsSync(jsonPath)) return [];
   const allModels = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-  const skipReasons = getProviderSkipReasons();
+  // Inactive providers, so their targets report as skipped with the collected
+  // reason. Never inline this — one shared implementation (#1043).
+  const skipReasons = providerSkipReasons();
   // apply strategy filter (see agent-component-regression.spec.ts for full implementation)
   return allModels.map((m: any) => ({
     label: `${m.provider} / ${m.model}`,
@@ -265,8 +259,22 @@ npx playwright test path/to/test.spec.ts --debug
 
 The base fixture prints backend errors automatically. Look for:
 
-- `🚨 Backend Error:` — unexpected HTTP error
-- `🚨 Flow Error Detected` — silent failure in flow execution
+- `🚨 Backend Error:` — unexpected HTTP error. **Logged, never fails the test** (#1084)
+- `🚨 Flow Error Detected` — silent failure in flow execution. **Fails the test** unless
+  the spec called `page.allowFlowErrors()`
+
+Because an HTTP error cannot fail a test, **this step is the only thing standing between a
+real backend 500 and a green run** — the fixture prints
+`⚠️  N HTTP error(s) detected — ADVISORY` to say so out loud. Treat any line under it as a
+finding to explain, not noise to scroll past.
+
+Which responses reach that log is decided by `tests/fixtures/http-error-policy.ts` (every
+4xx/5xx on an `/api/` route, minus documented exemptions: auth endpoints, and the external
+Langflow Store which is unreachable from CI). If your spec drives an endpoint into a 4xx/5xx
+**on purpose** — including mocking one with `page.route` — call `page.allowHttpErrors()` so
+the deliberate error stays out of the log instead of teaching readers to ignore it. Adding an
+endpoint to the exemption list makes it invisible to all 235 specs, so it needs a reason that
+survives review; run with `PW_HTTP_ERROR_DEBUG=1` to see what is currently being ignored.
 
 **6. Update the checklist**
 
@@ -461,41 +469,46 @@ The guide is the human-language specification of the automated tests. Keeping it
 
 ### How the team learns that a test needs review
 
-`file-watcher.yml` runs every day at 05:00 BRT and checks whether there were commits in the official Langflow repository in the last 24h in critical paths. When changes are detected, it automatically opens an issue in this repository.
+`file-watcher.yml` checks whether the official Langflow repository received commits in monitored paths within a window (`since`, default 24h) and opens an issue in this repository when it finds any.
+
+> **It cannot run today.** The workflow is `disabled_manually` in Actions *and* its cron was removed in `9da85fa`, so it has no run history at all and a dispatch fails with `HTTP 422: Cannot trigger a workflow_dispatch on a disabled workflow`. Reviving it takes both: enable the workflow, then restore a cadence if one is wanted. Until then nothing here fires, whatever the monitored paths say. When it is dispatched after a long gap, widen `since`.
 
 **The issue reports:**
 - Which functional area changed
 - The exact command to run the affected tests
-- Which section of `QA_CHECKLIST.md` to review
+- Which section of `QA-CHECKLIST.md` to review
 
 ### Monitored areas
 
-| Area | Monitored paths | Affected tags |
-|---|---|---|
-| Routes & Feature Flags | `routes.tsx`, `feature-flags.ts` | all |
-| Authentication | `api/v1/login.py`, `services/auth/` | `@auth` |
-| Flow CRUD & Canvas | `api/v1/flows.py`, `FlowPage/` | `@project-management` |
-| Flow Execution | `api/v1/endpoints.py`, `processing/` | `@api` |
-| Model Providers & LLM | `ModelProvidersPage/`, `providerConstants.ts` | `@model-provider @agents` |
-| Agents & Agentic Flows | `agentic/`, `base/agents/` | `@agents` |
-| Playground & Chat | `pages/Playground/`, `api/v1/chat.py` | `@playground` |
-| Settings & Global Variables | `SettingsPage/`, `api/v1/variable.py` | `@settings` |
-| MCP Server | `MCPServersPage/`, `api/v1/mcp.py` | `@mcp` |
-| Tracing & Monitoring | `api/v1/traces.py`, `services/tracing/` | `@observability` |
-| Database Models | `services/database/models/`, `alembic/` | `@api` |
-| Component Input Types | `parameterRenderComponent/`, `inputs/` | `@ui-ux` |
+The area table is **not duplicated here** — it lives in `scripts/watch-upstream-areas.mjs` (13 areas → paths, tags, checklist sections) and is printed by:
+
+```bash
+node scripts/watch-upstream-areas.mjs --mode=areas
+```
+
+Three rules govern it (issue #1092):
+
+- **A path that cannot be evaluated is a failure, not a pass.** The workflow runs `--mode=check` before the sweep; a monitored path missing from the upstream checkout fails the job by name. Before the guard, `git log -- <bad-path>` printed nothing and read as "nothing changed" — which is how `constants/flow_constants.tsx` sat dead in the list. That path has never existed upstream on any ref (the real file is `src/frontend/src/flow_constants.tsx`), so the entry was wrong from the day it was written and nothing ever said so. The guard is `continue-on-error` and the job is failed *after* the report exists: one upstream rename must not suppress the report for the other 12 areas.
+- **Every `src/lfx/` subtree is classified exactly once**, either mapped to an area or recorded as out of scope with a reason (`LFX_CLASSIFICATION` in the same file). A subtree that appears upstream and matches no entry fails the guard, so the next step of Langflow's `lfx` migration forces a decision instead of widening a blind spot. That blind spot is what made #1091 hard to catch: the change that broke all six stdio registrations landed in `src/lfx/src/lfx/base/mcp/security.py`, inside a 70-file commit that four *other* areas did watch — so the sweep would have fired, but never under **MCP Server**, leaving `@mcp` out of the revalidation grep.
+- **The window is validated, not guessed.** `since` must be `N hours|days|weeks|months ago`, `yesterday`, or an ISO date; anything else is rejected with exit 2. `git log --since=` is parsed by approxidate, which never errors — `undefined` silently selects zero commits (a green run that reads exactly like a quiet day) and `last thursdya` silently widens to 200. The sweep also prints how many commits the window selected repo-wide and the newest commit in the checkout, so an empty result is legible instead of being confused with clean areas.
+
+When you add or repoint a path, run the guard locally against a Langflow clone:
+
+```bash
+node scripts/watch-upstream-areas.mjs --mode=check --root /path/to/langflow
+```
 
 ### What to do when a file-watcher issue arrives
 
 1. Read the commits listed in the issue
 2. Run the tests indicated in the issue table
 3. For each test that fails or seems outdated, follow the validation guide above
-4. Update the necessary tests and mark `QA_CHECKLIST.md`
+4. Update the necessary tests and mark `QA-CHECKLIST.md`
 5. Close the issue
 
 ### Adaptive impacted-tests subset
 
-`adaptive-impacted.yml` is a finer-grained companion to `nightly.yml`. Each day at 04:00 BRT it:
+`adaptive-impacted.yml` is a finer-grained companion to `nightly.yml`. It is **`disabled_manually` in Actions** today (as are `nightly.yml`, `weekly-stable.yml` and `file-watcher.yml`), so the cadence below describes what it does *when enabled*, not what is running. When it ran, each day at 04:00 BRT it:
 
 1. Queries Docker Hub for the current `langflowai/langflow-nightly:latest` digest and resolves the matching git SHA in the Langflow repo.
 2. Compares to the SHA of the last nightly we tested (repo variable `LAST_TESTED_NIGHTLY_SHA`).
@@ -657,10 +670,10 @@ Three cases where the tag is intentionally absent:
 
 On a red scheduled `daily-stable.yml` run, the workflow does two things **automatically**:
 
-1. Removes `@stable` from **every hard failure** (a test that failed all retries), regenerates `QA-CHECKLIST.md`, and commits it to `main` with `[skip ci]` — no PR, no approval. If the mass-failure guard trips (too many at once → treated as infra), nothing is removed.
+1. Removes `@stable` from **every attributable hard failure** (a test that failed all retries with an error that could be its own), regenerates `QA-CHECKLIST.md`, and commits it to `main` with `[skip ci]` — no PR, no approval. Two things hold it back: the mass-failure guard (too many at once → treated as infra, nothing is removed) and the **infra-signature exemption** (a failure whose error is transport-level is wedge collateral and keeps its tag, whatever the count).
 2. Opens a single **triage issue** for the run, listing what was removed.
 
-The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. Its only deliverable is the **triage itself**: read the run, route each occurrence into a dedicated issue (or enrich an existing one), and then **close the triage issue**. It never carries an investigation or a fix. The triage issue is closed **only once the triage is complete** — every needed dedicated issue created or enriched (hard failure / flake / skip, per the criteria below) **and** every test the criteria require quarantined (hard failures: `@stable` auto-removed by the workflow; recurrent flakes: **quarantined via PR** at this point — remove `@stable` **and** add `test.fixme` — as prevention). When the mass-failure guard trips (see below), the triage gains one extra deliverable: **decide whether the day was environmental** and, if not, **manually quarantine** the real hard failures — and, because that day's today-only collateral is **noted rather than filed**, the triage issue **stays open** as the standing record until a clean, non-guarded daily rechecks it (only durable cross-day clusters get a dedicated issue on a guard day; see the Mass-failure guard note below). The human steps are the fan-out, the manual quarantine for recurrent flakes, and lifting it after the fix.
+The triage issue is the analyst's **inbox and dispatcher** — not the tracking issue for each problem. Its only deliverable is the **triage itself**: read the run, route each occurrence into a dedicated issue (or enrich an existing one), and then **close the triage issue**. It never carries an investigation or a fix. The triage issue is closed **only once the triage is complete** — every needed dedicated issue created or enriched (hard failure / flake / skip, per the criteria below) **and** every test the criteria require quarantined (hard failures: `@stable` auto-removed by the workflow; recurrent flakes: **quarantined via PR** at this point — remove `@stable` **and** add `test.fixme` — as prevention). When the mass-failure guard trips (see below), the triage gains one extra deliverable: **decide whether the day was environmental** and, if not, **manually quarantine** the real hard failures (only durable cross-day clusters get a dedicated issue on a guard day; the rest is **noted rather than filed** — see the Mass-failure guard note below). The triage issue still **closes** at the end of that triage, like on any other day, with the noted collateral listed in its closing comment. The human steps are the fan-out, the manual quarantine for recurrent flakes, and lifting it after the fix.
 
 The runbook — order, dedup, analysis depth, and how the follow-up issue must be written — is in **[Triage protocol — working the triage issue](#triage-protocol--working-the-triage-issue)** below.
 
@@ -668,13 +681,17 @@ The runbook — order, dedup, analysis depth, and how the follow-up issue must b
 daily-stable.yml run goes red
       │
       │  AUTOMATIC:
-      │   • @stable removed from each hard failure + committed to main [skip ci]
-      │     (unless the mass-failure guard trips → nothing removed)
-      │   • one TRIAGE ISSUE opened for the run, listing what was removed
+      │   • infra-signature failures set aside as WEDGE COLLATERAL (tag kept)
+      │   • @stable removed from each remaining hard failure + committed to
+      │     main [skip ci] (unless the mass-failure guard trips → nothing removed)
+      │   • one TRIAGE ISSUE opened for the run, listing both groups
       ▼
 Analyst works the triage issue (dispatcher) — order: HARD FAILURES → FLAKES → SKIPS:
       │
-      ├─► per HARD FAILURE  (tag already auto-removed)
+      ├─► per WEDGE COLLATERAL failure  (tag still in place)
+      │        → NO per-spec issue. Triage the backend outage once, for the run
+      │
+      ├─► per ATTRIBUTABLE HARD FAILURE  (tag already auto-removed)
       │        → one DEDICATED issue per failure
       │          (group failures that share a root cause into one issue)
       │
@@ -695,7 +712,15 @@ Problem resolved → quarantine LIFTED via PR (remove test.fixme + restore
 
 > **Mass-failure guard.** The threshold is the `max_auto_remove` input of the `auto-remove-stable` action (default `5`, so the guard trips at **6+** hard failures in a run). Above the threshold, the workflow assumes an environment-wide failure and removes nothing, so a bad infra day cannot strip `@stable` off the whole suite. When it trips, the triage issue says so and the tags are still in place — investigate the environment; if it turns out not to be environmental, **manually quarantine** the real hard failures (remove `@stable` + add `test.fixme`). There is nothing to lift for tests never quarantined.
 >
-> On a guard-tripped day, split the clusters by durability: a cluster whose same test + error signature also failed on **other, non-adjacent** dailies is a **durable** signal (it reproduces off mass-failure days) and gets its own dedicated issue as usual; **today-only collateral** (no cross-day recurrence) is **noted, not filed** — a dedicated tracker for what most likely vanishes when the instance recovers is throwaway triage noise (same reason a first-occurrence flake is noted, not filed). Because the collateral has no dedicated issue, the **umbrella stays open** on a guard-tripped run as the standing record; the next clean, non-guarded daily's triage closes it once it confirms recovery, or promotes any cluster that persists into a durable issue.
+> On a guard-tripped day, split the clusters by durability: a cluster whose same test + error signature also failed on **other, non-adjacent** dailies is a **durable** signal (it reproduces off mass-failure days) and gets its own dedicated issue as usual; **today-only collateral** (no cross-day recurrence) is **noted, not filed** — a dedicated tracker for what most likely vanishes when the instance recovers is throwaway triage noise (same reason a first-occurrence flake is noted, not filed). The collateral has no dedicated issue, but that is **not** a reason to leave the umbrella open: **close it at the end of triage, as on any other day**, listing the noted-not-filed collateral in the closing comment so the thread stays readable. The standing record is `reports/daily-history.jsonl`, not the issue — every triage recomputes recurrence from that file over a 30-day window, so a collateral cluster that persists is re-detected on the next run and filed then, whether or not an umbrella was left open. Keeping them open instead accumulates stale rows in the `daily-failure` list that every later triage has to dedup against, and contradicts the rule above that the triage issue is a dispatcher, never a tracker.
+
+> **Infra-signature exemption (wedge collateral).** A hard failure whose last error is **transport-level** — the harness could not reach or talk to the backend — is not attributable to the spec that reported it. It is collateral of a mid-run backend wedge (#1030/#1048), and `@stable` is left in place **regardless of the mass-failure guard**. The guard only ever covered the *wide* wedge (6+ failures); a wedge costing ≤5 tests used to strip their tags in an unreviewed commit — issue #1031.
+>
+> The exempting signatures live in `scripts/lib/infra-signatures.ts` and the list is **deliberately narrow**: only errors that cannot be a product assertion under any reading (`apiRequestContext.*: Timeout`, the globalSetup `[preflight] … is not reachable`, `ECONNREFUSED`/`ECONNRESET`/`socket hang up`, `net::ERR_CONNECTION_*`, DNS failures). Signatures a wedge also produces but a real regression produces too — `locator.click: Timeout`, `page.waitForSelector: Timeout`, `expect(...).toBeVisible()` — are **not** on it, because exempting them would switch auto-removal off for most genuine breakage. Widening the list is a deliberate change, not a convenience: add a pattern only when it is transport-level, and add a case to `scripts/remove-stable-from-failures.test.ts` with it.
+>
+> **What this changes for triage.** The umbrella issue renders collateral in its own block, ahead of the removals. **Do not open a per-spec issue for a collateral failure** — triage the outage once for the run (start from the backend liveness section of the same issue, then the Langflow service container log; `WORKER TIMEOUT` ⇒ #1048). The tag is still in place, so there is nothing to restore. If the same spec keeps appearing as collateral across days while other specs do not, that is a signal about the *spec* (it hammers the backend hardest) and belongs on a dedicated issue about load, not about the assertion.
+>
+> The in-run liveness verdict (#1030) is **corroboration, not the criterion**: the exemption is decided on the failure's own error, so it still applies on a run where the recorder measured nothing — which is exactly the run whose backend state is least known. The liveness section itself says overlap with an outage window is a *lead, not a verdict*, because at a 33-73% down-share a failure lands inside a window by chance.
 
 > **Trade-off.** Auto-removal does not distinguish a product regression from a test bug before removing — a hard failure quarantines the test either way, and the classification happens afterwards on the dedicated issue. Accepted trade-off: a genuine regression stops being tracked by the stable suite until a human restores the tag, but the daily stops going red immediately.
 
@@ -791,6 +816,7 @@ Then compare the signatures — the action depends on **what** recurred (same ca
 
 | Symptom in the latest daily run | History context | Action |
 |---|---|---|
+| Hard failure, **infra signature** (transport-level error — the umbrella lists it as wedge collateral) | any | Not attributable to the spec. `@stable` was **kept** (#1031). **No per-spec issue** — triage the backend outage once for the run. Nothing to restore. |
 | Hard failure (all retries failed) | any | `@stable` was already auto-removed (or the mass-failure guard tripped and left it in place). No manual removal — classify on the dedicated issue and restore the tag when the test is fixed. |
 | Flake (passed on retry) | No matching signature in the last 30 days | Note in the triage; **do not** open an issue yet. The retry budget absorbs single-run noise. |
 | Flake (recurrent) | **Same `error_signature`** seen before within 30 days | Open a **dedicated issue** (`daily-failure` + `area:<...>`, cite the run ids) **and quarantine via PR as prevention** — remove `@stable` **and** add `test.fixme` (tag removal alone leaves the test red on the impacted-specs gate; #871). Quarantine is manual — the workflow never auto-removes flakes. Lifting it (remove `test.fixme` + restore `@stable`) is a **deliverable of that dedicated issue**. |

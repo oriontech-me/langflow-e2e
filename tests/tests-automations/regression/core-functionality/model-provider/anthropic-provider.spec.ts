@@ -238,7 +238,7 @@ test.describe("Anthropic Provider", () => {
 
   test(
     "configured Anthropic selects a Claude model in the Agent and executes the flow",
-    { tag: ["@model-provider", "@agents", "@playground"] },
+    { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
     async ({ page }) => {
       test.skip(
         !hasProviderEnvKeys(PROVIDER),

@@ -1,6 +1,6 @@
 # Agent Multimodal Image Input — image via input handle processed
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -46,7 +46,12 @@ Playground.
   such a model per provider and skips a provider that has none.
 - Test image `tests/assets/media/chain.png` (a chain/links graphic).
 - Run with `--workers=1` (agent specs create named flows that collide in
-  parallel). File is serial (`SimpleAgentTemplatePage.load()` wipes all flows).
+  parallel). The file is serial so concurrent provider blocks do not starve the
+  single backend during the Playground runs.
+- **Teardown:** each test's flow is deleted **by id** in `afterEach` (ids captured
+  from the `POST /api/v1/flows/` 201 responses). `SimpleAgentTemplatePage.load()`
+  deletes nothing (post-#553 contract — no global `cleanAllFlows`, which races
+  parallel workers), so before #964 every run left one `Simple Agent` behind.
 
 ---
 
@@ -79,10 +84,13 @@ target provider; if none is available the provider is skipped.
    Playground races an async re-injection of the template default).
 6. Send (`button-send`); wait for the agent to finish
    (`waitForAgentToFinish` — Stop button appears then hides).
-7. **Validation:** the last rendered AI response (`.markdown.prose` / chat
-   bubble) **matches** `/chain|link|logo|inkscape/i` **and** its length is
-   `> 50` — the vision model described the image content, proving the image was
-   received via the input handle and processed.
+7. **Validation:** the last rendered **AI chat bubble**
+   (`[data-testid^="chat-message-AI-"]` → its `.markdown.prose`) **matches**
+   `/\bchains?\b|\binkscape\b/i`, does **not** match the "no image reached the
+   model" family (`cannot interpret/describe/see…`, `did not provide/attach`,
+   `please upload/provide…`), **and** its length is `> 50` — the vision model
+   described the image content, proving the image was received via the input
+   handle and processed.
 
 ---
 
@@ -103,9 +111,9 @@ target provider; if none is available the provider is skipped.
 ## Validation criterion *(required)*
 
 - **Positive:** with `chain.png` attached, the agent's response mentions the
-  image content (`/chain|link|logo|inkscape/i`) and is non-trivial (`> 50`
-  chars) — the image reached the vision model through the `ChatInput → Agent`
-  input handle and was processed.
+  image content (`/\bchains?\b|\binkscape\b/i`), is **not** a "no image / cannot
+  process images" reply, and is non-trivial (`> 50` chars) — the image reached the
+  vision model through the `ChatInput → Agent` input handle and was processed.
 - **Negative control:** with no image and the same prompt, the response does not
   mention `chain` — proving the positive match is caused by the image, not the
   prompt.
@@ -113,7 +121,20 @@ target provider; if none is available the provider is skipped.
 ## Guarding against false positives *(how)*
 
 - **Content keyword + length:** Test 1 asserts the reply describes the *actual*
-  image (chain/link/logo) and is substantive, not a generic acknowledgement.
+  image (word-bounded `chain(s)` / `inkscape`) and is substantive, not a generic
+  acknowledgement.
+- **The predicate may not match a refusal (#964).** `link` used to be in the
+  positive set, and a reply with **no image attached** — *"please upload an image
+  or provide a **link** to one"* — matched it: the test passed while proving
+  nothing. Measured by force-failure (image detached ⇒ `1 passed` before the fix,
+  `1 failed` after). Any word a no-image reply can produce is banned from the
+  positive set; `NO_IMAGE_REACHED_MODEL` asserts the refusal family separately so
+  the failure names itself.
+- **The reply must be a reply.** The assertion is anchored to the AI chat bubble
+  (`chat-message-AI-*`), not to `.markdown.prose` alone — the canvas renders 6 of
+  those (the Simple Agent sticky note among them), so `.last()` matched the sticky
+  note whenever no reply rendered and reported a hard build failure as a content
+  mismatch against the template's help text (#964).
 - **Negative control (Test 2):** the same prompt without the image must NOT
   produce the keyword — this is the primary guard, mirroring the positive /
   negative pattern in `agent-system-prompt.spec.ts`. Together they prove the
@@ -177,6 +198,20 @@ target provider; if none is available the provider is skipped.
   model selects the *first available* model, which may not be vision-capable
   (e.g. a `gemma-*`). The spec therefore resolves a vision-capable model per
   provider and skips a provider with none.
+- **Model resolution is settled-first (#964).** `resolveVisionModel()` takes the
+  model `collect-models` actually validated — it probes the catalog with real
+  calls and promotes the model that passed to the front of that provider's
+  `models.json` entries, while still listing the ones it rejected. A hardcoded
+  dated id must never win over it: the spec used to ask for
+  `^gemini-2.5-flash$` first, which Google has retired (*"This model
+  models/gemini-2.5-flash is no longer available to new users"*). collect-models
+  skipped it as gated and settled on `gemini-3.5-flash`; the spec kept resolving
+  the retired id, so the daily ran a model nobody validated — locally it 404s
+  (`Flow build failed`), and in CI, on a key that still reaches it, the agent
+  answered *"I cannot directly interpret or describe images"* (dailies 2026-07-20 /
+  07-22 / 07-27). Measured on 1.12.0.dev9: `gemini-2.5-flash` 0/3 runs, settled
+  `gemini-3.5-flash` 5/5. `VISION_PREFS` remains only as a fallback for partial
+  `models.json` data, and holds alias/undated patterns only (same lesson as #886).
 - **Prompt via the ChatInput node, not the Playground textarea:** the Playground
   chat input pre-fills from the ChatInput node's `input_value`, and it
   **re-injects the template default (`Hello, how are you?`) asynchronously** —

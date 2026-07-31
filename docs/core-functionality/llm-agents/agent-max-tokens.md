@@ -1,6 +1,6 @@
 # Agent max_tokens — caps generated output as configured
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -55,8 +55,11 @@ the token-usage observable live in the Playground.
 - `models.json` / `providers.json` generated via
   `npx playwright test tests/collect-models.spec.ts`.
 - At least one active provider API key in `.env`.
-- Run with `--workers=1` — the spec is serial
-  (`SimpleAgentTemplatePage.load()` wipes all flows).
+- Run with `--workers=1` — the spec is serial: every test loads the Simple Agent
+  template into the shared instance and runs it in the shared Playground.
+  `SimpleAgentTemplatePage.load()` does **not** wipe existing flows (the
+  cross-worker wipe left in #553); cleanup is id-scoped via the shared tracker
+  (see *Notes* → flow cleanup).
 
 ---
 
@@ -81,11 +84,17 @@ Shared setup per test:
    race — see `agent-multimodal-image-input.md`): *"Write a detailed 500-word
    essay about the history of the ocean. Do not use any tools — answer
    directly."*
-5. Open the Playground, send, and wait for completion on the
-   `chat-message-token-usage` badge count.
-6. Hover the badge and read the **Output** token count from its tooltip
-   (`Input: 1.0K / Output: 46` format; values may be plain integers, `N.NK`,
-   or empty ⇒ 0).
+5. Open the Playground, send, and wait for completion on a **model-agnostic**
+   signal: the turn mounts (`div-chat-message` count rises) and the generating
+   indicator clears (`button-stop` hidden, `button-send` back). The
+   `chat-message-token-usage` badge is **not** the completion gate — see the
+   note on #1059/#569 below. An **error card** at either point ends the run
+   immediately with the provider's message (#1188): upstream renders
+   `error-card-stack` *instead of* the bot bubble, so any wait keyed on the
+   bubble outlives an errored turn.
+6. Assert the badge exists (the `max_tokens` observable), then hover it and read
+   the **Output** token count from its tooltip (`Input: 1.0K / Output: 46`
+   format; values may be plain integers, `N.NK`, or empty ⇒ 0).
 
 ---
 
@@ -138,6 +147,15 @@ Shared setup per test:
   was intentionally **removed** (see the model-agnostic note below): it
   measured model verbosity, not the `max_tokens` contract, and produced a
   false negative on thinking models.
+- **Completion is proven before the observable is read** (#1059): the badge is
+  asserted only after the turn has demonstrably finished, so "still generating",
+  "finished without a badge" and "finished with an error" are three distinct
+  failures with three distinct messages instead of one blind
+  `toHaveCount … Received: 0`. A false positive is impossible in the other
+  direction too — the badge assertion is a hard `toHaveCount(1)`, never skipped
+  when absent. The third of those states only became true in **#1188**: an
+  errored turn renders no bot bubble at all, so it used to die 20 s later on
+  `locator.innerText` with the provider's error nowhere in the message.
 - **Force-failure check** (CONTRIBUTING §2) run during VERIFY on each hard
   assertion before `@stable`.
 
@@ -172,6 +190,9 @@ Shared setup per test:
 - If the node field testid changes from `int_int_max_tokens`.
 - If the token-usage tooltip format changes (`Output:` label, `N.NK`
   abbreviation).
+- If the Playground's generating indicator changes (`button-stop` /
+  `button-send` / `div-chat-message`) — that is the completion gate now, shared
+  in shape with `memory-history-regression.spec.ts`.
 - If the Agent regains a temperature/reasoning parameter (re-scope the §7.7
   bullets and extend this spec).
 
@@ -208,6 +229,61 @@ Shared setup per test:
   load. The floor was removed so the causal proof is token-level and holds for
   any collected model. `openai`/`anthropic` remain a real essay; that is a
   model trait, not a contract the suite pins.
+- **The token-usage badge is the observable, never the completion gate
+  (#1059 → #569).** The spec used to wait for
+  `chat-message-token-usage` to reach count 1 as its "response finished" signal.
+  That conflates three different states into one message — still generating,
+  finished without a badge, finished with an error — and reports all three as
+  `expect(locator).toHaveCount(expected) failed / Received: 0` after 120 s, with
+  the preceding Stop-button wait swallowed by a `.catch(() => {})`. **#569 had
+  already root-caused this exact pattern** on `memory-history-regression.spec.ts`:
+  not every model/response emits the badge, so its count can sit below the
+  expected value for the full budget even though the response has already
+  rendered. The completion gate is now the same model-agnostic pair that spec
+  uses (turn mounts → `button-stop` hidden → `button-send` back), and the badge
+  is asserted afterwards with a message that names it as a missing observable and
+  prints the reply that did render. Timeouts were **not** loosened (the total
+  budget went from ~248 s to ~205 s) and no assertion was weakened — only the
+  attribution changed.
+- **An errored run is resolved explicitly, at both points it can appear**
+  (#1188). Gating on the bot bubble fixed two of the three states but not the
+  third: upstream `chat-message.tsx` renders `ErrorView` **instead of**
+  `BotMessage` when `chat.category === "error"`, so an errored turn carries no
+  `div-chat-message` — only `error-card-stack`. Measured on `main` at
+  1.12.0.dev10 against a drained Anthropic key (a deterministic reproducer: the
+  provider answers `400 … credit balance is too low` every time), both tests
+  failed with `locator.innerText: Timeout 20000ms exceeded — waiting for
+  getByTestId('div-chat-message').last()`, never reaching the badge assertion
+  where the informative message lives. The cause was on screen and in the run
+  stream the whole time — the fixture's flow-error advisory (#1162) printed the
+  provider's 400 in the same run. `runPrompt()` now checks for the error card
+  after the turn-start poll (the run can fail before any bubble mounts) **and**
+  after the completion signal (the measured case: the bubble mounts, then is
+  replaced), failing with the provider's message expanded out of the error
+  accordion. The reply read is also count-guarded, so a finished turn that
+  rendered nothing still reaches the badge assertion instead of a locator
+  timeout. This adds no pass path — an errored run still fails.
+- **Where the #1059 signature came from.** The filed hard failure (daily
+  2026-07-29, `anthropic / claude-sonnet-5`) was **environmental collateral**, not
+  a product regression: attempt 0 of that very test died on the day's dominant
+  `GET /api/v1/auto_login` 20 s timeout (#1030), attempts 1–2 burned 231 s / 215 s
+  inside the run step, and ~15 unrelated specs failed on the same timeout in a
+  continuous 10:46→11:14 window. The next clean daily (2026-07-30, 466 passed /
+  2 hard, guard untripped) ran the same variant green twice (31 s, 35 s). The
+  issue's "recurrent same-signature on 07-13" reading does not hold: 07-13 was
+  **google / gemini-2.5-flash** failing the since-removed word-count floor
+  (`> 200` got 16 — the #866 family); `daily-history.jsonl` records only the
+  **last** attempt's signature, which is why that day was filed under
+  `toHaveCount`. 07-22 shows the same opaque `Received: 0` on google — also a
+  guard day. So the signature marks a weak wait, and load is what exposes it.
+- **Flow cleanup is captured from the creation POST, not from `load()`'s return
+  value** (#1108's shared tracker). The previous `afterEach` only knew the id
+  `SimpleAgentTemplatePage.load()` *returned*, so a `load()` that throws **after**
+  creating the flow leaked it — and the #751/#1072 credential-settle guard throws
+  exactly there. Measured while working #1059: one orphan `Simple Agent` per
+  failed load, on both local bursts (purged by hand). `trackCreatedFlows` records
+  every `POST /api/v1/flows` → 201 the page makes, so the flow is deleted
+  id-scoped regardless of where the setup died. Never a delete-all sweep (#553).
 - **Runtime honors the parameter** (verified two ways on dev33: an API run
   with a `max_tokens: 50` tweak returned an empty reply, and the UI-saved
   value produced Output = 46 ≤ 50), so unlike #481/#482 there is no

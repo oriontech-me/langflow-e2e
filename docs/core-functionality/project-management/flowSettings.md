@@ -119,7 +119,11 @@ enforcement, the save round-trip, or the persistence fails a specific step.
 
 ## Flow cleanup
 
-The test creates one blank flow; its id is captured from the canvas URL and an
-`afterEach` deletes it id-scoped (404-tolerant) via the API, so the instance is
-not polluted across runs. Behavioral force-fail: no-op the cleanup and the flow
-count grows.
+The test creates one blank flow. Its id comes from the `POST /api/v1/flows` → 201
+**response**, not from the canvas URL — the URL races the bootstrap flow's stale id
+(blank-flow opens behind the templates modal), which is what previously deleted the
+wrong flow and leaked the renamed one. Capture and teardown are the shared
+`trackCreatedFlows` helper since #1108, so the `afterEach` deletes id-scoped
+(404-tolerant) via the API and reports a failed delete instead of swallowing it.
+Behavioral force-fail: stop the tracker from matching the creation endpoint and the
+flow count grows while the test still passes.

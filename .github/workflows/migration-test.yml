@@ -127,7 +127,12 @@ jobs:
       - name: Wait for Langflow latest
         run: python tests/github-workflows/migration/wait_for_langflow.py
 
+      # `id`s on the three verification steps feed `steps.<id>.outcome` to the report
+      # below. That is what lets the report reconcile "what the runner observed"
+      # against "what the phase recorded", instead of inferring success from the
+      # absence of a failure record — see the Generate report step (#1120).
       - name: Create flow, configure and execute on latest
+        id: phase_latest
         run: python tests/github-workflows/migration/setup_latest.py
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -188,11 +193,17 @@ jobs:
 
       # ── Phase 3: Verify Migration ─────────────────────────────
       - name: Verify migration via API
+        id: phase_nightly_api
         run: python tests/github-workflows/migration/verify_migration_api.py
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
+      # Deliberately NOT `continue-on-error`: that would mark the step's conclusion
+      # as success and the job would stop failing, which is what the issue-opening
+      # condition below keys on. The report step reads `steps.*.outcome` under
+      # `if: always()`, which is available for a failed step anyway (#1120).
       - name: Verify migration via UI (Playwright)
+        id: phase_nightly_ui
         run: pytest tests/github-workflows/migration/test_ui_migration.py -v --tracing=retain-on-failure --output=test-results
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -202,8 +213,25 @@ jobs:
         if: always()
         run: kill "$(cat /tmp/langflow.pid)" 2>/dev/null || true
 
+      # The outcomes are what stop the report inferring success from silence
+      # (#1120): a phase the runner saw fail, that recorded no failing step, is
+      # reported as a crash rather than rendered as `Result: PASSED`. Run #115
+      # opened an issue titled "Failed" whose body said PASSED for exactly that
+      # reason — `test_05_execute_flow_ui` died on a Playwright timeout before it
+      # could write its own verdict.
+      #
+      # `JOB_STATUS` closes the other half (#1141): only these three steps carry an
+      # `id`, so a failure in the steps BETWEEN them — resolving/installing/booting
+      # the nightly, or the alembic migration timing out — left phases 2 and 3
+      # unrun, their outcomes empty, and the report saying PASSED on a red job. The
+      # job's own status covers those steps, and any step added here later.
       - name: Generate report
         if: always()
+        env:
+          PHASE_OUTCOME_latest: ${{ steps.phase_latest.outcome }}
+          PHASE_OUTCOME_nightly_api: ${{ steps.phase_nightly_api.outcome }}
+          PHASE_OUTCOME_nightly_ui: ${{ steps.phase_nightly_ui.outcome }}
+          JOB_STATUS: ${{ job.status }}
         run: python tests/github-workflows/migration/generate_report.py
 
       - name: Print report
@@ -271,8 +299,16 @@ jobs:
             /tmp/latest-digest.txt
             /tmp/nightly-digest.txt
 
+      # Scoped to the default branch (#1145). This step used to fire on ANY green
+      # run, so a `workflow_dispatch` on a branch closed the issue that tracks a bug
+      # still present on `main`. It happened for real: run #117, dispatched on the
+      # #1143 fix branch, closed #1143 while the fix was still unmerged and `main`
+      # still carried the racy assertion. Dispatching on a branch is the recommended
+      # way to prove changes to this workflow — #1139, #1141 and #1143 could only be
+      # proven that way — so the practice that produces the best evidence must not
+      # silently write to the tracker.
       - name: Close issue on success
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/github-script@v9
         with:
           script: |
@@ -304,6 +340,10 @@ jobs:
               });
             }
 
+      # Deliberately NOT scoped to the default branch (#1145): a red branch run is
+      # worth filing — that is exactly how #1143 was found, by dispatching on a
+      # branch. The body names the ref and the event instead, so a reader can tell a
+      # branch experiment from a `main` failure rather than assuming the latter.
       - name: Create or update issue on failure
         if: failure()
         uses: actions/github-script@v9
@@ -326,6 +366,8 @@ jobs:
 
             const body = [
               `## Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
+              '',
+              `**Ref:** \`${context.ref}\` · **Event:** \`${context.eventName}\``,
               '',
               report,
               '',
@@ -516,6 +558,33 @@ jobs:
 
           [[ -z "$TEMPLATE" || "$TEMPLATE" == "null" ]] && {
             echo "::error::No witness template found — /api/v1/flows/ and /api/v1/starter-projects/ both returned nothing usable"; exit 1; }
+
+          # Select a model on the witness (#1004). Starters ship the model
+          # component with NO selection, so the source smoke below used to die on
+          # "A model selection is required" — every run since 2026-07-23.
+          # Since 1.11.1 the selection lives in the required `model` field
+          # (`type: model`); `provider`/`model_name` are only advanced OVERRIDES of
+          # it, and writing them while `model` is empty is rejected with "Model
+          # name/provider overrides require a built-in model selection". So set
+          # `model` as a plain string when the field exists, and fall back to the
+          # legacy pair for older builds. Verified against langflow:1.11.1 and
+          # langflow-nightly 1.12.0.dev9: unpatched 500, patched 200 on both.
+          # `api_key` takes the NAME of the Credential Langflow auto-imports from
+          # the OPENAI_API_KEY env var (asserted a few lines above).
+          TEMPLATE=$(echo "$TEMPLATE" | jq --arg m "${WITNESS_MODEL:-gpt-4o-mini}" --arg key "OPENAI_API_KEY" '
+            (.data.nodes[]?
+              | select((.data.type // "") | test("^(LanguageModelComponent|OpenAIModel)$"))
+              | .data.node.template) |= (
+                (if has("model") then
+                   (if ((.model.value // "") == "") then .model.value = $m else . end)
+                 else
+                   (if ((.model_name.value // "") == "") then .model_name.value = $m else . end)
+                   | (if ((.provider.value // "") == "") then .provider.value = "OpenAI" else . end)
+                 end)
+                | (if (has("api_key") and ((.api_key.value // "") == "")) then .api_key.value = $key else . end)
+              )')
+          echo "Witness model selection: $(echo "$TEMPLATE" | jq -c '[.data.nodes[]? | select((.data.type // "") | test("LanguageModelComponent|OpenAIModel")) | .data.node.template | {model: .model.value, model_name: .model_name.value}]')"
+
           FLOW_PAYLOAD=$(echo "$TEMPLATE" | jq '{
             name: ((.name // "Simple Agent") + " — migration witness"),
             description: "compose migration witness",
@@ -688,8 +757,9 @@ jobs:
             /tmp/run-target.json
           retention-days: 30
 
+      # Same default-branch scope as the API job above (#1145).
       - name: Close issue on success
-        if: success()
+        if: success() && github.ref == 'refs/heads/main'
         uses: actions/github-script@v9
         with:
           script: |
@@ -734,6 +804,8 @@ jobs:
             });
             const body = [
               `## Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
+              '',
+              `**Ref:** \`${context.ref}\` · **Event:** \`${context.eventName}\``,
               '',
               `docker-compose migration test failed. Source: \`langflowai/langflow:latest\` → Target: \`langflowai/langflow-nightly:latest\`.`,
               `Compose file: pinned to upstream main of \`langflow-ai/langflow/docker_example/docker-compose.yml\`.`,

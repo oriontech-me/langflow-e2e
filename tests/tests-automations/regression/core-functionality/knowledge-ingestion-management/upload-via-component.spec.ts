@@ -1,7 +1,9 @@
-import type { APIRequestContext, Page } from "@playwright/test";
+import fs from "fs";
+import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { resolveAssetPath } from "../../../../helpers/filesystem/resolve-asset-path";
+import { generateRandomFilename } from "../../../../helpers/filesystem/generate-filename";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
@@ -11,12 +13,22 @@ const SENTINEL = "This is a test file for upload functionality testing.";
 const ASSET = "test-file.txt";
 
 // Two persistent artifacts to clean up id-scoped: the flow AND the uploaded
-// file (it lands in the user's global /api/v2/files store). The flow id is
-// captured from POST /api/v1/flows 201 responses (Pattern A) — never
-// page.url(), which returns the stale bootstrap flow id because
-// awaitBootstrapTest creates a competing flow before the blank-flow click
-// (#681).
+// file (it lands in the user's global /api/v2/files store). Both ids come from
+// the create responses (Pattern A) — never page.url() for the flow, which
+// returns the stale bootstrap flow id because awaitBootstrapTest creates a
+// competing flow before the blank-flow click (#681).
+//
+// The file cleanup used to sweep every file whose name started with the asset
+// stem. That is a cross-worker wipe on the shard's shared account (#465), and it
+// papered over the real problem: uploading a FIXED name at all. POST
+// /api/v2/files enforces unique names with a prefix query
+// (`name LIKE '<stem>%'`), so a single residue row renames the upload to
+// "<stem> (1)" and every name-derived testid built from the local asset name
+// misses — which is exactly how the daily of 2026-07-30 failed (#1125). The
+// upload therefore carries a random per-run stem and the testids are derived
+// from the name the SERVER returns.
 const createdFlowIds: string[] = [];
+const createdFileIds: string[] = [];
 
 function trackCreatedFlows(page: Page): void {
   page.on("response", (resp) => {
@@ -35,26 +47,6 @@ function trackCreatedFlows(page: Page): void {
   });
 }
 
-async function deleteUploadedFiles(
-  request: APIRequestContext,
-  bearer: string,
-): Promise<void> {
-  const res = await request.get("/api/v2/files", {
-    headers: { Authorization: bearer },
-  });
-  if (!res.ok()) return;
-  const files: Array<{ id: string; name: string }> = await res.json();
-  for (const f of files) {
-    // Match on the asset stem — Langflow strips the extension in `name` and
-    // suffixes duplicates ("test-file", "test-file (1)").
-    if (f.name.startsWith("test-file")) {
-      await request
-        .delete(`/api/v2/files/${f.id}`, { headers: { Authorization: bearer } })
-        .catch(() => {});
-    }
-  }
-}
-
 test.afterEach(async ({ request }) => {
   const bearer = await getAuthToken(request);
   for (const id of createdFlowIds.splice(0)) {
@@ -62,7 +54,11 @@ test.afterEach(async ({ request }) => {
       headers: { Authorization: bearer },
     }).catch(() => {});
   }
-  await deleteUploadedFiles(request, bearer);
+  for (const id of createdFileIds.splice(0)) {
+    await request
+      .delete(`/api/v2/files/${id}`, { headers: { Authorization: bearer } })
+      .catch(() => {});
+  }
 });
 
 test(
@@ -70,6 +66,14 @@ test(
   { tag: ["@stable", "@release", "@files", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
+    // The asset's bytes under a per-run unique name: the name is what the
+    // server's uniqueness check (and every testid below) keys on.
+    const stem = generateRandomFilename();
+    const buffer = fs.readFileSync(resolveAssetPath(ASSET));
+    // Filled from the upload response — the server is the authority on the
+    // stored name, so the testids are built from it and not from `stem`.
+    let uploadedName = "";
+
     await awaitBootstrapTest(page);
 
     await test.step("open a blank flow", async () => {
@@ -108,7 +112,7 @@ test(
       // Gate on the upload actually completing server-side: clicking
       // "select" before the POST /api/v2/files response lands leaves the file
       // not-yet-selectable and the confirm is a no-op, so the modal never
-      // closes (the dominant flake here).
+      // closes.
       const uploadDone = page.waitForResponse(
         (r) =>
           r.url().includes("/api/v2/files") &&
@@ -116,13 +120,48 @@ test(
           r.status() < 300,
         { timeout: 30000 },
       );
-      await chooser.setFiles(resolveAssetPath(ASSET));
-      await uploadDone;
+      await chooser.setFiles([
+        { name: `${stem}.txt`, mimeType: "text/plain", buffer },
+      ]);
+      const uploaded: { id?: string; name?: string } = await (
+        await uploadDone
+      ).json();
+      // Both fields are load-bearing, so neither is treated as optional: `id`
+      // is the only handle the afterEach cleanup has — dropping it silently
+      // leaks the upload into the shard's shared account, which is the very
+      // residue that broke this spec (#1125) — and `name` is what every testid
+      // below is built from. Register the id before asserting anything else, so
+      // a later failure still cleans up.
+      expect(
+        uploaded.id,
+        "the upload response must carry the file id",
+      ).toBeTruthy();
+      createdFileIds.push(uploaded.id as string);
+      // Equality, not just presence: the stem is random, so the server's
+      // uniqueness branch must not have fired. Asserting it keeps the
+      // unique-name guard falsifiable — the testids below are still built from
+      // the response (the server is the authority on the stored name), and
+      // without this the spec would silently follow a rename instead of
+      // reporting that the account already holds a colliding row. Same
+      // assertion as file-types-upload.spec.ts.
+      expect(
+        uploaded.name,
+        "the upload must keep its per-run unique stem — a rename means the shared account already holds a colliding row (#1125)",
+      ).toBe(stem);
+      uploadedName = uploaded.name as string;
 
-      // The uploaded file appears in My Files, pre-selected.
-      await expect(page.getByTestId("file-item-test-file")).toBeVisible({
+      // The uploaded file appears in My Files, pre-selected. The visible row is
+      // NOT enough: the optimistic cache entry renders the same testid while it
+      // is still `pointer-events-none`, and the row is keyed on the file name
+      // while the modal's selection is keyed on the file PATH. A checked box is
+      // the only proof that the two agree — i.e. that confirming attaches THIS
+      // file (#1125).
+      await expect(page.getByTestId(`file-item-${uploadedName}`)).toBeVisible({
         timeout: 15000,
       });
+      await expect(
+        page.getByTestId(`checkbox-${uploadedName}`),
+      ).toHaveAttribute("data-state", "checked", { timeout: 15000 });
       await page.getByTestId("select-files-modal-button").click();
     });
 
@@ -136,7 +175,7 @@ test(
       await expect(
         page.getByTestId("select-files-modal-button"),
       ).toBeHidden({ timeout: 15000 });
-      await expect(page.getByTestId("file-item-test-file")).toBeVisible({
+      await expect(page.getByTestId(`file-item-${uploadedName}`)).toBeVisible({
         timeout: 15000,
       });
     });

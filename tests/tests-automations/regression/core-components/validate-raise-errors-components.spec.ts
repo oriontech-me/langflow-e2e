@@ -1,4 +1,8 @@
-import { expect, test } from "../../../fixtures/fixtures";
+import {
+  expect,
+  test,
+  type PageWithErrorHooks,
+} from "../../../fixtures/fixtures";
 import { addCustomComponent } from "../../../helpers/flows/add-custom-component";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
@@ -32,6 +36,20 @@ test.describe("Core Components — Component That Raises a Python Error", () => 
   test("user should be able to see errors on popups when raise an error",
     { tag: ["@stable", "@release", "@regression", "@workspace", "@components"] },
     async ({ page }) => {
+      // This test's whole subject is a run that FAILS: the component below does
+      // `raise ValueError`, and the assertion is that the message reaches the UI.
+      // The hatch has been unnecessary until now only because the fixture could
+      // not see a v2 run at all (#1162), and it is still not load bearing today —
+      // a v2 verdict is advisory. It is added ahead of the flip (#1165) because
+      // the alternative is discovering it as a red `@stable @release` spec.
+      //
+      // Measured on 1.12.0.dev10: the run does emit
+      // `event_type=error / "THIS IS A TEST ERROR MESSAGE"`, but the fixture sees
+      // it only when the stream closes before the test ends. As written it does
+      // not (`read failed (stream aborted?)`, 3/3) — so the flip would make this
+      // spec fail INTERMITTENTLY, which is the worst version of the outcome.
+      (page as PageWithErrorHooks).allowFlowErrors();
+
       const customComponentCodeWithRaiseErrorMessage = `
 # from langflow.field_typing import Data
 from langflow.custom import Component

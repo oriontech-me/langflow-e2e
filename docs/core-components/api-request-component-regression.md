@@ -1,6 +1,6 @@
 # API Request Component — Rendering, Inspector, HTTP Methods, cURL Mode and Error Paths
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev7`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev10`; the cURL test re-validated on `1.11.1` as well, which already carries langflow#14312)
 
 ---
 
@@ -29,12 +29,13 @@ The **GET request returns 200** test (#4 below) had `@stable` removed in the #46
 
 ## Step by step *(required)*
 
-Every test starts with `addApiRequestComponent(page)` which:
-1. Bootstraps the app (`awaitBootstrapTest`)
-2. Clicks `blank-flow` and waits for the API Request sidebar item to be attached
-3. Hovers the sidebar card (the add button reveals on hover) and clicks `add-component-button-api-request`
-4. Calls `adjustScreenView(page)` to fit the canvas
-5. Asserts `title-API Request` is visible
+Every test starts with `addApiRequestComponent(page)`, which returns the created flow's id and:
+1. Creates the blank flow **over the REST API** and navigates to it (`setupBlankFlow`) — it never enters through home page → "New Flow" → templates modal → `blank-flow`, so the welcome overlay is never opened (issue #1147; see "Notes")
+2. Waits for write permission to have resolved (`menu_bar_display` enabled) — `useAddComponent` bails out silently while the flow is still read-only
+3. Waits for `sidebar-search-input` to be **visible** and fills it with `API Request`, then waits for the sidebar item to be attached
+4. Hovers the sidebar card (the add button reveals on hover) and clicks `add-component-button-api-request`
+5. Calls `adjustScreenView(page)` to fit the canvas
+6. Asserts `title-API Request` is visible
 
 ### 1. `renders on canvas with correct output and URL handles`
 - Asserts `title-API Request`, the right-side `handle-apirequest-shownode-api response-right`, and the left-side `handle-apirequest-shownode-url-left` are all visible.
@@ -75,7 +76,7 @@ For each of GET, POST, PUT, PATCH, DELETE:
 
 ### 13. `cURL mode parses command, auto-fills URL, executes GET and returns 200`
 - Switches to the cURL tab **before** touching the URL field (pre-filling `url_input` would mask a regression in the cURL parser by letting the run fall back to the URL-tab path).
-- Fills the cURL command and waits for the parser to auto-populate `url_input` with `https://postman-echo.com/get`. The `waitForFunction` directly proves the parser ran.
+- Fills the cURL command and waits for the parser to auto-populate `url_input` with `https://postman-echo.com/get`. Asserting that value directly proves the parser ran. The field is reached with `getByTestId("popover-anchor-input-url_input")` and asserted with the web-first `toHaveValue` — **never** by DOM `id`: langflow#14312 (LE-2037) scopes node-parameter DOM ids by `nodeId` (`<id>-<nodeId>`) while deliberately leaving `data-testid` unscoped, so a `document.getElementById` read here resolves to nothing on any build carrying that fix, and reports a bare timeout instead of the value it saw.
 - Runs the component and asserts the output Data contains `200`, the echoed URL, and the structural keys.
 
 ### 14. `body table accepts key + value cell entries when method is POST`
@@ -85,7 +86,7 @@ For each of GET, POST, PUT, PATCH, DELETE:
 - Closes the dialog with `btn-cancel-modal` — this test asserts in-session edit behavior only. End-to-end body persistence through reload is intentionally NOT covered (see "What this test does not cover").
 
 ### 15. `flow state persists in database after autosave (URL, method, headers)`
-- Configures URL (`https://postman-echo.com/get?persist=true`), method (`POST`) and a headers row (`X-Persist-Header` / `persisted-value`) on a freshly created flow; captures the `flowId` from the URL.
+- Configures URL (`https://postman-echo.com/get?persist=true`), method (`POST`) and a headers row (`X-Persist-Header` / `persisted-value`) on a freshly created flow; the `flowId` is the one `setupBlankFlow` returned (it created the flow), and the test asserts the editor URL carries that same id before polling it.
 - Like test 14, waits for the `POST /api/v1/custom_component/update` response after the method switch so the headers `[value]` useEffect settles before adding a new row.
 - Clicks the dialog-level **Save** button (not Cancel, which discards `tempValue` via `handleCancel` in `TableNodeComponent`) so the row commits before autosave fires.
 - Polls `GET /api/v1/flows/{id}` (using `page.request` which inherits the session cookie) until the autosave has written the URL, method and matching header row into the saved flow JSON. Polling the API directly proves the autosave reached the database — not just in-memory React state. The match key is `node.data.type === "APIRequest"` (Python class name, not the `"API Request"` display name).
@@ -101,6 +102,9 @@ The suite must:
 - Read execution output via the dialog's copy button + clipboard, not the Monaco editor's `textContent`: the editor is virtualized, so `textContent` only returns lines in the viewport and silently truncates fields below the fold for a verbose response. The helper clears the clipboard first (it persists across the serial tests) and polls until the fresh output lands rather than waiting on the transient "Copied to clipboard" toast.
 - Retry past transient upstream outages: `runAndOpenOutput` re-runs the component (up to 3 attempts) when its own top-level `status_code` is `5xx` or when a run produces no readable output (build error / timeout). Each attempt anchors build completion on the node's own success indicator — the `node_duration_api request` badge going hidden (a fresh build started, so `conditionSuccess` is momentarily false) then visible again (build finished successfully) — not on the inspect button (which stays enabled across re-runs and would re-read stale output) and not on any build endpoint URL. This is deliberately decoupled from the internal build endpoint, which moved from `/api/v1/build/{id}/events` to `/api/v1/flows/{id}/events` in 1.11.x and silently broke the previous `waitForResponse` anchor even though the build itself still succeeded (issue #478). No test here expects a 5xx, so retrying on one never masks a real assertion; once retries are exhausted on a still-5xx output it **throws loudly** rather than returning the 5xx, so a sustained outage or a regression surfacing as a 5xx fails clearly instead of slipping past a weak substring assertion (issue #383).
 - Run **serially** (`test.describe.configure({ mode: "serial" })`) — parallel autosaves on flow create cause `400 "flow must be unique"` errors that flag as backend errors in the fixture.
+- Enter the blank flow through **`setupBlankFlow`** (API create + navigate), never through home page → "New Flow" → templates modal → `blank-flow`. That UI path leaves the welcome overlay open behind the modal, and `FlowPage` mounts the whole `FlowSidebarComponent` inside a `display: none` wrapper while it is open — so `sidebar-search-input` is in the DOM with an empty bounding box and the fill races a `hidden` element (issue #1147, root-caused on #1063).
+- Gate the component add on write permission having **resolved** (`menu_bar_display` enabled) before touching the sidebar: `useAddComponent` returns early and **silently** while `useIsFlowReadOnly` is true, which it is for as long as the effective-permissions query is in flight. Without the gate an add that lands in that window registers nothing and the `react-flow__node` count assertion fails without naming the cause.
+- Delete the flow in `afterEach` with an **explicit `Authorization` bearer** (`getAuthToken`): under `AUTO_LOGIN` a bare `request` context is unauthenticated, so an unheadered `DELETE` returns `401` and silently leaks the flow.
 - For each verb test, hit an endpoint that returns a non-2xx for any other verb (postman-echo returns `404`; httpbin returned `405`) — this guarantees the test fails if the wrong verb is sent (e.g. POST sent as GET), because the assertion requires `200`.
 - For the cURL execution test, switch to the cURL tab *before* configuring the URL — and assert the parser auto-populates `url_input`. Asserting only the run output would let the test pass even if cURL parsing was broken.
 - For the headers and body table tests, fill both KEY and VALUE cells (not key only) — filling only the key cell would still pass even if the value column was non-functional or rejected entries.
@@ -115,7 +119,8 @@ The suite must:
 
 ## External dependencies *(required)*
 
-- `tests/helpers/other/await-bootstrap-test.ts` — bootstraps the app
+- `tests/helpers/flows/setup-blank-flow.ts` — creates the blank flow over the REST API and navigates to it, returning its id (replaces the `awaitBootstrapTest` + `blank-flow` entry, issue #1147)
+- `tests/helpers/auth/get-auth-token.ts` + `tests/helpers/flows/delete-flow.ts` — id-scoped `afterEach` cleanup with an explicit bearer
 - `tests/helpers/ui/adjust-screen-view.ts` — fits the canvas after adding the component
 - `tests/fixtures/fixtures.ts` — provides `(page as any).allowFlowErrors()` (the cast is required because the helper is injected via the fixture without a typed augmentation; see "Notes")
 - `src/lfx/src/lfx/components/data_source/api_request.py` — owns the field schema (URL, method, headers/body table inputs, cURL textarea); the test would need updating if a field is renamed, removed, or its `advanced` flag changes
@@ -128,8 +133,10 @@ The suite must:
 
 ## What this test does not cover *(optional)*
 
-- **`include_httpx_metadata=true`** — this advanced toggle adds outgoing request headers to output. Covered by `tests/tests-automations/regression/api/flows/api-component-regression.spec.ts` (legacy spec scheduled for retirement; see "Notes").
-- **Timeout error path** — covered by the same legacy spec.
+- **`include_httpx_metadata=true`** — this advanced toggle adds the outgoing request headers to the output as a **top-level `headers` key**. Covered by `tests/tests-automations/regression/api/flows/api-component-regression.spec.ts` (legacy spec scheduled for retirement; see "Notes"). The *top-level* qualifier is the whole assertion: the echo service's own response body, nested under `result`, carries a `headers` object of its own, so a substring match on the rendered output passes with the flag **off** — which is how that test silently stopped testing its feature until #1107. The observable is the key's presence at the top level, on the success path only (both exception branches upstream attach `headers` regardless of the flag).
+- **Timeout error path** — covered by the same legacy spec, which asserts a top-level `status_code` of `500` plus an `error` key. Only the exception branches emit `error`, so an upstream 5xx cannot be mistaken for the timeout.
+
+  Both of those two tests are **`@stable`** as of #1107, so `daily-stable.yml` reads them as release signal. They consequently share this spec's external-dependency contract: they build their URLs from **`ECHO_BASE_URL`** (default `https://postman-echo.com`, legacy `HTTPBIN_BASE_URL` honored), using `/get` and `/delay/5`, and they carry their own retry over a transient echo failure — necessary because the daily's `ECHO_BASE_URL` export is fail-soft, so a run where go-httpbin never answers puts them on the public endpoint. Their delay path is `/delay/5` rather than `/delay/10` on purpose: 10 s sits exactly on go-httpbin's default `-max-duration`, where the endpoint would answer `400` instantly instead of delaying and the timeout assertion would fail looking like a product regression.
 - **cURL with POST + JSON body and parser-driven body fill** — covered by the legacy spec; not yet migrated to this consolidated suite.
 - **Body persistence through reload** — the persistence test exercises URL, method and headers but not the body table. The body and headers tables share the same `TableInput` widget and persistence path, so headers coverage is treated as representative for table autosave.
 - **Anonymous / multi-tenant access** — runs as `LANGFLOW_SUPERUSER`.
@@ -160,6 +167,40 @@ The suite must:
 
 ## Notes *(optional)*
 
+- **Sidebar entry moved off the welcome overlay (issue #1147, root-caused on #1063).**
+  The setup used to enter the canvas through home page → "New Flow" → templates
+  modal → `blank-flow`, then fill `sidebar-search-input` with **no wait at all**
+  (relying on `fill`'s auto-wait). That window is not safe:
+  - "New Flow" (`useStartNewFlow`) creates a flow **and calls `openWelcome()` before
+    navigating**, deliberately, so the overlay paints on the first frame.
+  - `openNewFlowTemplatesModal` dismisses the overlay visually via "Browse more
+    templates", but `handleBrowseMore` only calls `setIsTemplatesOpen(true)` — it
+    never calls `close()`. The welcome stays **open behind the modal**.
+  - Clicking `blank-flow` then creates a **second** flow and navigates to it; the
+    welcome only closes once `FlowBuilderWelcomeMount` observes
+    `currentFlowId !== openedForFlowId` — a multi-hop settle (navigate → flow load →
+    store update → placeholder delete → re-render) that **nothing in the test drives**.
+  - While it is open, `FlowPage` mounts the whole `FlowSidebarComponent` inside a
+    `<div style={{ display: isWelcomeOpen ? "none" : "contents" }}>`, so
+    `sidebar-search-input` is in the DOM with an **empty bounding box** — exactly what
+    Playwright reports as `hidden`. Confirmed in the served `1.12.0.dev10` bundle, so
+    it is not a clone/skew artifact.
+
+  Under parallel CI load that settle can exceed the wait budget and the fill fails;
+  it always recovers on retry, which is why it reads as a flake. It is a **test
+  wait-strategy defect, not a Langflow regression** — the product behaviour is
+  intentional and documented in its own code comments. `setupBlankFlow` sidesteps it
+  entirely: the flow is created over the API and opened from the dashboard, so the
+  welcome overlay is never opened and the sidebar is never hidden. The helper also
+  returns the flow id, which replaced this spec's `POST /api/v1/flows` response
+  interception (the id is now known before the page is even touched) and the URL-regex
+  capture in test 15.
+
+  The same migration carried over two corrections from #1063: the add is gated on
+  `menu_bar_display` being enabled (silent `useAddComponent` bail-out while the flow
+  is read-only), and the `afterEach` `DELETE` now passes an explicit bearer (it
+  `401`ed unheadered under `AUTO_LOGIN` and leaked the flow — this file's cleanup had
+  the same defect).
 - **dev46 inspector migration (issue #818).** The nightly removed the always-on
   inspect-panel toggle (`canvas_controls_dropdown_toggle_inspector`) and made the
   `headers` / `body` table fields **advanced** — their `div-table_<field>` widget
@@ -170,7 +211,7 @@ The suite must:
   `enableInspectPanel` re-open step there was dropped. Also added id-scoped
   `afterEach` flow cleanup (the 15-test serial file previously had none).
   Re-validated on `1.11.0.dev46`.
-- **Duplicate coverage with legacy specs.** `tests/tests-automations/regression/api/flows/api-request-component-ui.spec.ts` (4 tests: canvas render, URL field, method dropdown, headers field) is fully superseded by tests 1, 2, and 11 of this spec — its 4th test uses anti-patterns (`.catch(() => false)`, conditional advanced-button click) that this consolidated spec replaces with deterministic locators. `tests/tests-automations/regression/api/flows/api-component-regression.spec.ts` (5 tests: GET, cURL POST + JSON body with auto-fill URL, `include_httpx_metadata`, timeout 500, URL-mode POST via dropdown) is partially duplicated by tests 4, 5, and 13 here, but contains 3 unique tests (`include_httpx_metadata`, timeout, cURL POST + body). A follow-up PR should migrate those 3 unique tests here and retire both legacy specs.
+- **Duplicate coverage with legacy specs.** `tests/tests-automations/regression/api/flows/api-request-component-ui.spec.ts` (4 tests: canvas render, URL field, method dropdown, headers field) is fully superseded by tests 1, 2, and 11 of this spec — its 4th test uses anti-patterns (`.catch(() => false)`, conditional advanced-button click) that this consolidated spec replaces with deterministic locators. `tests/tests-automations/regression/api/flows/api-component-regression.spec.ts` (5 tests: GET, cURL POST + JSON body with auto-fill URL, `include_httpx_metadata`, timeout 500, URL-mode POST via dropdown) is partially duplicated by tests 4, 5, and 13 here, but contains 3 unique tests (`include_httpx_metadata`, timeout, cURL POST + body). A follow-up PR should migrate those 3 unique tests here and retire both legacy specs. **That migration is now more expensive than when this note was written:** #1107 promoted 2 of those 3 (`include_httpx_metadata`, timeout) to `@stable` in place, so moving them also moves `QA-CHECKLIST.md` Part II bullets and churns the generated `Phase 0 — Validated` block. The promotion was still the right call — the two were failing on every run and had no coverage anywhere else — but whoever picks the migration up should expect to touch the checklist, and should carry over the guards those tests gained rather than assuming this spec's `runAndOpenOutput` is a drop-in (it retries on any 5xx, which would fight the timeout test's expected `500`).
 - **`(page as any).allowFlowErrors()` cast.** The fixture injects `allowFlowErrors` onto the page object via `(page as any).allowFlowErrors = () => {...}`, without extending the `Page` type. Removing the cast at the call site requires extending the type signature in `fixtures.ts`. The pattern is project-wide (`loop-component-regression.spec.ts` uses the same cast).
 - **Why one verb per endpoint.** `/get`, `/post`, `/put`, `/patch`, `/delete` each reject any other verb with a non-2xx (`404` on postman-echo, `405` on httpbin/go-httpbin). Since the verb tests assert the output contains `200`, the test fails if the component sends the wrong method — there's no way to silently pass with a misconfigured verb.
 - **Echo endpoint resilience (issue #383).** The verb/404/query/cURL tests originally hard-coded `https://httpbin.org/...`. A transient httpbin.org `503` (AWS ELB) hard-failed the POST test and flaked GET in the weekly run, opening #383. The fix makes the suite tolerate transient outages without masking a real regression:

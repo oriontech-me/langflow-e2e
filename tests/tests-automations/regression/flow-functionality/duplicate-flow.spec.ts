@@ -1,4 +1,5 @@
 import { expect, test } from "../../../fixtures/fixtures";
+import { leaveFlowEditor } from "../../../helpers/flows/leave-flow-editor";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
@@ -22,11 +23,15 @@ test(
       timeout: 30000,
     });
 
-    await page.getByTestId("icon-ChevronLeft").first().click();
-
-    await expect(page.getByTestId("home-dropdown-menu").first()).toBeVisible({
-      timeout: 30000,
-    });
+    // Back to the listing through the helper: the bare chevron click can land
+    // behind `SaveChangesModal`, which in autosave mode offers no confirm or
+    // cancel and can spin indefinitely, turning this into an unattributed
+    // `home-dropdown-menu` timeout (#1153).
+    //
+    // `escapeDeadlock` is safe here: the template flow is already persisted
+    // server-side by the template click, and everything after this line reads
+    // the home listing, so a reload discards nothing this test asserts on.
+    await leaveFlowEditor(page, { escapeDeadlock: true });
 
     const authToken = await getAuthToken(request);
 

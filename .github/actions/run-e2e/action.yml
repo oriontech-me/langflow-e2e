@@ -22,6 +22,14 @@ inputs:
     description: "OpenAI key for model-dependent specs (agents, playground). Optional."
     required: false
     default: ""
+  anthropic_api_key:
+    description: "Anthropic key for the anthropic-parameterized specs. Optional."
+    required: false
+    default: ""
+  google_api_key:
+    description: "Google key for the google-parameterized specs. Optional."
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -36,7 +44,14 @@ runs:
         # only ever sees them as variable contents.
         TEST_TAG: ${{ inputs.test_tag }}
         TEST_GREP: ${{ inputs.test_grep }}
+        # Every provider key the caller supplied, not just OpenAI: a
+        # provider-parameterized spec calls `hasProviderEnvKeys(<provider>)` and
+        # skips itself when its own key is absent from the environment, so a
+        # dispatch aimed at the anthropic or google specs silently ran zero of
+        # them while collect-models reported the provider active (#967).
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        GOOGLE_API_KEY: ${{ inputs.google_api_key }}
       run: |
         # Build the arg list as an array (no eval) so quoting is safe. Playwright
         # only honors one --grep, so to run "tag AND name" we combine them into a
@@ -66,6 +81,8 @@ runs:
         TEST_TAG: ${{ inputs.test_tag }}
         TEST_GREP: ${{ inputs.test_grep }}
         OPENAI_API_KEY: ${{ inputs.openai_api_key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
+        GOOGLE_API_KEY: ${{ inputs.google_api_key }}
       run: |
         # Same one-grep constraint as above: AND the filters into a single
         # lookahead regex, always including @destructive.

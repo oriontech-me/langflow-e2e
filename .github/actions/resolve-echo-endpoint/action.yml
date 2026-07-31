@@ -1,0 +1,166 @@
+name: "Resolve the self-hosted echo endpoint"
+description: >-
+  Point ECHO_BASE_URL at the job's self-hosted go-httpbin service instead of the
+  public internet. Shared by every lane that runs echo-dependent specs (#1128):
+  the decoupling built for #462/#639 lived in daily-stable.yml alone, so
+  pr-validation, nightly and manual kept calling public httpbin.org and reded on
+  its outages — most recently PR #1133, whose diff had nothing to do with it.
+  Works in both job topologies: a job running INSIDE a container resolves the
+  service alias with `getent`, while a host-based job reads the container IP with
+  `docker inspect`. The decision itself lives in
+  `scripts/resolve-echo-endpoint.mjs`, covered by `npm run test:scripts`.
+
+inputs:
+  service_name:
+    description: "Service container name/alias of the echo server."
+    required: false
+    default: "go-httpbin"
+  service_port:
+    description: "Port the echo listens on inside its container — the port Langflow calls."
+    required: false
+    default: "8080"
+  mapped_port:
+    description: "Host port the service is published on — the port this job probes."
+    required: false
+    default: "8080"
+  in_container:
+    description: >-
+      Whether the CALLING JOB runs inside a container (`container:` in the job
+      definition). Decides whether the service alias is resolvable and whether the
+      container IP is directly probeable. daily-stable.yml is the only lane where
+      this is true.
+    required: false
+    default: "false"
+  mode:
+    description: >-
+      What an unavailable echo service means for this lane. `fail` blocks it;
+      `warn` lets it continue on the PUBLIC fallback. Use `fail` wherever a human
+      is waiting on the verdict (PR), `warn` where a day of coverage outweighs
+      strictness (daily) — the trade-off #1128 asked to be decided and recorded.
+    required: false
+    default: "fail"
+  attempts:
+    description: "How many times to poll the echo before giving up (2s apart)."
+    required: false
+    default: "20"
+
+outputs:
+  echo_base_url:
+    description: "The resolved URL, or empty when the service was unavailable in `warn` mode."
+    value: ${{ steps.resolve.outputs.echo_base_url }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Resolve echo endpoint
+      id: resolve
+      shell: bash
+      env:
+        SERVICE_NAME: ${{ inputs.service_name }}
+        SERVICE_PORT: ${{ inputs.service_port }}
+        MAPPED_PORT: ${{ inputs.mapped_port }}
+        IN_CONTAINER: ${{ inputs.in_container }}
+        MODE: ${{ inputs.mode }}
+        ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        set -uo pipefail
+
+        # Discover, do not decide. Both lookups are expected to fail in one
+        # topology or the other, so neither failure is an error here — the script
+        # is what turns "what we found" into "what to use", and it is unit-tested.
+        GETENT_IP=""
+        if command -v getent >/dev/null 2>&1; then
+          GETENT_IP="$(getent hosts "$SERVICE_NAME" 2>/dev/null | awk '{print $1}' | head -1 || true)"
+        fi
+
+        DOCKER_IP=""
+        if command -v docker >/dev/null 2>&1; then
+          # Matched by IMAGE, not by container name: GitHub names service
+          # containers `<hash>_<image-slug>_<hash>` (observed in the run log for
+          # PR #1133), so the name is neither stable nor predictable, while the
+          # image is ours and unique in the job.
+          CID="$(docker ps --format '{{.ID}} {{.Image}}' 2>/dev/null | awk -v n="$SERVICE_NAME" '$2 ~ n {print $1; exit}' || true)"
+          if [ -n "$CID" ]; then
+            DOCKER_IP="$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}' "$CID" 2>/dev/null | awk '{print $1}' || true)"
+          fi
+        fi
+        echo "discovery: getent=\"${GETENT_IP:-none}\" docker=\"${DOCKER_IP:-none}\" in_container=$IN_CONTAINER mode=$MODE"
+
+        set +e
+        # Relative to the workspace, matching how `guard-dedicated-issue` invokes
+        # its own validator — the calling job has already checked out the repo.
+        DECISION="$(node scripts/resolve-echo-endpoint.mjs \
+          --service-port "$SERVICE_PORT" --mapped-port "$MAPPED_PORT" \
+          --getent-ip "$GETENT_IP" --docker-ip "$DOCKER_IP" \
+          --in-container "$IN_CONTAINER" --mode "$MODE")"
+        CODE=$?
+        set -e
+
+        # Read the decision with `node`, NOT `jq`. This is the only composite action
+        # the containerized lane uses (`daily-stable.yml`, `in_container: true`), and
+        # `mcr.microsoft.com/playwright:v1.58.2-noble` ships no `jq` — its Dockerfile
+        # installs curl/wget/gpg/ca-certificates, nodejs and git/openssh-client, and
+        # nothing else. The four `jq` calls this replaces aborted all four shards of
+        # the 2026-07-31 daily before its first test, and the failure was invisible:
+        # `jq -e . >/dev/null 2>&1` sent `jq: command not found` to /dev/null, so a
+        # missing binary was indistinguishable from malformed JSON. `node` needs no
+        # such trust — the line above just used it to PRODUCE this decision.
+        #
+        # One invocation, three tab-separated fields, stderr left ALONE so the next
+        # environment gap names itself in the log instead of surfacing as the "exit 0"
+        # contradiction that made this cost a whole day of @stable coverage.
+        set +e
+        FIELDS="$(node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{let v;try{v=JSON.parse(d)}catch(e){process.stderr.write("decision is not JSON: "+e.message+"\n");process.exit(1)}if(!v||typeof v!=="object"||Array.isArray(v)){process.stderr.write("decision is not a JSON object\n");process.exit(1)}process.stdout.write([v.ok===true?"true":"false",v.langflowUrl||"",v.probeUrl||""].join("\t")+"\n")})' <<<"$DECISION")"
+        PARSE=$?
+        set -e
+
+        # Exit 2 is the resolver itself being broken (bad flag, crash); a non-zero
+        # PARSE is the same class of fault one step later. Neither must read as "the
+        # service is absent" — the two call for opposite responses, and conflating
+        # them is how a gate silently stops gating.
+        if [ "$CODE" -eq 2 ] || [ "$PARSE" -ne 0 ]; then
+          echo "::error::resolve-echo-endpoint could not produce a decision (resolver exit $CODE, parse exit $PARSE). Treating as a wiring failure, not an absent service."
+          exit 1
+        fi
+
+        # One tab-split `read`, not `mapfile` and not three `read`s. Both alternatives
+        # reintroduce the class of bug being fixed here:
+        #   - `mapfile` is a bash-4 builtin, absent from the bash 3.2 on macOS, so the
+        #     fix for a missing-binary bug could not itself be run outside CI.
+        #   - three sequential `read`s hit EOF on a not-ok decision (the URL fields are
+        #     empty and command substitution strips trailing newlines) and return 1,
+        #     which under `set -e` kills the step silently on the exact path
+        #     `mode: warn` exists to keep alive.
+        # `|| true` covers a wholly empty FIELDS; a short line leaves the tail empty.
+        IFS=$'\t' read -r OK LANGFLOW_URL PROBE_URL <<<"$FIELDS" || true
+
+        if [ "$OK" != "true" ]; then
+          # The script already emitted ::error:: or ::warning:: with the reason.
+          echo "echo_base_url=" >> "$GITHUB_OUTPUT"
+          [ "$MODE" = "warn" ] && exit 0
+          exit 1
+        fi
+
+        # The image is `scratch`-based — no shell, no curl — so it cannot carry a
+        # container healthcheck. This poll IS the healthcheck (#639).
+        for i in $(seq 1 "$ATTEMPTS"); do
+          if curl -sf --max-time 5 "$PROBE_URL/get" >/dev/null 2>&1; then
+            echo "ECHO_BASE_URL=$LANGFLOW_URL" >> "$GITHUB_ENV"
+            echo "echo_base_url=$LANGFLOW_URL" >> "$GITHUB_OUTPUT"
+            echo "echo endpoint is up: probed $PROBE_URL, Langflow will call $LANGFLOW_URL"
+            exit 0
+          fi
+          sleep 2
+        done
+
+        # Reached the service's address but it never answered. Same fork as above:
+        # on a PR this is fatal, because the alternative is running the specs
+        # against the public host and reporting a third party's outage as a
+        # product failure (#1128).
+        echo "echo_base_url=" >> "$GITHUB_OUTPUT"
+        if [ "$MODE" = "warn" ]; then
+          echo "::warning::the echo service at $PROBE_URL did not answer after $ATTEMPTS attempts; ECHO_BASE_URL left unset, so the specs fall back to their PUBLIC default and this lane is exposed to a third-party outage (#1128)."
+          exit 0
+        fi
+        echo "::error::the echo service at $PROBE_URL did not answer after $ATTEMPTS attempts. Failing the lane rather than silently running the echo specs against public httpbin.org (#1128)."
+        exit 1

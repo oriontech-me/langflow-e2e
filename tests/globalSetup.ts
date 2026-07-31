@@ -4,6 +4,12 @@ import {
 } from "@playwright/test";
 import * as dotenv from "dotenv";
 import { getAuthToken } from "./helpers/auth/get-auth-token";
+import {
+  degradeProviders,
+  providersForEnvKeys,
+  readProviderHealth,
+  writeProviderHealth,
+} from "./helpers/provider-setup/provider-health";
 
 dotenv.config();
 
@@ -146,7 +152,43 @@ async function checkProviderCredentials(ctx: APIRequestContext): Promise<void> {
     `(the daily-stable CI does this automatically).`;
 
   if (process.env.CI) {
-    throw new Error(message);
+    // Degrade the affected providers instead of aborting the shard (#1058).
+    //
+    // This used to `throw`, and that defeated the guarantee #980 exists to give:
+    // a red `Collect models` is deliberately non-fatal (`continue-on-error`) so a
+    // drained provider key cannot kill a day of testing — but `Collect models` is
+    // ALSO what imports the keys as Langflow global variables, so its failure made
+    // this gate fire and killed the shard anyway. On run 30444299314 shards 1 and 2
+    // died here over google alone, and ~184 tests that never touch google went
+    // unexecuted behind a report that read as an ordinary failure day.
+    //
+    // Recording the providers unusable routes them through the gate the suite
+    // already has (`provider-health.ts` → `test.skip` with the reason), so their
+    // specs skip and every other spec runs. The run is still marked: the annotation
+    // below surfaces in the job log, `Collect models` is already red, and the
+    // report's top-level errors no longer hide a whole shard (see the `partial`
+    // verdict in `scripts/check-run-integrity.mjs`).
+    const affected = providersForEnvKeys(missing);
+    const persisted = writeProviderHealth(
+      degradeProviders(
+        readProviderHealth(),
+        affected,
+        `${missing.join(", ")} is set in the environment but was never imported as a ` +
+          `Langflow global variable — \`Collect models\` did not complete. Specs read ` +
+          `credentials from Langflow, so a live call would fail with a misleading ` +
+          `node_duration/build timeout (#1058).`,
+      ),
+    );
+
+    console.error(`::error::${message}`);
+    console.error(
+      persisted
+        ? `[preflight] recorded ${affected.join(", ")} as inactive — their specs will SKIP; ` +
+            `the rest of the shard runs.`
+        : `[preflight] WARNING: could not persist provider health, so ${affected.join(", ")} ` +
+            `specs may attempt a live call against a key Langflow does not have.`,
+    );
+    return;
   }
   console.warn(`${message}\n(local run — warning only, not blocking.)`);
 }

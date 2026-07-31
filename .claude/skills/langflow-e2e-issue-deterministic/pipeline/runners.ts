@@ -1,8 +1,51 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import type { PwStats } from './types.ts'
+import type { PwStats, RunClass, TestEntry } from './types.ts'
 
 // ---------- pure, unit-tested ----------
+
+/**
+ * Environment failures that say nothing about the spec under test. The
+ * backend wedge measured in #1074 (gunicorn kills the single worker 7-10x per
+ * shard) drops whatever request is in flight, so any call — most often the
+ * `/api/v1/auto_login` in `getAuthToken` — dies on its own timeout.
+ */
+export const INFRA_SIGNATURES: RegExp[] = [
+  /Timeout \d+ms exceeded[\s\S]{0,400}\/api\/v1\/auto_login/,
+  /socket hang up/i,
+  /ERR_EMPTY_RESPONSE/,
+  /ERR_CONNECTION_REFUSED/,
+  /ECONNREFUSED/,
+  /ECONNRESET/,
+]
+
+export function isInfraFailure(message: string): boolean {
+  return INFRA_SIGNATURES.some(re => re.test(message))
+}
+
+// Walk the report tree collecting every non-passing result's error text.
+function collectFailureMessages(node: unknown, out: string[]): void {
+  if (Array.isArray(node)) {
+    for (const child of node) collectFailureMessages(child, out)
+    return
+  }
+  if (!node || typeof node !== 'object') return
+  const n = node as Record<string, unknown>
+  // specs before nested suites keeps the messages in source order
+  for (const key of ['specs', 'tests', 'suites']) {
+    if (n[key]) collectFailureMessages(n[key], out)
+  }
+  if (Array.isArray(n.results)) {
+    for (const r of n.results as Array<Record<string, unknown>>) {
+      if (r.status === 'passed' || r.status === 'skipped') continue
+      const err = r.error as { message?: string } | undefined
+      if (err?.message) out.push(err.message)
+      for (const e of (r.errors ?? []) as Array<{ message?: string }>) {
+        if (e.message) out.push(e.message)
+      }
+    }
+  }
+}
 
 export function parsePwJson(raw: string): PwStats | null {
   // Playwright's JSON reporter pretty-prints to stdout, so the payload
@@ -10,10 +53,12 @@ export function parsePwJson(raw: string): PwStats | null {
   const start = raw.indexOf('{')
   const end = raw.lastIndexOf('}')
   if (start < 0 || end <= start) return null
-  let data: { stats?: Record<string, number> }
+  let data: { stats?: Record<string, number>; suites?: unknown }
   try { data = JSON.parse(raw.slice(start, end + 1)) } catch { return null }
   const s = data.stats
   if (!s) return null
+  const failureMessages: string[] = []
+  collectFailureMessages(data.suites, failureMessages)
   return {
     expected: s.expected ?? 0,
     unexpected: s.unexpected ?? 0,
@@ -21,13 +66,66 @@ export function parsePwJson(raw: string): PwStats | null {
     skipped: s.skipped ?? 0,
     durationMs: Math.round(s.duration ?? 0),
     backendErrors: raw.includes('🚨 Backend Error'),
+    failureMessages,
   }
 }
 
-const TEST_RE = /(?<![\w.$])test(?:\.only|\.fixme|\.fail)?\s*\(\s*(['"`])([\s\S]*?)\1\s*,/g
+/**
+ * Split a run into "the spec answered" vs "the environment answered".
+ *
+ * A run whose every failure carries an infra signature is VOID: it is neither
+ * evidence of a defect nor of stability, so the caller re-runs it instead of
+ * counting it. Anything else — including a run with no parseable error but a
+ * backend-error log — stays a real failure, so the classification can never
+ * silence a genuine red.
+ */
+export function classifyRun(stats: PwStats): RunClass {
+  if (stats.unexpected === 0 && stats.flaky === 0 && !stats.backendErrors) return 'clean'
+  const msgs = stats.failureMessages
+  if (msgs.length > 0 && msgs.every(isInfraFailure)) return 'infra-void'
+  return 'real-failure'
+}
 
+const TEST_RE =
+  /(?<![\w.$])test(\.only|\.fixme|\.fail|\.skip)?\s*\(\s*(['"`])([\s\S]*?)\2\s*,/g
+
+/**
+ * Title, modifier and tags of every `test(...)` in a spec file. Tags are read
+ * from the options object between the title and the callback, so a quarantine
+ * (`test.fixme`) and a missing `@stable` are both machine-checkable.
+ */
+export function enumerateTestEntries(source: string): TestEntry[] {
+  const entries: TestEntry[] = []
+  for (const m of source.matchAll(TEST_RE)) {
+    const after = source.slice(m.index + m[0].length)
+    // The options object always precedes the callback; stop at the callback so
+    // the NEXT test's tags can never be attributed to this one.
+    const stop = after.search(/async\s*\(|\(\s*\{|\(\s*\)\s*=>/)
+    const head = after.slice(0, stop === -1 ? 300 : stop)
+    const tagBlock = head.match(/tag:\s*\[([^\]]*)\]/)
+    const tags = tagBlock
+      ? [...tagBlock[1].matchAll(/['"`]([^'"`]+)['"`]/g)].map(t => t[1])
+      : []
+    entries.push({ title: m[3], modifier: m[1] ?? '', tags })
+  }
+  return entries
+}
+
+// Unchanged contract: an unconditionally skipped test is not in play, so it
+// stays out of the burst/report enumeration (a quarantined `.fixme` still
+// shows up — the quarantine gate needs to see it).
 export function enumerateTests(source: string): string[] {
-  return [...source.matchAll(TEST_RE)].map(m => m[2])
+  return enumerateTestEntries(source).filter(e => e.modifier !== '.skip').map(e => e.title)
+}
+
+/**
+ * Titles a force-fail can actually be run against. A `test.fixme`/`test.skip`
+ * never executes, so requiring a red run for it would deadlock FORCE_FAIL.
+ */
+export function enumerateRunnableTests(source: string): string[] {
+  return enumerateTestEntries(source)
+    .filter(e => e.modifier !== '.fixme' && e.modifier !== '.skip')
+    .map(e => e.title)
 }
 
 // ---------- subprocess wrappers (thin; not unit-tested) ----------
@@ -56,11 +154,15 @@ export function ghAssignSelf(repo: string, issue: number): void {
   if (r.code !== 0) throw new Error(`gh assign failed: ${r.stderr}`)
 }
 
-export function ghPrView(url: string): { body: string } {
-  const r = sh('gh', ['pr', 'view', url, '--json', 'body'])
+export function ghPrView(url: string): { body: string; commentUrls: string[] } {
+  const r = sh('gh', ['pr', 'view', url, '--json', 'body,comments'])
   if (r.code !== 0) throw new Error(`gh pr view failed: ${r.stderr}`)
   const j = JSON.parse(r.stdout)
-  return { body: (j.body ?? '') as string }
+  return {
+    body: (j.body ?? '') as string,
+    commentUrls: ((j.comments ?? []) as Array<{ url?: string }>)
+      .map(c => c.url).filter((u): u is string => typeof u === 'string'),
+  }
 }
 
 export function runPlaywright(args: string[]): { stats: PwStats | null; code: number; raw: string } {
@@ -99,6 +201,32 @@ export function gitDiffNames(): string[] {
 // and burned a burst cycle on it.
 export function filterScoutSpecs(files: string[]): string[] {
   return files.filter(f => !/(^|\/)scout[^/]*\.spec\.ts$/i.test(f) && !/-tmp\.spec\.ts$/i.test(f))
+}
+
+/**
+ * Files the branch changed relative to its base — the input to the PR purity
+ * gate. Returns null when the base ref cannot be resolved, so the gate can
+ * fail closed instead of reading "nothing extra".
+ */
+export function gitChangedVsBase(base = 'origin/main'): string[] | null {
+  const r = sh('git', ['diff', '--name-only', `${base}..HEAD`])
+  if (r.code !== 0) return null
+  return r.stdout.split('\n').filter(Boolean)
+}
+
+export function ghRunArtifactName(repo: string, runId: string): string | null {
+  const r = sh('gh', ['api', `repos/${repo}/actions/runs/${runId}/artifacts`,
+    '--jq', '.artifacts[].name'])
+  if (r.code !== 0) return null
+  return r.stdout.split('\n').filter(Boolean).find(n => /playwright-json/.test(n)) ?? null
+}
+
+export function ghRunDownload(repo: string, runId: string, name: string, dir: string): boolean {
+  return sh('gh', ['run', 'download', runId, '--repo', repo, '-n', name, '-D', dir]).code === 0
+}
+
+export function gitIsDirty(path: string): boolean {
+  return sh('git', ['status', '--porcelain', '--', path]).stdout.trim() !== ''
 }
 
 export function gitDiffOf(path: string): string {

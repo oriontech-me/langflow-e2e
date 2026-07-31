@@ -1,5 +1,9 @@
 import * as fs from 'node:fs'
-import type { FFEntry, Phase, PipelineState, PwStats } from './types.ts'
+import * as os from 'node:os'
+import * as path from 'node:path'
+import type {
+  FFEntry, Phase, PipelineState, PwStats, ReproRate, RunClass, RunRecord,
+} from './types.ts'
 import {
   initState, loadState, saveState, ensureStep, completeStep, escalateToDebug,
   setType, abortState, metricsOf, listStates, spineFor, TERMINAL, now,
@@ -7,18 +11,29 @@ import {
 import { classify, detectBodyFormat } from './classify.ts'
 import {
   ghIssueView, ghAssignSelf, ghPrView, runPlaywright, npmRun, gitCurrentBranch,
-  gitDiffNames, gitDiffOf, enumerateTests, getInstanceVersion, getLatestNightlyTag, sh,
+  gitDiffNames, gitDiffOf, enumerateTests, enumerateTestEntries, enumerateRunnableTests,
+  getInstanceVersion, getLatestNightlyTag, sh, classifyRun, gitChangedVsBase,
+  gitIsDirty, ghRunArtifactName, ghRunDownload,
 } from './runners.ts'
 import {
   checkSpecDoc, checkQaDiff, checkForceFailCoverage, checkNoMutationMarkers,
-  checkPrReadiness,
+  checkPrReadiness, checkQuarantineLifted, checkDebugEvidence, checkBranchPurity,
+  checkCiVerdict, symptomsOwnedElsewhere,
 } from './gates.ts'
+import { summarizeRunArtifact } from './artifacts.ts'
 import { instructionFor } from './instructions.ts'
 
 const REPO = 'oriontech-me/langflow-e2e'
 const EXCEPTION_LABELS = ['daily-failure', 'community', 'follow-up']
-export const RESERVED_KEYS = ['runs', 'typecheck', 'lint', 'nightly', 'qaDiff', 'ff', 'finalGreen']
+export const RESERVED_KEYS = [
+  'runs', 'typecheck', 'lint', 'nightly', 'qaDiff', 'ff', 'finalGreen',
+  'reproRate', 'artifactRuns',
+]
 const BURST = Number(process.env.PIPELINE_BURST ?? 3)
+// A wedged backend can void several runs in a row (#1074: the worker is killed
+// 7-10x per shard). Past this many, the environment — not the spec — is the
+// blocker, and the phase says so instead of burning the whole afternoon.
+const MAX_INFRA_VOIDS = Number(process.env.PIPELINE_MAX_INFRA_VOIDS ?? 3)
 
 // ---------- pure helpers (unit-tested) ----------
 
@@ -66,6 +81,43 @@ function touchedSpecFiles(): string[] {
   return gitDiffNames().filter(f => f.endsWith('.spec.ts'))
 }
 
+// Records written before infra classification existed have no `class`; derive
+// it so old state keeps counting the same way it did when it was written.
+function classOf(r: RunRecord): RunClass {
+  return r.class ?? (r.stats.unexpected === 0 && r.stats.flaky === 0 && !r.stats.backendErrors
+    ? 'clean'
+    : 'real-failure')
+}
+
+/**
+ * Run a spec, classifying infra aborts as void and retrying them, so a wedged
+ * backend never masquerades as a spec verdict. Returns the classified runs;
+ * the caller decides what a clean/failed run means for its phase.
+ */
+function runUntilClean(
+  args: string[], target: string, needed: number, existing: RunRecord[], notes: string[],
+): { records: RunRecord[]; voids: number; realFailure: boolean } {
+  const records: RunRecord[] = []
+  let voids = existing.filter(r => r.target === target && classOf(r) === 'infra-void').length
+  let clean = existing.filter(r => r.target === target && classOf(r) === 'clean').length
+  while (clean < needed) {
+    const run = runPlaywright(args)
+    if (!run.stats) throw new Error(`could not parse playwright JSON for ${target}`)
+    const cls = classifyRun(run.stats)
+    records.push({ target, stats: run.stats, class: cls })
+    notes.push(`run ${clean + 1}/${needed} ${target}: ${cls} expected=${run.stats.expected} unexpected=${run.stats.unexpected} flaky=${run.stats.flaky} backendErrors=${run.stats.backendErrors}`)
+    if (cls === 'clean') { clean++; continue }
+    if (cls === 'infra-void') {
+      voids++
+      notes.push(`  ↳ voided: every failure carries an environment signature (auto_login/socket hang up/connection) — not counted, re-running`)
+      if (voids >= MAX_INFRA_VOIDS) return { records, voids, realFailure: false }
+      continue
+    }
+    return { records, voids, realFailure: true }
+  }
+  return { records, voids, realFailure: false }
+}
+
 function guardBranchOwnership(s: PipelineState): void {
   const branch = gitCurrentBranch()
   const other = listStates().find(o =>
@@ -74,6 +126,25 @@ function guardBranchOwnership(s: PipelineState): void {
     fail(`branch "${branch}" belongs to in-flight issue #${other.issue} — one issue per branch`)
   }
   if (branch && branch !== 'main') s.branch = branch
+}
+
+/**
+ * Files this pipeline legitimately produced: whatever SPECIFY and IMPLEMENT
+ * recorded, plus the checklist bullet every spec change edits. Anything else
+ * on the branch came from somewhere the pipeline never went.
+ */
+export function allowedBranchFiles(s: PipelineState): string[] {
+  const spec = s.steps.SPECIFY?.evidence as {
+    specDoc?: string; existingSpec?: string; affectedSpecs?: string[]
+  } | undefined
+  const impl = s.steps.IMPLEMENT?.evidence as { files?: string[] } | undefined
+  return [...new Set([
+    ...(spec?.specDoc ? [spec.specDoc] : []),
+    ...(spec?.existingSpec ? [spec.existingSpec] : []),
+    ...(spec?.affectedSpecs ?? []),
+    ...(impl?.files ?? []),
+    'QA-CHECKLIST.md',
+  ])]
 }
 
 function guardSpecFirst(s: PipelineState): void {
@@ -149,7 +220,7 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
 
   if (s.phase === 'VALIDATE') {
     const ev = rec.evidence as {
-      runs?: Array<{ target: string; stats: PwStats }>
+      runs?: RunRecord[]
       typecheck?: number; lint?: number; nightly?: Record<string, string | null>
       qaDiff?: string[]
     }
@@ -166,16 +237,20 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
       : flags.grep ? [`--grep:${flags.grep}`]
       : touchedSpecFiles()
     for (const t of targets) {
-      const already = ev.runs.filter(r => r.target === t && r.stats.unexpected === 0 && !r.stats.backendErrors)
-      for (let i = already.length; i < BURST; i++) {
-        const args = t.startsWith('--grep:')
-          ? ['--grep', t.slice(7), '--retries=0', '--workers=1']
-          : [t, '--retries=0', '--workers=1']
-        const run = runPlaywright(args)
-        if (!run.stats) { saveState(s); fail(`could not parse playwright JSON for ${t}`) }
-        ev.runs.push({ target: t, stats: run.stats })
-        notes.push(`run ${i + 1}/${BURST} ${t}: expected=${run.stats.expected} unexpected=${run.stats.unexpected} flaky=${run.stats.flaky} backendErrors=${run.stats.backendErrors}`)
-        if (run.stats.unexpected > 0 || run.stats.backendErrors) break
+      const args = t.startsWith('--grep:')
+        ? ['--grep', t.slice(7), '--retries=0', '--workers=1']
+        : [t, '--retries=0', '--workers=1']
+      let outcome
+      try {
+        outcome = runUntilClean(args, t, BURST, ev.runs, notes)
+      } catch (e) {
+        saveState(s)
+        fail(e instanceof Error ? e.message : String(e))
+      }
+      ev.runs.push(...outcome.records)
+      if (outcome.voids >= MAX_INFRA_VOIDS) {
+        saveState(s)
+        fail(`${outcome.voids} runs of ${t} aborted on environment signatures (auto_login timeout / socket hang up / connection refused) — the instance is the blocker, not the spec. Restart it (see langflow-e2e → nightly) and run next again; these runs are recorded as void, not as failures.`)
       }
     }
     if (targets.length === 0) notes.push('no .spec.ts in diff — docs-only change, burst skipped')
@@ -191,8 +266,10 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
   if (s.phase === 'FORCE_FAIL') {
     const ev = rec.evidence as { ff?: FFEntry[]; finalGreen?: PwStats }
     ev.ff ??= []
+    // A test.fixme/test.skip never executes, so demanding a red run for it
+    // would deadlock the phase — only runnable titles are required.
     const required = touchedSpecFiles().map(f => ({
-      file: f, titles: enumerateTests(fs.readFileSync(f, 'utf8')),
+      file: f, titles: enumerateRunnableTests(fs.readFileSync(f, 'utf8')),
     }))
     const missing = checkForceFailCoverage(required, ev.ff)
     const dirty = checkNoMutationMarkers(
@@ -201,11 +278,19 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
     notes.push(dirty.length ? dirty.join('; ') : 'no FF-MUTATION markers in diff ✓')
     if (missing.length === 0 && dirty.length === 0 && !ev.finalGreen) {
       for (const { file } of required) {
-        const run = runPlaywright([file, '--retries=0', '--workers=1'])
-        if (!run.stats || run.stats.unexpected > 0 || run.stats.backendErrors) {
-          fail(`final green run failed for ${file} after FF reverts`)
+        let outcome
+        try {
+          outcome = runUntilClean([file, '--retries=0', '--workers=1'], file, 1, [], notes)
+        } catch (e) {
+          saveState(s)
+          fail(e instanceof Error ? e.message : String(e))
         }
-        ev.finalGreen = run.stats
+        if (outcome.voids >= MAX_INFRA_VOIDS) {
+          saveState(s)
+          fail(`final green run for ${file} kept aborting on environment signatures — restart the instance and run next again`)
+        }
+        if (outcome.realFailure) fail(`final green run failed for ${file} after FF reverts`)
+        ev.finalGreen = outcome.records[outcome.records.length - 1]?.stats
       }
       notes.push('final green run after reverts ✓')
     }
@@ -262,18 +347,37 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
     }
   }
 
+  if (step === 'DEBUG') {
+    const reproRate = (rec?.evidence as { reproRate?: ReproRate } | undefined)?.reproRate
+    problems.push(...checkDebugEvidence({
+      issueBody: s.issueData?.body ?? '',
+      labels: s.issueData?.labels ?? [],
+      verdict: evidence.verdict,
+      summary: evidence.summary,
+      decision: evidence.decision,
+      symptoms: evidence.symptoms,
+      reproRate,
+      mechanismProof: evidence.mechanismProof,
+    }))
+  }
+
   if (step === 'VALIDATE') {
     const ev = (rec?.evidence ?? {}) as {
-      runs?: Array<{ target: string; stats: PwStats }>; typecheck?: number; lint?: number; qaDiff?: string[]
+      runs?: RunRecord[]; typecheck?: number; lint?: number; qaDiff?: string[]
     }
     const runs = ev.runs ?? []
     for (const target of touchedSpecFiles()) {
-      const greens = runs.filter(r =>
-        r.target === target && r.stats.unexpected === 0 && r.stats.flaky === 0 && !r.stats.backendErrors)
+      const greens = runs.filter(r => r.target === target && classOf(r) === 'clean')
+      const voids = runs.filter(r => r.target === target && classOf(r) === 'infra-void')
       if (greens.length < BURST) {
-        problems.push(`need ${BURST} clean --retries=0 runs for ${target}; have ${greens.length} (run next again)`)
+        const voidNote = voids.length ? ` (${voids.length} run(s) voided on environment signatures)` : ''
+        problems.push(`need ${BURST} clean --retries=0 runs for ${target}; have ${greens.length}${voidNote} (run next again)`)
       }
     }
+    problems.push(...checkQuarantineLifted(
+      s.issueData?.body ?? '',
+      touchedSpecFiles().map(f => ({ file: f, entries: enumerateTestEntries(fs.readFileSync(f, 'utf8')) })),
+    ))
     if (ev.typecheck !== 0) problems.push(`typecheck exit=${ev.typecheck}`)
     if (ev.lint !== 0) problems.push(`lint exit=${ev.lint}`)
     if ((ev.qaDiff ?? []).length > 0) problems.push(...ev.qaDiff!)
@@ -282,7 +386,7 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
   if (step === 'FORCE_FAIL') {
     const ev = (rec?.evidence ?? {}) as { ff?: FFEntry[]; finalGreen?: PwStats }
     const required = touchedSpecFiles().map(f => ({
-      file: f, titles: enumerateTests(fs.readFileSync(f, 'utf8')),
+      file: f, titles: enumerateRunnableTests(fs.readFileSync(f, 'utf8')),
     }))
     problems.push(...checkForceFailCoverage(required, ev.ff ?? []))
     problems.push(...checkNoMutationMarkers(
@@ -308,12 +412,22 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
       problems.push('evidence.prUrl required')
     } else {
       try {
-        const { body } = ghPrView(evidence.prUrl)
+        const { body, commentUrls } = ghPrView(evidence.prUrl)
         problems.push(...checkPrReadiness({
           branch: gitCurrentBranch(), prBody: body, issue: s.issue,
           isWave: s.issueData?.milestone != null,
           labels: s.issueData?.labels ?? [],
         }))
+        problems.push(...checkBranchPurity(gitChangedVsBase(), allowedBranchFiles(s)))
+        problems.push(...checkCiVerdict(evidence, commentUrls))
+        // A symptom another issue owns must be visible to the reviewer, or the
+        // PR reads as if it closed a cause it never touched.
+        for (const owner of symptomsOwnedElsewhere(
+          (s.steps.DEBUG?.evidence as { symptoms?: unknown } | undefined)?.symptoms)) {
+          if (!body.includes(owner)) {
+            problems.push(`symptom owned by ${owner} is not referenced in the PR body — say which row belongs there and why it is not fixed here`)
+          }
+        }
       } catch (e) {
         problems.push(e instanceof Error ? e.message : String(e))
       }
@@ -328,7 +442,7 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
 async function main() {
   const { command, issue, step, flags, evidence } = parseArgs(process.argv.slice(2))
   if (!command || Number.isNaN(issue)) {
-    fail('usage: cli.ts <next|complete|escalate|ff-run|status|abort|metrics|authorize-pr> <issue> [step] [--flags]')
+    fail('usage: cli.ts <next|complete|escalate|ff-run|repro-run|artifacts|status|abort|metrics|authorize-pr> <issue> [step] [--flags]')
   }
 
   if (command === 'next') {
@@ -403,6 +517,69 @@ async function main() {
     ev.ff.push({ file, test: title, mutation, unexpected: run.stats.unexpected, at: now() })
     saveState(s)
     console.log(`✔ FF recorded: "${title}" failed as expected (unexpected=${run.stats.unexpected}). Now REVERT the mutation.`)
+    return
+  }
+
+  if (command === 'repro-run') {
+    const s = load(issue)
+    guardBranchOwnership(s)
+    if (s.phase !== 'DEBUG') fail(`repro-run only valid in DEBUG (now: ${s.phase})`)
+    const spec = flags.spec
+    if (!spec) fail('repro-run needs --spec <path> [--grep "<title>"] [--runs N]')
+    if (!fs.existsSync(spec)) fail(`spec not found: ${spec}`)
+    // The point of this measurement is the rate BEFORE the fix. Measuring a
+    // patched spec proves nothing about the defect it is supposed to expose.
+    if (gitIsDirty(spec) && flags['allow-dirty'] === undefined) {
+      fail(`${spec} already has local changes — repro-run measures the PRE-fix baseline. Stash the fix, or pass --allow-dirty '' if the change cannot affect the measured behavior.`)
+    }
+    const total = Number(flags.runs ?? 10)
+    const args = [spec, '--retries=0', '--workers=1']
+    if (flags.grep) args.push('--grep', flags.grep.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    let failures = 0, voids = 0
+    const signatures: string[] = []
+    for (let i = 1; i <= total; i++) {
+      const run = runPlaywright(args)
+      if (!run.stats) fail(`could not parse playwright JSON on run ${i}`)
+      const cls = classifyRun(run.stats)
+      if (cls === 'infra-void') voids++
+      else if (cls === 'real-failure') {
+        failures++
+        const first = run.stats.failureMessages[0]
+        if (first) signatures.push(first.split('\n')[0].slice(0, 200))
+      }
+      console.log(`repro ${i}/${total}: ${cls} (unexpected=${run.stats.unexpected} flaky=${run.stats.flaky} ${Math.round(run.stats.durationMs / 1000)}s)`)
+    }
+    const rec = ensureStep(s, 'DEBUG')
+    const ev = rec.evidence as { reproRate?: ReproRate }
+    ev.reproRate = {
+      spec, grep: flags.grep, runs: total, failures, voids,
+      signatures: [...new Set(signatures)], at: now(),
+    }
+    saveState(s)
+    const pct = total > 0 ? Math.round((failures / total) * 100) : 0
+    console.log(`✔ baseline recorded: ${failures}/${total} failed (${pct}%), ${voids} voided on environment signatures`)
+    if (failures === 0) {
+      console.log('note: the defect never reproduced — either raise --runs or prove the mechanism another way and pass evidence.mechanismProof at complete DEBUG.')
+    }
+    return
+  }
+
+  if (command === 'artifacts') {
+    const s = load(issue)
+    const runId = flags.run
+    if (!runId) fail('artifacts needs --run <workflow-run-id> [--filter "<test title>"]')
+    const name = ghRunArtifactName(REPO, runId)
+    if (!name) fail(`no playwright-json artifact on run ${runId} (expired, or the run produced none)`)
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), `pipeline-${issue}-`))
+    if (!ghRunDownload(REPO, runId, name, dir)) fail(`gh run download failed for artifact ${name}`)
+    const file = fs.readdirSync(dir).find(f => f.endsWith('.json'))
+    if (!file) fail(`artifact ${name} contains no .json`)
+    const lines = summarizeRunArtifact(fs.readFileSync(path.join(dir, file), 'utf8'), flags.filter)
+    for (const l of lines) console.log(l)
+    const rec = ensureStep(s, s.phase === 'DEBUG' ? 'DEBUG' : s.phase)
+    const ev = rec.evidence as { artifactRuns?: string[] }
+    ev.artifactRuns = [...new Set([...(ev.artifactRuns ?? []), runId])]
+    saveState(s)
     return
   }
 

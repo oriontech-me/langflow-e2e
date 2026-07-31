@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/component-breaking-change-alert.spec.ts`
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev9`)
 
 ---
 
@@ -92,6 +92,29 @@ Each assertion fails if the breaking-change alert regresses: e.g. every breaking
 component routed to a silent `update-button` (no `review-button` left, toolbar
 falls back to "Update All"), the warning copy removed, the backup default flipped
 off, or a breaking component pre-selected (submit enabled).
+
+### The banner is gated on the component registry, not on elapsed time (#1061)
+
+The outdated/breaking diff is computed against the frontend's component
+registry, fetched at app bootstrap by `GET /api/v1/all?force_refresh=true`.
+Measured on the running nightly, the banner appears **≈ the duration of that
+request + ~1 s**: stalling the response by 8 s renders the banner at 8.9 s, and
+stalling it by 20 s renders it at 21.0 s. Nothing is computed one-shot against
+an empty store — the diff re-runs when the registry lands.
+
+That makes a fixed wait on the banner a wait on someone else's clock. The
+request rebuilds the whole registry (`force_refresh=true`) on a backend the
+daily pins to a single worker while two Playwright workers share it, so it can
+outlast any window chosen in advance; the original 30 s bound is exactly what
+expired on 2026-07-27 and 2026-07-29 (`element(s) not found`, test duration
+38 s, retry green in 6 s once the registry was warm).
+
+The import helper therefore **waits for the registry response itself** before
+opening the flow, and only then asserts the banner within a short window. The
+generous bound belongs to the environment-dependent request; the assertion on
+the product's own behaviour stays tight, so a genuinely missing banner still
+fails fast instead of hiding behind a long timeout. The two failures are also
+distinguishable in the log: a registry that never lands names the registry.
 
 ### Frozen-fixture caveat
 

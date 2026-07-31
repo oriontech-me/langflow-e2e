@@ -126,12 +126,27 @@ def ensure_model_selected(
 ) -> list:
     """Patch model components so the witness flow can build.
 
-    A starter's model component may ship with an empty `model_name` / `provider`
-    (the unified `LanguageModelComponent` on latest requires an explicit
-    selection — otherwise the build fails with "A model selection is required",
-    #905). Fill any empty model field in place so the flow is executable. Returns
-    the list of node types that were patched (for reporting). Non-empty fields
-    (e.g. `OpenAIModel` shipping `gpt-4o-mini`) are left untouched.
+    A starter's model component ships with no model selected, and the build fails
+    with "A model selection is required" (#905). Fill the selection in place so
+    the flow is executable. Returns the list of node types that were patched (for
+    reporting). Non-empty fields are left untouched.
+
+    **Fill the unified selector, not the legacy overrides (#1004).** Since 1.11.1
+    `LanguageModelComponent` carries a required `model` field (`type: model`,
+    `input_types: ['LanguageModel']`) and demotes `provider` / `model_name` to
+    advanced *overrides* of it. Writing the overrides while `model` stays empty is
+    rejected at build time:
+
+        Error running method "text_response": Model name/provider overrides
+        require a built-in model selection, not a connected model object.
+
+    which is what broke the baseline every day from 2026-07-23 (#1004). Measured
+    against `langflow:1.11.1` and `langflow-nightly:1.12.0.dev9`, both of which
+    ship the same node shape: `model` as a plain string builds and runs; a
+    `{provider, model_name}` dict fails with "A model selection is required"; the
+    legacy-overrides-only patch reproduces the #1004 error. So when the selector
+    exists, set it and leave the overrides alone; the legacy branch stays for
+    builds that predate it (e.g. `OpenAIModel`).
     """
     patched = []
     for node in (template.get("data") or {}).get("nodes", []):
@@ -140,12 +155,20 @@ def ensure_model_selected(
             continue
         tmpl = data.get("node", {}).get("template", {})
         changed = False
-        if "provider" in tmpl and not tmpl["provider"].get("value"):
-            tmpl["provider"]["value"] = provider
-            changed = True
-        if "model_name" in tmpl and not tmpl["model_name"].get("value"):
-            tmpl["model_name"]["value"] = model
-            changed = True
+        if "model" in tmpl:
+            if not tmpl["model"].get("value"):
+                tmpl["model"]["value"] = model
+                changed = True
+        else:
+            if "provider" in tmpl and not tmpl["provider"].get("value"):
+                tmpl["provider"]["value"] = provider
+                changed = True
+            if "model_name" in tmpl and not tmpl["model_name"].get("value"):
+                tmpl["model_name"]["value"] = model
+                changed = True
+        # The api_key field takes the NAME of the global Credential (Langflow
+        # auto-imports OPENAI_API_KEY on startup). Harmless alongside the unified
+        # selector — verified building both with and without it.
         if "api_key" in tmpl and not tmpl["api_key"].get("value"):
             tmpl["api_key"]["value"] = api_key_var
             changed = True
