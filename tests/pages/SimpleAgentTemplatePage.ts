@@ -112,7 +112,15 @@ export class SimpleAgentTemplatePage extends BasePage {
     // and selecting an Ollama model must CLEAR it. Measured on 1.12.0.dev10 after
     // selecting `Ollama-llama3.1:latest`: `api_key.value === ""` with
     // `model.value[0] = { name: "llama3.1:latest", provider: "Ollama" }`. So `""` is
-    // the settled state to wait for, and the guard still proves both axes.
+    // the settled state to wait for.
+    // But what carries the proof for a keyless provider is the MODEL axis, and the
+    // caller has to supply it. `credentialOf()` returns `""` for an absent field
+    // too, and on the lane this exists for — every hosted key dead, so nothing
+    // prefills `api_key` at mount — `""` is ALSO the state before anything was
+    // selected. With `model` passed the guard still blocks on a real transition,
+    // and the routed path always pins one (`OLLAMA_TEST_MODEL` is mandatory in
+    // `resolveTestTargets`); called for a keyless provider WITHOUT a model it
+    // would settle on the first read and prove nothing.
     const config = providerConfigMap[provider];
     await this.waitForAgentCredentialSettled(
       flowId,

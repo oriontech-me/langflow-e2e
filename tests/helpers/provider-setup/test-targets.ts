@@ -351,6 +351,16 @@ function resolveRoutedTarget(
   return {
     label: `${provider} / ${model}`,
     options: { provider, model },
+    // A FORWARD SEAM, not a live gate — and saying so is the point, because the
+    // line reads like health enforcement. `providerSkipReasons()` is built only
+    // from the `inactive` records in `providers.json`, and this same change takes
+    // keyless providers out of the `collect-models` sweep on purpose, so nothing
+    // can ever put `ollama` in that map today; the unit test that exercises this
+    // branch has to inject one. It is wired anyway so a future keyless health
+    // signal lands here instead of being added as a second, divergent check —
+    // but do not read it as the reason an unreachable instance is caught. That
+    // is `setupOllama`, which FAILS with `OLLAMA_PROVIDER_UNREACHABLE` rather
+    // than routing the misconfiguration through a skip.
     skipReason: skipReasons.get(provider),
   };
 }
