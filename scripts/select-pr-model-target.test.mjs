@@ -4,7 +4,7 @@
 // Why these exist: the two ways to get this wrong both read as success.
 //
 //  - Emitting `MODEL_TEST_PROVIDER` without `MODEL_TEST_ID` does not narrow the
-//    lane, it *widens* it: `getTestTargets()` skips the first-per-provider dedup
+//    lane, it *widens* it: `resolveTestTargets()` skips the first-per-provider dedup
 //    on that branch and runs every model the provider exposes (41 openai entries
 //    in the 2026-07-30 catalog). A cost fix that becomes a 41x cost regression
 //    would look exactly like a working one in the log, so the pair invariant is

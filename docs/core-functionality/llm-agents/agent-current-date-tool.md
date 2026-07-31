@@ -72,7 +72,7 @@ guards the toggle→toolkit wiring; `@agents` — agent tool configuration;
 
 ## Step by step *(required)*
 
-The spec generates tests per active model via the `getTestTargets()`
+The spec generates tests per active model via the `resolveTestTargets()`
 machinery (family standard). Per model, a serial describe with two tests:
 
 **Test 1 — toggle ON (default): the date tool exists and returns today (§6.5)**

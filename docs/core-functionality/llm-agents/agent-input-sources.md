@@ -49,7 +49,7 @@ drives input through the Playground.
 
 ## Step by step *(required)*
 
-The spec generates **2 tests per active model** via `getTestTargets()` (default:
+The spec generates **2 tests per active model** via `resolveTestTargets()` (default:
 1 model per active provider; `ALL_MODELS=true` runs all models in `models.json`).
 A per-run token `SENTINEL_<Date.now()>` is generated so a match is unambiguous.
 

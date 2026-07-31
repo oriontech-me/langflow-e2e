@@ -1,6 +1,5 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -13,7 +12,7 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
-import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
+import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 
 /**
  * Agent Markdown output (QA-CHECKLIST §6.5, "Agent returns output in correctly
@@ -49,83 +48,6 @@ const PROMPT =
   "items `- alpha`, `- beta`, `- gamma`; then a separate paragraph containing the " +
   "word **important** in bold; then a single fenced code block whose only content " +
   "is print('hello'). Output nothing else.";
-
-// Model families that are not chat-capable — excluded when resolving a model.
-const NON_CHAT = /embedding|tts|audio|whisper|realtime|image|moderation|search/i;
-
-interface ModelRecord {
-  provider: string;
-  model: string;
-}
-
-interface TestTarget {
-  label: string;
-  options: LoadSimpleAgentOptions;
-  skipReason?: string;
-}
-
-function getModelsFromJson(): ModelRecord[] {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/models.json",
-  );
-  if (!fs.existsSync(jsonPath)) {
-    console.warn("models.json not found — run collect-models.spec.ts first.");
-    return [];
-  }
-  return JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ModelRecord[];
-}
-
-// Resolve a chat model for a provider: MODEL_TEST_ID wins (if it belongs to the
-// provider), otherwise the first non-excluded model in models.json.
-function resolveChatModel(provider: string, models: ModelRecord[]): string | undefined {
-  const forProvider = models.filter((m) => m.provider === provider).map((m) => m.model);
-  const envId = process.env.MODEL_TEST_ID;
-  if (envId && forProvider.includes(envId)) return envId;
-  return forProvider.find((m) => !NON_CHAT.test(m)) ?? forProvider[0];
-}
-
-// One target per active provider, each with a resolved chat model. Honors the
-// MODEL_TEST_PROVIDER override (single provider); MODEL_TEST_ID (via
-// resolveChatModel) further pins the model when it belongs to that provider.
-function getTestTargets(): TestTarget[] {
-  const skipReasons = providerSkipReasons();
-  const allModels = getModelsFromJson();
-
-  if (allModels.length === 0) {
-    const fallbackProvider = Object.keys(providerConfigMap)[0] as Provider;
-    console.warn("models.json not found or empty — run collect-models.spec.ts first.");
-    return [{
-      label: `provider:${fallbackProvider} (fallback)`,
-      options: { provider: fallbackProvider },
-      skipReason: skipReasons.get(fallbackProvider),
-    }];
-  }
-
-  if (process.env.MODEL_TEST_PROVIDER) {
-    const provider = process.env.MODEL_TEST_PROVIDER;
-    const model = resolveChatModel(provider, allModels);
-    return [{
-      label: `${provider} / ${model ?? "(no chat model)"}`,
-      options: { provider: provider as Provider, model },
-      skipReason:
-        skipReasons.get(provider) ??
-        (model ? undefined : `Provider "${provider}" has no chat model in models.json`),
-    }];
-  }
-
-  const providers = Array.from(new Set(allModels.map((m) => m.provider)));
-  return providers.map((provider) => {
-    const model = resolveChatModel(provider, allModels);
-    return {
-      label: `${provider} / ${model ?? "(no chat model)"}`,
-      options: { provider: provider as Provider, model },
-      skipReason:
-        skipReasons.get(provider) ??
-        (model ? undefined : `Provider "${provider}" has no chat model in models.json`),
-    };
-  });
-}
 
 // Flows created by the template load are tracked here and deleted by id in
 // afterEach — loadTemplateByName does NO cleanup (post-#553 contract), and the
@@ -197,7 +119,7 @@ async function openPlayground(page: Page): Promise<void> {
   await expect(chatInput).toHaveValue(PROMPT, { timeout: 15000 });
 }
 
-const targets = getTestTargets();
+const targets = resolveTestTargets({ tier: "tool-calling", requires: "chat" });
 
 // SimpleAgentTemplatePage.load() deletes all flows before loading the template.
 // File-level serial mode prevents parallel provider blocks from wiping each

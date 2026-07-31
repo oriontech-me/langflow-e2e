@@ -77,7 +77,7 @@ running as concurrent load.
 
 ## Step by step *(required)*
 
-The spec generates **1 test per active model** via `getTestTargets()` (same
+The spec generates **1 test per active model** via `resolveTestTargets()` (same
 machinery as `agent-max-iterations.spec.ts` / `agent-tool-name-validation.spec.ts`).
 
 **Test — agent handles a tool error and continues execution** (§6.4)

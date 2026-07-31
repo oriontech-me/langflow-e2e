@@ -97,9 +97,10 @@ reliable signal (fail — invalidates the positive assertion).
 
 ## Model strategy
 
-- Parameterized per provider/model from `models.json` (inline `getTestTargets`,
-  mirroring `agent-component-regression.spec.ts` in this folder — there is no
-  shared export yet).
+- Parameterized per provider/model from `models.json` via the shared
+  `resolveTestTargets({ tier: "tool-calling" })` in
+  `helpers/provider-setup/test-targets.ts` (#1184 replaced the inline copy this
+  spec used to mirror from `agent-component-regression.spec.ts`).
 - Requires `collect-models.spec.ts` to have run and at least one provider API key
   in `.env`. Without keys/data, every target skips with a reason (no false pass).
 - Run with `--workers=1` (agent specs create named flows that collide in parallel).

@@ -1,6 +1,5 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -10,9 +9,9 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
+import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
 
 /**
  * Agent robustness on a degenerate model output (QA-CHECKLIST §6.5,
@@ -38,85 +37,6 @@ if (!process.env.CI) {
 // would normally answer, so a refusal / empty reply can only come from the
 // instruction we set.
 const USER_MESSAGE = "What is the capital of France?";
-
-interface ModelRecord {
-  provider: string;
-  model: string;
-}
-
-interface TestTarget {
-  label: string;
-  options: LoadSimpleAgentOptions;
-  skipReason?: string;
-}
-
-function getModelsFromJson(): ModelRecord[] {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/models.json",
-  );
-  if (!fs.existsSync(jsonPath)) {
-    console.warn("models.json not found — run collect-models.spec.ts first.");
-    return [];
-  }
-  return JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ModelRecord[];
-}
-
-function getTestTargets(): TestTarget[] {
-  const skipReasons = providerSkipReasons();
-
-  if (process.env.MODEL_TEST_ID) {
-    const model = process.env.MODEL_TEST_ID;
-    const allModels = getModelsFromJson();
-    const record = allModels.find((m) => m.model === model);
-
-    if (!record) {
-      console.warn(
-        `MODEL_TEST_ID="${model}" not found in models.json — provider cannot be inferred. ` +
-        `Run collect-models.spec.ts first, or set MODEL_TEST_PROVIDER.`,
-      );
-      return [{ label: `model:${model}`, options: { model } }];
-    }
-
-    const provider = record.provider as Provider;
-    return [{
-      label: `${provider} / ${model}`,
-      options: { provider, model },
-      skipReason: skipReasons.get(provider),
-    }];
-  }
-
-  const allModels = getModelsFromJson();
-
-  if (allModels.length === 0) {
-    const fallbackProvider = Object.keys(providerConfigMap)[0] as Provider;
-    console.warn("models.json not found or empty — run collect-models.spec.ts first.");
-    return [{
-      label: `provider:${fallbackProvider} (fallback)`,
-      options: { provider: fallbackProvider },
-      skipReason: skipReasons.get(fallbackProvider),
-    }];
-  }
-
-  let models = allModels;
-
-  if (process.env.MODEL_TEST_PROVIDER) {
-    models = models.filter((m) => m.provider === process.env.MODEL_TEST_PROVIDER);
-  } else if (process.env.ALL_MODELS !== "true") {
-    const seen = new Set<string>();
-    models = models.filter((m) => {
-      if (seen.has(m.provider)) return false;
-      seen.add(m.provider);
-      return true;
-    });
-  }
-
-  return models.map((m) => ({
-    label: `${m.provider} / ${m.model}`,
-    options: { provider: m.provider as Provider, model: m.model },
-    skipReason: skipReasons.get(m.provider),
-  }));
-}
 
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
   try {
@@ -212,7 +132,7 @@ async function expectMarkerInPersistedReply(
     .toBe("marker-persisted");
 }
 
-const targets = getTestTargets();
+const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // SimpleAgentTemplatePage.load() deletes all flows before loading the template.
 // File-level serial mode prevents parallel provider blocks from wiping each
