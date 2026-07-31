@@ -12,26 +12,19 @@ import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlowFromStarter } from "../../../helpers/flows/create-flow-from-starter";
-import { dismissOnboardingIfPresent } from "../../../helpers/ui/dismiss-onboarding";
+import { openFlowById } from "../../../helpers/flows/open-flow-by-id";
 
 // Id of the flow this file creates, so afterEach deletes exactly it (#515).
 const createdFlowIds: string[] = [];
 
-// Open a flow (freshly created, or a reopen of the same one) addressed by id and
-// wait for the canvas. Reopening by id — not `list-card.first()` — is what makes
-// the persistence checks parallel-safe: `.first()` would open whichever card is
-// on top of the shared home grid, i.e. another worker's flow (#684).
-async function openFlowById(page: Page, flowId: string): Promise<void> {
-  await page.goto(`/flow/${flowId}`);
-  await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-    timeout: 100000,
-    state: "visible",
-  });
-  await page.waitForTimeout(500);
-  // The onboarding popup overlays the canvas on entry and intercepts the
-  // settings clicks lockFlow/unlockFlow issue — dismiss it first (#684).
-  await dismissOnboardingIfPresent(page);
-}
+// Entry is the shared helper (#1214). The local copy this replaces addressed the
+// flow by id for the same reason — `list-card.first()` opens whichever card is on
+// top of the shared home grid, i.e. another worker's flow (#684) — but carried an
+// unexplained 100 s canvas deadline, an arbitrary `waitForTimeout(500)`, and an
+// onboarding dismiss that is measurably a no-op at entry (upstream arms the
+// tooltip on a 10 s idle timer, so the probe looked ~8 s too early). The helper
+// suppresses the overlay outright and gates on the flow being writable, which
+// this spec needs: every step below mutates the flow through the settings menu.
 
 test.afterEach(async ({ page }) => {
   const ids = createdFlowIds.splice(0);

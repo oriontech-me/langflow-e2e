@@ -1,6 +1,6 @@
 # Lock Flow — functional editing-prevention on the canvas
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -53,10 +53,13 @@ on the fresh nightly. `@components` — node/edge canvas manipulation; `@workspa
 **Test — user must be able to lock a flow and it must be saved**
 
 1. Create a uniquely-named Basic Prompting flow via the API
-   (`createFlowFromStarter`) and open it by id (`/flow/{id}`); id captured for
-   teardown. Wait for `canvas_controls_dropdown`. Reopens later in the test also
-   go by id (not `list-card.first()`) so parallel workers never open each
-   other's flow — see Notes.
+   (`createFlowFromStarter`) and open it with `openFlowById(page, flowId)`; id
+   captured for teardown. That shared helper (#1214) waits for
+   `canvas_controls_dropdown`, suppresses the assistant onboarding overlay before
+   the load, and gates on the flow being **writable** (`menu_bar_display`
+   enabled) — every step below mutates the flow through the settings menu.
+   Reopens later in the test also go by id (not `list-card.first()`) so parallel
+   workers never open each other's flow — see Notes.
 2. `lockFlow(page)` — open settings, toggle `lock-flow-switch`, save.
 3. Navigate to the flows list (`icon-ChevronLeft`) and reopen the flow via its
    card; assert the `icon-lock` badge is present (lock persisted).

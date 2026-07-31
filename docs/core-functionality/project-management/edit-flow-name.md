@@ -34,11 +34,12 @@ in editor-local state.
    copy the **Basic Prompting** starter graph into a uniquely-named flow of this
    worker's own, over the REST API. Not a click on the shared template card: see
    *The template-entry race* below.
-2. `openFlowById(page, flowId)` — `page.goto('/flow/{id}')`, wait for
-   `canvas_controls_dropdown`, then gate on `menu_bar_display` being **enabled**
-   (write permission resolved). The assistant onboarding tooltip is suppressed
-   before the first load by seeding `langflow-assistant-discovered` in
-   localStorage — see *The onboarding tooltip is armed on a 10 s timer* below.
+2. `openFlowById(page, flowId)` — the shared entry helper (#1214):
+   `page.goto('/flow/{id}')`, wait for `canvas_controls_dropdown`, then gate on
+   `menu_bar_display` being **enabled** (write permission resolved). It also
+   suppresses the assistant onboarding tooltip before the load by seeding
+   `langflow-assistant-discovered` in localStorage — see *The onboarding tooltip
+   is armed on a 10 s timer* below.
 3. For each of two random target names:
    1. `renameFlow(page, { flowName: targetName })` — rename via the flow header
       settings modal; then `renameFlow(page)` (read-only) asserts the committed
@@ -193,7 +194,8 @@ localStorage flag (`langflow-assistant-discovered`, written when the user opens
 the assistant or clicks the tooltip's X), which is **empty in every fresh
 Playwright context**, so every test is exposed on every entry.
 
-Dismissing it on entry does not work, and the reason is worth recording:
+This is owned by `openFlowById` (#1214) since three specs needed it, and
+dismissing it on entry does not work, for a reason worth recording:
 upstream arms the tooltip on an **idle timer of 10 s** after mount
 (`ONBOARDING_TOOLTIP_DELAY_MS` in `CanvasControls.tsx`). A probe right after the
 canvas renders looks ~8 s too early, sees nothing, and the tooltip then pops
