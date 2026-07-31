@@ -9,11 +9,16 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import realFs from "node:fs";
 import { flattenSpans, spanModelUsage, collectOnce, parseProbeLines, poll, summarize } from "./watch-tokens.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
+
+const REPO_ROOT = path.resolve(import.meta.dirname, "..");
+const daily = () =>
+  realFs.readFileSync(path.join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8");
 
 // The exact span shape the spike measured: a component-level llm span with a null
 // modelName carrying the SAME usage as the inner provider span.
@@ -376,4 +381,33 @@ test("a summary-write failure is logged and summarize still resolves 0", async (
     logs.some((l) => /could not write the step summary/.test(l)),
     `expected a summary-write-failure log, got: ${JSON.stringify(logs)}`,
   );
+});
+
+// --- Structural guard: is the daily workflow actually wired to this script? ---
+
+// The wedge cannot be reproduced on demand and neither can a real token spend, so
+// what CAN be asserted cheaply is that the wiring still exists — the same reason
+// the health gate carries a structural guard (#1045).
+test("the daily starts the token recorder before the test step and summarizes after", () => {
+  const text = daily();
+  const start = text.indexOf("node scripts/watch-tokens.mjs");
+  // The bare `npx playwright test --grep "@stable"` prefix also matches the
+  // `prep` job's `--list` step (it enumerates the same suite earlier in the
+  // file), so anchor on the shard run's own flag to find the actual test step.
+  const run = text.indexOf('npx playwright test --grep "@stable" --pass-with-no-tests');
+  const summarize = text.indexOf("node scripts/watch-tokens.mjs --summarize");
+  assert.ok(start > 0, "the daily no longer starts the token recorder");
+  assert.ok(run > 0, "the daily no longer runs the @stable shard step");
+  assert.ok(start < run, "the token recorder must start BEFORE the test step");
+  assert.ok(summarize > run, "the summary must run after the tests");
+});
+
+test("the shard exports TOKENS_ATTRIB so cleanup's sidecar is live", () => {
+  assert.match(daily(), /TOKENS_ATTRIB:/);
+});
+
+test("the token steps never gate the run", () => {
+  const text = daily();
+  const block = text.slice(text.indexOf("Summarize token consumption"));
+  assert.match(block.slice(0, 400), /continue-on-error: true/);
 });
