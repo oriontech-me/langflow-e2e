@@ -222,42 +222,11 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
       ids.clear();
       if (captured.length === 0) return result;
 
-      // BEFORE the deletes, on purpose: deleting a flow 404s its trace (#1197,
-      // design §2/S4), so this is the last moment the data exists. It cannot throw
-      // — `recordTokenAttribution` resolves with its failures — and it is inert
-      // unless the lane asked for it.
-      if (attribution) {
-        result.attribution = await recordTokenAttribution({
-          request,
-          flowIds: captured,
-          test: attribution.test,
-          file: attribution.file,
-        });
-        if (result.attribution.skipped.length > 0) {
-          console.warn(
-            `⚠️  token attribution skipped ${result.attribution.skipped.length} flow(s): ` +
-              result.attribution.skipped.join("; "),
-          );
-        }
-      }
-
-      // Take the page off the flow canvas BEFORE deleting anything (#1023/#1103):
-      // an editor left mounted over a flow that is being deleted keeps polling
-      // `GET /flows/{id}/events?since=`, 404s once the flow is gone, and the
-      // fixture logs each one as `🚨 Backend Error` — which the deterministic
-      // pipeline's VALIDATE gate hard-stops on. `about:blank` rather than `/` so the
-      // teardown adds no backend traffic of its own.
-      //
-      // Honest scope: this does NOT fire in every spec. A probe on
-      // `api-component-regression.spec.ts` — failure forced after the component run,
-      // editor mounted, flow deleted underneath — logged zero backend errors either
-      // way, because the build's event stream is already closed by then. It bites
-      // the specs whose editor is still polling, and costs nothing in the rest.
-      // Two of the 51 copies did this; #1103 added it to the folder specs.
-      await page.goto("about:blank").catch(() => {});
-
       // `page.request` carries only browser cookies, so the flows API answers 401 —
-      // pass the bearer explicitly.
+      // pass the bearer explicitly. Resolved BEFORE both the attribution call and the
+      // deletes, and shared by both: an unauthenticated `GET /monitor/traces` answers
+      // 403 on a real Langflow (measured against `langflowai/langflow-nightly` 1.12.0),
+      // which would make every flow land in `skipped` and `recorded` always 0.
       //
       // The throw is CAUGHT but never turned into an empty token silently, which is
       // what `get-auth-token.ts` forbids (#1086: "it must never degrade into the
@@ -283,6 +252,43 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
             `alone, so a 401 here is THAT and not the flow (#1086/#1077): ${authError}`,
         );
       }
+
+      // BEFORE the deletes, on purpose: deleting a flow 404s its trace (#1197,
+      // design §2/S4), so this is the last moment the data exists. It cannot throw
+      // — `recordTokenAttribution` resolves with its failures — and it is inert
+      // unless the lane asked for it. Shares the bearer resolved above: when it could
+      // not be obtained, this runs unauthenticated too and its failures land in
+      // `skipped` — the same documented, counted outcome as everywhere else here.
+      if (attribution) {
+        result.attribution = await recordTokenAttribution({
+          request,
+          flowIds: captured,
+          test: attribution.test,
+          file: attribution.file,
+          headers: options?.headers,
+        });
+        if (result.attribution.skipped.length > 0) {
+          console.warn(
+            `⚠️  token attribution skipped ${result.attribution.skipped.length} flow(s): ` +
+              result.attribution.skipped.join("; "),
+          );
+        }
+      }
+
+      // Take the page off the flow canvas BEFORE deleting anything (#1023/#1103):
+      // an editor left mounted over a flow that is being deleted keeps polling
+      // `GET /flows/{id}/events?since=`, 404s once the flow is gone, and the
+      // fixture logs each one as `🚨 Backend Error` — which the deterministic
+      // pipeline's VALIDATE gate hard-stops on. `about:blank` rather than `/` so the
+      // teardown adds no backend traffic of its own.
+      //
+      // Honest scope: this does NOT fire in every spec. A probe on
+      // `api-component-regression.spec.ts` — failure forced after the component run,
+      // editor mounted, flow deleted underneath — logged zero backend errors either
+      // way, because the build's event stream is already closed by then. It bites
+      // the specs whose editor is still polling, and costs nothing in the rest.
+      // Two of the 51 copies did this; #1103 added it to the folder specs.
+      await page.goto("about:blank").catch(() => {});
 
       const errors: unknown[] = [];
       for (const id of captured) {

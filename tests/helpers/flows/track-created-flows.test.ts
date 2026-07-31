@@ -611,3 +611,34 @@ test("a throwing attribution never fails the cleanup", async (t) => {
   assert.equal(result.attribution?.skipped.length, 1);
   assert.deepEqual(result.deleted, ["f1"]);
 });
+
+test("the attribution GET carries the same bearer the deletes use, not just cookies", async (t) => {
+  // Measured against a real Langflow (langflowai/langflow-nightly 1.12.0.dev10):
+  // an unauthenticated `GET /monitor/traces` answers 403. Pinning this so the
+  // sidecar cannot silently regress back to running on cookies alone.
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-attrib-")), "a.jsonl");
+  const { page, emit } = fakePage();
+  const tracker = trackCreatedFlows(page);
+  emit(creationResponse("f1"));
+  await tracker.settle();
+
+  let tracesAuthHeader: string | undefined;
+  const request = {
+    get: async (url: string, options?: { headers?: Record<string, string> }) => {
+      if (url === "/api/v1/auto_login") {
+        return { ok: () => true, status: () => 200, json: async () => ({ access_token: "tok-abc" }) };
+      }
+      tracesAuthHeader = options?.headers?.Authorization;
+      return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1" }] }) };
+    },
+    delete: async () => ({ ok: () => true, status: () => 200, json: async () => ({}) }),
+  } as unknown as APIRequestContext;
+
+  process.env.TOKENS_ATTRIB = out;
+  t.after(() => delete process.env.TOKENS_ATTRIB);
+
+  const result = await tracker.cleanup(request, { attribution: { test: "t", file: "f" } });
+
+  assert.equal(tracesAuthHeader, "Bearer tok-abc");
+  assert.equal(result.attribution?.recorded, 1);
+});
