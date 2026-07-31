@@ -104,7 +104,7 @@ unaffected (never depended on httpbin).
 
 ## Step by step *(required)*
 
-The spec generates tests per active model via the `getTestTargets()`
+The spec generates tests per active model via the `resolveTestTargets()`
 machinery (same as `agent-tool-error-handling.spec.ts`). Per model, a serial
 describe with two tests:
 

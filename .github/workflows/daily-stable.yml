@@ -28,7 +28,7 @@ on:
         required: false
         default: ""
       recover_timeout_s:
-        description: "Seconds to wait for the backend to answer after Collect models before failing the shard (#1011). Empty = 300."
+        description: "Seconds to wait for the backend to answer after Collect models before failing the shard (#1011). Empty = 420, the shared default of ./.github/actions/wait-for-backend (#1045)."
         required: false
         default: ""
 
@@ -397,60 +397,39 @@ jobs:
       # process-wide WEDGED — container alive, event loop blocked, requests simply
       # not answered (#922, #927). globalSetup polls for 120 s and then throws, so
       # a wedge that outlasts that window costs the ENTIRE shard and reports itself
-      # as a preflight error with no mention of what caused it.
-      # This gate does two things the preflight cannot:
-      #   1. gives the wedge a longer window to clear BEFORE Playwright starts, and
-      #   2. when it does not clear, fails with the real cause named here, in its
-      #      own step, instead of 40 specs' worth of container time and a
-      #      globalSetup stack trace.
-      # It polls with a SHORT per-request timeout over a long deadline, the shape
-      # #928 established: a hung request must fail fast so the loop can keep
-      # polling across the wedge instead of burning the budget on one GET.
-      # Honest about its limits: whether the backend recovers is not guaranteed.
-      # It was first measured on 2026-07-28 (#1019) — not by this gate, and not by
-      # pr-validation's copy either, which did not exist yet. The measurement came
-      # out of the service container's own log on a pr-validation job that died in
-      # globalSetup: same image, same sweep. gunicorn raised WORKER TIMEOUT
-      # ~3.5 min after the sweep ended, SIGKILLed the worker, and the replacement
-      # had finished startup 214 s after the preflight began polling (inferred
-      # from that startup log — nothing was polling by then to observe a 200).
-      # globalSetup's 120 s missed it by 94 s; this step's 300 s would not have,
-      # though only just: 223 s of budget spent, all of it gunicorn's own timer.
-      # So recovery is real and observed, not merely hoped for — but it is one
-      # measurement, and attribution is still what the gate buys unconditionally.
-      # pr-validation's copy widened the deadline to 420 s for that margin and
-      # decodes curl's exit code in its error; #1045 unifies the two.
+      # as a preflight error with no mention of what caused it. The gate does two
+      # things the preflight cannot: it gives the wedge a longer window to clear
+      # BEFORE Playwright starts, and when it does not clear it fails with the real
+      # cause named, in its own step, instead of 40 specs' worth of container time
+      # and a globalSetup stack trace.
+      #
+      # Shared implementation since #1045 — this was the first of four copies (see
+      # the action for what diverged and why one of them lacked a gate entirely).
+      # Two things changed for the daily when it adopted the shared version, both
+      # ported from pr-validation's copy: the failure now names WHICH state it
+      # observed (refused → dead vs accepted-and-unanswered → the #922/#927 wedge)
+      # rather than hedging "wedged or dead", and a heartbeat keeps a step that can
+      # legitimately sit for 5-7 min from reading as hung.
+      #
+      # Recovery is real and observed, not merely hoped for: on 2026-07-28 (#1019)
+      # the service container's log showed gunicorn raising WORKER TIMEOUT ~3.5 min
+      # after a sweep, SIGKILLing the worker, and the replacement serving requests
+      # 214 s after polling began — 94 s past globalSetup's 120 s budget. That is
+      # what the deadline is sized against; attribution is what the gate buys
+      # unconditionally, on every run, whether or not the backend comes back.
       - name: Wait for the backend to recover from the collect-models load
-        shell: bash
-        env:
-          # Generous: a wedge is worth waiting out when the alternative is losing
-          # a ~20 min run. The recover_timeout_s dispatch input shortens it for a
-          # validation run without editing the file; empty on schedule → 300.
-          RECOVER_TIMEOUT_S: ${{ inputs.recover_timeout_s || '300' }}
-          # Only for the log line below — the run is NOT gated on it (see the
-          # Collect models step: a drained key must not kill unrelated specs).
-          COLLECT_MODELS_OUTCOME: ${{ steps.collect_models.outcome }}
-        run: |
-          # Surface the pre-flight's own verdict here, where a reader is already
-          # looking. Without this the step's failure is buried in its log and the
-          # resulting skips look unexplained (the silent-erosion class of #570).
-          if [ "$COLLECT_MODELS_OUTCOME" = "failure" ]; then
-            echo "::warning::Collect models FAILED (outcome=$COLLECT_MODELS_OUTCOME). The run continues by design, but providers.json/models.json may be stale or incomplete, so provider-parameterized specs can skip. Check that step's log for which provider is down."
-          fi
-          deadline=$(( $(date +%s) + RECOVER_TIMEOUT_S ))
-          attempt=0
-          while :; do
-            attempt=$((attempt + 1))
-            if curl -sf --connect-timeout 5 --max-time 8 http://localhost:7860/api/v1/version >/dev/null 2>&1; then
-              echo "Backend answered /api/v1/version on attempt $attempt — proceeding to the @stable run."
-              exit 0
-            fi
-            if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::Langflow did not answer /api/v1/version within ${RECOVER_TIMEOUT_S}s after the Collect models step (${attempt} attempts). The backend is wedged or dead, so the @stable run would abort in globalSetup with zero tests. This is the post-collect-models wedge (#922/#927/#1011), NOT a per-test failure."
-              exit 1
-            fi
-            sleep 5
-          done
+        uses: ./.github/actions/wait-for-backend
+        with:
+          # 420 s for every lane since #1045 (the number's evidence is in the
+          # action). The recover_timeout_s dispatch input still shortens it for a
+          # validation run without editing this file; empty on schedule → 420.
+          timeout_s: ${{ inputs.recover_timeout_s || '420' }}
+          next_step_label: "the @stable run"
+          attribution: "NOT a per-test failure"
+          # Reported, never gated on — a drained key must not kill unrelated
+          # specs (#980), but a silent provider skip must not go unexplained
+          # either (#570).
+          collect_models_outcome: ${{ steps.collect_models.outcome }}
 
       # Mid-run backend liveness (#1030). The gate above only proves the backend
       # is alive when Playwright STARTS. On the heavy shards the single worker
@@ -496,6 +475,69 @@ jobs:
           # configuration rather than a backstop.
           WATCH_MAX_SECONDS: "3600"
 
+      # Rotate the agent specs through ONE provider per run, by weekday (#1185).
+      # The parametrized specs resolve one model per ACTIVE provider, so ~30 @stable
+      # agent tests run an openai AND an anthropic AND a google variant every weekday —
+      # multi-turn agent runs with the tool schemas re-sent every turn (Langflow sets no
+      # `cache_control`, so nothing is cached on the anthropic side). `claude-sonnet-5`
+      # is $3/$15 per MTok against `gpt-4o-mini` at ~$0.15/$0.60: 20-25x per token for
+      # assertions that are about Langflow, not about the provider. The PR lane stopped
+      # paying that on 2026-07-31 (#1169 / PR #1170); this is the same argument applied
+      # to the lane #1170 deliberately left multi-provider.
+      #
+      # Coverage is not what is being cut. The provider-contract specs
+      # (core-functionality/model-provider/*-provider.spec.ts) read NEITHER pin
+      # variable, so every provider is still exercised end-to-end EVERY day — #1184
+      # added a unit test that fails if one of them starts reading one. What rotates is
+      # agent behaviour, which is a Langflow contract rather than a provider one.
+      #
+      # Rotation rather than a fixed pin, at identical cost: a fixed pin would make the
+      # detection window for a provider-specific regression a standing human decision
+      # (#643 anthropic streaming/`thinking`, #963 gemini "Message empty." — both real,
+      # both caught here). Rotating bounds it to <=3 days automatically. The weekday
+      # mapping is FIXED, not evenly distributed, so two Mondays are comparable:
+      #   Mon openai · Tue anthropic · Wed google · Thu openai · Fri anthropic
+      #
+      # A drained key costs a DEVIATION, not the day: the script advances to the next
+      # active provider in the rotation and says so with a ::warning::. It declines to
+      # pin only when every provider is down — where the fallback is moot anyway — and
+      # exits 2 on a providers.json it cannot read (#1035). Losing coverage is the more
+      # expensive failure (#980), and it is not hypothetical: this lane recorded ZERO
+      # tests on 07-28 and 07-31.
+      #
+      # continue-on-error: the pin is an optimisation. If it fails outright, the right
+      # outcome is the costlier multi-provider run, not a lost day — the same trade
+      # `Collect models` above already makes.
+      - name: Rotate the lane to this weekday's provider
+        continue-on-error: true
+        run: node scripts/select-daily-model-target.mjs
+
+      # In-run token consumption recorder (#1197). Langflow computes what each flow
+      # run cost in tokens and discards it: deleting a flow 404s its trace, and this
+      # suite deletes every flow it creates. So the only place to read it is during
+      # the run. One request per tick — /api/v1/monitor/traces answers without a
+      # flow_id — plus one detail fetch per new trace, capped per tick so a burst
+      # cannot pile load onto the single backend (#817/#1048).
+      #
+      # DIAGNOSTIC ONLY: it never fails a step and never aborts the shard.
+      - name: Start the token consumption recorder (shard ${{ matrix.shard }})
+        shell: bash
+        continue-on-error: true
+        run: |
+          nohup node scripts/watch-tokens.mjs > /tmp/tokens.log 2>&1 &
+          echo "$!" > /tmp/tokens.pid
+          disown
+          echo "Token recorder started (pid $(cat /tmp/tokens.pid))."
+        env:
+          TOKENS_BASE_URL: http://localhost:7860
+          TOKENS_OUT: token-probes-${{ matrix.shard }}.jsonl
+          TOKENS_INTERVAL_MS: "15000"
+          TOKENS_TIMEOUT_MS: "8000"
+          # Same reasoning as WATCH_MAX_SECONDS: below the job's timeout-minutes so
+          # it is a real backstop rather than dead configuration.
+          TOKENS_MAX_SECONDS: "3600"
+          TOKENS_DETAIL_CAP: "25"
+
       - name: Run @stable tests (shard ${{ matrix.shard }})
         # Sharded run. The reporter list is NOT overridden on the CLI: setting
         # PW_SHARD_FILE_LEVEL selects the sharded reporter shape in
@@ -525,6 +567,9 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          # Turns the cleanup sidecar on for this lane only: with it unset (local
+          # runs, the PR lane) the helper makes no request and writes no file.
+          TOKENS_ATTRIB: token-attrib-${{ matrix.shard }}.jsonl
 
       # always(): the liveness data is most valuable precisely when the shard
       # went red, and a shard killed by its own timeout still leaves a probe log
@@ -571,6 +616,41 @@ jobs:
           # absence as `measured=false`, which it renders as UNKNOWN — never as
           # a healthy backend.
           if-no-files-found: warn
+
+      # Renamed (#1197 review, minor fix) from a name that claimed this step
+      # summarizes token consumption — it does not; it only stops the recorder
+      # and copies its files. The actual pricing/summarizing happens once, in
+      # the merge job's own step further down this workflow.
+      - name: Stop and collect token consumption (shard ${{ matrix.shard }})
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          if [ -f /tmp/tokens.pid ]; then
+            kill "$(cat /tmp/tokens.pid)" 2>/dev/null || true
+          fi
+          # Let an in-flight append land before the file is copied. 3s was shorter
+          # than a worst-case in-flight tick (TOKENS_DETAIL_CAP × TOKENS_TIMEOUT_MS
+          # = 25 × 8s = 200s if every detail fetch times out sequentially), and the
+          # LAST tick holds the newest traces — the ones most likely to matter for
+          # an anomaly (#1197 review, minor fix). A full worst-case wait is too
+          # costly to pay on every shard; 10s is a modest bump that catches an
+          # ordinary slow tick without meaningfully lengthening the job.
+          sleep 10
+          mkdir -p tokens
+          cp token-probes-${{ matrix.shard }}.jsonl tokens/ 2>/dev/null || true
+          cp token-attrib-${{ matrix.shard }}.jsonl tokens/ 2>/dev/null || true
+          echo "--- token recorder stdout (tail) ---"
+          tail -n 5 /tmp/tokens.log 2>/dev/null || true
+
+      - name: Upload token consumption (shard ${{ matrix.shard }})
+        uses: actions/upload-artifact@v7
+        if: always()
+        continue-on-error: true
+        with:
+          name: tokens-${{ matrix.shard }}
+          path: tokens/
+          if-no-files-found: ignore
 
       # Resolve the ACTUAL Langflow version running in the service container.
       # The image tag is just `:latest` (or an RC/stable tag), so it never
@@ -643,6 +723,21 @@ jobs:
         with:
           pattern: liveness-*
           path: all-liveness
+
+      # Token consumption artifacts from every shard (#1197). Flattened like the
+      # blob download above: each shard names its files uniquely
+      # (token-probes-<shard>.jsonl / token-attrib-<shard>.jsonl), so
+      # merge-multiple cannot collide them.
+      # continue-on-error: same reasoning as the liveness download — a shard that
+      # never uploaded (an old job, a run that died in prep) must not fail the merge.
+      - name: Download shard token consumption data
+        uses: actions/download-artifact@v7
+        if: always()
+        continue-on-error: true
+        with:
+          pattern: tokens-*
+          path: all-tokens
+          merge-multiple: true
 
       - name: Guard — every expected shard produced a blob
         id: shardguard
@@ -852,6 +947,26 @@ jobs:
         if: needs.test.result == 'success' && github.event_name == 'schedule' && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
         run: node scripts/partition-shards.mjs extract results.json > reports/spec-durations.json
 
+      # Token consumption (#1197). Diagnostic: continue-on-error so a defect in the
+      # cost report can never skip the steps that matter on a red day — the same
+      # reasoning the liveness reporter carries.
+      - name: Summarize token consumption
+        if: always()
+        continue-on-error: true
+        run: node scripts/watch-tokens.mjs --summarize
+        env:
+          TOKENS_DIR: all-tokens
+          TOKENS_HISTORY: reports/token-history.jsonl
+          TOKENS_PRICES: scripts/lib/model-prices.json
+          WORKFLOW: daily-stable
+          LANGFLOW_IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
+          # A zero-test run is an infra abort, not a cheap day (#1012): with this at
+          # 0 the summarizer writes no history line, so the abort cannot lower the
+          # anomaly baseline for every run that follows. Reuses `runguard`'s own
+          # count (expected+unexpected+flaky+skipped, #1012) rather than adding a
+          # second computation of the same thing.
+          TESTS_TOTAL: ${{ steps.runguard.outputs.tests_total }}
+
       # Long-lived run history: append one JSON line per scheduled run to
       # reports/daily-history.jsonl and commit it back to main. See
       # reports/README.md for schema and queries. Runs even on failure so
@@ -885,7 +1000,10 @@ jobs:
           # `git status --porcelain` (not `git diff --quiet`) so a brand-new,
           # still-UNTRACKED reports/spec-durations.json (first green run) is
           # detected too — `git diff` ignores untracked files.
-          if [ -z "$(git status --porcelain reports/daily-history.jsonl reports/spec-durations.json 2>/dev/null)" ]; then
+          # reports/token-history.jsonl (#1197) rides the same commit: the token
+          # summarizer is continue-on-error and a zero-test run writes no line at
+          # all, so this file is just as often absent/unchanged as the other two.
+          if [ -z "$(git status --porcelain reports/daily-history.jsonl reports/spec-durations.json reports/token-history.jsonl 2>/dev/null)" ]; then
             echo "No history/durations change to commit."
             exit 0
           fi
@@ -895,6 +1013,9 @@ jobs:
           # Present only after a green run's "Refresh spec durations" step; a no-op
           # add on a red run (file unchanged / already tracked).
           [ -f reports/spec-durations.json ] && git add reports/spec-durations.json
+          # Present only when the summarizer found at least one trace on a non-zero
+          # test run (#1197); a no-op add otherwise.
+          [ -f reports/token-history.jsonl ] && git add reports/token-history.jsonl
           git commit -m "chore(history): record daily run ${{ github.run_id }} [skip ci]"
           # Push with rebase-retry. The suite runs ~35 min, and main routinely
           # advances during that window (merged PRs, the coverage-bot [skip ci]

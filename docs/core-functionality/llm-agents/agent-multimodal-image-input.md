@@ -57,9 +57,19 @@ Playground.
 
 ## Step by step *(required)*
 
-The spec generates **2 tests per active model** via `getTestTargets()` (default:
-1 vision model per active provider). It resolves a vision-capable model for the
-target provider; if none is available the provider is skipped.
+The spec generates **2 tests per active model** via
+`resolveTestTargets({ tier: "tool-calling", requires: "vision" })` (default: 1 vision
+model per active provider). `requires: "vision"` resolves a vision-capable model for
+the target provider — preferring the one `collect-models` settled on, falling back to
+the per-provider preference list only when that model cannot serve vision (#964); if
+none is available the provider is skipped with that reason.
+
+**Changed in #1184:** this spec carried its own copy of the resolver with **no
+`MODEL_TEST_ID` branch**, so pinning a model did not pin this spec — it kept running
+one target per provider. It now honours the documented env precedence like every
+other parametrized spec, which also means `MODEL_TEST_PROVIDER` alone sweeps that
+provider's vision-capable catalog rather than narrowing to one model. Use the
+`MODEL_TEST_PROVIDER` + `MODEL_TEST_ID` pair to narrow.
 
 ---
 

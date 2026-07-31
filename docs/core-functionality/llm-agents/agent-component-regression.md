@@ -24,7 +24,7 @@ no code change was needed, only the verification.
 
 ## Step by step *(required)*
 
-The spec generates **2 tests per active model** via `getTestTargets()`. By default (nightly/CI) it runs 1 model per provider; `ALL_MODELS=true` runs all models from `models.json`.
+The spec generates **2 tests per active model** via `resolveTestTargets()`. By default (nightly/CI) it runs 1 model per provider; `ALL_MODELS=true` runs all models from `models.json`.
 
 ---
 
@@ -116,7 +116,7 @@ Kept separate from the suite because it interrupts the execution state.
 
 ## Notes *(optional)*
 - **Test structure**: 2 tests per model — `agent interaction suite` (5 validations in `test.step` with `expect.soft`) and `agent stop button` (kept separate because it is destructive). Using `expect.soft` ensures all validations run even if one fails, without losing visibility.
-- **Model selection**: by default (`ALL_MODELS` omitted), `getTestTargets()` returns 1 model per active provider (the first one in `models.json`). To run all models: `ALL_MODELS=true`. To filter by provider: `MODEL_TEST_PROVIDER=openai`. For a specific model: `MODEL_TEST_ID=gpt-4o-mini`.
+- **Model selection**: by default (`ALL_MODELS` omitted), `resolveTestTargets()` returns 1 model per active provider (the first one in `models.json`). To run all models: `ALL_MODELS=true`. To filter by provider: `MODEL_TEST_PROVIDER=openai`. For a specific model: `MODEL_TEST_ID=gpt-4o-mini`.
 - **Streaming assertion**: waits for Stop to appear (confirms the model is actively generating), then polls `div-chat-message` text length every 100ms for up to 5s. If text grows during the polling window → streaming confirmed, loop exits early. If Stop never appears → validates final text is non-empty and returns early (step passes, remaining steps continue). If growth is not observed (Stop gone before growth, or model renders faster than the poll interval, or `div-chat-message` testid is applied only after streaming completes) → no assertion; the final-text `expect.soft` is the safety net for truly broken streaming. This replaces the previous fixed 3s sleep + conditional guard that silently passed for fast models.
 - **"Finished in Xs" in the Playground**: conditional check — the text appears in `BotMessage` based on the `isBuilding` cycle of `useFlowStore`; not guaranteed in multi-message sessions or with models that respond very quickly. The canonical duration assertion is `node_duration_agent` on the canvas.
 - **The stop test asserts the Stop button, it no longer probes for it (#992).** It used to read `isVisible({ timeout: 30000 }).catch(() => false)` and `return` early when the button was absent, on the rationale that a fast model may answer before the button renders. That rationale rested on a false premise: `locator.isVisible()` **never waits** — Playwright marks its `timeout` option `@deprecated: this option is ignored` — so the check fired instantaneously, microseconds after the send click, and any render latency at all turned the whole test into a silent no-op that asserted nothing while reporting green. As a `@stable` test that would blind the daily on this surface. The gate is now `expect(stopButton).toBeVisible({ timeout: 30000 })`, which polls for real. The prompt asks for a long story, so the button is visible for the whole stream on every model target; if some future model does finish before it renders, the failure is the correct signal — investigate then, do not restore the bypass.

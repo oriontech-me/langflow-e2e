@@ -1,4 +1,5 @@
 import * as dotenv from "dotenv";
+import { leaveFlowEditor } from "../../../helpers/flows/leave-flow-editor";
 import path from "path";
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
@@ -127,7 +128,18 @@ test(
       // select it deterministically by name (issue #340).
       await renameFlow(page, { flowName: targetFlowName });
 
-      await page.getByTestId("icon-ChevronLeft").click();
+      // Back to the listing through the helper: the bare chevron click can land
+      // behind `SaveChangesModal` and spin indefinitely (#1153), and this call
+      // site had nothing waiting on the navigation at all — so a blocked exit
+      // surfaced downstream inside `openNewFlowTemplatesModal`, i.e. wearing
+      // LE-2019's signature on a run where LE-2019 was not what happened.
+      //
+      // NO `escapeDeadlock` here, deliberately. The recovery is a full page
+      // load, and everything the rest of this test asserts lives in the flow
+      // built on the canvas above; discarding it would trade a clean, attributed
+      // failure at the exit for an inscrutable one ~90 s later at the Run Flow
+      // dropdown. The helper throws with the reason instead.
+      await leaveFlowEditor(page);
 
       await openNewFlowTemplatesModal(page);
 

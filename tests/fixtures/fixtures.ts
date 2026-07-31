@@ -1,6 +1,30 @@
 // tests/fixtures.ts
 import { test as base, expect, type Page } from "@playwright/test";
 import { classifyHttpError } from "./http-error-policy";
+import {
+  classifyFlowError,
+  isUnreadableStream,
+  runStreamSurface,
+  type FlowErrorVerdict,
+} from "./flow-error-policy";
+import {
+  attachRunStreamCapture,
+  type CapturedStream,
+} from "./run-stream-capture";
+
+/**
+ * How long a **v1** run-stream body may take to arrive.
+ *
+ * The pre-#1162 bound, kept. v1 bodies land in milliseconds; the two v1 surfaces
+ * that stream (`text/event-stream`, `application/x-ndjson`) are read on a best
+ * effort and counted as unevaluated when they do not close in time.
+ *
+ * There is deliberately no long budget here any more. Waiting longer for a body
+ * is what #1168 proved cannot work: `response.text()` does not read a stream, it
+ * asks Chromium for a buffer it may already have discarded. v2 does not use this
+ * path at all — see `run-stream-capture.ts`.
+ */
+const V1_BODY_READ_TIMEOUT_MS = 2_000;
 
 /**
  * The escape hatches this fixture bolts onto `page`.
@@ -35,6 +59,17 @@ export const test = base.extend({
       responseBody?: string;
       type?: string;
     }> = [];
+    /**
+     * v2 flow errors, kept OUT of `errors` on purpose (#1162).
+     *
+     * `errors.length` feeds the `📋 Found N backend error(s)` line, and that line
+     * is the human gate — checklist step 4, `CONTRIBUTING.md` step 5. Counting
+     * advisories there would inflate the one number a reviewer scans with entries
+     * that are explicitly not the thing it asks about, which works against the
+     * same log trustworthiness #1084 was written to restore. They get their own
+     * line instead.
+     */
+    const advisoryFlowErrors: Array<{ url: string; message: string }> = [];
 
     // Flag to allow flow errors (for tests that expect errors)
     let allowFlowErrors = false;
@@ -49,6 +84,59 @@ export const test = base.extend({
      * tests (the open half of #1084).
      */
     const ignoredByPolicy = new Map<string, number>();
+    /**
+     * Run streams whose body never produced a verdict, by reason. A stream the
+     * fixture could not read is UNKNOWN, not clean — and the most common reason
+     * (the page aborting the stream on Stop / closing the playground) used to
+     * return silently, so whether a run was evaluated at all came down to who won
+     * a race nobody could see.
+     */
+    const unevaluatedStreams = new Map<string, number>();
+    const countUnevaluated = (reason: string) =>
+      unevaluatedStreams.set(reason, (unevaluatedStreams.get(reason) ?? 0) + 1);
+
+    /**
+     * Render a flow-error verdict. Shared, because the two surfaces reach it by
+     * different routes: v1 through `response.text()` in the listener below, v2
+     * through the CDP capture (#1168).
+     */
+    const reportFlowError = (
+      url: string,
+      verdict: Extract<FlowErrorVerdict, { failed: true }>,
+      advisory: boolean,
+    ) => {
+      console.log(
+        `🚨 Flow Error Detected in Event Stream - ${url}${advisory ? " (ADVISORY)" : ""}`,
+      );
+      console.log(`   Shape: ${verdict.shape}`);
+      console.log(`   Error: ${verdict.message}`);
+      if (advisory) {
+        console.log(
+          `   ADVISORY: this does NOT fail the test yet — the v2 run path is newly covered and 80 of the 89 run-driving specs have no page.allowFlowErrors() (#1165).`,
+        );
+        advisoryFlowErrors.push({ url, message: verdict.message });
+        return;
+      }
+      errors.push({
+        url,
+        status: 200,
+        statusText: "Flow Error",
+        responseBody: verdict.message,
+        type: "flow_error",
+      });
+    };
+
+    /** A v2 stream the capture handed over — complete or cut short. */
+    const judgeCapturedStream = (stream: CapturedStream) => {
+      if (!stream.body) {
+        countUnevaluated(
+          stream.complete ? "empty body" : "stream cancelled before any data",
+        );
+        return;
+      }
+      const verdict = classifyFlowError(stream.body);
+      if (verdict.failed) reportFlowError(stream.url, verdict, true);
+    };
 
     // Add helper method to page context
     (page as any).allowFlowErrors = () => {
@@ -57,6 +145,15 @@ export const test = base.extend({
     (page as any).allowHttpErrors = () => {
       allowHttpErrors = true;
     };
+
+    // Capture v2 run-stream bodies as they arrive. This is what makes the v2
+    // verdict deterministic: the old `response.text()` path lost every run whose
+    // stream outlived its test, which on the node-run path was all of them
+    // (#1168).
+    const runStreamCapture = await attachRunStreamCapture(
+      page,
+      judgeCapturedStream,
+    );
 
     // Monitor API responses for errors
     page.on("response", async (response) => {
@@ -110,176 +207,126 @@ export const test = base.extend({
         }
       }
 
-      // Monitor event delivery endpoints for error messages (streaming/polling/direct)
-      if (
-        status === 200 &&
-        (url.includes("/events?event_delivery=") ||
-          url.includes("/build/") ||
-          url.includes("/run/"))
-      ) {
-        try {
-          const headers = response.headers();
-          const contentType = (headers["content-type"] || "").toLowerCase();
-          const streamingContentHints = [
-            "text/event-stream",
-            "application/grpc",
-            "application/octet-stream",
-            "application/x-ndjson",
-          ];
-          const isStreamLike = streamingContentHints.some((hint) =>
-            contentType.includes(hint),
-          );
-          if (isStreamLike) {
-            console.log(
-              `Skipping streaming response body parsing for ${url} (${contentType || "unknown content-type"})`,
-            );
-            return;
-          }
-
-          const READ_BODY_TIMEOUT_MS = 2000;
-          const bodyTimeoutToken = Symbol("response-body-timeout");
-          let responseBody: string | undefined;
-          let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
+      // Monitor the v1 run-stream endpoints for execution errors. Which URLs
+      // those are, and which shapes count as a failure, live in
+      // `flow-error-policy.ts` where `npm run test:units` covers them — this used
+      // to be an inline URL list plus an inline shape check (#1162).
+      //
+      // v2 does NOT come through here: its body is captured as it arrives, by
+      // `run-stream-capture.ts`. Asking for a v2 body after the fact is the
+      // failure #1168 is about — a run stream routinely outlives its test, and
+      // Chromium has dropped the buffer by the time anyone asks.
+      //
+      // The read below is deliberately NOT awaited and NOT tracked anywhere.
+      // Attaching any `.catch()` to it marks its rejection as handled, and the
+      // intentional throw stops reaching the running test — measured, that turns
+      // "interrupts in 238 ms" into "fails its teardown 10 249 ms later", which
+      // re-creates the exact problem #1059 describes. A unit assertion pins it,
+      // because it regressed once already.
+      const surface =
+        status === 200 ? runStreamSurface(url, response.request().method()) : null;
+      if (surface === "v1") {
+        void (async () => {
           try {
-            const bodyResult = await Promise.race([
-              response.text(),
-              new Promise<symbol>((resolve) => {
-                timeoutId = setTimeout(
-                  () => resolve(bodyTimeoutToken),
-                  READ_BODY_TIMEOUT_MS,
-                );
-              }),
-            ]);
-
-            if (timeoutId) {
-              clearTimeout(timeoutId);
-              timeoutId = undefined;
-            }
-
-            if (bodyResult === bodyTimeoutToken) {
-              console.warn(
-                `Timed out reading response body for ${url}; skipping body inspection.`,
-              );
+            const contentType = (
+              response.headers()["content-type"] || ""
+            ).toLowerCase();
+            if (isUnreadableStream(contentType)) {
+              countUnevaluated("unreadable content type");
               return;
             }
 
-            responseBody = bodyResult as string;
-          } catch (bodyReadErr) {
-            if (timeoutId) {
-              clearTimeout(timeoutId);
-              timeoutId = undefined;
+            const bodyTimeoutToken = Symbol("response-body-timeout");
+            let timeoutId: ReturnType<typeof setTimeout> | undefined;
+            let bodyResult: string | symbol;
+
+            try {
+              bodyResult = await Promise.race([
+                response.text(),
+                new Promise<symbol>((resolve) => {
+                  timeoutId = setTimeout(
+                    () => resolve(bodyTimeoutToken),
+                    V1_BODY_READ_TIMEOUT_MS,
+                  );
+                  (timeoutId as unknown as { unref?: () => void }).unref?.();
+                }),
+              ]);
+            } catch {
+              // Usually the page aborting the stream (Stop, closing the
+              // playground, navigating away). Counted, not silent: whether the
+              // read won that race decided the verdict, which is not something a
+              // suite should learn by accident.
+              countUnevaluated("read failed (stream aborted?)");
+              return;
+            } finally {
+              if (timeoutId) clearTimeout(timeoutId);
             }
-            console.warn(
-              `Failed to read response body for ${url}; skipping body inspection.`,
-              bodyReadErr,
-            );
-            return;
-          }
 
-          if (!responseBody) {
-            return;
-          }
-
-          // Try to parse as JSON and extract error details
-          let errorPreview: string | null = null;
-          let hasError = false;
-
-          try {
-            const lines = responseBody.split("\n");
-            for (const line of lines) {
-              if (line.trim()) {
-                try {
-                  const json = JSON.parse(line);
-
-                  // Check for error in params field (build errors)
-                  if (json.data?.build_data?.params?.startsWith("Error")) {
-                    errorPreview = json.data.build_data.params;
-                    hasError = true;
-                    break;
-                  }
-
-                  // Check for error: true (not error: false)
-                  if (json.data?.error === true || json.error === true) {
-                    const errMsg =
-                      json.data?.error_message ||
-                      json.error_message ||
-                      "Unknown error";
-                    errorPreview = errMsg;
-                    hasError = true;
-                    break;
-                  }
-                } catch (lineParseErr) {
-                  // Skip lines that aren't valid JSON
-                }
-              }
+            if (bodyResult === bodyTimeoutToken) {
+              countUnevaluated("read timed out");
+              return;
             }
-          } catch (parseErr) {
-            // Fallback to string search if JSON parsing completely fails
-          }
-
-          // Fallback: check for Python exceptions in the raw text
-          if (!hasError) {
-            const exceptionPatterns = [
-              /NameError: .+/,
-              /TypeError: .+/,
-              /ValueError: .+/,
-              /AttributeError: .+/,
-              /ImportError: .+/,
-              /KeyError: .+/,
-              /An error occured .+/,
-            ];
-
-            for (const pattern of exceptionPatterns) {
-              const match = responseBody.match(pattern);
-              if (match) {
-                errorPreview = match[0];
-                hasError = true;
-                break;
-              }
+            if (!bodyResult) {
+              countUnevaluated("empty body");
+              return;
             }
-          }
 
-          if (hasError && errorPreview) {
-            console.log(`🚨 Flow Error Detected in Event Stream - ${url}`);
-            console.log(`   Error: ${errorPreview}`);
+            const verdict = classifyFlowError(bodyResult as string);
+            if (!verdict.failed) return;
+            reportFlowError(url, verdict, false);
 
-            const error = {
-              url,
-              status: 200,
-              statusText: "Flow Error",
-              responseBody: errorPreview,
-              type: "flow_error",
-            };
-            errors.push(error);
-
-            // Fail immediately if flow errors are not allowed
+            // Fail the running test, not just its teardown. The throw escapes
+            // this async listener as an unhandled rejection, which Playwright
+            // attributes to the test in flight.
             if (!allowFlowErrors) {
               const errorMessage =
                 `Flow execution error detected during test:\n\n` +
                 `URL: ${url}\n` +
-                `Error: ${errorPreview}\n\n` +
+                `Error: ${verdict.message}\n\n` +
                 `If this error is expected, call page.allowFlowErrors() at the start of your test.`;
 
-              // Use page.close() to fail the test immediately
               (page as any).emit("pageerror", new Error(errorMessage));
               throw new Error(errorMessage);
             }
+          } catch (e) {
+            // Only ignore parsing errors, not our intentional throws
+            if (e instanceof Error && e.message.includes("Flow execution error")) {
+              throw e;
+            }
           }
-        } catch (e) {
-          // Only ignore parsing errors, not our intentional throws
-          if (
-            e instanceof Error &&
-            e.message.includes("Flow execution error")
-          ) {
-            throw e;
-          }
-          // Ignore parsing errors for event streams
-        }
+        })();
       }
     });
 
     await use(page);
+
+    // Judge every v2 stream that was still open when the test ended. These are
+    // exactly the ones the old path always lost — and they are judged on the
+    // bytes that DID arrive, which is enough: an SSE error event lands long
+    // before the stream closes, and `parseStreamEvents()` tolerates a truncated
+    // tail. No waiting, because there is nothing left to wait for (#1168).
+    for (const stream of await runStreamCapture.drain()) {
+      judgeCapturedStream(stream);
+    }
+    if (!runStreamCapture.available) {
+      // No CDP session, so the whole v2 surface went unwatched for this test.
+      // Said out loud rather than left to read as a clean run (#1012).
+      countUnevaluated("v2 capture unavailable (no CDP session)");
+    }
+
+    // Say it out loud: a run stream the fixture could not read means the
+    // flow-error verdict for this test is UNKNOWN, not clean. Same rule as the
+    // daily's runguard (#1012) — a verdict that cannot be produced must not read
+    // as a pass. All four give-up paths funnel here; three of them used to be
+    // silent, and one printed nothing at all.
+    if (unevaluatedStreams.size > 0) {
+      const breakdown = [...unevaluatedStreams.entries()]
+        .map(([reason, count]) => `      ${count}× ${reason}`)
+        .join("\n");
+      console.log(
+        `\n⚠️  run stream(s) NOT evaluated for flow-execution errors — this test's flow-error verdict is unknown, not clean:\n${breakdown}`,
+      );
+    }
 
     if (process.env.PW_HTTP_ERROR_DEBUG === "1" && ignoredByPolicy.size > 0) {
       const breakdown = [...ignoredByPolicy.entries()]
@@ -287,6 +334,15 @@ export const test = base.extend({
         .join("\n");
       console.log(
         `\n🔎 HTTP responses ignored by policy (tests/fixtures/http-error-policy.ts):\n${breakdown}`,
+      );
+    }
+
+    // New coverage on the v2 run path (#1162). Logged, never failing, until the
+    // hatch audit — step 2 in `flow-error-policy.ts`. Printed on its own rather
+    // than folded into the count below, which is the human gate for HTTP errors.
+    if (advisoryFlowErrors.length > 0) {
+      console.log(
+        `\n   ⚠️  ${advisoryFlowErrors.length} flow execution error(s) on the v2 run path — ADVISORY: these do NOT fail the test yet. Review them before trusting this run.`,
       );
     }
 

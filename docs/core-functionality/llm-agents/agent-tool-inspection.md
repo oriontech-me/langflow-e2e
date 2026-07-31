@@ -59,7 +59,7 @@ promotion is gated on the clean non-guarded baseline (#818), per issue #827.
 - Langflow running at `PLAYWRIGHT_BASE_URL`.
 - `models.json` / `providers.json` generated via
   `npx playwright test tests/collect-models.spec.ts`.
-- One active provider (resolved via `getTestTargets` — `MODEL_TEST_ID` /
+- One active provider (resolved via `resolveTestTargets` — `MODEL_TEST_ID` /
   `MODEL_TEST_PROVIDER` when set, else one model per active provider; the
   inspection surface is provider-agnostic).
 - Run with `--workers=1` (agent-family convention — shared instance state).

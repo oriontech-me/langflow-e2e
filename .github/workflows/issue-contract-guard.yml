@@ -17,8 +17,9 @@ on:
     # `edited` closes the loop: fixing the body re-runs the check, and the guard
     # comment is updated in place rather than a new one being appended.
     types: [opened, edited]
-  # Manual entry: run the identical composite action against a chosen issue,
-  # printing the verdict without mutating it by default.
+  # Manual entry: run the identical composite action against a chosen issue, or
+  # over a `since` window, printing the verdict without mutating anything by
+  # default.
   #
   # NOTE on what this does and does not buy. GitHub requires a workflow_dispatch
   # workflow to exist on the DEFAULT branch before it can be dispatched at all
@@ -26,11 +27,23 @@ on:
   # it. What it does buy, from here on: every later change to this guard is
   # testable from its own branch (`gh workflow run ... --ref <branch>`), and the
   # guard can be re-run on demand against any issue.
+  #
+  # `since` exists because the SWEEP path had no on-demand entry at all (#1037).
+  # That path only ever runs as an inline post-step of triage-dispatch.yml's
+  # `execute` job, which fires on a human "pode abrir" after a red daily — and in
+  # the automation's whole lifetime that has happened ZERO times (every
+  # triage-dispatch run to date is a `propose`). So the one code path documented as
+  # failing silently by construction was also the only one that could not be
+  # exercised. Dispatching it here runs the identical composite action, on a real
+  # runner, against real issues, and prints `Contract guard: N checked, …`.
   workflow_dispatch:
     inputs:
       issue:
-        description: "Issue number to check"
-        required: true
+        description: "Issue number to check. Leave empty when using `since`."
+        required: false
+      since:
+        description: "ISO-8601 timestamp (e.g. 2026-07-30T11:34:00Z) — sweep every daily-failure issue created at or after it. Mutually exclusive with `issue`."
+        required: false
       dry_run:
         description: "Print the verdict without commenting or labelling"
         type: boolean
@@ -58,12 +71,26 @@ jobs:
     timeout-minutes: 5
     concurrency:
       # An edit burst must not race itself into duplicate comments.
-      group: issue-contract-guard-${{ github.event.issue.number || inputs.issue }}
+      # A sweep has no issue number, so it groups by run id instead of collapsing
+      # every dispatched sweep onto one cancel-in-progress group.
+      group: issue-contract-guard-${{ github.event.issue.number || inputs.issue || github.run_id }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
+
+      # The action prefers `issue` when both arrive, which would silently ignore a
+      # `since` the dispatcher typed. Say so instead — a guard that quietly checks
+      # something other than what was asked is the class of bug #1037 is about.
+      - name: Reject an ambiguous dispatch
+        if: github.event_name == 'workflow_dispatch' && inputs.issue != '' && inputs.since != ''
+        run: |
+          echo "::error::pass either issue or since, not both — the action would use issue and ignore since."
+          exit 1
+
       - uses: ./.github/actions/guard-dedicated-issue
         with:
           issue: ${{ github.event.issue.number || inputs.issue }}
+          # Empty on the `issues` path, so single-issue behaviour is unchanged.
+          since: ${{ inputs.since }}
           dry_run: ${{ inputs.dry_run || false }}
           github_token: ${{ github.token }}

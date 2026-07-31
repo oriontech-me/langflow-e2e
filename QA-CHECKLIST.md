@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-07-30
+> **Last updated:** 2026-07-31
 
 ---
 
@@ -272,6 +272,13 @@
 - [x] Other numeric operators (`less than`, `less than or equal`, `greater than or equal`) — share the same `float(...)` cast as `greater than` → `core-components/if-else-component-regression.spec.ts`
 - [ ] `max_iterations` + `default_route` cycle break (not implementable as a standalone If-Else feedback loop on 1.12.x — Langflow forms graph cycles only via loop-aware target handles (`from_loop_target_handle`, `target_handle.type is None`) that `LoopComponent` ports provide; a feedback edge into the router's regular `match_text` field-input persists in the flow JSON but does not make the graph iterate (`is_cyclic` stays false, router runs once). `conditional_router.py`'s cycle-break only fires when the router already sits inside a Loop-created cycle. Confirmed live on 1.12.0.dev3; product finding filed upstream; #891, follow-up of #822)
 
+#### 3.9 Human Input (HITL, 1.11.0)
+- [ ] Human Input node config: default Approve/Reject branch handles, custom User Action creates a new handle, configured handles persist after save + reload → `core-components/human-input-node-config.spec.ts`
+
+#### 3.10 Data Operations (1.11.0)
+- [ ] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode → `core-components/data-operations-component.spec.ts`
+- [ ] Legacy operations components link/redirect to Data Operations (legacy flows keep working) → `core-components/data-operations-legacy-link.spec.ts`
+
 ---
 
 ## core-functionality/ — Core and Operational Logic
@@ -432,6 +439,10 @@
 - [x] Use of custom `context_id` for memory isolation → `agent-context-id-isolation.spec.ts`
 - [x] Output formatting (JSON via output_schema, Markdown, plain text) → `agent-structured-output.spec.ts`
 
+#### 7.8 Unified Provider Setup — 1.11.0 additions
+- [ ] OpenAI Compatible as a first-class unified model provider: setup with base URL + key, models discovered, usable by a flow → `core-functionality/model-provider/openai-compatible-provider-setup.spec.ts`
+- [ ] Azure AI Foundry in the unified provider setup: configuration accepts deployment names, provider appears configured (requires Azure credentials in CI) → `core-functionality/model-provider/azure-ai-foundry-provider-setup.spec.ts`
+
 ---
 
 ### core-functionality/observability-monitoring/ — Tracing, Logs and Metrics
@@ -531,6 +542,9 @@
 #### 9.5 Structured Data Output
 - [x] JSON Data output renders as code block → `core-functionality/playground/playground-output-data.spec.ts`
 - [x] DataFrame output renders as Markdown table → `core-functionality/playground/playground-output-data.spec.ts`
+
+#### 9.6 Human-in-the-Loop (1.11.0)
+- [ ] Human Input pauses the run durably, decision card renders in the Playground, Approve routes only the approved branch and the run completes; Reject routes only the reject branch → `core-functionality/playground/human-input-pause-resume.spec.ts`
 
 ---
 
@@ -779,13 +793,13 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
-| `core-components/` — Core Components | 87 | 83 | 3 | 0 | 1 |
+| `core-components/` — Core Components | 90 | 83 | 3 | 0 | 4 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
-| `core-functionality/model-provider/` | 32 | 30 | 2 | 0 | 0 |
+| `core-functionality/model-provider/` | 34 | 30 | 2 | 0 | 2 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 50 | 46 | 3 | 1 | 0 |
+| `core-functionality/playground/` | 51 | 46 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
@@ -793,7 +807,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **474** | **377 (80%)** | **80 (17%)** | **11 (2%)** | **6 (1%)** |
+| **TOTAL** | **480** | **377 (79%)** | **80 (17%)** | **11 (2%)** | **12 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1279,11 +1293,11 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 4 | 0 |
-| `core-components/` — Core Components | 3 | 1 |
+| `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 5 | 2 |
-| `core-functionality/model-provider/` | 2 | 0 |
-| `core-functionality/playground/` | 3 | 0 |
+| `core-functionality/model-provider/` | 2 | 2 |
+| `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |

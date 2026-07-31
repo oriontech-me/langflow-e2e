@@ -13,13 +13,27 @@ before acting; this list drifts.
 | `daily-stable.yml` | **Active stable workflow.** Weekdays 05:00 BRT, `@stable` only; opens `daily-failure` issue; appends `reports/daily-history.jsonl` | consumed by `langflow-e2e-triage` |
 | `weekly-stable.yml` | **Disabled** fallback (superseded by daily-stable); writes `reports/weekly-history.jsonl` | frozen history |
 | `pr-validation.yml` | Every PR: `tsc --noEmit` + ESLint + QA-CHECKLIST guard + impacted-specs gate | `#741`, `#873`, `#892` |
-| `adaptive-impacted.yml` | Runs the impacted-tests subset for a PR | `scripts/impacted-tests.ts`; `CONTRIBUTING.md` → Adaptive impacted-tests |
+| `adaptive-impacted.yml` | Runs the impacted-tests subset for a PR. **`disabled_manually`** | `scripts/impacted-tests.ts`; `CONTRIBUTING.md` → Adaptive impacted-tests |
 | `manual.yml` | Parameterized manual run (Docker tag / URL, suite, grep) | use to dry-run a workflow-adjacent change |
-| `file-watcher.yml` | Detects upstream Langflow changes in critical paths; opens revalidation issue | `CONTRIBUTING.md` → Monitored areas |
+| `file-watcher.yml` | Detects upstream Langflow changes in monitored paths; opens revalidation issue. **`disabled_manually` in Actions + no cron (9da85fa) ⇒ no run history at all**; a dispatch 422s | `scripts/watch-upstream-areas.mjs` (area table + `lfx` decision record + fail-closed guard, `#1092`) |
 | `triage-dispatch.yml` | Automates daily-failure triage dispatch behind an approval gate | `#785/#786/#787`, `#819` |
 | `update-coverage-summary.yml` | Regenerates QA-CHECKLIST generated blocks on merge to `main` | `scripts/coverage-summary.ts`, `stable-tests.ts` |
 | `migration-test.yml` / `migration-fresh-install.yml` / `migration-upgrade-with-flows.yml` | Langflow version-migration checks (latest → nightly) | `migration-test` label |
 | `build-ollama-image.yml` | Builds the Ollama image used by provider specs | — |
+
+## Composite actions (`.github/actions/`)
+
+Where a mechanism is shared by more than one lane. Check here before adding a step
+to a workflow — a copy-pasted step is how the gates diverge (`#1045`).
+
+| Action | Role | Notes / owner doc |
+|---|---|---|
+| `setup-playwright` | Node + deps + browser install for a lane | — |
+| `run-e2e` | Runs a suite and uploads the report | used by `manual.yml` |
+| `wait-for-backend` | Post-collect-models health gate: waits out the wedge, else fails naming the state | `scripts/wait-for-backend.mjs`; `#1011/#1019/#1044/#1045` — adopted by daily/pr/manual/weekly |
+| `resolve-echo-endpoint` | Points `ECHO_BASE_URL` at the lane's `go-httpbin` service | `scripts/resolve-echo-endpoint.mjs`; `#1128` |
+| `guard-dedicated-issue` | Validates a `daily-failure` issue against the dedicated-issue contract | `#1035/#1037` |
+| `auto-remove-stable` | Auto-removes `@stable` from hard failures | `scripts/remove-stable-from-failures.ts`, `#476` |
 
 ## Scripts (`scripts/`)
 
@@ -38,6 +52,9 @@ before acting; this list drifts.
 | `remove-stable-from-failures.ts` | Auto-removes `@stable` from hard failures (`#476`) |
 | `format-auto-remove-summary.mjs` | Formats the auto-remove summary comment |
 | `validate-spec-deps.ts` | Validates a spec's declared external dependencies |
+| `wait-for-backend.mjs` | The post-collect-models health gate's polling loop, behind `.github/actions/wait-for-backend`. Classifies the failure (dead / wedged / HTTP / wiring) instead of hedging (`#1045`) |
+| `watch-backend.mjs` | In-run backend liveness recorder + `--summarize` (diagnostic only, never fails a shard) (`#1030/#1048`) |
+| `ci-change-coverage.mjs` | Decides what a CI-only diff gets on a PR: `canary` (the PR lane runs what changed → fixed 3-spec set), `dispatch` (another lane's surface → name it), `none`. Reachability derived from the YAML, not hardcoded (`#1159`) |
 
 ## `playwright.config.ts` knobs
 

@@ -1,6 +1,6 @@
 # Provider Invalid API Key Error
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -15,6 +15,18 @@ Protects against regressions in the integration between the frontend (ProviderCo
 ## Tags *(required)*
 
 `@stable` `@regression` `@model-provider` `@agents`
+
+The tag is shared by all three provider variants (one parameterized `test()` call).
+Between 2026-07-24 and #933 the google variant was skipped by an in-body
+`test.fixme` — `@stable` could not be dropped for one provider alone without
+de-stabling the other two. That quarantine is lifted: the recurrence was caused by
+this spec's own action path, not by google.
+
+The invalid key is made **unique per run** (`${invalidKey}-${Date.now()}`).
+Langflow validates a provider key on save, and re-saving the value it already
+holds produces no validation and therefore no toast at all — so with a cleanup
+that could silently fail to restore, a retry re-submitting the identical string
+could never pass. Uniqueness makes every save a real state change.
 
 ---
 
