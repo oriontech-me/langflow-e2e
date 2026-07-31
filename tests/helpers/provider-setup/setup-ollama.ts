@@ -32,6 +32,18 @@ const OLLAMA = providerConfigMap.ollama;
  * must arrive pinned (`OLLAMA_TEST_MODEL`), and a name the instance does not serve
  * must surface as `MODEL_NOT_AVAILABLE` — the #570 trap is a weak-model failure that
  * reads as a product regression, and a silently substituted model is how you get one.
+ *
+ * ## Two error prefixes, and the split is the contract
+ *
+ * `MODEL_NOT_AVAILABLE` is turned into a `test.skip` by every caller, so it is
+ * reserved for the one fault that is genuinely about the model: the instance answered
+ * and does not serve this tag. Everything that means *the lane is wired wrong* throws
+ * `OLLAMA_PROVIDER_UNREACHABLE` and FAILS instead — Langflow rejecting the base URL
+ * (Step 4), and an empty model list on an instance configured by an earlier run
+ * (Step 6, which Step 4 cannot see because it short-circuits on an already-configured
+ * provider). Collapsing the two would give the lane that asked for a keyless model a
+ * silent skip when its local instance is down, which is #976's "24 specs skipped
+ * silently" reproduced on the mechanism built to prevent it.
  */
 export async function setupOllama(page: Page, modelTestId?: string): Promise<void> {
   // Step 1: Find the entry point into the provider management panel.
@@ -160,10 +172,42 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
       .allTextContents()
       .catch(() => [] as string[]);
     await page.keyboard.press("Escape");
+
+    // NOTHING offered is a different fault from THIS TAG not offered, and only one
+    // of them may skip.
+    //
+    // The `validate-provider` guard in Step 4 covers a URL saved on THIS run. It
+    // cannot cover the other path: an instance where Ollama was configured earlier
+    // short-circuits that step (`alreadyConfigured`), so a provider that has since
+    // become unreachable — the container stopped, the address changed — reaches
+    // here with an empty list and no verdict read anywhere. Reported as
+    // MODEL_NOT_AVAILABLE it becomes a `test.skip`, which is exactly the silent
+    // coverage loss #976 recorded and the reason Step 4 throws instead of skipping.
+    //
+    // An empty Ollama list has no benign reading: Langflow enumerates the live
+    // instance on save, so zero options means it enumerated nothing — unreachable,
+    // or reachable and serving no model at all. Both are lane misconfigurations a
+    // dispatcher must fix, so both FAIL, attributed. A non-empty list that lacks
+    // the requested tag is the genuine "this instance does not serve it" case and
+    // keeps skipping.
+    if (offered.length === 0) {
+      throw new Error(
+        `OLLAMA_PROVIDER_UNREACHABLE: the Agent's model dropdown offers NO Ollama ` +
+          `model at all. Langflow enumerates the live instance when the provider is ` +
+          `saved, so an empty list means it reached nothing — the instance is down or ` +
+          `at a different address than the one Langflow holds, or it serves no model. ` +
+          `Check that Langflow (not this test process) can reach ` +
+          `OLLAMA_BASE_URL_FROM_LANGFLOW, that LANGFLOW_SSRF_ALLOWED_HOSTS covers it, ` +
+          `and that the instance has the model pulled. Reported as a FAILURE, not a ` +
+          `skip: a lane that asked for a local model must not lose that coverage ` +
+          `quietly when the wiring is wrong (#1187).`,
+      );
+    }
+
     throw new Error(
       `MODEL_NOT_AVAILABLE: "${modelTestId ?? "(any Ollama model)"}" is not offered by ` +
         `the Agent's model dropdown. Ollama's list is the LIVE instance, so this means ` +
-        `the instance does not serve it (offered: ${offered.join(", ") || "nothing"}) — ` +
+        `the instance does not serve it (offered: ${offered.join(", ")}) — ` +
         `pull it, or point OLLAMA_TEST_MODEL at one it has.`,
     );
   }
