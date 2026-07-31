@@ -1,6 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { renameFlow } from "../../../../helpers/flows/rename-flow";
+import { openFlowSettings } from "../../../../helpers/flows/open-flow-settings";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import {
   trackCreatedFlows,
@@ -56,10 +57,10 @@ test(
       // Let the entry autosave settle before opening the modal, or an in-flight
       // PATCH re-renders the dialog and detaches its inputs mid-edit (#357).
       await waitForFlowSaveSettled(page);
-      await expect(page.getByTestId("flow_name")).toBeVisible({
-        timeout: 15000,
-      });
-      await page.getByTestId("flow_name").click();
+      // Through the helper, never `getByTestId("flow_name").click()`: that span is
+      // `aria-hidden` inside a button upstream disables while the permissions query
+      // is in flight, and a click on a span is swallowed with no error (#1215).
+      await openFlowSettings(page);
 
       const nameInput = page.getByTestId("input-flow-name");
       await expect(nameInput).toBeVisible({ timeout: 15000 });

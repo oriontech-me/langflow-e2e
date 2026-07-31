@@ -1,6 +1,6 @@
 # Flow Lock — settings-modal round-trip & locked-state UI
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -63,7 +63,9 @@ management; `@ui-ux` — settings-modal interaction + locked-state indicators.
    "Basic Prompting" template card) is what keeps the spec parallel-safe — see
    Notes.
 2. Assert the flow is initially unlocked — no `icon-lock` badge on the canvas.
-3. Open Flow Settings (`flow_name`); wait for `lock-flow-switch`.
+3. Open Flow Settings with `openFlowSettings(page)` — the `menu_bar_display`
+   button once enabled, never the `aria-hidden` `flow_name` span (#1215); wait
+   for `lock-flow-switch`.
 4. Assert the switch is `unchecked` and both `input-flow-name` /
    `input-flow-description` are **enabled**.
 5. Toggle the switch to `checked`; assert both inputs become **disabled**.
@@ -150,3 +152,25 @@ management; `@ui-ux` — settings-modal interaction + locked-state indicators.
   while the modal is still binding under load. The lock-persisted assertions read
   the authoritative `GET /api/v1/flows/{id}` `locked` flag before trusting the
   reopened modal.
+
+### Opening the header must drive the button, not the span (#1215)
+
+`flow_name` is an **`aria-hidden` `<span>` inside** the `menu_bar_display` button,
+which upstream renders as `disabled={isReadOnly}` with
+
+```ts
+useIsFlowReadOnly = Boolean(flowId) && (isLoading || !can(flowId, "write"))
+```
+
+i.e. it fails **closed** for the whole time `POST /api/v1/authz/me/permissions` is
+in flight — deliberately, per its own docstring. A `<span>` is not a form control,
+so Playwright's actionability check never covers that disabled state: a click
+landed in the window is swallowed by the browser with **no error at all**, and the
+failure surfaces later and elsewhere (a control inside the dialog that never
+appears). Two of the four signatures #1005 classified were exactly that.
+
+This spec therefore opens the popover through `openFlowSettings(page)`, which
+asserts the header is present, waits for the **button** to report enabled, and
+then clicks it. The `disabled` attribute arrived upstream on 2026-07-15
+(`887f2a552d`, langflow-ai/langflow#14068), so it is live on the nightly the daily
+runs.

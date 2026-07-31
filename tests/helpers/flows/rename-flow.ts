@@ -1,5 +1,6 @@
 import { type Page, expect } from "@playwright/test";
 import { waitForFlowSaveSettled } from "./wait-for-flow-save-settled";
+import { openFlowSettings } from "./open-flow-settings";
 
 // Generous, load-tolerant timeout for the modal interactions. The previous
 // hardcoded 3000ms waits were the fragile part flagged in issue #357: under
@@ -30,32 +31,16 @@ const applyFlowSettings = async (
   // not race a PATCH that would re-render the dialog and detach its inputs.
   await waitForFlowSaveSettled(page);
 
-  // Open the flow-settings modal from the header. Assert the header first: it
-  // renders only under `onFlowPage`, so its absence means the editor never
-  // mounted — a caller that has not landed on the canvas yet, which is a very
-  // different failure from the gate below (#1005).
-  await expect(page.getByTestId("flow_name")).toBeVisible({
-    timeout: MODAL_TIMEOUT,
-  });
-
-  // Drive the BUTTON, and only once write permission has RESOLVED. Upstream
-  // renders the header as
-  //   <button data-testid="menu_bar_display" disabled={isReadOnly}>
-  //     <span aria-hidden data-testid="flow_name">…</span>
-  // with `useIsFlowReadOnly = Boolean(flowId) && (isLoading || !can(flowId,"write"))`,
-  // which fails CLOSED for the whole time `POST /api/v1/authz/me/permissions` is
-  // in flight (deliberately, per its own docstring). Two consequences, both of
-  // which cost this helper flakes:
-  //  - Clicking the aria-hidden span does not exercise Playwright's disabled
-  //    check — a span is not a form control — so a click landed in that window
-  //    is swallowed by the browser with no error at all. Targeting the button
-  //    makes the wait explicit AND puts the check back.
-  //  - `<Popover open={openSettings && !isReadOnly}>` means a read-only flip
-  //    AFTER the dialog opened tears it down; remounting `FlowSettingsComponent`
-  //    re-runs its `useEffect` and resets `name` to the flow's own, leaving
-  //    `save-flow-settings` disabled for the rest of the budget (#1005).
-  // Same gate #1063/#1147 added for `useAddComponent`, which bails out silently
-  // under the identical predicate.
+  // Open the flow-settings popover from the header, through the shared opener.
+  //
+  // It asserts the header is present (absent ⇒ the editor never mounted, since it
+  // renders only under `onFlowPage`), then drives the `menu_bar_display` BUTTON
+  // once it reports enabled — never the `aria-hidden` `flow_name` span inside it.
+  // Upstream disables that button for the whole time
+  // `POST /api/v1/authz/me/permissions` is in flight, and a click on a span is
+  // swallowed with no error in that window because a span is not a form control
+  // (#1005). The logic was inline here after #1152; #1215 made it shared, because
+  // six other call sites had the un-fixed version.
   //
   // The gate NARROWS this window, it does not close it, and the next triager
   // should not have to re-derive why. `PermissionsProvider` (mounted around the
@@ -63,14 +48,16 @@ const applyFlowSettings = async (
   // `domain: project:{folder_id}` read off `currentFlow`, and `use-save-flow`
   // replaces that object via `setCurrentFlow(updatedFlow)` on every save — so a
   // response that changes or drops `folder_id` changes the query key, re-enters
-  // `isLoading`, and re-disables the button. Landing between the assertion and
-  // the click below, the click is swallowed again and the failure surfaces at the
+  // `isLoading`, and re-disables the button. Landing between the assertion and the
+  // click, the click is swallowed again and the failure surfaces at the
   // `input-flow-name` assertion instead. If that is ever observed, the fix is to
   // retry open→dialog-visible rather than to widen a timeout.
-  const flowHeaderButton = page.getByTestId("menu_bar_display");
-  await expect(flowHeaderButton).toBeEnabled({ timeout: MODAL_TIMEOUT });
-  await flowHeaderButton.hover();
-  await flowHeaderButton.click();
+  //
+  // A read-only flip landing AFTER the dialog opened is a second consequence:
+  // `<Popover open={openSettings && !isReadOnly}>` tears it down, and remounting
+  // `FlowSettingsComponent` re-runs its `useEffect` and resets `name` to the
+  // flow's own — which is what the `toHaveValue` assertion below catches.
+  await openFlowSettings(page);
 
   // Wait for the modal's name input to be present and interactable before
   // reading/editing it (avoids acting on a half-rendered dialog).
