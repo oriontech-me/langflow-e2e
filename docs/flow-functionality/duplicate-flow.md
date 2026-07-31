@@ -1,6 +1,6 @@
 # Flow Functionality — Duplicate Flow
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -28,8 +28,8 @@ API test: `@release` `@workspace` `@api` `@stable`
 
 1. Bootstrap the app
 2. Click `side_nav_options_all-templates`, then click the `Basic Prompting` heading to open the template (which creates a new flow)
-3. Wait for `sidebar-search-input` to confirm the editor loaded; navigate back via `icon-ChevronLeft`
-4. Wait for the first `home-dropdown-menu` to be visible
+3. Wait for `sidebar-search-input` to confirm the editor loaded; return to the listing with `leaveFlowEditor(page)` — the `icon-ChevronLeft` click plus its home assertion, wrapped so the exit survives the `SaveChangesModal` deadlock (#1153)
+4. `leaveFlowEditor` asserts the first `home-dropdown-menu` is visible before returning
 5. Acquire a Bearer token via `getAuthToken(request)`
 6. Click the first `home-dropdown-menu`, wait for `btn-duplicate-flow`
 7. Register a `page.waitForResponse` listener for `POST /api/v1/flows/` with status `201`, then click `btn-duplicate-flow`
@@ -68,6 +68,7 @@ The API test must assert **all** of:
 ## External dependencies *(required)*
 
 - `tests/helpers/auth/get-auth-token.ts` — issues the Bearer token
+- `tests/helpers/flows/leave-flow-editor.ts` — the editor exit: drains in-flight flow saves, clicks `icon-ChevronLeft`, and distinguishes the #1153 blocker deadlock from a swallowed click. It depends on upstream `src/frontend/src/pages/FlowPage/index.tsx` (`useBlocker` / `handleSave`), `src/frontend/src/modals/saveChangesModal/index.tsx`, and the `flow.unsavedChangesTitle` string in `src/frontend/src/locales/en.json` — if that title is reworded the dialog stops being recognised and every deadlock silently reclassifies as a swallowed click
 - `src/frontend/src/pages/MainPage/components/dropdown/index.tsx` — registers `btn-duplicate-flow` testid; the test would need updating if it is renamed or removed
 - `src/frontend/src/pages/MainPage/hooks/use-handle-duplicate.ts` — calls `createNewFlow` then `postAddFlow`; the API test mirrors this round-trip directly
 - `src/frontend/src/utils/reactflowUtils.ts` (`createNewFlow`) — keeps the original `name` (no client-side suffix); the suffix originates server-side
