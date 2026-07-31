@@ -267,12 +267,22 @@ jobs:
       # Export TOKENS_ATTRIB for the specs' cleanup sidecar (#1183), same as
       # daily-stable.yml / pr-validation.yml — with it unset, the helper makes
       # no request and writes no file. The actual test run below is the
-      # `run-e2e` COMPOSITE action, not a plain `run:` step, so its own steps
-      # do not automatically see an `env:` set on this workflow's `uses:` line
-      # the way a plain step would; $GITHUB_ENV is the one mechanism guaranteed
-      # to reach every later step in this job regardless of how it runs,
-      # including a composite action's internal steps.
+      # `run-e2e` COMPOSITE action, not a plain `run:` step: composite actions
+      # do NOT inherit a caller step's `env:` block into their own internal
+      # steps, so an `env:` added to the `uses:` line below would silently not
+      # reach it. $GITHUB_ENV is not a fallback for that gap, it is the one
+      # mechanism that actually works here — anything appended to it becomes a
+      # real process environment variable for every later step in the job,
+      # composite-internal steps included.
+      #
+      # continue-on-error: true, like every other step this change adds. The
+      # step below it (`Run tests and upload report`) carries no `if:` of its
+      # own, so a failure here — however unlikely for a bare `echo` — would
+      # otherwise skip the run it exists only to measure: a diagnostic add-on
+      # aborting the work it measures, which this whole change is built to
+      # never do.
       - name: Export TOKENS_ATTRIB for the specs' cleanup sidecar
+        continue-on-error: true
         run: echo "TOKENS_ATTRIB=token-attrib.jsonl" >> "$GITHUB_ENV"
 
       - name: Run tests and upload report

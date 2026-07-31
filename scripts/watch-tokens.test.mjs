@@ -929,7 +929,12 @@ test("manual's e2e-docker job starts the token recorder before the test run and 
   const dockerJobText = text.slice(0, urlJobAt > 0 ? urlJobAt : text.length);
   const start = dockerJobText.indexOf("node scripts/watch-tokens.mjs");
   const exportAttrib = dockerJobText.indexOf("TOKENS_ATTRIB=token-attrib.jsonl");
-  const run = dockerJobText.indexOf("Run tests and upload report");
+  // Anchor on the STEP HEADER, not the bare phrase — the export step's own
+  // comment mentions "Run tests and upload report" in prose (to explain why
+  // it needs continue-on-error), which sits BEFORE the actual step and would
+  // otherwise false-positive this guard (same class of bug as pr-validation's
+  // guard above, fixed the same way).
+  const run = dockerJobText.indexOf("- name: Run tests and upload report");
   const stop = dockerJobText.indexOf("Stop and collect token consumption");
   const summarizeStep = dockerJobText.indexOf("Summarize token consumption");
   assert.ok(start > 0, "manual.yml's e2e-docker job no longer starts the token recorder");
@@ -941,8 +946,25 @@ test("manual's e2e-docker job starts the token recorder before the test run and 
   assert.ok(exportAttrib < run, "TOKENS_ATTRIB must be exported BEFORE the test run consumes it");
   assert.ok(stop > run, "the stop/collect step must come after the test run");
   assert.ok(summarizeStep > stop, "the summary must run after the stop/collect step");
-  for (const label of ["Start the token consumption recorder", "Stop and collect token consumption", "Summarize token consumption", "Upload token consumption"]) {
-    const at = dockerJobText.indexOf(label);
+  // Includes the TOKENS_ATTRIB export step: it sits between the recorder start
+  // and the actual test run with no `if:` of its own, so a failure there would
+  // otherwise skip the run it exists only to measure — the same hazard the
+  // other four steps guard against (review finding on manual.yml:275).
+  //
+  // Anchored on the STEP HEADER ("- name: <label>"), not the bare label text:
+  // the export step's own comment repeats its name in prose ("Export
+  // TOKENS_ATTRIB for the specs' cleanup sidecar (#1183), same as ...") ahead
+  // of the actual `- name:` line, and a bare indexOf would match that comment
+  // instead of the step — the same false-positive class the `run` anchor
+  // above was fixed for.
+  for (const label of [
+    "Start the token consumption recorder",
+    "Export TOKENS_ATTRIB for the specs' cleanup sidecar",
+    "Stop and collect token consumption",
+    "Summarize token consumption",
+    "Upload token consumption",
+  ]) {
+    const at = dockerJobText.indexOf(`- name: ${label}`);
     assert.ok(at > 0, `manual.yml's e2e-docker job is missing the "${label}" step`);
     assert.match(
       dockerJobText.slice(at, at + 400),
