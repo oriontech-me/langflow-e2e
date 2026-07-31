@@ -23,6 +23,7 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
 import {
+  rankCandidates,
   validateProviderWithFallback,
   type ProviderRecord,
 } from "./collect-models";
@@ -387,4 +388,83 @@ test("first candidate works: exactly one probe, record returned untouched", asyn
   assert.equal(result.status, "active");
   assert.equal(result.model, "gpt-4o-mini");
   assert.equal(result.error, null);
+});
+
+// ─── CANDIDATE_PREFS ordering (#1171) ────────────────────────────────────────
+//
+// What a unit test can and cannot prove here. `rankCandidates` decides which
+// model `collect-models` probes FIRST, and the first one that validates is what
+// it settles on and promotes to models.json[0] — which every parametrized agent
+// spec then runs against. So the ordering is a real cost and coverage lever.
+//
+// But ordering is ALL a unit test can prove. CANDIDATE_PREFS encodes agent
+// COMPATIBILITY, and the probe is a ~1-token completion that cannot tell "the
+// key reaches this model" from "the Agent can drive it" — #570 found `gpt-5.6`
+// passing the probe while the Agent returned empty replies. These assertions
+// therefore guard against a silent reordering; they are NOT evidence that the
+// leading model drives the agent suite. That evidence is the real @stable run
+// recorded on #1171.
+
+test("anthropic ranks claude-haiku-4-5 first — 2x cheaper than sonnet today, 3x from 2026-09-01", () => {
+  const ranked = rankCandidates("anthropic", ANTHROPIC_CATALOG);
+  assert.equal(ranked[0], "claude-haiku-4-5");
+});
+
+test("anthropic keeps sonnet reachable — a haiku-less catalog must not fall through to opus", () => {
+  // The catalog here is in RAW api order, not the promoted order collect-models
+  // writes after a successful sweep. That distinction is the whole test: a
+  // failing sweep promotes nothing, so the raw order stands — and it leads with
+  // claude-opus-5, the most expensive model Anthropic exposes (#1169's latent
+  // risk note). Filtering the promoted ANTHROPIC_CATALOG instead would prove
+  // nothing, because that fixture already starts with sonnet: the assertion
+  // would pass with the sonnet tail deleted.
+  const rawUnpromoted = [
+    "claude-opus-5",
+    "claude-fable-5",
+    "claude-opus-4-8",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+  ];
+  assert.equal(rankCandidates("anthropic", rawUnpromoted)[0], "claude-sonnet-5");
+});
+
+test("a future claude-haiku-5 is preferred over the pinned 4-5 id", () => {
+  // The exact id ranks first, then the generic /haiku/ — so a newer haiku is
+  // picked up without editing this map, as long as it sorts ahead in the
+  // catalog. Both are haiku-tier, so either outcome is correct on price; this
+  // pins that neither falls behind sonnet.
+  const ranked = rankCandidates("anthropic", ["claude-sonnet-5", "claude-haiku-5", "claude-haiku-4-5"]);
+  assert.deepEqual(ranked.slice(0, 2), ["claude-haiku-4-5", "claude-haiku-5"]);
+  assert.ok(ranked.indexOf("claude-sonnet-5") > 1, "sonnet must rank behind every haiku");
+});
+
+test("openai still leads with gpt-4o-mini — the cheaper entries are reasoning models (#569)", () => {
+  // Regression guard for the tempting-but-wrong optimisation: gpt-5-nano and
+  // gpt-5.4-mini are cheaper per token and hang the playground for 120 s.
+  const ranked = rankCandidates("openai", [
+    "gpt-5-nano",
+    "gpt-5.4-mini",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4.1-nano",
+  ]);
+  assert.equal(ranked[0], "gpt-4o-mini");
+  assert.ok(
+    ranked.indexOf("gpt-5-nano") > ranked.indexOf("gpt-4.1-nano"),
+    "no gpt-5.x model may outrank a gpt-4 family model",
+  );
+});
+
+test("google is unchanged — its entries are already the flash tier", () => {
+  const ranked = rankCandidates("google", [
+    "gemini-3-pro",
+    "gemini-flash-latest",
+    "gemini-2.5-flash",
+  ]);
+  assert.equal(ranked[0], "gemini-2.5-flash");
+});
+
+test("an unknown provider falls back to raw catalog order rather than dropping models", () => {
+  const catalog = ["b", "a", "c"];
+  assert.deepEqual(rankCandidates("groq", catalog), catalog);
 });
