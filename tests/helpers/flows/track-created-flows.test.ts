@@ -28,6 +28,9 @@
 // without a browser or a backend.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { APIRequestContext } from "@playwright/test";
 import {
   flowIdFrom,
@@ -532,4 +535,79 @@ test("settle() drains the queue, so a later cleanup does not re-await it", async
   assert.deepEqual(flows.ids(), ["flow-1"]);
   await flows.cleanup(request);
   assert.deepEqual(deletes.map((d) => d.url), ["/api/v1/flows/flow-1"]);
+});
+
+// ─── Token attribution sidecar (#1197) ───────────────────────────────────────
+
+test("cleanup records token attribution BEFORE deleting, and only when asked", async (t) => {
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-attrib-")), "a.jsonl");
+  const order: string[] = [];
+  const { page, emit } = fakePage();
+  const tracker = trackCreatedFlows(page);
+  emit(creationResponse("f1"));
+  await tracker.settle();
+
+  const request = {
+    get: async (url: string) => {
+      order.push(`GET ${url.split("?")[0]}`);
+      return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1" }] }) };
+    },
+    delete: async (url: string) => {
+      order.push(`DELETE ${url}`);
+      return { ok: () => true, status: () => 200, json: async () => ({}) };
+    },
+  } as unknown as APIRequestContext;
+
+  process.env.TOKENS_ATTRIB = out;
+  t.after(() => delete process.env.TOKENS_ATTRIB);
+
+  const result = await tracker.cleanup(request, {
+    attribution: { test: "agent suite", file: "x.spec.ts" },
+  });
+
+  assert.equal(result.attribution?.recorded, 1);
+  const traceIndex = order.findIndex((o) => o.includes("/monitor/traces"));
+  const deleteIndex = order.findIndex((o) => o.startsWith("DELETE"));
+  // The whole point: the trace is read while the flow still exists.
+  assert.ok(traceIndex >= 0 && traceIndex < deleteIndex);
+  assert.deepEqual(result.deleted, ["f1"]);
+});
+
+test("no attribution option means no attribution request at all", async () => {
+  const { page, emit } = fakePage();
+  const tracker = trackCreatedFlows(page);
+  emit(creationResponse("f1"));
+  await tracker.settle();
+  let sawTraceCall = false;
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("/monitor/traces")) sawTraceCall = true;
+      return { ok: () => true, status: () => 200, json: async () => ({}) };
+    },
+    delete: async () => ({ ok: () => true, status: () => 200, json: async () => ({}) }),
+  } as unknown as APIRequestContext;
+  const result = await tracker.cleanup(request);
+  assert.equal(sawTraceCall, false);
+  assert.equal(result.attribution, undefined);
+  assert.deepEqual(result.deleted, ["f1"]);
+});
+
+test("a throwing attribution never fails the cleanup", async (t) => {
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-attrib-")), "a.jsonl");
+  const { page, emit } = fakePage();
+  const tracker = trackCreatedFlows(page);
+  emit(creationResponse("f1"));
+  await tracker.settle();
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("/monitor/traces")) throw new Error("backend wedged");
+      return { ok: () => true, status: () => 200, json: async () => ({}) };
+    },
+    delete: async () => ({ ok: () => true, status: () => 200, json: async () => ({}) }),
+  } as unknown as APIRequestContext;
+  process.env.TOKENS_ATTRIB = out;
+  t.after(() => delete process.env.TOKENS_ATTRIB);
+  const result = await tracker.cleanup(request, { attribution: { test: "t", file: "f" } });
+  assert.equal(result.attribution?.skipped.length, 1);
+  assert.deepEqual(result.deleted, ["f1"]);
 });

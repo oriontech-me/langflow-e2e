@@ -31,6 +31,7 @@
 import type { APIRequestContext } from "@playwright/test";
 import { deleteFlow } from "./delete-flow";
 import { getAuthToken } from "../auth/get-auth-token";
+import { recordTokenAttribution, type TokenAttributionResult } from "./token-attribution";
 
 /**
  * The `Page` surface the tracker uses. Narrow on purpose: it is what lets the unit
@@ -90,6 +91,8 @@ export interface FlowCleanupResult {
    * not a problem with the flow — see the note at the call site.
    */
   authError?: string;
+  /** Set when `attribution` was requested — what the sidecar recorded or skipped. */
+  attribution?: TokenAttributionResult;
 }
 
 export interface FlowCleanupOptions {
@@ -112,6 +115,13 @@ export interface FlowCleanupOptions {
    * 30 s per run.
    */
   authRetryDelaysMs?: number[];
+  /**
+   * Name this spec on the traces its flows produced, for the token consumption
+   * monitor (#1197). Omitted ⇒ nothing happens: no request, no file. Even when
+   * passed, the sidecar is inert unless `TOKENS_ATTRIB` is set, so only the CI lane
+   * that runs the poller pays for it.
+   */
+  attribution?: { test: string; file: string };
 }
 
 export interface FlowTracker {
@@ -204,13 +214,32 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
     dispose: () => page.off("response", onResponse),
     async cleanup(
       request: APIRequestContext,
-      { strict = false, authRetryDelaysMs }: FlowCleanupOptions = {},
+      { strict = false, authRetryDelaysMs, attribution }: FlowCleanupOptions = {},
     ): Promise<FlowCleanupResult> {
       await settle();
       const result: FlowCleanupResult = { deleted: [], failed: [] };
       const captured = [...ids];
       ids.clear();
       if (captured.length === 0) return result;
+
+      // BEFORE the deletes, on purpose: deleting a flow 404s its trace (#1197,
+      // design §2/S4), so this is the last moment the data exists. It cannot throw
+      // — `recordTokenAttribution` resolves with its failures — and it is inert
+      // unless the lane asked for it.
+      if (attribution) {
+        result.attribution = await recordTokenAttribution({
+          request,
+          flowIds: captured,
+          test: attribution.test,
+          file: attribution.file,
+        });
+        if (result.attribution.skipped.length > 0) {
+          console.warn(
+            `⚠️  token attribution skipped ${result.attribution.skipped.length} flow(s): ` +
+              result.attribution.skipped.join("; "),
+          );
+        }
+      }
 
       // Take the page off the flow canvas BEFORE deleting anything (#1023/#1103):
       // an editor left mounted over a flow that is being deleted keeps polling
