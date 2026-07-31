@@ -33,6 +33,11 @@
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "./fixtures";
+import { classifyFlowError } from "./flow-error-policy";
+import {
+  attachRunStreamCapture,
+  type CapturedStream,
+} from "./run-stream-capture";
 
 const V1_ERROR_BODY = JSON.stringify({
   data: { error: true, error_message: "boom in the graph" },
@@ -46,10 +51,12 @@ const V2_ERROR_BODY = [
 
 let server: http.Server;
 let origin: string;
+/** Responses left deliberately open by `?mode=hang`, ended in `afterAll`. */
+const hanging = new Set<http.ServerResponse>();
 
 test.beforeAll(async () => {
   server = http.createServer((req, res) => {
-    const path = (req.url ?? "").split("?")[0];
+    const [path, query = ""] = (req.url ?? "").split("?");
     if (path === "/api/v1/build/abc/flow") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(V1_ERROR_BODY);
@@ -57,6 +64,15 @@ test.beforeAll(async () => {
     }
     if (path === "/api/v2/workflows") {
       res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+      if (query.includes("mode=hang")) {
+        // The case the capture exists for: the error is on the wire, and the
+        // stream never closes. Asking for this body afterwards is what always
+        // failed (#1168) — Chromium discards the partial buffer once the
+        // request is cancelled.
+        res.write(V2_ERROR_BODY);
+        hanging.add(res);
+        return;
+      }
       res.end(V2_ERROR_BODY);
       return;
     }
@@ -68,6 +84,10 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  // `server.close()` waits for open connections, and `?mode=hang` leaves one on
+  // purpose — so end them first or this hook is the hang.
+  for (const res of hanging) res.end();
+  hanging.clear();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
@@ -128,6 +148,48 @@ test.describe("fixture flow-error gate", () => {
       ).toBeTruthy();
       expect(verdict).toContain("ADVISORY");
       expect(logged.join("\n")).toContain("provider said no");
+    },
+  );
+
+  test(
+    "a run stream that never closes still yields its bytes (#1168)",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // Asserted against the capture DIRECTLY, not through the fixture, for the
+      // same reason the mid-test interrupt is not asserted here: the fixture
+      // renders this verdict during teardown, after both the test body and its
+      // `afterEach` have run, so no assertion inside the test could ever see it.
+      // Attaching a second capture measures the one property that matters and
+      // can be checked in place.
+      const finished: CapturedStream[] = [];
+      const capture = await attachRunStreamCapture(page, (s) =>
+        finished.push(s),
+      );
+
+      await page.goto(`${origin}/`);
+      // NOT awaited inside the page: this fetch never settles by design, and
+      // `page.evaluate` would wait for its result.
+      await page.evaluate(() => {
+        void fetch("/api/v2/workflows?mode=hang", { method: "POST" });
+      });
+      await page.waitForTimeout(1500);
+
+      const captured = [...finished, ...(await capture.drain())];
+      expect(
+        captured.length,
+        "the hanging run stream was never captured at all",
+      ).toBe(1);
+      expect(
+        captured[0].complete,
+        "the stream never closed, so it must be reported as incomplete",
+      ).toBe(false);
+
+      // The point of the whole mechanism: a partial body is still a verdict.
+      const verdict = classifyFlowError(captured[0].body);
+      expect(
+        verdict.failed,
+        `no verdict from the captured bytes: ${JSON.stringify(captured[0].body).slice(0, 200)}`,
+      ).toBe(true);
     },
   );
 });
