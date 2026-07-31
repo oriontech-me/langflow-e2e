@@ -2,6 +2,7 @@
 // Run with: npm run test:scripts
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { usdFor, aggregate, parsePrices, loadPrices } from "./token-cost.mjs";
 
 const PRICES = {
@@ -196,12 +197,85 @@ test("usdFor resolves a dated/preview model id to its family via substring match
   assert.equal(usdFor("claude-opus-4-20250514", 40, 48, prices), 40 * (5 / 1e6) + 48 * (25 / 1e6));
 });
 
-test("usdFor resolves a short alias to a longer key that contains it (#1211)", () => {
-  const prices = { "gemini-2.5-flash-lite-preview": { inputPerMillion: 0.1, outputPerMillion: 0.4 } };
-  // "gemini-2.5-flash-lite-preview".includes("gemini-2.5-flash") is true — the
-  // shorter alias is CONTAINED BY the longer, more specific key.
-  assert.equal(usdFor("gemini-2.5-flash", 40, 48, prices), 40 * (0.1 / 1e6) + 48 * (0.4 / 1e6));
+// A genuinely SAFE "short alias contained by a longer key" case: the leftover
+// (the dated suffix) is version/alias noise, not a different product. This
+// replaces an earlier version of this test that used
+// `gemini-2.5-flash-lite-preview` as the longer key — that leftover is
+// `-lite-preview`, and "lite" names a cheaper, DIFFERENT product tier, not an
+// alias of the same one. Matching on it was exactly the critical defect a
+// review round on this issue caught: a real Lite id would have silently
+// resolved to its non-Lite sibling's (higher) rate. Fixed below by requiring
+// the leftover suffix to be recognizable version/alias noise (see
+// isAllowedSuffix's own comment).
+test("usdFor resolves a short alias to a longer key that contains it, when the leftover is dated/alias noise (#1211)", () => {
+  const prices = { "gpt-4o-2024-08-06": { inputPerMillion: 0.1, outputPerMillion: 0.4 } };
+  // "gpt-4o-2024-08-06".startsWith("gpt-4o") is true, leftover "-2024-08-06" is
+  // an all-digit date — accepted noise, not a different product.
+  assert.equal(usdFor("gpt-4o", 40, 48, prices), 40 * (0.1 / 1e6) + 48 * (0.4 / 1e6));
 });
+
+// --- #1211 (review round 2): the substring pass must not absorb a TIER
+// suffix into its parent's rate. `gemini-2.5-flash-lite` is a real, priced-
+// lower SKU, not an alias of `gemini-2.5-flash` — before this fix,
+// `gemini-2.5-flash-lite`.startsWith("gemini-2.5-flash") produced a
+// confidently wrong number (the non-Lite rate) instead of the honest `null`
+// this issue set out to produce. Asserted against the REAL SHIPPED TABLE
+// (scripts/lib/model-prices.json), not an isolated fixture, because the
+// defect is specifically about what ships, and the ids below are real
+// entries in tests/helpers/provider-setup/data/models.json that
+// collect-models can rotate onto.
+test("usdFor never absorbs a Lite tier suffix into its non-Lite parent's rate — the shipped table (#1211 review round 2)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  const nonLiteUsd = usdFor("gemini-2.5-flash", 1000, 1000, prices, "2026-07-31");
+  for (const liteId of [
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash-lite-preview-09-2025",
+    "gemini-3.5-flash-lite",
+  ]) {
+    const usd = usdFor(liteId, 1000, 1000, prices, "2026-07-31");
+    assert.notEqual(
+      usd,
+      nonLiteUsd,
+      `${liteId} must not resolve to the non-Lite gemini-2.5-flash rate (${nonLiteUsd})`,
+    );
+    assert.ok(Number.isFinite(usd), `${liteId} must resolve to its own priced Lite rate now that the table carries it`);
+  }
+});
+
+// A tier id deliberately absent from the table (not added as part of this
+// fix): the honest outcome is null + named unpriced, never a guessed price
+// derived from a sibling.
+test("a tier id absent from the table returns null and is named unpriced, never inferred from a sibling (#1211 review round 2)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  // gpt-4o-nano does not exist in the shipped table (nor in reality, at time
+  // of writing) — "nano" is a tier word, so it must never resolve via
+  // "gpt-4o"'s rate.
+  assert.equal(usdFor("gpt-4o-nano", 10, 10, prices, "2026-07-31"), null);
+  const out = aggregate({
+    probes: [
+      probe({
+        trace_id: "t-nano",
+        total_tokens: 20,
+        models: [{ model: "gpt-4o-nano", prompt_tokens: 10, completion_tokens: 10, total_tokens: 20, calls: 1 }],
+      }),
+    ],
+    attributions: [],
+    prices,
+    date: "2026-07-31",
+  });
+  assert.deepEqual(out.unpricedModels, ["gpt-4o-nano"]);
+});
+
+// Tier/size/family words must be refused as a leftover even when they are the
+// ONLY candidate that substring-matches (the exact failure mode the review
+// found) — pinned directly against isAllowedSuffix's contract via usdFor,
+// covering every word the review named.
+for (const tierWord of ["lite", "mini", "nano", "pro", "max", "opus", "sonnet", "haiku"]) {
+  test(`usdFor refuses a leftover naming the tier/family word "${tierWord}", never absorbing it into the parent's rate (#1211 review round 2)`, () => {
+    const prices = { "base-model": { inputPerMillion: 1, outputPerMillion: 1 } };
+    assert.equal(usdFor(`base-model-${tierWord}`, 10, 10, prices), null);
+  });
+}
 
 // The core hazard the issue names: gpt-4o-mini-search-preview matches BOTH
 // gpt-4o and gpt-4o-mini. Picking gpt-4o (the shorter substring) overstates
@@ -302,6 +376,60 @@ test("parsePrices drops a model entirely when every one of its dated bands is in
   });
   const prices = parsePrices(raw);
   assert.equal(prices["broken-dated-model"], undefined);
+});
+
+// Minor (review round 2): bands need not be authored in chronological order
+// in the JSON — selectBand() must sort them itself, not trust file order.
+test("selectBand sorts bands itself — a `since` band listed BEFORE an earlier one in the file still resolves correctly (#1211 review round 2)", () => {
+  const outOfOrder = {
+    "claude-sonnet-5": [
+      // The later (2026-09-01) band is declared FIRST here, on purpose.
+      { since: "2026-09-01", inputPerMillion: 3.0, outputPerMillion: 15.0 },
+      { since: "2026-01-01", inputPerMillion: 2.0, outputPerMillion: 10.0 },
+    ],
+  };
+  assert.equal(usdFor("claude-sonnet-5", 1_000_000, 0, outOfOrder, "2026-08-31"), 2.0);
+  assert.equal(usdFor("claude-sonnet-5", 1_000_000, 0, outOfOrder, "2026-09-01"), 3.0);
+});
+
+// Minor (review round 2): an equal-length tie between two candidate keys must
+// resolve lexically, never by which one the price table happened to declare
+// first. Constructed so BOTH keys are genuinely valid (equal-length, allowed
+// -digit-suffix) matches for the SAME short model id — "ccc" is the ALIAS
+// contained by both "ccc-111" and "ccc-222" (7 chars each, leftover "-111" /
+// "-222", both all-digit and therefore allowed noise) — declared in both
+// orders to prove the winner is lexical ("ccc-111"), not declaration order.
+for (const [label, prices] of [
+  [
+    "ccc-111 declared first",
+    {
+      "ccc-111": { inputPerMillion: 1, outputPerMillion: 1 },
+      "ccc-222": { inputPerMillion: 9, outputPerMillion: 9 },
+    },
+  ],
+  [
+    "ccc-222 declared first",
+    {
+      "ccc-222": { inputPerMillion: 9, outputPerMillion: 9 },
+      "ccc-111": { inputPerMillion: 1, outputPerMillion: 1 },
+    },
+  ],
+]) {
+  test(`usdFor's equal-length tie-break is lexical ("ccc-111" over "ccc-222"), not declaration order (${label}) (#1211 review round 2)`, () => {
+    const usd = usdFor("ccc", 10, 10, prices);
+    assert.equal(usd, 10 * (1 / 1e6) + 10 * (1 / 1e6), `expected the lexically-first "ccc-111" rate, got ${usd}`);
+  });
+}
+
+// Structural guard (review round 2, minor): this module is pure by design —
+// no clock reads. A `Date.now()` or `new Date()` call here would break the
+// scripts' unit-test determinism the same way it would in
+// scripts/wait-for-backend.mjs (which carries the same class of guard in its
+// own test file).
+test("token-cost.mjs never reads the clock — no Date.now() or new Date() call (#1211 review round 2)", () => {
+  const src = readFileSync(new URL("./token-cost.mjs", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /Date\.now\(\)/, "token-cost.mjs must not call Date.now() — dates are passed in as arguments");
+  assert.doesNotMatch(src, /new Date\(/, "token-cost.mjs must not call new Date() — dates are passed in as arguments");
 });
 
 // The shipped table's own claim (#1211): claude-sonnet-5 carries the

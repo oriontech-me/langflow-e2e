@@ -83,9 +83,9 @@ function toBands(entry) {
 // the fact (#1211 — the same "never a stand-in for unknown" rule #1012
 // applies to prices applies here to dates).
 //
-// Pure: takes `date` as an argument, never reads a clock (design constraint —
-// a `Date.now()` call in this module would break the scripts' unit-test
-// determinism).
+// Pure: takes `date` as an argument, never reads the wall clock (design
+// constraint — a clock read in this module would break the scripts' unit-test
+// determinism; see this file's own structural guard in token-cost.test.mjs).
 function selectBand(bands, date) {
   const dated = bands
     .filter((band) => band.since)
@@ -98,27 +98,71 @@ function selectBand(bands, date) {
   return bands.find((band) => !band.since) ?? null;
 }
 
+// A substring match is only ever SAFE when the leftover — whatever text sits
+// beyond the shorter of {model, key} — is recognizably version/alias noise
+// (a date, a snapshot suffix, "-latest", "-preview", "-search-preview", …)
+// rather than a DIFFERENT product's name. This is the fix for a review-round-2
+// defect (#1211): the naive rule ("either string contains the other") let
+// `gemini-2.5-flash-lite` match `gemini-2.5-flash` — `-lite` is a real,
+// separately-priced tier, not an alias — and silently priced a Lite call at
+// its more expensive non-Lite sibling's rate. A wrong number is strictly
+// worse than the honest `null` this whole issue exists to produce, so the
+// substring pass must refuse a match it cannot vouch for.
+//
+// The allow-list below was derived from the ids `collect-models` actually
+// rotates through (tests/helpers/provider-setup/data/models.json), not
+// invented: every observed leftover against this table's own keys is either
+// all-digits (a date: `-20250514`, or its parts: `-09`, `-2025`) or one of
+// "search" / "preview" (`-search-preview`, `-preview-09-2025`). "latest" is
+// included on the same reasoning even though no CURRENT id in the catalog
+// produces it as a leftover (gemini-flash-latest already matches by exact
+// key) — the original issue names "-latest" alongside "-preview" and a dated
+// suffix as the three suffix shapes this fix targets. Tier/size/modality
+// words seen in the same catalog (`-lite`, `-image`, `-preview-tts`) and the
+// family names the review named (`mini`, `nano`, `pro`, `max`, `opus`,
+// `sonnet`, `haiku`) are deliberately ABSENT: refusing them (→ null, named in
+// unpriced_models) is the correct, honest outcome, not a gap to fill in.
+const ALLOWED_SUFFIX_WORDS = new Set(["latest", "preview", "search"]);
+function isAllowedSuffix(leftover) {
+  if (!leftover.startsWith("-")) return false;
+  const segments = leftover.slice(1).split("-");
+  return segments.every((segment) => /^\d+$/.test(segment) || ALLOWED_SUFFIX_WORDS.has(segment));
+}
+
 // Resolves a model id to its price bands: an EXACT key match first (#1211 —
 // "no behaviour change for a model already priced by an exact key" is a
 // stated done-when, so this branch never falls through to substring logic),
 // then a substring match in both directions — a dated/preview/latest id
 // CONTAINS its family key (`claude-opus-4-20250514` ⊃ `claude-opus-4`), and a
 // short alias can be CONTAINED BY a longer, more specific key
-// (`gemini-2.5-flash` ⊂ `gemini-2.5-flash-lite-preview`).
+// (`gpt-4o` ⊂ `gpt-4o-2024-08-06`) — gated by isAllowedSuffix() above so a
+// tier/product suffix is never absorbed into a sibling's rate.
+//
+// Both directions are checked via `startsWith` (a PREFIX relationship), not
+// `includes` anywhere-in-the-string — every real suffix this module targets
+// (a date, `-latest`, `-preview`) is appended after the shared base, never
+// inserted in the middle, and `startsWith` is what makes computing "the
+// leftover" ($longer.slice(shorter.length)$) well-defined.
 //
 // Candidates are sorted LONGEST-KEY-FIRST — never object/iteration order —
 // so the most specific match always wins: `gpt-4o-mini-search-preview`
-// matches both `gpt-4o` and `gpt-4o-mini`; picking the shorter `gpt-4o` would
-// overstate that call 16x (#1211). The same hazard applies to
-// `gpt-4`/`gpt-4.1`, `claude-sonnet-4`/`claude-sonnet-4-6`, and
-// `gemini-2.5-flash`/`gemini-2.5-flash-lite`. A tie in key length falls back
-// to a plain lexical sort so the result never depends on which key the price
-// table happened to declare first.
+// matches both `gpt-4o` (leftover `-mini-search-preview`, REFUSED — "mini" is
+// not allowed noise) and `gpt-4o-mini` (leftover `-search-preview`, allowed).
+// Even without the length sort, the suffix gate alone throws out the wrong
+// candidate here; the sort exists for the case where more than one candidate
+// survives the gate. A tie in key length falls back to a plain lexical sort
+// so the result never depends on which key the price table happened to
+// declare first.
 function resolveBands(model, prices) {
   if (!model || !prices) return null;
   if (prices[model]) return toBands(prices[model]);
   const candidates = Object.keys(prices)
-    .filter((key) => model.includes(key) || key.includes(model))
+    .filter((key) => {
+      if (model === key) return false;
+      const [shorter, longer] = model.length <= key.length ? [model, key] : [key, model];
+      if (!longer.startsWith(shorter)) return false;
+      return isAllowedSuffix(longer.slice(shorter.length));
+    })
     .sort((a, b) => b.length - a.length || a.localeCompare(b));
   return candidates.length ? toBands(prices[candidates[0]]) : null;
 }
