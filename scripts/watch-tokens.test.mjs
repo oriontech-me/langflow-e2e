@@ -421,6 +421,63 @@ test("per-model dollar figures use enough decimals to show sub-cent spend", asyn
   assert.doesNotMatch(fs2.written["summary.md"], /\| `gpt-4o-mini` \| 1 \| 40 \| 48 \| \$0\.00 \|/);
 });
 
+// #1197 review, I5 follow-up (re-review): the per-model/spec/anomaly rows were
+// fixed to sub-cent precision, but the two places a reader looks FIRST still
+// used the 2-decimal `usd()` — the step summary's headline
+// ("**N tokens** across M trace(s) — $0.00") and the `token summary: N
+// tokens, $0.00` stdout line. A real run (this fixture: 40/48 gpt-4o-mini
+// tokens, $0.0000348) rendered a $0.00 headline sitting directly above its
+// own $0.000035 model row — a run total that reads as "nothing was spent",
+// contradicted by the line beneath it. `usd()` must scale precision to
+// magnitude too: readable (2 decimals) once the total clears a cent, enough
+// decimals (6) to show a real value below that.
+test("the headline and the stdout log report a sub-cent total honestly, not $0.00 (#1197 review, I5 follow-up)", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const logs = [];
+  await summarize({ env: baseEnv, ...fs2, log: (msg) => logs.push(msg) });
+  assert.ok(
+    fs2.written["summary.md"].includes("**88 tokens** across 1 trace(s) — $0.000035"),
+    `expected the headline to show $0.000035, got: ${fs2.written["summary.md"]}`,
+  );
+  assert.ok(
+    !fs2.written["summary.md"].includes("across 1 trace(s) — $0.00\n"),
+    "the headline must not read as a bare $0.00 above a non-zero model row",
+  );
+  assert.ok(
+    logs.some((l) => l.includes("token summary: 88 tokens, $0.000035")),
+    `expected the stdout log to show $0.000035, got: ${JSON.stringify(logs)}`,
+  );
+  assert.ok(
+    !logs.some((l) => /token summary: 88 tokens, \$0\.00(?!\d)/.test(l)),
+    "the stdout log must not report the same run as a bare $0.00",
+  );
+});
+
+// A $4.82 run must still read as "$4.82", not gain trailing zeros just
+// because sub-cent runs now need more precision — the headline is meant to
+// stay readable at ordinary scale.
+test("the headline stays readable (2 decimals) once the total clears a cent", async () => {
+  const bigPrices = JSON.stringify({ m: { inputPerMillion: 1000000, outputPerMillion: 1000000 } }); // $1/token
+  const bigProbe = JSON.stringify({
+    trace_id: "big1",
+    flow_id: "f1",
+    total_tokens: 4.82,
+    models: [{ model: "m", prompt_tokens: 0, completion_tokens: 4.82, total_tokens: 4.82, calls: 1 }],
+  });
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${bigProbe}\n`,
+    "prices.json": bigPrices,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  assert.ok(
+    fs2.written["summary.md"].includes("— $4.82"),
+    `expected a readable $4.82 headline, got: ${fs2.written["summary.md"]}`,
+  );
+});
+
 test("probe files from several shards are merged and deduped by trace", async () => {
   const fs2 = fakeFs({
     "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
@@ -445,6 +502,15 @@ test("anomalies land in the history line when the baseline supports them", async
   const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
   assert.equal(line.anomalies.length, 1);
   assert.equal(line.anomalies[0].scope, "run");
+  // #1197 re-review, Low: the anomaly branch's last `lines.push` is the 🔺
+  // line with no trailing "" after it, so the rendered text used to end
+  // without a newline. Harmless while this is the last writer in the job,
+  // but the C1 fix made GITHUB_STEP_SUMMARY an append-mode target — a
+  // missing terminator is a latent defect for whatever appends next.
+  assert.ok(
+    fs2.written["summary.md"].endsWith("\n"),
+    "the summary text must be newline-terminated, even when the last section is an anomaly line",
+  );
 });
 
 // #1197 review, finding I7: the anomaly baseline must be WINDOWED to a recent

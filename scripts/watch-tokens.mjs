@@ -246,9 +246,22 @@ export async function poll({ fetchImpl = fetch, env = process.env, log = console
   return 0;
 }
 
-// Headline figure only — 2 decimals is readable at the run-total scale, where
-// the total is normally at least several cents.
-const usd = (n) => (n === null || n === undefined ? "n/a" : `$${(Math.round(n * 100) / 100).toFixed(2)}`);
+// Headline figure (the summary's own total line, and the matching stdout log
+// line). Originally a fixed 2 decimals — readable at the usual run-total
+// scale, but a single-trace run can legitimately total under a cent
+// ($0.0000348 for one gpt-4o-mini call), and 2-decimal rounding rendered that
+// as a bare "$0.00" sitting directly above its own non-zero per-model row
+// ("**88 tokens** across 1 trace(s) — $0.00" over "$0.000035") — the same
+// constraint finding I5 raised, just at the two places a reader looks FIRST
+// (#1197 re-review). Scale precision to magnitude, same idea as
+// `usdDetail` below: 2 decimals once the total clears a cent (so an ordinary
+// $4.82 run still reads "$4.82", not "$4.820000"), 6 decimals under that (so
+// a real sub-cent total doesn't read as zero).
+const usd = (n) => {
+  if (n === null || n === undefined) return "n/a";
+  const decimals = Math.abs(n) < 0.01 ? 6 : 2;
+  return `$${n.toFixed(decimals)}`;
+};
 
 // Detail-level $ figures (per-model, per-spec, anomaly lines): a single trace
 // commonly costs a fraction of a cent ($0.000035 is a real value, not noise),
@@ -432,11 +445,17 @@ export async function summarize({
 // Writing the step summary is best-effort: a bad TOKENS_SUMMARY_MD path (or none —
 // GITHUB_STEP_SUMMARY is unset outside CI) must not stop the summarizer, which is
 // diagnostic-only by contract. `writeFile` APPENDS (see realIo.writeFile above) —
-// never assume this is the only writer of the target path within the job.
+// never assume this is the only writer of the target path within the job, which
+// is exactly why the text must be newline-terminated: whichever branch built
+// `lines` can end on a section with no trailing blank entry (the anomaly loop's
+// last push has none), and an un-terminated append here would run its content
+// into whatever the NEXT job step appends after it (#1197 re-review, Low).
+// Guaranteed here, once, rather than at every call site.
 function writeSummary(writeFile, summaryPath, text, log) {
   if (!summaryPath) return;
+  const terminated = text.endsWith("\n") ? text : `${text}\n`;
   try {
-    writeFile(summaryPath, text);
+    writeFile(summaryPath, terminated);
   } catch (error) {
     log(`token summary: could not write the step summary: ${error?.message || error}`);
   }
