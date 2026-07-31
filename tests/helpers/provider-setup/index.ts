@@ -2,10 +2,21 @@ import type { Page } from "@playwright/test";
 import { setupOpenAI } from "./setup-openai";
 import { setupAnthropic } from "./setup-anthropic";
 import { setupGoogle } from "./setup-google";
+import { setupOllama } from "./setup-ollama";
 import { providerConfigMap, type Provider } from "./provider-config";
 
-export type { Provider } from "./provider-config";
-export { providerConfigMap } from "./provider-config";
+export type {
+  ApiKeyProviderConfig,
+  BaseUrlProviderConfig,
+  KeyedProvider,
+  Provider,
+  ProviderConfig,
+} from "./provider-config";
+export {
+  providerConfigMap,
+  keyedProviders,
+  keyedProviderNames,
+} from "./provider-config";
 
 // Derivado de provider-config.ts — edite lá para alterar as chaves de ambiente
 export const providerEnvKeyMap: Record<string, string[]> = Object.fromEntries(
@@ -22,6 +33,7 @@ export const providerSetupMap: Record<
   openai: setupOpenAI,
   anthropic: setupAnthropic,
   google: setupGoogle,
+  ollama: setupOllama,
 };
 
 /** Retorna true se todas as env vars do provider estiverem definidas */

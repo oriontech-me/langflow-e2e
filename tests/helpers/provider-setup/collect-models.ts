@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 import path from "path";
 import fs from "fs";
 import { SettingsPage } from "../../pages/SettingsPage";
-import { providerConfigMap, type Provider } from "./provider-config";
+import { keyedProviders, keyedProviderNames, type Provider } from "./provider-config";
 import { probeBuildAxis, type ProviderVerdict } from "./probe-component-buildable";
 
 const DATA_DIR = path.join(__dirname, "data");
@@ -434,7 +434,10 @@ async function collectModels(page: Page): Promise<ModelRecord[]> {
 
   const allModels: ModelRecord[] = [];
 
-  for (const [provider, config] of Object.entries(providerConfigMap) as [Provider, typeof providerConfigMap[Provider]][]) {
+  // Keyed providers only. This sweep SAVES an API key per provider through the
+  // Settings UI, so a keyless one (Ollama, #1187) has nothing for it to do here —
+  // and its model list is the live instance's, not a catalog to collect.
+  for (const [provider, config] of keyedProviders) {
     allModels.push(
       ...(await collectModelsForProvider(
         page,
@@ -492,8 +495,7 @@ export async function collectAll(page: Page): Promise<void> {
   // build, so the axis reported `unknown` for all three providers and produced no
   // signal at all. The probe needs only the component registry — not models.json,
   // not the keys — so it can and must run before that load.
-  const knownProviders = Object.keys(providerConfigMap) as Provider[];
-  const buildAxis = await probeBuildAxis(page.request, knownProviders);
+  const buildAxis = await probeBuildAxis(page.request, keyedProviderNames);
 
   // Step 2: Collect models from UI via Settings
   const models = await collectModels(page);
