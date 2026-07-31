@@ -15,6 +15,14 @@
 //   --summarize  join TOKENS_OUT with TOKENS_ATTRIB, price it, write the history
 //                line and the step summary (see the summarize section)
 //
+// TOKENS_SUPPRESS_HISTORY=1 (#1183): --summarize still renders the step-summary
+// table, but skips reading AND writing reports/token-history.jsonl entirely.
+// For pr-validation.yml / manual.yml — lanes whose per-run scope (a capped PR
+// subset, an arbitrary manual dispatch) is not comparable to the daily's fixed
+// @stable sweep, so mixing it into that one series would corrupt the trend and
+// the anomaly baseline. Never silent about it: both the log and the step
+// summary say the append was suppressed and why.
+//
 // One request per tick: /api/v1/monitor/traces answers WITHOUT flow_id (S2), so the
 // tick does not scale with the number of live flows. Detail fetches are capped per
 // tick, because a burst of traces must not turn one tick into a hundred requests
@@ -276,6 +284,19 @@ export async function summarize({
   const attribDir = env.TOKENS_ATTRIB_DIR || dir;
   const historyPath = env.TOKENS_HISTORY || "reports/token-history.jsonl";
   const summaryPath = env.TOKENS_SUMMARY_MD || env.GITHUB_STEP_SUMMARY;
+  // Measurement-only lanes (#1183 — pr-validation.yml, manual.yml). Those lanes
+  // want the step-summary table (so the run's own spend is visible) but must
+  // NEVER add a line to reports/token-history.jsonl: that file is the daily's
+  // series, one line per FULL @stable sweep, and its anomaly baseline
+  // (detectAnomalies() above) is a plain median over recent entries. A PR's
+  // scope is whatever subset of specs the import graph selected for THAT PR
+  // (capped, often zero LLM specs at all) and a manual dispatch's scope is
+  // whatever tag/grep was chosen — neither is comparable to the daily's fixed
+  // sweep, so writing either into the same series would corrupt the trend and
+  // silently poison every anomaly check that follows. Skips the read too (not
+  // just the write): comparing a bounded PR/manual run's totals against the
+  // daily's own baseline would produce a false anomaly on nearly every run.
+  const suppressHistory = /^(1|true)$/i.test(env.TOKENS_SUPPRESS_HISTORY || "");
 
   const read = (p) => {
     try {
@@ -359,7 +380,7 @@ export async function summarize({
   }
 
   const agg = aggregate({ probes: [...probesById.values()], attributions, prices });
-  const history = parseHistory(read(historyPath));
+  const history = suppressHistory ? [] : parseHistory(read(historyPath));
   const runLine = {
     version: 1,
     date: env.RUN_DATE || new Date().toISOString().slice(0, 10),
@@ -388,10 +409,23 @@ export async function summarize({
   // Writing the history line is the summarizer's one durable side effect. Losing it
   // to a bad path/full disk must degrade the run's cost visibility, not the run
   // itself — same reasoning as poll()'s own appendFileSync guard above.
-  try {
-    appendFile(historyPath, `${JSON.stringify(runLine)}\n`);
-  } catch (error) {
-    log(`token summary: could not append the history line: ${error?.message || error}`);
+  //
+  // Suppressed deliberately on measurement-only lanes (#1183, see the
+  // `suppressHistory` comment above) — logged here rather than silently
+  // skipped, so a reader of the run log is never left wondering why the file
+  // did not change (#1012's "never silently" rule applied to this knob).
+  if (suppressHistory) {
+    log(
+      "token summary: TOKENS_SUPPRESS_HISTORY set — history line NOT written " +
+        "(this lane's scope is not comparable to reports/token-history.jsonl's " +
+        "daily series, #1183)",
+    );
+  } else {
+    try {
+      appendFile(historyPath, `${JSON.stringify(runLine)}\n`);
+    } catch (error) {
+      log(`token summary: could not append the history line: ${error?.message || error}`);
+    }
   }
 
   const floor = agg.unpricedModels.length
@@ -402,6 +436,19 @@ export async function summarize({
     "",
     `**${agg.totals.total_tokens.toLocaleString("en-US")} tokens** across ${agg.totals.traces} trace(s) — ${usd(agg.totals.usd_estimated)}${floor}`,
     "",
+  );
+  if (suppressHistory) {
+    // Same "never silently" rule as the log line above (#1012), stated where a
+    // human reading the run's own step summary — not just its raw log — would
+    // otherwise wonder why reports/token-history.jsonl did not change.
+    lines.push(
+      "_History append suppressed for this lane (`TOKENS_SUPPRESS_HISTORY`) — " +
+        "this run's numbers are a per-run measurement only, not part of " +
+        "`reports/token-history.jsonl`'s daily trend/anomaly series (#1183)._",
+      "",
+    );
+  }
+  lines.push(
     "| Model | Calls | Prompt | Completion | Estimated |",
     "|---|---:|---:|---:|---:|",
     ...agg.byModel.map(

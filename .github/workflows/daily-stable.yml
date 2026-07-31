@@ -966,6 +966,26 @@ jobs:
           # count (expected+unexpected+flaky+skipped, #1012) rather than adding a
           # second computation of the same thing.
           TESTS_TOTAL: ${{ steps.runguard.outputs.tests_total }}
+          # Suppress the history write on a MANUAL dispatch of this workflow
+          # (#1183, found live on run 30657439522: 4 shards, one red, dispatched
+          # by hand). This step still runs and still publishes its step summary
+          # either way — only reports/token-history.jsonl's line is affected.
+          #
+          # "Append daily history" / "Commit daily history" below are already
+          # gated `if: always() && github.event_name == 'schedule'`, so a manual
+          # dispatch never commits that file — but this step ran unconditionally
+          # and, before this line, wrote the line into the runner's ephemeral
+          # workspace regardless, silently diverging from what the (uncommitted)
+          # file on disk implied. A manual dispatch has an arbitrary shape (a
+          # different shard count, a subset of specs, one shard failing outright)
+          # that is not comparable to the daily's own fixed @stable sweep — the
+          # same reasoning that keeps pr-validation.yml and manual.yml's own
+          # summarize steps out of this series entirely.
+          #
+          # `github.event_name != 'schedule' && '1' || ''` reads as: manual
+          # dispatch → "1" (suppressed), scheduled run → "" (not suppressed, the
+          # knob's own truthiness check treats an empty string as "not set").
+          TOKENS_SUPPRESS_HISTORY: ${{ github.event_name != 'schedule' && '1' || '' }}
 
       # Long-lived run history: append one JSON line per scheduled run to
       # reports/daily-history.jsonl and commit it back to main. See

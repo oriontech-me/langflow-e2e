@@ -220,6 +220,71 @@ jobs:
           attribution: "NOT a failure of the tests you dispatched"
           collect_models_outcome: ${{ steps.collect_models.outcome }}
 
+      # In-run token consumption recorder, extended to this job (#1183 — measure
+      # the suite's real LLM spend per lane/provider). Same mechanism as
+      # daily-stable.yml / pr-validation.yml (#1197): poll
+      # /api/v1/monitor/traces and price what each trace spent, because
+      # deleting a flow 404s its trace and this suite deletes every flow it
+      # creates, so the only place to read the data is DURING the run.
+      #
+      # Only wired into THIS job. It polls TOKENS_BASE_URL, which defaults to
+      # localhost — exactly this job's Langflow service container. The
+      # `e2e-url` job below targets an EXTERNAL Langflow instance the runner
+      # does not host; a recorder started there would poll a localhost with
+      # nothing behind it and spend the whole run logging connection-refused
+      # errors, never producing a real number — worse than not measuring, so
+      # it is deliberately skipped there instead of started to fail.
+      #
+      # MEASUREMENT-ONLY: --summarize (below, after the run) still renders a
+      # step-summary table, but TOKENS_SUPPRESS_HISTORY keeps it from writing
+      # reports/token-history.jsonl — that file is the daily's series, one line
+      # per FULL @stable sweep, and a manual dispatch's scope (whatever
+      # tag/grep was chosen — @stable, a single spec, the whole suite) is
+      # arbitrary and not comparable to it. Mixing the two would corrupt the
+      # trend and the anomaly baseline the daily itself relies on (see the
+      # summarizer's own comment on the knob).
+      #
+      # DIAGNOSTIC ONLY: continue-on-error, and it never gates the run.
+      - name: Start the token consumption recorder
+        shell: bash
+        continue-on-error: true
+        run: |
+          nohup node scripts/watch-tokens.mjs > /tmp/tokens.log 2>&1 &
+          echo "$!" > /tmp/tokens.pid
+          disown
+          echo "Token recorder started (pid $(cat /tmp/tokens.pid))."
+        env:
+          TOKENS_BASE_URL: http://localhost:7860
+          TOKENS_OUT: token-probes.jsonl
+          TOKENS_INTERVAL_MS: "15000"
+          TOKENS_TIMEOUT_MS: "8000"
+          # Below the job's timeout-minutes: 90 so this is a real backstop, not
+          # dead configuration reached only after the runner already killed the
+          # job. Same reasoning as the daily's TOKENS_MAX_SECONDS.
+          TOKENS_MAX_SECONDS: "5100"
+          TOKENS_DETAIL_CAP: "25"
+
+      # Export TOKENS_ATTRIB for the specs' cleanup sidecar (#1183), same as
+      # daily-stable.yml / pr-validation.yml — with it unset, the helper makes
+      # no request and writes no file. The actual test run below is the
+      # `run-e2e` COMPOSITE action, not a plain `run:` step: composite actions
+      # do NOT inherit a caller step's `env:` block into their own internal
+      # steps, so an `env:` added to the `uses:` line below would silently not
+      # reach it. $GITHUB_ENV is not a fallback for that gap, it is the one
+      # mechanism that actually works here — anything appended to it becomes a
+      # real process environment variable for every later step in the job,
+      # composite-internal steps included.
+      #
+      # continue-on-error: true, like every other step this change adds. The
+      # step below it (`Run tests and upload report`) carries no `if:` of its
+      # own, so a failure here — however unlikely for a bare `echo` — would
+      # otherwise skip the run it exists only to measure: a diagnostic add-on
+      # aborting the work it measures, which this whole change is built to
+      # never do.
+      - name: Export TOKENS_ATTRIB for the specs' cleanup sidecar
+        continue-on-error: true
+        run: echo "TOKENS_ATTRIB=token-attrib.jsonl" >> "$GITHUB_ENV"
+
       - name: Run tests and upload report
         uses: ./.github/actions/run-e2e
         with:
@@ -234,6 +299,58 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           google_api_key: ${{ secrets.GOOGLE_API_KEY }}
 
+      # Stop the recorder, price what it saw, and upload the raw JSONL — mirrors
+      # daily-stable.yml's shard-level "Stop and collect" + merge-job
+      # "Summarize" steps, collapsed into one job since this workflow has no
+      # shards to merge. always(): the recorder's data is most useful precisely
+      # when the run went red, and continue-on-error on every step here means a
+      # defect in the reporting itself can never touch the specs' own pass/fail.
+      - name: Stop and collect token consumption
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          # SIGTERM is the recorder's normal exit path: it stops after the
+          # current probe.
+          if [ -f /tmp/tokens.pid ]; then
+            kill "$(cat /tmp/tokens.pid)" 2>/dev/null || true
+          fi
+          # Let an in-flight append land before the file is copied — same
+          # reasoning and margin as the daily's own copy of this step.
+          sleep 10
+          mkdir -p tokens
+          cp token-probes.jsonl tokens/ 2>/dev/null || true
+          cp token-attrib.jsonl tokens/ 2>/dev/null || true
+          echo "--- token recorder stdout (tail) ---"
+          tail -n 5 /tmp/tokens.log 2>/dev/null || true
+
+      - name: Summarize token consumption
+        if: always()
+        continue-on-error: true
+        run: node scripts/watch-tokens.mjs --summarize
+        env:
+          TOKENS_DIR: tokens
+          TOKENS_PRICES: scripts/lib/model-prices.json
+          WORKFLOW: manual
+          LANGFLOW_IMAGE: ${{ needs.detect-target.outputs.docker_image }}
+          # Measurement-only lane (#1183): never add a line to
+          # reports/token-history.jsonl. See "Start the token consumption
+          # recorder" above and the summarizer's own comment on this knob for
+          # why an arbitrary manual-dispatch scope is not comparable to the
+          # daily's series. Suppressed openly, not silently: the summarizer
+          # states this in both its log line and the step summary itself
+          # (#1012's rule).
+          TOKENS_SUPPRESS_HISTORY: "1"
+
+      - name: Upload token consumption
+        uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: tokens-manual-${{ github.run_id }}
+          path: tokens/
+          if-no-files-found: ignore
+
   # Scoped OUT of the go-httpbin decoupling (#1128), deliberately: this job points
   # at a Langflow we do not host — a staging deployment, someone's tunnel — which
   # is not on this runner's Docker network and therefore cannot reach a service
@@ -241,6 +358,14 @@ jobs:
   # host in this job and remain exposed to its outages. Self-hosting for it would
   # need a publicly reachable echo, which is a different (and larger) decision
   # than the one #1128 asked for.
+  #
+  # Also scoped OUT of the token consumption recorder (#1183), for the same
+  # class of reason: TOKENS_BASE_URL defaults to localhost, which is
+  # `e2e-docker`'s own Langflow service container, not the external instance
+  # this job targets. Starting the recorder here would poll a localhost with
+  # nothing listening behind it and spend the whole run logging
+  # connection-refused errors instead of measuring anything real — so it is
+  # skipped rather than started to fail.
   e2e-url:
     name: E2E via URL (${{ github.event.inputs.langflow_target }})
     needs: detect-target
