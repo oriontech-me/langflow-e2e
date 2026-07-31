@@ -210,8 +210,8 @@ tests/
 | `daily-stable.yml` | Mon–Fri 05:00 BRT + manual | Runs `@stable` tests against `langflow-nightly:latest`; opens a triage issue on failure and uploads a navigable HTML report. **Active stable workflow.** |
 | `weekly-stable.yml` | Disabled (fallback) | Superseded by `daily-stable.yml`; kept in the repo, disabled. Same `@stable` machinery on a weekly cron when enabled |
 | `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag |
-| `file-watcher.yml` | Manual (`workflow_dispatch`) | Monitors changes in Langflow source and opens a review issue. Accepts a `since` window; guards its monitored paths against the checkout first (`scripts/watch-upstream-areas.mjs`) |
-| `adaptive-impacted.yml` | Daily 04:00 BRT + manual | Runs only the specs whose `External dependencies` reference the Langflow source paths that changed since the last nightly we tested; skips entirely when no new nightly was published |
+| `file-watcher.yml` | **Disabled in Actions** — cannot even be dispatched | Monitors changes in Langflow source and opens a review issue. Accepts a `since` window; guards its monitored paths against the checkout first (`scripts/watch-upstream-areas.mjs`). Re-enabling needs the Actions toggle **and** a cron (removed in `9da85fa`) |
+| `adaptive-impacted.yml` | **Disabled in Actions** (was daily 04:00 BRT) | Runs only the specs whose `External dependencies` reference the Langflow source paths that changed since the last nightly we tested; skips entirely when no new nightly was published |
 
 ---
 

@@ -469,7 +469,9 @@ The guide is the human-language specification of the automated tests. Keeping it
 
 ### How the team learns that a test needs review
 
-`file-watcher.yml` checks whether the official Langflow repository received commits in monitored paths within a window (`since`, default 24h) and opens an issue in this repository when it finds any. It is **`workflow_dispatch` only** — the schedule was disabled in `9da85fa`, so it reports nothing until someone dispatches it; widen `since` when the last dispatch was a while ago.
+`file-watcher.yml` checks whether the official Langflow repository received commits in monitored paths within a window (`since`, default 24h) and opens an issue in this repository when it finds any.
+
+> **It cannot run today.** The workflow is `disabled_manually` in Actions *and* its cron was removed in `9da85fa`, so it has no run history at all and a dispatch fails with `HTTP 422: Cannot trigger a workflow_dispatch on a disabled workflow`. Reviving it takes both: enable the workflow, then restore a cadence if one is wanted. Until then nothing here fires, whatever the monitored paths say. When it is dispatched after a long gap, widen `since`.
 
 **The issue reports:**
 - Which functional area changed
@@ -506,7 +508,7 @@ node scripts/watch-upstream-areas.mjs --mode=check --root /path/to/langflow
 
 ### Adaptive impacted-tests subset
 
-`adaptive-impacted.yml` is a finer-grained companion to `nightly.yml`. Each day at 04:00 BRT it:
+`adaptive-impacted.yml` is a finer-grained companion to `nightly.yml`. It is **`disabled_manually` in Actions** today (as are `nightly.yml`, `weekly-stable.yml` and `file-watcher.yml`), so the cadence below describes what it does *when enabled*, not what is running. When it ran, each day at 04:00 BRT it:
 
 1. Queries Docker Hub for the current `langflowai/langflow-nightly:latest` digest and resolves the matching git SHA in the Langflow repo.
 2. Compares to the SHA of the last nightly we tested (repo variable `LAST_TESTED_NIGHTLY_SHA`).
