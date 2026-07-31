@@ -16,15 +16,18 @@ dashboard can carry a cost view.
 
 It is a **correction pass**, not a fresh design. §5 of the #1197 document sketched two tables in one
 short section, before #1211 dated the price table and before anyone read the platform's migrations.
-Eight of its assumptions turn out to be wrong or stale. Seven are defects that would have shipped as
-a grain nothing can fill, sums that do not add up, a column that is always NULL, a history repriced
-on every correction, the repo's most error-prone rule written twice in two languages, a payload that
-cannot carry the data at all, and two providers' consumption merged into one row. The eighth is a
+Nine of its assumptions turn out to be wrong or stale. Eight are defects that would have shipped as a
+grain nothing can fill, sums that do not add up, a column that is always NULL, a history repriced on
+every correction, the repo's most error-prone rule written twice in two languages, a payload that
+cannot carry the data at all, two providers' consumption merged into one row, and a fact table with no
+shared identity — so the join the whole exercise exists for would not have worked. The ninth is a
 dependency that does not exist.
 
-The issue that opened this pass named six. The two found while writing it — §2.2 and §2.7 — are
-both consequences of reading the implementation rather than the design, and §2.7 is a live defect in
-phase 1's own output, not just in the sketch.
+The issue that opened this pass named six. Three more were found while writing and reviewing it, all
+from reading the implementation and the sibling design rather than the sketch: §2.2 and §2.7 while
+drafting, and §2.8 — the missing `test_key` — from a reviewer asking the obvious question, *can the two
+documents be correlated?* §2.7 is a live defect in phase 1's own output, independently confirmed by
+#1180's own review on production rows.
 
 ### 1.1 State on the ground
 
@@ -42,7 +45,7 @@ wait on it.
 
 ---
 
-## 2. The eight corrections
+## 2. The nine corrections
 
 ### 2.1 The declared grain cannot be filled from what the summarizer emits
 
@@ -148,13 +151,37 @@ providers' consumption merges into a single `bySpec` row **today** — a live de
 output, not only a database concern. #1185's weekday rotation masks it by usually resolving one
 provider per day, which is exactly the kind of masking that makes a latent bug expensive later.
 
+**#1180's own review reached the same defect from the other side, with production data.** Its backfill
+aborted on it: the daily of **2026-07-29** holds two `agent-context-id-isolation.spec.ts` rows with an
+identical leaf title, and **17 spec files** use an interpolated `describe`, concentrated in
+`llm-agents/` and `mcp/client/` (#1180 §3.1, §11). `llm-agents/` is where this suite's token
+consumption lives, so the overlap between "collides on the leaf title" and "spends money" is close to
+total. Two independent routes — reading the code here, reading the recorded rows there — found one bug.
+That is the argument for fixing it in the producer rather than compensating for it per query.
+
 **Decision.** The call site passes `testInfo.titlePath.slice(1).join(" > ")`. Playwright documents
 `titlePath` as "the full title path starting with the test file name", so element 0 is the file name
 and is dropped — `file` is already carried separately. Pinned by a unit test, because that `slice(1)`
 is the kind of off-by-one that silently produces a `title_path` beginning with a filename and joins
 to nothing.
 
-### 2.8 The #1180 dependency is weaker than §5 states
+### 2.8 The sketch gives the fact table no shared identity, so the join it exists for does not work
+
+§5 declares `spec_path` and `title_path` columns and stops there. #1180 §3.1 keys its own fact on a
+**generated** `test_key` — `md5(e2e_normalize_spec_path(spec_path) || '::' || title_path)`, `UNIQUE
+(run_id, test_key)` — and resolves renames through `e2e_test_aliases` and
+`COALESCE(new_test_key, test_key)`. A token table without that column joins only by recomputing the
+digest on every query, and never reaches the rename bridge at all.
+
+The second half is the damaging one. #1180 §3.4 records that a **file move breaks the key exactly as a
+rename does, and that moves are more frequent in this repository than renames.** One folder
+reorganisation would therefore reset the cost series while leaving the failure series intact — two
+histories disagreeing about when a test began, with nothing reporting the disagreement.
+
+**Decision.** The fact table generates the same `test_key` from the same expression, and the unique key
+becomes `(run_id, test_key, model)`. Full treatment, including the `title_path_exact` trap, in §3.5.
+
+### 2.9 The #1180 dependency is weaker than §5 states
 
 §5 routes the token ingest through the atomic RPC #1180 §4.2 introduces. The FK anchors on
 `e2e_automation_runs(run_id)`, which exists today; only the cross-joins — cost of the spec that
@@ -167,9 +194,14 @@ join to, and an approved design is not a schema.
 **Decision: ship independently of #1180.** The token fact table, its dimension and its RPCs stand
 alone and answer all four questions of #1197 §1. When #1180's migrations land, `e2e_ingest_run`
 absorbs the token block and `e2e_ingest_run_tokens` (§4.2) is retired in the same migration; the fact
-table itself does not change, because it already keys on `(spec_path, title_path)` under the same
-normaliser. Ordering the two the other way would make a cost view wait on the larger deliverable for
-no schema reason.
+table itself does not change, because §2.8 already gave it #1180's identity.
+
+**The shared `test_key` does not reintroduce the dependency.** The generated column needs only
+`public.e2e_normalize_spec_path()`, which exists and is `IMMUTABLE` — not `e2e_test_results`. The
+token table can therefore be keyed for the join long before there is anything to join to, and the
+alias bridge starts protecting the cost series from the first row rather than from whenever #1180's
+migrations land. Ordering the two the other way would make a cost view wait on the larger deliverable
+for no schema reason.
 
 ---
 
@@ -206,10 +238,20 @@ CREATE TABLE public.e2e_test_token_usage (
   id                BIGSERIAL PRIMARY KEY,
   run_id            TEXT NOT NULL REFERENCES public.e2e_automation_runs(run_id) ON DELETE CASCADE,
 
-  spec_path         TEXT,          -- e2e_normalize_spec_path()'d; NULL = unattributed bucket
+  spec_path         TEXT,          -- as reported; normalised by the RPC. NULL = unattributed bucket
   title_path        TEXT,          -- describe > … > test (§2.7); NULL = unattributed bucket
   model             TEXT NOT NULL, -- raw modelName as the trace reported it
   price_key         TEXT,          -- resolved by token-cost.mjs (§2.5); NULL = unpriced
+
+  -- The SAME identity #1180 §3.1 generates on e2e_test_results, character for character,
+  -- so the two facts join without either side recomputing a hash at read time and the
+  -- token series inherits the e2e_test_aliases rename bridge (§3.5). NULL for the
+  -- unattributed bucket, because `||` with a NULL operand yields NULL — which is the
+  -- wanted behaviour: a bucket row has no test identity to be stable about.
+  -- Requires e2e_normalize_spec_path() to be IMMUTABLE — verified in #1180 §2.1.
+  test_key          TEXT GENERATED ALWAYS AS (
+                      md5(public.e2e_normalize_spec_path(spec_path) || '::' || title_path)
+                    ) STORED,
 
   calls             INTEGER NOT NULL DEFAULT 0,
   prompt_tokens     BIGINT  NOT NULL DEFAULT 0,
@@ -217,16 +259,22 @@ CREATE TABLE public.e2e_test_token_usage (
   total_tokens      BIGINT  NOT NULL DEFAULT 0,
 
   -- NULLS NOT DISTINCT is required, not cosmetic: with the default, Postgres treats two
-  -- unattributed rows (spec_path/title_path NULL) as distinct, so a re-POST would duplicate
-  -- the bucket and idempotency would hold for attributed rows while quietly failing for it.
-  -- On PG < 15, a unique index over COALESCE(spec_path,''), COALESCE(title_path,'') instead.
-  UNIQUE NULLS NOT DISTINCT (run_id, spec_path, title_path, model)
+  -- unattributed rows (test_key NULL) as distinct, so a re-POST would duplicate the
+  -- bucket and idempotency would hold for attributed rows while quietly failing for it.
+  -- On PG < 15, a unique index over COALESCE(test_key,'') instead.
+  UNIQUE NULLS NOT DISTINCT (run_id, test_key, model)
 );
 
 CREATE INDEX ON public.e2e_test_token_usage (run_id);
 CREATE INDEX ON public.e2e_test_token_usage (model);
+CREATE INDEX ON public.e2e_test_token_usage (test_key, run_id DESC);  -- mirrors #1180 §3.1
 CREATE INDEX ON public.e2e_test_token_usage (spec_path) WHERE spec_path IS NOT NULL;
 ```
+
+The unique key is `(run_id, test_key, model)` rather than the four-column
+`(run_id, spec_path, title_path, model)` an earlier draft used: `test_key` already *is* the normalised
+pair, so keying on both would let a row whose `spec_path` differs only by a `tests/` prefix insert
+twice under one identity.
 
 `price_key` carries no FK: the dimension's key is `(price_key, since)`, so a single-column reference
 is not expressible, and a run must remain ingestable when its model was priced after the fact. The
@@ -260,6 +308,46 @@ read time so a price correction is retroactive instead of frozen into old rows.
 
 Identical to the sibling tables: `SELECT` to `authenticated`, all writes to `service_role` only.
 
+### 3.5 Joining the two facts
+
+The two fact tables are siblings at different grains — `e2e_test_results` is (run × test),
+`e2e_test_token_usage` is (run × test × model) — and the whole value of having both is the join. Three
+things make it work, and none of them was in §5 of the #1197 document.
+
+**One identity, generated in one place.** Both tables generate `test_key` from the same expression
+over the same `IMMUTABLE` normaliser, so the join is `USING (run_id, test_key)` with no hashing, no
+`e2e_normalize_spec_path()` call and no prefix reconciliation at read time. Without it the join would
+have to recompute the digest on every query, and each RPC would be free to compute it slightly
+differently — the objection #1180 §3.1 answers by generating the column in the database rather than in
+the edge function.
+
+**The rename bridge is inherited, not re-solved.** #1180 §3.4 resolves renames through
+`e2e_test_aliases` and `COALESCE(new_test_key, test_key)`. Sharing the key means every token RPC gets
+that for free. This is not a nicety: #1180 §3.4 records that a **file move** breaks the key exactly as
+a rename does, *and that moves are more frequent in this repository than renames*. Without a shared
+key, one folder reorganisation silently resets the cost series while leaving the failure series
+intact — two histories disagreeing about when a test began, with nothing reporting it.
+
+**A join must not pair an exact identity with a reconstructed one.** #1180 §3.1 carries
+`title_path_exact BOOLEAN`, false for rows whose `title_path` was reconstructed during backfill
+(§4.3 there). Token rows are never backfilled — there is nothing to backfill (§4.4 here) — so they are
+always exact, and a naive join would quietly match an exact token row against a reconstructed result
+row, i.e. against a guess. Every RPC that joins the two filters `e2e_test_results.title_path_exact`,
+and reports how many rows it dropped for that reason rather than narrowing the window in silence.
+
+**What the join answers that neither table can alone:**
+
+| Question | Why it needs both |
+|---|---|
+| Did the red day cost more than the green one? | `status` lives only in the results fact; tokens only in ours |
+| What does a retry cost? | The poller records a trace per **attempt**, so a flaky test's tokens already arrive summed across attempts — but `attempts` exists only on the results side. A test billed three times is invisible today, in both tables separately |
+| Cost movers, not just duration movers | `e2e_duration_movers` already ranks by p95 delta across the window halves; the same query over `usd_estimated` needs the run and spec identity to agree |
+| What does the `@stable` set cost, and what does a promotion add? | `tags` are stored **as they were at that run** (#1180 §3.1), so the cost of a scope change is a join, not an archaeology exercise |
+| Dollars spent on a recurring failure that never got an issue | `e2e_failure_lifecycle`'s `has_no_issue` × cost. The suite's least comfortable number |
+
+The retry row is the one worth acting on: it is a real measurement gap that exists **now**, in phase 1,
+and neither document currently names it.
+
 ---
 
 ## 4. Ingestion
@@ -290,6 +378,9 @@ the file, the block is absent and every consumer that ignores it keeps working.
 `spec_path` is sent exactly as `build-run-payload.mjs` already reports a test's file — normalisation
 is the RPC's job, through `public.e2e_normalize_spec_path()`, which is what #1180 invariant 3 requires
 so the join to `e2e_issue_spec_refs` cannot miss on a `tests/` prefix.
+
+The payload carries **no** `test_key`. It is `GENERATED ALWAYS`, so supplying it is an error rather than
+an override — which is the point: one expression, in the database, for both facts (§2.8).
 
 No dollars in the payload. The producer computes them for its own step summary and history line; the
 database recomputes from `price_key` + `run_date`, and the two agreeing is a property worth being
@@ -366,6 +457,23 @@ band selected by the run's own `run_date` (§2.4). A row with no resolvable band
 today, a "cost per spec" screen shows a few percent of the run. It has to read as *the share we can
 attribute*, not as a breakdown.
 
+### 5.1 The joining RPCs, deferred on purpose
+
+The questions in §3.5's table — cost by outcome, cost per retry, cost movers, cost of the `@stable` set,
+dollars on an unticketed recurring failure — all need `e2e_test_results` to be a table. They are
+**not** in the four above, and they are not in this deliverable.
+
+What *is* in this deliverable is the identity that makes them a query rather than a migration when
+#1180 lands: `test_key` generated identically on both sides (§2.8, §3.5). The RPCs themselves become a
+short follow-up, gated on #1180's migrations, and every one of them filters
+`e2e_test_results.title_path_exact` and reports its drops.
+
+The exception worth naming now: **cost per retry** is a measurement gap in phase 1 itself, not only a
+missing query. The poller records a trace per attempt, so a flaky test's tokens already arrive summed
+across attempts with no attempt count anywhere on the token side. Nothing in this design makes it worse
+and nothing here fixes it — it needs `attempts` from the results fact, which is exactly why it is
+listed as a join question and flagged in §7.
+
 ---
 
 ## 6. Producer changes in this repo
@@ -402,6 +510,9 @@ attribute*, not as a breakdown.
 | Platform unreachable | `continue-on-error: true` already covers it; `reports/token-history.jsonl` remains the record |
 | Zero-test run (#1007/#1012) | No history line already; `is_valid_run` (#1180 §3.5) also excludes the run from every RPC, so an abort cannot lower a cost average |
 | Price dimension stale | `repo_commit_sha` on every row; full replace per commit, so "N commits behind" is queryable |
+| A spec is renamed or **moved** | `test_key` changes on both facts identically, and `e2e_test_aliases` (#1180 §3.4) bridges both. Sharing the key is what keeps the cost series and the failure series from disagreeing about when a test began |
+| A flaky test is billed once per attempt | **Known gap, not handled here.** The poller records a trace per attempt, so the tokens arrive summed with no attempt count on the token side. Needs `attempts` from #1180's fact — §5.1 |
+| A join pairs an exact identity with a reconstructed one | Every joining RPC filters `e2e_test_results.title_path_exact` and reports the rows it dropped (§3.5) |
 
 ---
 
@@ -425,6 +536,15 @@ re-POST for idempotency; exercise each RPC, including a run whose date falls in 
 `claude-sonnet-5` band and one that falls after 2026-09-01, asserting the two price differently from
 identical token counts.
 
+Two assertions specifically about the shared identity (§2.8), because a silent divergence there is the
+one failure that makes both datasets look fine on their own:
+
+- The same `(spec_path, title_path)` inserted into `e2e_test_results` and into
+  `e2e_test_token_usage` produces the **same** `test_key`, including when one side carries the `tests/`
+  prefix and the other does not — the case `e2e_normalize_spec_path()` exists for.
+- A row of the unattributed bucket has `test_key IS NULL`, and two bucket rows differing only by
+  `model` both insert (the `NULLS NOT DISTINCT` key admits them, and a re-POST adds neither).
+
 **Real evidence before the screen** — the first scheduled daily after the producer ships,
 cross-checking the RPC's per-model dollars against the same run's `reports/token-history.jsonl` line.
 The two are computed independently (§4.1); agreement is the check.
@@ -434,8 +554,14 @@ The two are computed independently (§4.1); agreement is the check.
 ## 9. Implementation split (after approval)
 
 - **`langflow-e2e`** — the producer changes of §6 plus their tests. No screen, no migration.
-- **`quality-platform`** — migrations for the dimension, the fact table and the four run columns;
-  `e2e_ingest_run_tokens`; the four RPCs; the edge-function call; the price-sync endpoint.
+- **`quality-platform`** — migrations for the dimension, the fact table (including its generated
+  `test_key`, §2.8) and the four run columns; `e2e_ingest_run_tokens`; the four RPCs of §5; the
+  edge-function call; the price-sync endpoint.
+- **Follow-up, gated on #1180's migrations** — the joining RPCs of §5.1. No schema change: the shared
+  identity ships here.
+- **One line in `ISSUE-1180-ANALYTICS-DB-DESIGN.md`** pointing at this document. Today the reference is
+  one-way — this design cites #1180 fifteen times and #1180 does not contain the word "token", so a
+  reader arriving at the data model has no way to learn a sibling fact was designed against it.
 - **Later cycle** — the cost view, a fourth alongside
   `src/components/e2e/dashboard/{TrendView,RunSummaryView,RegressionsView}.tsx`. Deferred for the
   reason #1180 §7 defers its own UI, and for one more: with a single attributed spec and no committed
@@ -458,3 +584,12 @@ The two are computed independently (§4.1); agreement is the check.
    tracker and could each gain one line, which would take `attributed_share` from a few percent to
    something a screen can lead with. Against it: #1197 kept the blast radius at one call site
    deliberately.
+5. **Does the per-attempt billing gap deserve its own issue now?** A flaky test's tokens already arrive
+   summed across attempts (§5.1, §7) and nothing on the token side counts attempts. It is invisible in
+   both facts today and becomes a query only once #1180's `attempts` exists — which argues for filing it
+   against the retry data rather than letting it live as a table row in this document.
+6. **Should the identity expression be extracted rather than duplicated?** Both facts now generate
+   `md5(e2e_normalize_spec_path(spec_path) || '::' || title_path)`. Two literal copies of one expression
+   is exactly the kind of divergence #1180 §3.1 generated the column to prevent, one level up. A shared
+   `IMMUTABLE` helper (`e2e_test_key(spec_path, title_path)`) would make it one definition — at the cost
+   of a function both generated columns depend on.

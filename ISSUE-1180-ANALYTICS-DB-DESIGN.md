@@ -3,6 +3,11 @@
 **Status:** proposed — revision 2, after review on [#1181](https://github.com/oriontech-me/langflow-e2e/pull/1181). No code ships against this document until the model is approved.
 **Issue:** [#1180](https://github.com/oriontech-me/langflow-e2e/issues/1180)
 **Scope:** the QA Platform database (`quality-platform`) plus the payload producers in this repo.
+**Sibling fact:** `ISSUE-1217-TOKEN-ANALYTICS-DB-DESIGN.md` designs `e2e_test_token_usage` — one row per
+(run × test × **model**) — against this model. It generates the same `test_key` as §3.1 so the two facts
+join on `(run_id, test_key)` and the token series inherits §3.4's rename bridge; it also reuses §3.5's
+`is_valid_run` and adds four nullable token columns to `e2e_automation_runs`. Any change to §3.1's
+identity expression, to §3.4, or to §3.5 has to be made in both places.
 **Revision log:** §11.
 
 ---
