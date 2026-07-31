@@ -246,6 +246,11 @@ const usdDetail = (n) => {
   return `$${n.toFixed(decimals)}`;
 };
 
+// Escapes a `|` so an arbitrary test title cannot shred a markdown table row —
+// unlike `file`, which is a path this repo controls, `test` is a title a spec
+// author wrote and could, in principle, contain a pipe.
+const cell = (text) => String(text ?? "").replace(/\|/g, "\\|");
+
 // Injected I/O so the summarizer is unit-testable without a filesystem: CI passes
 // none of these and gets the real fs.
 const realIo = {
@@ -411,9 +416,21 @@ export async function summarize({
     lines.push(
       "| Spec | Traces | Tokens | Estimated |",
       "|---|---:|---:|---:|",
+      // bySpec is keyed by file + test (#1197 re-review, run 30651081641) —
+      // rendering only `file` made two different tests in the same spec file
+      // print as two identical-looking rows with different numbers, reading
+      // as a bug in the tool to a human looking at the artifact. Keep the
+      // file first (it's what a reader greps for) with the test title on its
+      // own line beneath, via `<br>` (GitHub renders raw HTML inside a table
+      // cell) — a second "Test" column would double the table's width at
+      // this repo's typical file-path length. Grain, history shape, and sort
+      // order are all unchanged; this is a rendering-only fix.
       ...agg.bySpec
         .slice(0, 15)
-        .map((s) => `| \`${s.file}\` | ${s.traces} | ${s.total_tokens} | ${usdDetail(s.usd_estimated)} |`),
+        .map(
+          (s) =>
+            `| \`${s.file}\`<br>${cell(s.test)} | ${s.traces} | ${s.total_tokens} | ${usdDetail(s.usd_estimated)} |`,
+        ),
       "",
     );
     if (agg.bySpec.length > 15) lines.push(`…and ${agg.bySpec.length - 15} more spec(s) in the history file.`, "");

@@ -565,6 +565,60 @@ test("summarize prefers whichever copy of a trace has a KNOWN total_tokens (find
   );
 });
 
+// #1197 re-review (run 30651081641): bySpec is keyed by file + test — correctly,
+// that is the fact table's grain — but the rendered step-summary table showed
+// only `file`. Two different tests in the same spec file rendered as two
+// identical-looking rows with different numbers, reading as a bug in the tool
+// to a human looking at the artifact. Assert on the RENDERED TEXT (not the
+// aggregation, which was already correct) that two same-file, different-title
+// rows are distinguishable.
+test("the by_spec table distinguishes two rows that share a file but differ in test title", async () => {
+  const probeA = JSON.stringify({
+    trace_id: "cap-1",
+    flow_id: "f1",
+    total_tokens: 941,
+    models: [{ model: "gpt-4o-mini", prompt_tokens: 891, completion_tokens: 50, total_tokens: 941, calls: 1 }],
+  });
+  const attribA = JSON.stringify({
+    trace_id: "cap-1",
+    flow_id: "f1",
+    test: "max_tokens=50 caps the response's output tokens",
+    file: "tests-automations/regression/core-functionality/llm-agents/agent-max-tokens.spec.ts",
+  });
+  const probeB = JSON.stringify({
+    trace_id: "free-1",
+    flow_id: "f2",
+    total_tokens: 4821,
+    models: [{ model: "gpt-4o-mini", prompt_tokens: 421, completion_tokens: 4400, total_tokens: 4821, calls: 1 }],
+  });
+  const attribB = JSON.stringify({
+    trace_id: "free-1",
+    flow_id: "f2",
+    test: "causal control — unset max_tokens generates freely",
+    file: "tests-automations/regression/core-functionality/llm-agents/agent-max-tokens.spec.ts",
+  });
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${probeA}\n${probeB}\n`,
+    "all-tokens/token-attrib-1.jsonl": `${attribA}\n${attribB}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const summary = fs2.written["summary.md"];
+  // The aggregation grain is unchanged: two distinct by_spec rows.
+  const historyLine = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(historyLine.by_spec.length, 2);
+  // The RENDERED table must show each test's own title, not just the shared
+  // file — that's the presentation defect. Both titles must appear in the
+  // by_spec section, and the two rows must not be textually identical.
+  assert.match(summary, /max_tokens=50 caps the response's output tokens/);
+  assert.match(summary, /causal control — unset max_tokens generates freely/);
+  const rows = summary
+    .split("\n")
+    .filter((l) => l.includes("agent-max-tokens.spec.ts") && l.includes("941"));
+  // Sanity: exactly one row carries the 941-token trace's numbers.
+  assert.equal(rows.length, 1);
+});
+
 test("anomalies land in the history line when the baseline supports them", async () => {
   const history = Array.from({ length: 5 }, () =>
     JSON.stringify({ totals: { usd_estimated: 0.000001 }, by_spec: [] }),
