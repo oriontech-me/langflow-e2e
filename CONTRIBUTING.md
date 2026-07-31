@@ -469,41 +469,46 @@ The guide is the human-language specification of the automated tests. Keeping it
 
 ### How the team learns that a test needs review
 
-`file-watcher.yml` runs every day at 05:00 BRT and checks whether there were commits in the official Langflow repository in the last 24h in critical paths. When changes are detected, it automatically opens an issue in this repository.
+`file-watcher.yml` checks whether the official Langflow repository received commits in monitored paths within a window (`since`, default 24h) and opens an issue in this repository when it finds any.
+
+> **It cannot run today.** The workflow is `disabled_manually` in Actions *and* its cron was removed in `9da85fa`, so it has no run history at all and a dispatch fails with `HTTP 422: Cannot trigger a workflow_dispatch on a disabled workflow`. Reviving it takes both: enable the workflow, then restore a cadence if one is wanted. Until then nothing here fires, whatever the monitored paths say. When it is dispatched after a long gap, widen `since`.
 
 **The issue reports:**
 - Which functional area changed
 - The exact command to run the affected tests
-- Which section of `QA_CHECKLIST.md` to review
+- Which section of `QA-CHECKLIST.md` to review
 
 ### Monitored areas
 
-| Area | Monitored paths | Affected tags |
-|---|---|---|
-| Routes & Feature Flags | `routes.tsx`, `feature-flags.ts` | all |
-| Authentication | `api/v1/login.py`, `services/auth/` | `@auth` |
-| Flow CRUD & Canvas | `api/v1/flows.py`, `FlowPage/` | `@project-management` |
-| Flow Execution | `api/v1/endpoints.py`, `processing/` | `@api` |
-| Model Providers & LLM | `ModelProvidersPage/`, `providerConstants.ts` | `@model-provider @agents` |
-| Agents & Agentic Flows | `agentic/`, `base/agents/` | `@agents` |
-| Playground & Chat | `pages/Playground/`, `api/v1/chat.py` | `@playground` |
-| Settings & Global Variables | `SettingsPage/`, `api/v1/variable.py` | `@settings` |
-| MCP Server | `MCPServersPage/`, `api/v1/mcp.py` | `@mcp` |
-| Tracing & Monitoring | `api/v1/traces.py`, `services/tracing/` | `@observability` |
-| Database Models | `services/database/models/`, `alembic/` | `@api` |
-| Component Input Types | `parameterRenderComponent/`, `inputs/` | `@ui-ux` |
+The area table is **not duplicated here** — it lives in `scripts/watch-upstream-areas.mjs` (13 areas → paths, tags, checklist sections) and is printed by:
+
+```bash
+node scripts/watch-upstream-areas.mjs --mode=areas
+```
+
+Three rules govern it (issue #1092):
+
+- **A path that cannot be evaluated is a failure, not a pass.** The workflow runs `--mode=check` before the sweep; a monitored path missing from the upstream checkout fails the job by name. Before the guard, `git log -- <bad-path>` printed nothing and read as "nothing changed" — which is how `constants/flow_constants.tsx` sat dead in the list. That path has never existed upstream on any ref (the real file is `src/frontend/src/flow_constants.tsx`), so the entry was wrong from the day it was written and nothing ever said so. The guard is `continue-on-error` and the job is failed *after* the report exists: one upstream rename must not suppress the report for the other 12 areas.
+- **Every `src/lfx/` subtree is classified exactly once**, either mapped to an area or recorded as out of scope with a reason (`LFX_CLASSIFICATION` in the same file). A subtree that appears upstream and matches no entry fails the guard, so the next step of Langflow's `lfx` migration forces a decision instead of widening a blind spot. That blind spot is what made #1091 hard to catch: the change that broke all six stdio registrations landed in `src/lfx/src/lfx/base/mcp/security.py`, inside a 70-file commit that four *other* areas did watch — so the sweep would have fired, but never under **MCP Server**, leaving `@mcp` out of the revalidation grep.
+- **The window is validated, not guessed.** `since` must be `N hours|days|weeks|months ago`, `yesterday`, or an ISO date; anything else is rejected with exit 2. `git log --since=` is parsed by approxidate, which never errors — `undefined` silently selects zero commits (a green run that reads exactly like a quiet day) and `last thursdya` silently widens to 200. The sweep also prints how many commits the window selected repo-wide and the newest commit in the checkout, so an empty result is legible instead of being confused with clean areas.
+
+When you add or repoint a path, run the guard locally against a Langflow clone:
+
+```bash
+node scripts/watch-upstream-areas.mjs --mode=check --root /path/to/langflow
+```
 
 ### What to do when a file-watcher issue arrives
 
 1. Read the commits listed in the issue
 2. Run the tests indicated in the issue table
 3. For each test that fails or seems outdated, follow the validation guide above
-4. Update the necessary tests and mark `QA_CHECKLIST.md`
+4. Update the necessary tests and mark `QA-CHECKLIST.md`
 5. Close the issue
 
 ### Adaptive impacted-tests subset
 
-`adaptive-impacted.yml` is a finer-grained companion to `nightly.yml`. Each day at 04:00 BRT it:
+`adaptive-impacted.yml` is a finer-grained companion to `nightly.yml`. It is **`disabled_manually` in Actions** today (as are `nightly.yml`, `weekly-stable.yml` and `file-watcher.yml`), so the cadence below describes what it does *when enabled*, not what is running. When it ran, each day at 04:00 BRT it:
 
 1. Queries Docker Hub for the current `langflowai/langflow-nightly:latest` digest and resolves the matching git SHA in the Langflow repo.
 2. Compares to the SHA of the last nightly we tested (repo variable `LAST_TESTED_NIGHTLY_SHA`).
