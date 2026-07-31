@@ -36,19 +36,24 @@ in editor-local state.
    *The template-entry race* below.
 2. `openFlowById(page, flowId)` — `page.goto('/flow/{id}')`, wait for
    `canvas_controls_dropdown`, then gate on `menu_bar_display` being **enabled**
-   (write permission resolved).
+   (write permission resolved). The assistant onboarding tooltip is suppressed
+   before the first load by seeding `langflow-assistant-discovered` in
+   localStorage — see *The onboarding tooltip is armed on a 10 s timer* below.
 3. For each of two random target names:
    1. `renameFlow(page, { flowName: targetName })` — rename via the flow header
       settings modal; then `renameFlow(page)` (read-only) asserts the committed
       header name equals `targetName`.
-   2. Click `icon-ChevronLeft` to return to the home listing.
-   3. Assert `home-dropdown-menu` is visible (home rendered) — web-first
-      assertion, 30 s.
-   4. Assert `getByText(targetName)` has count `1` — auto-waits for the flow-list
-      refetch + render (web-first, 30 s). This replaced a fixed 3 s
-      `waitForSelector` that raced the refetch under parallel load
-      (recurring flaky, issue #410).
-   5. Re-open the SAME flow with `openFlowById(page, flowId)`, so the next
+   2. `leaveFlowEditor(page, { escapeDeadlock: true })` — return to the home
+      listing through the helper, which drains in-flight saves, clicks
+      `icon-ChevronLeft`, and asserts `home-dropdown-menu`. Never a bare chevron
+      click: see *The editor-exit deadlock* below.
+   3. Assert exactly one `list-card` carries a `flow-name-div` reading
+      `targetName` — auto-waits for the flow-list refetch + render (web-first,
+      30 s). This replaced a fixed 3 s `waitForSelector` that raced the refetch
+      under parallel load (recurring flaky, issue #410). Scoped to a card, not
+      `getByText` over the page: see *The listing assertion must be scoped to a
+      card* below.
+   4. Re-open the SAME flow with `openFlowById(page, flowId)`, so the next
       iteration starts inside the editor. Addressed by id, never by a
       name-filtered `list-card-open-button` click: on the shared home grid the
       cards other parallel workers leave behind overlap the target's
@@ -60,8 +65,9 @@ in editor-local state.
 ## Validation criterion *(required)*
 
 - After each rename, the flow header reflects the new name.
-- Returning to the home listing shows the renamed flow exactly once
-  (`toHaveCount(1)`), proving the rename persisted through the flow-list refetch.
+- Returning to the home listing shows the renamed flow exactly once — asserted on
+  the listing **card**, so the editor header cannot satisfy it — proving the
+  rename persisted through the flow-list refetch.
 
 ---
 
@@ -70,9 +76,12 @@ in editor-local state.
 - **Basic Prompting** starter template must be available on the fresh instance —
   read through `GET /api/v1/flows/` (the starter row, `user_id === null`) rather
   than clicked in the templates modal.
-- Testids: `canvas_controls_dropdown`, `icon-ChevronLeft`, `home-dropdown-menu`,
-  and the flow-header rename controls used by `renameFlow` (`menu_bar_display`,
-  `flow_name`, flow-settings name input, `save-flow-settings`).
+- Testids: `canvas_controls_dropdown`, `list-card` + `flow-name-div` (read only —
+  the listing assertion), the exit controls used by `leaveFlowEditor`
+  (`icon-ChevronLeft`, `home-dropdown-menu`), and the flow-header rename controls
+  used by `renameFlow` (`menu_bar_display`, `flow_name`, flow-settings name
+  input, `save-flow-settings`).
+- localStorage key `langflow-assistant-discovered`, seeded before the first load.
 - No LLM or provider API key required — the flow is never executed.
 
 ---
@@ -143,21 +152,67 @@ with a full document load, so there is no SPA hop left to race. The flow still
 carries the real Basic Prompting graph, so the #995 autosave exposure above is
 preserved.
 
-The fourth signature is **not** fixed here and is not a test defect: clicking
-`icon-ChevronLeft` can leave the editor stuck behind `SaveChangesModal` —
-"Flow has unsaved changes" / "Saving your changes…" — which in autosave mode
-renders as a button-less spinner (`loading` hardcoded `true`, no confirm/cancel
-text) and deadlocks.
+### The editor-exit deadlock (issue #1153)
+
+The fourth signature is **not a test defect** and is not addressed by the entry
+change above: clicking `icon-ChevronLeft` can leave the editor stuck behind
+`SaveChangesModal` — "Flow has unsaved changes" / "Saving your changes…" — which
+in autosave mode renders as a button-less spinner (`loading` hardcoded `true`, no
+confirm/cancel text) and deadlocks.
 
 `FlowPage.handleSave` calls `saveFlow()` with **no `.catch()`**, so a save that
 fails or never settles leaves `proceed` false, the 1200 ms `setTimeout` finds it
 false and does nothing, and the dialog has no dismissal path left. Reproduced
 deterministically on 1.12.0.dev10 by aborting every flow-save PATCH: the modal
 appears, never clears in 30 s, the URL stays on `/flow/{id}`, and the dialog
-renders **zero** buttons — so the user is stranded too, not just the test.
+renders **zero** buttons — so the user is stranded too, not just the test. Under
+natural load it fired **2 in 24 runs at `--workers=4`** during this
+investigation, where it read as an unattributed `home-dropdown-menu` timeout.
 
 The toast visible in the natural failure screenshot is `success.changesSaved`
 ("Changes saved successfully"), fired by the **rename** modal — not
 `flow.savedSuccessfully` ("Flow saved successfully!"), the one `handleSave`
-fires next to `blocker.proceed()`. Tracked separately — masking it inside this
-spec would hide a product defect.
+fires next to `blocker.proceed()`.
+
+The product defect is tracked and reported upstream in **#1153**; this spec
+survives it, attributed, through `leaveFlowEditor` — the shared helper #1156
+added for the same class. `escapeDeadlock: true` is safe **here specifically**:
+the rename's persistence is asserted *after* the exit, against the server (the
+home listing is a `GET /api/v1/flows/` refetch), and the next iteration re-enters
+by id, so the full page load the escape performs discards nothing this test
+relies on. A rename that never landed still fails on the `toHaveCount(1)`
+assertion — the escape cannot mask it — and every deadlock it absorbs is warned
+loudly, so the suite keeps its only signal on how often #1153 fires.
+
+### The onboarding tooltip is armed on a 10 s timer
+
+`assistant-onboarding-tooltip` renders in a Portal over the editor and its
+overlay intercepts clicks on the canvas **and on the Flow Settings modal** — the
+one this spec drives on every iteration (#684). Upstream gates it on a
+localStorage flag (`langflow-assistant-discovered`, written when the user opens
+the assistant or clicks the tooltip's X), which is **empty in every fresh
+Playwright context**, so every test is exposed on every entry.
+
+Dismissing it on entry does not work, and the reason is worth recording:
+upstream arms the tooltip on an **idle timer of 10 s** after mount
+(`ONBOARDING_TOOLTIP_DELAY_MS` in `CanvasControls.tsx`). A probe right after the
+canvas renders looks ~8 s too early, sees nothing, and the tooltip then pops
+*mid-rename*, with the settings dialog already open. So the flag is seeded
+instead, before the first document load, which removes the affordance entirely.
+
+Measured on 1.12.0.dev10, one run each:
+
+| Seed | `assistant-onboarding-tooltip` within 20 s |
+|---|---|
+| present | never appears |
+| neutralised (key renamed) | **appears** |
+
+### The listing assertion must be scoped to a card
+
+`getByText(targetName)` over the whole page is satisfied by the **flow header**,
+which renders the same name — so the unscoped count passed from inside the editor
+and never proved this test's title. Measured: with the exit commented out, the
+unscoped assertion still passed; the only thing forcing the navigation was the
+home marker inside `leaveFlowEditor`. The assertion is therefore scoped to a
+`list-card` carrying a matching `flow-name-div`, which fails (`Received: 0`) when
+the exit is removed.
