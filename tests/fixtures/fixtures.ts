@@ -3,8 +3,8 @@ import { test as base, expect, type Page } from "@playwright/test";
 import { classifyHttpError } from "./http-error-policy";
 import {
   classifyFlowError,
-  isRunStreamUrl,
   isUnreadableStream,
+  runStreamSurface,
 } from "./flow-error-policy";
 
 /**
@@ -19,10 +19,14 @@ const RUN_STREAM_READ_TIMEOUT_MS = 240_000;
 
 /**
  * How long teardown waits for in-flight run-stream reads before rendering its
- * verdict. Bounded on purpose: a wedged backend can leave a stream open forever,
- * and a fixture that hangs is worse than one that reports what it has.
+ * verdict. Bounded tightly on purpose: measured, the wait only pays off when a
+ * stream closes on its own shortly after the test ends. When the app aborts it —
+ * the common case — the read settles in under a second and this costs nothing;
+ * when the backend is wedged, every extra second is paid by every such test and
+ * buys no verdict. 15 s was measured at exactly 15 s of pure waste on a
+ * never-closing stream.
  */
-const PENDING_READ_DRAIN_MS = 15_000;
+const PENDING_READ_DRAIN_MS = 3_000;
 
 /**
  * The escape hatches this fixture bolts onto `page`.
@@ -78,6 +82,14 @@ export const test = base.extend({
      * the same undercount hazard already documented for HTTP errors below.
      */
     const pendingBodyReads = new Set<Promise<void>>();
+    /**
+     * Run streams whose body never produced a verdict, by reason. A stream the
+     * fixture could not read is UNKNOWN, not clean — and the most common reason
+     * (the page aborting the stream on Stop / closing the playground) used to
+     * return silently, so whether a run was evaluated at all came down to who won
+     * a race nobody could see.
+     */
+    const unevaluatedStreams = new Map<string, number>();
 
     // Add helper method to page context
     (page as any).allowFlowErrors = () => {
@@ -147,14 +159,17 @@ export const test = base.extend({
       // `text/event-stream` (skipped wholesale). An Anthropic 400 therefore
       // produced NO verdict at all, which is how #1059's failure ended up
       // attributed to a count assertion (#1162).
-      if (status === 200 && isRunStreamUrl(url)) {
+      const surface =
+        status === 200 ? runStreamSurface(url, response.request().method()) : null;
+      if (surface) {
         const bodyRead = (async () => {
         try {
           const headers = response.headers();
           const contentType = (headers["content-type"] || "").toLowerCase();
           if (isUnreadableStream(contentType)) {
-            console.log(
-              `Skipping unreadable response body for ${url} (${contentType || "unknown content-type"})`,
+            unevaluatedStreams.set(
+              "unreadable content type",
+              (unevaluatedStreams.get("unreadable content type") ?? 0) + 1,
             );
             return;
           }
@@ -187,8 +202,9 @@ export const test = base.extend({
             }
 
             if (bodyResult === bodyTimeoutToken) {
-              console.warn(
-                `Timed out reading response body for ${url}; skipping body inspection.`,
+              unevaluatedStreams.set(
+                "read timed out",
+                (unevaluatedStreams.get("read timed out") ?? 0) + 1,
               );
               return;
             }
@@ -199,46 +215,67 @@ export const test = base.extend({
               clearTimeout(timeoutId);
               timeoutId = undefined;
             }
-            console.warn(
-              `Failed to read response body for ${url}; skipping body inspection.`,
-              bodyReadErr,
+            // The usual cause is the page aborting the stream (Stop, closing the
+            // playground, navigating away) — Playwright then reports "No resource
+            // with given identifier found". Counted, not silent: whether the read
+            // won that race decided the verdict, which is not something a suite
+            // should learn by accident.
+            unevaluatedStreams.set(
+              "read failed (stream aborted?)",
+              (unevaluatedStreams.get("read failed (stream aborted?)") ?? 0) + 1,
             );
             return;
           }
 
           if (!responseBody) {
+            unevaluatedStreams.set(
+              "empty body",
+              (unevaluatedStreams.get("empty body") ?? 0) + 1,
+            );
             return;
           }
 
           const verdict = classifyFlowError(responseBody);
-          if (verdict.failed) {
-            console.log(`🚨 Flow Error Detected in Event Stream - ${url}`);
-            console.log(`   Shape: ${verdict.shape}`);
-            console.log(`   Error: ${verdict.message}`);
+          if (!verdict.failed) return;
 
-            errors.push({
-              url,
-              status: 200,
-              statusText: "Flow Error",
-              responseBody: verdict.message,
-              type: "flow_error",
-            });
+          // How strong the verdict may be depends on the surface — see
+          // `runStreamSurface`. v1 keeps failing tests exactly as before; v2 is
+          // new coverage and logs only, until the hatch audit in step 2.
+          const advisory = surface === "v2";
+          console.log(
+            `🚨 Flow Error Detected in Event Stream - ${url}${advisory ? " (ADVISORY)" : ""}`,
+          );
+          console.log(`   Shape: ${verdict.shape}`);
+          console.log(`   Error: ${verdict.message}`);
+          if (advisory) {
+            console.log(
+              `   ADVISORY: this does NOT fail the test yet — the v2 run path is newly covered and 75 of the 88 run-driving specs have no page.allowFlowErrors() (#1162, step 2).`,
+            );
+          }
 
-            // Fail immediately if flow errors are not allowed. This path is
-            // best-effort: the handler is detached, so on an SSE stream the body
-            // resolves long after the assertion that would have been interrupted.
-            // The gate that actually holds is the teardown check below, which is
-            // why the fixture waits for in-flight reads before evaluating it.
-            if (!allowFlowErrors) {
-              const errorMessage =
-                `Flow execution error detected during test:\n\n` +
-                `URL: ${url}\n` +
-                `Error: ${verdict.message}\n\n` +
-                `If this error is expected, call page.allowFlowErrors() at the start of your test.`;
+          errors.push({
+            url,
+            status: 200,
+            statusText: "Flow Error",
+            responseBody: verdict.message,
+            type: advisory ? "flow_error_advisory" : "flow_error",
+          });
 
-              (page as any).emit("pageerror", new Error(errorMessage));
-              throw new Error(errorMessage);
-            }
+          // Fail the running test, not just its teardown. The throw escapes this
+          // async listener as an unhandled rejection, which Playwright attributes
+          // to the test in flight — measured: 1.96 s to fail mid-test versus
+          // 22.15 s when the rejection is swallowed and only teardown reports it.
+          // Swallowing it re-created the very problem #1059 describes: the real
+          // cause buried under a downstream timeout.
+          if (!advisory && !allowFlowErrors) {
+            const errorMessage =
+              `Flow execution error detected during test:\n\n` +
+              `URL: ${url}\n` +
+              `Error: ${verdict.message}\n\n` +
+              `If this error is expected, call page.allowFlowErrors() at the start of your test.`;
+
+            (page as any).emit("pageerror", new Error(errorMessage));
+            throw new Error(errorMessage);
           }
         } catch (e) {
           // Only ignore parsing errors, not our intentional throws
@@ -251,10 +288,20 @@ export const test = base.extend({
           // Ignore parsing errors for event streams
         }
         })();
-        pendingBodyReads.add(bodyRead);
-        void bodyRead
-          .catch(() => {})
-          .finally(() => pendingBodyReads.delete(bodyRead));
+        // Only the v2 read is tracked for the teardown drain, and this is load
+        // bearing rather than an optimisation: attaching ANY `.catch()` to
+        // `bodyRead` marks its rejection as handled, and the intentional throw
+        // above stops reaching the test. Measured — with the read tracked, a v1
+        // error let the test run its full 10 s and failed only in teardown;
+        // untracked, it interrupts in ~2 s, which is the behaviour specs have
+        // always had. v2 never throws (it is advisory), so tracking it is safe,
+        // and it is the only surface that needs draining: its SSE body resolves
+        // late by construction, while a v1 JSON body lands in milliseconds.
+        if (surface === "v2") {
+          const tracked = bodyRead.catch(() => {});
+          pendingBodyReads.add(tracked);
+          void tracked.finally(() => pendingBodyReads.delete(tracked));
+        }
       }
     });
 
@@ -271,13 +318,26 @@ export const test = base.extend({
         ),
       ]);
       if (!drained) {
-        // Say it out loud: an unread run stream means the flow_error verdict for
-        // this test is unknown, not clean. Same rule as the daily's runguard
-        // (#1012) — a verdict that cannot be produced must not read as a pass.
-        console.log(
-          `\n⚠️  ${pendingBodyReads.size} run-stream body read(s) did not finish within ${PENDING_READ_DRAIN_MS / 1000}s — flow-execution errors on those streams were NOT evaluated for this test.`,
+        unevaluatedStreams.set(
+          "read still in flight at teardown",
+          (unevaluatedStreams.get("read still in flight at teardown") ?? 0) +
+            pendingBodyReads.size,
         );
       }
+    }
+
+    // Say it out loud: a run stream the fixture could not read means the
+    // flow-error verdict for this test is UNKNOWN, not clean. Same rule as the
+    // daily's runguard (#1012) — a verdict that cannot be produced must not read
+    // as a pass. All four give-up paths funnel here; three of them used to be
+    // silent, and one printed nothing at all.
+    if (unevaluatedStreams.size > 0) {
+      const breakdown = [...unevaluatedStreams.entries()]
+        .map(([reason, count]) => `      ${count}× ${reason}`)
+        .join("\n");
+      console.log(
+        `\n⚠️  run stream(s) NOT evaluated for flow-execution errors — this test's flow-error verdict is unknown, not clean:\n${breakdown}`,
+      );
     }
 
     if (process.env.PW_HTTP_ERROR_DEBUG === "1" && ignoredByPolicy.size > 0) {
@@ -299,6 +359,16 @@ export const test = base.extend({
       if (flowErrors.length > 0) {
         console.log(
           `   ⚠️  ${flowErrors.length} flow execution error(s) detected`,
+        );
+      }
+      const advisoryFlowErrors = errors.filter(
+        (e) => e.type === "flow_error_advisory",
+      );
+      if (advisoryFlowErrors.length > 0) {
+        // New coverage on the v2 run path (#1162). Logged, not failing, until the
+        // hatch audit — step 2 in `flow-error-policy.ts`.
+        console.log(
+          `   ⚠️  ${advisoryFlowErrors.length} flow execution error(s) on the v2 run path — ADVISORY: these do NOT fail the test yet. Review them before trusting this run.`,
         );
       }
       if (httpErrors.length > 0) {

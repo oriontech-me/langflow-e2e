@@ -16,6 +16,7 @@ import {
   isRunStreamUrl,
   isUnreadableStream,
   parseStreamEvents,
+  runStreamSurface,
 } from "./flow-error-policy";
 
 const ANTHROPIC_400 =
@@ -23,21 +24,38 @@ const ANTHROPIC_400 =
 
 // ---------- URL scope ----------
 
-test("the v2 run endpoint is monitored — the miss that made #1162 possible", () => {
-  assert.equal(isRunStreamUrl("http://localhost:7860/api/v2/workflows"), true);
-  assert.equal(
-    isRunStreamUrl("http://localhost:7860/api/v2/workflows/pending?flow_id=abc"),
-    true,
-  );
+test("the v2 run POST is the newly covered surface — the miss that made #1162 possible", () => {
+  assert.equal(runStreamSurface("http://localhost:7860/api/v2/workflows", "POST"), "v2");
 });
 
-test("the v1 endpoints stay monitored", () => {
+test("the v1 endpoints keep their pre-existing, test-failing surface", () => {
   for (const url of [
     "http://localhost:7860/api/v1/build/abc/flow",
     "http://localhost:7860/api/v1/run/abc",
     "http://localhost:7860/api/v1/flows/abc/events?event_delivery=polling",
   ]) {
-    assert.equal(isRunStreamUrl(url), true, url);
+    assert.equal(runStreamSurface(url, "POST"), "v1", url);
+  }
+});
+
+test("the /pending poll is NOT a run stream — it fires every 5s on every canvas spec", () => {
+  assert.equal(
+    runStreamSurface("http://localhost:7860/api/v2/workflows/pending?flow_id=abc", "GET"),
+    null,
+  );
+  // Only the POST is a run; the GET on the same path is react-query polling.
+  assert.equal(runStreamSurface("http://localhost:7860/api/v2/workflows", "GET"), null);
+});
+
+test("matching is anchored on the pathname — substring matching hit static assets", () => {
+  // Measured with the previous `url.includes()` implementation: all three
+  // matched, and one of them is a 300 KB JS bundle.
+  for (const url of [
+    "http://localhost:7860/assets/build/index.js",
+    "http://localhost:7860/api/v1/files/download/run/report.json",
+    "http://localhost:7860/api/v1/monitor/messages?flow_id=/run/x",
+  ]) {
+    assert.equal(runStreamSurface(url, "GET"), null, url);
   }
 });
 
@@ -47,8 +65,12 @@ test("unrelated endpoints are not monitored", () => {
     "http://localhost:7860/api/v1/monitor/builds?flow_id=abc",
     "http://localhost:7860/api/v1/variables/",
   ]) {
-    assert.equal(isRunStreamUrl(url), false, url);
+    assert.equal(isRunStreamUrl(url, "POST"), false, url);
   }
+});
+
+test("a malformed URL is not a run stream rather than a crash", () => {
+  assert.equal(runStreamSurface("not-a-url", "POST"), null);
 });
 
 test("event-stream bodies are readable; only truly opaque ones are skipped", () => {
@@ -195,6 +217,79 @@ test("empty and non-JSON bodies are not errors", () => {
   }
 });
 
+test("agent prose that CONTAINS a Python traceback is not a verdict", () => {
+  // The measured false-positive vector: the raw-text traceback patterns used to
+  // run over the whole body, which on a structured stream means every assistant
+  // token and every echoed prompt. An agent answering a Python question, or a
+  // tool returning a traceback the agent then handled, turned a healthy run red.
+  for (const text of [
+    "Sure — TypeError: unsupported operand happens when you add str and int.",
+    "retrying after ValueError: bad shape",
+    "KeyError: 'foo' means the dict has no such key",
+  ]) {
+    const body = `data: ${JSON.stringify({
+      type: "CUSTOM",
+      name: "langflow.event",
+      value: { event_type: "add_message", data: { data: { sender: "Machine", text, error: false } } },
+    })}`;
+    assert.deepEqual(classifyFlowError(body), { failed: false }, text);
+  }
+});
+
+test("a traceback in an UNSTRUCTURED body is still a verdict", () => {
+  // The patterns keep their job where they were useful: a body that is not a
+  // stream at all (a plain 200 carrying a traceback).
+  const verdict = classifyFlowError("Traceback (most recent call last):\nValueError: bad input shape");
+  assert.equal(verdict.failed, true);
+  assert.equal(verdict.shape, "python exception");
+});
+
+test("the minimal v2 error payload yields text, not [object Object]", () => {
+  // `agui_translator.py`'s minimal path sends {"error": "<text>"} rather than a
+  // nested message. Reading only the nested one produced literally
+  // "[object Object]" as the failure message.
+  const verdict = classifyFlowError(
+    `data: ${JSON.stringify({ type: "CUSTOM", value: { event_type: "error", data: { error: "Graph blew up" } } })}`,
+  );
+  assert.equal(verdict.failed, true);
+  assert.equal(verdict.message, "Graph blew up");
+});
+
+test("the v1 event envelope's error is matched despite error:false", () => {
+  // `{"event": "<type>", "data": …}` is the v1 wire format
+  // (`lfx/events/event_manager.py`), and its error payload carries error:false —
+  // so neither of the two v1 shapes the old detector knew was the error carrier.
+  const verdict = classifyFlowError(
+    JSON.stringify({ event: "error", data: { text: "Error building Component X", error: false } }),
+  );
+  assert.equal(verdict.failed, true);
+  assert.equal(verdict.shape, "event=error");
+  assert.match(verdict.message, /Error building Component X/);
+});
+
+test("the node shape keeps the provider message, not just its prefix", () => {
+  // `errorMessage` opens with "Error building Component Agent: \n\n<cause>", so
+  // taking only line 1 dropped the part that says what went wrong.
+  const verdict = classifyFlowError(
+    `data: ${JSON.stringify({
+      type: "STATE_DELTA",
+      delta: [
+        {
+          path: "/nodes/Agent-1",
+          value: {
+            status: "error",
+            output: { outputs: { response: { message: { errorMessage: `Error building Component Agent: \n\n${ANTHROPIC_400}` } } } },
+          },
+        },
+      ],
+    })}`,
+  );
+  assert.equal(verdict.failed, true);
+  if (!verdict.failed) return;
+  assert.match(verdict.message, /Error building Component Agent/);
+  assert.match(verdict.message, /credit balance is too low/);
+});
+
 test("a chat message merely CONTAINING the word error is not a verdict", () => {
   // The agent's own prose mentions errors constantly ("If a tool fails, read the
   // error…" is in the default system prompt). Matching on text would fail every
@@ -215,8 +310,19 @@ test("a chat message merely CONTAINING the word error is not a verdict", () => {
 test("fixtures.ts consumes the policy instead of an inline filter", () => {
   const fixture = fs.readFileSync(path.join(__dirname, "fixtures.ts"), "utf8");
   assert.match(fixture, /from "\.\/flow-error-policy"/);
-  assert.match(fixture, /isRunStreamUrl\(/);
+  assert.match(fixture, /runStreamSurface\(url, response\.request\(\)\.method\(\)\)/);
   assert.match(fixture, /classifyFlowError\(/);
+  // v1 must still fail the test, v2 must not (yet) — the staging this lands with.
+  assert.match(fixture, /const advisory = surface === "v2"/);
+  assert.match(fixture, /if \(!advisory && !allowFlowErrors\)/);
+  // THE invariant behind the v1 gate: only the v2 read may be tracked for the
+  // drain. Attaching a `.catch()` to the v1 read marks its rejection handled, and
+  // the gate silently degrades from "interrupts the test" to "fails its
+  // teardown". Measured: 238 ms vs 10 249 ms on a probe that waits 10 s after the
+  // error. This assertion exists because that regression shipped once already.
+  assert.match(fixture, /if \(surface === "v2"\) \{\s*\n\s*const tracked = bodyRead\.catch/);
+  // Every give-up path must be accounted for, not silent.
+  assert.match(fixture, /unevaluatedStreams/);
   // The inline URL list and the blanket event-stream skip are what #1162 is
   // about; neither may come back. Note `text/event-stream` still appears in the
   // fixture — it selects the longer read budget — so the assertion pins the two

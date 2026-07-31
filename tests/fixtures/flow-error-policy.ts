@@ -46,22 +46,73 @@ export type FlowErrorVerdict =
   | { failed: false };
 
 /**
- * Endpoints that stream flow-execution events.
+ * Which run-stream surface a response belongs to — and therefore how strong the
+ * verdict may be.
  *
- * `/api/v2/workflows` is the current playground/agent run path; the other three
- * are the v1 endpoints the suite has always watched, kept because specs still
- * reach them (component runs, the legacy IOModal path) and because a nightly can
- * serve either.
+ *   "v1"  the endpoints the fixture has ALWAYS watched. A verdict here fails the
+ *         test, exactly as before; specs are calibrated to that.
+ *   "v2"  `POST /api/v2/workflows`, the current playground/agent/node run path.
+ *         New coverage, so a verdict here is ADVISORY for now — see the staging
+ *         note below.
+ *   null  not a run stream.
+ *
+ * ## Why v2 is advisory
+ *
+ * Turning on a gate that has been dead for a whole endpoint is not a no-op. 88
+ * specs trigger a run (playground *or* node), 75 of them without
+ * `page.allowFlowErrors()`, and some provoke an execution error deliberately —
+ * `core-components/validate-raise-errors-components.spec.ts` raises a
+ * `ValueError` from a custom component and asserts the error UI, is
+ * `@stable @release`, and has no hatch because until now it never needed one.
+ * Failing on the v2 path immediately would turn that spec (and an unmeasured
+ * number of others) red for doing exactly what it is written to do.
+ *
+ * So this lands in two steps, the same way #1084 handled the HTTP half — fix the
+ * classification first, decide about failing second:
+ *
+ *   step 1 (here) the verdict is computed and LOGGED with its cause, which is
+ *                 all #1059 needed: the reason a run failed is in the output
+ *                 instead of being inferred from a downstream timeout.
+ *   step 2        flip v2 to failing, after auditing which of those 75 specs
+ *                 provoke an error on purpose and hatching them. Step 1's own
+ *                 log is what makes that audit cheap.
+ *
+ * Nothing loosens: v1 keeps failing tests today.
  */
-const RUN_STREAM_PATTERNS = [
-  "/api/v2/workflows",
-  "/events?event_delivery=",
-  "/build/",
-  "/run/",
-];
+export type RunStreamSurface = "v1" | "v2" | null;
 
-export function isRunStreamUrl(url: string): boolean {
-  return RUN_STREAM_PATTERNS.some((pattern) => url.includes(pattern));
+// Anchored at the API root, not "contains". `/build/` and `/run/` as substrings
+// matched `/assets/build/index.js` and `/api/v1/files/download/run/report.json`.
+const V1_PATTERNS = [/^\/api\/v1\/build\//, /^\/api\/v1\/run\//];
+const V2_RUN_PATH = /^\/api\/v2\/workflows$/;
+
+export function runStreamSurface(url: string, method = "POST"): RunStreamSurface {
+  let pathname: string;
+  let search: string;
+  try {
+    const parsed = new URL(url);
+    pathname = parsed.pathname;
+    search = parsed.search;
+  } catch {
+    return null;
+  }
+
+  // Anchored on the pathname, never a substring of the whole URL: `includes()`
+  // matched `/assets/build/index.js` and any query string containing `/run/`.
+  if (V2_RUN_PATH.test(pathname)) {
+    // `/api/v2/workflows/pending` is a 5 s react-query poll, not a run — reading
+    // it on every canvas spec is pure waste. Only the POST is a run.
+    return method === "POST" ? "v2" : null;
+  }
+  if (V1_PATTERNS.some((p) => p.test(pathname)) || (pathname.endsWith("/events") && search.includes("event_delivery="))) {
+    return "v1";
+  }
+  return null;
+}
+
+/** Back-compat helper for call sites that only need "is this a run stream". */
+export function isRunStreamUrl(url: string, method = "POST"): boolean {
+  return runStreamSurface(url, method) !== null;
 }
 
 /**
@@ -116,12 +167,23 @@ const EXCEPTION_PATTERNS = [
 const asRecord = (value: unknown): Record<string, any> | null =>
   value && typeof value === "object" ? (value as Record<string, any>) : null;
 
+/**
+ * Collapse to a single readable line.
+ *
+ * NOT "the first line": `errorMessage` opens with
+ * `"Error building Component Agent: \n\n<the provider's message>"`, so taking
+ * line 1 dropped the only part that says what went wrong. Joins the leading
+ * lines instead, which is also what makes the message useful in the run-history
+ * `error_signature`.
+ */
 const firstLine = (text: unknown, limit = 400): string =>
   String(text ?? "")
     .split("\n")
     .map((l) => l.trim())
-    .filter(Boolean)[0]
-    ?.slice(0, limit) ?? "";
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(" ")
+    .slice(0, limit);
 
 /**
  * Classify one run-stream body.
@@ -144,7 +206,8 @@ const firstLine = (text: unknown, limit = 400): string =>
  * the signal there, not the flag.
  */
 export function classifyFlowError(body: string): FlowErrorVerdict {
-  for (const event of parseStreamEvents(body)) {
+  const events = parseStreamEvents(body);
+  for (const event of events) {
     const e = asRecord(event);
     if (!e) continue;
 
@@ -153,14 +216,35 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
       return { failed: true, message: firstLine(e.message), shape: "RUN_ERROR" };
     }
 
-    // v2 — the error message pushed into the chat.
+    // v2 — the error message pushed into the chat. The payload shape varies by
+    // emitter (`agui_translator.py`): the rich path nests a message under
+    // `data.data`, the minimal one sends `{"error": "<text>"}`. Reading only the
+    // first produced a verdict whose message was literally "[object Object]".
     const value = asRecord(e.value);
     if (value?.event_type === "error") {
-      const text = asRecord(asRecord(value.data)?.data)?.text ?? value.data;
+      const data = asRecord(value.data);
+      const text =
+        asRecord(data?.data)?.text ??
+        asRecord(data?.data)?.error ??
+        data?.error ??
+        data?.text ??
+        (typeof value.data === "string" ? value.data : undefined);
       return {
         failed: true,
-        message: firstLine(text) || "flow emitted an error event with no text",
+        message: firstLine(text) || "flow emitted an error event with no readable text",
         shape: "event_type=error",
+      };
+    }
+
+    // v1 — the event envelope is `{"event": "<type>", "data": …}`
+    // (`lfx/events/event_manager.py`), and its error payload carries
+    // `error: false`, so the `data.error === true` check below never saw it.
+    if (e.event === "error") {
+      const data = asRecord(e.data);
+      return {
+        failed: true,
+        message: firstLine(data?.text ?? data?.error_message ?? e.data) || "flow emitted an error event",
+        shape: "event=error",
       };
     }
 
@@ -200,9 +284,17 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
     }
   }
 
-  for (const pattern of EXCEPTION_PATTERNS) {
-    const match = String(body ?? "").match(pattern);
-    if (match) return { failed: true, message: match[0].slice(0, 400), shape: "python exception" };
+  // Raw-text traceback matching, ONLY for a body that is not a structured
+  // stream. On a structured one it scans every assistant token and every echoed
+  // prompt: an agent explaining `TypeError: unsupported operand` — or a tool
+  // returning a traceback the agent then handled — would fail a healthy run.
+  // Harmless while this code sat behind the event-stream skip; a false-positive
+  // engine the moment the skip was lifted.
+  if (events.length === 0) {
+    for (const pattern of EXCEPTION_PATTERNS) {
+      const match = String(body ?? "").match(pattern);
+      if (match) return { failed: true, message: match[0].slice(0, 400), shape: "python exception" };
+    }
   }
 
   return { failed: false };
