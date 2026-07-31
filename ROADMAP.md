@@ -128,8 +128,9 @@ without it the Wave 4 promotions would land in a red daily.
 |---|---|---|---|---|---|
 | ~~**1**~~ ✅ | Agents & providers | ~53 | llm-agents §6.2–6.5 & §7.7 (26) + model-provider §7.1–7.6 (27) | ~61% | ✅ 2026-07-14 (**59%**) |
 | ~~**2**~~ ✅ | Components, RAG, flows & observability | ~58 | core-components §2 (22) + knowledge-ingestion §5 (8) + flow-functionality §12 (15) + observability §8 (8) + playground §9 (5) | ~74% | ✅ 2026-07-17 |
-| **3** ◀ current | Infra stabilization & test coverage | off-band | infra (not a coverage axis) + new-test batch: §Pages, §3.8, §6.2–6.4, §9.1, §13–14 | n/a (stabilization) | 2026-07-24 |
-| **4** | Canvas UI/UX & MCP | ~46 | ui-ux §15 (42) + mcp §13–14 remainder | ~87% | 2026-08-11 |
+| ~~**3**~~ ✅ | Infra stabilization & test coverage | off-band | infra (not a coverage axis) + new-test batch: §Pages, §3.8, §6.2–6.4, §9.1, §13–14 | n/a (stabilization) | ✅ 2026-07-24 |
+| ~~**4**~~ ✅ | Canvas UI/UX & MCP | ~46 | ui-ux §15 (42) + mcp §13–14 remainder | ~87% | ✅ 2026-07-29 (early) |
+| **5** ◀ current | 1.11.0 feature coverage | ~6 (+1 scoping) | core-components §3.9–3.10 + model-provider §7.8 + playground §9.6 (+ A2A scoping issue) | directional (+6 `[x]`) | 2026-08-14 |
 
 > Bullet counts and `%` are planned targets (`~`), not contracts — see **Cadence & review**.
 > Each wave mixes creation (`[ ]`→`[x]`) and validation (`[-]`→`[x]`): Wave 1 is
@@ -158,7 +159,7 @@ without it the Wave 4 promotions would land in a red daily.
 > observability (§8) and playground (§9) surfaces to `@stable`. Final coverage per the
 > auto-generated Coverage Summary in `QA-CHECKLIST.md` (not hand-maintained here).
 
-### Wave 3 — Infra stabilization & test coverage  ·  2026-07-17 → 2026-07-24 ◀ **CURRENT**
+### ✅ Wave 3 — Infra stabilization & test coverage  ·  2026-07-17 → 2026-07-24 · **DONE**
 
 > **Off-band stabilization wave — the exception to the coverage-bullet model.** Infra
 > is not a coverage axis, so this wave does **not** target the 50–60 band. It was
@@ -175,7 +176,7 @@ Convergence: not a target this wave (stabilization). The `[ ]`→`[x]` bullets i
 Exit: a clean non-guarded daily exists; the safe new-test batch is validated; the gated batch is authored and ready to promote.
 Review (2026-07-24): reassess; confirm the baseline holds; hand the gated specs to Wave 4.
 
-### Wave 4 — Canvas UI/UX & MCP  ·  2026-07-28 → 2026-08-11
+### ✅ Wave 4 — Canvas UI/UX & MCP  ·  2026-07-28 → 2026-08-11 · **DONE** (delivered 2026-07-29)
 
 Validation-heavy: the ~36 inherited `ui-ux` canvas specs already have code — this wave
 promotes them to `@stable`. The MCP §13–14 items and the few named `[ ]` gaps that
@@ -188,6 +189,31 @@ Requires:
 Convergence: ~74% → **~87%**
 Exit: the inherited canvas surface and MCP client/server are validated under `@stable`.
 Review (2026-08-11): reassess delivered vs. target; promote a pool item (templates, once scoped) into a dated wave.
+
+### Wave 5 — 1.11.0 feature coverage  ·  2026-07-31 → 2026-08-14 ◀ **CURRENT**
+
+First wave driven by an upstream release rather than the inherited backlog: Langflow
+1.11.0 shipped new user-facing features with zero suite coverage. Backlog bullets live
+in `QA-CHECKLIST.md` §3.9–3.10 (Human Input, Data Operations), §7.8 (unified provider
+additions) and §9.6 (HITL in the Playground).
+
+Requires:
+- **Create** (`[ ]` → `[x]`): Human Input pause/resume in the Playground (§9.6) and
+  node configuration (§3.9); Data Operations unified component + legacy linkage
+  (§3.10); OpenAI Compatible and Azure AI Foundry unified provider setup (§7.8).
+- **Scope** (issue-only, Rule 1 pointer): A2A protocol support — explore the surface
+  (server endpoint, component, UI) and turn it into named checklist bullets before any
+  spec is written (same "needs scoping first" treatment as Templates).
+
+Notes: HITL and Data Operations specs need no LLM key. Azure AI Foundry depends on
+Azure credentials being available in CI — the spec ships without `@stable` until they
+are. Update the "Langflow version last validated" snapshot to `1.11.x` at wave close.
+
+Convergence: directional — +6 `[x]` on a grown denominator (new 1.11.0 bullets).
+Exit: the six named specs are validated under `@stable` (Azure spec may remain
+credential-gated); the A2A scoping issue produced named checklist bullets.
+Review (2026-08-14): reassess; date the A2A spec batch and revisit the pool
+(templates refresh, MCP-servers-in-DB persistence) for Wave 6.
 
 ---
 
