@@ -245,3 +245,33 @@ test("a network error fetching ONE trace's detail degrades that trace only — t
   assert.deepEqual(lines[0].models, []);
   assert.equal(lines[1].total_tokens, 20);
 });
+
+// #1197 re-review, "Important": the dynamic `import()` that loads `buildProbe`
+// sat OUTSIDE every try/catch, at the top of `recordTokenAttribution` — a
+// rejection there (module moved, fd exhaustion, a transient resolution
+// failure) propagated straight out of this function. `cleanup()` in
+// track-created-flows.ts awaits this call with no try/catch of its own, on
+// the stated assumption that it "cannot throw" — so an unguarded import
+// failure would have failed the calling spec's teardown as an unrelated
+// random failure, in a helper 28 specs depend on. Forcing a REAL import
+// failure reliably from a test is impractical, so `loadBuildProbe` is
+// injectable — unit tests only, per its doc comment.
+test("a failing buildProbe import degrades to a named skip — never a silent {recorded: 0, skipped: []}", async () => {
+  const out = tmpFile();
+  const request = fakeRequest({ f1: [{ id: "t1", totalTokens: 88 }] }, { t1: { spans: SPANS } });
+  const result = await recordTokenAttribution({
+    request,
+    flowIds: ["f1"],
+    test: "t",
+    file: "f.spec.ts",
+    out,
+    loadBuildProbe: async () => {
+      throw new Error("Cannot find module '../../../scripts/lib/token-spans.mjs'");
+    },
+  });
+  assert.equal(result.recorded, 0);
+  assert.equal(result.skipped.length, 1);
+  assert.match(result.skipped[0], /buildProbe import failed/);
+  assert.match(result.skipped[0], /Cannot find module/);
+  assert.equal(fs.existsSync(out), false, "no file must be written when the import itself fails");
+});

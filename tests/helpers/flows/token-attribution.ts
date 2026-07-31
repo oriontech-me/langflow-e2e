@@ -43,20 +43,34 @@ import type { APIRequestContext } from "@playwright/test";
 // first call. `@ts-expect-error` is required because a plain `.mjs` file with
 // no declaration makes `tsc` report TS7016 — verified to reproduce identically
 // under both `ts-node` (this repo's test runner) and plain `tsc --noEmit`.
-async function loadBuildProbe() {
+//
+// Node version dependency (#1197 re-review): under Playwright's own
+// transform this dynamic `import()` survives as a native ES import; under
+// `tsc`/`ts-node` (`module: commonjs`, the path this file's own unit tests
+// take) it compiles to `Promise.resolve().then(() => require(...))`, which
+// only succeeds because Node ≥20.19 backported unflagged `require(esm)`. CI
+// pins Node 20, so this holds today — but moving this lane's Node version
+// below 20.19 would turn this call into a hard failure. That failure is now
+// caught (see the try/catch at the call site below) rather than escaping
+// `cleanup()`, but it would still mean every attributed trace silently loses
+// its probe recovery — a Node downgrade is not something this guard can make
+// invisible, only non-fatal.
+type BuildProbeFn = (
+  trace: { id?: string; flowId?: string; startTime?: string; status?: string; totalTokens?: number },
+  spans: unknown,
+) => {
+  trace_id: string | null;
+  flow_id: string | null;
+  start_time: string | null;
+  status: string | null;
+  total_tokens: number | null;
+  models: unknown[];
+};
+
+async function loadBuildProbe(): Promise<BuildProbeFn> {
   // @ts-expect-error -- dynamic import of a dependency-free ESM .mjs module; no .d.ts to resolve
   const mod = await import("../../../scripts/lib/token-spans.mjs");
-  return mod.buildProbe as (
-    trace: { id?: string; flowId?: string; startTime?: string; status?: string; totalTokens?: number },
-    spans: unknown,
-  ) => {
-    trace_id: string | null;
-    flow_id: string | null;
-    start_time: string | null;
-    status: string | null;
-    total_tokens: number | null;
-    models: unknown[];
-  };
+  return mod.buildProbe as BuildProbeFn;
 }
 
 export interface RecordTokenAttributionOptions {
@@ -71,6 +85,14 @@ export interface RecordTokenAttributionOptions {
   out?: string;
   /** Auth header, when the caller already has one. */
   headers?: Record<string, string>;
+  /**
+   * Override the `buildProbe` loader. **Unit tests only** — a spec must not
+   * set it. Lets a test force the dynamic-import failure path (module moved,
+   * fd exhaustion, a transient resolution failure) with a rejecting stub,
+   * since reliably forcing a REAL `import()` failure from a test is
+   * impractical. Defaults to the real loader.
+   */
+  loadBuildProbe?: () => Promise<BuildProbeFn>;
 }
 
 export interface TokenAttributionResult {
@@ -86,11 +108,31 @@ export async function recordTokenAttribution({
   file,
   out = process.env.TOKENS_ATTRIB,
   headers,
+  loadBuildProbe: loadBuildProbeOverride = loadBuildProbe,
 }: RecordTokenAttributionOptions): Promise<TokenAttributionResult> {
   const result: TokenAttributionResult = { recorded: 0, skipped: [] };
   if (!out || !flowIds?.length) return result;
 
-  const buildProbe = await loadBuildProbe();
+  // The import itself can reject — a future refactor moves the shared
+  // module, fd exhaustion, a transient resolution failure (#1197 re-review,
+  // Important). Unguarded, that rejection would propagate straight out of
+  // this function: `track-created-flows.ts`'s `cleanup()` awaits this call
+  // with no try/catch of its own, on the stated assumption that it "cannot
+  // throw" — so an unguarded import failure would fail the calling spec's
+  // teardown as an unrelated random failure, in a helper 28 specs depend on.
+  // Degrade instead: resolve normally, and name the failure on `skipped`
+  // rather than silently returning `{recorded: 0, skipped: []}` — which
+  // would read exactly like "no traces yet", the same confusion finding I8
+  // already fixed once, one level up the call stack this time.
+  let buildProbe: BuildProbeFn;
+  try {
+    buildProbe = await loadBuildProbeOverride();
+  } catch (error) {
+    result.skipped.push(
+      `buildProbe import failed: ${(error as Error)?.message?.split("\n")[0] ?? String(error)}`,
+    );
+    return result;
+  }
 
   for (const flowId of flowIds) {
     try {
