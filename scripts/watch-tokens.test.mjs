@@ -6,7 +6,14 @@
 // double-count (design §2.1), and a trace already seen must never be counted twice.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { flattenSpans, spanModelUsage, collectOnce, parseProbeLines } from "./watch-tokens.mjs";
+import { spawn } from "node:child_process";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { flattenSpans, spanModelUsage, collectOnce, parseProbeLines, poll } from "./watch-tokens.mjs";
+
+const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
 
 // The exact span shape the spike measured: a component-level llm span with a null
 // modelName carrying the SAME usage as the inner provider span.
@@ -141,4 +148,59 @@ test("parseProbeLines skips a torn last line", () => {
   const probes = parseProbeLines('{"trace_id":"a","total_tokens":1}\n{"trace_id":"b"');
   assert.equal(probes.length, 1);
   assert.equal(probes[0].trace_id, "a");
+});
+
+// TOKENS_OUT becoming unwritable mid-run (ENOSPC, permissions, a bad path) must
+// degrade the recorder, not crash it — the file's own header promises "always
+// exits 0 / never throws out of a tick". Point TOKENS_OUT at a directory: on
+// every platform node's fs targets, appendFileSync on a directory throws
+// (EISDIR/EPERM), which is the same failure family as a disk going away.
+test("an append failure is logged and the loop is not stopped", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tokens-out-"));
+  const traces = [{ id: "t1", flowId: "f1", startTime: "x", status: "ok", totalTokens: 88 }];
+  const { fetchImpl } = fakeBackend({ traces, detail: { t1: { spans: SPANS } } });
+  const logs = [];
+  const code = await poll({
+    fetchImpl,
+    env: {
+      TOKENS_BASE_URL: "http://x",
+      TOKENS_OUT: dir, // a directory, not a file
+      TOKENS_INTERVAL_MS: "10",
+      TOKENS_MAX_SECONDS: "0.15",
+    },
+    log: (msg) => logs.push(msg),
+  });
+  assert.equal(code, 0);
+  assert.ok(
+    logs.some((l) => /could not append a probe/.test(l)),
+    `expected an append-failure log, got: ${JSON.stringify(logs)}`,
+  );
+});
+
+// The entry-point guard (`if (import.meta.url === ...)`) only runs when the file
+// is executed as the main module, which none of the tests above do — they all
+// import the named exports. Spawn the real file to exercise that code path and
+// confirm the process still exits 0, even pointed at a backend that refuses
+// every connection. This does not force the try/catch's error branch: poll()
+// is designed to never throw (every failure is caught and turned into a
+// logged `errors[]` entry inside collectOnce/poll itself), so there is no fault
+// this test can inject that would reach main()'s catch without mocking poll()
+// internals directly — the wrapping is defense-in-depth for an unexpected
+// throw, matching watch-backend.mjs's own untested catch branch in main().
+test("the entry point exits 0 when run directly, even against an unreachable backend", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "tokens-entry-"));
+  const out = join(dir, "probes.jsonl");
+  const child = spawn(process.execPath, [SCRIPT], {
+    env: {
+      ...process.env,
+      TOKENS_BASE_URL: "http://127.0.0.1:1", // nothing listens here: connection refused
+      TOKENS_OUT: out,
+      TOKENS_INTERVAL_MS: "50",
+      TOKENS_TIMEOUT_MS: "200",
+      TOKENS_MAX_SECONDS: "0.3",
+    },
+    stdio: "ignore",
+  });
+  const code = await new Promise((resolve) => child.on("exit", resolve));
+  assert.equal(code, 0);
 });

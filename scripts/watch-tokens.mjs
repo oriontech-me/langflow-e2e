@@ -185,8 +185,14 @@ export async function poll({ fetchImpl = fetch, env = process.env, log = console
     ticks += 1;
     if (tick.refreshAuth) bearer = await login(fetchImpl, base, timeoutMs);
     for (const probe of tick.probes) {
-      fs.appendFileSync(out, `${JSON.stringify(probe)}\n`);
-      recorded += 1;
+      try {
+        fs.appendFileSync(out, `${JSON.stringify(probe)}\n`);
+        recorded += 1;
+      } catch (error) {
+        // Losing a probe line is preferable to killing the recorder: the summary
+        // degrades, the run is unaffected.
+        log(`token watcher: could not append a probe: ${error?.message || error}`);
+      }
     }
     for (const error of tick.errors) log(`token watcher: ${error}`);
     if (tick.deferred) log(`token watcher: ${tick.deferred} trace(s) deferred to the next tick`);
@@ -199,7 +205,17 @@ export async function poll({ fetchImpl = fetch, env = process.env, log = console
   return 0;
 }
 
+async function main() {
+  try {
+    const code = await poll();
+    return code === undefined ? 0 : code;
+  } catch (error) {
+    // Diagnostics never break the build.
+    console.log(`token watcher: recorder error (ignored): ${error?.stack || error}`);
+    return 0;
+  }
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1] || "").href) {
-  const code = await poll();
-  process.exit(code === undefined ? 0 : code);
+  process.exit(await main());
 }
