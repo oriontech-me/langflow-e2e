@@ -793,13 +793,13 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
-| `core-components/` — Core Components | 87 | 83 | 3 | 0 | 1 |
+| `core-components/` — Core Components | 90 | 83 | 3 | 0 | 4 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
-| `core-functionality/model-provider/` | 32 | 30 | 2 | 0 | 0 |
+| `core-functionality/model-provider/` | 34 | 30 | 2 | 0 | 2 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 50 | 46 | 3 | 1 | 0 |
+| `core-functionality/playground/` | 51 | 46 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
@@ -807,7 +807,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **474** | **377 (80%)** | **80 (17%)** | **11 (2%)** | **6 (1%)** |
+| **TOTAL** | **480** | **377 (79%)** | **80 (17%)** | **11 (2%)** | **12 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1293,11 +1293,11 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 4 | 0 |
-| `core-components/` — Core Components | 3 | 1 |
+| `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 5 | 2 |
-| `core-functionality/model-provider/` | 2 | 0 |
-| `core-functionality/playground/` | 3 | 0 |
+| `core-functionality/model-provider/` | 2 | 2 |
+| `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |
