@@ -49,6 +49,18 @@ export async function recordTokenAttribution({
   for (const flowId of flowIds) {
     try {
       const res = await request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, { headers });
+      // `res.json()` used to run regardless of `res.ok()`. Langflow answers an
+      // unauthenticated/forbidden request with a JSON body too (e.g. 403
+      // `{"detail": "Not authenticated"}`), so `body.traces` was `undefined`,
+      // the loop below `continue`d, and the result read exactly like "no
+      // traces yet" — `{recorded: 0, skipped: []}` — with no warning anywhere.
+      // That is the exact regression the bearer-token fix (design §S2) exists
+      // to catch: a 403 must be distinguishable from "nothing to attribute
+      // yet" (#1197 review, finding I8).
+      if (!res.ok()) {
+        result.skipped.push(`${flowId}: HTTP ${res.status()}`);
+        continue;
+      }
       const body = (await res.json()) as { traces?: Array<{ id?: string }> };
       const lines = (body?.traces ?? [])
         .map((t) => t?.id)

@@ -98,6 +98,27 @@ test("an unwritable out path is reported, never thrown", async () => {
   assert.equal(result.skipped.length, 1);
 });
 
+// #1197 review, finding I8: the sidecar used to call `res.json()` regardless of
+// `res.ok()`. Langflow answers an unauthenticated/forbidden request with a JSON
+// body too (e.g. 403 `{"detail": "Not authenticated"}`), so `body.traces` was
+// `undefined`, the loop `continue`d, and the result read exactly like "no
+// traces yet" — `{recorded: 0, skipped: []}` — with no warning anywhere. That
+// is the exact regression the bearer-token fix (#1197 §S2) exists to catch.
+test("a non-ok response (e.g. 403 unauthenticated) is reported, never read as zero traces", async () => {
+  const out = tmpFile();
+  const request = {
+    get: async () => ({
+      ok: () => false,
+      status: () => 403,
+      json: async () => ({ detail: "Not authenticated" }),
+    }),
+  } as unknown as APIRequestContext;
+  const result = await recordTokenAttribution({ request, flowIds: ["f1"], test: "t", file: "f", out });
+  assert.equal(result.recorded, 0);
+  assert.deepEqual(result.skipped, ["f1: HTTP 403"]);
+  assert.equal(fs.existsSync(out), false, "nothing should be written when every flow was skipped");
+});
+
 test("a flow with no trace yet is simply not recorded — no polling", async () => {
   const out = tmpFile();
   const request = fakeRequest({ f1: [] });

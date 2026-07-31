@@ -99,6 +99,19 @@ test("collectOnce emits one probe per new trace and records its trace total", as
   assert.equal(calls.detail, 1);
 });
 
+// #1197 review, finding I3: a trace with no reported total must record `null`
+// (unknown), never `0` — `aggregate()`'s spanTotal fallback exists precisely so
+// this case is not silently priced as "the run spent nothing".
+test("collectOnce emits total_tokens: null when the trace's own total is unknown, not 0", async () => {
+  const { fetchImpl } = fakeBackend({
+    traces: [{ id: "t1", flowId: "f1", startTime: "x", status: "ok" }], // no totalTokens field
+    detail: { t1: { spans: SPANS } },
+  });
+  const out = await collectOnce({ fetchImpl, base: "http://x", bearer: "b", seen: new Set() });
+  assert.equal(out.probes.length, 1);
+  assert.equal(out.probes[0].total_tokens, null);
+});
+
 test("a trace already seen is not fetched or emitted again", async () => {
   const traces = [{ id: "t1", flowId: "f1", startTime: "x", status: "ok", totalTokens: 88 }];
   const { fetchImpl, calls } = fakeBackend({ traces, detail: { t1: { spans: SPANS } } });
@@ -182,6 +195,37 @@ test("an append failure is logged and the loop is not stopped", async () => {
   );
 });
 
+// #1197 review, finding I4: a permanently unauthorized poller must not fail
+// SILENTLY. Before the fix, `collectOnce` returning `refreshAuth: true` with an
+// empty `errors[]` meant `poll()` logged nothing for that tick — a run where
+// login() keeps failing (bad credentials, an auth endpoint that started
+// rejecting mid-run) ends with "0 trace(s) recorded" and no clue why.
+test("poll logs each unauthorized tick and names the streak in its final line", async () => {
+  const fetchImpl = async (url) => {
+    if (url.includes("/auto_login")) return { ok: true, status: 200, json: async () => ({}) }; // never yields a usable token
+    return { ok: false, status: 401, json: async () => ({}) };
+  };
+  const logs = [];
+  const code = await poll({
+    fetchImpl,
+    env: {
+      TOKENS_BASE_URL: "http://x",
+      TOKENS_OUT: join(mkdtempSync(join(tmpdir(), "tokens-auth-")), "probes.jsonl"),
+      TOKENS_INTERVAL_MS: "5",
+      TOKENS_MAX_SECONDS: "0.05",
+    },
+    log: (msg) => logs.push(msg),
+  });
+  assert.equal(code, 0);
+  assert.ok(
+    logs.some((l) => /unauthorized/i.test(l)),
+    `expected an unauthorized log per tick, got: ${JSON.stringify(logs)}`,
+  );
+  const finalLine = logs[logs.length - 1];
+  assert.match(finalLine, /0 trace\(s\) recorded/);
+  assert.match(finalLine, /unauthorized/i, "the final line must name unauthorized as a candidate cause, not just '0 traces'");
+});
+
 // The entry-point guard (`if (import.meta.url === ...)`) only runs when the file
 // is executed as the main module, which none of the tests above do — they all
 // import the named exports. Spawn the real file to exercise that code path and
@@ -228,9 +272,14 @@ function fakeFs(files, { throwAppend = false, throwWrite = false } = {}) {
       return files[p];
     },
     listDir: (dir) => Object.keys(files).filter((p) => p.startsWith(`${dir}/`)),
+    // Append, not overwrite (#1197 review, finding C1): GITHUB_STEP_SUMMARY is
+    // append-only by GitHub's own documented contract, and the merge job's
+    // `Report mid-run backend outages` step (#1030) writes to it BEFORE this
+    // one runs. A plain overwrite would silently delete that section on
+    // exactly the red days it matters.
     writeFile: (p, text) => {
       if (throwWrite) throw new Error("ENOSPC: no space left on device");
-      written[p] = text;
+      written[p] = (written[p] || "") + text;
     },
     appendFile: (p, text) => {
       if (throwAppend) throw new Error("ENOSPC: no space left on device");
@@ -295,6 +344,27 @@ test("a run with zero traces writes NO history line and says why", async () => {
   assert.match(fs2.written["summary.md"], /no traces recorded/i);
   // The absence must never read as "the run spent nothing".
   assert.doesNotMatch(fs2.written["summary.md"], /\$0\.00 total/);
+  // #1197 review, finding I4: a permanently unauthorized poller also ends with
+  // zero traces recorded — the "why" string must name that as a candidate
+  // cause instead of only blaming tracing / no LLM call, which would send a
+  // triager down the wrong path.
+  assert.match(fs2.written["summary.md"], /authenticate/i);
+});
+
+// #1197 review, finding C1: the step summary is APPEND-only in GitHub's own
+// contract. The merge job's `Report mid-run backend outages` step (#1030) runs
+// before this one in the same job and appends its own section to
+// GITHUB_STEP_SUMMARY — a plain overwrite here would silently delete that
+// section on exactly the red days it matters.
+test("the step summary is appended, never overwriting an earlier step's section (#1030's outage table)", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  fs2.written["summary.md"] = "## Mid-run backend outages\n\nShard 2 was wedged for 260s.\n";
+  assert.equal(await summarize({ env: baseEnv, ...fs2, log: () => {} }), 0);
+  assert.match(fs2.written["summary.md"], /Mid-run backend outages/, "the earlier step's section must survive");
+  assert.match(fs2.written["summary.md"], /Token consumption/, "the new section must still be written");
 });
 
 test("a zero-test run (infra abort) writes no history line", async () => {
@@ -306,6 +376,20 @@ test("a zero-test run (infra abort) writes no history line", async () => {
   assert.equal(await summarize({ env, ...fs2, log: () => {} }), 0);
   assert.equal(fs2.appended["reports/token-history.jsonl"], undefined);
   assert.match(fs2.written["summary.md"], /zero tests/i);
+});
+
+// #1197 review, minor: `Number("")` is `0`, so an unset/empty TESTS_TOTAL used
+// to be indistinguishable from a genuine "0" and got reported as an infra
+// abort — even when real trace data existed and should have been priced.
+test("an unset/empty TESTS_TOTAL is not mistaken for a zero-test run", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TESTS_TOTAL: "" };
+  assert.equal(await summarize({ env, ...fs2, log: () => {} }), 0);
+  assert.ok(fs2.appended["reports/token-history.jsonl"], "real trace data must still be priced and recorded");
+  assert.doesNotMatch(fs2.written["summary.md"], /zero tests/i);
 });
 
 test("an unpriced model makes the summary say the dollar figure is a floor", async () => {
@@ -322,6 +406,19 @@ test("an unpriced model makes the summary say the dollar figure is a floor", asy
   const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
   assert.deepEqual(line.unpriced_models, ["gemini-flash-latest"]);
   assert.match(fs2.written["summary.md"], /floor/i);
+});
+
+// #1197 review, finding I5: 2-decimal rounding renders a real sub-cent trace
+// cost ($0.0000348 for 40 prompt / 48 completion gpt-4o-mini tokens) as "$0.00"
+// in the per-model table — indistinguishable from a model that spent nothing.
+test("per-model dollar figures use enough decimals to show sub-cent spend", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  assert.match(fs2.written["summary.md"], /\$0\.000035/, "must not round the model row to $0.00");
+  assert.doesNotMatch(fs2.written["summary.md"], /\| `gpt-4o-mini` \| 1 \| 40 \| 48 \| \$0\.00 \|/);
 });
 
 test("probe files from several shards are merged and deduped by trace", async () => {
@@ -348,6 +445,41 @@ test("anomalies land in the history line when the baseline supports them", async
   const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
   assert.equal(line.anomalies.length, 1);
   assert.equal(line.anomalies[0].scope, "run");
+});
+
+// #1197 review, finding I7: the anomaly baseline must be WINDOWED to a recent
+// slice of history, not the whole all-time file. Otherwise a legitimate,
+// sustained cost increase (deliberate suite growth) never raises the median —
+// the old, cheap runs permanently outnumber the new ones — and the run-scope
+// anomaly fires every day forever.
+test("the anomaly baseline is windowed to recent history, not the whole all-time file", async () => {
+  const prices = JSON.stringify({ m: { inputPerMillion: 1000000, outputPerMillion: 1000000 } }); // $1/token
+  const probe = JSON.stringify({
+    trace_id: "t1",
+    flow_id: "f1",
+    total_tokens: 6,
+    models: [{ model: "m", prompt_tokens: 0, completion_tokens: 6, total_tokens: 6, calls: 1 }],
+  });
+  // 30 old, cheap lines (before the suite grew) followed by 20 recent lines at
+  // the new, legitimately higher spend level. Un-windowed, the 30 old lines
+  // dominate the median (old:1 outnumbers recent:5), and the run's $6 reads as
+  // a 6x anomaly against a stale $1 baseline. Windowed to the last 20, the
+  // baseline is the recent $5 level and $6 is unremarkable.
+  const oldCheap = Array.from({ length: 30 }, () => JSON.stringify({ totals: { usd_estimated: 1 }, by_spec: [] }));
+  const recentGrown = Array.from({ length: 20 }, () => JSON.stringify({ totals: { usd_estimated: 5 }, by_spec: [] }));
+  const history = `${[...oldCheap, ...recentGrown].join("\n")}\n`;
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${probe}\n`,
+    "prices.json": prices,
+    "reports/token-history.jsonl": history,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(
+    line.anomalies.length,
+    0,
+    "windowed to the recent $5 baseline, a $6 run is not a 6x anomaly against the stale all-time $1 median",
+  );
 });
 
 test("summarize never throws on a missing probe directory", async () => {
@@ -402,12 +534,29 @@ test("the daily starts the token recorder before the test step and summarizes af
   assert.ok(summarize > run, "the summary must run after the tests");
 });
 
-test("the shard exports TOKENS_ATTRIB so cleanup's sidecar is live", () => {
+// Renamed per #1197 review (finding C2c): this only proves the env var is SET
+// on the @stable shard step — it says nothing about whether any spec actually
+// calls the sidecar (that would need the spec itself to pass `attribution`,
+// which is covered by agent-max-tokens.spec.ts, not by this workflow guard).
+test("the @stable shard step sets TOKENS_ATTRIB (env wiring only, not proof the sidecar runs)", () => {
   assert.match(daily(), /TOKENS_ATTRIB:/);
 });
 
-test("the token steps never gate the run", () => {
+// #1197 review, finding I9: the guard sliced from the FIRST occurrence of
+// "Summarize token consumption" only — that's the SHARD step. A
+// `continue-on-error: true` could be dropped from the MERGE-job step (the one
+// that actually prices and writes the run's history line) and this guard would
+// still pass. Check both occurrences: the shard's stop-and-collect step and the
+// merge job's summarize step (renamed per the minor fix below — anchor on
+// substrings unique to each so the rename doesn't collapse them to one match).
+test("neither token step gates the run — the shard stop step AND the merge summary step", () => {
   const text = daily();
-  const block = text.slice(text.indexOf("Summarize token consumption"));
-  assert.match(block.slice(0, 400), /continue-on-error: true/);
+  const shardStep = text.indexOf("Stop and collect token consumption");
+  const mergeStep = text.indexOf("Summarize token consumption");
+  assert.ok(shardStep > 0, "the shard's stop-and-collect step must exist");
+  assert.ok(mergeStep > 0, "the merge job's summarize step must exist");
+  assert.notEqual(shardStep, mergeStep, "the two must be distinct steps, not the same match twice");
+  for (const start of [shardStep, mergeStep]) {
+    assert.match(text.slice(start, start + 400), /continue-on-error: true/);
+  }
 });

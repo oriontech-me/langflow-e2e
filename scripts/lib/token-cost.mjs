@@ -10,8 +10,16 @@
 //     spans would double-count. A disagreement between the two is REPORTED.
 import fs from "node:fs";
 
+// Reworded per #1197 review (finding C2b): the previous text blamed a spec "not
+// migrated to trackCreatedFlows (#1108)", which is no longer the live cause now
+// that the sidecar's one call site (agent-max-tokens.spec.ts) passes
+// `attribution` — a triager reading that string would wait on a migration that
+// does nothing to turn attribution on. Name the two causes that actually put a
+// trace here: the spec's own `cleanup()` call did not pass `attribution` (most
+// specs, by design — the sidecar is opt-in per #1197), or the flow was deleted
+// between two poller ticks before the sidecar could read its trace (#1197 §S4).
 export const UNATTRIBUTED_REASON =
-  "spec not migrated to trackCreatedFlows (#1108), or its flow was deleted between two poller ticks";
+  "the spec's cleanup() did not pass attribution (most specs don't, by design), or its flow was deleted between two poller ticks";
 
 // Pure validation step, split out from loadPrices() so a caller with its own I/O
 // (the summarizer's injected readFile, in particular) can reuse the exact same
@@ -107,7 +115,16 @@ export function aggregate({ probes = [], attributions = [], prices = {} } = {}) 
     // The trace's own total is authoritative for the run (§2.1). When the two
     // disagree, say so — a silent preference would hide a Langflow change in how
     // spans are emitted.
-    const traceTotal = Number(probe.total_tokens);
+    //
+    // Read the RAW value, not `Number(probe.total_tokens)`: the poller emits a
+    // literal JSON `null` when the trace's own total is unknown (#1197 review,
+    // finding I3), and `Number(null)` coerces to `0` — a finite number — before
+    // `Number.isFinite` ever sees it, which would silently treat "unknown" as
+    // "the run spent nothing" and flag every such trace as a fake mismatch
+    // against its real span sum. `Number.isFinite` on the raw value rejects
+    // `null` (and a missing/undefined field) without coercion, so both correctly
+    // fall through to `spanTotal` below.
+    const traceTotal = probe.total_tokens;
     const runTotal = Number.isFinite(traceTotal) ? traceTotal : spanTotal;
     if (Number.isFinite(traceTotal) && traceTotal !== spanTotal) {
       mismatches.push({ trace_id: probe.trace_id, trace_total: traceTotal, span_total: spanTotal });

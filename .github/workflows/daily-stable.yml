@@ -580,7 +580,11 @@ jobs:
           # a healthy backend.
           if-no-files-found: warn
 
-      - name: Summarize token consumption (shard ${{ matrix.shard }})
+      # Renamed (#1197 review, minor fix) from a name that claimed this step
+      # summarizes token consumption — it does not; it only stops the recorder
+      # and copies its files. The actual pricing/summarizing happens once, in
+      # the merge job's own step further down this workflow.
+      - name: Stop and collect token consumption (shard ${{ matrix.shard }})
         if: always()
         continue-on-error: true
         shell: bash
@@ -588,8 +592,14 @@ jobs:
           if [ -f /tmp/tokens.pid ]; then
             kill "$(cat /tmp/tokens.pid)" 2>/dev/null || true
           fi
-          # Let an in-flight append land before the file is copied.
-          sleep 3
+          # Let an in-flight append land before the file is copied. 3s was shorter
+          # than a worst-case in-flight tick (TOKENS_DETAIL_CAP × TOKENS_TIMEOUT_MS
+          # = 25 × 8s = 200s if every detail fetch times out sequentially), and the
+          # LAST tick holds the newest traces — the ones most likely to matter for
+          # an anomaly (#1197 review, minor fix). A full worst-case wait is too
+          # costly to pay on every shard; 10s is a modest bump that catches an
+          # ordinary slow tick without meaningfully lengthening the job.
+          sleep 10
           mkdir -p tokens
           cp token-probes-${{ matrix.shard }}.jsonl tokens/ 2>/dev/null || true
           cp token-attrib-${{ matrix.shard }}.jsonl tokens/ 2>/dev/null || true

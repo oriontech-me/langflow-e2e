@@ -2,7 +2,7 @@
 // Run with: npm run test:scripts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { usdFor, aggregate, parsePrices } from "./token-cost.mjs";
+import { usdFor, aggregate, parsePrices, loadPrices } from "./token-cost.mjs";
 
 const PRICES = {
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
@@ -47,9 +47,29 @@ test("an unattributed trace is counted in the bucket, never dropped", () => {
   assert.equal(out.bySpec.length, 0);
   assert.equal(out.unattributed.traces, 1);
   assert.equal(out.unattributed.total_tokens, 88);
-  assert.match(out.unattributed.reason, /trackCreatedFlows/);
+  // Reworded per #1197 review (finding C2b): the reason must name the two REAL
+  // causes — cleanup() not passing `attribution`, or a flow deleted between
+  // ticks — not the retired "not migrated to trackCreatedFlows (#1108)" excuse,
+  // which would send a triager to wait on a migration that changes nothing.
+  assert.match(out.unattributed.reason, /cleanup\(\)/);
+  assert.match(out.unattributed.reason, /did not pass attribution/);
+  assert.doesNotMatch(out.unattributed.reason, /trackCreatedFlows/);
   // The bucket is part of the run total, so a consumer that ignores bySpec still sums right.
   assert.equal(out.totals.total_tokens, 88);
+});
+
+// #1197 review, finding I3: a list item whose trace has no `totalTokens` must
+// fall back to the span sum, never silently read as "the run spent nothing".
+test("a probe with total_tokens: null falls back to the span sum, not 0 (#1197 review, I3)", () => {
+  const out = aggregate({
+    probes: [probe({ total_tokens: null })],
+    attributions: [],
+    prices: PRICES,
+  });
+  assert.equal(out.totals.total_tokens, 88, "must use the span sum, not Number(null) === 0");
+  // An unknown trace total disagreeing with the span sum is not a real
+  // disagreement — it must not be reported as a mismatch.
+  assert.equal(out.mismatches.length, 0);
 });
 
 test("an unpriced model keeps its tokens, gets null dollars and is named", () => {
@@ -127,4 +147,24 @@ test("parsePrices keeps a valid entry, skips the _comment key, and drops a non-n
     "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
   });
   assert.equal(prices["broken-model"], undefined);
+});
+
+// #1197 review, finding I6: the price table must cover the model ids the suite
+// actually resolves against a real Langflow, or anomaly detection (which keys
+// entirely on usd_estimated) cannot see that provider's spikes at all.
+test("the shipped price table covers the models measured against Langflow 1.12.0.dev10 (#1197 review, I6)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  for (const model of [
+    "gpt-4o-mini",
+    "gpt-4o",
+    "claude-sonnet-4-6",
+    "claude-sonnet-5",
+    "claude-opus-5",
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+  ]) {
+    assert.ok(prices[model], `missing price entry for ${model}`);
+    assert.ok(Number.isFinite(prices[model].inputPerMillion), `${model} inputPerMillion must be numeric`);
+    assert.ok(Number.isFinite(prices[model].outputPerMillion), `${model} outputPerMillion must be numeric`);
+  }
 });

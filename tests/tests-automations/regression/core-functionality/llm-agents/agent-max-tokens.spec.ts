@@ -130,8 +130,21 @@ test.beforeEach(({ page }) => {
   flows = trackCreatedFlows(page);
 });
 
-test.afterEach(async ({ request }) => {
-  await flows.cleanup(request);
+// Names this spec on the traces its flows produced, for the token consumption
+// monitor (#1197). One call site, by explicit human-partner decision (this is
+// the only spec edit the token-monitor branch is allowed) — proves the
+// attribution path end to end without a full-suite migration. `testInfo.title`
+// / `testInfo.file` are Playwright's own per-test metadata; the sidecar stays
+// inert (no request, no file) whenever TOKENS_ATTRIB is unset, so this changes
+// nothing about local runs or the PR lane — no new unconditional await is
+// introduced, just an extra option on the one that already existed.
+test.afterEach(async ({ request }, testInfo) => {
+  await flows.cleanup(request, {
+    attribution: {
+      test: testInfo.title,
+      file: path.relative(testInfo.project.testDir, testInfo.file),
+    },
+  });
   flows.dispose();
 });
 

@@ -62,3 +62,16 @@ test("a zero baseline never divides — it is skipped", () => {
   const out = detectAnomalies({ run: line(3), history, minBaseline: 5 });
   assert.deepEqual(out, []);
 });
+
+// #1197 review, finding I5: 2-decimal rounding renders a real sub-cent trace
+// cost as "$0.00", making the anomaly line read as a contradiction ("run: $0.00
+// vs a $0.00 baseline"). run_usd/baseline_usd must keep enough precision to
+// stay distinguishable from 0.
+test("run_usd and baseline_usd keep sub-cent precision instead of rounding to 0", () => {
+  const history = [line(0.00003), line(0.00003), line(0.00003), line(0.00003), line(0.00003)];
+  const out = detectAnomalies({ run: line(0.00021), history, minBaseline: 5, ratio: 3 });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].run_usd, 0.00021, "a real sub-cent run cost must not round to 0");
+  assert.equal(out[0].baseline_usd, 0.00003, "a real sub-cent baseline must not round to 0");
+  assert.ok(out[0].run_usd > 0 && out[0].baseline_usd > 0);
+});

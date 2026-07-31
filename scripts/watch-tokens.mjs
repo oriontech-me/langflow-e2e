@@ -40,6 +40,12 @@ const DEFAULTS = {
   detailCap: 25,
 };
 
+// How many of the most recent `reports/token-history.jsonl` lines feed the
+// anomaly baseline (#1197 review, finding I7). token-anomaly.mjs's
+// detectAnomalies() is a pure median over whatever history it is given — it
+// does not window itself — so this is enforced here, at the one call site.
+const ANOMALY_HISTORY_WINDOW = 20;
+
 const num = (value, fallback) => {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : fallback;
@@ -134,12 +140,20 @@ export async function collectOnce({
       continue;
     }
     seen.add(trace.id);
+    // `|| 0` used to put a ZERO where the value is unknown: a list item without
+    // totalTokens recorded 0, which aggregate() then treated as finite and
+    // authoritative — totals.total_tokens stayed 0 while by_model showed real
+    // tokens, and the trace was flagged as a fake mismatch (#1197 review,
+    // finding I3). Emit `null` instead: aggregate()'s spanTotal fallback (and
+    // its `Number.isFinite` check on the raw value, not a coerced one — see
+    // token-cost.mjs) then does the right thing.
+    const traceTotal = Number(trace.totalTokens);
     probes.push({
       trace_id: trace.id,
       flow_id: trace.flowId ?? null,
       start_time: trace.startTime ?? null,
       status: trace.status ?? null,
-      total_tokens: Number(trace.totalTokens) || 0,
+      total_tokens: Number.isFinite(traceTotal) ? traceTotal : null,
       models: spanModelUsage(detail.body?.spans),
     });
   }
@@ -183,10 +197,27 @@ export async function poll({ fetchImpl = fetch, env = process.env, log = console
 
   let ticks = 0;
   let recorded = 0;
+  // A permanently unauthorized poller used to produce NO diagnostic at all:
+  // collectOnce() returns `refreshAuth: true` with an empty errors[], so the
+  // per-tick error log below never fired, and a run where login() keeps
+  // failing ended with "0 trace(s) recorded" and no clue why (#1197 review,
+  // finding I4). Track the length of the CURRENT unauthorized streak so the
+  // final line can name it — and reset on any tick that isn't unauthorized, so
+  // a transient blip early in the run doesn't mislabel a healthy finish.
+  let consecutiveAuthFailures = 0;
   while (!stop && Date.now() < deadline) {
     const tick = await collectOnce({ fetchImpl, base, bearer, seen, detailCap, timeoutMs });
     ticks += 1;
-    if (tick.refreshAuth) bearer = await login(fetchImpl, base, timeoutMs);
+    if (tick.refreshAuth) {
+      consecutiveAuthFailures += 1;
+      log(
+        `token watcher: unauthorized (401/403) — refreshing the login token ` +
+          `(${consecutiveAuthFailures} consecutive tick(s))`,
+      );
+      bearer = await login(fetchImpl, base, timeoutMs);
+    } else {
+      consecutiveAuthFailures = 0;
+    }
     for (const probe of tick.probes) {
       try {
         fs.appendFileSync(out, `${JSON.stringify(probe)}\n`);
@@ -204,18 +235,46 @@ export async function poll({ fetchImpl = fetch, env = process.env, log = console
     const wait = tick.errors.length && !tick.probes.length ? intervalMs * 2 : intervalMs;
     await new Promise((resolve) => setTimeout(resolve, wait));
   }
-  log(`token watcher: ${recorded} trace(s) recorded over ${ticks} tick(s) → ${out}`);
+  // Name unauthorized in the final line whenever the run ENDED on an auth
+  // failure streak — not just when zero traces were recorded, since a poller
+  // that authenticated fine for an hour and then lost its token for the last
+  // few ticks deserves the same visibility.
+  const authSuffix = consecutiveAuthFailures
+    ? ` (unauthorized on the last ${consecutiveAuthFailures} consecutive tick(s) — check TOKENS_BASE_URL / credentials, not tracing)`
+    : "";
+  log(`token watcher: ${recorded} trace(s) recorded over ${ticks} tick(s) → ${out}${authSuffix}`);
   return 0;
 }
 
+// Headline figure only — 2 decimals is readable at the run-total scale, where
+// the total is normally at least several cents.
 const usd = (n) => (n === null || n === undefined ? "n/a" : `$${(Math.round(n * 100) / 100).toFixed(2)}`);
+
+// Detail-level $ figures (per-model, per-spec, anomaly lines): a single trace
+// commonly costs a fraction of a cent ($0.000035 is a real value, not noise),
+// and 2-decimal rounding renders that indistinguishable from a model that spent
+// nothing — "🔺 run: $0.00 vs a $0.00 baseline (6×)" is a contradiction, not a
+// report (#1197 review, finding I5). Scale precision to magnitude instead of
+// picking one fixed decimal count: sub-cent amounts get 6 decimals (enough to
+// show a real value), everything at or above a cent gets 4 (enough to show
+// real cents-level differences without a wall of trailing zeros on ordinary
+// run-level costs).
+const usdDetail = (n) => {
+  if (n === null || n === undefined) return "n/a";
+  const decimals = Math.abs(n) < 0.01 ? 6 : 4;
+  return `$${n.toFixed(decimals)}`;
+};
 
 // Injected I/O so the summarizer is unit-testable without a filesystem: CI passes
 // none of these and gets the real fs.
 const realIo = {
   readFile: (p) => fs.readFileSync(p, "utf8"),
   listDir: (dir) => (fs.existsSync(dir) ? fs.readdirSync(dir).map((f) => path.join(dir, f)) : []),
-  writeFile: (p, text) => fs.writeFileSync(p, text),
+  // GITHUB_STEP_SUMMARY is append-only by GitHub's own documented contract: the
+  // merge job's `Report mid-run backend outages` step (#1030) runs BEFORE this
+  // one and appends its own section. `writeFileSync` would silently delete that
+  // section on exactly the red days it matters (#1197 review, finding C1).
+  writeFile: (p, text) => fs.appendFileSync(p, text),
   appendFile: (p, text) => fs.appendFileSync(p, text),
 };
 
@@ -250,16 +309,32 @@ export async function summarize({
   }
 
   const lines = [];
-  const testsTotal = Number(env.TESTS_TOTAL);
+  // `Number("")` is `0`, so an unset/blank TESTS_TOTAL used to be
+  // indistinguishable from a genuine "0" — reported as "the run executed zero
+  // tests (infra abort)" even when real trace data existed and should have been
+  // priced (#1197 review, minor fix). Treat a missing/empty value as UNKNOWN,
+  // never as zero: only a literal "0" (or the run's own totalsTotal computing to
+  // 0) counts as an infra abort.
+  const rawTestsTotal = env.TESTS_TOTAL;
+  const testsTotal =
+    rawTestsTotal === undefined || rawTestsTotal === "" ? NaN : Number(rawTestsTotal);
   const zeroTestRun = Number.isFinite(testsTotal) && testsTotal === 0;
 
   if (!probesById.size || zeroTestRun) {
     // Both cases are silences, and a silence must never read as "nothing was spent"
     // (#1012's rule applied to cost). No history line is written either way: a
     // zero would enter the baseline and lower the bar for every future anomaly.
+    //
+    // The "no traces" branch used to name only two candidate causes — tracing
+    // disabled, or no LLM call — which excluded the likeliest one on a run
+    // where login() kept failing: `poll()` returns "0 trace(s) recorded" with
+    // no other signal, and this message would blame tracing (#1197 review,
+    // finding I4). Name a permanently unauthorized poller as a third candidate;
+    // this file has no direct evidence either way, so it is named as a
+    // possibility to check, the same way the other two are.
     const why = zeroTestRun
       ? "the run executed zero tests (infra abort) — no cost line written"
-      : "no traces recorded — tracing may be disabled on the target (LANGFLOW_DEACTIVATE_TRACING), or the run made no LLM call";
+      : "no traces recorded — tracing may be disabled on the target (LANGFLOW_DEACTIVATE_TRACING), the poller could not authenticate (check TOKENS_BASE_URL / credentials — see the recorder's own log for consecutive 401/403 ticks), or the run made no LLM call";
     lines.push("## Token consumption", "", `⚠️ ${why}.`, "");
     writeSummary(writeFile, summaryPath, lines.join("\n"), log);
     log(`token summary: ${why}`);
@@ -292,7 +367,13 @@ export async function summarize({
     unpriced_models: agg.unpricedModels,
     anomalies: [],
   };
-  runLine.anomalies = detectAnomalies({ run: runLine, history });
+  // token-anomaly.mjs computes a plain median over whatever `history` it is
+  // given — it does NOT window to "the last N lines" itself (see that module's
+  // own comment). Window HERE, at the call site: an all-time median stays
+  // anchored to the run's cheapest early days for as long as the file exists,
+  // so after deliberate suite growth the baseline never catches up and the
+  // run-scope anomaly fires every day forever (#1197 review, finding I7).
+  runLine.anomalies = detectAnomalies({ run: runLine, history: history.slice(-ANOMALY_HISTORY_WINDOW) });
 
   // Writing the history line is the summarizer's one durable side effect. Losing it
   // to a bad path/full disk must degrade the run's cost visibility, not the run
@@ -314,7 +395,8 @@ export async function summarize({
     "| Model | Calls | Prompt | Completion | Estimated |",
     "|---|---:|---:|---:|---:|",
     ...agg.byModel.map(
-      (m) => `| \`${m.model}\` | ${m.calls} | ${m.prompt_tokens} | ${m.completion_tokens} | ${usd(m.usd_estimated)} |`,
+      (m) =>
+        `| \`${m.model}\` | ${m.calls} | ${m.prompt_tokens} | ${m.completion_tokens} | ${usdDetail(m.usd_estimated)} |`,
     ),
     "",
     `Unattributed: ${agg.unattributed.traces} trace(s), ${agg.unattributed.total_tokens.toLocaleString("en-US")} tokens — ${agg.unattributed.reason}`,
@@ -326,7 +408,7 @@ export async function summarize({
       "|---|---:|---:|---:|",
       ...agg.bySpec
         .slice(0, 15)
-        .map((s) => `| \`${s.file}\` | ${s.traces} | ${s.total_tokens} | ${usd(s.usd_estimated)} |`),
+        .map((s) => `| \`${s.file}\` | ${s.traces} | ${s.total_tokens} | ${usdDetail(s.usd_estimated)} |`),
       "",
     );
     if (agg.bySpec.length > 15) lines.push(`…and ${agg.bySpec.length - 15} more spec(s) in the history file.`, "");
@@ -338,7 +420,9 @@ export async function summarize({
     );
   }
   for (const a of runLine.anomalies) {
-    lines.push(`🔺 **${a.scope}** \`${a.key}\`: ${usd(a.run_usd)} vs a ${usd(a.baseline_usd)} baseline (${a.ratio}×).`);
+    lines.push(
+      `🔺 **${a.scope}** \`${a.key}\`: ${usdDetail(a.run_usd)} vs a ${usdDetail(a.baseline_usd)} baseline (${a.ratio}×).`,
+    );
   }
   writeSummary(writeFile, summaryPath, lines.join("\n"), log);
   log(`token summary: ${agg.totals.total_tokens} tokens, ${usd(agg.totals.usd_estimated)}${floor}`);
@@ -347,7 +431,8 @@ export async function summarize({
 
 // Writing the step summary is best-effort: a bad TOKENS_SUMMARY_MD path (or none —
 // GITHUB_STEP_SUMMARY is unset outside CI) must not stop the summarizer, which is
-// diagnostic-only by contract.
+// diagnostic-only by contract. `writeFile` APPENDS (see realIo.writeFile above) —
+// never assume this is the only writer of the target path within the job.
 function writeSummary(writeFile, summaryPath, text, log) {
   if (!summaryPath) return;
   try {
