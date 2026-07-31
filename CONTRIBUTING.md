@@ -172,6 +172,13 @@ if (!process.env.CI) {
 //   "tool-calling"     — the assertion IS model capability (tools, structured output)
 //   "any-completion"   — any model that returns text; the assertion is plumbing
 //   "none"             — no inference at all (modals, invalid-key UI)
+//
+// `any-completion` is the one tier a lane ACTS on today: with
+// ANY_COMPLETION_PROVIDER=ollama (+ OLLAMA_TEST_MODEL) those specs run against a
+// keyless local model — no key, no quota — and that routing outranks MODEL_TEST_ID /
+// MODEL_TEST_PROVIDER for that tier, because #1185's daily pin is global to the run.
+// Declare `any-completion` only when the assertion truly does not read model
+// quality, and prove it: adoption is per spec behind a measured 3/3 CI gate (#1187).
 // Add `requires: "vision" | "chat"` when the spec needs a specific capability
 // WITHIN the provider.
 const targets = resolveTestTargets({ tier: "tool-calling" });
