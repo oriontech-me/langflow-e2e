@@ -37,9 +37,9 @@
 // orthogonal: `agent-multimodal-image-input` needs a real agent *and* a
 // vision-capable model.
 //
-// Nothing in this module acts on `tier` yet, deliberately. It is declared here so a
-// lane can resolve it in one place instead of 17, and so a spec's requirement is
-// recorded next to the spec rather than inferred by whoever changes a workflow.
+// `tier` was declared inert by #1184 and stayed that way until #1187, which acts on
+// exactly one value: `any-completion`. See `ANY_COMPLETION_PROVIDER` below. The other
+// three tiers still only record intent.
 //
 // ## Env precedence — unchanged, and load-bearing
 //
@@ -50,6 +50,20 @@
 //   MODEL_TEST_PROVIDER → EVERY model that provider exposes  ← a sweep, not a filter
 //   ALL_MODELS=true     → every model of every provider
 //   (none set)          → one model per provider
+//
+// ## `ANY_COMPLETION_PROVIDER` sits ABOVE all four, and only for one tier (#1187)
+//
+// It routes `tier: "any-completion"` to a keyless local provider (today: `ollama`),
+// and it deliberately OUTRANKS the pins. That inversion is the whole mechanism, not
+// an oversight: #1185's weekday rotation emits `MODEL_TEST_ID` + `MODEL_TEST_PROVIDER`
+// into `$GITHUB_ENV`, which is global to the run and reaches every parametrized spec
+// alike. If the pin won, a routed spec would run the pinned hosted model and the
+// routing could never take effect on the very lane it exists for. The two variables
+// answer different questions — the pin says *which hosted provider this run uses*,
+// the routing says *this spec needs no hosted provider at all* — so the narrower
+// statement wins. An overridden pin is announced (`console.warn`), never silent
+// (#1012), and the override is scoped to the one tier: every other tier reads the
+// pins exactly as before.
 //
 // Two specs did not implement that order and now do, which is the point of the
 // consolidation rather than a side effect: the vision and markdown copies gain the
@@ -69,6 +83,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { providerConfigMap, type Provider } from "./provider-config";
 import { providerSkipReasons } from "./provider-health";
+import { ollamaTestModel } from "./ollama-endpoint";
 
 /**
  * What a lane owes this spec. Consumed by lane-level policy (#1185, #1187), not here.
@@ -256,6 +271,91 @@ function targetFor(
 }
 
 /**
+ * The local target for a routed `any-completion` spec, or `undefined` when routing
+ * does not apply (#1187).
+ *
+ * Every rejection returns a REPORTED target rather than falling through to the
+ * hosted paths. Falling through would be the worse failure of the two: the lane
+ * asked for a local model — because its keys may be dead, which is the resilience
+ * argument the issue rests on — and quietly spending a hosted call instead is both
+ * the cost this exists to avoid and a green run that proves the wrong thing (#570 /
+ * #1012). A reported skip says which knob is wrong.
+ *
+ * The model cannot be inferred here. `models.json` comes from `collect-models`,
+ * which sweeps the keyed providers only, so a routed provider never appears in the
+ * catalog — and Ollama's model list is the LIVE instance's `GET /api/tags`, not a
+ * static catalog. Hence the pin (`OLLAMA_TEST_MODEL`) is required, and its absence
+ * is reported instead of guessed: a name this suite invents is a name the instance
+ * may not serve, and that surfaces as `MODEL_NOT_AVAILABLE` mid-spec.
+ */
+function resolveRoutedTarget(
+  tier: ModelTier,
+  env: NodeJS.ProcessEnv,
+  skipReasons: Map<string, string>,
+): TestTarget | undefined {
+  const routed = env.ANY_COMPLETION_PROVIDER;
+  if (!routed || tier !== "any-completion") return undefined;
+
+  const label = `provider:${routed} (routed)`;
+  const report = (reason: string): TestTarget => {
+    console.warn(reason);
+    return { label, options: {}, skipReason: reason };
+  };
+
+  if (!(routed in providerConfigMap)) {
+    return report(
+      `ANY_COMPLETION_PROVIDER="${routed}" is not a provider this suite knows ` +
+        `(known: ${Object.keys(providerConfigMap).join(", ")}) — nothing would have run.`,
+    );
+  }
+  const provider = routed as Provider;
+  const config = providerConfigMap[provider];
+  // Keyed providers are rejected on purpose: routing exists to reach a model that
+  // needs no credit, and `MODEL_TEST_PROVIDER` already narrows to a hosted one. A
+  // variable that silently accepted both would make "the any-completion tier is
+  // routed" say nothing about whether the run spends money.
+  if (config.credential !== "base-url") {
+    return report(
+      `ANY_COMPLETION_PROVIDER="${routed}" is an API-key provider, and this variable ` +
+        `routes the any-completion tier to a KEYLESS local one (credential: ` +
+        `"base-url"). To narrow the tier to a hosted provider use MODEL_TEST_PROVIDER.`,
+    );
+  }
+
+  const model = ollamaTestModel(env);
+  if (!model) {
+    return report(
+      `ANY_COMPLETION_PROVIDER="${routed}" is set but OLLAMA_TEST_MODEL is not — the ` +
+        `model cannot be inferred (a routed provider is absent from models.json, and ` +
+        `Ollama's list is the live instance). Set OLLAMA_TEST_MODEL to a tag the ` +
+        `instance serves.`,
+    );
+  }
+
+  if (env.MODEL_TEST_ID || env.MODEL_TEST_PROVIDER || env.ALL_MODELS === "true") {
+    console.warn(
+      `ANY_COMPLETION_PROVIDER="${routed}" overrides the model pin for this ` +
+        `any-completion spec (ignoring ` +
+        [
+          env.MODEL_TEST_ID && `MODEL_TEST_ID="${env.MODEL_TEST_ID}"`,
+          env.MODEL_TEST_PROVIDER && `MODEL_TEST_PROVIDER="${env.MODEL_TEST_PROVIDER}"`,
+          env.ALL_MODELS === "true" && "ALL_MODELS=true",
+        ]
+          .filter(Boolean)
+          .join(", ") +
+        `). The tier declares it needs no hosted provider; the pin only says which ` +
+        `hosted one the run would have used (#1187).`,
+    );
+  }
+
+  return {
+    label: `${provider} / ${model}`,
+    options: { provider, model },
+    skipReason: skipReasons.get(provider),
+  };
+}
+
+/**
  * Resolve the targets a parametrized spec should run against.
  *
  * Replaces the 17 in-spec copies of `getTestTargets()`. With no env set the returned
@@ -267,6 +367,11 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
   const skipReasons = opts.skipReasons ?? providerSkipReasons();
   const allModels = opts.models ?? readCatalog(opts.catalogPath);
   const { requires } = opts;
+
+  // 0. ANY_COMPLETION_PROVIDER — routes this tier to a keyless local model, above
+  //    the pins. Reads no catalog: a routed provider is not in one (#1187).
+  const routed = resolveRoutedTarget(opts.tier, env, skipReasons);
+  if (routed) return [routed];
 
   // 1. MODEL_TEST_ID — highest documented priority. An explicit id is honoured as
   //    given: the caller asked for that model, so `requires` is not second-guessed.

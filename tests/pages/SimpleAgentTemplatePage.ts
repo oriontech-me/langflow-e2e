@@ -105,9 +105,18 @@ export class SimpleAgentTemplatePage extends BasePage {
     // flow shows BOTH that credential and the requested model, so every caller
     // starts settled — the credential alone does not prove it (#1072, see the
     // classifier's note on the anthropic default).
+    // A KEYLESS provider expects an EMPTY `api_key`, and that is a real assertion
+    // rather than a vacuous one (#1187). The Agent node prefills `api_key` with the
+    // default credential (`ANTHROPIC_API_KEY`) when it MOUNTS — so on an instance
+    // where Anthropic is also configured, the node starts out carrying a credential
+    // and selecting an Ollama model must CLEAR it. Measured on 1.12.0.dev10 after
+    // selecting `Ollama-llama3.1:latest`: `api_key.value === ""` with
+    // `model.value[0] = { name: "llama3.1:latest", provider: "Ollama" }`. So `""` is
+    // the settled state to wait for, and the guard still proves both axes.
+    const config = providerConfigMap[provider];
     await this.waitForAgentCredentialSettled(
       flowId,
-      providerConfigMap[provider].envKeys[0],
+      config.credential === "base-url" ? "" : config.envKeys[0],
       { provider, model },
     );
 
