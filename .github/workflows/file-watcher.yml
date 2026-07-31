@@ -15,9 +15,13 @@ on:
   workflow_dispatch:
     inputs:
       since:
-        description: 'Window passed to git log --since (e.g. "24 hours ago", "2026-07-15")'
+        description: '"N hours|days|weeks|months ago", "yesterday", or an ISO date. Validated — a typo is rejected, not guessed at by git approxidate'
         required: false
         default: '24 hours ago'
+
+permissions:
+  contents: read
+  issues: write
 
 jobs:
   watch-langflow-changes:
@@ -40,7 +44,15 @@ jobs:
       # must not read as clean (same rule as the daily's runguard, #1012). This
       # also fails when upstream adds an `lfx` subtree nothing classifies, so the
       # next package split forces a decision instead of widening the blind spot.
+      #
+      # `continue-on-error` deliberately: upstream renames constantly, and one
+      # dead path must not suppress the report for the other 12 areas. The
+      # annotations land here, the report is still produced, and the job is failed
+      # at the end by "Enforce the path guard" — coverage first, strictness kept
+      # (the trade-off `Collect models` makes on the daily, #980/#570).
       - name: Guard the monitored paths against the checkout
+        id: guard
+        continue-on-error: true
         run: node scripts/watch-upstream-areas.mjs --mode=check --root langflow-upstream
 
       - name: Detect changes in monitored paths
@@ -65,5 +77,16 @@ jobs:
               repo: context.repo.repo,
               title: process.env.ISSUE_TITLE,
               body: process.env.ISSUE_BODY,
-              labels: ['needs-review', 'langflow-upstream-change'],
+              // Both labels exist in the repo. The previous pair
+              // (needs-review / langflow-upstream-change) did not, so the first
+              // successful dispatch would have auto-created two labels nobody
+              // decided on.
+              labels: ['needs-triage', 'automated'],
             });
+
+      # The guard's verdict decides the job, but only after the report exists.
+      - name: Enforce the path guard
+        if: always() && steps.guard.outcome == 'failure'
+        run: |
+          echo "::error::the monitored-path guard failed — see the 'Guard the monitored paths' step." >&2
+          exit 1

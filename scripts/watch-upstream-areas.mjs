@@ -6,23 +6,33 @@
  * WHY THIS EXISTS
  *
  * `file-watcher.yml` opens a revalidation issue when upstream Langflow touches a
- * path one of our areas depends on. It carried two defects that made a clean
- * verdict worthless:
+ * path one of our areas depends on, and prints the `--grep` to revalidate. It
+ * carried two defects that made its output untrustworthy:
  *
  *   1. `src/lfx/` was watched by ZERO of the 13 areas, while Langflow has been
- *      moving backend behavior into that package. The change that broke all six
- *      stdio registrations in `mcp-server.spec.ts` (#1091) landed in
- *      `src/lfx/src/lfx/base/mcp/security.py` — the watcher did not fire, and it
- *      was never going to. Two areas were watching a path whose implementation
- *      had already left: `langflow/base/agents/` is a 1-file shim next to
+ *      moving backend behavior into that package. The consequence is ATTRIBUTION,
+ *      not detection: the change that broke all six stdio registrations in
+ *      `mcp-server.spec.ts` (#1091) landed in `lfx/base/mcp/security.py` as part
+ *      of a 70-file commit (f4d6ac4) that also touched `api/v1/users.py`,
+ *      `processing/`, `agentic/` and `SettingsPage/` — so four areas would have
+ *      fired on it, and none of them would have been MCP Server. `@mcp` was
+ *      absent from the printed grep, so `mcp-server.spec.ts` was never in the
+ *      revalidation set. Two areas were also watching a path whose
+ *      implementation had left: `langflow/base/agents/` is a 3-line shim next to
  *      `lfx/base/agents/`'s 15 files.
  *
- *   2. A monitored path that no longer exists was SILENT. The sweep ran
+ *      (Independently of any of this, the workflow has been `workflow_dispatch`
+ *      only since 9da85fa, so in July it produced no signal at all. Re-enabling
+ *      the schedule is a separate decision — this script does not change it.)
+ *
+ *   2. A monitored path that does not exist was SILENT. The sweep ran
  *      `git log --since=… -- $PATHS 2>/dev/null`, and `git log` over a
- *      nonexistent path prints nothing — so "this path is gone" and "nothing
- *      changed here" produced the same empty string, and the empty string was
- *      read as good news. `src/frontend/src/constants/flow_constants.tsx` had
- *      already moved to `src/frontend/src/flow_constants.tsx`.
+ *      nonexistent path prints nothing — so "this path is not there" and
+ *      "nothing changed here" produced the same empty string, and the empty
+ *      string was read as good news. `src/frontend/src/constants/flow_constants.tsx`
+ *      was such a path: it has never existed on any upstream ref (the file is
+ *      `src/frontend/src/flow_constants.tsx`), so that entry was dead from the
+ *      day it was written and nothing ever said so.
  *
  * Both are fixed the way the repo fixes this class elsewhere — fail closed. A
  * verdict the watcher cannot produce must not read as a pass: the daily's
@@ -35,9 +45,21 @@
  * every sweep, which is the same uselessness as watching none — "run the whole
  * suite" is not a signal. So each subtree is classified exactly once, in
  * LFX_CLASSIFICATION below: either it maps to an area the watcher already has,
- * or it is deliberately out of scope WITH a reason. The mapped set is
- * deliberately conservative — a subtree earns a mapping by being the counterpart
- * of something already watched, or by being what a spec observes directly.
+ * or it is out of scope WITH a reason. A subtree earns a mapping by being the
+ * counterpart of something already watched, or by being what a spec observes
+ * directly.
+ *
+ * Measured cost of that choice, areas firing per 24h window on `origin/main`:
+ * the median goes from ~3 of 13 to ~7 of 13, and a busy upstream day now names
+ * 11 — whose tag union is close to the whole suite. That is the honest price of
+ * covering `lfx` at all, and it is near the limit of what stays a signal. Widen
+ * the mapped set further only with a reason, and prefer moving an entry to
+ * out-of-scope over adding one.
+ *
+ * KNOWN LIMIT: the guard proves a monitored path EXISTS. It cannot tell a live
+ * implementation from an emptied compatibility shim — `langflow/base/agents/`
+ * passes today with 3 lines. Shim detection needs a size/content signal and is
+ * deliberately not attempted here.
  *
  * That table is also the guard's input: a subtree that appears upstream and
  * matches no entry FAILS the job by name, so the next `lfx` split forces a
@@ -261,6 +283,11 @@ export const LFX_CLASSIFICATION = {
   interface: { area: "Component Input Types" },
   upgrade: { area: "Component Input Types" },
   "base/prompts": { area: "Component Input Types" },
+  // `parse.py` IS the cURL parser two @stable tests exercise end-to-end
+  // (api-request-component-regression.spec.ts, the cURL tab and the
+  // parses-and-executes case). Recorded as unwatched in the first draft of this
+  // table on the false grounds that no spec asserted it.
+  "base/curl": { area: "Component Input Types" },
   graph: { area: "Flow Execution" },
   execution: { area: "Flow Execution" },
   processing: { area: "Flow Execution" },
@@ -302,7 +329,6 @@ export const LFX_CLASSIFICATION = {
   "base/composio": { area: null, reason: "vendor-specific base; packaging axis (#1040)" },
   "base/langwatch": { area: null, reason: "vendor-specific base; packaging axis (#1040)" },
   "base/datastax": { area: null, reason: "vendor-specific base; packaging axis (#1040)" },
-  "base/curl": { area: null, reason: "cURL import helper for the API Request component; no spec asserts it" },
   "base/data": { area: null, reason: "data-component base; packaging axis (#1040)" },
   "base/langchain_utilities": { area: null, reason: "LangChain interop helpers; reached only through component families" },
 
@@ -310,12 +336,12 @@ export const LFX_CLASSIFICATION = {
   "base/knowledge_bases": {
     area: null,
     reason:
-      "knowledge ingestion has specs but no watcher area owns it — adding one is a scoping decision beyond #1092",
+      "UNCOVERED GAP, not a safe exclusion: 7 knowledge-ingestion specs depend on this and two spec docs list it under External dependencies, but no watcher area owns knowledge ingestion. Adding an area is a scoping decision beyond #1092 — tracked as a follow-up",
   },
   templates: {
     area: null,
     reason:
-      "packaging templates (hello-world flow + CI templates), NOT the starter projects the @templates specs load — those live in `src/backend/base/langflow/initial_setup/starter_projects/`, which no area watches yet (same follow-up as `base/knowledge_bases`)",
+      "packaging templates (hello-world flow + CI templates), NOT the starter projects the @templates specs load — those live in `src/backend/base/langflow/initial_setup/starter_projects/`, referenced by four spec docs and watched by no area. Same uncovered gap as `base/knowledge_bases`",
   },
   workflow: { area: null, reason: "AG-UI workflow surface; no spec drives it yet" },
   run: { area: null, reason: "programmatic run/HITL API; no spec drives it — revisit if HITL coverage lands" },
@@ -323,7 +349,11 @@ export const LFX_CLASSIFICATION = {
   cli: { area: null, reason: "`lfx` CLI entry points; the suite never invokes them" },
 
   // ── out of scope: plumbing that surfaces through an already-watched path
-  _assets: { area: null, reason: "static assets bundled into the package" },
+  _assets: {
+    area: null,
+    reason:
+      "`component_index.json` (2.3 MB, the registry the sidebar renders from) plus `stable_hash_history.json` — excluded because it is regenerated by every component edit, so watching it would fire @components on nearly every sweep with no added information over the component sources themselves",
+  },
   config: { area: null, reason: "package defaults; the suite sets behavior via container env vars" },
   exceptions: { area: null, reason: "exception types; they surface through the watched endpoints" },
   helpers: { area: null, reason: "generic helpers; a change lands in the area that consumes it" },
@@ -458,6 +488,32 @@ export function findLfxDrift({ classification = LFX_CLASSIFICATION, listChildren
 }
 
 /**
+ * Accepted `--since` windows.
+ *
+ * `git log --since=` is parsed by approxidate, which NEVER errors — it guesses.
+ * Measured against the real clone: `--since=undefined` selects 0 commits (a green
+ * "nothing changed" run indistinguishable from a quiet day) and
+ * `--since="last thursdya"` selects 200 (12 of 13 areas fire). A typo in the
+ * dispatch form must not decide the window, so the input is validated here
+ * instead of being handed to git unchecked.
+ *
+ * Upstream does have genuinely quiet days (2026-07-19 and 2026-07-11/12 had zero
+ * commits on main), so an empty result is NOT treated as a failure — it is
+ * reported as an empty window with the newest commit in the checkout, which is
+ * what makes a wrong window obvious.
+ */
+export const SINCE_PATTERN = /^(?:\d+ (?:hour|day|week|month)s? ago|yesterday|\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:?\d{2})?)?)$/;
+
+/** @throws when the window is not one of the accepted forms. */
+export function assertValidSince(since) {
+  if (!SINCE_PATTERN.test(String(since || "").trim())) {
+    throw new Error(
+      `--since "${since}" is not an accepted window. Use "N hours|days|weeks|months ago", "yesterday", or an ISO date/time ("2026-07-15", "2026-07-15T17:24:00-0700"). git's approxidate would silently guess instead of rejecting a typo.`,
+    );
+  }
+}
+
+/**
  * The change sweep: one entry per area with commits in the window.
  *
  * @param {{areas?: Array, commitsFor: (paths: string[]) => string}} options
@@ -495,12 +551,13 @@ const cell = (text) => String(text).replace(/\|/g, "\\|");
  * `npm run test:scripts` — the unescaped `|` that used to shred every row of the
  * table was invisible for exactly as long as this lived in inline YAML.
  */
-export function renderIssueBody({ since, areas, today }) {
+export function renderIssueBody({ since, areas, today, window }) {
   return [
     "## Langflow source changes detected — test review required",
     "",
     `**Date:** ${today}`,
-    `**Window:** \`${since}\``,
+    `**Window:** \`${since}\`` +
+      (window ? ` — ${window.count} upstream commit(s) repo-wide; newest in checkout: \`${window.newest}\`` : ""),
     "**Source:** [langflow-ai/langflow](https://github.com/langflow-ai/langflow)",
     "",
     "### Changed areas, affected tags and checklist sections",
@@ -541,21 +598,39 @@ const isDir = (root, p) => {
 function listChildrenFactory(root) {
   return (dir) => {
     if (!isDir(root, dir)) return null;
-    return fs
-      .readdirSync(path.join(root, dir), { withFileTypes: true })
-      .filter((e) => e.isDirectory() || (e.isFile() && e.name.endsWith(".py")))
-      .map((e) => e.name)
-      .filter((name) => !name.startsWith("__"));
+    return (
+      fs
+        .readdirSync(path.join(root, dir), { withFileTypes: true })
+        // A symlinked subtree is neither isDirectory() nor isFile(), so taking
+        // those two alone would skip it silently — a classifiable child the
+        // guard could not see. Resolve instead of ignoring.
+        .filter((e) => {
+          if (e.isSymbolicLink()) return isDir(root, path.join(dir, e.name)) || e.name.endsWith(".py");
+          return e.isDirectory() || (e.isFile() && e.name.endsWith(".py"));
+        })
+        .map((e) => e.name)
+        .filter((name) => !name.startsWith("__"))
+    );
   };
 }
 
+const git = (root, args) =>
+  execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 8 * 1024 * 1024 });
+
 function commitsForFactory(root, since) {
-  return (paths) =>
-    execFileSync("git", ["log", `--since=${since}`, "--oneline", "--", ...paths], {
-      cwd: root,
-      encoding: "utf8",
-      maxBuffer: 8 * 1024 * 1024,
-    });
+  return (paths) => git(root, ["log", `--since=${since}`, "--oneline", "--", ...paths]);
+}
+
+/**
+ * What the window actually selected, repo-wide. Printed so a window that
+ * resolved to something other than what was typed is visible at a glance
+ * instead of arriving as a per-area verdict.
+ */
+function describeWindow(root, since) {
+  const total = git(root, ["log", `--since=${since}`, "--oneline"]).trim();
+  const count = total ? total.split("\n").length : 0;
+  const newest = git(root, ["log", "-1", "--format=%h %cs %s"]).trim();
+  return { count, newest };
 }
 
 function runCheck(root) {
@@ -590,7 +665,9 @@ function runCheck(root) {
 
 function runDetect(root, since) {
   let changed;
+  let window;
   try {
+    window = describeWindow(root, since);
     changed = detectChangedAreas({ commitsFor: commitsForFactory(root, since) });
   } catch (error) {
     process.stderr.write(
@@ -599,13 +676,26 @@ function runDetect(root, since) {
     process.exit(2);
   }
 
+  process.stdout.write(
+    `Window "${since}" selects ${window.count} upstream commit(s) repo-wide. Newest commit in the checkout: ${window.newest}\n`,
+  );
+  if (window.count === 0) {
+    // Not a failure: upstream has genuinely quiet days (2026-07-19, 07-11/12).
+    // But "0 areas changed" must not be the only thing the log says, or a wrong
+    // window reads exactly like a quiet weekend.
+    process.stderr.write(
+      `::warning::the window selected NO upstream commits at all, so "0 areas changed" says nothing about the areas. Either upstream was quiet or the window is wrong for this checkout — compare it against the newest commit above.\n`,
+    );
+  }
+
   const today = new Date().toISOString().split("T")[0];
-  const body = renderIssueBody({ since, areas: changed, today });
+  const body = renderIssueBody({ since, areas: changed, today, window });
   if (process.env.GITHUB_OUTPUT) {
     fs.appendFileSync(
       process.env.GITHUB_OUTPUT,
       [
         `has_changes=${changed.length > 0}`,
+        `window_commits=${window.count}`,
         `title=[Test Review] Langflow source changed on ${today} — validate affected tests`,
         `body<<${BODY_DELIMITER}`,
         body,
@@ -622,31 +712,71 @@ function runDetect(root, since) {
   process.stdout.write(`${changed.length} area(s) changed since ${since}\n`);
 }
 
-function main(argv) {
-  const args = argv.slice(2);
-  let mode = "check";
-  let root = ".";
-  let since = "24 hours ago";
+/** The area table as the same markdown the issue body prints — reviewable. */
+function renderAreaTable() {
+  return [
+    "| Area | Run these tests | Checklist | Paths |",
+    "|---|---|---|---|",
+    ...AREAS.map(
+      (a) =>
+        `| ${cell(a.area)} | \`--grep "${cell(a.tags.join("|"))}"\` | ${cell(a.checklist)} | ${a.paths.length} |`,
+    ),
+    "",
+    ...AREAS.flatMap((a) => [`### ${a.area}`, ...a.paths.map((p) => `- \`${p}\``), ""]),
+  ].join("\n");
+}
+
+/** `--flag value` and `--flag=value` both work — the mixed forms bit a reviewer. */
+export function parseArgs(args) {
+  const opts = { mode: "check", root: ".", since: "24 hours ago" };
+  const KEYS = new Set(["mode", "root", "since"]);
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
-    if (a.startsWith("--mode=")) mode = a.slice(7);
-    else if (a === "--root") root = args[++i];
-    else if (a === "--since") since = args[++i];
-    else {
-      process.stderr.write(`::error::watch-upstream-areas: unknown argument ${a}\n`);
+    const match = /^--([a-z]+)(?:=(.*))?$/.exec(a);
+    if (!match || !KEYS.has(match[1])) throw new Error(`unknown argument ${a}`);
+    const value = match[2] !== undefined ? match[2] : args[++i];
+    if (value === undefined) throw new Error(`--${match[1]} needs a value`);
+    opts[match[1]] = value;
+  }
+  return opts;
+}
+
+function main(argv) {
+  let opts;
+  try {
+    opts = parseArgs(argv.slice(2));
+  } catch (error) {
+    process.stderr.write(`::error::watch-upstream-areas: ${error.message}\n`);
+    process.exit(2);
+  }
+  const { mode, root, since } = opts;
+
+  if (mode === "areas") {
+    process.stdout.write(`${renderAreaTable()}\n`);
+    return;
+  }
+  if (mode !== "check" && mode !== "detect") {
+    process.stderr.write(`::error::watch-upstream-areas: unknown mode "${mode}"\n`);
+    process.exit(2);
+  }
+  // An unusable --root is "could not decide" (exit 2), never a table that
+  // disagrees with the checkout (exit 1) — otherwise a typo'd path prints 88
+  // missing-path errors instead of naming the real problem.
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) {
+    process.stderr.write(`::error::watch-upstream-areas: --root "${root}" is not a directory.\n`);
+    process.exit(2);
+  }
+  if (mode === "detect") {
+    try {
+      assertValidSince(since);
+    } catch (error) {
+      process.stderr.write(`::error::watch-upstream-areas: ${error.message}\n`);
       process.exit(2);
     }
   }
 
   try {
-    if (mode === "areas") {
-      process.stdout.write(`${JSON.stringify(AREAS, null, 2)}\n`);
-      return;
-    }
-    if (mode === "check") return runCheck(root);
-    if (mode === "detect") return runDetect(root, since);
-    process.stderr.write(`::error::watch-upstream-areas: unknown mode "${mode}"\n`);
-    process.exit(2);
+    return mode === "check" ? runCheck(root) : runDetect(root, since);
   } catch (error) {
     // Includes the fail-closed throw from findLfxDrift and a bad area name in
     // buildAreas — both mean the table no longer describes the checkout.

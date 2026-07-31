@@ -10,11 +10,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 
 import {
   AREAS,
   BODY_DELIMITER,
+  assertValidSince,
+  parseArgs,
   LANGFLOW_AREAS,
   LFX_CLASSIFICATION,
   LFX_ROOT,
@@ -252,21 +256,151 @@ test("area names and paths are unique, and every area keeps tags plus a checklis
   }
 });
 
-test("file-watcher.yml runs both guards and consumes the payload", () => {
-  // A table nothing reads, or a check the workflow forgot to run, would restore
-  // the silence this issue is about.
+test("file-watcher.yml runs both modes and consumes every output this script emits", () => {
+  // A table nothing reads, or an output name that drifted on one side only,
+  // would restore the silence this issue is about.
   const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/file-watcher.yml"), "utf8");
   assert.match(yml, /watch-upstream-areas\.mjs --mode=check/);
   assert.match(yml, /watch-upstream-areas\.mjs --mode=detect/);
   assert.match(yml, /steps\.detect\.outputs\.title/);
   assert.match(yml, /steps\.detect\.outputs\.body/);
+  // The output that GATES issue creation. Renaming it on either side would leave
+  // a green job that never opens an issue — a silent fail-open.
+  assert.match(yml, /steps\.detect\.outputs\.has_changes == 'true'/);
   // The body reaches github-script through the environment. Interpolating it
   // into the script body would put an upstream commit subject inside a JS
   // template literal.
   assert.match(yml, /body: process\.env\.ISSUE_BODY/);
-  // The guard must run BEFORE the sweep, or a stale table still produces a report.
+  // Issue creation needs an explicit grant; every other issue-opening workflow
+  // in the repo declares one.
+  assert.match(yml, /permissions:\s*\n\s*contents: read\s*\n\s*issues: write/);
+  // Labels must exist in the repo — GitHub silently creates unknown ones.
+  assert.match(yml, /labels: \['needs-triage', 'automated'\]/);
+  // The guard runs first for early annotations, but must not suppress the report
+  // for the healthy areas; the job is failed afterwards instead.
   assert.ok(
     yml.indexOf("--mode=check") < yml.indexOf("--mode=detect"),
     "the existence guard must precede the change sweep",
   );
+  assert.match(yml, /id: guard\s*\n\s*continue-on-error: true/);
+  assert.match(yml, /steps\.guard\.outcome == 'failure'/);
+});
+
+// ---------- the window ----------
+
+test("assertValidSince accepts the documented forms and rejects what git would guess at", () => {
+  for (const good of [
+    "24 hours ago",
+    "3 days ago",
+    "1 week ago",
+    "2 months ago",
+    "yesterday",
+    "2026-07-15",
+    "2026-07-15 17:24",
+    "2026-07-15T17:24:00-0700",
+  ]) {
+    assert.doesNotThrow(() => assertValidSince(good), `${good} should be accepted`);
+  }
+  // Measured against the real clone: "undefined" selects 0 commits (a green run
+  // that looks like a quiet day) and "last thursdya" selects 200 (12 of 13 areas
+  // fire). approxidate never errors, so the input is validated here instead.
+  for (const bad of ["undefined", "last thursdya", "2026-07-15 to 2026-07-16", "", "yesterdya", "24 hours"]) {
+    assert.throws(() => assertValidSince(bad), /is not an accepted window/, `${bad} should be rejected`);
+  }
+});
+
+// ---------- parseArgs ----------
+
+test("parseArgs accepts both --flag value and --flag=value", () => {
+  assert.deepEqual(parseArgs(["--mode=detect", "--root", "up", "--since=2026-07-15"]), {
+    mode: "detect",
+    root: "up",
+    since: "2026-07-15",
+  });
+  assert.throws(() => parseArgs(["--nope"]), /unknown argument --nope/);
+  assert.throws(() => parseArgs(["--root"]), /--root needs a value/);
+});
+
+// ---------- the CLI contract ----------
+
+function runCli(args) {
+  const result = spawnSync(process.execPath, [path.join(REPO_ROOT, "scripts/watch-upstream-areas.mjs"), ...args], {
+    encoding: "utf8",
+  });
+  return { code: result.status, out: result.stdout, err: result.stderr };
+}
+
+test("the CLI exits 2 — could not decide — for an unusable root or a bad flag", () => {
+  const missingRoot = runCli(["--mode=check", "--root", path.join(REPO_ROOT, "no-such-checkout")]);
+  assert.equal(missingRoot.code, 2);
+  assert.match(missingRoot.err, /is not a directory/);
+
+  assert.equal(runCli(["--mode=check", "--root"]).code, 2);
+  assert.equal(runCli(["--bogus"]).code, 2);
+  assert.equal(runCli(["--mode=nope"]).code, 2);
+  assert.equal(runCli(["--mode=detect", "--root", REPO_ROOT, "--since", "undefined"]).code, 2);
+});
+
+test("the CLI exits 1 and names the path when the checkout contradicts the table", () => {
+  // A tree with the lfx layout but one monitored path deliberately absent.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-cli-"));
+  try {
+    for (const area of AREAS) {
+      for (const p of area.paths) {
+        const rel = p.replace(/\/$/, "");
+        if (rel.endsWith(".py") || rel.endsWith(".ts") || rel.endsWith(".tsx")) {
+          fs.mkdirSync(path.join(root, path.dirname(rel)), { recursive: true });
+          fs.writeFileSync(path.join(root, rel), "");
+        } else {
+          fs.mkdirSync(path.join(root, rel), { recursive: true });
+        }
+      }
+    }
+    // Every classified lfx child must exist, or the drift scan reports it too.
+    for (const key of Object.keys(LFX_CLASSIFICATION)) {
+      const target = path.join(root, LFX_ROOT, key);
+      if (key.endsWith(".py")) {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, "");
+      } else {
+        fs.mkdirSync(target, { recursive: true });
+      }
+    }
+
+    // Now take one watched subtree away — the flow_constants case.
+    fs.rmSync(path.join(root, LFX_ROOT, "base/mcp"), { recursive: true });
+
+    const result = runCli(["--mode=check", "--root", root]);
+    assert.equal(result.code, 1);
+    assert.match(result.err, /::error::monitored path "[^"]*base\/mcp\/" \(area: MCP Server\)/);
+    // The same removal is also reported as a stale classification entry, and a
+    // warning must never be the only signal for a coverage hole.
+    assert.match(result.err, /::warning::LFX_CLASSIFICATION records "base\/mcp"/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a symlinked lfx subtree is classified, not skipped", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-link-"));
+  try {
+    const lfx = path.join(root, LFX_ROOT);
+    fs.mkdirSync(path.join(lfx, "graph"), { recursive: true });
+    fs.symlinkSync("graph", path.join(lfx, "newsurface"));
+    const drift = findLfxDrift({
+      classification: { graph: { area: "Area A" } },
+      listChildren: (dir) => {
+        const full = path.join(root, dir);
+        if (!fs.existsSync(full) || !fs.statSync(full).isDirectory()) return null;
+        return fs
+          .readdirSync(full, { withFileTypes: true })
+          .filter((e) => e.isDirectory() || e.isSymbolicLink() || (e.isFile() && e.name.endsWith(".py")))
+          .map((e) => e.name);
+      },
+      lfxRoot: LFX_ROOT,
+    });
+    assert.deepEqual(drift.unclassified, ["newsurface"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
