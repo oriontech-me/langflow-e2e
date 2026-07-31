@@ -791,6 +791,27 @@ test("TOKENS_SUPPRESS_HISTORY unset (or falsy) preserves the existing daily beha
   );
 });
 
+// #1183, found live on a manual dispatch of daily-stable.yml (run 30657439522):
+// the daily's merge job now sets TOKENS_SUPPRESS_HISTORY via
+// `github.event_name != 'schedule' && '1' || ''` — an empty string on the
+// scheduled branch, not an unset variable. GitHub Actions env values are
+// always strings, so this is the exact runtime value the daily's own
+// scheduled runs pass, and it must resolve to "not suppressed" just like the
+// knob being absent entirely — this pins that specific value, not just the
+// general "falsy" case #782 already covers.
+test("TOKENS_SUPPRESS_HISTORY as an empty string (the daily's own scheduled-run value) preserves history writes", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TOKENS_SUPPRESS_HISTORY: "" };
+  assert.equal(await summarize({ env, ...fs2, log: () => {} }), 0);
+  assert.ok(
+    fs2.appended["reports/token-history.jsonl"],
+    "an empty string must behave exactly like the knob being absent",
+  );
+});
+
 test("a history-append failure is logged and summarize still resolves 0", async () => {
   const fs2 = fakeFs(
     { "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`, "prices.json": PRICES },
@@ -862,6 +883,52 @@ test("neither token step gates the run — the shard stop step AND the merge sum
   assert.notEqual(shardStep, mergeStep, "the two must be distinct steps, not the same match twice");
   for (const start of [shardStep, mergeStep]) {
     assert.match(text.slice(start, start + 400), /continue-on-error: true/);
+  }
+});
+
+// #1183, found live on a manual dispatch of daily-stable.yml (run 30657439522):
+// "Append daily history" / "Commit daily history" are already gated
+// `if: always() && github.event_name == 'schedule'`, so a manual dispatch of
+// this workflow never COMMITS reports/token-history.jsonl — but the merge
+// job's "Summarize token consumption" step ran unconditionally and, before
+// this fix, WROTE the history line into the runner's (uncommitted) workspace
+// regardless, silently diverging from what the file on disk implied. This
+// guard pins that the merge step suppresses the write on any non-scheduled
+// run, using the exact same event_name check the two history steps already
+// use — expressed as an env value instead of a step `if:`, since the step
+// itself must keep running and keep publishing its step summary either way.
+test("the daily's merge-job summarize step suppresses history on a manual dispatch (#1183)", () => {
+  const text = daily();
+  const mergeStep = text.indexOf("- name: Summarize token consumption");
+  assert.ok(mergeStep > 0, "the merge job's summarize step must exist");
+  const nextStep = text.indexOf("- name:", mergeStep + 1);
+  const stepText = text.slice(mergeStep, nextStep > 0 ? nextStep : mergeStep + 3000);
+  assert.match(
+    stepText,
+    /TOKENS_SUPPRESS_HISTORY:/,
+    "the merge job's summarize step must set TOKENS_SUPPRESS_HISTORY — a manual dispatch's arbitrary shape must not silently write into the scheduled series",
+  );
+  assert.match(
+    stepText,
+    /github\.event_name\s*!=\s*'schedule'/,
+    "the suppression must key off the SAME event_name check the history append/commit steps already use, not a new one",
+  );
+});
+
+// The history steps' own `if:` conditions are explicitly out of scope for this
+// change (they were already correct) — pin that they are untouched, so a
+// future edit to the merge-job env does not accidentally start gating these
+// steps on something else instead.
+test("the history append/commit steps are still gated on if: always() && github.event_name == 'schedule' (unchanged)", () => {
+  const text = daily();
+  for (const label of ["Append daily history", "Commit daily history"]) {
+    const at = text.indexOf(`- name: ${label}`);
+    assert.ok(at > 0, `the "${label}" step must still exist`);
+    assert.match(
+      text.slice(at, at + 200),
+      /if:\s*always\(\)\s*&&\s*github\.event_name\s*==\s*'schedule'/,
+      `the "${label}" step's own if: condition must be untouched by the #1183 fix`,
+    );
   }
 });
 
