@@ -28,7 +28,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { aggregate } from "./lib/token-cost.mjs";
+import { aggregate, parsePrices } from "./lib/token-cost.mjs";
 import { detectAnomalies } from "./lib/token-anomaly.mjs";
 
 const DEFAULTS = {
@@ -209,24 +209,6 @@ export async function poll({ fetchImpl = fetch, env = process.env, log = console
 }
 
 const usd = (n) => (n === null || n === undefined ? "n/a" : `$${(Math.round(n * 100) / 100).toFixed(2)}`);
-
-// Mirrors token-cost.mjs's loadPrices() validation exactly, but reads through the
-// caller-supplied `readFile` rather than fs directly. loadPrices() always hits the
-// real filesystem, which would make the price table the one input the summarizer's
-// fake-fs tests could never override; routing it through the injected reader keeps
-// production behaviour identical (the default readFile wraps the same
-// fs.readFileSync) while making the summarizer fully testable without a disk.
-function parsePrices(raw) {
-  const prices = {};
-  for (const [model, entry] of Object.entries(JSON.parse(raw))) {
-    if (model.startsWith("_")) continue; // "_comment"
-    const input = Number(entry?.inputPerMillion);
-    const output = Number(entry?.outputPerMillion);
-    if (!Number.isFinite(input) || !Number.isFinite(output)) continue;
-    prices[model] = { inputPerMillion: input, outputPerMillion: output };
-  }
-  return prices;
-}
 
 // Injected I/O so the summarizer is unit-testable without a filesystem: CI passes
 // none of these and gets the real fs.

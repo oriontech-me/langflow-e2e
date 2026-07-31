@@ -13,10 +13,14 @@ import fs from "node:fs";
 export const UNATTRIBUTED_REASON =
   "spec not migrated to trackCreatedFlows (#1108), or its flow was deleted between two poller ticks";
 
-export function loadPrices(filePath) {
-  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+// Pure validation step, split out from loadPrices() so a caller with its own I/O
+// (the summarizer's injected readFile, in particular) can reuse the exact same
+// rules without going through this module's hardcoded fs.readFileSync. Takes the
+// RAW file text (not a pre-parsed object) so both callers do the same JSON.parse.
+export function parsePrices(raw) {
+  const parsed = JSON.parse(raw);
   const prices = {};
-  for (const [model, entry] of Object.entries(raw)) {
+  for (const [model, entry] of Object.entries(parsed)) {
     if (model.startsWith("_")) continue; // "_comment"
     const input = Number(entry?.inputPerMillion);
     const output = Number(entry?.outputPerMillion);
@@ -24,6 +28,10 @@ export function loadPrices(filePath) {
     prices[model] = { inputPerMillion: input, outputPerMillion: output };
   }
   return prices;
+}
+
+export function loadPrices(filePath) {
+  return parsePrices(fs.readFileSync(filePath, "utf8"));
 }
 
 export function usdFor(model, promptTokens, completionTokens, prices) {

@@ -209,7 +209,10 @@ test("the entry point exits 0 when run directly, even against an unreachable bac
 //
 // The filesystem is faked at the readFile/listDir/writeFile/appendFile boundary
 // (design's injected-I/O rule) so these tests run with no disk access at all.
-function fakeFs(files) {
+// `throwAppend`/`throwWrite` arm a write-side failure — used to prove summarize()
+// logs and still resolves 0 when the history append or the summary write itself
+// fails (review round 1, #1197: those two guards were previously untested).
+function fakeFs(files, { throwAppend = false, throwWrite = false } = {}) {
   const written = {};
   const appended = {};
   return {
@@ -220,8 +223,14 @@ function fakeFs(files) {
       return files[p];
     },
     listDir: (dir) => Object.keys(files).filter((p) => p.startsWith(`${dir}/`)),
-    writeFile: (p, text) => (written[p] = text),
-    appendFile: (p, text) => (appended[p] = (appended[p] || "") + text),
+    writeFile: (p, text) => {
+      if (throwWrite) throw new Error("ENOSPC: no space left on device");
+      written[p] = text;
+    },
+    appendFile: (p, text) => {
+      if (throwAppend) throw new Error("ENOSPC: no space left on device");
+      appended[p] = (appended[p] || "") + text;
+    },
   };
 }
 
@@ -339,4 +348,32 @@ test("anomalies land in the history line when the baseline supports them", async
 test("summarize never throws on a missing probe directory", async () => {
   const fs2 = fakeFs({ "prices.json": PRICES });
   assert.equal(await summarize({ env: { ...baseEnv, TOKENS_DIR: "nope" }, ...fs2, log: () => {} }), 0);
+});
+
+test("a history-append failure is logged and summarize still resolves 0", async () => {
+  const fs2 = fakeFs(
+    { "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`, "prices.json": PRICES },
+    { throwAppend: true },
+  );
+  const logs = [];
+  const code = await summarize({ env: baseEnv, ...fs2, log: (msg) => logs.push(msg) });
+  assert.equal(code, 0);
+  assert.ok(
+    logs.some((l) => /could not append the history line/.test(l)),
+    `expected a history-append-failure log, got: ${JSON.stringify(logs)}`,
+  );
+});
+
+test("a summary-write failure is logged and summarize still resolves 0", async () => {
+  const fs2 = fakeFs(
+    { "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`, "prices.json": PRICES },
+    { throwWrite: true },
+  );
+  const logs = [];
+  const code = await summarize({ env: baseEnv, ...fs2, log: (msg) => logs.push(msg) });
+  assert.equal(code, 0);
+  assert.ok(
+    logs.some((l) => /could not write the step summary/.test(l)),
+    `expected a summary-write-failure log, got: ${JSON.stringify(logs)}`,
+  );
 });

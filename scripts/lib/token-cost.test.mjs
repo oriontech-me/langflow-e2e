@@ -2,7 +2,7 @@
 // Run with: npm run test:scripts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { usdFor, aggregate } from "./token-cost.mjs";
+import { usdFor, aggregate, parsePrices } from "./token-cost.mjs";
 
 const PRICES = {
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
@@ -110,4 +110,21 @@ test("a trace with no model spans still counts its tokens", () => {
   });
   assert.equal(out.totals.total_tokens, 88);
   assert.equal(out.byModel.length, 0);
+});
+
+// parsePrices() is the validation step loadPrices() runs after fs.readFileSync +
+// JSON.parse — split out so a caller with its own I/O (the summarizer's injected
+// readFile) can apply the identical rules without going through this module's
+// hardcoded fs access (review round 1, #1197).
+test("parsePrices keeps a valid entry, skips the _comment key, and drops a non-numeric price", () => {
+  const raw = JSON.stringify({
+    _comment: "USD per 1M tokens",
+    "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+    "broken-model": { inputPerMillion: "not-a-number", outputPerMillion: 0.6 },
+  });
+  const prices = parsePrices(raw);
+  assert.deepEqual(prices, {
+    "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  });
+  assert.equal(prices["broken-model"], undefined);
 });
