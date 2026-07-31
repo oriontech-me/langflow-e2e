@@ -96,24 +96,50 @@ runs:
         CODE=$?
         set -e
 
-        # Exit 2 is the resolver itself being broken (bad flag, crash). That must
-        # never read as "the service is absent" — the two call for opposite
-        # responses, and conflating them is how a gate silently stops gating.
-        if [ "$CODE" -eq 2 ] || ! echo "$DECISION" | jq -e . >/dev/null 2>&1; then
-          echo "::error::resolve-echo-endpoint could not produce a decision (exit $CODE). Treating as a wiring failure, not an absent service."
+        # Read the decision with `node`, NOT `jq`. This is the only composite action
+        # the containerized lane uses (`daily-stable.yml`, `in_container: true`), and
+        # `mcr.microsoft.com/playwright:v1.58.2-noble` ships no `jq` — its Dockerfile
+        # installs curl/wget/gpg/ca-certificates, nodejs and git/openssh-client, and
+        # nothing else. The four `jq` calls this replaces aborted all four shards of
+        # the 2026-07-31 daily before its first test, and the failure was invisible:
+        # `jq -e . >/dev/null 2>&1` sent `jq: command not found` to /dev/null, so a
+        # missing binary was indistinguishable from malformed JSON. `node` needs no
+        # such trust — the line above just used it to PRODUCE this decision.
+        #
+        # One invocation, three tab-separated fields, stderr left ALONE so the next
+        # environment gap names itself in the log instead of surfacing as the "exit 0"
+        # contradiction that made this cost a whole day of @stable coverage.
+        set +e
+        FIELDS="$(node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{let v;try{v=JSON.parse(d)}catch(e){process.stderr.write("decision is not JSON: "+e.message+"\n");process.exit(1)}if(!v||typeof v!=="object"||Array.isArray(v)){process.stderr.write("decision is not a JSON object\n");process.exit(1)}process.stdout.write([v.ok===true?"true":"false",v.langflowUrl||"",v.probeUrl||""].join("\t")+"\n")})' <<<"$DECISION")"
+        PARSE=$?
+        set -e
+
+        # Exit 2 is the resolver itself being broken (bad flag, crash); a non-zero
+        # PARSE is the same class of fault one step later. Neither must read as "the
+        # service is absent" — the two call for opposite responses, and conflating
+        # them is how a gate silently stops gating.
+        if [ "$CODE" -eq 2 ] || [ "$PARSE" -ne 0 ]; then
+          echo "::error::resolve-echo-endpoint could not produce a decision (resolver exit $CODE, parse exit $PARSE). Treating as a wiring failure, not an absent service."
           exit 1
         fi
 
-        OK="$(echo "$DECISION" | jq -r .ok)"
+        # One tab-split `read`, not `mapfile` and not three `read`s. Both alternatives
+        # reintroduce the class of bug being fixed here:
+        #   - `mapfile` is a bash-4 builtin, absent from the bash 3.2 on macOS, so the
+        #     fix for a missing-binary bug could not itself be run outside CI.
+        #   - three sequential `read`s hit EOF on a not-ok decision (the URL fields are
+        #     empty and command substitution strips trailing newlines) and return 1,
+        #     which under `set -e` kills the step silently on the exact path
+        #     `mode: warn` exists to keep alive.
+        # `|| true` covers a wholly empty FIELDS; a short line leaves the tail empty.
+        IFS=$'\t' read -r OK LANGFLOW_URL PROBE_URL <<<"$FIELDS" || true
+
         if [ "$OK" != "true" ]; then
           # The script already emitted ::error:: or ::warning:: with the reason.
           echo "echo_base_url=" >> "$GITHUB_OUTPUT"
           [ "$MODE" = "warn" ] && exit 0
           exit 1
         fi
-
-        LANGFLOW_URL="$(echo "$DECISION" | jq -r .langflowUrl)"
-        PROBE_URL="$(echo "$DECISION" | jq -r .probeUrl)"
 
         # The image is `scratch`-based — no shell, no curl — so it cannot carry a
         # container healthcheck. This poll IS the healthcheck (#639).
