@@ -60,9 +60,17 @@ achieved. Absence of `@stable` is explained here per the PR checklist.
 
 ## Step by step *(required)*
 
-The spec generates **1 test per active model** via `getTestTargets()` (default:
-one chat model per active provider), reusing the Simple Agent parameterization
-pattern from `agent-multimodal-image-input.spec.ts`.
+The spec generates **1 test per active model** via
+`resolveTestTargets({ tier: "tool-calling", requires: "chat" })` (default: one chat
+model per active provider). `requires: "chat"` excludes the non-chat families
+(embedding / tts / audio / whisper / realtime / image / moderation / search).
+
+**Changed in #1184:** this spec carried its own copy of the resolver with **no
+`MODEL_TEST_ID` branch**, so pinning a model did not pin this spec — it kept running
+one target per provider. It now honours the documented env precedence like every
+other parametrized spec, which also means `MODEL_TEST_PROVIDER` alone sweeps that
+provider's chat catalog rather than narrowing to one model. Use the
+`MODEL_TEST_PROVIDER` + `MODEL_TEST_ID` pair to narrow.
 
 ---
 

@@ -152,33 +152,29 @@ Basic structure:
 ```typescript
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import { test, expect } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { hasProviderEnvKeys, type Provider } from "../../../../helpers/provider-setup";
-import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
+import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
 }
 
-// Read models and apply the .env strategy
-function getTestTargets() {
-  const jsonPath = path.resolve(__dirname, "../../../../helpers/provider-setup/data/models.json");
-  if (!fs.existsSync(jsonPath)) return [];
-  const allModels = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
-  // Inactive providers, so their targets report as skipped with the collected
-  // reason. Never inline this — one shared implementation (#1043).
-  const skipReasons = providerSkipReasons();
-  // apply strategy filter (see agent-component-regression.spec.ts for full implementation)
-  return allModels.map((m: any) => ({
-    label: `${m.provider} / ${m.model}`,
-    options: { provider: m.provider as Provider, model: m.model },
-    skipReason: skipReasons.get(m.provider),
-  }));
-}
-
-const targets = getTestTargets();
+// One shared resolver — NEVER inline a copy of this (#1184). It reads models.json,
+// applies the .env strategy (MODEL_TEST_ID → MODEL_TEST_PROVIDER → ALL_MODELS → one
+// per provider) and attaches each provider's inactive-skip reason. Seventeen specs
+// used to carry their own copy and they had drifted into five variants, two of which
+// silently ignored MODEL_TEST_ID — same drift #1043 removed for providerSkipReasons.
+//
+// `tier` declares what the spec needs from a lane, so a lane can pick the cheapest
+// target that satisfies it (#1185, #1187) instead of guessing per spec:
+//   "tool-calling"     — the assertion IS model capability (tools, structured output)
+//   "any-completion"   — any model that returns text; the assertion is plumbing
+//   "none"             — no inference at all (modals, invalid-key UI)
+// Add `requires: "vision" | "chat"` when the spec needs a specific capability
+// WITHIN the provider.
+const targets = resolveTestTargets({ tier: "tool-calling" });
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? "openai";
@@ -347,7 +343,7 @@ await page.getByText("Anthropic").click();
 await page.getByTestId("popover-anchor-input-api_key").fill(process.env.ANTHROPIC_API_KEY);
 
 // ✅ CORRECT — parameterized by the project's provider infrastructure
-for (const { label, options, skipReason } of getTestTargets()) {
+for (const { label, options, skipReason } of resolveTestTargets({ tier: "tool-calling" })) {
   test.describe.serial(`My Test [${label}]`, () => {
     test("should ...", async ({ page }) => {
       await new SimpleAgentTemplatePage(page).load(options);

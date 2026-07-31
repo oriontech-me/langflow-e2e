@@ -58,7 +58,7 @@ through the Playground.
 
 ## Step by step *(required)*
 
-The spec generates **2 tests per active model** via `getTestTargets()` (default:
+The spec generates **2 tests per active model** via `resolveTestTargets()` (default:
 1 model per active provider). The limit message and the arithmetic answer are
 provider-agnostic (Langflow-level), so any chat model works.
 

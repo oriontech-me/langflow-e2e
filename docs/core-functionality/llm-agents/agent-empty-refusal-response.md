@@ -57,7 +57,7 @@ the model through the Playground.
 
 ## Step by step *(required)*
 
-The spec generates **2 tests per active model** via `getTestTargets()` (default:
+The spec generates **2 tests per active model** via `resolveTestTargets()` (default:
 1 model per active provider; `ALL_MODELS=true` runs all models in `models.json`;
 `MODEL_TEST_ID` / `MODEL_TEST_PROVIDER` narrow it). A per-run marker
 `REFUSE-<Date.now()>-<rand>` makes each refusal unambiguous.
