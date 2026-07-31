@@ -4,7 +4,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage } from "../../../../pages/SettingsPage";
 import {
   hasProviderEnvKeys,
-  providerConfigMap,
+  keyedProviders,
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { errorToastLocator } from "../../../../helpers/ui/error-toast";
@@ -24,15 +24,22 @@ type ProviderTarget = {
   invalidKey: string;
 };
 
+// Iterates `keyedProviders`, not every provider (#1187). This test's subject IS the
+// API key — it saves a deliberately invalid one and asserts the error toast — so a
+// keyless provider (Ollama, configured by a base URL) has no such journey: it would
+// contribute a test case that types an invalid "key" into a field that does not
+// exist. The narrowing is the compiler's, not a filter to remember: `keyedProviders`
+// carries `ApiKeyProviderConfig`, so `keyPlaceholder` / `invalidKey` are reachable
+// here precisely because the entry has them.
 function getProviderTargets(): ProviderTarget[] {
-  return (Object.keys(providerConfigMap) as Provider[])
-    .filter(hasProviderEnvKeys)
-    .map((provider) => ({
+  return keyedProviders
+    .filter(([provider]) => hasProviderEnvKeys(provider))
+    .map(([provider, config]) => ({
       provider,
-      primaryEnvVar: providerConfigMap[provider].envKeys[0],
-      providerTestId: providerConfigMap[provider].providerTestId,
-      keyPlaceholder: providerConfigMap[provider].keyPlaceholder,
-      invalidKey: providerConfigMap[provider].invalidKey,
+      primaryEnvVar: config.envKeys[0],
+      providerTestId: config.providerTestId,
+      keyPlaceholder: config.keyPlaceholder,
+      invalidKey: config.invalidKey,
     }));
 }
 

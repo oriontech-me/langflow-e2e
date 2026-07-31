@@ -6,6 +6,7 @@ import { SimpleAgentTemplatePage } from "../../../../pages";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 import {
   hasProviderEnvKeys,
+  keyedProviderNames,
   missingProviderEnvKeys,
   providerConfigMap,
   type Provider,
@@ -20,20 +21,23 @@ if (!process.env.CI) {
 // Resolve the provider to drive the test. The behavior under test (per-model
 // enable/disable toggles in Settings → Model Providers) is provider-agnostic,
 // so a single env-configured provider is enough. Priority: MODEL_TEST_PROVIDER
-// (when its env keys are set) > first provider in providerConfigMap with env
-// keys configured.
+// (when its env keys are set) > first KEYED provider with env keys configured.
+//
+// Scoped to `keyedProviderNames` rather than the whole map (#1187) to keep this
+// selection exactly what it was before a keyless provider existed. `hasProviderEnvKeys`
+// answers "are this provider's env vars set", and for Ollama that is a base URL — so
+// on a box with OLLAMA_BASE_URL exported and no API key, an unscoped `.find()` would
+// silently hand this spec a local provider it was never validated against.
 const envProvider = process.env.MODEL_TEST_PROVIDER as Provider | undefined;
 const provider: Provider | undefined =
   envProvider && hasProviderEnvKeys(envProvider)
     ? envProvider
-    : (Object.keys(providerConfigMap) as Provider[]).find(hasProviderEnvKeys);
+    : keyedProviderNames.find(hasProviderEnvKeys);
 
 const skipReason = provider
   ? undefined
-  : `No provider has its env keys configured (need one of: ${Object.keys(
-      providerConfigMap,
-    )
-      .map((p) => missingProviderEnvKeys(p as Provider).join("/"))
+  : `No provider has its env keys configured (need one of: ${keyedProviderNames
+      .map((p) => missingProviderEnvKeys(p).join("/"))
       .join(" | ")})`;
 
 // The `provider-item-...` testid carries the provider's display name
