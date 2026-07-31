@@ -73,13 +73,43 @@ jobs:
             -n "playwright-json-daily-$DAILY_RUN_ID" -D . \
             || echo "::warning::results.json artifact unavailable for run $DAILY_RUN_ID — propose runs history-only."
           if [ -f results.json ]; then echo "results.json present ($(wc -c < results.json) bytes)."; else echo "no results.json — history-only."; fi
+
+      # Do not start the agent when the triggering run produced nothing to triage
+      # (#1178). Until this gate existed, the step above degraded to
+      # "history-only" and the agent ran anyway: on 2026-07-31 the daily's four
+      # shards all failed without a blob, the merge job died on `No report files
+      # found in .../all-blobs`, no results.json was uploaded, and the agent spent
+      # 28 of its 30 turns and $1.66 (its own log reports `num_turns` and
+      # `total_cost_usd`) reconstructing a run that had recorded ZERO test results.
+      #
+      # The decision reuses `analyze()` from scripts/check-run-integrity.mjs — the
+      # daily's own runguard logic (#1012) — so the two can never disagree, and so
+      # the case that makes a naive test-count check wrong is handled: a PARTIAL
+      # run, where some shards aborted in globalSetup while others executed
+      # (#1058), still RUNS the agent. Skipping is loud (::warning:: + a run-summary
+      # line), never silent; an unparseable-but-present report fails the step
+      # rather than reading as "nothing to triage" (#1035).
+      - name: Gate — does the triggering run give the agent anything to triage?
+        id: triage_input
+        run: node scripts/triage-input-gate.mjs --results results.json
+
       - uses: anthropics/claude-code-action@v1
+        if: steps.triage_input.outputs.should_run_agent == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: "/langflow-e2e-triage --phase propose ${{ inputs.issue && format('--issue {0}', inputs.issue) || '' }}"
-          claude_args: '--allowedTools "Read,Bash" --max-turns 30'
+          # --model pinned (#1178): the action's default is `claude-opus-5[1m]`, and
+          # nothing here needs Opus-tier reasoning at Opus-tier price. Sonnet 5
+          # keeps the 1M context window this job depends on (it reads CI logs) at
+          # 3/5 of the per-token price — on the three measured runs, $4.71 → ~$2.80.
+          # NOT haiku: its window is 200K, and the most expensive runs are the ones
+          # with the largest input, so it would overflow exactly where it matters.
+          # Worth an A/B once the input is bounded — via `workflow_dispatch --issue N`
+          # on the same umbrella — and #1171 is the standing reminder that a cheaper
+          # model has to be validated, not assumed.
+          claude_args: '--allowedTools "Read,Bash" --max-turns 30 --model claude-sonnet-5'
 
   execute:
     name: Execute approved triage
@@ -109,7 +139,10 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           prompt: "/langflow-e2e-triage --phase execute --issue ${{ github.event.issue.number }}"
-          claude_args: '--allowedTools "Read,Bash" --max-turns 40'
+          # Same pin as propose (#1178). NOT gated on a report: execute is triggered
+          # by a human "pode abrir" on a plan that already exists, so it has
+          # something to do regardless of what the daily uploaded.
+          claude_args: '--allowedTools "Read,Bash" --max-turns 40 --model claude-sonnet-5'
 
       # The contract gate for the AGENT path (#1035).
       #
