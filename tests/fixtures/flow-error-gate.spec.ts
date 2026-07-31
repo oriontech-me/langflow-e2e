@@ -15,6 +15,20 @@
 //
 // A tiny local server stands in for Langflow: no container, no provider key, no
 // LLM. The fixture only cares about the URL shape, the content type and the body.
+//
+// WHY `@stable` — it is load bearing, not decoration. `daily-stable.yml` selects
+// with `--grep @stable` and is the only recurring lane (`nightly.yml` has been
+// dormant since 03-2026), and `pr-validation.yml` caps the impacted set at 20
+// with `@stable` first — a fixtures change resolves to every spec in the repo, so
+// an untagged spec here sorts below the cap and never runs. Measured on PR #1164:
+// 237 impacted, 20 run, 217 dropped, and this file was among the dropped. A guard
+// against "a regression shipped because nothing executed the gate" that itself
+// executes nowhere is the same defect wearing the fix's clothes. The tag is cheap
+// here in a way it is not for a product spec: no backend, no provider, ~6 s.
+//
+// It needs no QA-CHECKLIST bullet: `check-checklist-coverage.ts` and
+// `stable-tests.ts` both scope to `tests/tests-automations/regression/`, so this
+// file is outside their glob and outside the generated counts.
 
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
@@ -74,7 +88,7 @@ test.describe("fixture flow-error gate", () => {
 
   test(
     "allowFlowErrors() suppresses the v1 gate",
-    { tag: ["@regression"] },
+    { tag: ["@stable", "@regression"] },
     async ({ page }) => {
       (page as any).allowFlowErrors();
       await page.goto(`${origin}/`);
@@ -91,10 +105,9 @@ test.describe("fixture flow-error gate", () => {
 
   test(
     "a v2 run error is advisory: logged, and it does not fail the test",
-    { tag: ["@regression"] },
+    { tag: ["@stable", "@regression"] },
     async ({ page }) => {
       const logged: string[] = [];
-      page.on("console", () => {});
       const originalLog = console.log;
       console.log = (...args: unknown[]) => {
         logged.push(args.map(String).join(" "));

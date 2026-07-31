@@ -13,7 +13,6 @@ import * as path from "node:path";
 
 import {
   classifyFlowError,
-  isRunStreamUrl,
   isUnreadableStream,
   parseStreamEvents,
   runStreamSurface,
@@ -65,7 +64,7 @@ test("unrelated endpoints are not monitored", () => {
     "http://localhost:7860/api/v1/monitor/builds?flow_id=abc",
     "http://localhost:7860/api/v1/variables/",
   ]) {
-    assert.equal(isRunStreamUrl(url, "POST"), false, url);
+    assert.equal(runStreamSurface(url, "POST"), null, url);
   }
 });
 
@@ -334,4 +333,53 @@ test("fixtures.ts consumes the policy instead of an inline filter", () => {
   // stream close, and teardown must wait for the reads it started.
   assert.match(fixture, /RUN_STREAM_READ_TIMEOUT_MS/);
   assert.match(fixture, /pendingBodyReads/);
+  // The long budget is v2-ONLY, and this pairs with the invariant above: the two
+  // together are what keeps a late verdict inside the test that caused it. Only
+  // v2 reads are drained (tracking a v1 read disarms its mid-test interrupt), so
+  // a v1 read with a 4-minute budget could resolve after teardown had already
+  // rendered its verdict — pushing into an array nobody reads again, or throwing
+  // outside the test. v1 keeps the pre-#1162 bound instead.
+  assert.match(
+    fixture,
+    /surface === "v2" && contentType\.includes\("text\/event-stream"\)/,
+  );
+  // Advisories must NOT land in `errors`: its length is the `📋 Found N backend
+  // error(s)` line, and that line is the human gate (#1084). Padding it with
+  // entries that explicitly do not fail anything is the same log-noise problem
+  // that gate was written to remove.
+  assert.match(fixture, /advisoryFlowErrors\.push\(/);
+  assert.doesNotMatch(fixture, /flow_error_advisory/);
+});
+
+test("the v2 read budget stays under the per-test timeout it is derived from", () => {
+  // `RUN_STREAM_READ_TIMEOUT_MS` is hand-copied from `playwright.config.ts`'s
+  // `timeout`, in another file, with a margin for teardown. Nothing else would
+  // notice the two drifting apart: a budget at or above the test timeout can
+  // never fire, so the read would hang until Playwright killed the test and the
+  // "read timed out" accounting would silently stop working.
+  const fixture = fs.readFileSync(path.join(__dirname, "fixtures.ts"), "utf8");
+  const config = fs.readFileSync(
+    path.join(__dirname, "..", "..", "playwright.config.ts"),
+    "utf8",
+  );
+
+  const budget = fixture.match(/RUN_STREAM_READ_TIMEOUT_MS = ([\d_]+)/);
+  assert.ok(budget, "RUN_STREAM_READ_TIMEOUT_MS not found in fixtures.ts");
+  const budgetMs = Number(budget[1].replace(/_/g, ""));
+
+  const timeout = config.match(/timeout:\s*([\d\s*_]+?),/);
+  assert.ok(timeout, "no `timeout:` found in playwright.config.ts");
+  const timeoutMs = timeout[1]
+    .split("*")
+    .map((part) => Number(part.replace(/_/g, "").trim()))
+    .reduce((a, b) => a * b, 1);
+
+  assert.ok(
+    budgetMs < timeoutMs,
+    `the run-stream read budget (${budgetMs} ms) must stay below the per-test timeout (${timeoutMs} ms)`,
+  );
+  assert.ok(
+    timeoutMs - budgetMs >= 30_000,
+    `only ${timeoutMs - budgetMs} ms of teardown margin between the read budget and the test timeout — too tight to render a verdict`,
+  );
 });

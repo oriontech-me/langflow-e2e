@@ -50,7 +50,8 @@ export type FlowErrorVerdict =
  * verdict may be.
  *
  *   "v1"  the endpoints the fixture has ALWAYS watched. A verdict here fails the
- *         test, exactly as before; specs are calibrated to that.
+ *         test, as it did before — but see "what v1 gained" below: "unchanged"
+ *         would be inaccurate, and this gate exists to stop that kind of claim.
  *   "v2"  `POST /api/v2/workflows`, the current playground/agent/node run path.
  *         New coverage, so a verdict here is ADVISORY for now — see the staging
  *         note below.
@@ -77,7 +78,29 @@ export type FlowErrorVerdict =
  *                 provoke an error on purpose and hatching them. Step 1's own
  *                 log is what makes that audit cheap.
  *
- * Nothing loosens: v1 keeps failing tests today.
+ * ## What v1 gained (it is NOT unchanged)
+ *
+ * Nothing loosens — no path that failed a test before stops failing. But the
+ * reverse direction is not empty either, and saying "v1 is unchanged" would send
+ * whoever triages the first red down the wrong path:
+ *
+ *   - the old detector skipped BY CONTENT TYPE before it ever looked at the URL,
+ *     so a v1 `text/event-stream` or `application/x-ndjson` body was never
+ *     classified. Those are read now, and a verdict on them fails the test.
+ *   - the `{"event": "error"}` envelope (below) is a v1 shape that never matched
+ *     before, because its payload carries `error: false`.
+ *
+ * That is the same "turn a dead gate on" move this file argues against for v2, so
+ * it needs its reason: `/api/v1/build/{id}/flow` has been retired since 1.11
+ * (`ui-ux/execution-error-notification.spec.ts`), which is what the whole suite
+ * runs against, so on every scheduled lane this is latent. It is live only for a
+ * `manual.yml` dispatch at <= 1.10 — a supervised run. Staging v1 too would leave
+ * the fixture with no failing flow-error gate at all, which is a real loss for a
+ * hypothetical one; the honest bound is documented rather than removed.
+ *
+ * The read budget is bounded accordingly — see `SHORT_READ_TIMEOUT_MS` in
+ * `fixtures.ts`: only v2 reads get the long budget, because only v2 reads are
+ * drained at teardown.
  */
 export type RunStreamSurface = "v1" | "v2" | null;
 
@@ -108,11 +131,6 @@ export function runStreamSurface(url: string, method = "POST"): RunStreamSurface
     return "v1";
   }
   return null;
-}
-
-/** Back-compat helper for call sites that only need "is this a run stream". */
-export function isRunStreamUrl(url: string, method = "POST"): boolean {
-  return runStreamSurface(url, method) !== null;
 }
 
 /**
@@ -168,15 +186,15 @@ const asRecord = (value: unknown): Record<string, any> | null =>
   value && typeof value === "object" ? (value as Record<string, any>) : null;
 
 /**
- * Collapse to a single readable line.
+ * Collapse a multi-line error into one readable line.
  *
- * NOT "the first line": `errorMessage` opens with
- * `"Error building Component Agent: \n\n<the provider's message>"`, so taking
- * line 1 dropped the only part that says what went wrong. Joins the leading
- * lines instead, which is also what makes the message useful in the run-history
- * `error_signature`.
+ * Explicitly NOT "the first line", which is why it is not called that:
+ * `errorMessage` opens with `"Error building Component Agent: \n\n<the
+ * provider's message>"`, so taking line 1 dropped the only part that says what
+ * went wrong. Joins the leading lines instead, which is also what makes the
+ * message useful in the run-history `error_signature`.
  */
-const firstLine = (text: unknown, limit = 400): string =>
+const summarize = (text: unknown, limit = 400): string =>
   String(text ?? "")
     .split("\n")
     .map((l) => l.trim())
@@ -213,7 +231,7 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
 
     // v2 — the terminal verdict of the run. Most direct, so checked first.
     if (e.type === "RUN_ERROR" && e.message) {
-      return { failed: true, message: firstLine(e.message), shape: "RUN_ERROR" };
+      return { failed: true, message: summarize(e.message), shape: "RUN_ERROR" };
     }
 
     // v2 — the error message pushed into the chat. The payload shape varies by
@@ -231,7 +249,7 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
         (typeof value.data === "string" ? value.data : undefined);
       return {
         failed: true,
-        message: firstLine(text) || "flow emitted an error event with no readable text",
+        message: summarize(text) || "flow emitted an error event with no readable text",
         shape: "event_type=error",
       };
     }
@@ -243,7 +261,7 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
       const data = asRecord(e.data);
       return {
         failed: true,
-        message: firstLine(data?.text ?? data?.error_message ?? e.data) || "flow emitted an error event",
+        message: summarize(data?.text ?? data?.error_message ?? e.data) || "flow emitted an error event",
         shape: "event=error",
       };
     }
@@ -258,7 +276,7 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
         if (message?.errorMessage) {
           return {
             failed: true,
-            message: firstLine(message.errorMessage),
+            message: summarize(message.errorMessage),
             shape: "node status=error",
           };
         }
@@ -273,12 +291,12 @@ export function classifyFlowError(body: string): FlowErrorVerdict {
     // v1 — kept verbatim from the inline detector.
     const data = asRecord(e.data);
     if (typeof data?.build_data?.params === "string" && data.build_data.params.startsWith("Error")) {
-      return { failed: true, message: firstLine(data.build_data.params), shape: "build_data.params" };
+      return { failed: true, message: summarize(data.build_data.params), shape: "build_data.params" };
     }
     if (data?.error === true || e.error === true) {
       return {
         failed: true,
-        message: firstLine(data?.error_message ?? e.error_message) || "Unknown error",
+        message: summarize(data?.error_message ?? e.error_message) || "Unknown error",
         shape: "error=true",
       };
     }

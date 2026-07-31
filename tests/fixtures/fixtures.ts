@@ -8,14 +8,32 @@ import {
 } from "./flow-error-policy";
 
 /**
- * How long a run stream's body may take to arrive.
+ * How long a **v2** run stream's body may take to arrive.
  *
  * An SSE run stream closes when the run does, so the old 2 s bound guaranteed a
  * miss on the endpoint that matters most (#1162). This is the per-test timeout
  * from `playwright.config.ts` minus a margin for teardown: a read that outlives
- * the test cannot produce a verdict anyway.
+ * the test cannot produce a verdict anyway. `flow-error-policy.test.ts` asserts
+ * the two stay coherent, since the config's timeout lives in another file.
  */
 const RUN_STREAM_READ_TIMEOUT_MS = 240_000;
+
+/**
+ * Everything else: a v1 body of any content type, and a v2 body that is not SSE.
+ *
+ * Deliberately the pre-#1162 bound, and the reason is the same staging as the
+ * verdict itself. The long budget is what makes a verdict land LATE, and only v2
+ * reads are drained at teardown (see `pendingBodyReads` — tracking a v1 read
+ * would disarm its mid-test interrupt). Giving v1 the long budget would therefore
+ * open a window this fixture cannot close: a verdict resolving after
+ * `await use(page)` is either pushed into an `errors` array nobody reads again,
+ * or thrown as an unhandled rejection outside the test that caused it.
+ *
+ * The practical cost is that a v1 SSE body which does not close within 2 s is not
+ * classified — but it is now COUNTED as unevaluated rather than skipped in
+ * silence, which is the honest version of what `main` already did.
+ */
+const SHORT_READ_TIMEOUT_MS = 2_000;
 
 /**
  * How long teardown waits for in-flight run-stream reads before rendering its
@@ -61,6 +79,17 @@ export const test = base.extend({
       responseBody?: string;
       type?: string;
     }> = [];
+    /**
+     * v2 flow errors, kept OUT of `errors` on purpose (#1162).
+     *
+     * `errors.length` feeds the `📋 Found N backend error(s)` line, and that line
+     * is the human gate — checklist step 4, `CONTRIBUTING.md` step 5. Counting
+     * advisories there would inflate the one number a reviewer scans with entries
+     * that are explicitly not the thing it asks about, which works against the
+     * same log trustworthiness #1084 was written to restore. They get their own
+     * line instead.
+     */
+    const advisoryFlowErrors: Array<{ url: string; message: string }> = [];
 
     // Flag to allow flow errors (for tests that expect errors)
     let allowFlowErrors = false;
@@ -178,9 +207,13 @@ export const test = base.extend({
           // guaranteed miss for the endpoint that matters most. The read is
           // bounded by the spec's own patience instead, and the fixture waits for
           // in-flight reads before it renders a verdict (see below).
-          const READ_BODY_TIMEOUT_MS = contentType.includes("text/event-stream")
-            ? RUN_STREAM_READ_TIMEOUT_MS
-            : 2000;
+          //
+          // v2 ONLY, on purpose — see `SHORT_READ_TIMEOUT_MS`. The long budget is
+          // safe exactly where the drain covers it.
+          const READ_BODY_TIMEOUT_MS =
+            surface === "v2" && contentType.includes("text/event-stream")
+              ? RUN_STREAM_READ_TIMEOUT_MS
+              : SHORT_READ_TIMEOUT_MS;
           const bodyTimeoutToken = Symbol("response-body-timeout");
           let responseBody: string | undefined;
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -193,6 +226,9 @@ export const test = base.extend({
                   () => resolve(bodyTimeoutToken),
                   READ_BODY_TIMEOUT_MS,
                 );
+                // A 4-minute budget must not keep the worker's event loop alive
+                // at exit just because one stream never closed.
+                (timeoutId as unknown as { unref?: () => void }).unref?.();
               }),
             ]);
 
@@ -253,13 +289,17 @@ export const test = base.extend({
             );
           }
 
-          errors.push({
-            url,
-            status: 200,
-            statusText: "Flow Error",
-            responseBody: verdict.message,
-            type: advisory ? "flow_error_advisory" : "flow_error",
-          });
+          if (advisory) {
+            advisoryFlowErrors.push({ url, message: verdict.message });
+          } else {
+            errors.push({
+              url,
+              status: 200,
+              statusText: "Flow Error",
+              responseBody: verdict.message,
+              type: "flow_error",
+            });
+          }
 
           // Fail the running test, not just its teardown. The throw escapes this
           // async listener as an unhandled rejection, which Playwright attributes
@@ -349,6 +389,15 @@ export const test = base.extend({
       );
     }
 
+    // New coverage on the v2 run path (#1162). Logged, never failing, until the
+    // hatch audit — step 2 in `flow-error-policy.ts`. Printed on its own rather
+    // than folded into the count below, which is the human gate for HTTP errors.
+    if (advisoryFlowErrors.length > 0) {
+      console.log(
+        `\n   ⚠️  ${advisoryFlowErrors.length} flow execution error(s) on the v2 run path — ADVISORY: these do NOT fail the test yet. Review them before trusting this run.`,
+      );
+    }
+
     // Check for errors and fail test if not allowed
     if (errors.length > 0) {
       const flowErrors = errors.filter((e) => e.type === "flow_error");
@@ -359,16 +408,6 @@ export const test = base.extend({
       if (flowErrors.length > 0) {
         console.log(
           `   ⚠️  ${flowErrors.length} flow execution error(s) detected`,
-        );
-      }
-      const advisoryFlowErrors = errors.filter(
-        (e) => e.type === "flow_error_advisory",
-      );
-      if (advisoryFlowErrors.length > 0) {
-        // New coverage on the v2 run path (#1162). Logged, not failing, until the
-        // hatch audit — step 2 in `flow-error-policy.ts`.
-        console.log(
-          `   ⚠️  ${advisoryFlowErrors.length} flow execution error(s) on the v2 run path — ADVISORY: these do NOT fail the test yet. Review them before trusting this run.`,
         );
       }
       if (httpErrors.length > 0) {
