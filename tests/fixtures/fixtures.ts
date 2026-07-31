@@ -1,6 +1,28 @@
 // tests/fixtures.ts
 import { test as base, expect, type Page } from "@playwright/test";
 import { classifyHttpError } from "./http-error-policy";
+import {
+  classifyFlowError,
+  isRunStreamUrl,
+  isUnreadableStream,
+} from "./flow-error-policy";
+
+/**
+ * How long a run stream's body may take to arrive.
+ *
+ * An SSE run stream closes when the run does, so the old 2 s bound guaranteed a
+ * miss on the endpoint that matters most (#1162). This is the per-test timeout
+ * from `playwright.config.ts` minus a margin for teardown: a read that outlives
+ * the test cannot produce a verdict anyway.
+ */
+const RUN_STREAM_READ_TIMEOUT_MS = 240_000;
+
+/**
+ * How long teardown waits for in-flight run-stream reads before rendering its
+ * verdict. Bounded on purpose: a wedged backend can leave a stream open forever,
+ * and a fixture that hangs is worse than one that reports what it has.
+ */
+const PENDING_READ_DRAIN_MS = 15_000;
 
 /**
  * The escape hatches this fixture bolts onto `page`.
@@ -49,6 +71,13 @@ export const test = base.extend({
      * tests (the open half of #1084).
      */
     const ignoredByPolicy = new Map<string, number>();
+    /**
+     * Run-stream body reads still in flight. Awaited (bounded) before the
+     * teardown verdict: an SSE stream resolves late by construction, and the
+     * previous code's only gate for such a read was a race it usually lost —
+     * the same undercount hazard already documented for HTTP errors below.
+     */
+    const pendingBodyReads = new Set<Promise<void>>();
 
     // Add helper method to page context
     (page as any).allowFlowErrors = () => {
@@ -110,33 +139,33 @@ export const test = base.extend({
         }
       }
 
-      // Monitor event delivery endpoints for error messages (streaming/polling/direct)
-      if (
-        status === 200 &&
-        (url.includes("/events?event_delivery=") ||
-          url.includes("/build/") ||
-          url.includes("/run/"))
-      ) {
+      // Monitor the run-stream endpoints for execution errors. Which URLs those
+      // are, and which shapes count as a failure, live in `flow-error-policy.ts`
+      // where `npm run test:units` covers them — this used to be an inline URL
+      // list plus an inline shape check, and on 1.12.x neither could see a
+      // playground run: it is `POST /api/v2/workflows` (in no list) served as
+      // `text/event-stream` (skipped wholesale). An Anthropic 400 therefore
+      // produced NO verdict at all, which is how #1059's failure ended up
+      // attributed to a count assertion (#1162).
+      if (status === 200 && isRunStreamUrl(url)) {
+        const bodyRead = (async () => {
         try {
           const headers = response.headers();
           const contentType = (headers["content-type"] || "").toLowerCase();
-          const streamingContentHints = [
-            "text/event-stream",
-            "application/grpc",
-            "application/octet-stream",
-            "application/x-ndjson",
-          ];
-          const isStreamLike = streamingContentHints.some((hint) =>
-            contentType.includes(hint),
-          );
-          if (isStreamLike) {
+          if (isUnreadableStream(contentType)) {
             console.log(
-              `Skipping streaming response body parsing for ${url} (${contentType || "unknown content-type"})`,
+              `Skipping unreadable response body for ${url} (${contentType || "unknown content-type"})`,
             );
             return;
           }
 
-          const READ_BODY_TIMEOUT_MS = 2000;
+          // An SSE run stream only closes when the run does, so 2 s is a
+          // guaranteed miss for the endpoint that matters most. The read is
+          // bounded by the spec's own patience instead, and the fixture waits for
+          // in-flight reads before it renders a verdict (see below).
+          const READ_BODY_TIMEOUT_MS = contentType.includes("text/event-stream")
+            ? RUN_STREAM_READ_TIMEOUT_MS
+            : 2000;
           const bodyTimeoutToken = Symbol("response-body-timeout");
           let responseBody: string | undefined;
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -181,87 +210,32 @@ export const test = base.extend({
             return;
           }
 
-          // Try to parse as JSON and extract error details
-          let errorPreview: string | null = null;
-          let hasError = false;
-
-          try {
-            const lines = responseBody.split("\n");
-            for (const line of lines) {
-              if (line.trim()) {
-                try {
-                  const json = JSON.parse(line);
-
-                  // Check for error in params field (build errors)
-                  if (json.data?.build_data?.params?.startsWith("Error")) {
-                    errorPreview = json.data.build_data.params;
-                    hasError = true;
-                    break;
-                  }
-
-                  // Check for error: true (not error: false)
-                  if (json.data?.error === true || json.error === true) {
-                    const errMsg =
-                      json.data?.error_message ||
-                      json.error_message ||
-                      "Unknown error";
-                    errorPreview = errMsg;
-                    hasError = true;
-                    break;
-                  }
-                } catch (lineParseErr) {
-                  // Skip lines that aren't valid JSON
-                }
-              }
-            }
-          } catch (parseErr) {
-            // Fallback to string search if JSON parsing completely fails
-          }
-
-          // Fallback: check for Python exceptions in the raw text
-          if (!hasError) {
-            const exceptionPatterns = [
-              /NameError: .+/,
-              /TypeError: .+/,
-              /ValueError: .+/,
-              /AttributeError: .+/,
-              /ImportError: .+/,
-              /KeyError: .+/,
-              /An error occured .+/,
-            ];
-
-            for (const pattern of exceptionPatterns) {
-              const match = responseBody.match(pattern);
-              if (match) {
-                errorPreview = match[0];
-                hasError = true;
-                break;
-              }
-            }
-          }
-
-          if (hasError && errorPreview) {
+          const verdict = classifyFlowError(responseBody);
+          if (verdict.failed) {
             console.log(`🚨 Flow Error Detected in Event Stream - ${url}`);
-            console.log(`   Error: ${errorPreview}`);
+            console.log(`   Shape: ${verdict.shape}`);
+            console.log(`   Error: ${verdict.message}`);
 
-            const error = {
+            errors.push({
               url,
               status: 200,
               statusText: "Flow Error",
-              responseBody: errorPreview,
+              responseBody: verdict.message,
               type: "flow_error",
-            };
-            errors.push(error);
+            });
 
-            // Fail immediately if flow errors are not allowed
+            // Fail immediately if flow errors are not allowed. This path is
+            // best-effort: the handler is detached, so on an SSE stream the body
+            // resolves long after the assertion that would have been interrupted.
+            // The gate that actually holds is the teardown check below, which is
+            // why the fixture waits for in-flight reads before evaluating it.
             if (!allowFlowErrors) {
               const errorMessage =
                 `Flow execution error detected during test:\n\n` +
                 `URL: ${url}\n` +
-                `Error: ${errorPreview}\n\n` +
+                `Error: ${verdict.message}\n\n` +
                 `If this error is expected, call page.allowFlowErrors() at the start of your test.`;
 
-              // Use page.close() to fail the test immediately
               (page as any).emit("pageerror", new Error(errorMessage));
               throw new Error(errorMessage);
             }
@@ -276,10 +250,35 @@ export const test = base.extend({
           }
           // Ignore parsing errors for event streams
         }
+        })();
+        pendingBodyReads.add(bodyRead);
+        void bodyRead
+          .catch(() => {})
+          .finally(() => pendingBodyReads.delete(bodyRead));
       }
     });
 
     await use(page);
+
+    // Let in-flight run-stream reads land before judging the test. Without this
+    // the flow_error gate is decided by whether a body happened to resolve in
+    // time, which for an SSE stream it usually did not (#1162).
+    if (pendingBodyReads.size > 0) {
+      const drained = await Promise.race([
+        Promise.allSettled([...pendingBodyReads]).then(() => true),
+        new Promise<false>((resolve) =>
+          setTimeout(() => resolve(false), PENDING_READ_DRAIN_MS),
+        ),
+      ]);
+      if (!drained) {
+        // Say it out loud: an unread run stream means the flow_error verdict for
+        // this test is unknown, not clean. Same rule as the daily's runguard
+        // (#1012) — a verdict that cannot be produced must not read as a pass.
+        console.log(
+          `\n⚠️  ${pendingBodyReads.size} run-stream body read(s) did not finish within ${PENDING_READ_DRAIN_MS / 1000}s — flow-execution errors on those streams were NOT evaluated for this test.`,
+        );
+      }
+    }
 
     if (process.env.PW_HTTP_ERROR_DEBUG === "1" && ignoredByPolicy.size > 0) {
       const breakdown = [...ignoredByPolicy.entries()]
