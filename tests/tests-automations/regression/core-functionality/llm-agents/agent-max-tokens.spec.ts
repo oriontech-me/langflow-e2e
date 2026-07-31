@@ -5,8 +5,7 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
-import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import {
   closeAdvancedOptions,
   openAdvancedOptions,
@@ -117,23 +116,28 @@ function getTestTargets(): TestTarget[] {
   }));
 }
 
-// Ids of flows created by loadAgent — deleted id-scoped in afterEach.
-// SimpleAgentTemplatePage.load() no longer wipes existing flows (the cross-worker
-// wipe was removed in #553), so each loaded template persists until cleaned up.
-const createdFlowIds: string[] = [];
+// Id-scoped flow cleanup via the shared tracker (#1108). It captures every
+// `POST /api/v1/flows` → 201 the page makes, which is what the previous
+// `afterEach` could not: that one only knew the id `load()` RETURNED, so a
+// `load()` throwing AFTER creating the flow leaked it — and the #751/#1072
+// credential-settle guard throws exactly there. Measured while working #1059: one
+// orphan `Simple Agent` per failed load, on both local bursts.
+// SimpleAgentTemplatePage.load() does not wipe existing flows (the cross-worker
+// wipe left in #553), and this is never a delete-all sweep either.
+let flows: ReturnType<typeof trackCreatedFlows>;
+
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
 
 test.afterEach(async ({ request }) => {
-  if (createdFlowIds.length === 0) return;
-  const bearer = await getAuthToken(request);
-  for (const id of createdFlowIds.splice(0)) {
-    await deleteFlow(request, id, { headers: { Authorization: bearer } });
-  }
+  await flows.cleanup(request);
+  flows.dispose();
 });
 
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
   try {
-    const flowId = await new SimpleAgentTemplatePage(page).load(options);
-    createdFlowIds.push(flowId);
+    await new SimpleAgentTemplatePage(page).load(options);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
@@ -195,7 +199,17 @@ async function getSavedMaxTokens(page: Page): Promise<unknown> {
 // Seed the prompt on the ChatInput node (the Playground prefill re-injects the
 // template default asynchronously and would corrupt typed text — see
 // agent-multimodal-image-input.md), then send it and wait for the response to
-// complete (token-usage badge renders only on completion).
+// complete on a MODEL-AGNOSTIC signal before touching the token-usage badge.
+//
+// The badge count used to BE the completion gate, which is what made #1059
+// unattributable: "still generating", "finished without a badge" and "finished
+// with an error" all surfaced as `toHaveCount … Received: 0` after 120 s, with the
+// Stop-button wait before it swallowed by a `.catch(() => {})`. #569 had already
+// root-caused that exact pattern on memory-history-regression.spec.ts — not every
+// model/response emits the badge, so its count cannot mean "done". Gate on the
+// same pair that spec uses (the turn mounts, then the generating indicator
+// clears), then assert the badge separately so each failure names its own cause.
+// No timeout was loosened: the worst case went from ~248 s to ~205 s.
 async function runPrompt(page: Page): Promise<string> {
   const node = page.locator(
     '[data-testid^="rf__node-ChatInput"] [data-testid="textarea_str_input_value"]',
@@ -208,15 +222,35 @@ async function runPrompt(page: Page): Promise<string> {
 
   await page.getByTestId("playground-btn-flow-io").click();
   await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({ timeout: 30000 });
+
+  const messages = page.getByTestId("div-chat-message");
+  const before = await messages.count();
   await page.getByTestId("button-send").last().click();
 
-  const stop = page.getByRole("button", { name: "Stop" });
-  if (await stop.isVisible({ timeout: 8000 }).catch(() => false)) {
-    await stop.waitFor({ state: "hidden", timeout: 120000 }).catch(() => {});
-  }
-  await expect(page.getByTestId("chat-message-token-usage")).toHaveCount(1, { timeout: 120000 });
+  // 1. The turn actually started — guards the "checked completion before
+  //    generation started" race that an indicator-only wait returns early on
+  //    (#354). `toBeGreaterThan` rather than an exact count, so it holds whether
+  //    or not the user bubble carries this testid.
+  await expect
+    .poll(() => messages.count(), { timeout: 60000 })
+    .toBeGreaterThan(before);
+  // 2. Generation finished. This is the completion signal because it is emitted
+  //    for every model and every response (#569).
+  await expect(page.getByTestId("button-stop")).toBeHidden({ timeout: 120000 });
+  await expect(page.getByTestId("button-send").last()).toBeVisible({ timeout: 10000 });
 
-  return (await page.getByTestId("div-chat-message").last().innerText()).trim();
+  const reply = (await messages.last().innerText()).trim();
+
+  // 3. Only now the observable itself. A finished turn that renders no badge is a
+  //    MISSING OBSERVABLE, not a slow model — and the message says so, quoting the
+  //    reply that did render (an error bubble included) instead of timing out blind.
+  await expect(
+    page.getByTestId("chat-message-token-usage"),
+    `the finished response must expose a token-usage badge — it is the max_tokens ` +
+      `observable this spec reads. Rendered reply: ${reply.slice(0, 300)}`,
+  ).toHaveCount(1, { timeout: 15000 });
+
+  return reply;
 }
 
 // "1.9K" -> 1900, "46" -> 46, missing/empty -> 0 (a tight cap can be fully
@@ -248,7 +282,7 @@ const targets = getTestTargets();
 // Each test loads the Simple Agent template (creating a flow) and runs it in the
 // shared Playground; serial mode + --workers=1 keeps that shared instance state
 // deterministic and avoids named-flow collisions. Flows are deleted id-scoped in
-// afterEach (load() no longer wipes them — see #553).
+// afterEach from the tracker above (load() does not wipe them — see #553).
 test.describe.configure({ mode: "serial" });
 
 for (const { label, options, skipReason } of targets) {
