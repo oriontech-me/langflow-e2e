@@ -1,6 +1,5 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -20,7 +19,7 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
-import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
+import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 
 /**
  * Agent context_id continuity (QA-CHECKLIST §6.3 "Agent uses custom
@@ -50,78 +49,6 @@ import { providerSkipReasons } from "../../../../helpers/provider-setup/provider
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
-}
-
-interface ModelRecord {
-  provider: string;
-  model: string;
-}
-
-interface TestTarget {
-  label: string;
-  options: LoadSimpleAgentOptions;
-  skipReason?: string;
-}
-
-function getModelsFromJson(): ModelRecord[] {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/models.json",
-  );
-  if (!fs.existsSync(jsonPath)) {
-    console.warn("models.json not found — run collect-models.spec.ts first.");
-    return [];
-  }
-  return JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ModelRecord[];
-}
-
-function getTestTargets(): TestTarget[] {
-  const skipReasons = providerSkipReasons();
-
-  if (process.env.MODEL_TEST_ID) {
-    const model = process.env.MODEL_TEST_ID;
-    const allModels = getModelsFromJson();
-    const record = allModels.find((m) => m.model === model);
-    if (!record) {
-      console.warn(`MODEL_TEST_ID="${model}" not found in models.json — provider cannot be inferred.`);
-      return [{ label: `model:${model}`, options: { model } }];
-    }
-    const provider = record.provider as Provider;
-    return [{
-      label: `${provider} / ${model}`,
-      options: { provider, model },
-      skipReason: skipReasons.get(provider),
-    }];
-  }
-
-  const allModels = getModelsFromJson();
-  if (allModels.length === 0) {
-    const fallbackProvider = Object.keys(providerConfigMap)[0] as Provider;
-    console.warn("models.json not found or empty — run collect-models.spec.ts first.");
-    return [{
-      label: `provider:${fallbackProvider} (fallback)`,
-      options: { provider: fallbackProvider },
-      skipReason: skipReasons.get(fallbackProvider),
-    }];
-  }
-
-  let models = allModels;
-  if (process.env.MODEL_TEST_PROVIDER) {
-    models = models.filter((m) => m.provider === process.env.MODEL_TEST_PROVIDER);
-  } else if (process.env.ALL_MODELS !== "true") {
-    const seen = new Set<string>();
-    models = models.filter((m) => {
-      if (seen.has(m.provider)) return false;
-      seen.add(m.provider);
-      return true;
-    });
-  }
-
-  return models.map((m) => ({
-    label: `${m.provider} / ${m.model}`,
-    options: { provider: m.provider as Provider, model: m.model },
-    skipReason: skipReasons.get(m.provider),
-  }));
 }
 
 // Flows created by test 1 are tracked here and deleted by id in afterEach —
@@ -408,7 +335,7 @@ async function retrieveViaMessageHistory(
   return textarea.inputValue();
 }
 
-const targets = getTestTargets();
+const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // Test 1 loads the Simple Agent template — serial + --workers=1 per the
 // agent-area rule. Cleanup is id-scoped; nothing here wipes flows.
