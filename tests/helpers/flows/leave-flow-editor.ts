@@ -62,12 +62,30 @@ const HOME_MARKER = "home-dropdown-menu";
  */
 export const BLOCKER_GRACE_MS = 15000;
 
-/** Budget for the home list to render, on either path. */
-const HOME_TIMEOUT_MS = 30000;
+/**
+ * How long the flows list may take to render before the exit is called broken.
+ *
+ * Deliberately LONGER than `BLOCKER_GRACE_MS` and tracked as its own deadline:
+ * the two windows answer different questions and collapsing them costs a real
+ * budget. `BLOCKER_GRACE_MS` bounds "the dialog is up and not clearing" — the
+ * one thing the blocker being on screen already tells us. This bounds "nothing
+ * is on screen yet", which is the ordinary in-flight navigation: a client-side
+ * route change plus the listing's own `GET /api/v1/flows/`, and on a saturated
+ * single-backend daily that request is exactly what runs long (#790 measured
+ * 45 s for a single save). The 30 s is inherited, not invented — it is what
+ * `duplicate-flow` and `export-import-flow` already allowed this assertion
+ * before the helper existed.
+ *
+ * Charging the blocker's 15 s to a healthy-but-slow navigation would fail it as
+ * `stuck`, i.e. report the swallowed-click class (#420 / LE-2019) on a run where
+ * the click landed fine — the same mis-attribution this helper exists to end,
+ * only with a confident label instead of a silent timeout.
+ */
+export const HOME_TIMEOUT_MS = 30000;
 
 /** What the exit did, once the click has been made. */
 export type EditorExitVerdict =
-  /** Nothing has resolved yet and the grace window is still open — keep polling. */
+  /** Nothing has resolved yet and its own window is still open — keep polling. */
   | "pending"
   /** Home rendered. */
   | "left"
@@ -88,11 +106,19 @@ export type EditorExitVerdict =
  * still on screen, and they send a reader to opposite places (the #420 /
  * LE-2019 dead-click class vs. this upstream defect). Collapsing them would
  * re-create the unattributed timeout this helper exists to replace.
+ *
+ * The two terminal failures are gated on SEPARATE deadlines, and they must stay
+ * separate. `graceExpired` (`BLOCKER_GRACE_MS`) only ever promotes a dialog that
+ * is already up; `homeBudgetExpired` (`HOME_TIMEOUT_MS`) is the only thing that
+ * may call an empty screen `stuck`. Sharing one deadline would charge the
+ * blocker's short grace window to an ordinary slow navigation and report it as a
+ * dead click.
  */
 export function classifyEditorExit(observed: {
   homeVisible: boolean;
   blockerVisible: boolean;
   graceExpired: boolean;
+  homeBudgetExpired: boolean;
 }): EditorExitVerdict {
   // Home wins even with the dialog still painted: the route changed, which is
   // the only thing the caller asked for. The dialog animates out, so it is
@@ -104,15 +130,25 @@ export function classifyEditorExit(observed: {
   if (observed.blockerVisible) {
     return observed.graceExpired ? "blocked-deadlocked" : "pending";
   }
-  return observed.graceExpired ? "stuck" : "pending";
+  // Nothing on screen is the in-flight navigation, so it gets the full home
+  // budget — NOT the blocker's grace window.
+  return observed.homeBudgetExpired ? "stuck" : "pending";
 }
 
 /**
  * The line a triager reads when the deadlock fires. It has to name the defect,
  * not just the symptom — an unattributed `home-dropdown-menu` timeout is exactly
  * what #1005 spent a 24-run burst re-deriving.
+ *
+ * The window DEFAULTS to the constant this verdict is actually gated on, so the
+ * call sites pass nothing and the unit lane can pin the pairing. Passing it in
+ * left the "which budget does this message quote" wiring as an untested
+ * one-liner — the very drift the test asserting against the real constant was
+ * written to prevent.
  */
-export function formatEditorExitWarning(graceMs: number): string {
+export function formatEditorExitWarning(
+  graceMs: number = BLOCKER_GRACE_MS,
+): string {
   return (
     `[leaveFlowEditor] the editor exit is deadlocked behind SaveChangesModal ` +
     `("${BLOCKER_TITLE}") — it did not clear in ${graceMs}ms, and in autosave ` +
@@ -123,13 +159,22 @@ export function formatEditorExitWarning(graceMs: number): string {
   );
 }
 
-/** Same, for the swallowed-click case — a different cause and a different fix. */
-export function formatEditorExitStuckFailure(graceMs: number): string {
+/**
+ * Same, for the swallowed-click case — a different cause and a different fix.
+ *
+ * Defaults to the HOME budget, not the blocker's grace window: that is the
+ * window this verdict actually waited out, and quoting the shorter one would
+ * understate the evidence behind a claim as specific as "the click never
+ * registered".
+ */
+export function formatEditorExitStuckFailure(
+  homeBudgetMs: number = HOME_TIMEOUT_MS,
+): string {
   return (
     `[leaveFlowEditor] the chevron click did not navigate and nothing is ` +
-    `blocking it: no flows list and no SaveChangesModal after ${graceMs}ms. ` +
-    `This is the swallowed-click class (#420 / LE-2019), NOT the #1153 exit ` +
-    `deadlock — the editor is simply still on screen.`
+    `blocking it: no flows list and no SaveChangesModal after ` +
+    `${homeBudgetMs}ms. This is the swallowed-click class (#420 / LE-2019), ` +
+    `NOT the #1153 exit deadlock — the editor is simply still on screen.`
   );
 }
 
@@ -152,8 +197,12 @@ export interface LeaveFlowEditorOptions {
  * assertion. On the happy path it costs the save barrier plus one visibility
  * poll; it only pays the grace window when the blocker actually shows up.
  *
- * The closing assertion is unconditional, so a navigation that genuinely never
- * happens still fails the caller.
+ * It never shortens the budget the call sites had before it: an exit that is
+ * simply slow keeps the full `HOME_TIMEOUT_MS`, and only a dialog that is
+ * demonstrably on screen is judged on the shorter `BLOCKER_GRACE_MS`.
+ *
+ * Every path either throws with the cause named or ends on the closing
+ * assertion, so a navigation that never happened cannot be reported as an exit.
  *
  * Only valid for editors whose exit target is the default flows list — the
  * chevron's own handler is `navigate("/")`. A caller that exits into a specific
@@ -184,13 +233,20 @@ export async function leaveFlowEditor(
   // Poll both rather than awaiting either: a `waitFor` on the blocker would pay
   // its full timeout on every healthy exit, and a `waitFor` on home would hide
   // which of the two failure modes happened.
-  const deadline = Date.now() + BLOCKER_GRACE_MS;
+  //
+  // Two deadlines, not one. The blocker's grace window is short because a dialog
+  // that is already up is evidence in itself; an empty screen is just an
+  // in-flight navigation and gets the full home budget. Sharing one deadline
+  // would fail a slow-but-healthy exit as a dead click.
+  const blockerDeadline = Date.now() + BLOCKER_GRACE_MS;
+  const homeDeadline = Date.now() + HOME_TIMEOUT_MS;
   let verdict: EditorExitVerdict;
   for (;;) {
     verdict = classifyEditorExit({
       homeVisible: await home.isVisible().catch(() => false),
       blockerVisible: await blocker.isVisible().catch(() => false),
-      graceExpired: Date.now() >= deadline,
+      graceExpired: Date.now() >= blockerDeadline,
+      homeBudgetExpired: Date.now() >= homeDeadline,
     });
     if (verdict !== "pending") break;
     await page.waitForTimeout(200);
@@ -200,21 +256,32 @@ export async function leaveFlowEditor(
     if (!escapeDeadlock) {
       // Thrown, not warned: console output is not attached to the Playwright
       // failure, and the whole point is that the reason reaches the report.
-      throw new Error(formatEditorExitWarning(BLOCKER_GRACE_MS));
+      throw new Error(formatEditorExitWarning());
     }
     // Loud on purpose — a silent recovery would hide how often #1153 fires,
     // which is the only signal the suite has on it.
     console.warn(
-      `${formatEditorExitWarning(BLOCKER_GRACE_MS)} Escaping with a full page ` +
-        `load; anything this flow had unsaved is discarded.`,
+      `${formatEditorExitWarning()} Escaping with a full page load; anything ` +
+        `this flow had unsaved is discarded.`,
     );
+    // Load-bearing Playwright default: `FlowPage` registers a `beforeunload`
+    // that calls `preventDefault()` whenever `changesNotSaved || isBuilding` —
+    // i.e. always, on this path. The load only completes because Playwright
+    // ACCEPTS beforeunload dialogs when no `page.on("dialog")` handler is
+    // registered (`dialog.close()` → `accept()` for that type, `dismiss()` for
+    // every other). No spec in this repo registers one; the first that does
+    // would silently turn this escape into a cancelled navigation.
     await page.goto("/");
   }
 
   if (verdict === "stuck") {
-    throw new Error(formatEditorExitStuckFailure(BLOCKER_GRACE_MS));
+    throw new Error(formatEditorExitStuckFailure());
   }
 
+  // Reached only with home already visible (`left` / `blocked-settled`) or right
+  // after the escape's page load, so this never stacks a second full budget on
+  // top of the poll above. Kept unconditional so the helper cannot return a
+  // verdict it did not actually observe.
   await expect(home).toBeVisible({ timeout: HOME_TIMEOUT_MS });
   return verdict;
 }

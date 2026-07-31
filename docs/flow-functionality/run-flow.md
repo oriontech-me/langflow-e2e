@@ -87,7 +87,6 @@ does. Shared-helper blast radius (`awaitBootstrapTest`,
 milliseconds once the list is rendered and returns immediately on non-list pages,
 so no consumer's behavior changes.
 
-
 **Verdict: product defect, not a test defect.** An enabled button with a wired
 `onClick` whose click is a no-op while the list loads is broken behavior — invisible
 to a human (who takes more than a second to move the mouse), fatal to a test that
@@ -127,7 +126,12 @@ was not what happened.
 Step 5 now goes through `leaveFlowEditor(page)`, which drains in-flight flow
 saves before the click (prevention — `changesNotSaved` is exactly what
 `useBlocker` gates on) and throws with the mechanism named if the dialog is still
-up after 15 s. The recovery-by-page-load that helper also offers is deliberately
+up after 15 s. That 15 s is charged **only** to a dialog that is demonstrably on
+screen; an exit where nothing has rendered yet is an ordinary in-flight
+navigation and keeps the full 30 s the listing assertion has always had —
+otherwise a slow-but-healthy exit would be reported as the swallowed-click class
+above, which is the same mis-attribution with a more confident label.
+The recovery-by-page-load that helper also offers is deliberately
 **not** enabled here: everything the rest of this spec asserts lives in the flow
 built on the canvas, so discarding it would trade a clean failure at the exit for
 an inscrutable one at the Run Flow dropdown.
