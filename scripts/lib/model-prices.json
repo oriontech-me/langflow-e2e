@@ -1,0 +1,7 @@
+{
+  "_comment": "USD per 1M tokens. Hand-edited in a PR. A model absent here keeps its token counts and reports usd_estimated: null — see scripts/lib/token-cost.mjs.",
+  "gpt-4o-mini": { "inputPerMillion": 0.15, "outputPerMillion": 0.6 },
+  "gpt-4o": { "inputPerMillion": 2.5, "outputPerMillion": 10.0 },
+  "claude-sonnet-4-6": { "inputPerMillion": 3.0, "outputPerMillion": 15.0 },
+  "gemini-2.5-flash": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 }
+}
