@@ -594,6 +594,48 @@ jobs:
         if: needs.detect-specs.outputs.needs_models == 'true'
         run: node scripts/select-pr-model-target.mjs --provider openai
 
+      # In-run token consumption recorder, extended to this lane (#1183 — measure
+      # the suite's real LLM spend per lane/provider). Same mechanism as
+      # daily-stable.yml (#1197): poll /api/v1/monitor/traces and price what each
+      # trace spent, because deleting a flow 404s its trace and this suite deletes
+      # every flow it creates, so the only place to read the data is DURING the run.
+      #
+      # Placed here — after Collect models / the health gate / the model pin,
+      # right before the actual Playwright step — so it only ever runs where
+      # specs actually run: the job itself is already gated on
+      # `needs.detect-specs.outputs.has_specs == 'true'`, and this step carries
+      # no separate condition of its own, same as "Run impacted specs" below (an
+      # earlier hard failure in this job skips both identically).
+      #
+      # MEASUREMENT-ONLY on this lane: --summarize (below, after the run) still
+      # renders a step-summary table, but TOKENS_SUPPRESS_HISTORY keeps it from
+      # writing reports/token-history.jsonl — that file is the daily's series,
+      # one line per FULL @stable sweep, and this lane's scope is whatever
+      # subset of specs the import graph selected for THIS PR (capped at
+      # IMPACTED_SPEC_CAP, frequently zero LLM specs at all). Mixing the two
+      # would corrupt the trend and the anomaly baseline the daily itself relies
+      # on (see the summarizer's own comment on the knob).
+      #
+      # DIAGNOSTIC ONLY: continue-on-error, and it never gates the run.
+      - name: Start the token consumption recorder
+        shell: bash
+        continue-on-error: true
+        run: |
+          nohup node scripts/watch-tokens.mjs > /tmp/tokens.log 2>&1 &
+          echo "$!" > /tmp/tokens.pid
+          disown
+          echo "Token recorder started (pid $(cat /tmp/tokens.pid))."
+        env:
+          TOKENS_BASE_URL: http://localhost:7860
+          TOKENS_OUT: token-probes.jsonl
+          TOKENS_INTERVAL_MS: "15000"
+          TOKENS_TIMEOUT_MS: "8000"
+          # Below the job's timeout-minutes: 60 so this is a real backstop, not
+          # dead configuration reached only after the runner already killed the
+          # job. Same reasoning as the daily's TOKENS_MAX_SECONDS.
+          TOKENS_MAX_SECONDS: "3300"
+          TOKENS_DETAIL_CAP: "25"
+
       - name: Run impacted specs
         env:
           CI: "true"
@@ -619,6 +661,10 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           SPECS: ${{ needs.detect-specs.outputs.specs }}
+          # Turns the cleanup sidecar on for this lane (#1183), same as
+          # daily-stable.yml: with this unset (local runs) the helper makes no
+          # request and writes no file.
+          TOKENS_ATTRIB: token-attrib.jsonl
         run: |
           echo "Running specs: $SPECS"
           # shellcheck disable=SC2086
@@ -647,6 +693,57 @@ jobs:
           # shellcheck disable=SC2086
           npx playwright test $SPECS --grep "@destructive" --pass-with-no-tests \
             --reporter=github --output=test-results-destructive
+
+      # Stop the recorder, price what it saw, and upload the raw JSONL — mirrors
+      # daily-stable.yml's shard-level "Stop and collect" + merge-job "Summarize"
+      # steps, collapsed into one job since this lane has no shards to merge.
+      # always(): the recorder's data is most useful precisely when the run went
+      # red, and continue-on-error on every step here means a defect in the
+      # reporting itself can never touch the specs' own pass/fail.
+      - name: Stop and collect token consumption
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          # SIGTERM is the recorder's normal exit path: it stops after the
+          # current probe.
+          if [ -f /tmp/tokens.pid ]; then
+            kill "$(cat /tmp/tokens.pid)" 2>/dev/null || true
+          fi
+          # Let an in-flight append land before the file is copied — same
+          # reasoning and margin as the daily's own copy of this step.
+          sleep 10
+          mkdir -p tokens
+          cp token-probes.jsonl tokens/ 2>/dev/null || true
+          cp token-attrib.jsonl tokens/ 2>/dev/null || true
+          echo "--- token recorder stdout (tail) ---"
+          tail -n 5 /tmp/tokens.log 2>/dev/null || true
+
+      - name: Summarize token consumption
+        if: always()
+        continue-on-error: true
+        run: node scripts/watch-tokens.mjs --summarize
+        env:
+          TOKENS_DIR: tokens
+          TOKENS_PRICES: scripts/lib/model-prices.json
+          WORKFLOW: pr-validation
+          LANGFLOW_IMAGE: "langflowai/langflow-nightly:latest"
+          # Measurement-only lane (#1183): never add a line to
+          # reports/token-history.jsonl. See "Start the token consumption
+          # recorder" above and the summarizer's own comment on this knob for
+          # why a capped, per-PR subset is not comparable to the daily's series.
+          # Suppressed openly, not silently: the summarizer states this in both
+          # its log line and the step summary itself (#1012's rule).
+          TOKENS_SUPPRESS_HISTORY: "1"
+
+      - name: Upload token consumption
+        uses: actions/upload-artifact@v7
+        if: always()
+        continue-on-error: true
+        with:
+          name: tokens-pr-${{ github.run_id }}
+          path: tokens/
+          if-no-files-found: ignore
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v7

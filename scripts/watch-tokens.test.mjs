@@ -19,6 +19,10 @@ const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const daily = () =>
   realFs.readFileSync(path.join(REPO_ROOT, ".github/workflows/daily-stable.yml"), "utf8");
+const prValidation = () =>
+  realFs.readFileSync(path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"), "utf8");
+const manual = () =>
+  realFs.readFileSync(path.join(REPO_ROOT, ".github/workflows/manual.yml"), "utf8");
 
 // The exact span shape the spike measured: a component-level llm span with a null
 // modelName carrying the SAME usage as the inner provider span.
@@ -683,6 +687,110 @@ test("summarize never throws on a missing probe directory", async () => {
   assert.equal(await summarize({ env: { ...baseEnv, TOKENS_DIR: "nope" }, ...fs2, log: () => {} }), 0);
 });
 
+// --- TOKENS_SUPPRESS_HISTORY (#1183) ---
+//
+// pr-validation.yml and manual.yml run --summarize for the step-summary table
+// but must never add a line to reports/token-history.jsonl: their per-run
+// scope (a capped PR subset, an arbitrary manual dispatch) is not comparable
+// to the daily's fixed @stable sweep, and mixing it in would corrupt the
+// trend and the anomaly baseline. These tests pin: the write is suppressed,
+// the read is suppressed too (so an existing history file cannot seed a false
+// anomaly against a mismatched baseline), the suppression is logged, and it
+// is stated in the step summary itself — never silently (#1012's rule).
+
+test("TOKENS_SUPPRESS_HISTORY=1 writes no history line even though real trace data exists", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TOKENS_SUPPRESS_HISTORY: "1" };
+  const code = await summarize({ env, ...fs2, log: () => {} });
+  assert.equal(code, 0);
+  assert.equal(
+    fs2.appended["reports/token-history.jsonl"],
+    undefined,
+    "the history file must not be written when suppression is set",
+  );
+  // The run's own numbers must still be priced and rendered — suppression only
+  // affects the history file, not the step summary.
+  assert.match(fs2.written["summary.md"], /\*\*88 tokens\*\*/);
+});
+
+test("TOKENS_SUPPRESS_HISTORY=1 logs why, so a suppressed write does not read as a silent bug", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TOKENS_SUPPRESS_HISTORY: "1" };
+  const logs = [];
+  await summarize({ env, ...fs2, log: (msg) => logs.push(msg) });
+  assert.ok(
+    logs.some((l) => /TOKENS_SUPPRESS_HISTORY set/.test(l)),
+    `expected a log line naming the suppression, got: ${JSON.stringify(logs)}`,
+  );
+});
+
+test("TOKENS_SUPPRESS_HISTORY=1 states the suppression in the step summary itself", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TOKENS_SUPPRESS_HISTORY: "1" };
+  await summarize({ env, ...fs2, log: () => {} });
+  assert.match(
+    fs2.written["summary.md"],
+    /History append suppressed/i,
+    "a reader of the run's own step summary must not be left wondering why the history file did not change",
+  );
+});
+
+// #1197 review, finding I7's windowing fix (the anomaly baseline must be a
+// recent slice of history, not the whole all-time file) only matters when
+// history is actually read. A PR/manual run's totals are not comparable to the
+// daily's baseline AT ALL — a small subset's totals would read as a huge
+// negative "anomaly" against the daily's full-sweep numbers on every single
+// run — so suppression must skip the READ too, not only the write.
+test("TOKENS_SUPPRESS_HISTORY=1 does not read the existing history file for the anomaly baseline either", async () => {
+  const history = Array.from({ length: 5 }, () =>
+    JSON.stringify({ totals: { usd_estimated: 0.000001 }, by_spec: [] }),
+  ).join("\n");
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+    "reports/token-history.jsonl": `${history}\n`,
+  });
+  const env = { ...baseEnv, TOKENS_SUPPRESS_HISTORY: "1" };
+  const logs = [];
+  await summarize({ env, ...fs2, log: (msg) => logs.push(msg) });
+  // No history line is appended (nothing to assert anomalies on), and no
+  // anomaly line is rendered — proving the pre-existing (daily-scoped) history
+  // was never consulted for this run's baseline.
+  assert.equal(fs2.appended["reports/token-history.jsonl"], undefined);
+  assert.doesNotMatch(fs2.written["summary.md"], /🔺/);
+});
+
+test("TOKENS_SUPPRESS_HISTORY is case-insensitive and accepts 'true' as well as '1'", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TOKENS_SUPPRESS_HISTORY: "true" };
+  await summarize({ env, ...fs2, log: () => {} });
+  assert.equal(fs2.appended["reports/token-history.jsonl"], undefined);
+});
+
+test("TOKENS_SUPPRESS_HISTORY unset (or falsy) preserves the existing daily behaviour", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  assert.ok(await summarize({ env: { ...baseEnv, TOKENS_SUPPRESS_HISTORY: "0" }, ...fs2, log: () => {} }) === 0);
+  assert.ok(
+    fs2.appended["reports/token-history.jsonl"],
+    "an explicit '0' must behave exactly like the knob being absent — the daily never sets it",
+  );
+});
+
 test("a history-append failure is logged and summarize still resolves 0", async () => {
   const fs2 = fakeFs(
     { "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`, "prices.json": PRICES },
@@ -755,4 +863,121 @@ test("neither token step gates the run — the shard stop step AND the merge sum
   for (const start of [shardStep, mergeStep]) {
     assert.match(text.slice(start, start + 400), /continue-on-error: true/);
   }
+});
+
+// --- Structural guard: pr-validation.yml and manual.yml wiring (#1183) ---
+//
+// Same rationale as the daily's own guard above: neither the wedge nor a real
+// token spend can be reproduced on demand in a unit test, but the WIRING can
+// be asserted cheaply, and a silent regression here (a step quietly dropped
+// from a workflow edit) is exactly the failure mode these guards exist to
+// catch.
+
+test("pr-validation's E2E job starts the token recorder before the impacted-specs run and summarizes after, all steps continue-on-error", () => {
+  const text = prValidation();
+  const start = text.indexOf("node scripts/watch-tokens.mjs");
+  // Anchor on the STEP HEADER, not the bare phrase — the recorder-start step's
+  // own comment mentions "Run impacted specs" in prose (to explain why it
+  // needs no separate `if`), which sits BEFORE the recorder actually starts
+  // and would otherwise false-positive this guard.
+  const run = text.indexOf("- name: Run impacted specs");
+  const stop = text.indexOf("Stop and collect token consumption");
+  const summarizeStep = text.indexOf("Summarize token consumption");
+  assert.ok(start > 0, "pr-validation.yml no longer starts the token recorder");
+  assert.ok(run > 0, "pr-validation.yml no longer runs the impacted specs step");
+  assert.ok(stop > 0, "pr-validation.yml no longer stops/collects the token recorder");
+  assert.ok(summarizeStep > 0, "pr-validation.yml no longer summarizes token consumption");
+  assert.ok(start < run, "the token recorder must start BEFORE the impacted-specs run");
+  assert.ok(stop > run, "the stop/collect step must come after the impacted-specs run");
+  assert.ok(summarizeStep > stop, "the summary must run after the stop/collect step");
+  for (const label of ["Start the token consumption recorder", "Stop and collect token consumption", "Summarize token consumption", "Upload token consumption"]) {
+    const at = text.indexOf(label);
+    assert.ok(at > 0, `pr-validation.yml is missing the "${label}" step`);
+    assert.match(
+      text.slice(at, at + 400),
+      /continue-on-error: true/,
+      `the "${label}" step must carry continue-on-error: true — it is diagnostic-only and must never gate the PR`,
+    );
+  }
+});
+
+test("pr-validation's impacted-specs step sets TOKENS_ATTRIB for the cleanup sidecar", () => {
+  const text = prValidation();
+  const run = text.indexOf("- name: Run impacted specs");
+  const nextStep = text.indexOf("- name:", run + 1);
+  assert.match(
+    text.slice(run, nextStep > 0 ? nextStep : run + 2000),
+    /TOKENS_ATTRIB:/,
+    "TOKENS_ATTRIB must be set on the impacted-specs step, same as the daily's @stable run step",
+  );
+});
+
+test("pr-validation's summarize step suppresses the history append (#1183)", () => {
+  const text = prValidation();
+  const summarizeStep = text.indexOf("- name: Summarize token consumption");
+  const nextStep = text.indexOf("- name:", summarizeStep + 1);
+  assert.match(
+    text.slice(summarizeStep, nextStep > 0 ? nextStep : summarizeStep + 2000),
+    /TOKENS_SUPPRESS_HISTORY:\s*"1"/,
+    "pr-validation.yml must set TOKENS_SUPPRESS_HISTORY — a capped PR subset must never enter reports/token-history.jsonl's daily series",
+  );
+});
+
+test("manual's e2e-docker job starts the token recorder before the test run and summarizes after, all steps continue-on-error", () => {
+  const text = manual();
+  const urlJobAt = text.indexOf("e2e-url:");
+  const dockerJobText = text.slice(0, urlJobAt > 0 ? urlJobAt : text.length);
+  const start = dockerJobText.indexOf("node scripts/watch-tokens.mjs");
+  const exportAttrib = dockerJobText.indexOf("TOKENS_ATTRIB=token-attrib.jsonl");
+  const run = dockerJobText.indexOf("Run tests and upload report");
+  const stop = dockerJobText.indexOf("Stop and collect token consumption");
+  const summarizeStep = dockerJobText.indexOf("Summarize token consumption");
+  assert.ok(start > 0, "manual.yml's e2e-docker job no longer starts the token recorder");
+  assert.ok(exportAttrib > 0, "manual.yml's e2e-docker job no longer exports TOKENS_ATTRIB");
+  assert.ok(run > 0, "manual.yml's e2e-docker job no longer runs the test step");
+  assert.ok(stop > 0, "manual.yml's e2e-docker job no longer stops/collects the token recorder");
+  assert.ok(summarizeStep > 0, "manual.yml's e2e-docker job no longer summarizes token consumption");
+  assert.ok(start < run, "the token recorder must start BEFORE the test run");
+  assert.ok(exportAttrib < run, "TOKENS_ATTRIB must be exported BEFORE the test run consumes it");
+  assert.ok(stop > run, "the stop/collect step must come after the test run");
+  assert.ok(summarizeStep > stop, "the summary must run after the stop/collect step");
+  for (const label of ["Start the token consumption recorder", "Stop and collect token consumption", "Summarize token consumption", "Upload token consumption"]) {
+    const at = dockerJobText.indexOf(label);
+    assert.ok(at > 0, `manual.yml's e2e-docker job is missing the "${label}" step`);
+    assert.match(
+      dockerJobText.slice(at, at + 400),
+      /continue-on-error: true/,
+      `the "${label}" step must carry continue-on-error: true — it is diagnostic-only and must never gate a dispatch`,
+    );
+  }
+});
+
+test("manual's summarize step (e2e-docker) suppresses the history append (#1183)", () => {
+  const text = manual();
+  const urlJobAt = text.indexOf("e2e-url:");
+  const dockerJobText = text.slice(0, urlJobAt > 0 ? urlJobAt : text.length);
+  const summarizeStep = dockerJobText.indexOf("- name: Summarize token consumption");
+  const nextStep = dockerJobText.indexOf("- name:", summarizeStep + 1);
+  assert.match(
+    dockerJobText.slice(summarizeStep, nextStep > 0 ? nextStep : summarizeStep + 2000),
+    /TOKENS_SUPPRESS_HISTORY:\s*"1"/,
+    "manual.yml must set TOKENS_SUPPRESS_HISTORY — an arbitrary dispatch scope must never enter reports/token-history.jsonl's daily series",
+  );
+});
+
+// The recorder polls TOKENS_BASE_URL, which defaults to localhost — e2e-docker's
+// own service container, not the external instance e2e-url targets (#1183). A
+// recorder started there would only ever log connection-refused errors, so this
+// guard pins the omission itself: the recorder must exist ONLY inside the
+// e2e-docker job's own text, never inside e2e-url's.
+test("the token recorder is NOT wired into manual's e2e-url job (it targets an external Langflow, not localhost)", () => {
+  const text = manual();
+  const urlJobAt = text.indexOf("e2e-url:");
+  assert.ok(urlJobAt > 0, "manual.yml no longer has an e2e-url job — this guard's premise is gone");
+  const urlJobText = text.slice(urlJobAt);
+  assert.doesNotMatch(
+    urlJobText,
+    /node scripts\/watch-tokens\.mjs/,
+    "the token recorder must not be started in the e2e-url job — it targets an external Langflow, not the localhost the recorder polls",
+  );
 });
