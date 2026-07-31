@@ -12,12 +12,17 @@
 // `github_network_*` bridges hand out.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   resolveEchoEndpoint,
   isPrivateIpv4,
   isLoopback,
   isIpv4,
 } from "./resolve-echo-endpoint.mjs";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 test("host-based job: Langflow gets the container IP, the job probes the published port", () => {
   // pr-validation / nightly / manual: no `container:`, so `getent` cannot resolve
@@ -165,4 +170,88 @@ test("isLoopback covers every shape the SSRF error message named", () => {
     assert.equal(isLoopback(h), true, h);
   }
   assert.equal(isLoopback("172.18.0.2"), false);
+});
+
+// ── Portability guard: nothing the containerized lane runs may need `jq` ─────
+//
+// The 2026-07-31 daily executed ZERO tests. All four shards aborted in this very
+// action, because it parsed the decision with `jq` and
+// `mcr.microsoft.com/playwright:v1.58.2-noble` ships none — its Dockerfile installs
+// curl/wget/gpg/ca-certificates, nodejs and git/openssh-client, nothing more.
+//
+// The bug survived review because `pr-validation.yml` is `runs-on: ubuntu-latest`
+// with no `container:`, where `jq` is preinstalled: the PR lane CANNOT reach the
+// topology it broke. `daily-stable.yml` is the only lane whose jobs are all
+// containerized, and it is unattended. So the invariant has to be asserted here or
+// it is only ever discovered by a lost day of @stable coverage.
+//
+// The convention already held everywhere else — every `jq` call site in the repo
+// (pr-validation, adaptive-impacted, migration-test, guard-dedicated-issue) sits in
+// a host-based job, and daily-stable's own three container jobs use `node -e`
+// instead — it was simply never written down.
+
+// Comment lines are stripped first: this file and the action both DISCUSS `jq` at
+// length, and a guard that tripped on the word rather than the call would force the
+// explanation out of the code that needs it.
+function shellLines(yaml) {
+  return yaml
+    .split("\n")
+    .filter((l) => !/^\s*#/.test(l))
+    .filter((l) => !/^\s*(#|description:)/.test(l));
+}
+
+function jqInvocations(yaml) {
+  // `--jq` is `gh`'s own built-in JSON filter, not the binary — `gh` implements it
+  // internally, so it stays available in a jq-less image and must not be flagged.
+  return shellLines(yaml).filter((l) => /(^|[\s|(`$])jq\b/.test(l) && !/--jq\b/.test(l));
+}
+
+const CONTAINERIZED_LANE = "daily-stable.yml";
+
+test(`${CONTAINERIZED_LANE} itself invokes no jq (all three of its jobs run in a container)`, () => {
+  const text = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", CONTAINERIZED_LANE), "utf8");
+  const lines = text.split("\n");
+
+  // Guard the premise too: if a job ever loses its `container:`, the reasoning above
+  // stops applying and this test should be revisited rather than quietly relaxed.
+  // Counted from the `jobs:` line down — 2-space keys also occur under `on:`
+  // (`schedule:`, `workflow_dispatch:`), which are not jobs.
+  const jobsAt = lines.findIndex((l) => /^jobs:\s*$/.test(l));
+  assert.ok(jobsAt > -1, `no top-level jobs: block found in ${CONTAINERIZED_LANE}`);
+  const body = lines.slice(jobsAt + 1);
+  const jobs = body.filter((l) => /^ {2}[a-z][a-z0-9-]*:\s*$/.test(l)).length;
+  const containers = body.filter((l) => /^ {4}container:\s*$/.test(l)).length;
+
+  assert.ok(jobs > 0, "no jobs parsed — the guard would pass vacuously");
+  assert.equal(
+    containers,
+    jobs,
+    `every job in ${CONTAINERIZED_LANE} must be containerized for this guard's premise to hold (${containers} container: for ${jobs} jobs)`,
+  );
+  assert.deepEqual(jqInvocations(text), []);
+});
+
+test(`every composite action ${CONTAINERIZED_LANE} uses invokes no jq`, () => {
+  const lane = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", CONTAINERIZED_LANE), "utf8");
+  const used = [...new Set([...lane.matchAll(/uses:\s*\.\/(\.github\/actions\/[a-z-]+)/g)].map((m) => m[1]))];
+
+  // A guard that silently checks nothing is the failure mode #1035/#1037 called out.
+  assert.ok(used.length > 0, `no local composite actions found in ${CONTAINERIZED_LANE} — the guard would pass vacuously`);
+  assert.ok(
+    used.includes(".github/actions/resolve-echo-endpoint"),
+    "the action this guard exists for is no longer used by the containerized lane",
+  );
+
+  for (const action of used) {
+    const text = fs.readFileSync(path.join(REPO_ROOT, action, "action.yml"), "utf8");
+    assert.deepEqual(jqInvocations(text), [], `${action}/action.yml invokes jq, which the Playwright container lacks`);
+  }
+});
+
+test("the guard flags a real jq call and ignores a comment or gh --jq", () => {
+  // Proving the guard can fail: a guard never seen red is a guard nobody can trust.
+  assert.deepEqual(jqInvocations('        OK="$(echo "$D" | jq -r .ok)"').length, 1);
+  assert.deepEqual(jqInvocations("        jq -e . <<<\"$D\"").length, 1);
+  assert.deepEqual(jqInvocations("        # we deliberately avoid jq here"), []);
+  assert.deepEqual(jqInvocations("          gh issue view 1 --json title --jq .title"), []);
 });
