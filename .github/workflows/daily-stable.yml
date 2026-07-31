@@ -475,6 +475,43 @@ jobs:
           # configuration rather than a backstop.
           WATCH_MAX_SECONDS: "3600"
 
+      # Rotate the agent specs through ONE provider per run, by weekday (#1185).
+      # The parametrized specs resolve one model per ACTIVE provider, so ~30 @stable
+      # agent tests run an openai AND an anthropic AND a google variant every weekday —
+      # multi-turn agent runs with the tool schemas re-sent every turn (Langflow sets no
+      # `cache_control`, so nothing is cached on the anthropic side). `claude-sonnet-5`
+      # is $3/$15 per MTok against `gpt-4o-mini` at ~$0.15/$0.60: 20-25x per token for
+      # assertions that are about Langflow, not about the provider. The PR lane stopped
+      # paying that on 2026-07-31 (#1169 / PR #1170); this is the same argument applied
+      # to the lane #1170 deliberately left multi-provider.
+      #
+      # Coverage is not what is being cut. The provider-contract specs
+      # (core-functionality/model-provider/*-provider.spec.ts) read NEITHER pin
+      # variable, so every provider is still exercised end-to-end EVERY day — #1184
+      # added a unit test that fails if one of them starts reading one. What rotates is
+      # agent behaviour, which is a Langflow contract rather than a provider one.
+      #
+      # Rotation rather than a fixed pin, at identical cost: a fixed pin would make the
+      # detection window for a provider-specific regression a standing human decision
+      # (#643 anthropic streaming/`thinking`, #963 gemini "Message empty." — both real,
+      # both caught here). Rotating bounds it to <=3 days automatically. The weekday
+      # mapping is FIXED, not evenly distributed, so two Mondays are comparable:
+      #   Mon openai · Tue anthropic · Wed google · Thu openai · Fri anthropic
+      #
+      # A drained key costs a DEVIATION, not the day: the script advances to the next
+      # active provider in the rotation and says so with a ::warning::. It declines to
+      # pin only when every provider is down — where the fallback is moot anyway — and
+      # exits 2 on a providers.json it cannot read (#1035). Losing coverage is the more
+      # expensive failure (#980), and it is not hypothetical: this lane recorded ZERO
+      # tests on 07-28 and 07-31.
+      #
+      # continue-on-error: the pin is an optimisation. If it fails outright, the right
+      # outcome is the costlier multi-provider run, not a lost day — the same trade
+      # `Collect models` above already makes.
+      - name: Rotate the lane to this weekday's provider
+        continue-on-error: true
+        run: node scripts/select-daily-model-target.mjs
+
       # In-run token consumption recorder (#1197). Langflow computes what each flow
       # run cost in tokens and discards it: deleting a flow 404s its trace, and this
       # suite deletes every flow it creates. So the only place to read it is during

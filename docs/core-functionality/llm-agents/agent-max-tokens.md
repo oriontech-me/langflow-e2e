@@ -65,7 +65,7 @@ the token-usage observable live in the Playground.
 
 ## Step by step *(required)*
 
-The spec generates **2 tests per active model** via `getTestTargets()`
+The spec generates **2 tests per active model** via `resolveTestTargets()`
 (default: 1 model per active provider).
 
 Shared setup per test:
@@ -88,7 +88,10 @@ Shared setup per test:
    signal: the turn mounts (`div-chat-message` count rises) and the generating
    indicator clears (`button-stop` hidden, `button-send` back). The
    `chat-message-token-usage` badge is **not** the completion gate — see the
-   note on #1059/#569 below.
+   note on #1059/#569 below. An **error card** at either point ends the run
+   immediately with the provider's message (#1188): upstream renders
+   `error-card-stack` *instead of* the bot bubble, so any wait keyed on the
+   bubble outlives an errored turn.
 6. Assert the badge exists (the `max_tokens` observable), then hover it and read
    the **Output** token count from its tooltip (`Input: 1.0K / Output: 46`
    format; values may be plain integers, `N.NK`, or empty ⇒ 0).
@@ -150,7 +153,9 @@ Shared setup per test:
   failures with three distinct messages instead of one blind
   `toHaveCount … Received: 0`. A false positive is impossible in the other
   direction too — the badge assertion is a hard `toHaveCount(1)`, never skipped
-  when absent.
+  when absent. The third of those states only became true in **#1188**: an
+  errored turn renders no bot bubble at all, so it used to die 20 s later on
+  `locator.innerText` with the provider's error nowhere in the message.
 - **Force-failure check** (CONTRIBUTING §2) run during VERIFY on each hard
   assertion before `@stable`.
 
@@ -240,6 +245,24 @@ Shared setup per test:
   prints the reply that did render. Timeouts were **not** loosened (the total
   budget went from ~248 s to ~205 s) and no assertion was weakened — only the
   attribution changed.
+- **An errored run is resolved explicitly, at both points it can appear**
+  (#1188). Gating on the bot bubble fixed two of the three states but not the
+  third: upstream `chat-message.tsx` renders `ErrorView` **instead of**
+  `BotMessage` when `chat.category === "error"`, so an errored turn carries no
+  `div-chat-message` — only `error-card-stack`. Measured on `main` at
+  1.12.0.dev10 against a drained Anthropic key (a deterministic reproducer: the
+  provider answers `400 … credit balance is too low` every time), both tests
+  failed with `locator.innerText: Timeout 20000ms exceeded — waiting for
+  getByTestId('div-chat-message').last()`, never reaching the badge assertion
+  where the informative message lives. The cause was on screen and in the run
+  stream the whole time — the fixture's flow-error advisory (#1162) printed the
+  provider's 400 in the same run. `runPrompt()` now checks for the error card
+  after the turn-start poll (the run can fail before any bubble mounts) **and**
+  after the completion signal (the measured case: the bubble mounts, then is
+  replaced), failing with the provider's message expanded out of the error
+  accordion. The reply read is also count-guarded, so a finished turn that
+  rendered nothing still reaches the badge assertion instead of a locator
+  timeout. This adds no pass path — an errored run still fails.
 - **Where the #1059 signature came from.** The filed hard failure (daily
   2026-07-29, `anthropic / claude-sonnet-5`) was **environmental collateral**, not
   a product regression: attempt 0 of that very test died on the day's dominant

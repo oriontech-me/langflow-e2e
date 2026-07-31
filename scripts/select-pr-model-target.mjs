@@ -5,7 +5,7 @@
  *
  * ## Why the PR lane pins one provider at all
  *
- * `getTestTargets()` (~17 agent specs) parametrizes over **one model per active
+ * `resolveTestTargets()` (~17 agent specs) parametrizes over **one model per active
  * provider**, so every LLM spec selected by the impacted-specs job runs once per
  * provider whose key is in the repo secrets — openai *and* anthropic *and* google.
  * That is the right shape for `daily-stable.yml`, which is the lane that owes
@@ -28,7 +28,7 @@
  * Two reasons, both of which have already bitten this repo:
  *
  * 1. **`MODEL_TEST_PROVIDER` alone is a trap, not a filter.** In
- *    `getTestTargets()` the `MODEL_TEST_PROVIDER` branch filters the catalog by
+ *    `resolveTestTargets()` the `MODEL_TEST_PROVIDER` branch filters the catalog by
  *    provider and **skips the first-per-provider dedup**, so setting it without
  *    `MODEL_TEST_ID` runs *every* model that provider exposes — 41 openai entries
  *    in the catalog collected 2026-07-30. That turns a cost fix into a 41x cost
@@ -36,7 +36,7 @@
  *    without the other.
  * 2. **The model has to be the settled one.** Hardcoding `gpt-4o-mini` in YAML
  *    fails silently the day it retires or the CI project loses access:
- *    `getTestTargets()` warns `MODEL_TEST_ID="…" not found in models.json` and
+ *    `resolveTestTargets()` warns `MODEL_TEST_ID="…" not found in models.json` and
  *    returns a target with no provider, so the spec skips and the PR still reads
  *    green — the exact silent-skip failure #570 and #1012 exist to prevent.
  *    `providers.json` already records what `collect-models` probed successfully;
@@ -222,7 +222,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
 
   if (result.ok) {
     // Both variables, always together — MODEL_TEST_PROVIDER on its own makes
-    // getTestTargets skip the per-provider dedup and run the whole catalog.
+    // resolveTestTargets skip the per-provider dedup and run the whole catalog.
     const lines = [
       `MODEL_TEST_ID=${result.model}`,
       `MODEL_TEST_PROVIDER=${result.provider}`,

@@ -1,0 +1,91 @@
+# Dependabot VERSION updates. Two things this file is NOT:
+#
+#  1. It is not what closes a Dependabot *alert*. Alerts are closed by Dependabot
+#     **security updates**, a repository setting (Settings → Code security →
+#     "Dependabot security updates") that cannot be enabled from this file and
+#     needs admin on the repo. That distinction matters here because every alert
+#     this repo has received (#1–#6) was a *transitive* dev dependency of eslint
+#     (`picomatch`, `brace-expansion`) — nothing in package.json. Version updates
+#     below sweep the dependencies we declare; the security-updates toggle is what
+#     reacts to an advisory landing on something we only reach through the tree.
+#     See issue #1202.
+#
+#  2. It is not a substitute for review. Grouped PRs land as one diff per
+#     ecosystem, and the PR lane reports `skipping` on a manifest-only change
+#     (nothing under tests/ imports a manifest, so the import graph honestly
+#     returns zero specs). A green Dependabot PR therefore proves that the tree
+#     resolves and the static gates pass — not that the suite still runs.
+version: 2
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "12:00"
+      timezone: "Etc/UTC"
+    # 12:00 UTC = 09:00 BRT, deliberately after daily-stable.yml's 05:00 BRT
+    # window: a Dependabot PR triggers pr-validation.yml, which boots its own
+    # Langflow service container, and the daily is the run that must not contend
+    # for the runner.
+
+    open-pull-requests-limit: 3
+    labels:
+      - "infra"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+
+    groups:
+      # One PR for all dev dependencies. Ungrouped, the six alerts this repo has
+      # seen would have been six separate PRs, each booting a Langflow container
+      # in the PR lane. There is exactly one production dependency (dotenv), so a
+      # production group would be a group of one — it is left ungrouped on purpose.
+      dev-dependencies:
+        dependency-type: "development"
+        patterns:
+          - "*"
+
+    ignore:
+      # @playwright/test and playwright are pinned to an EXACT version on purpose,
+      # and the pin is load-bearing across files Dependabot cannot edit. Bumping
+      # the runner means 8 coordinated edits across 3 files:
+      #
+      #   package.json          @playwright/test + playwright            (2)
+      #   daily-stable.yml      3x `image: mcr.microsoft.com/playwright:vX-noble`
+      #                         + 1x PLAYWRIGHT_VERSION env             (4)
+      #   weekly-stable.yml     1x image tag + 1x PLAYWRIGHT_VERSION env (2)
+      #
+      # Dependabot only touches package.json and the lockfile, so its PR would
+      # leave every workflow behind. daily-stable.yml then fails at its
+      # "Verify Playwright version matches the container image" guard — while the
+      # PR itself looks green, because a manifest change resolves to zero impacted
+      # specs. A bot cannot make this change correctly; a human bumps the runner
+      # and the image tags together.
+      - dependency-name: "@playwright/test"
+      - dependency-name: "playwright"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "12:00"
+      timezone: "Etc/UTC"
+
+    open-pull-requests-limit: 3
+    labels:
+      - "infra"
+    commit-message:
+      prefix: "ci(deps)"
+
+    groups:
+      # Grouped for the same reason as npm, plus one specific to this repo: the
+      # action pins have already drifted apart because nothing sweeps them
+      # (checkout @v7 vs @v4, upload-artifact @v7 vs @v4, setup-python @v6 vs @v5
+      # — see #1202). A per-action PR stream is what let that happen unnoticed;
+      # one grouped PR makes the whole set visible in a single diff.
+      actions:
+        patterns:
+          - "*"

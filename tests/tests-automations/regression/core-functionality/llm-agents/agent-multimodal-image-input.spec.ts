@@ -1,6 +1,5 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -13,7 +12,7 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
-import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
+import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 
 /**
  * Agent multimodal image input (QA-CHECKLIST §6.5, "Image passed via input
@@ -56,112 +55,6 @@ const IMAGE_SPECIFIC = /chain/i;
 // instead of surfacing as "pattern not found".
 const NO_IMAGE_REACHED_MODEL =
   /(cannot|can not|can't|unable to|not able to)[\s\S]{0,40}(interpret|describe|process|analy[sz]e|see|view)|did not (provide|attach|include)|no image (was )?(provided|attached|included)|please (upload|provide|attach|share)/i;
-
-interface ModelRecord {
-  provider: string;
-  model: string;
-}
-
-interface TestTarget {
-  label: string;
-  options: LoadSimpleAgentOptions;
-  skipReason?: string;
-}
-
-// Non-vision / non-chat model families to exclude when resolving a vision model.
-const NON_VISION = /gemma|embedding|tts|audio|whisper|realtime|image|customtools|moderation|search/i;
-
-// Fallback preference per provider, used only when the settled model cannot be
-// used (see resolveVisionModel). Alias/undated patterns only — a hardcoded dated
-// id goes stale the moment the provider retires it (#886, #964).
-const VISION_PREFS: Record<string, RegExp[]> = {
-  openai: [/^gpt-4o-mini$/, /^gpt-4o$/, /^gpt-4\.1(-mini)?$/, /gpt-4o/, /^gpt-5.*mini$/, /^gpt-5/],
-  google: [/^gemini-flash-latest$/, /gemini.*flash/, /gemini/],
-  anthropic: [/^claude-3-5-sonnet/, /^claude-3-5-haiku/, /^claude-3-7/, /claude-3\.?5/, /claude-3/, /claude/],
-};
-
-// Resolve a vision-capable model for a provider from its models.json entries.
-//
-// **Settled-first (#964).** `collect-models` probes the provider's catalog with
-// real calls and promotes the model it actually validated to the front of that
-// provider's entries; models.json still lists the ones it rejected. Preferring a
-// hardcoded id over that settled model pins a model nobody validated: this spec
-// asked for `^gemini-2.5-flash$` first, which Google has retired ("no longer
-// available to new users") — collect-models skipped it as gated and settled on
-// `gemini-3.5-flash`, while the spec kept resolving the retired id. Locally that
-// 404s ("Flow build failed"); in CI, on a key that still reaches it, the agent
-// answered that it cannot interpret images at all (#964, dailies 2026-07-20 /
-// 07-22 / 07-27). So: take the settled model, and fall back to the preference
-// scan only when it is not usable for vision.
-function resolveVisionModel(provider: string, models: ModelRecord[]): string | undefined {
-  const providerModels = models.filter((m) => m.provider === provider).map((m) => m.model);
-  const candidates = providerModels.filter((m) => !NON_VISION.test(m));
-
-  const settled = providerModels[0];
-  if (settled && !NON_VISION.test(settled)) return settled;
-
-  const prefs = VISION_PREFS[provider] ?? [/.*/];
-  for (const pref of prefs) {
-    const hit = candidates.find((m) => pref.test(m));
-    if (hit) return hit;
-  }
-  return candidates[0];
-}
-
-function getModelsFromJson(): ModelRecord[] {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/models.json",
-  );
-  if (!fs.existsSync(jsonPath)) {
-    console.warn("models.json not found — run collect-models.spec.ts first.");
-    return [];
-  }
-  return JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ModelRecord[];
-}
-
-// One target per active provider, each with a resolved vision-capable model.
-// A provider with no vision model is skipped with a reason.
-function getTestTargets(): TestTarget[] {
-  const skipReasons = providerSkipReasons();
-  const allModels = getModelsFromJson();
-
-  if (allModels.length === 0) {
-    const fallbackProvider = Object.keys(providerConfigMap)[0] as Provider;
-    console.warn("models.json not found or empty — run collect-models.spec.ts first.");
-    return [{
-      label: `provider:${fallbackProvider} (fallback)`,
-      options: { provider: fallbackProvider },
-      skipReason: skipReasons.get(fallbackProvider),
-    }];
-  }
-
-  // Explicit single-provider override.
-  if (process.env.MODEL_TEST_PROVIDER) {
-    const provider = process.env.MODEL_TEST_PROVIDER;
-    const model = resolveVisionModel(provider, allModels);
-    return [{
-      label: `${provider} / ${model ?? "(no vision model)"}`,
-      options: { provider: provider as Provider, model },
-      skipReason:
-        skipReasons.get(provider) ??
-        (model ? undefined : `Provider "${provider}" has no vision-capable model in models.json`),
-    }];
-  }
-
-  // One vision model per provider present in models.json.
-  const providers = Array.from(new Set(allModels.map((m) => m.provider)));
-  return providers.map((provider) => {
-    const model = resolveVisionModel(provider, allModels);
-    return {
-      label: `${provider} / ${model ?? "(no vision model)"}`,
-      options: { provider: provider as Provider, model },
-      skipReason:
-        skipReasons.get(provider) ??
-        (model ? undefined : `Provider "${provider}" has no vision-capable model in models.json`),
-    };
-  });
-}
 
 // Flows created by the template load are tracked here and deleted BY ID in
 // afterEach. `SimpleAgentTemplatePage.load()` does NO cleanup (post-#553
@@ -266,7 +159,7 @@ async function openPlayground(page: Page, attachImage: boolean): Promise<void> {
   }
 }
 
-const targets = getTestTargets();
+const targets = resolveTestTargets({ tier: "tool-calling", requires: "vision" });
 
 // Serial: each provider block loads the Simple Agent template and runs it, and
 // the Playground work is heavy enough that concurrent provider blocks starve the
