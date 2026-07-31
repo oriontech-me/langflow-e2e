@@ -27,7 +27,7 @@
     "check:nightly-delta": "ts-node scripts/check-nightly-delta.ts"
   },
   "dependencies": {
-    "dotenv": "^16.4.5"
+    "dotenv": "^17.4.2"
   },
   "devDependencies": {
     "@flakiness/playwright": "^1.18.0",
