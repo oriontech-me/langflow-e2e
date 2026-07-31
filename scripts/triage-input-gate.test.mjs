@@ -189,6 +189,15 @@ test("triage-dispatch.yml gates the propose agent and pins the model on both job
     /should_run_agent == 'true'/,
     "the propose agent step must be gated on the input verdict",
   );
+  // …and the manual path must stay open. A workflow_dispatch downloads no
+  // artifact (there is no triggering run id), so a gate without this escape
+  // hatch would refuse the only way to re-propose on demand — the path #1171's
+  // per-model A/B depends on.
+  assert.match(
+    proposeBlock,
+    /github\.event_name == 'workflow_dispatch'/,
+    "workflow_dispatch must bypass the report gate",
+  );
 
   // Model pinned on BOTH jobs — the action's default is claude-opus-5[1m].
   const pinned = lines.filter((l) => l.includes("--model claude-sonnet-5"));

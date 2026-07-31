@@ -93,8 +93,15 @@ jobs:
         id: triage_input
         run: node scripts/triage-input-gate.mjs --results results.json
 
+      # The gate binds the AUTOMATIC path only. A `workflow_dispatch` is a human
+      # asking for this triage with an explicit `--issue`, and it downloads no
+      # artifact at all (there is no triggering run id), so gating it would refuse
+      # the one path that exists for re-proposing on demand — including the
+      # per-model A/B #1171 needs. Same reasoning as leaving `execute` ungated.
       - uses: anthropics/claude-code-action@v1
-        if: steps.triage_input.outputs.should_run_agent == 'true'
+        if: >-
+          github.event_name == 'workflow_dispatch' ||
+          steps.triage_input.outputs.should_run_agent == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         with:
