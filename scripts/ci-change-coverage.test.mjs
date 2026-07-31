@@ -136,7 +136,7 @@ test("every canary spec exists, is @stable, and needs no provider model", () => 
   // The three properties that make the canary usable: it exists (or the CLI
   // aborts), it is validated, and it never depends on provider key health — a
   // canary that skips on a drained key proves nothing (#915/#910/#911).
-  const LLM = /getTestTargets|SimpleAgentTemplatePage|provider-setup|models\.json|MODEL_TEST_ID|initialGPTsetup|setupOpenAI|resolveGptModel|resolveGeminiModel/;
+  const LLM = /resolveTestTargets|SimpleAgentTemplatePage|provider-setup|models\.json|MODEL_TEST_ID|initialGPTsetup|setupOpenAI|resolveGptModel|resolveGeminiModel/;
   for (const spec of CANARY_SPECS) {
     const file = path.join(REPO_ROOT, spec);
     assert.ok(fs.existsSync(file), `canary spec missing: ${spec}`);

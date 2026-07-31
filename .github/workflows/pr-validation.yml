@@ -297,7 +297,7 @@ jobs:
           # PR that never touches that provider (the recurring #915/#910/#911
           # class). A spec needs models if it lives in an always-LLM area
           # (llm-agents/ or model-provider/) OR its content references a
-          # collect-models consumer (getTestTargets / SimpleAgentTemplatePage /
+          # collect-models consumer (resolveTestTargets / SimpleAgentTemplatePage /
           # provider-setup / models.json / MODEL_TEST_ID / initialGPTsetup /
           # setupOpenAI / resolveGptModel / resolveGeminiModel) — this catches the
           # cross-area consumers (mcp/client agent specs, the loop-component
@@ -327,7 +327,7 @@ jobs:
               tests/tests-automations/regression/core-functionality/llm-agents/*|tests/tests-automations/regression/core-functionality/model-provider/*)
                 NEEDS_MODELS=true; break;;
             esac
-            if grep -qE 'getTestTargets|SimpleAgentTemplatePage|provider-setup|models\.json|MODEL_TEST_ID|initialGPTsetup|setupOpenAI|resolveGptModel|resolveGeminiModel' "$f" 2>/dev/null; then
+            if grep -qE 'resolveTestTargets|SimpleAgentTemplatePage|provider-setup|models\.json|MODEL_TEST_ID|initialGPTsetup|setupOpenAI|resolveGptModel|resolveGeminiModel' "$f" 2>/dev/null; then
               NEEDS_MODELS=true; break
             fi
           done
@@ -453,7 +453,7 @@ jobs:
 
       # Collect provider/model data BEFORE the impacted specs, mirroring
       # daily-stable.yml. Without this, `models.json` is absent (it is
-      # git-ignored) and an agent/LLM spec's `getTestTargets` falls back to
+      # git-ignored) and an agent/LLM spec's `resolveTestTargets` falls back to
       # picking a model straight from the live agent dropdown by name — without
       # validating that the key can access it. On some nightly builds that
       # resolves to a model the CI OPENAI_API_KEY's project cannot use (e.g.
@@ -566,7 +566,7 @@ jobs:
           # here is a HARD gate (not `continue-on-error`), so a failed sweep has
           # already reddened the job and there is no surviving run to warn about.
 
-      # Pin this lane to ONE provider's settled model (#1169). getTestTargets()
+      # Pin this lane to ONE provider's settled model (#1169). resolveTestTargets()
       # parametrizes over one model per active provider, so every impacted agent
       # spec runs an openai AND an anthropic AND a google variant here. That is
       # daily-stable.yml's job — it is the lane that owes multi-provider coverage.
