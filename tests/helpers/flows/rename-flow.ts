@@ -56,6 +56,17 @@ const applyFlowSettings = async (
   //    `save-flow-settings` disabled for the rest of the budget (#1005).
   // Same gate #1063/#1147 added for `useAddComponent`, which bails out silently
   // under the identical predicate.
+  //
+  // The gate NARROWS this window, it does not close it, and the next triager
+  // should not have to re-derive why. `PermissionsProvider` (mounted around the
+  // app header in `DashboardWrapperPage`) keys its query on
+  // `domain: project:{folder_id}` read off `currentFlow`, and `use-save-flow`
+  // replaces that object via `setCurrentFlow(updatedFlow)` on every save — so a
+  // response that changes or drops `folder_id` changes the query key, re-enters
+  // `isLoading`, and re-disables the button. Landing between the assertion and
+  // the click below, the click is swallowed again and the failure surfaces at the
+  // `input-flow-name` assertion instead. If that is ever observed, the fix is to
+  // retry open→dialog-visible rather than to widen a timeout.
   const flowHeaderButton = page.getByTestId("menu_bar_display");
   await expect(flowHeaderButton).toBeEnabled({ timeout: MODAL_TIMEOUT });
   await flowHeaderButton.hover();
