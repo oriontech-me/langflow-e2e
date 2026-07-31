@@ -238,6 +238,55 @@ test("ALL_MODELS reports each emptied provider once, and keeps catalog order for
   ]);
 });
 
+test("a sweep on a provider absent from the catalog REPORTS instead of running nothing", () => {
+  // Round-2 review finding, and NOT introduced by #1184 — the pre-existing copies
+  // filtered identically and had the same hole. Consolidating them is what made it
+  // fixable in one place. Highly reachable: the catalog keys are lowercase while the
+  // UI/testids use display casing, so `MODEL_TEST_PROVIDER=OpenAI` silently ran zero
+  // tests and read green.
+  for (const name of ["anthropic", "OpenAI"]) {
+    const targets = resolveTestTargets({
+      tier: "tool-calling",
+      env: { MODEL_TEST_PROVIDER: name },
+      models: [{ provider: "openai", model: "gpt-4o-mini" }],
+      skipReasons: NO_SKIPS,
+    });
+    assert.equal(targets.length, 1, `${name} must report, not vanish`);
+    assert.deepEqual(labels(targets), [`provider:${name} (not in catalog)`]);
+    assert.match(targets[0].skipReason ?? "", /matches no model in models\.json/);
+    assert.match(targets[0].skipReason ?? "", /present: openai/);
+  }
+});
+
+test("the absent-provider report also fires with a capability filter set", () => {
+  const targets = resolveTestTargets({
+    tier: "tool-calling",
+    requires: "vision",
+    env: { MODEL_TEST_PROVIDER: "anthropic" },
+    models: [{ provider: "openai", model: "gpt-4o-mini" }],
+    skipReasons: NO_SKIPS,
+  });
+  assert.equal(targets.length, 1);
+  assert.match(targets[0].skipReason ?? "", /matches no model in models\.json/);
+});
+
+test("the unfit-pin reason points at the heuristic, since it matches on substrings", () => {
+  // `gemini-2.5-flash-image` and `gpt-4o-image-preview` are excluded by NON_VISION
+  // purely because their names contain "image", so an explicit pin of a genuinely
+  // vision-capable model can be refused. The refusal is a reported skip, not a false
+  // pass — but the message has to say the exclusion is a heuristic, or the reader is
+  // told to "pin a vision-capable model" when they just did.
+  const targets = resolveTestTargets({
+    tier: "tool-calling",
+    requires: "vision",
+    env: { MODEL_TEST_ID: "gemini-2.5-flash-image" },
+    models: [{ provider: "google", model: "gemini-2.5-flash-image" }],
+    skipReasons: NO_SKIPS,
+  });
+  assert.match(targets[0].skipReason ?? "", /name heuristic/);
+  assert.match(targets[0].skipReason ?? "", /matches on substrings/);
+});
+
 test("a pinned MODEL_TEST_ID that cannot serve the capability is REPORTED, not run", () => {
   // The second review finding. The two capability specs had no MODEL_TEST_ID branch
   // at all, so they could never be handed an unfit model; gaining one without this
@@ -251,7 +300,7 @@ test("a pinned MODEL_TEST_ID that cannot serve the capability is REPORTED, not r
     skipReasons: NO_SKIPS,
   });
   assert.equal(targets.length, 1);
-  assert.match(targets[0].skipReason ?? "", /cannot serve "vision"/);
+  assert.match(targets[0].skipReason ?? "", /excluded from "vision"/);
   assert.match(targets[0].skipReason ?? "", /pin a vision-capable model/);
 });
 

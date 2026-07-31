@@ -282,10 +282,12 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
     // failure.
     const unfit =
       requires && CAPABILITY_EXCLUDES[requires].test(model)
-        ? `MODEL_TEST_ID="${model}" cannot serve "${requires}" for this spec ` +
-          `(excluded model family). Pinned explicitly, so it is reported rather than ` +
-          `silently replaced — pin a ${requires}-capable model, or drop MODEL_TEST_ID ` +
-          `to let the resolver pick one.`
+        ? `MODEL_TEST_ID="${model}" is excluded from "${requires}" by the name ` +
+          `heuristic in test-targets.ts. Pinned explicitly, so it is reported rather ` +
+          `than silently replaced. Either pin a ${requires}-capable model, drop ` +
+          `MODEL_TEST_ID to let the resolver pick one, or — if this model really does ` +
+          `serve ${requires} — fix the heuristic: it matches on substrings, so a name ` +
+          `containing "image" or "search" is excluded even when the model is capable.`
         : undefined;
     if (!record) {
       // Never silent: this path returns a target with NO provider, which makes the
@@ -333,6 +335,34 @@ export function resolveTestTargets(opts: ResolveTestTargetsOptions): TestTarget[
     const scoped = allModels.filter((m) =>
       sweepProvider ? m.provider === sweepProvider : true,
     );
+
+    // A sweep scoped to a provider the catalog does not contain resolved to ZERO
+    // targets, silently, on every path — the spec declared no tests and read green.
+    // This one is NOT new in #1184: the pre-existing copies filtered the same way and
+    // had the same hole. Consolidating them is what makes it fixable in one place.
+    //
+    // It is very reachable. `MODEL_TEST_PROVIDER` is a bare string nothing validates,
+    // and the catalog keys are lowercase (`openai`) while the UI and the testids use
+    // display casing (`provider-item-OpenAI`) — so `MODEL_TEST_PROVIDER=OpenAI` is a
+    // natural typo that silently ran nothing. A provider whose key is not configured
+    // is also legitimately absent from the catalog, so this reports rather than
+    // throws: a typo must not take all 17 specs down, but it must not read as a pass
+    // either (#570 / #1012).
+    if (sweepProvider && scoped.length === 0) {
+      const present = Array.from(new Set(allModels.map((m) => m.provider)));
+      const reason =
+        `MODEL_TEST_PROVIDER="${sweepProvider}" matches no model in models.json ` +
+        `(present: ${present.join(", ") || "none"}) — nothing would have run. Names are ` +
+        `lowercase catalog keys, not display names.`;
+      console.warn(reason);
+      return [
+        {
+          label: `provider:${sweepProvider} (not in catalog)`,
+          options: {},
+          skipReason: reason,
+        },
+      ];
+    }
     const exclude = requires ? CAPABILITY_EXCLUDES[requires] : undefined;
     const capable = scoped.filter((m) => (exclude ? !exclude.test(m.model) : true));
     const targets: TestTarget[] = capable.map((m) => ({
