@@ -698,7 +698,7 @@ jobs:
         run: npm ci
 
       - name: Download all shard blobs
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: blob-*
           path: all-blobs
@@ -717,7 +717,7 @@ jobs:
       # job, a run that died in prep) must not fail the merge — the reporter
       # renders that as UNKNOWN, which is the honest verdict.
       - name: Download shard liveness data
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         if: always()
         continue-on-error: true
         with:
@@ -731,7 +731,7 @@ jobs:
       # continue-on-error: same reasoning as the liveness download — a shard that
       # never uploaded (an old job, a run that died in prep) must not fail the merge.
       - name: Download shard token consumption data
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         if: always()
         continue-on-error: true
         with:

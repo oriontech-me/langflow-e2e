@@ -55,7 +55,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Best-effort: pull the triggering daily's results.json so the skill's
       # INTAKE can pass --results and Phase 5 (SKIPS) reads real per-skip
       # reasons. Only the workflow_run path has a source run; a manual
@@ -133,7 +133,7 @@ jobs:
       group: triage-execute-${{ github.event.issue.number }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Stamped BEFORE the agent runs so the guard below can tell the issues this
       # run created from every other open daily-failure issue. Minus a minute of
       # slack for clock skew between the runner and the API.

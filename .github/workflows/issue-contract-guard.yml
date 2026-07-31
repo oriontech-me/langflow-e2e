@@ -76,7 +76,7 @@ jobs:
       group: issue-contract-guard-${{ github.event.issue.number || inputs.issue || github.run_id }}
       cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The action prefers `issue` when both arrive, which would silently ignore a
       # `since` the dispatcher typed. Say so instead — a guard that quietly checks
