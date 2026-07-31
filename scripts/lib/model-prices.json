@@ -1,10 +1,11 @@
 {
-  "_comment": "USD per 1M tokens. Hand-edited in a PR. A model absent here keeps its token counts and reports usd_estimated: null — see scripts/lib/token-cost.mjs. Sourced 2026-07-31 (#1197 review, finding I6) from Anthropic's published pricing (platform.claude.com/docs/en/pricing) and Google's public Gemini pricing page — re-verify before trusting a number more than a few months old. claude-sonnet-5 is priced at its standing list rate ($3/$15 per 1M); Anthropic may also run an introductory $2/$10 rate through 2026-08-31 that this table does not track, so a run priced during that window is a slight over-estimate, never an under-estimate. gemini-flash-latest is priced the same as gemini-2.5-flash — the model class the alias currently resolves to on Langflow 1.12.0.dev10 (measured: the trace's modelName is the bare alias, not a dated id) — re-check this row if the alias moves to a newer Gemini generation.",
+  "_comment": "USD per 1M tokens. Hand-edited in a PR. A model absent here keeps its token counts and reports usd_estimated: null — see scripts/lib/token-cost.mjs. Sourced 2026-07-31 (#1197 review, finding I6; gemini-3.5-flash added #1197 re-review, finding B, from run 30647253368 — the run's largest consumer, 13 calls / 14,690 tokens, previously unpriced) from Anthropic's published pricing (platform.claude.com/docs/en/pricing) and Google's public Gemini pricing page — re-verify before trusting a number more than a few months old. claude-sonnet-5 is priced at its standing list rate ($3/$15 per 1M); Anthropic may also run an introductory $2/$10 rate through 2026-08-31 that this table does not track, so a run priced during that window is a slight over-estimate, never an under-estimate. gemini-flash-latest and gemini-3.5-flash are priced the same as gemini-2.5-flash — the Flash tier's pricing has stayed stable across recent dot-releases and gemini-flash-latest resolves to this exact class on Langflow 1.12.0.dev10 (measured: the trace's modelName is the bare alias, not a dated id) — re-check these two rows if either moves to pricing distinct from 2.5-flash.",
   "gpt-4o-mini": { "inputPerMillion": 0.15, "outputPerMillion": 0.6 },
   "gpt-4o": { "inputPerMillion": 2.5, "outputPerMillion": 10.0 },
   "claude-sonnet-4-6": { "inputPerMillion": 3.0, "outputPerMillion": 15.0 },
   "claude-sonnet-5": { "inputPerMillion": 3.0, "outputPerMillion": 15.0 },
   "claude-opus-5": { "inputPerMillion": 5.0, "outputPerMillion": 25.0 },
   "gemini-2.5-flash": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 },
-  "gemini-flash-latest": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 }
+  "gemini-flash-latest": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 },
+  "gemini-3.5-flash": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 }
 }

@@ -30,6 +30,12 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { aggregate, parsePrices } from "./lib/token-cost.mjs";
 import { detectAnomalies } from "./lib/token-anomaly.mjs";
+// flattenSpans/spanModelUsage/buildProbe moved to lib/token-spans.mjs (#1197
+// re-review, finding A) so the attribution sidecar (a TypeScript file under
+// tests/helpers/) can import the SAME rules instead of reimplementing the
+// anti-double-count logic. Re-exported below for backward compatibility with
+// existing direct imports of this module (scripts/watch-tokens.test.mjs).
+import { flattenSpans, spanModelUsage, buildProbe } from "./lib/token-spans.mjs";
 
 const DEFAULTS = {
   base: "http://localhost:7860",
@@ -51,38 +57,8 @@ const num = (value, fallback) => {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 };
 
-export function flattenSpans(spans, acc = []) {
-  for (const span of spans ?? []) {
-    acc.push(span);
-    if (span?.children) flattenSpans(span.children, acc);
-  }
-  return acc;
-}
-
-// Only spans that name their model. Langflow emits the component-level "Language
-// Model" span with modelName === null carrying the SAME tokenUsage as the inner
-// provider span, so counting every llm span doubles every call (design §2.1).
-export function spanModelUsage(spans) {
-  const byModel = new Map();
-  for (const span of flattenSpans(spans)) {
-    const model = typeof span?.modelName === "string" ? span.modelName : "";
-    const usage = span?.tokenUsage;
-    if (!model || !usage) continue;
-    const prompt = Number(usage.promptTokens) || 0;
-    const completion = Number(usage.completionTokens) || 0;
-    const total = Number(usage.totalTokens) || prompt + completion;
-    if (!prompt && !completion && !total) continue;
-    const acc =
-      byModel.get(model) ??
-      { model, prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, calls: 0 };
-    acc.prompt_tokens += prompt;
-    acc.completion_tokens += completion;
-    acc.total_tokens += total;
-    acc.calls += 1;
-    byModel.set(model, acc);
-  }
-  return [...byModel.values()];
-}
+// Re-exported from lib/token-spans.mjs — see the import comment above.
+export { flattenSpans, spanModelUsage };
 
 async function getJson(fetchImpl, url, bearer, timeoutMs) {
   const controller = new AbortController();
@@ -140,22 +116,14 @@ export async function collectOnce({
       continue;
     }
     seen.add(trace.id);
-    // `|| 0` used to put a ZERO where the value is unknown: a list item without
-    // totalTokens recorded 0, which aggregate() then treated as finite and
-    // authoritative — totals.total_tokens stayed 0 while by_model showed real
-    // tokens, and the trace was flagged as a fake mismatch (#1197 review,
-    // finding I3). Emit `null` instead: aggregate()'s spanTotal fallback (and
-    // its `Number.isFinite` check on the raw value, not a coerced one — see
-    // token-cost.mjs) then does the right thing.
-    const traceTotal = Number(trace.totalTokens);
-    probes.push({
-      trace_id: trace.id,
-      flow_id: trace.flowId ?? null,
-      start_time: trace.startTime ?? null,
-      status: trace.status ?? null,
-      total_tokens: Number.isFinite(traceTotal) ? traceTotal : null,
-      models: spanModelUsage(detail.body?.spans),
-    });
+    // buildProbe (lib/token-spans.mjs) is the ONE place that decides how a
+    // trace + its spans become a probe — including the total_tokens: null
+    // rule for an unknown total (#1197 review, finding I3) and the
+    // modelName-bearing-spans-only rule (design §2.1). The attribution
+    // sidecar (tests/helpers/flows/token-attribution.ts) builds its own
+    // recovered probes through the SAME function (#1197 re-review, finding A)
+    // — this is not the only caller.
+    probes.push(buildProbe(trace, detail.body?.spans));
   }
   return { probes, errors, deferred, refreshAuth: false };
 }
@@ -313,12 +281,36 @@ export async function summarize({
   };
 
   const probesById = new Map();
+  // A trace can now be seen by TWO independent sources (#1197 re-review,
+  // finding A): the poller's own tick, and the attribution sidecar's own
+  // detail fetch (run moments before the flow — and its trace — 404s away,
+  // design §2/S4). A trace present in both must be counted exactly once, and
+  // when the two copies disagree on whether the total is known, the one that
+  // actually captured it wins — never let a copy that missed it (total_tokens:
+  // null) clobber a copy that didn't, regardless of which file is read first.
+  const mergeProbe = (probe) => {
+    if (!probe?.trace_id) return;
+    const existing = probesById.get(probe.trace_id);
+    if (!existing || (existing.total_tokens === null && probe.total_tokens !== null)) {
+      probesById.set(probe.trace_id, probe);
+    }
+  };
   for (const file of listDir(dir).filter((f) => f.includes("token-probes"))) {
-    for (const probe of parseProbeLines(read(file))) probesById.set(probe.trace_id, probe);
+    for (const probe of parseProbeLines(read(file))) mergeProbe(probe);
   }
   const attributions = [];
   for (const file of listDir(attribDir).filter((f) => f.includes("token-attrib"))) {
-    for (const rec of parseProbeLines(read(file))) attributions.push(rec);
+    for (const rec of parseProbeLines(read(file))) {
+      attributions.push(rec);
+      // The sidecar now writes the trace's own total + spans ALONGSIDE the
+      // attribution fields in the same line (finding A), so an attributed
+      // trace's tokens no longer depend on the poller's own tick landing
+      // before the flow is deleted. `"total_tokens" in rec` (not just
+      // truthiness — the value is legitimately `null` when the sidecar's own
+      // detail fetch failed) distinguishes a merged probe+attribution line
+      // from an older, attribution-only line that never carried these fields.
+      if ("total_tokens" in rec) mergeProbe(rec);
+    }
   }
 
   const lines = [];

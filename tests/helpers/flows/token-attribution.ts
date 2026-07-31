@@ -7,13 +7,57 @@
 //
 //   - it must NEVER throw. `cleanup()` promises to fail a teardown only under
 //     `{ strict: true }`, and never over telemetry;
-//   - it must not poll. One request per captured flow. A trace that has not landed
-//     yet is missed, and its tokens fall to the poller or to the summary's
-//     `unattributed` bucket — which is counted and named, never hidden;
+//   - it must not poll. One list request per captured flow, plus at most one
+//     detail request per trace that flow's list turned up — never repeated,
+//     never retried. A trace that has not landed yet is simply missed, and its
+//     tokens fall to whatever the poller's own tick manages (or the summary's
+//     `unattributed` bucket — counted and named, never hidden);
 //   - it must be inert by default. With `TOKENS_ATTRIB` unset (every local run,
 //     every PR lane) it makes no request and touches no file.
+//
+// Making an attributed trace SELF-SUFFICIENT (#1197 re-review, finding A): a
+// real daily-stable run (30647253368) proved that of 6 traces this sidecar
+// attributed, only ONE also showed up in a `token-probes-*.jsonl` file — the
+// poller's 15s tick lost the race against the flow (and its trace) being
+// deleted seconds after this sidecar read it, and the other five contributed
+// NOTHING to the run's totals. Fixed by having this sidecar build the exact
+// same probe shape the poller writes — via `buildProbe()`, the ONE place the
+// anti-double-count rule (design §2.1) and the total_tokens: null-not-0 rule
+// (#1197 review, finding I3) are allowed to live — using the SAME list
+// response it already fetches (each item carries `totalTokens`) plus one
+// detail fetch per trace for the per-model spans. That shape rides ALONGSIDE
+// the attribution fields (`test`/`file`) in the SAME line, so `summarize()`
+// only needs to merge one file's worth of records, not two.
 import fs from "node:fs";
 import type { APIRequestContext } from "@playwright/test";
+
+// `buildProbe` is pure, dependency-free ESM under scripts/lib — the poller
+// (scripts/watch-tokens.mjs) imports it the normal, static way. This file is
+// TypeScript compiled to CommonJS (tsconfig: `module: commonjs`), and a CJS
+// module cannot `require()` a plain ESM `.mjs` file (ERR_REQUIRE_ESM) — so a
+// static `import` here would fail at runtime even though it type-checks. A
+// dynamic `import()` is Node's documented CJS→ESM interop path and works from
+// any CommonJS module, sync or async; it is resolved once and cached by
+// Node's module loader, so calling it per-invocation (this function already
+// runs at most once per test, inside `cleanup()`) costs nothing after the
+// first call. `@ts-expect-error` is required because a plain `.mjs` file with
+// no declaration makes `tsc` report TS7016 — verified to reproduce identically
+// under both `ts-node` (this repo's test runner) and plain `tsc --noEmit`.
+async function loadBuildProbe() {
+  // @ts-expect-error -- dynamic import of a dependency-free ESM .mjs module; no .d.ts to resolve
+  const mod = await import("../../../scripts/lib/token-spans.mjs");
+  return mod.buildProbe as (
+    trace: { id?: string; flowId?: string; startTime?: string; status?: string; totalTokens?: number },
+    spans: unknown,
+  ) => {
+    trace_id: string | null;
+    flow_id: string | null;
+    start_time: string | null;
+    status: string | null;
+    total_tokens: number | null;
+    models: unknown[];
+  };
+}
 
 export interface RecordTokenAttributionOptions {
   request: APIRequestContext;
@@ -46,6 +90,8 @@ export async function recordTokenAttribution({
   const result: TokenAttributionResult = { recorded: 0, skipped: [] };
   if (!out || !flowIds?.length) return result;
 
+  const buildProbe = await loadBuildProbe();
+
   for (const flowId of flowIds) {
     try {
       const res = await request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, { headers });
@@ -61,12 +107,40 @@ export async function recordTokenAttribution({
         result.skipped.push(`${flowId}: HTTP ${res.status()}`);
         continue;
       }
-      const body = (await res.json()) as { traces?: Array<{ id?: string }> };
-      const lines = (body?.traces ?? [])
-        .map((t) => t?.id)
-        .filter((id): id is string => typeof id === "string" && id.length > 0)
-        .map((id) => JSON.stringify({ trace_id: id, flow_id: flowId, test, file }));
-      if (!lines.length) continue;
+      const body = (await res.json()) as {
+        traces?: Array<{ id?: string; flowId?: string; startTime?: string; status?: string; totalTokens?: number }>;
+      };
+      const traces = (body?.traces ?? []).filter(
+        (t): t is { id: string; flowId?: string; startTime?: string; status?: string; totalTokens?: number } =>
+          typeof t?.id === "string" && t.id.length > 0,
+      );
+      if (!traces.length) continue;
+
+      const lines: string[] = [];
+      for (const trace of traces) {
+        // At most ONE detail fetch per trace this flow's list turned up — never
+        // repeated, never retried (the "must not poll" contract above). A
+        // failure here (404 — the flow raced ahead and 404'd this trace too,
+        // S4; or any other non-2xx) must not lose the line: `buildProbe`
+        // degrades a missing/undefined spans array to `models: []` on its own,
+        // the exact same degradation the poller applies when ITS OWN detail
+        // fetch comes back empty. The trace's own `total_tokens` — already in
+        // hand from the list response above — survives either way.
+        let spans: unknown;
+        try {
+          const detailRes = await request.get(`/api/v1/monitor/traces/${trace.id}`, { headers });
+          if (detailRes.ok()) {
+            const detailBody = (await detailRes.json()) as { spans?: unknown };
+            spans = detailBody?.spans;
+          }
+        } catch {
+          // Network-level failure fetching THIS ONE trace's detail must not
+          // lose the whole flow's attribution — degrade to no spans, same as
+          // a non-ok response.
+        }
+        const probe = buildProbe(trace, spans);
+        lines.push(JSON.stringify({ ...probe, flow_id: flowId, test, file }));
+      }
       // appendFileSync, not a stream: parallel workers share this file, and a single
       // sub-4KB append is what keeps their lines from interleaving.
       fs.appendFileSync(out, `${lines.join("\n")}\n`);

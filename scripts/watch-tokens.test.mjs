@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import realFs from "node:fs";
-import { flattenSpans, spanModelUsage, collectOnce, parseProbeLines, poll, summarize } from "./watch-tokens.mjs";
+import { collectOnce, parseProbeLines, poll, summarize } from "./watch-tokens.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
 
@@ -55,33 +55,11 @@ function fakeBackend({ traces, detail, failList = false }) {
   return { fetchImpl, calls };
 }
 
-test("flattenSpans walks nested children", () => {
-  const flat = flattenSpans([{ name: "a", children: [{ name: "b", children: [{ name: "c" }] }] }]);
-  assert.deepEqual(flat.map((s) => s.name), ["a", "b", "c"]);
-});
-
-test("spanModelUsage counts the provider span ONLY — no double count", () => {
-  const usage = spanModelUsage(SPANS);
-  assert.equal(usage.length, 1);
-  assert.deepEqual(usage[0], {
-    model: "gpt-4o-mini",
-    prompt_tokens: 40,
-    completion_tokens: 48,
-    total_tokens: 88,
-    calls: 1,
-  });
-});
-
-test("spanModelUsage sums two calls to the same model within one trace", () => {
-  const usage = spanModelUsage([...SPANS, SPANS[2]]);
-  assert.equal(usage.length, 1);
-  assert.equal(usage[0].calls, 2);
-  assert.equal(usage[0].total_tokens, 176);
-});
-
-test("spanModelUsage ignores a model span with no usage", () => {
-  assert.deepEqual(spanModelUsage([{ type: "llm", modelName: "x", tokenUsage: null }]), []);
-});
+// flattenSpans/spanModelUsage moved to scripts/lib/token-spans.mjs and are
+// tested there (#1197 re-review, finding A: that module is now shared with
+// the attribution sidecar, so its rules are tested once, independent of
+// either caller). This file keeps its collectOnce-level tests, which exercise
+// spanModelUsage indirectly through fakeBackend's `detail` responses.
 
 test("collectOnce emits one probe per new trace and records its trace total", async () => {
   const { fetchImpl, calls } = fakeBackend({
@@ -487,6 +465,104 @@ test("probe files from several shards are merged and deduped by trace", async ()
   await summarize({ env: baseEnv, ...fs2, log: () => {} });
   const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
   assert.equal(line.totals.traces, 1);
+});
+
+// --- Finding A (#1197 re-review): a real daily-stable run (30647253368) proved
+// 5 of 6 attributed traces never reached a `token-probes-*.jsonl` file at all —
+// the poller's 15s tick lost the race against the flow (and its trace) being
+// deleted seconds after the sidecar read it. Fixed by having the sidecar write
+// the trace's own total + spans ALONGSIDE the attribution fields in the same
+// token-attrib line, and having summarize() merge that into probesById too.
+
+test("a trace the poller never saw still reaches totals and by_spec via the sidecar's own probe fields (finding A)", async () => {
+  const sidecarOnly = JSON.stringify({
+    trace_id: "781928a9",
+    flow_id: "0fad1e0d",
+    test: "causal control — unset max_tokens generates freely",
+    file: "tests-automations/regression/core-functionality/llm-agents/agent-max-tokens.spec.ts",
+    start_time: "2026-07-31T16:35:00Z",
+    status: "ok",
+    total_tokens: 5321,
+    models: [
+      { model: "gpt-4o-mini", prompt_tokens: 400, completion_tokens: 4921, total_tokens: 5321, calls: 1 },
+    ],
+  });
+  const fs2 = fakeFs({
+    // No token-probes file mentions this trace at all — the poller never saw it.
+    "all-tokens/token-attrib-1.jsonl": `${sidecarOnly}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.totals.traces, 1);
+  assert.equal(line.totals.total_tokens, 5321);
+  assert.equal(line.by_spec.length, 1);
+  assert.equal(line.by_spec[0].total_tokens, 5321);
+  assert.equal(line.unattributed.traces, 0, "the sidecar's own fields must attribute it, not strand it as unattributed");
+});
+
+test("a trace present in BOTH the poller's file and the sidecar's merged line is counted once (finding A)", async () => {
+  const pollerLine = JSON.stringify({
+    trace_id: "both-1",
+    flow_id: "f1",
+    start_time: "x",
+    status: "ok",
+    total_tokens: 88,
+    models: [{ model: "gpt-4o-mini", prompt_tokens: 40, completion_tokens: 48, total_tokens: 88, calls: 1 }],
+  });
+  const mergedLine = JSON.stringify({
+    trace_id: "both-1",
+    flow_id: "f1",
+    test: "agent suite",
+    file: "a.spec.ts",
+    start_time: "x",
+    status: "ok",
+    total_tokens: 88,
+    models: [{ model: "gpt-4o-mini", prompt_tokens: 40, completion_tokens: 48, total_tokens: 88, calls: 1 }],
+  });
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${pollerLine}\n`,
+    "all-tokens/token-attrib-1.jsonl": `${mergedLine}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.totals.traces, 1, "one trace, seen by two sources, must not be counted twice");
+  assert.equal(line.totals.total_tokens, 88, "not 176 — the trace must not be double-counted");
+});
+
+test("summarize prefers whichever copy of a trace has a KNOWN total_tokens (finding A dedup)", async () => {
+  const pollerLineUnknownTotal = JSON.stringify({
+    trace_id: "dedup-1",
+    flow_id: "f1",
+    start_time: "x",
+    status: "ok",
+    total_tokens: null,
+    models: [],
+  });
+  const mergedLineKnownTotal = JSON.stringify({
+    trace_id: "dedup-1",
+    flow_id: "f1",
+    test: "agent suite",
+    file: "a.spec.ts",
+    start_time: "x",
+    status: "ok",
+    total_tokens: 200,
+    models: [{ model: "gpt-4o-mini", prompt_tokens: 80, completion_tokens: 120, total_tokens: 200, calls: 1 }],
+  });
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${pollerLineUnknownTotal}\n`,
+    "all-tokens/token-attrib-1.jsonl": `${mergedLineKnownTotal}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.totals.traces, 1);
+  assert.equal(
+    line.totals.total_tokens,
+    200,
+    "must prefer the copy with a KNOWN total (200), not the poller's null-total copy",
+  );
 });
 
 test("anomalies land in the history line when the baseline supports them", async () => {

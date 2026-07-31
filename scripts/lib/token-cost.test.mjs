@@ -162,6 +162,10 @@ test("the shipped price table covers the models measured against Langflow 1.12.0
     "claude-opus-5",
     "gemini-2.5-flash",
     "gemini-flash-latest",
+    // #1197 re-review, finding B: gemini-3.5-flash was the run's largest
+    // consumer (13 calls / 14,690 tokens on run 30647253368) and had no
+    // price entry — the headline printed a FLOOR with `n/a` on the biggest row.
+    "gemini-3.5-flash",
   ]) {
     assert.ok(prices[model], `missing price entry for ${model}`);
     assert.ok(Number.isFinite(prices[model].inputPerMillion), `${model} inputPerMillion must be numeric`);
