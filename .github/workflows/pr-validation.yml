@@ -566,6 +566,34 @@ jobs:
           # here is a HARD gate (not `continue-on-error`), so a failed sweep has
           # already reddened the job and there is no surviving run to warn about.
 
+      # Pin this lane to ONE provider's settled model (#1169). getTestTargets()
+      # parametrizes over one model per active provider, so every impacted agent
+      # spec runs an openai AND an anthropic AND a google variant here. That is
+      # daily-stable.yml's job — it is the lane that owes multi-provider coverage.
+      # This lane answers "does this PR break the specs it touches", which one
+      # provider settles, and the difference is not cosmetic: measured 2026-07-31,
+      # this workflow ran 141 times in 3.5 days, each model-needing run paying an
+      # anthropic variant on claude-sonnet-5 ($3/$15 per MTok) for assertions
+      # gpt-4o-mini ($0.15/$0.60) satisfies identically — 20-25x per token, with no
+      # prompt caching on the anthropic side. Both the CI secret and the local key
+      # drained inside that window (Anthropic credit is account-scoped, so they
+      # share one balance).
+      #
+      # Why a script (see its header for the full argument): MODEL_TEST_PROVIDER
+      # alone does not narrow the run, it runs the provider's ENTIRE catalog (the
+      # dedup branch is skipped) — so the two variables must be emitted as a pair,
+      # which this does. And the model must be the one collect-models settled on:
+      # a hardcoded id skips silently the day the CI project loses access, leaving
+      # a green PR that tested nothing (#570/#1012).
+      #
+      # Declines to pin — with a ::warning:: — when the provider is not active, so
+      # a drained openai key costs a costlier multi-provider run rather than zero
+      # coverage. Gated on needs_models for the same reason as the two steps above:
+      # with no sweep there is no settled model to read.
+      - name: Pin the lane to a single provider's settled model
+        if: needs.detect-specs.outputs.needs_models == 'true'
+        run: node scripts/select-pr-model-target.mjs --provider openai
+
       - name: Run impacted specs
         env:
           CI: "true"
