@@ -35,12 +35,25 @@
  * normal PR run). Excluding them all would silently drop coverage. So the verdict
  * turns on what the PR is ABOUT:
  *
- *   - a provider-dependent spec that the PR **changed directly** ⇒ force the sweep.
- *     The PR is about that spec; gating it on key health is correct, and skipping
- *     it would mean the PR ran nothing that covers its own diff.
- *   - a provider-dependent spec pulled in only **transitively** (a helper changed)
+ *   - a provider-dependent spec the PR **changed itself** ⇒ force the sweep. The PR
+ *     is about that spec; gating it on key health is correct, and skipping it would
+ *     mean the PR ran nothing that covers its own diff.
+ *   - a provider-dependent spec pulled in because something it IMPORTS changed
  *     ⇒ EXCLUDE it and say so. The daily covers it with a real provider; running it
  *     bare here produces a red that misinforms.
+ *
+ * "changed itself" comes from the PR's changed-file list, NOT from
+ * `impacted-specs-by-import.mjs`'s `.direct`. That field holds every **depth-1
+ * importer**, so for #1152 — a one-helper diff — all 7 callers were `direct`,
+ * including the agent spec. Reading it as "the PR changed this" made the verdict
+ * force the sweep for exactly the case this exists to fix, and it survived a
+ * hand-built fixture (`direct: []`) that the real resolver never emits. The unit
+ * lane now feeds it the resolver's ACTUAL output so that cannot recur.
+ *
+ * When the exclusion would empty the run list entirely, the sweep is forced
+ * instead. Decoupling from key health is worth a spec's coverage, never worth ALL
+ * of it: an empty list skips the E2E job, and a lane that runs nothing is not a
+ * cheaper green, it is no evidence at all (#1012).
  *
  * A DELIBERATE ASYMMETRY, stated because it will look like an oversight
  *
@@ -53,8 +66,9 @@
  *
  * Run:
  *   node scripts/impacted-specs-by-import.mjs --format=json … > impacted.json
- *   node scripts/provider-dependent-specs.mjs --stdin < impacted.json
- *   node scripts/provider-dependent-specs.mjs --stdin --canary < impacted.json
+ *   node scripts/provider-dependent-specs.mjs --stdin --changed-file=changed.txt \\
+ *     < impacted.json
+ *   … --canary   (a CI-only run; forces the sweep, excludes nothing)
  *
  * Exit codes: 0 = a verdict was produced; 2 = it could not be (bad flag, malformed
  * input, unreadable spec). A guard that cannot decide must never read as "nothing
@@ -143,45 +157,62 @@ export function classifySpec(file, source) {
 /**
  * Decide the sweep and the run list for one impacted set.
  *
- * @param selected specs the lane would run (post-cap).
- * @param direct   specs the PR changed itself.
- * @param read     `(file) => source`; injected so the unit lane needs no fixtures
- *                 on disk. Must return a string, or the verdict is undecidable.
- * @param canary   a CI-only run, which forces the sweep for its own reasons (#1159).
+ * @param selected     specs the lane would run (post-cap).
+ * @param changedSpecs spec files the PR CHANGED. Required — must be an array, even
+ *                     an empty one. Defaulting it would fail open on coverage: with
+ *                     no changed specs every provider-dependent spec looks
+ *                     transitive and gets excluded, which is the opposite of this
+ *                     file's own "undecidable, never LLM-free" rule.
+ * @param read         `(file) => source`; injected so the unit lane needs no fixtures
+ *                     on disk. Must return a string, or the verdict is undecidable.
+ * @param canary       a CI-only run, which forces the sweep for its own reasons (#1159).
  */
 export function decideProviderCoverage({
   selected,
-  direct = [],
+  changedSpecs,
   read,
   canary = false,
 }) {
-  if (!Array.isArray(selected) || !Array.isArray(direct)) {
-    throw new UndecidableError("selected and direct must be arrays");
+  if (!Array.isArray(selected)) {
+    throw new UndecidableError("selected must be an array");
+  }
+  if (!Array.isArray(changedSpecs)) {
+    throw new UndecidableError(
+      "changedSpecs must be an array (pass [] explicitly — defaulting it would " +
+        "silently exclude every provider-dependent spec)",
+    );
   }
   if (typeof read !== "function") {
     throw new UndecidableError("read must be a function");
   }
 
-  const directSet = new Set(direct);
+  const changed = new Set(changedSpecs);
   const classified = selected.map((file) => ({
     file,
-    isDirect: directSet.has(file),
+    isChanged: changed.has(file),
     ...classifySpec(file, read(file)),
   }));
 
   const forced = classified.filter(
-    (spec) => spec.consumesModelData || (spec.isDirect && spec.providerDependent),
+    (spec) => spec.consumesModelData || (spec.isChanged && spec.providerDependent),
   );
+
+  const providerDependent = classified.filter((spec) => spec.providerDependent);
+
+  // Excluding EVERY selected spec would leave the lane with nothing to run, and an
+  // E2E job that runs nothing is not a cheaper green — it is no evidence at all.
+  // Decoupling from provider key health is worth one spec's coverage, never worth
+  // all of it, so the sweep is forced instead (#1012).
+  const wouldRunNothing =
+    selected.length > 0 && providerDependent.length === selected.length;
 
   // The canary forces the sweep so the post-sweep health gate has something to
   // gate (#1159); with the sweep running, nothing needs excluding.
-  const needsModels = canary || forced.length > 0;
+  const needsModels = canary || forced.length > 0 || wouldRunNothing;
 
   const excluded = needsModels
     ? []
-    : classified
-        .filter((spec) => spec.providerDependent)
-        .map((spec) => ({ file: spec.file, reasons: spec.reasons }));
+    : providerDependent.map((spec) => ({ file: spec.file, reasons: spec.reasons }));
 
   const excludedFiles = new Set(excluded.map((spec) => spec.file));
   return {
@@ -191,9 +222,13 @@ export function decideProviderCoverage({
     excluded,
     forcedBy: forced.map((spec) => ({
       file: spec.file,
-      isDirect: spec.isDirect,
+      isChanged: spec.isChanged,
       reasons: spec.reasons,
     })),
+    // Why the sweep is on when no individual spec demanded it — so the summary can
+    // say "otherwise this lane would have run nothing" instead of leaving a reader
+    // to infer it.
+    forcedToAvoidEmptyRun: !canary && forced.length === 0 && wouldRunNothing,
   };
 }
 
@@ -225,23 +260,53 @@ function readStdin() {
   }
 }
 
-export function main(argv, { read = (file) => fs.readFileSync(file, "utf8") } = {}) {
+/** Spec paths out of a changed-file list. The suite's specs are `*.spec.ts`. */
+export function changedSpecsFrom(changedFiles) {
+  return changedFiles
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith(".spec.ts"));
+}
+
+export function main(
+  argv,
+  {
+    read = (file) => fs.readFileSync(file, "utf8"),
+    readFile = (file) => fs.readFileSync(file, "utf8"),
+    stdin = readStdin,
+  } = {},
+) {
   const args = argv.slice(2);
+  const changedFlag = args.find((arg) => arg.startsWith("--changed-file="));
   const unknown = args.filter(
-    (arg) => !["--stdin", "--canary", "--format=json"].includes(arg),
+    (arg) =>
+      !["--stdin", "--canary", "--format=json"].includes(arg) &&
+      arg !== changedFlag,
   );
-  if (unknown.length > 0 || !args.includes("--stdin")) {
+  if (unknown.length > 0 || !args.includes("--stdin") || !changedFlag) {
     process.stderr.write(
-      "usage: provider-dependent-specs.mjs --stdin [--canary] [--format=json]\n",
+      "usage: provider-dependent-specs.mjs --stdin --changed-file=<path> " +
+        "[--canary] [--format=json]\n",
     );
     return 2;
   }
 
   let impacted;
   try {
-    impacted = JSON.parse(readStdin());
+    impacted = JSON.parse(stdin());
   } catch (error) {
     process.stderr.write(`::error::malformed impacted-specs JSON: ${error}\n`);
+    return 2;
+  }
+
+  // The PR's own changed files, NOT `impacted.direct` — that field is every
+  // depth-1 IMPORTER, so reading it as "the PR changed this" forces the sweep for
+  // precisely the helper-only diff this exists to fix (#1216's own first attempt).
+  let changedSpecs;
+  try {
+    changedSpecs = changedSpecsFrom(readFile(changedFlag.split("=")[1]));
+  } catch (error) {
+    process.stderr.write(`::error::could not read the changed-file list: ${error}\n`);
     return 2;
   }
 
@@ -249,7 +314,7 @@ export function main(argv, { read = (file) => fs.readFileSync(file, "utf8") } = 
   try {
     verdict = decideProviderCoverage({
       selected: impacted.selected,
-      direct: impacted.direct,
+      changedSpecs,
       canary: args.includes("--canary"),
       // A spec that cannot be read is UNDECIDABLE, never "LLM-free": defaulting to
       // false there is how a provider-dependent spec would run bare again.

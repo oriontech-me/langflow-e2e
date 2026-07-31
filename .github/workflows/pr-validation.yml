@@ -313,18 +313,23 @@ jobs:
           # than degrading to "LLM-free" (#1012).
           CANARY_FLAG=""
           if [ "$CANARY" = "true" ]; then CANARY_FLAG="--canary"; fi
-          node scripts/provider-dependent-specs.mjs --stdin --format=json $CANARY_FLAG \
+          node scripts/provider-dependent-specs.mjs --stdin --format=json \
+            --changed-file=/tmp/changed.txt $CANARY_FLAG \
             < /tmp/impacted.json > /tmp/provider.json \
             || { echo "::error::provider-coverage verdict failed"; exit 1; }
           NEEDS_MODELS=$(jq -r '.needsModels' /tmp/provider.json)
           EXCLUDED=$(jq -r '.excluded | length' /tmp/provider.json)
 
-          # Re-derive the run list from the verdict: the excluded specs must not
-          # reach Playwright. When this empties the list the job's own `has_specs`
-          # gate skips the E2E run — safe, because an empty `SPECS` would otherwise
-          # make `npx playwright test` run the WHOLE suite, and honest only because
-          # the warning below always accompanies it.
-          SPECS=$(jq -r '.run | join(" ")' /tmp/provider.json)
+          # Re-derive the run list from the verdict, so an excluded spec cannot reach
+          # Playwright — but NEVER on a canary run. A canary's specs come from
+          # `ci-change-coverage.mjs`, not from the import graph, so `impacted.selected`
+          # is empty there and overwriting `$SPECS` with the verdict's (empty) run list
+          # would blank it, trip `has_specs=false`, and skip the whole E2E job — taking
+          # `Collect models` and the health gate with it, since both live in that job.
+          # That is precisely the "green check, nothing ran" hole #1159 exists to close.
+          if [ "$CANARY" != "true" ]; then
+            SPECS=$(jq -r '.run | join(" ")' /tmp/provider.json)
+          fi
 
           if [ "$EXCLUDED" -gt 0 ]; then
             echo "::warning::$(jq -r '.warning' /tmp/provider.json)"
@@ -334,11 +339,18 @@ jobs:
               echo "  Covered by \`daily-stable.yml\`; dispatch \`manual.yml\` on this branch to run them against a provider now."
             } >> "$GITHUB_STEP_SUMMARY"
           fi
-          if [ "$NEEDS_MODELS" = "true" ]; then
+          # Only when a spec demanded it: on a canary the sweep is forced for the
+          # health gate's sake and `forcedBy` is legitimately empty, so this would
+          # otherwise print a header over nothing.
+          if [ "$(jq -r '.forcedBy | length' /tmp/provider.json)" -gt 0 ]; then
             {
               echo "- 🔑 provider sweep **required** by:"
-              jq -r '.forcedBy[] | "  - `" + .file + "`" + (if .isDirect then " (changed by this PR)" else " (consumes the sweep output)" end)' /tmp/provider.json
+              jq -r '.forcedBy[] | "  - `" + .file + "`" + (if .isChanged then " (changed by this PR)" else " (consumes the sweep output)" end)' /tmp/provider.json
             } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$(jq -r '.forcedToAvoidEmptyRun' /tmp/provider.json)" = "true" ]; then
+            echo "::warning::Every impacted spec needs a provider, so the sweep runs rather than leaving this lane with nothing to execute — decoupling from key health is not worth ALL of a PR's coverage (#1216)."
+            echo "- 🔑 provider sweep forced: every impacted spec needs a provider, so excluding them would have left nothing to run." >> "$GITHUB_STEP_SUMMARY"
           fi
 
           echo "Needs provider models: $NEEDS_MODELS"

@@ -11,8 +11,10 @@
 // The case that matters most is reproduced literally below: PR #1152's impacted set.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { execFileSync, spawnSync } from "node:child_process";
 
 import {
   ALWAYS_LLM_AREAS,
@@ -105,7 +107,7 @@ test("PR #1152's set: the transitive agent spec is excluded, not run bare", () =
   // A helper change (`rename-flow.ts`) — no spec changed directly.
   const verdict = decideProviderCoverage({
     selected: [AGENT_CANVAS, EDIT_FLOW_NAME, RUN_FLOW],
-    direct: [],
+    changedSpecs: [],
     read,
   });
   assert.equal(verdict.needsModels, false, "a helper PR must not gate on key health");
@@ -121,14 +123,14 @@ test("the same spec, changed DIRECTLY, forces the sweep and runs", () => {
   // covering its own diff, so gating on key health is the correct trade here.
   const verdict = decideProviderCoverage({
     selected: [AGENT_CANVAS, EDIT_FLOW_NAME],
-    direct: [AGENT_CANVAS],
+    changedSpecs: [AGENT_CANVAS],
     read,
   });
   assert.equal(verdict.needsModels, true);
   assert.deepEqual(verdict.run, [AGENT_CANVAS, EDIT_FLOW_NAME]);
   assert.deepEqual(verdict.excluded, []);
   assert.deepEqual(verdict.forcedBy, [
-    { file: AGENT_CANVAS, isDirect: true, reasons: ["tagged @agents"] },
+    { file: AGENT_CANVAS, isChanged: true, reasons: ["tagged @agents"] },
   ]);
 });
 
@@ -138,7 +140,7 @@ test("a sweep-consuming spec forces it even when only transitive", () => {
   // today. Stated as a test so a future change to it is deliberate.
   const verdict = decideProviderCoverage({
     selected: [MCP_AGENT, EDIT_FLOW_NAME],
-    direct: [],
+    changedSpecs: [],
     read,
   });
   assert.equal(verdict.needsModels, true);
@@ -148,7 +150,7 @@ test("a sweep-consuming spec forces it even when only transitive", () => {
 test("with the sweep running, nothing is excluded", () => {
   const verdict = decideProviderCoverage({
     selected: [LLM_AREA, AGENT_CANVAS, EDIT_FLOW_NAME],
-    direct: [],
+    changedSpecs: [],
     read,
   });
   assert.equal(verdict.needsModels, true);
@@ -160,7 +162,7 @@ test("a canary forces the sweep and excludes nothing", () => {
   // #1159: the canary exists so the post-sweep health gate has something to gate.
   const verdict = decideProviderCoverage({
     selected: [AGENT_CANVAS],
-    direct: [],
+    changedSpecs: [],
     read,
     canary: true,
   });
@@ -172,7 +174,7 @@ test("a canary forces the sweep and excludes nothing", () => {
 test("an LLM-free set changes nothing", () => {
   const verdict = decideProviderCoverage({
     selected: [EDIT_FLOW_NAME, RUN_FLOW],
-    direct: [EDIT_FLOW_NAME],
+    changedSpecs: [EDIT_FLOW_NAME],
     read,
   });
   assert.equal(verdict.needsModels, false);
@@ -180,16 +182,29 @@ test("an LLM-free set changes nothing", () => {
   assert.deepEqual(verdict.excluded, []);
 });
 
-test("excluding every selected spec is allowed but never silent", () => {
+test("excluding EVERY selected spec forces the sweep instead of running nothing", () => {
+  // Decoupling from provider key health is worth one spec's coverage, never worth
+  // all of it. An empty run list makes the lane's `has_specs` gate skip the E2E job
+  // entirely, and a lane that runs nothing is not a cheaper green — it is no
+  // evidence at all (#1012).
   const verdict = decideProviderCoverage({
     selected: [AGENT_CANVAS],
-    direct: [],
+    changedSpecs: [],
     read,
   });
-  assert.deepEqual(verdict.run, []);
+  assert.equal(verdict.needsModels, true);
+  assert.equal(verdict.forcedToAvoidEmptyRun, true);
+  assert.deepEqual(verdict.excluded, []);
+  assert.deepEqual(verdict.run, [AGENT_CANVAS]);
+});
+
+test("an exclusion is worded so a shortened run cannot read as full coverage", () => {
+  const verdict = decideProviderCoverage({
+    selected: [AGENT_CANVAS, EDIT_FLOW_NAME],
+    changedSpecs: [],
+    read,
+  });
   assert.equal(verdict.excluded.length, 1);
-  // The lane's `has_specs` gate then skips the E2E job, which is safe only because
-  // the reason reaches the reviewer: an empty run list must never look like a pass.
   const warning = formatExclusionWarning(verdict.excluded);
   assert.match(warning, /NOT run here/);
   assert.match(warning, /daily-stable\.yml/);
@@ -198,13 +213,41 @@ test("excluding every selected spec is allowed but never silent", () => {
   assert.match(warning, /agent-component-regression/);
 });
 
+test("a canary with an EMPTY impacted set excludes nothing and keeps its own list", () => {
+  // The canary's specs come from `ci-change-coverage.mjs`, not from the import
+  // graph, so `selected` is empty on a CI-only PR. A verdict that returned an empty
+  // run list here would let the workflow clobber the canary list and skip the E2E
+  // job — killing the very run #1159 added to prove the lane boots.
+  const verdict = decideProviderCoverage({
+    selected: [],
+    changedSpecs: [],
+    read,
+    canary: true,
+  });
+  assert.equal(verdict.needsModels, true);
+  assert.deepEqual(verdict.run, []);
+  assert.deepEqual(verdict.excluded, []);
+  assert.equal(verdict.forcedToAvoidEmptyRun, false, "an empty SELECTION is not an emptied run");
+});
+
 test("bad arguments are undecidable", () => {
   assert.throws(
-    () => decideProviderCoverage({ selected: "nope", read }),
+    () => decideProviderCoverage({ selected: "nope", changedSpecs: [], read }),
     UndecidableError,
   );
   assert.throws(
-    () => decideProviderCoverage({ selected: [], read: null }),
+    () => decideProviderCoverage({ selected: [], changedSpecs: [], read: null }),
+    UndecidableError,
+  );
+});
+
+test("a MISSING changedSpecs is undecidable, not an empty list", () => {
+  // Defaulting it fails OPEN on coverage: with no changed specs every
+  // provider-dependent spec looks transitive and gets excluded. That is the
+  // opposite of this script's own rule, and it would fire the day the resolver's
+  // JSON shape changes.
+  assert.throws(
+    () => decideProviderCoverage({ selected: [AGENT_CANVAS], read }),
     UndecidableError,
   );
 });
@@ -234,42 +277,6 @@ test("@playground is deliberately NOT a provider tag", () => {
 
 // ---------- CLI ----------
 
-test("the CLI emits GitHub outputs and warns on exclusion", () => {
-  const out = [];
-  const err = [];
-  const stdout = process.stdout.write;
-  const stderr = process.stderr.write;
-  const stdin = { selected: [AGENT_CANVAS, EDIT_FLOW_NAME], direct: [] };
-  process.stdout.write = (chunk) => out.push(chunk);
-  process.stderr.write = (chunk) => err.push(chunk);
-  let code;
-  try {
-    // `main` reads fd 0; feed it by monkey-patching the reader via `read` and a
-    // pre-serialized stdin is not possible here, so exercise the pure path and the
-    // formatter above, and assert the CLI's contract on argument handling below.
-    code = main(["node", "provider-dependent-specs.mjs", "--bogus"], { read });
-  } finally {
-    process.stdout.write = stdout;
-    process.stderr.write = stderr;
-  }
-  assert.equal(code, 2, "an unknown flag must exit 2, not default to a verdict");
-  assert.match(err.join(""), /usage:/);
-  assert.ok(stdin.selected.length > 0);
-});
-
-test("a missing --stdin exits 2 rather than assuming an empty set", () => {
-  const err = [];
-  const stderr = process.stderr.write;
-  process.stderr.write = (chunk) => err.push(chunk);
-  let code;
-  try {
-    code = main(["node", "provider-dependent-specs.mjs"], { read });
-  } finally {
-    process.stderr.write = stderr;
-  }
-  assert.equal(code, 2);
-});
-
 // ---------- the workflow wiring ----------
 
 test("pr-validation calls the verdict and emits the run list ONLY after it", () => {
@@ -286,6 +293,20 @@ test("pr-validation calls the verdict and emits the run list ONLY after it", () 
     workflow,
     /node scripts\/provider-dependent-specs\.mjs --stdin --format=json/,
     "the lane must ask this script for the verdict",
+  );
+  assert.match(
+    workflow,
+    /--changed-file=\/tmp\/changed\.txt/,
+    "the verdict must read the PR's changed files, never impacted.direct — that " +
+      "field is the depth-1 importers, and misreading it forced the sweep for the " +
+      "very helper-only diff this fixes (#1216)",
+  );
+  // A canary's specs come from ci-change-coverage, not the import graph, so the
+  // re-derivation MUST be skipped there or the E2E job is skipped outright.
+  assert.match(
+    workflow,
+    /if \[ "\$CANARY" != "true" \]; then\n\s+SPECS=\$\(jq -r '\.run \| join\(" "\)'/,
+    "the canary's spec list must survive the verdict (#1159)",
   );
   const count = (needle) => workflow.split(needle).length - 1;
   assert.equal(count('echo "specs=$SPECS"'), 1, "the run list is emitted exactly once");
@@ -312,4 +333,187 @@ test("an exclusion is announced, never silent", () => {
   );
   assert.match(workflow, /::warning::\$\(jq -r '\.warning' \/tmp\/provider\.json\)/);
   assert.match(workflow, /GITHUB_STEP_SUMMARY/);
+});
+
+// ---------- against the REAL resolver ----------
+
+test("PR #1152's actual diff: the resolver's own output, not a hand-built fixture", () => {
+  // This test exists because a hand-built fixture (`direct: []`) lied. The real
+  // `impacted-specs-by-import.mjs` puts every DEPTH-1 IMPORTER in `.direct`, so for
+  // a one-helper diff all 7 callers were "direct" — and a verdict that read that
+  // field as "the PR changed this" forced the sweep for exactly the case #1216
+  // exists to fix, while every unit test stayed green.
+  //
+  // So the fixture is now the resolver itself, run on the real diff of PR #1152, and
+  // the specs are read off the real tree. If the resolver's shape or this repo's
+  // import graph changes, this fails instead of quietly agreeing with itself.
+  const impacted = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        path.join(REPO_ROOT, "scripts/impacted-specs-by-import.mjs"),
+        "--stdin",
+        "--format=json",
+        "--cap",
+        "20",
+      ],
+      { input: "tests/helpers/flows/rename-flow.ts\n", encoding: "utf8" },
+    ),
+  );
+
+  assert.ok(
+    impacted.direct.length > 1,
+    "guard the guard: `.direct` must still be the depth-1 importers, else this " +
+      "test would stop covering the trap it was written for",
+  );
+
+  const verdict = decideProviderCoverage({
+    selected: impacted.selected,
+    // What the PR actually changed: one helper, no spec files.
+    changedSpecs: [],
+    read: (file) => readFileSync(path.join(REPO_ROOT, file), "utf8"),
+  });
+
+  const agentSpec = impacted.selected.find((file) =>
+    file.endsWith("agent-component-regression.spec.ts"),
+  );
+  assert.ok(agentSpec, "the agent spec must still be reachable from renameFlow");
+  assert.equal(
+    verdict.needsModels,
+    false,
+    "a helper-only diff must not gate this lane on provider key health",
+  );
+  assert.deepEqual(
+    verdict.excluded.map((spec) => spec.file),
+    [agentSpec],
+    "the provider-dependent spec is excluded rather than run bare",
+  );
+  assert.ok(
+    verdict.run.length >= 5 && !verdict.run.includes(agentSpec),
+    "the rest of the impacted set still runs",
+  );
+});
+
+test("the same diff plus that spec edited: the sweep is forced and it runs", () => {
+  const impacted = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        path.join(REPO_ROOT, "scripts/impacted-specs-by-import.mjs"),
+        "--stdin",
+        "--format=json",
+        "--cap",
+        "20",
+      ],
+      { input: "tests/helpers/flows/rename-flow.ts\n", encoding: "utf8" },
+    ),
+  );
+  const agentSpec = impacted.selected.find((file) =>
+    file.endsWith("agent-component-regression.spec.ts"),
+  );
+  const verdict = decideProviderCoverage({
+    selected: impacted.selected,
+    changedSpecs: [agentSpec],
+    read: (file) => readFileSync(path.join(REPO_ROOT, file), "utf8"),
+  });
+  assert.equal(verdict.needsModels, true);
+  assert.deepEqual(verdict.excluded, []);
+  assert.ok(verdict.run.includes(agentSpec));
+});
+
+// ---------- the CLI, actually exercised ----------
+
+const CLI = path.join(REPO_ROOT, "scripts/provider-dependent-specs.mjs");
+
+/** Run the real CLI in a child process. Returns `{status, stdout, stderr}`. */
+function runCli(args, { impacted, changedFiles }) {
+  const changedPath = path.join(
+    os.tmpdir(),
+    `changed-${process.pid}-${args.join("_").replace(/\W/g, "")}.txt`,
+  );
+  writeFileSync(changedPath, changedFiles);
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [CLI, ...args, `--changed-file=${changedPath}`],
+      { input: JSON.stringify(impacted), encoding: "utf8" },
+    );
+    return result;
+  } finally {
+    rmSync(changedPath, { force: true });
+  }
+}
+
+test("the CLI emits the GitHub outputs and warns, over a real stdin", () => {
+  const result = runCli(["--stdin"], {
+    impacted: { selected: [AGENT_CANVAS, EDIT_FLOW_NAME] },
+    changedFiles: "tests/helpers/flows/rename-flow.ts\n",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /needs_models=false/);
+  assert.match(result.stdout, new RegExp(`specs=${EDIT_FLOW_NAME}`));
+  assert.doesNotMatch(result.stdout, /agent-component-regression/);
+  assert.match(result.stderr, /::warning::/);
+  assert.match(result.stderr, /agent-component-regression/);
+});
+
+test("the CLI's JSON carries the warning text, so the workflow never rewords it", () => {
+  const result = runCli(["--stdin", "--format=json"], {
+    impacted: { selected: [AGENT_CANVAS, EDIT_FLOW_NAME] },
+    changedFiles: "tests/helpers/flows/rename-flow.ts\n",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const verdict = JSON.parse(result.stdout);
+  assert.equal(verdict.needsModels, false);
+  assert.match(verdict.warning, /NOT run here/);
+  assert.deepEqual(verdict.run, [EDIT_FLOW_NAME]);
+});
+
+test("a changed spec file reaches the verdict through the changed-file list", () => {
+  const result = runCli(["--stdin", "--format=json"], {
+    impacted: { selected: [AGENT_CANVAS, EDIT_FLOW_NAME] },
+    changedFiles: `tests/helpers/flows/rename-flow.ts\n${AGENT_CANVAS}\n`,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const verdict = JSON.parse(result.stdout);
+  assert.equal(verdict.needsModels, true, "editing the spec forces the sweep");
+  assert.deepEqual(verdict.excluded, []);
+  assert.equal(verdict.warning, "");
+});
+
+test("the CLI exits 2 on a missing --changed-file, malformed JSON, or a bad flag", () => {
+  // Three ways to be undecidable, all of which must fail the step rather than
+  // degrade to "LLM-free" (#1012).
+  const noFlag = spawnSync(process.execPath, [CLI, "--stdin"], {
+    input: "{}",
+    encoding: "utf8",
+  });
+  assert.equal(noFlag.status, 2);
+  assert.match(noFlag.stderr, /usage:/);
+
+  const malformed = runCli(["--stdin"], {
+    impacted: "not json at all",
+    changedFiles: "",
+  });
+  // A quoted string IS valid JSON, so force the parse failure explicitly instead.
+  const trulyMalformed = spawnSync(
+    process.execPath,
+    [CLI, "--stdin", "--changed-file=/dev/null"],
+    { input: "{ nope", encoding: "utf8" },
+  );
+  assert.equal(trulyMalformed.status, 2);
+  assert.match(trulyMalformed.stderr, /malformed impacted-specs JSON|verdict failed/);
+  assert.ok(malformed.status === 2 || malformed.status === 0);
+
+  const badFlag = runCli(["--stdin", "--bogus"], {
+    impacted: { selected: [] },
+    changedFiles: "",
+  });
+  assert.equal(badFlag.status, 2);
+
+  const unreadableSpec = runCli(["--stdin"], {
+    impacted: { selected: ["tests/does-not-exist.spec.ts"] },
+    changedFiles: "",
+  });
+  assert.equal(unreadableSpec.status, 2, "an unreadable spec is undecidable");
 });
