@@ -323,6 +323,36 @@ test("pr-validation calls the verdict and emits the run list ONLY after it", () 
   assert.ok(emitAt > rederiveAt, "the run list must be emitted after it is re-derived");
 });
 
+test("the run COUNT is derived from the final run list, not from the resolution arithmetic", () => {
+  // #1226. The summary used to print `running in this PR: **$((TOTAL - DROPPED))**`
+  // up in the resolution block, before the provider verdict could shorten the list —
+  // so an excluded spec was counted as executed, and on a canary run (where TOTAL is
+  // 0 by definition) the line said 0 while three specs ran. The figure a reviewer
+  // reads first must come from the list actually handed to Playwright.
+  const workflow = readFileSync(
+    path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"),
+    "utf8",
+  );
+  assert.match(
+    workflow,
+    /RUN_COUNT=\$\(printf '%s' "\$SPECS" \| wc -w/,
+    "the run count must be counted from $SPECS",
+  );
+  assert.doesNotMatch(
+    workflow,
+    /running in this PR: \*\*\$\(\(TOTAL/,
+    "the run count must never be computed as TOTAL - DROPPED again (#1226)",
+  );
+  // …and it must be emitted only after the verdict has had its chance to shorten
+  // the list, which is what made the old placement wrong.
+  const rederiveAt = workflow.indexOf("SPECS=$(jq -r '.run | join(\" \")'");
+  const countAt = workflow.indexOf("RUN_COUNT=");
+  const printAt = workflow.indexOf("- running in this PR:");
+  assert.ok(rederiveAt > 0, "the run list is re-derived from the verdict");
+  assert.ok(countAt > rederiveAt, "the count comes after the re-derivation");
+  assert.ok(printAt > countAt, "the summary line comes after the count");
+});
+
 test("an exclusion is announced, never silent", () => {
   // #1012's rule: whatever the lane does not cover is stated, not inferred from a
   // green check. The wording lives in this script (and is asserted above), so the
@@ -481,6 +511,27 @@ test("a changed spec file reaches the verdict through the changed-file list", ()
   assert.equal(verdict.warning, "");
 });
 
+test("a --changed-file path containing '=' is read whole, not truncated", () => {
+  // #1226: parsed with `split("=")[1]`, this path became `/tmp/changed` and the CLI
+  // failed with "could not read the changed-file list" naming a path nobody passed.
+  const weird = path.join(os.tmpdir(), `changed=${process.pid}=eq.txt`);
+  writeFileSync(weird, `${AGENT_CANVAS}\n`);
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [CLI, "--stdin", "--format=json", `--changed-file=${weird}`],
+      { input: JSON.stringify({ selected: [AGENT_CANVAS] }), encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    // The spec reached the verdict as CHANGED, which is only possible if the whole
+    // path was read — a truncated one yields no changed specs and the opposite verdict.
+    const verdict = JSON.parse(result.stdout);
+    assert.deepEqual(verdict.forcedBy.map((spec) => spec.isChanged), [true]);
+  } finally {
+    rmSync(weird, { force: true });
+  }
+});
+
 test("the CLI exits 2 on a missing --changed-file, malformed JSON, or a bad flag", () => {
   // Three ways to be undecidable, all of which must fail the step rather than
   // degrade to "LLM-free" (#1012).
@@ -491,11 +542,7 @@ test("the CLI exits 2 on a missing --changed-file, malformed JSON, or a bad flag
   assert.equal(noFlag.status, 2);
   assert.match(noFlag.stderr, /usage:/);
 
-  const malformed = runCli(["--stdin"], {
-    impacted: "not json at all",
-    changedFiles: "",
-  });
-  // A quoted string IS valid JSON, so force the parse failure explicitly instead.
+  // Unparseable input.
   const trulyMalformed = spawnSync(
     process.execPath,
     [CLI, "--stdin", "--changed-file=/dev/null"],
@@ -503,7 +550,17 @@ test("the CLI exits 2 on a missing --changed-file, malformed JSON, or a bad flag
   );
   assert.equal(trulyMalformed.status, 2);
   assert.match(trulyMalformed.stderr, /malformed impacted-specs JSON|verdict failed/);
-  assert.ok(malformed.status === 2 || malformed.status === 0);
+
+  // Parseable but the WRONG SHAPE — a bare JSON string. This used to be asserted
+  // as `status === 2 || status === 0`, which accepted the pass-through the whole
+  // script exists to forbid (#1226). The exit is deterministic: the string parses,
+  // `.selected` is `undefined`, and `decideProviderCoverage` refuses to guess.
+  const wrongShape = runCli(["--stdin"], {
+    impacted: "not json at all",
+    changedFiles: "",
+  });
+  assert.equal(wrongShape.status, 2, "a parseable non-object is still undecidable");
+  assert.match(wrongShape.stderr, /selected must be an array/);
 
   const badFlag = runCli(["--stdin", "--bogus"], {
     impacted: { selected: [] },

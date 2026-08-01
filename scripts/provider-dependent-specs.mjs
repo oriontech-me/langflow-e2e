@@ -304,7 +304,12 @@ export function main(
   // precisely the helper-only diff this exists to fix (#1216's own first attempt).
   let changedSpecs;
   try {
-    changedSpecs = changedSpecsFrom(readFile(changedFlag.split("=")[1]));
+    // `slice`, not `split("=")[1]`: a path containing `=` would be truncated, and
+    // the failure would be "could not read the changed-file list" pointing at a
+    // path the caller never passed (#1226).
+    changedSpecs = changedSpecsFrom(
+      readFile(changedFlag.slice(changedFlag.indexOf("=") + 1)),
+    );
   } catch (error) {
     process.stderr.write(`::error::could not read the changed-file list: ${error}\n`);
     return 2;

@@ -245,11 +245,16 @@ jobs:
 
           echo "Running: ${SPECS:-<none>}"
 
+          # RESOLUTION only — what the import graph found, which is settled here and
+          # cannot change below. The count of what actually RUNS is emitted after the
+          # provider verdict, because only there is the run list final (#1226).
+          # `$STABLE` is `.stableSelected`, a property of the SELECTION, so it stays
+          # on this line rather than following the run count: moving it would make it
+          # a claim about execution that the exclusion below can falsify.
           {
             echo "### Impacted specs"
             echo ""
-            echo "- resolved by import graph: **$TOTAL** ($DIRECT direct, $((TOTAL - DIRECT)) transitive)"
-            echo "- running in this PR: **$((TOTAL - DROPPED))** (of which \`@stable\`: $STABLE)"
+            echo "- resolved by import graph: **$TOTAL** ($DIRECT direct, $((TOTAL - DIRECT)) transitive; \`@stable\`: $STABLE)"
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Same rule as the cap and the suite-wide signal: whatever this lane does
@@ -330,6 +335,24 @@ jobs:
           if [ "$CANARY" != "true" ]; then
             SPECS=$(jq -r '.run | join(" ")' /tmp/provider.json)
           fi
+
+          # The run count is COUNTED FROM $SPECS, here — after everything that can
+          # shorten it has run, and never as `TOTAL - DROPPED` up in the resolution
+          # block (#1226). That arithmetic lied in two ways, and the second predates
+          # #1216:
+          #   - an excluded provider-dependent spec was still counted as executed,
+          #     and the `@stable` tally with it — the spec that motivated #1216
+          #     (`agent-component-regression`) is `@stable`, so the headline figure
+          #     contradicted the exclusion warning printed directly below it;
+          #   - on a CANARY run `TOTAL` is 0 by definition (no spec imports a
+          #     workflow), so the line read "running in this PR: 0" while the canary
+          #     block below it listed the three specs that do run.
+          # Same defect both times: a figure a reviewer reads as coverage the lane did
+          # not deliver (#1012's rule). Counting the list actually handed to Playwright
+          # cannot drift from it, and `wc -w` is exact here because `$SPECS` is a
+          # space-joined list of paths with no spaces.
+          RUN_COUNT=$(printf '%s' "$SPECS" | wc -w | tr -d ' ')
+          echo "- running in this PR: **$RUN_COUNT**" >> "$GITHUB_STEP_SUMMARY"
 
           if [ "$EXCLUDED" -gt 0 ]; then
             echo "::warning::$(jq -r '.warning' /tmp/provider.json)"
