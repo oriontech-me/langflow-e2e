@@ -118,49 +118,65 @@ test("the seeded key is the flag upstream reads", () => {
   assert.equal(ASSISTANT_DISCOVERED_STORAGE_KEY, "langflow-assistant-discovered");
 });
 
-test("the init script writes the upstream key with the upstream value", () => {
+/**
+ * Run `body` with `globalThis.localStorage` replaced by `stub`, then restore.
+ *
+ * Via `defineProperty` against the saved descriptor, not `globals.localStorage =`.
+ * Node exposes `localStorage` as a getter-only global from v22.4 (unflagged in
+ * v24), and a plain assignment to an accessor with no setter THROWS under the
+ * `"use strict"` these modules compile to — so the direct form would fail both
+ * tests below on a newer runtime, for a reason having nothing to do with what
+ * they assert. Restoring the descriptor rather than the value keeps that global
+ * a getter afterwards instead of flattening it into a data property.
+ */
+function withLocalStorage(stub: unknown, body: () => void): void {
+  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    value: stub,
+    configurable: true,
+    writable: true,
+  });
+  try {
+    body();
+  } finally {
+    if (original) Object.defineProperty(globalThis, "localStorage", original);
+    else delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+}
+
+test("the init script writes the upstream key with the upstream value", async () => {
   const page = fakePage();
-  return seedAssistantDiscovered(page).then(() => {
-    const { script, arg } = page.initScripts[0];
-    const written: Record<string, string> = {};
-    const globals = globalThis as { localStorage?: unknown };
-    const original = globals.localStorage;
-    globals.localStorage = {
+  await seedAssistantDiscovered(page);
+  const { script, arg } = page.initScripts[0];
+  const written: Record<string, string> = {};
+  withLocalStorage(
+    {
       setItem: (key: string, value: string) => {
         written[key] = value;
       },
-    };
-    try {
-      script(arg);
-    } finally {
-      if (original === undefined) delete globals.localStorage;
-      else globals.localStorage = original;
-    }
-    assert.deepEqual(written, { "langflow-assistant-discovered": "true" });
-  });
+    },
+    () => script(arg),
+  );
+  assert.deepEqual(written, { "langflow-assistant-discovered": "true" });
 });
 
-test("a localStorage that throws does not reject the seed", () => {
+test("a localStorage that throws does not reject the seed", async () => {
   const page = fakePage();
-  return seedAssistantDiscovered(page).then(() => {
-    const { script, arg } = page.initScripts[0];
-    const globals = globalThis as { localStorage?: unknown };
-    const original = globals.localStorage;
-    globals.localStorage = {
+  await seedAssistantDiscovered(page);
+  const { script, arg } = page.initScripts[0];
+  withLocalStorage(
+    {
       setItem: () => {
         throw new Error("private browsing");
       },
-    };
-    try {
+    },
+    () => {
       // Upstream treats its own write as best-effort for the same reason; the
       // consequence of swallowing it is a visible overlay and a loud spec
       // failure, never a silent pass.
       assert.doesNotThrow(() => script(arg));
-    } finally {
-      if (original === undefined) delete globals.localStorage;
-      else globals.localStorage = original;
-    }
-  });
+    },
+  );
 });
 
 test("the canvas budget is separate from, and longer than, the writable budget", () => {

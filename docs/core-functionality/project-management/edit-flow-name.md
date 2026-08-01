@@ -187,12 +187,19 @@ loudly, so the suite keeps its only signal on how often #1153 fires.
 
 ### The onboarding tooltip is armed on a 10 s timer
 
-`assistant-onboarding-tooltip` renders in a Portal over the editor and its
-overlay intercepts clicks on the canvas **and on the Flow Settings modal** — the
-one this spec drives on every iteration (#684). Upstream gates it on a
+`assistant-onboarding-tooltip` renders in a Portal over the editor, anchored
+beside `assistant-button` in the canvas controls bar. Upstream gates it on a
 localStorage flag (`langflow-assistant-discovered`, written when the user opens
 the assistant or clicks the tooltip's X), which is **empty in every fresh
 Playwright context**, so every test is exposed on every entry.
+
+The #684 write-up says the overlay also intercepts clicks on the Flow Settings
+modal — the one this spec drives on every iteration. That is no longer true on
+1.12.x and should not be repeated: upstream renders the popover as
+`modal={false}` at `z-40`, deliberately capped below the z-50 dialog layer so it
+cannot float in front of an open modal. What is left is a small opaque rectangle
+over the canvas-controls region — enough to eat a hit-tested click on whatever it
+covers, which is reason enough to remove it rather than race it.
 
 This is owned by `openFlowById` (#1214) since three specs needed it, and
 dismissing it on entry does not work, for a reason worth recording:

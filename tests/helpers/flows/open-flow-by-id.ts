@@ -23,6 +23,21 @@
 // `trackCreatedFlows` made (#1108). The seed is registered by the entry itself and
 // is idempotent per page, so a caller cannot forget it and a caller that enters
 // three times still pays for one registration.
+//
+// What this does NOT do, stated so the next reader does not conclude the
+// duplication is gone: three callers is the whole reach today, and roughly twenty
+// other `page.goto('/flow/{id}')` sites remain across the suite
+// (`core-components/edit-tools`, `parameters-panel-field-types`,
+// `flow-execution-canvas`, the three `llm-agents` agent-context specs, three
+// knowledge-ingestion specs, `traces-latency-tokens`,
+// `webhook-component-regression`, plus `helpers/flows/setup-playground.ts` and
+// `load-template-by-name.ts`). They are not copies of this — they gate readiness
+// on `sidebar-search-input` rather than `canvas_controls_dropdown`, a genuinely
+// different signal — but none seeds the onboarding flag and none gates on
+// writability, so both hazards above are still open there. Migrating them is a
+// separate change on purpose: every spec added here is selected by the impacted
+// lane on every edit to this file (#1054), so reach is a cost to spend
+// deliberately, with a measurement behind it, not in passing.
 
 import { type Page, expect } from "@playwright/test";
 
@@ -82,10 +97,20 @@ export interface NavigablePage {
 /**
  * Suppress the assistant onboarding affordances for every subsequent load.
  *
- * `assistant-onboarding-tooltip` renders in a Portal over the editor and its
- * overlay intercepts clicks on the canvas AND on the Flow Settings modal (#684).
- * The flag gating it lives in localStorage, i.e. it is empty in every fresh
- * Playwright context, so every test is exposed on every entry.
+ * `assistant-onboarding-tooltip` renders in a Portal over the editor, anchored
+ * beside `assistant-button` in the canvas controls bar, and the flag gating it
+ * lives in localStorage — empty in every fresh Playwright context, so every test
+ * is exposed on every entry.
+ *
+ * What it actually costs is worth stating precisely, because the #684 write-up
+ * this helper inherited overstates it on 1.12.x. Upstream renders the popover as
+ * `modal={false}` at `z-40`, with a comment saying the z-index is deliberately
+ * capped below the z-50 dialog layer "so the onboarding tooltip never floats in
+ * front of an open modal". So there is no body-wide blocking layer and no
+ * interception of the Flow Settings modal any more — what remains is a small
+ * opaque rectangle over the canvas-controls region, which is enough to eat a
+ * hit-tested click on whatever it covers, and enough to have flaked
+ * click-heavy specs before that cap landed.
  *
  * Seeding rather than dismissing is not a preference, it is what works: upstream
  * arms the tooltip on an **idle timer of 10 s** after mount

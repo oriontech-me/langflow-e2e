@@ -24,7 +24,19 @@ const createdFlowIds: string[] = [];
 // onboarding dismiss that is measurably a no-op at entry (upstream arms the
 // tooltip on a 10 s idle timer, so the probe looked ~8 s too early). The helper
 // suppresses the overlay outright and gates on the flow being writable, which
-// this spec needs: every step below mutates the flow through the settings menu.
+// this spec needs: `expectLockState` opens Flow Settings by clicking `flow_name`,
+// and upstream renders that popover as `open={openSettings && !isReadOnly}`, so a
+// click landing while the permissions query is in flight opens nothing.
+//
+// One consequence to know before triaging a flake here: the two things dropped
+// were doing nothing as OVERLAY handling but were ~2.5 s of settle time by
+// accident (`waitForTimeout(500)` plus the dismiss probe's own
+// `isVisible({ timeout: 2000 })` burning its full budget on an absent element).
+// The writable gate that replaces them normally resolves in milliseconds. The
+// migration ran 12/12 at `--workers=4 --retries=0` on 1.12.0.dev10 and every step
+// below asserts through polling `toHaveCount`, so this is not a known problem —
+// but if this spec starts flaking on the saturated daily, look here first rather
+// than at the canvas deadline.
 
 test.afterEach(async ({ page }) => {
   const ids = createdFlowIds.splice(0);

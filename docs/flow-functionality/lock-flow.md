@@ -9,8 +9,8 @@
 A **locked** flow blocks all canvas graph edits, and unlocking restores them —
 the functional core of the "Lock flow (prevents editing)" behavior:
 
-1. **Lock persists across navigation** — locking a flow, leaving to the flows
-   list, and reopening it keeps the flow locked (the `icon-lock` badge is shown
+1. **Lock persists across a reload** — locking a flow and reopening it by id
+   keeps the flow locked (the Flow Settings `lock-flow-switch` reads `checked`
    on reopen).
 2. **Locked ⇒ edits blocked** — while locked, clicking edges and pressing
    `Backspace` does **not** delete them (edge count stays constant), and
@@ -61,8 +61,11 @@ on the fresh nightly. `@components` — node/edge canvas manipulation; `@workspa
    Reopens later in the test also go by id (not `list-card.first()`) so parallel
    workers never open each other's flow — see Notes.
 2. `lockFlow(page)` — open settings, toggle `lock-flow-switch`, save.
-3. Navigate to the flows list (`icon-ChevronLeft`) and reopen the flow via its
-   card; assert the `icon-lock` badge is present (lock persisted).
+3. Reopen the **same** flow by id (`openFlowById` again — a full reload, not a
+   trip through the flows list) and assert the lock persisted with
+   `expectLockState(page, "checked")`: open Flow Settings via `flow_name` and
+   require `lock-flow-switch` to read `data-state="checked"`. Deliberately
+   **not** the per-node `icon-lock` badge — see Notes.
 4. `unlockFlow(page)` — reopen settings, toggle the switch off, save.
 5. Reopen the flow. Run `tryDeleteEdge`: **re-lock**, then assert that clicking
    each edge + `Backspace` leaves the edge count at 3 across several attempts
@@ -80,7 +83,8 @@ on the fresh nightly. `@components` — node/edge canvas manipulation; `@workspa
 - While locked: edge count is invariant under delete attempts, and handle clicks
   create no edges.
 - While unlocked: edges delete to 0 and re-wire back to exactly 3.
-- The lock state survives leaving and reopening the flow (`icon-lock` on reopen).
+- The lock state survives a reopen of the flow — `lock-flow-switch` reads
+  `checked` after the reload.
 
 ---
 
@@ -95,19 +99,25 @@ on the fresh nightly. `@components` — node/edge canvas manipulation; `@workspa
 ## External dependencies *(required)*
 
 - `tests/helpers/flows/lock-flow.ts` — `lockFlow` / `unlockFlow` drive the
-  settings switch (`flow_name` → `lock-flow-switch` → `save-flow-settings`).
+  settings switch (`flow_name` → `lock-flow-switch` → `save-flow-settings`);
+  `expectLockState` reads that switch back without mutating it.
+- `tests/helpers/flows/open-flow-by-id.ts` — the shared id-addressed entry
+  (#1214). Its **writable** gate is load-bearing here and not merely defensive:
+  `expectLockState` opens Flow Settings by clicking `flow_name`, upstream renders
+  `menu_bar_display` as `disabled={isReadOnly}` and the popover as
+  `open={openSettings && !isReadOnly}`, so a click landing while
+  `POST /api/v1/authz/me/permissions` is still in flight opens nothing.
 - Canvas edit surface — `.react-flow__edge`, node handles
   (`handle-…-shownode-…`), and the lock enforcement that suppresses
   delete/connect while locked.
-- Canvas node chrome — renders the per-node `icon-lock` badge (1.11).
 - "Basic Prompting" starter template — the disposable subject flow.
 
 ---
 
 ## When to review this test *(optional)*
 
-- If the locked-state indicator testid changes (moved from header `icon-Lock` to
-  per-node `icon-lock` on 1.11 — see Notes).
+- If `lock-flow-switch` or `flow_name` moves, or if Flow Settings stops reflecting
+  the persisted lock state — that is what the persistence check now reads.
 - If the "Basic Prompting" template's node/handle testids change, or if the
   lock-enforcement on the canvas changes.
 
@@ -115,11 +125,16 @@ on the fresh nightly. `@components` — node/edge canvas manipulation; `@workspa
 
 ## Notes *(optional)*
 
-- **Locked-state indicator drift (#684):** the persistence check waits for the
-  per-node **`icon-lock`** badge (lowercase, 1.11) on reopen. The prior header
-  `icon-Lock` (capital) no longer renders — asserting it was the sole reason
-  this test hard-failed on the nightly while the lock feature itself works
-  (locked flows still refuse edge deletion, verified live).
+- **The persistence check is the settings switch, and it took two corrections to
+  get there.** It was originally the header `icon-Lock` badge (capital), which
+  stopped rendering and hard-failed this test on the nightly while the lock
+  feature itself worked (#684). It then became the per-node **`icon-lock`** badge
+  (lowercase, 1.11) — which force-fail showed renders on **every** flow regardless
+  of lock state, so it passed even when the flow was never locked (#909). Neither
+  badge is asserted today: `expectLockState(page, "checked")` reads
+  `lock-flow-switch` out of Flow Settings, the same control `lockFlow` wrote, so a
+  lock that did not persist cannot satisfy it. Do not reintroduce an `icon-lock`
+  assertion here without first proving it distinguishes locked from unlocked.
 - **Complementary to `flow-lock.spec.ts`:** same lock mechanism, different
   assertions — this spec proves the *functional* editing-block; the sibling
   proves the *settings-UI* state. Kept separate so the functional proof stands
