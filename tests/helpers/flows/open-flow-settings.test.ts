@@ -14,11 +14,16 @@
 // guard in `scripts/wait-for-backend.test.mjs`: assert the SOURCE, because the
 // behaviour cannot be observed from a green run.
 //
-// The guard covers three spellings, because the narrow one is not the likely
+// The guard covers several spellings, because the narrow one is not the likely
 // regression. `rename-flow.ts` ALREADY holds `const header =
 // page.getByTestId("flow_name")` for its read-back assertions, so
 // `header.click()` two lines later is the most probable way this comes back — and
 // a guard that only matched the inline form would have blessed it.
+//
+// What it must NOT do is fire on a read. Those same files read the span
+// legitimately, and a guard that fails a correct PR gets deleted rather than
+// fixed — so the negative cases carry as much weight here as the positive ones,
+// and are asserted with the same care.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
@@ -35,6 +40,29 @@ const SWALLOWED = String.raw`click|hover|dblclick|tap`;
 const FLOW_NAME_LOCATOR = String.raw`(?:getByTestId\(\s*["'\`]flow_name["'\`]\s*\)|locator\(\s*["'\`]\[data-testid=["'\\]*flow_name["'\\]*\]["'\`]\s*\))`;
 
 /**
+ * Zero or more intermediate calls between the locator and the action —
+ * `.first()`, `.nth(0)`, `.filter({ hasText: "x" })`.
+ *
+ * This is what makes an offender an offender: the action is chained ONTO the
+ * locator. The first version of this guard used a proximity window instead
+ * (`[\s\S]{0,80}?`), which reads as the same thing and is not: a legitimate read
+ * followed by an unrelated click on the next line falls inside 80 characters and
+ * was reported as a swallowed click. Two specs already read this span, so that
+ * false positive was a live trap, not a hypothetical one — the negative cases
+ * below pin it shut.
+ *
+ * Known limit, and it fails to the safe side: `[^()]*` does not span a nested
+ * paren, so `.filter((x) => f(x)).click()` is NOT matched. A missed offender is
+ * recoverable; a guard that cries wolf gets deleted.
+ */
+const LOCATOR_CHAIN = String.raw`\s*(?:\.\s*\w+\s*\([^()]*\)\s*)*`;
+
+/** 1-indexed line of an offset, for a message that points somewhere. */
+function lineOf(code: string, index: number): number {
+  return code.slice(0, index).split("\n").length;
+}
+
+/**
  * Strip comments so the guard does not fail on its own documentation.
  *
  * Line comments are matched only when `//` follows start-of-line or whitespace
@@ -49,18 +77,31 @@ function stripComments(source: string): string {
 
 /**
  * Every swallowed interaction on the `flow_name` span in one file, as readable
- * reasons. Covers the inline form, the `.first()`/chained form, and the variable
- * form — the last one by finding what the locator was assigned to and then looking
- * for an interaction on that name.
+ * reasons carrying a line number. Covers the inline form, the `.first()`/chained
+ * form, and the variable form — the last one by finding what the locator was
+ * assigned to and then looking for an interaction on that name.
+ *
+ * Each occurrence is reported, not just the first per file: `lock-flow.ts` and
+ * `flow-lock.spec.ts` held two and three of these respectively, and a guard that
+ * says "this file" instead of "these lines" makes the reader re-find them.
+ *
+ * The variable form is matched FILE-WIDE, which is the one place this over-reads
+ * by design: a file that assigns the span to `header` and, in an unrelated
+ * function, clicks a different `header` is flagged. Scoping to a block would cost
+ * a parser for a case the suite has never had — but a reader hitting a puzzling
+ * hit here should check that the two `header`s are the same one before rewriting
+ * anything.
  */
 function findSpanInteractions(code: string): string[] {
   const hits: string[] = [];
 
   const inline = new RegExp(
-    `${FLOW_NAME_LOCATOR}[\\s\\S]{0,80}?\\.\\s*(?:${SWALLOWED})\\s*\\(`,
+    `${FLOW_NAME_LOCATOR}${LOCATOR_CHAIN}\\.\\s*(?:${SWALLOWED})\\s*\\(`,
     "g",
   );
-  if (inline.test(code)) hits.push("inline locator interaction");
+  for (const match of code.matchAll(inline)) {
+    hits.push(`inline locator interaction (line ${lineOf(code, match.index)})`);
+  }
 
   const assigned = new RegExp(
     `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*[^;]*${FLOW_NAME_LOCATOR}`,
@@ -69,9 +110,12 @@ function findSpanInteractions(code: string): string[] {
   for (const match of code.matchAll(assigned)) {
     const name = match[1];
     const viaVariable = new RegExp(
-      `\\b${name}\\s*(?:\\.\\s*\\w+\\s*\\([^)]*\\)\\s*)*\\.\\s*(?:${SWALLOWED})\\s*\\(`,
+      `\\b${name}${LOCATOR_CHAIN}\\.\\s*(?:${SWALLOWED})\\s*\\(`,
+      "g",
     );
-    if (viaVariable.test(code)) hits.push(`via variable \`${name}\``);
+    for (const use of code.matchAll(viaVariable)) {
+      hits.push(`via variable \`${name}\` (line ${lineOf(code, use.index)})`);
+    }
   }
 
   return hits;
@@ -116,7 +160,7 @@ test("nothing in the suite interacts with the aria-hidden flow_name span", () =>
   );
 });
 
-test("the guard catches the three spellings it claims to catch", () => {
+test("the guard catches the spellings it claims to catch", () => {
   // A guard nobody has seen fail is a guard nobody knows works, and this one has
   // no behavioural counterpart — so its own detection is asserted here rather
   // than trusted.
@@ -129,6 +173,10 @@ test("the guard catches the three spellings it claims to catch", () => {
     [
       "variable",
       `const header = page.getByTestId("flow_name");\nawait header.hover();`,
+    ],
+    [
+      "variable, chained",
+      `const header = page.getByTestId("flow_name");\nawait header.first().click();`,
     ],
     [
       "raw locator",
@@ -144,10 +192,18 @@ test("the guard catches the three spellings it claims to catch", () => {
 
   // And reads must NOT be flagged: several specs assert the committed name off
   // this span, which cannot be swallowed the way a click can.
+  //
+  // The last two are the ones that matter. They are what the proximity-window
+  // version of this guard reported as offenders — a legitimate read followed by
+  // an unrelated click, which is ordinary spec code and lands well inside 80
+  // characters. Both live shapes are taken from the suite: `flow-rename-header`
+  // reads the header back after a rename, `setup-playground` asserts it hydrated.
   const reads = [
     `await expect(page.getByTestId("flow_name")).toBeVisible();`,
     `const header = page.getByTestId("flow_name");\nawait expect(header).toHaveText(name);`,
     `const header = page.getByTestId("flow_name");\nconst text = await header.textContent();`,
+    `await expect(page.getByTestId("flow_name")).toHaveText(name);\nawait page.getByTestId("save-flow-settings").click();`,
+    `await expect(page.getByTestId("flow_name")).toContainText(n, {\n  timeout: 30000,\n});\nawait page.getByTestId("menu_bar_display").click();`,
   ];
   for (const snippet of reads) {
     assert.deepEqual(
@@ -171,6 +227,19 @@ test("the guard catches the three spellings it claims to catch", () => {
     stripComments(`await page.goto("http://localhost:7860/flows");`),
     /http:\/\/localhost:7860/,
   );
+
+  // Every occurrence is reported with its line, not one verdict per file. The
+  // three call sites this issue removed all lived in one file each; "somewhere in
+  // flow-lock.spec.ts" would have sent the next reader looking for them by hand.
+  const twoSites = [
+    `await page.getByTestId("flow_name").click();`,
+    ``,
+    `await page.getByTestId("flow_name").click();`,
+  ].join("\n");
+  assert.deepEqual(findSpanInteractions(twoSites), [
+    "inline locator interaction (line 1)",
+    "inline locator interaction (line 3)",
+  ]);
 });
 
 test("the helper drives the button, and gates on it being enabled", () => {

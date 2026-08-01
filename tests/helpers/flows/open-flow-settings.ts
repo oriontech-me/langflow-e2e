@@ -44,11 +44,14 @@ import { type Page, expect } from "@playwright/test";
  * modal's INPUTS, not for the effective-permissions query this waits on. Nobody
  * has measured that query under the daily's parallel load.
  *
- * There is a second gate on the SAME button in `open-flow-by-id.ts` (#1214) at
- * 30 s. Two constants for one wait is exactly the divergence both changes exist to
- * end; converging them is tracked separately rather than resolved by whichever of
- * the two PRs merges second, and deliberately not pinned by a test here — that
- * would make the convergence fail the unit lane.
+ * The same gate on the same button exists in FOUR other places at 30 s —
+ * `open-flow-by-id.ts` (#1214), `setup-playground.ts`,
+ * `api-request-component-regression.spec.ts` and `output-modal-copy-button.spec.ts`
+ * — so this is a five-way divergence, not a two-way one. Converging them is
+ * **#1222**, deliberately not resolved here: picking a number for five call sites
+ * is a decision with its own evidence, and doing it inside a fix for the swallowed
+ * click would bury it. It is also deliberately not pinned by a test — an assertion
+ * tying this constant to another would make #1222 fail the unit lane.
  */
 export const HEADER_ENABLED_TIMEOUT_MS = 15000;
 
