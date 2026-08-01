@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { openFlowSettings } from "./open-flow-settings";
 
 // Open Flow Settings, toggle the lock switch to the target state, and save.
 // The switch can take well over a second to settle into its new `data-state`
@@ -9,7 +10,7 @@ async function setLockState(
   page: Page,
   state: "checked" | "unchecked",
 ): Promise<void> {
-  await page.getByTestId("flow_name").click();
+  await openFlowSettings(page);
   const lockSwitch = page.getByTestId("lock-flow-switch");
   await expect(lockSwitch).toBeVisible({ timeout: 30000 });
 
@@ -58,7 +59,7 @@ export async function expectLockState(
   page: Page,
   state: "checked" | "unchecked",
 ): Promise<void> {
-  await page.getByTestId("flow_name").click();
+  await openFlowSettings(page);
   const lockSwitch = page.getByTestId("lock-flow-switch");
   await expect(lockSwitch).toBeVisible({ timeout: 30000 });
   await expect(lockSwitch).toHaveAttribute("data-state", state, {

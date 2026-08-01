@@ -4,6 +4,7 @@ import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlowFromStarter } from "../../../helpers/flows/create-flow-from-starter";
 import { openFlowById } from "../../../helpers/flows/open-flow-by-id";
+import { openFlowSettings } from "../../../helpers/flows/open-flow-settings";
 
 // Ids of the flows this file creates, so afterEach deletes exactly those via the
 // API (id-scoped, #515).
@@ -66,7 +67,7 @@ test.describe("Flow Lock Feature", () => {
       }).toPass({ timeout: 15000, intervals: [500, 1000, 2000] });
 
       // Open flow settings by clicking on the flow name
-      await page.getByTestId("flow_name").click();
+      await openFlowSettings(page);
 
       // Wait for the settings modal to open
       await page.waitForSelector('[data-testid="lock-flow-switch"]', {
@@ -128,7 +129,7 @@ test.describe("Flow Lock Feature", () => {
       // (testid reused by unrelated placeholder icons), so it is not asserted.
 
       // Try to open settings again to unlock
-      await page.getByTestId("flow_name").click();
+      await openFlowSettings(page);
 
       // Wait for the settings modal to open again
       await page.waitForSelector('[data-testid="lock-flow-switch"]', {
@@ -193,7 +194,7 @@ test.describe("Flow Lock Feature", () => {
       await openIsolatedBasicPrompting(page);
 
       // Open flow settings
-      await page.getByTestId("flow_name").click();
+      await openFlowSettings(page);
       await page.waitForSelector('[data-testid="lock-flow-switch"]', {
         timeout: 30000,
       });

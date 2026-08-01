@@ -99,14 +99,17 @@ on the fresh nightly. `@components` — node/edge canvas manipulation; `@workspa
 ## External dependencies *(required)*
 
 - `tests/helpers/flows/lock-flow.ts` — `lockFlow` / `unlockFlow` drive the
-  settings switch (`flow_name` → `lock-flow-switch` → `save-flow-settings`);
-  `expectLockState` reads that switch back without mutating it.
+  settings switch (`openFlowSettings` → `lock-flow-switch` →
+  `save-flow-settings`; the opener drives `menu_bar_display`, not the
+  `aria-hidden` `flow_name` span — #1215). `expectLockState` reads that switch
+  back without mutating it.
 - `tests/helpers/flows/open-flow-by-id.ts` — the shared id-addressed entry
   (#1214). Its **writable** gate is load-bearing here and not merely defensive:
-  `expectLockState` opens Flow Settings by clicking `flow_name`, upstream renders
-  `menu_bar_display` as `disabled={isReadOnly}` and the popover as
-  `open={openSettings && !isReadOnly}`, so a click landing while
-  `POST /api/v1/authz/me/permissions` is still in flight opens nothing.
+  upstream renders `menu_bar_display` as `disabled={isReadOnly}` and the popover
+  as `open={openSettings && !isReadOnly}`, so an open attempted while
+  `POST /api/v1/authz/me/permissions` is still in flight opens nothing. Since
+  #1215 `openFlowSettings` waits on that same button, so the two gates agree on
+  the observable — this one just makes the flow writable before the spec starts.
 - Canvas edit surface — `.react-flow__edge`, node handles
   (`handle-…-shownode-…`), and the lock enforcement that suppresses
   delete/connect while locked.
@@ -152,3 +155,25 @@ on the fresh nightly. `@components` — node/edge canvas manipulation; `@workspa
   another worker's flow. The shared `lock-flow.ts` helper converges the switch to
   its target state with a retry (a single click drops under load) and saves only
   when a change is pending.
+
+### Opening the header must drive the button, not the span (#1215)
+
+`flow_name` is an **`aria-hidden` `<span>` inside** the `menu_bar_display` button,
+which upstream renders as `disabled={isReadOnly}` with
+
+```ts
+useIsFlowReadOnly = Boolean(flowId) && (isLoading || !can(flowId, "write"))
+```
+
+i.e. it fails **closed** for the whole time `POST /api/v1/authz/me/permissions` is
+in flight — deliberately, per its own docstring. A `<span>` is not a form control,
+so Playwright's actionability check never covers that disabled state: a click
+landed in the window is swallowed by the browser with **no error at all**, and the
+failure surfaces later and elsewhere (a control inside the dialog that never
+appears). Two of the four signatures #1005 classified were exactly that.
+
+This spec therefore opens the popover through `openFlowSettings(page)`, which
+asserts the header is present, waits for the **button** to report enabled, and
+then clicks it. The `disabled` attribute arrived upstream on 2026-07-15
+(`887f2a552d`, langflow-ai/langflow#14068), so it is live on the nightly the daily
+runs.

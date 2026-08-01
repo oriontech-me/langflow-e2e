@@ -24,9 +24,11 @@ const createdFlowIds: string[] = [];
 // onboarding dismiss that is measurably a no-op at entry (upstream arms the
 // tooltip on a 10 s idle timer, so the probe looked ~8 s too early). The helper
 // suppresses the overlay outright and gates on the flow being writable, which
-// this spec needs: `expectLockState` opens Flow Settings by clicking `flow_name`,
-// and upstream renders that popover as `open={openSettings && !isReadOnly}`, so a
-// click landing while the permissions query is in flight opens nothing.
+// this spec needs: `expectLockState` opens Flow Settings through the header, and
+// upstream renders that popover as `open={openSettings && !isReadOnly}`, so an
+// open attempted while the permissions query is in flight opens nothing. Since
+// #1215 the opener waits on the same `menu_bar_display` button this gate reads,
+// so the two agree on the observable rather than each guessing at it.
 //
 // One consequence to know before triaging a flake here: the two things dropped
 // were doing nothing as OVERLAY handling but were ~2.5 s of settle time by

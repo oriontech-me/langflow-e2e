@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/project-management/flowSettings.spec.ts`
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -56,7 +56,9 @@ the test drives the UI modal, not the REST API directly. `@stable` applied by
 1. Bootstrap and open a blank flow; capture the flow id from `/flow/{id}` for
    cleanup. Let the editor's autosave settle (`waitForFlowSaveSettled`) before
    touching the modal, so an in-flight `PATCH` does not re-render it mid-edit.
-2. Open the settings modal (`flow_name`).
+2. Open the settings modal with `openFlowSettings(page)` — the shared header
+   opener, which drives the `menu_bar_display` button once it reports enabled
+   rather than clicking the `aria-hidden` `flow_name` span inside it (#1215).
 3. **Name limit:** fill `input-flow-name` with an overlong string; assert
    "Character limit reached" is visible and the field value was truncated
    (shorter than the input).
@@ -90,7 +92,9 @@ enforcement, the save round-trip, or the persistence fails a specific step.
 
 ## External dependencies
 
-- Modal testids: `flow_name`, `input-flow-name`, `input-flow-description`,
+- Modal testids: `menu_bar_display` (the header button the opener drives),
+  `flow_name` (read only — the header's committed name), `input-flow-name`,
+  `input-flow-description`,
   `save-flow-settings`, `cancel-flow-settings` (scouted live; renaming breaks
   the test).
 - "Character limit reached" copy (`flow.characterLimitReached`).
@@ -127,3 +131,25 @@ wrong flow and leaked the renamed one. Capture and teardown are the shared
 (404-tolerant) via the API and reports a failed delete instead of swallowing it.
 Behavioral force-fail: stop the tracker from matching the creation endpoint and the
 flow count grows while the test still passes.
+
+### Opening the header must drive the button, not the span (#1215)
+
+`flow_name` is an **`aria-hidden` `<span>` inside** the `menu_bar_display` button,
+which upstream renders as `disabled={isReadOnly}` with
+
+```ts
+useIsFlowReadOnly = Boolean(flowId) && (isLoading || !can(flowId, "write"))
+```
+
+i.e. it fails **closed** for the whole time `POST /api/v1/authz/me/permissions` is
+in flight — deliberately, per its own docstring. A `<span>` is not a form control,
+so Playwright's actionability check never covers that disabled state: a click
+landed in the window is swallowed by the browser with **no error at all**, and the
+failure surfaces later and elsewhere (a control inside the dialog that never
+appears). Two of the four signatures #1005 classified were exactly that.
+
+This spec therefore opens the popover through `openFlowSettings(page)`, which
+asserts the header is present, waits for the **button** to report enabled, and
+then clicks it. The `disabled` attribute arrived upstream on 2026-07-15
+(`887f2a552d`, langflow-ai/langflow#14068), so it is live on the nightly the daily
+runs.
