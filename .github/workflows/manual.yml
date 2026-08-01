@@ -187,7 +187,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "npm"
@@ -396,7 +396,7 @@ jobs:
           TOKENS_SUPPRESS_HISTORY: "1"
 
       - name: Upload token consumption
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         continue-on-error: true
         with:
@@ -453,7 +453,7 @@ jobs:
           route the any-completion tier locally (#1187)."
           exit 1
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: "npm"
