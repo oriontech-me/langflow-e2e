@@ -51,6 +51,16 @@ const SPECS = {
   // Always-LLM area.
   [`${REGRESSION}core-functionality/llm-agents/agent-system-prompt.spec.ts`]: `
     test("Agent Instructions are respected", { tag: ["@stable", "@agents"] }, async () => {});`,
+  // NOT `@stable`, and provider-free. Without this fixture every spec in the map
+  // carried `@stable`, so `stableRun: run.length` passed the whole lane — the tally's
+  // defining filter was unpinned (#1226 round two).
+  [`${REGRESSION}ui-ux/unstable-thing.spec.ts`]: `
+    test("something not yet validated", { tag: ["@release", "@ui-ux"] }, async () => {});`,
+  // The trap the strict predicate exists for: mentions `@stable` only to say it is not
+  // one. A substring test counts this as `@stable`; eight real specs do this.
+  [`${REGRESSION}api/flows/mentions-stable-in-prose.spec.ts`]: `
+    // Left off the stable lane on purpose (\`@release\`, never \`@stable\`).
+    test("api thing", { tag: ["@release", "@api"] }, async () => {});`,
 };
 
 const read = (file) => {
@@ -63,6 +73,8 @@ const EDIT_FLOW_NAME = `${REGRESSION}core-functionality/project-management/edit-
 const RUN_FLOW = `${REGRESSION}flow-functionality/run-flow.spec.ts`;
 const MCP_AGENT = `${REGRESSION}mcp/client/mcp-client-agent.spec.ts`;
 const LLM_AREA = `${REGRESSION}core-functionality/llm-agents/agent-system-prompt.spec.ts`;
+const NOT_STABLE = `${REGRESSION}ui-ux/unstable-thing.spec.ts`;
+const PROSE_STABLE = `${REGRESSION}api/flows/mentions-stable-in-prose.spec.ts`;
 
 // ---------- classifySpec ----------
 
@@ -329,16 +341,20 @@ test("the @stable tally is counted over the RUN list, not the pre-cap total", ()
   // every capped run, which is the common case for a helper change. And the exclusion
   // can shorten the set again after that. Counted here, it cannot disagree with `run`.
   const verdict = decideProviderCoverage({
-    // AGENT_CANVAS and LLM_AREA are `@stable`; RUN_FLOW is too; EDIT_FLOW_NAME is.
-    selected: [AGENT_CANVAS, EDIT_FLOW_NAME, RUN_FLOW],
+    // AGENT_CANVAS (`@stable`, excluded), EDIT_FLOW_NAME + RUN_FLOW (`@stable`, run),
+    // NOT_STABLE (runs, but must not be tallied).
+    selected: [AGENT_CANVAS, EDIT_FLOW_NAME, RUN_FLOW, NOT_STABLE],
     changedSpecs: [],
     read,
   });
-  // The agent spec is excluded, so it must NOT be in the tally.
-  assert.deepEqual(verdict.run, [EDIT_FLOW_NAME, RUN_FLOW]);
-  assert.equal(verdict.stableRun, 2, "@stable is counted over `run`, not `selected`");
+  assert.deepEqual(verdict.run, [EDIT_FLOW_NAME, RUN_FLOW, NOT_STABLE]);
+  // 3 specs run, only 2 are `@stable`. This is the assertion that pins the FILTER:
+  // with the set previously used here every fixture was `@stable`, so replacing the
+  // whole predicate with `run.length` passed the entire lane.
+  assert.equal(verdict.stableRun, 2, "@stable is counted over `run`, and it is a filter");
+  assert.notEqual(verdict.stableRun, verdict.run.length);
 
-  // With the sweep on, nothing is excluded and all three count.
+  // With the sweep on, nothing is excluded and every `@stable` spec counts.
   const swept = decideProviderCoverage({
     selected: [AGENT_CANVAS, EDIT_FLOW_NAME, LLM_AREA],
     changedSpecs: [],
@@ -346,6 +362,25 @@ test("the @stable tally is counted over the RUN list, not the pre-cap total", ()
   });
   assert.equal(swept.needsModels, true);
   assert.equal(swept.stableRun, 3);
+});
+
+test("@stable is read from a tag array, not from prose that says the opposite", () => {
+  // Eight of the suite's 235 specs mention `@stable` outside a `tag:` array, and one of
+  // them does it to state it is NOT stable ("`@release`, never `@stable`"). A substring
+  // test counted all eight. `stableRun` is published as the CORRECTED figure (#1226), so
+  // being off by eight is not an option. The strict predicate yields 170 files, which is
+  // exactly what `scripts/stable-tests.ts` derives from the spec ASTs.
+  assert.equal(classifySpec(PROSE_STABLE, SPECS[PROSE_STABLE]).isStable, false);
+  assert.equal(classifySpec(NOT_STABLE, SPECS[NOT_STABLE]).isStable, false);
+  assert.equal(classifySpec(AGENT_CANVAS, SPECS[AGENT_CANVAS]).isStable, true);
+  // Multi-line tag arrays are common in this suite and must still match.
+  assert.equal(
+    classifySpec(
+      "x.spec.ts",
+      'test("t", {\n  tag: [\n    "@stable",\n    "@release",\n  ],\n}, () => {});',
+    ).isStable,
+    true,
+  );
 });
 
 test("classifySpec reports @stable so the tally needs no grep in the workflow", () => {
@@ -360,105 +395,14 @@ test("classifySpec reports @stable so the tally needs no grep in the workflow", 
   );
 });
 
-test("the run COUNT is derived from the final run list, not from the resolution arithmetic", () => {
-  // #1226. The summary used to print `running in this PR: **$((TOTAL - DROPPED))**`
-  // up in the resolution block, before the provider verdict could shorten the list —
-  // so an excluded spec was counted as executed, and on a canary run (where TOTAL is
-  // 0 by definition) the line said 0 while three specs ran. The figure a reviewer
-  // reads first must come from the list actually handed to Playwright.
-  const workflow = readFileSync(
-    path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"),
-    "utf8",
-  );
-  assert.match(
-    workflow,
-    /RUN_COUNT=\$\(printf '%s' "\$SPECS" \| wc -w/,
-    "the run count must be counted from $SPECS",
-  );
-  assert.doesNotMatch(
-    workflow,
-    /running in this PR: \*\*\$\(\(TOTAL/,
-    "the run count must never be computed as TOTAL - DROPPED again (#1226)",
-  );
-  // …and it must be emitted only after the verdict has had its chance to shorten
-  // the list, which is what made the old placement wrong.
-  const rederiveAt = workflow.indexOf("SPECS=$(jq -r '.run | join(\" \")'");
-  const countAt = workflow.indexOf("RUN_COUNT=");
-  const printAt = workflow.indexOf("- running in this PR:");
-  assert.ok(rederiveAt > 0, "the run list is re-derived from the verdict");
-  assert.ok(countAt > rederiveAt, "the count comes after the re-derivation");
-  assert.ok(printAt > countAt, "the summary line comes after the count");
-
-  // The `@stable` tally must come from the verdict's `.stableRun`, never from the
-  // resolver's `.stableSelected` — the latter is post-cap while the total beside it
-  // is pre-cap, so the pair misreported itself on every capped run.
-  //
-  // Asserted over CODE with comments stripped, and without depending on how the jq
-  // filter happens to be quoted. The first version of this guard checked for the
-  // exact string `'.stableSelected' /tmp/impacted.json`, and a mutation writing
-  // `jq -r .stableSelected` unquoted sailed straight through it — a guard that only
-  // catches the spelling it was written against is not a guard.
-  const code = workflow
-    .split("\n")
-    .filter((line) => !/^\s*#/.test(line))
-    .join("\n");
-  assert.doesNotMatch(
-    code,
-    /stableSelected/,
-    "the summary must not read .stableSelected in any form — it is scoped to `selected`, not to the resolved total (#1226)",
-  );
-  assert.match(
-    code,
-    /STABLE_RUN=\$\(jq -r ['"]?\.stableRun['"]? \/tmp\/provider\.json\)/,
-    "the @stable tally comes from the verdict",
-  );
-  // Presence of `STABLE_RUN=` proves nothing on its own — it must actually reach the
-  // run-count line, and nothing but it may.
-  const runLine = code
-    .split("\n")
-    .find((line) => line.includes("- running in this PR:"));
-  assert.ok(runLine, "the run-count line exists");
-  assert.match(runLine, /\$STABLE_NOTE/, "the tally reaches the run-count line");
-  assert.match(
-    code,
-    /STABLE_NOTE=" \(of which \\`@stable\\`: \$STABLE_RUN\)"/,
-    "and STABLE_NOTE is built from STABLE_RUN, not from anything else",
-  );
-  const resolvedLine = code
-    .split("\n")
-    .find((line) => line.includes("- resolved by import graph:"));
-  assert.ok(resolvedLine, "the resolution line exists");
-  assert.doesNotMatch(
-    resolvedLine,
-    /@stable/,
-    "the resolution line must carry no @stable count — its total is pre-cap, any tally is post-cap",
-  );
-});
-
-test("the summary is buffered so the counts precede the caveats that qualify them", () => {
-  // #1226's grievance was "the number a reviewer reads FIRST". Appending each caveat
-  // as it occurs put the cap's dropped list — 217 nested bullets on a suite-wide
-  // change — above the run count, which answers the grievance in letter and not in
-  // substance. `$GITHUB_STEP_SUMMARY` is append-only, so ordering means buffering.
-  const workflow = readFileSync(
-    path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"),
-    "utf8",
-  );
-  assert.match(workflow, /NOTES=\/tmp\/summary-notes\.md/, "the caveat buffer exists");
-  assert.match(workflow, /: > "\$NOTES"/, "the buffer is truncated before use");
-  // Every caveat writes to the buffer; only the final block writes the summary.
-  const summaryWrites = workflow.split('>> "$GITHUB_STEP_SUMMARY"').length - 1;
-  assert.equal(summaryWrites, 1, "the step summary is written exactly once");
-  const finalBlockAt = workflow.indexOf('cat "$NOTES"');
-  assert.ok(finalBlockAt > workflow.indexOf("RUN_COUNT="), "the caveats are flushed after the counts");
-  // The heading must ride in that same final block, or the caveats would render
-  // above it.
-  assert.match(
-    workflow,
-    /echo "### Impacted specs"[\s\S]{0,600}?cat "\$NOTES"/,
-    "the heading, the counts and the flushed caveats are one ordered block",
-  );
-});
+// The two guards that used to live here — "the run count is derived from $SPECS" and
+// "the summary is buffered so the counts come first" — are GONE, deliberately. They were
+// regexes over `pr-validation.yml`, and both were shown to miss their own mutation:
+// swapping the printed `$RUN_COUNT` for `$TOTAL`, and hoisting the caveats above the
+// counts, each passed a green lane. That rendering now lives in
+// `scripts/render-impacted-summary.mjs`, where `render-impacted-summary.test.mjs`
+// asserts the same two invariants on OUTPUT — what the number is, and what it sits
+// above — which is what a regex over YAML could never do (#1226).
 
 test("an exclusion is announced, never silent", () => {
   // #1012's rule: whatever the lane does not cover is stated, not inferred from a

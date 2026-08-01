@@ -120,6 +120,26 @@ export const PROVIDER_TAGS = ["@agents", "@model-provider"];
 
 const MARKER_RE = new RegExp(MODEL_DATA_MARKERS.join("|"));
 
+/**
+ * `@stable` inside a `tag:` array, not anywhere in the file.
+ *
+ * A bare `source.includes("@stable")` overcounts by 8 of the suite's 235 specs, and one
+ * of the eight says the opposite of what it was counted as —
+ * `api/flows/api-request-component-ui.spec.ts`'s only occurrence is the comment
+ * "(`@release`, never `@stable`)". Since `stableRun` is published as the corrected
+ * figure (#1226), it cannot itself be off by eight.
+ *
+ * `[^\]]*` spans newlines, so a multi-line `tag: [ … ]` array matches. Measured against
+ * the suite: 170 files, which is exactly what `scripts/stable-tests.ts` reports from the
+ * spec ASTs — so this cheap regex agrees with the repo's authoritative parser, and there
+ * are no false negatives to trade for the eight false positives it removes.
+ *
+ * `impacted-specs-by-import.mjs` still uses the loose test for `stableSelected` and its
+ * `@stable`-first ordering. That is not a divergence this file can fix from here, and it
+ * no longer matters for anything printed: `stableSelected` is not read by the workflow.
+ */
+const STABLE_TAG_RE = /tag:\s*\[[^\]]*@stable/;
+
 /** Raised for anything that leaves the verdict unknown. */
 export class UndecidableError extends Error {}
 
@@ -135,8 +155,14 @@ export class UndecidableError extends Error {}
  * Note the tag scan is FILE-scoped, not `test()`-scoped: one `@agents` test marks the
  * whole file provider-dependent, so its provider-free tests are excluded with it.
  * That errs on the safe side — the alternative is running a test bare against no
- * provider, which is the defect #1216 exists to end — and no spec in the suite mixes
- * the two today. Revisit here if one starts to.
+ * provider, which is the defect #1216 exists to end.
+ *
+ * One spec in the suite is already in that position, so this is a live cost and not a
+ * hypothetical: `core-components/duplicate-dom-ids-regression.spec.ts` has an
+ * `@agents` test and a provider-free one, and a transitive impact excludes both. A
+ * `test()`-scoped scan would need the run list to carry a per-test grep expression
+ * rather than file paths, which is a larger change than #1216 or #1226 called for.
+ * Revisit if more specs start mixing the two.
  */
 export function classifySpec(file, source) {
   if (typeof source !== "string") {
@@ -158,7 +184,7 @@ export function classifySpec(file, source) {
   return {
     consumesModelData,
     providerDependent: consumesModelData || tags.length > 0,
-    isStable: source.includes("@stable"),
+    isStable: STABLE_TAG_RE.test(source),
     reasons,
   };
 }

@@ -210,7 +210,11 @@ jobs:
           # tally now comes from the verdict's `.stableRun`, over the surviving list
           # (#1226).
 
-          echo "Impacted specs: $TOTAL ($DIRECT direct, $((TOTAL - DIRECT)) transitive); running ${TOTAL:-0} minus $DROPPED dropped"
+          # Resolution only. The old tail — "running $TOTAL minus $DROPPED dropped" — was
+          # the same arithmetic #1226 disproved, and it stayed wrong here after the
+          # summary was fixed: on a canary it logged "running 0 minus 0" while three
+          # specs ran. What runs is logged once, below, after the verdict settles it.
+          echo "Impacted specs resolved: $TOTAL ($DIRECT direct, $((TOTAL - DIRECT)) transitive); $DROPPED dropped by the cap"
 
           # A CI-ONLY diff imports into no spec, so the resolver above honestly
           # returns zero and this lane used to skip — proving the change PARSES,
@@ -230,9 +234,14 @@ jobs:
           #   dispatch → the surface belongs to another lane; name the workflows to
           #              dispatch instead of implying coverage
           CANARY=false
+          # Empty unless the classifier ran, so the renderer is only handed a file that
+          # exists — `${CI_COVERAGE:+…}` then omits the flag entirely rather than passing
+          # a path to nothing.
+          CI_COVERAGE=""
           if [ "$TOTAL" -eq 0 ]; then
             node scripts/ci-change-coverage.mjs --stdin --format=json < /tmp/changed.txt > /tmp/ci-coverage.json \
               || { echo "::error::CI-change classification failed — treating as undecidable rather than as 'no CI change'."; exit 1; }
+            CI_COVERAGE=/tmp/ci-coverage.json
             VERDICT=$(jq -r .verdict /tmp/ci-coverage.json)
             jq -r '.reasons[] | "  " + .' /tmp/ci-coverage.json
             case "$VERDICT" in
@@ -249,42 +258,18 @@ jobs:
 
           echo "Running: ${SPECS:-<none>}"
 
-          # The summary is BUFFERED from here on, and emitted at the end of the step in
-          # reading order: heading, the two counts, then the caveats (#1226). The counts
-          # cannot be written where they are computed, because the run count is only
-          # final after the provider verdict — and appending caveats as they occur put
-          # the cap's full dropped list (217 bullets on a suite-wide change) ABOVE the
-          # figure a reviewer is looking for, which is the grievance #1226 opened with.
-          # `$GITHUB_STEP_SUMMARY` is append-only, so ordering means buffering.
-          NOTES=/tmp/summary-notes.md
-          : > "$NOTES"
-
-          # Same rule as the cap and the suite-wide signal: whatever this lane does
-          # or does not cover is stated in the summary, never inferred from a green
-          # check (#1012).
-          if [ "$CANARY" = "true" ]; then
-            {
-              echo "- 🐤 **CI-only change** — no spec imports it, so the lane runs the canary to prove the wiring boots:"
-              jq -r '.canarySpecs[] | "  - `" + . + "`"' /tmp/ci-coverage.json
-              echo "  This proves the lane RUNS, not that the changed behaviour is correct."
-            } >> "$NOTES"
-          elif [ -f /tmp/ci-coverage.json ] && [ "$(jq -r .verdict /tmp/ci-coverage.json)" = "dispatch" ]; then
-            {
-              echo "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:"
-              jq -r '.dispatchWorkflows[] | "  - `" + . + "`"' /tmp/ci-coverage.json
-            } >> "$NOTES"
-          fi
-
-          # A fixture/config change governs every spec. Say so loudly instead of
-          # letting a bounded subset read as full coverage.
+          # The SUMMARY is not written here. It is rendered in one pass at the end of
+          # this step by `scripts/render-impacted-summary.mjs`, because the run count is
+          # only final after the provider verdict below and because everything that
+          # qualifies it must print AFTER it, not above it (#1226). The `::warning::`
+          # annotations stay inline: they are log-level, unaffected by ordering, and
+          # they are what keeps a shortened run from reading as a clean one even if the
+          # step dies before it can render (#1012).
           if [ "$FULL_SUITE" = "true" ]; then
             echo "::warning::This PR changes a suite-wide surface (fixtures / playwright.config / global hooks): ALL $TOTAL specs are impacted. PR CI runs a bounded subset — dispatch manual.yml on this branch for the full suite before merging."
-            echo "- ⚠️ **suite-wide change** — every spec is impacted; the PR run is a subset. Dispatch \`manual.yml\` on this branch for the full suite." >> "$NOTES"
           fi
           if [ "$DROPPED" -gt 0 ]; then
             echo "::warning::Capped at $IMPACTED_SPEC_CAP of $TOTAL impacted specs — $DROPPED not run in this PR (listed in the step log)."
-            echo "- ⚠️ capped at \`$IMPACTED_SPEC_CAP\` — **$DROPPED impacted specs were NOT run**:" >> "$NOTES"
-            jq -r '.dropped[] | "  - `" + . + "`"' /tmp/impacted.json >> "$NOTES"
           fi
 
           # `has_specs` and `specs` are emitted at the END of this step, after the
@@ -323,9 +308,19 @@ jobs:
           node scripts/provider-dependent-specs.mjs --stdin --format=json \
             --changed-file=/tmp/changed.txt $CANARY_FLAG \
             < /tmp/impacted.json > /tmp/provider.json \
-            || { echo "::error::provider-coverage verdict failed"; exit 1; }
+            || {
+              echo "::error::provider-coverage verdict failed"
+              # Render what CAN still be established (resolution, suite-wide, the cap)
+              # and name the gap, so an aborted verdict leaves an explained summary
+              # instead of an empty one. `|| true`: this path is already failing, and a
+              # renderer error must not replace the real cause (#1226).
+              rm -f /tmp/provider.json
+              node scripts/render-impacted-summary.mjs --impacted=/tmp/impacted.json \
+                --specs="$SPECS" --cap="$IMPACTED_SPEC_CAP" $CANARY_FLAG \
+                >> "$GITHUB_STEP_SUMMARY" || true
+              exit 1
+            }
           NEEDS_MODELS=$(jq -r '.needsModels' /tmp/provider.json)
-          EXCLUDED=$(jq -r '.excluded | length' /tmp/provider.json)
 
           # Re-derive the run list from the verdict, so an excluded spec cannot reach
           # Playwright — but NEVER on a canary run. A canary's specs come from
@@ -338,69 +333,32 @@ jobs:
             SPECS=$(jq -r '.run | join(" ")' /tmp/provider.json)
           fi
 
-          # The run count is COUNTED FROM $SPECS, here — after everything that can
-          # shorten it has run, and never as `TOTAL - DROPPED` up in the resolution
-          # block (#1226). That arithmetic lied in three ways:
-          #   - an excluded provider-dependent spec was still counted as executed;
-          #   - on a CANARY run `TOTAL` is 0 by definition (no spec imports a
-          #     workflow), so the line read "running in this PR: 0" while the canary
-          #     block below it listed the three specs that do run;
-          #   - the `@stable` tally beside it was the resolver's `.stableSelected`,
-          #     which is over `selected` (POST-cap) while `$TOTAL` is `.specs`
-          #     (PRE-cap) — so on any capped run the pair read as a breakdown of a
-          #     number it was not about. It now comes from `.stableRun`, counted by
-          #     the verdict script over the surviving list, which already holds every
-          #     selected spec's source.
-          # Same defect all three times: a figure a reviewer reads as coverage the lane
-          # did not deliver (#1012's rule). Counting the list actually handed to
-          # Playwright cannot drift from it, and `wc -w` is exact here because `$SPECS`
-          # is a space-joined list of paths with no spaces — the same premise
-          # `npx playwright test $SPECS` already rests on.
-          RUN_COUNT=$(printf '%s' "$SPECS" | wc -w | tr -d ' ')
-          STABLE_RUN=$(jq -r '.stableRun' /tmp/provider.json)
-          # On a canary the run list comes from `ci-change-coverage.mjs`, so the
-          # verdict never saw those specs and its `.stableRun` is 0. Say nothing rather
-          # than publish a zero that is an artefact of where the list came from.
-          if [ "$CANARY" = "true" ]; then STABLE_NOTE=""; else STABLE_NOTE=" (of which \`@stable\`: $STABLE_RUN)"; fi
-
-          if [ "$EXCLUDED" -gt 0 ]; then
+          # Log-level annotations only; the summary bullets for these are the renderer's
+          # job. Kept inline because a `::warning::` is what still tells a reviewer the
+          # run was shortened even if this step dies before rendering (#1012).
+          if [ "$(jq -r '.excluded | length' /tmp/provider.json)" -gt 0 ]; then
             echo "::warning::$(jq -r '.warning' /tmp/provider.json)"
-            {
-              echo "- ⚠️ **$EXCLUDED impacted spec(s) NOT run** — they need a provider configured, were pulled in only transitively, and this lane skips the models sweep (#1216):"
-              jq -r '.excluded[] | "  - `" + .file + "` (" + (.reasons | join(", ")) + ")"' /tmp/provider.json
-              echo "  Covered by \`daily-stable.yml\`; dispatch \`manual.yml\` on this branch to run them against a provider now."
-            } >> "$NOTES"
-          fi
-          # Only when a spec demanded it: on a canary the sweep is forced for the
-          # health gate's sake and `forcedBy` is legitimately empty, so this would
-          # otherwise print a header over nothing.
-          if [ "$(jq -r '.forcedBy | length' /tmp/provider.json)" -gt 0 ]; then
-            {
-              echo "- 🔑 provider sweep **required** by:"
-              jq -r '.forcedBy[] | "  - `" + .file + "`" + (if .isChanged then " (changed by this PR)" else " (consumes the sweep output)" end)' /tmp/provider.json
-            } >> "$NOTES"
           fi
           if [ "$(jq -r '.forcedToAvoidEmptyRun' /tmp/provider.json)" = "true" ]; then
-            echo "::warning::Every impacted spec needs a provider, so the sweep runs rather than leaving this lane with nothing to execute — decoupling from key health is not worth ALL of a PR's coverage (#1216)."
-            echo "- 🔑 provider sweep forced: every impacted spec needs a provider, so excluding them would have left nothing to run." >> "$NOTES"
+            echo "::warning::Every impacted spec needs a provider, so the sweep runs rather than leaving this lane with nothing to execute — decoupling from key health is not worth ALL of a PR's coverage (#1226)."
           fi
 
           echo "Needs provider models: $NEEDS_MODELS"
           echo "Running after the provider verdict: ${SPECS:-<none>}"
 
-          # The whole summary, in reading order, written once (#1226). The counts come
-          # first because they are what a reviewer opens this for; every caveat that
-          # qualifies them — canary/dispatch, suite-wide, the cap and its dropped list,
-          # the provider exclusions — follows from the buffer. `$STABLE` is deliberately
-          # absent from the resolution line: `.stableSelected` is scoped to `selected`,
-          # not to `$TOTAL`.
-          {
-            echo "### Impacted specs"
-            echo ""
-            echo "- resolved by import graph: **$TOTAL** ($DIRECT direct, $((TOTAL - DIRECT)) transitive)"
-            echo "- running in this PR: **$RUN_COUNT**$STABLE_NOTE"
-            cat "$NOTES"
-          } >> "$GITHUB_STEP_SUMMARY"
+          # The whole summary, rendered once, from the run list this step is about to
+          # export (#1226). Nothing about WHAT it says is decided here: the counts, the
+          # order, and every caveat live in `render-impacted-summary.mjs`, where they are
+          # asserted on OUTPUT by `npm run test:scripts`. Three wrong figures shipped
+          # from this block while it was inline shell, each one guarded only by a regex
+          # over this file — and each of those regexes was then shown to miss its own
+          # mutation. Same reason the verdict above is a script.
+          node scripts/render-impacted-summary.mjs \
+            --impacted=/tmp/impacted.json --provider=/tmp/provider.json \
+            --specs="$SPECS" --cap="$IMPACTED_SPEC_CAP" $CANARY_FLAG \
+            ${CI_COVERAGE:+--ci-coverage=$CI_COVERAGE} \
+            >> "$GITHUB_STEP_SUMMARY" \
+            || { echo "::error::could not render the run summary"; exit 1; }
 
           # The run list is whatever survived the verdict — emitted here and only
           # here. An empty list skips the E2E job through `has_specs`, which is the
