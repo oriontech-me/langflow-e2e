@@ -3,7 +3,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlowFromStarter } from "../../../helpers/flows/create-flow-from-starter";
-import { dismissOnboardingIfPresent } from "../../../helpers/ui/dismiss-onboarding";
+import { openFlowById } from "../../../helpers/flows/open-flow-by-id";
 
 // Ids of the flows this file creates, so afterEach deletes exactly those via the
 // API (id-scoped, #515).
@@ -22,13 +22,10 @@ async function openIsolatedBasicPrompting(page: Page): Promise<string> {
     `flow-lock ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   );
   createdFlowIds.push(flowId);
-  await page.goto(`/flow/${flowId}`);
-  await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
-    timeout: 30000,
-  });
-  // The getting-started onboarding popup (also role="dialog") intercepts clicks
-  // and stalls the settings-modal detached-wait — dismiss it up front (#684).
-  await dismissOnboardingIfPresent(page);
+  // Shared entry (#1214): canvas wait, onboarding overlay suppressed before the
+  // load rather than probed for after it, and a gate on the flow being writable —
+  // this spec locks and unlocks through the settings menu, so every step mutates.
+  await openFlowById(page, flowId);
   return flowId;
 }
 

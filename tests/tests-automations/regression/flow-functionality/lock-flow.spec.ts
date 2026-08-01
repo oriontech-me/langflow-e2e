@@ -12,26 +12,31 @@ import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlowFromStarter } from "../../../helpers/flows/create-flow-from-starter";
-import { dismissOnboardingIfPresent } from "../../../helpers/ui/dismiss-onboarding";
+import { openFlowById } from "../../../helpers/flows/open-flow-by-id";
 
 // Id of the flow this file creates, so afterEach deletes exactly it (#515).
 const createdFlowIds: string[] = [];
 
-// Open a flow (freshly created, or a reopen of the same one) addressed by id and
-// wait for the canvas. Reopening by id — not `list-card.first()` — is what makes
-// the persistence checks parallel-safe: `.first()` would open whichever card is
-// on top of the shared home grid, i.e. another worker's flow (#684).
-async function openFlowById(page: Page, flowId: string): Promise<void> {
-  await page.goto(`/flow/${flowId}`);
-  await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-    timeout: 100000,
-    state: "visible",
-  });
-  await page.waitForTimeout(500);
-  // The onboarding popup overlays the canvas on entry and intercepts the
-  // settings clicks lockFlow/unlockFlow issue — dismiss it first (#684).
-  await dismissOnboardingIfPresent(page);
-}
+// Entry is the shared helper (#1214). The local copy this replaces addressed the
+// flow by id for the same reason — `list-card.first()` opens whichever card is on
+// top of the shared home grid, i.e. another worker's flow (#684) — but carried an
+// unexplained 100 s canvas deadline, an arbitrary `waitForTimeout(500)`, and an
+// onboarding dismiss that is measurably a no-op at entry (upstream arms the
+// tooltip on a 10 s idle timer, so the probe looked ~8 s too early). The helper
+// suppresses the overlay outright and gates on the flow being writable, which
+// this spec needs: `expectLockState` opens Flow Settings by clicking `flow_name`,
+// and upstream renders that popover as `open={openSettings && !isReadOnly}`, so a
+// click landing while the permissions query is in flight opens nothing.
+//
+// One consequence to know before triaging a flake here: the two things dropped
+// were doing nothing as OVERLAY handling but were ~2.5 s of settle time by
+// accident (`waitForTimeout(500)` plus the dismiss probe's own
+// `isVisible({ timeout: 2000 })` burning its full budget on an absent element).
+// The writable gate that replaces them normally resolves in milliseconds. The
+// migration ran 12/12 at `--workers=4 --retries=0` on 1.12.0.dev10 and every step
+// below asserts through polling `toHaveCount`, so this is not a known problem —
+// but if this spec starts flaking on the saturated daily, look here first rather
+// than at the canvas deadline.
 
 test.afterEach(async ({ page }) => {
   const ids = createdFlowIds.splice(0);

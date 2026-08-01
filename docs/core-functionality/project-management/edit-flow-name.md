@@ -34,11 +34,12 @@ in editor-local state.
    copy the **Basic Prompting** starter graph into a uniquely-named flow of this
    worker's own, over the REST API. Not a click on the shared template card: see
    *The template-entry race* below.
-2. `openFlowById(page, flowId)` — `page.goto('/flow/{id}')`, wait for
-   `canvas_controls_dropdown`, then gate on `menu_bar_display` being **enabled**
-   (write permission resolved). The assistant onboarding tooltip is suppressed
-   before the first load by seeding `langflow-assistant-discovered` in
-   localStorage — see *The onboarding tooltip is armed on a 10 s timer* below.
+2. `openFlowById(page, flowId)` — the shared entry helper (#1214):
+   `page.goto('/flow/{id}')`, wait for `canvas_controls_dropdown`, then gate on
+   `menu_bar_display` being **enabled** (write permission resolved). It also
+   suppresses the assistant onboarding tooltip before the load by seeding
+   `langflow-assistant-discovered` in localStorage — see *The onboarding tooltip
+   is armed on a 10 s timer* below.
 3. For each of two random target names:
    1. `renameFlow(page, { flowName: targetName })` — rename via the flow header
       settings modal; then `renameFlow(page)` (read-only) asserts the committed
@@ -186,14 +187,22 @@ loudly, so the suite keeps its only signal on how often #1153 fires.
 
 ### The onboarding tooltip is armed on a 10 s timer
 
-`assistant-onboarding-tooltip` renders in a Portal over the editor and its
-overlay intercepts clicks on the canvas **and on the Flow Settings modal** — the
-one this spec drives on every iteration (#684). Upstream gates it on a
+`assistant-onboarding-tooltip` renders in a Portal over the editor, anchored
+beside `assistant-button` in the canvas controls bar. Upstream gates it on a
 localStorage flag (`langflow-assistant-discovered`, written when the user opens
 the assistant or clicks the tooltip's X), which is **empty in every fresh
 Playwright context**, so every test is exposed on every entry.
 
-Dismissing it on entry does not work, and the reason is worth recording:
+The #684 write-up says the overlay also intercepts clicks on the Flow Settings
+modal — the one this spec drives on every iteration. That is no longer true on
+1.12.x and should not be repeated: upstream renders the popover as
+`modal={false}` at `z-40`, deliberately capped below the z-50 dialog layer so it
+cannot float in front of an open modal. What is left is a small opaque rectangle
+over the canvas-controls region — enough to eat a hit-tested click on whatever it
+covers, which is reason enough to remove it rather than race it.
+
+This is owned by `openFlowById` (#1214) since three specs needed it, and
+dismissing it on entry does not work, for a reason worth recording:
 upstream arms the tooltip on an **idle timer of 10 s** after mount
 (`ONBOARDING_TOOLTIP_DELAY_MS` in `CanvasControls.tsx`). A probe right after the
 canvas renders looks ~8 s too early, sees nothing, and the tooltip then pops
