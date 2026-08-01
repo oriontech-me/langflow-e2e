@@ -29,6 +29,25 @@ on:
         description: "Additional name/regex filter, ANDed with the tag above (e.g. 'login|logout')"
         required: false
         default: ""
+      any_completion_provider:
+        description: |
+          Where the `any-completion` tier runs (#1187). "ollama" routes those specs
+          to this job's Ollama service — no key, no quota, no credit — and overrides
+          any model pin, for that tier only. "hosted" keeps them on a keyed provider.
+        required: false
+        type: choice
+        options:
+          - hosted
+          - ollama
+        default: "hosted"
+      retries:
+        description: |
+          Playwright retries for the run. Empty = the config default (2 in CI).
+          Set "0" to measure a spec honestly — a retry hides an intermittent
+          failure, and the #1187 adoption gate is "passes 3/3 with no retries".
+          Honoured by BOTH target kinds (Docker and external URL).
+        required: false
+        default: ""
 
 jobs:
   detect-target:
@@ -39,6 +58,26 @@ jobs:
       image_tag: ${{ steps.check.outputs.image_tag }}
       docker_image: ${{ steps.check.outputs.docker_image }}
     steps:
+      # A retry count the config cannot read is worse than no input at all: the
+      # dispatcher asked to measure a spec unamplified, and `Number("O")` is `NaN`,
+      # which Playwright resolves to its own default — the run would then hide the
+      # very intermittency the #1187 gate exists to expose, and say nothing. Both
+      # target jobs read this input, so the check belongs here, before either runs.
+      - name: Validate the retries input
+        if: github.event.inputs.retries != ''
+        env:
+          RETRIES: ${{ github.event.inputs.retries }}
+        run: |
+          case "$RETRIES" in
+            ''|*[!0-9]*)
+              echo "::error::retries=\"$RETRIES\" is not a non-negative integer. \
+          Leave it empty for the config default (2 in CI), or pass a number \
+          (\"0\" for the #1187 adoption gate)."
+              exit 1
+              ;;
+          esac
+          echo "retries=$RETRIES"
+
       - id: check
         run: |
           TARGET="${{ github.event.inputs.langflow_target }}"
@@ -131,6 +170,20 @@ jobs:
       OLLAMA_BASE_URL: http://localhost:11434
       OLLAMA_BASE_URL_FROM_LANGFLOW: http://ollama:11434
       OLLAMA_TEST_MODEL: llama3.2:1b
+      # Set at JOB level, not on the run step: `.github/actions/run-e2e` declares
+      # its own `env:` per step, and a step-level block ADDS to the job environment
+      # rather than replacing it — which is already how the three OLLAMA_* vars
+      # above reach the Playwright process. So routing needs no change to the
+      # shared action, and no other lane's behaviour moves.
+      #
+      # This is the lane that can answer #1187's adoption gate: it has the Ollama
+      # service with the model baked into the image, and `retries` lets a dispatch
+      # measure a candidate spec with retries off.
+      # "hosted" maps to EMPTY, which is what `resolveTestTargets` reads as "not
+      # routed" — the choice is worded for the dispatcher, the variable for the code.
+      ANY_COMPLETION_PROVIDER: >-
+        ${{ github.event.inputs.any_completion_provider == 'ollama' && 'ollama' || '' }}
+      PLAYWRIGHT_RETRIES: ${{ github.event.inputs.retries }}
 
     steps:
       - uses: actions/checkout@v7
@@ -373,7 +426,32 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
 
+    # `retries` is a dispatch input, not a Docker-lane input, so it is honoured on
+    # BOTH target kinds — set at job level for the same reason as in `e2e-docker`
+    # (`.github/actions/run-e2e` declares per-step `env`, which ADDS to the job
+    # environment rather than replacing it). Routing is the one input this job
+    # cannot honour, and it says so out loud in the first step below; `retries`
+    # has no such obstacle, and leaving it unset here would have been the silent
+    # half of the same failure — a dispatcher passing "0" to measure a spec would
+    # have got the config default and no indication of it.
+    env:
+      PLAYWRIGHT_RETRIES: ${{ github.event.inputs.retries }}
+
     steps:
+      # Say NO out loud rather than running something else (#1012). This job targets
+      # a Langflow that is not on this runner's network, so it cannot reach the
+      # Ollama service container — the same reason it is scoped out of the go-httpbin
+      # decoupling above. Ignoring the input would run the routed specs against a
+      # HOSTED provider while the dispatch summary said `ollama`: the run would be
+      # green, spend keys, and prove nothing about the local path.
+      - name: Reject local-model routing on an external target
+        if: github.event.inputs.any_completion_provider == 'ollama'
+        run: |
+          echo "::error::any_completion_provider=ollama cannot be honoured against \
+          an external Langflow: this job has no Ollama service container, and the \
+          target is not on this runner's network. Dispatch with a Docker tag to \
+          route the any-completion tier locally (#1187)."
+          exit 1
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:

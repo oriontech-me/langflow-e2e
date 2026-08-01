@@ -58,10 +58,13 @@ management; `@ui-ux` — settings-modal interaction + locked-state indicators.
 **Test 1 — lock and unlock a flow and verify UI changes**
 
 1. Create a uniquely-named Basic Prompting flow via the API
-   (`createFlowFromStarter`) and open it by id (`/flow/{id}`); its id is kept for
-   id-scoped teardown. This id-addressed open (rather than clicking the shared
-   "Basic Prompting" template card) is what keeps the spec parallel-safe — see
-   Notes.
+   (`createFlowFromStarter`) and open it with `openFlowById(page, flowId)`; its id
+   is kept for id-scoped teardown. This id-addressed open (rather than clicking
+   the shared "Basic Prompting" template card) is what keeps the spec
+   parallel-safe — see Notes. The shared helper (#1214) also suppresses the
+   assistant onboarding overlay before the load and gates on the flow being
+   **writable** (`menu_bar_display` enabled), which this spec needs: it locks and
+   unlocks through the settings menu.
 2. Assert the flow is initially unlocked — no `icon-lock` badge on the canvas.
 3. Open Flow Settings with `openFlowSettings(page)` — the `menu_bar_display`
    button once enabled, never the `aria-hidden` `flow_name` span (#1215); wait

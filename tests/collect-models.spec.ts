@@ -4,7 +4,7 @@ import fs from "fs";
 import { expect, test } from "./fixtures/fixtures";
 import { collectAll } from "./helpers/provider-setup/collect-models";
 import type { ProviderRecord } from "./helpers/provider-setup/collect-models";
-import { providerConfigMap, type Provider } from "./helpers/provider-setup";
+import { keyedProviderNames, providerConfigMap, type Provider } from "./helpers/provider-setup";
 import { isBuildAxisReason } from "./helpers/provider-setup/probe-component-buildable";
 
 /**
@@ -41,10 +41,16 @@ test(
 
     await collectAll(page);
 
-    await test.step("providers.json has exactly one valid record per known provider", async () => {
+    await test.step("providers.json has exactly one valid record per known KEYED provider", async () => {
       expect(fs.existsSync(PROVIDERS_PATH), `${PROVIDERS_PATH} was written`).toBe(true);
       const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
-      const known = Object.keys(providerConfigMap).sort();
+      // Keyed providers only (#1187). This sweep is the KEY axis: it saves an API key
+      // per provider through the Settings UI and probes it with a real call, so a
+      // keyless provider (Ollama, configured by a base URL) is out of scope by
+      // design, not missing. Comparing against the whole map would fail this
+      // pre-flight on every lane the moment a keyless entry existed — and this spec
+      // gates the daily, the PR run and every manual dispatch.
+      const known = [...keyedProviderNames].sort();
       expect(providers.map((p) => p.provider).sort()).toEqual(known);
       for (const p of providers) {
         expect(["active", "inactive"], `status of ${p.provider}`).toContain(p.status);

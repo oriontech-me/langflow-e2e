@@ -154,7 +154,20 @@ async function askAndGetReply(page: Page, message: string): Promise<string> {
   return chatMessage.innerText();
 }
 
-const targets = resolveTestTargets({ tier: "tool-calling" });
+// `any-completion`, not `tool-calling` — the pilot for #1187.
+//
+// What decides this spec is whether the instruction travelled UI → flow → backend →
+// model call, and any model that returns text can carry that proof: the assertion is
+// `reply.contains(sentinel)`, and the spec doc has always said "even small models
+// comply with 'always include this word'". It was declared `tool-calling` only
+// because #1184 migrated all 17 parametrized agent specs to the resolver under one
+// tier. Declaring what it actually needs is what lets a lane route it to a keyless
+// local model — no key, no quota, no credit — which is the point of #1187: this lane
+// recorded ZERO tests on 2026-07-28 and 2026-07-31 with the account drained.
+//
+// Measured before adopting it, calling `llama3.2:1b` (the model the CI Ollama image
+// bakes) directly: sentinel echoed 3/3, and the neutral control emitted no stem.
+const targets = resolveTestTargets({ tier: "any-completion" });
 
 // SimpleAgentTemplatePage.load() deletes all flows before loading the template.
 // File-level serial mode prevents parallel provider blocks from wiping each

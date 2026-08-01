@@ -6,8 +6,8 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import {
   hasProviderEnvKeys,
+  keyedProviderNames,
   missingProviderEnvKeys,
-  providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
 
@@ -49,7 +49,11 @@ function resolveTarget(): LoadSimpleAgentOptions | undefined {
   const provider =
     envProvider && hasProviderEnvKeys(envProvider)
       ? envProvider
-      : (Object.keys(providerConfigMap) as Provider[]).find(hasProviderEnvKeys);
+      // Keyed providers only (#1187): `hasProviderEnvKeys` is true for Ollama as
+      // soon as OLLAMA_BASE_URL is exported, and this spec resolves its model from
+      // models.json — which a keyless provider is never in. Scoping keeps the
+      // selection identical to what it was before a keyless entry existed.
+      : keyedProviderNames.find(hasProviderEnvKeys);
   if (!provider) return undefined;
 
   const model = models.find((m) => m.provider === provider)?.model;
@@ -76,8 +80,8 @@ const skipReason = provider
   : process.env.MODEL_TEST_ID
     ? `MODEL_TEST_ID="${process.env.MODEL_TEST_ID}" could not be mapped to a provider — ` +
       `it is absent from models.json and MODEL_TEST_PROVIDER is unset.`
-    : `No provider has its env keys configured (need one of: ${Object.keys(providerConfigMap)
-        .map((p) => missingProviderEnvKeys(p as Provider).join("/"))
+    : `No provider has its env keys configured (need one of: ${keyedProviderNames
+        .map((p) => missingProviderEnvKeys(p).join("/"))
         .join(" | ")})`;
 
 async function loadAgent(page: Page): Promise<void> {

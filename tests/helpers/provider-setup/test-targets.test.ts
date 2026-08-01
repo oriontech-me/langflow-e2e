@@ -461,3 +461,133 @@ test("provider-contract specs read neither pin variable — this is what #1185 r
     );
   }
 });
+
+// ─── ANY_COMPLETION_PROVIDER — local-model routing (#1187) ───────────────────
+//
+// The one tier this module acts on. Two directions to hold down, and they pull
+// against each other:
+//
+//  - It must OUTRANK the pins, or it can never fire on the daily: #1185 emits
+//    MODEL_TEST_ID + MODEL_TEST_PROVIDER into $GITHUB_ENV, which is global to the
+//    run and reaches every parametrized spec.
+//  - It must fire for NOTHING ELSE — not another tier, not a keyed provider, not a
+//    missing model pin. Every rejection has to REPORT rather than fall through to
+//    the hosted paths: falling through spends a paid call on a lane that asked for a
+//    keyless one (possibly because its keys are dead) and reads green (#570/#1012).
+
+/** Collect what the resolver warned while `fn` ran. */
+function withWarnings<T>(fn: () => T): { result: T; warnings: string[] } {
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (msg: unknown) => void warnings.push(String(msg));
+  try {
+    return { result: fn(), warnings };
+  } finally {
+    console.warn = original;
+  }
+}
+
+const ROUTED_ENV = {
+  ANY_COMPLETION_PROVIDER: "ollama",
+  OLLAMA_TEST_MODEL: "llama3.2:1b",
+};
+
+test("routes an any-completion spec to the local provider, reading no catalog", () => {
+  const targets = resolve(ROUTED_ENV, { tier: "any-completion" });
+  assert.deepEqual(labels(targets), ["ollama / llama3.2:1b"]);
+  assert.deepEqual(targets[0].options, { provider: "ollama", model: "llama3.2:1b" });
+  assert.equal(targets[0].skipReason, undefined);
+});
+
+test("routing reads no catalog at all — an EMPTY models.json still resolves the local target", () => {
+  // The lane this exists for is the one where every hosted key is dead, and
+  // collect-models leaves an empty catalog exactly then. If routing depended on the
+  // catalog it would fall back to `provider:openai (fallback)` on the very run it
+  // was meant to rescue.
+  const targets = resolve(ROUTED_ENV, { tier: "any-completion", models: [] });
+  assert.deepEqual(labels(targets), ["ollama / llama3.2:1b"]);
+});
+
+test("routing leaves every other tier on the hosted paths", () => {
+  for (const tier of ["none", "tool-calling", "provider-contract"] as const) {
+    const targets = resolve(ROUTED_ENV, { tier });
+    assert.deepEqual(
+      labels(targets),
+      ["openai / gpt-4o-mini", "anthropic / claude-sonnet-5", "google / gemini-2.5-flash"],
+      `tier "${tier}" must ignore ANY_COMPLETION_PROVIDER`,
+    );
+  }
+});
+
+test("routing is inert when the variable is unset — the default path is untouched", () => {
+  const targets = resolve({ OLLAMA_TEST_MODEL: "llama3.2:1b" }, { tier: "any-completion" });
+  assert.deepEqual(labels(targets), [
+    "openai / gpt-4o-mini",
+    "anthropic / claude-sonnet-5",
+    "google / gemini-2.5-flash",
+  ]);
+});
+
+test("routing OUTRANKS MODEL_TEST_ID and says so — #1185's pin is global to the run", () => {
+  const { result: targets, warnings } = withWarnings(() =>
+    resolve(
+      { ...ROUTED_ENV, MODEL_TEST_ID: "claude-haiku-4-5", MODEL_TEST_PROVIDER: "anthropic" },
+      { tier: "any-completion" },
+    ),
+  );
+  assert.deepEqual(labels(targets), ["ollama / llama3.2:1b"]);
+  assert.ok(
+    warnings.some((w) => /overrides the model pin/.test(w) && /claude-haiku-4-5/.test(w)),
+    `the overridden pin must be named, never silent: ${JSON.stringify(warnings)}`,
+  );
+});
+
+test("ALL_MODELS is overridden too, and named", () => {
+  const { result: targets, warnings } = withWarnings(() =>
+    resolve({ ...ROUTED_ENV, ALL_MODELS: "true" }, { tier: "any-completion" }),
+  );
+  assert.deepEqual(labels(targets), ["ollama / llama3.2:1b"]);
+  assert.ok(warnings.some((w) => /ALL_MODELS=true/.test(w)));
+});
+
+test("a missing OLLAMA_TEST_MODEL is REPORTED, never guessed and never fallen through", () => {
+  const { result: targets, warnings } = withWarnings(() =>
+    resolve({ ANY_COMPLETION_PROVIDER: "ollama" }, { tier: "any-completion" }),
+  );
+  assert.equal(targets.length, 1);
+  assert.equal(targets[0].label, "provider:ollama (routed)");
+  assert.deepEqual(targets[0].options, {}, "no provider ⇒ the spec skips, it does not run hosted");
+  assert.match(targets[0].skipReason ?? "", /OLLAMA_TEST_MODEL is not/);
+  assert.ok(warnings.some((w) => /OLLAMA_TEST_MODEL/.test(w)));
+});
+
+test("an unknown provider name is reported with the known set", () => {
+  const { result: targets } = withWarnings(() =>
+    resolve({ ANY_COMPLETION_PROVIDER: "llamacpp" }, { tier: "any-completion" }),
+  );
+  assert.equal(targets[0].label, "provider:llamacpp (routed)");
+  assert.match(targets[0].skipReason ?? "", /not a provider this suite knows/);
+  assert.match(targets[0].skipReason ?? "", /ollama/);
+});
+
+test("a KEYED provider is rejected and pointed at MODEL_TEST_PROVIDER", () => {
+  // Accepting it would make "the any-completion tier is routed" say nothing about
+  // whether the run spends money — the entire point of the variable.
+  const { result: targets } = withWarnings(() =>
+    resolve(
+      { ANY_COMPLETION_PROVIDER: "openai", OLLAMA_TEST_MODEL: "llama3.2:1b" },
+      { tier: "any-completion" },
+    ),
+  );
+  assert.equal(targets[0].label, "provider:openai (routed)");
+  assert.match(targets[0].skipReason ?? "", /API-key provider/);
+  assert.match(targets[0].skipReason ?? "", /MODEL_TEST_PROVIDER/);
+});
+
+test("a routed provider carries its providers.json skip reason like any other", () => {
+  const targets = resolve(ROUTED_ENV, {
+    tier: "any-completion",
+    skipReasons: new Map([["ollama", "ollama inactive: instance unreachable"]]),
+  });
+  assert.equal(targets[0].skipReason, "ollama inactive: instance unreachable");
+});
