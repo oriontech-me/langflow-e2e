@@ -204,7 +204,11 @@ jobs:
           DROPPED=$(jq -r '.dropped | length' /tmp/impacted.json)
           FULL_SUITE=$(jq -r '.fullSuite' /tmp/impacted.json)
           DIRECT=$(jq -r '.direct | length' /tmp/impacted.json)
-          STABLE=$(jq -r '.stableSelected' /tmp/impacted.json)
+          # `.stableSelected` is deliberately NOT read here. It is scoped to `selected`
+          # (post-cap), so pairing it with `$TOTAL` (pre-cap) misreported it on every
+          # capped run, and the exclusion below can shorten the set again. The `@stable`
+          # tally now comes from the verdict's `.stableRun`, over the surviving list
+          # (#1226).
 
           echo "Impacted specs: $TOTAL ($DIRECT direct, $((TOTAL - DIRECT)) transitive); running ${TOTAL:-0} minus $DROPPED dropped"
 
@@ -245,17 +249,15 @@ jobs:
 
           echo "Running: ${SPECS:-<none>}"
 
-          # RESOLUTION only — what the import graph found, which is settled here and
-          # cannot change below. The count of what actually RUNS is emitted after the
-          # provider verdict, because only there is the run list final (#1226).
-          # `$STABLE` is `.stableSelected`, a property of the SELECTION, so it stays
-          # on this line rather than following the run count: moving it would make it
-          # a claim about execution that the exclusion below can falsify.
-          {
-            echo "### Impacted specs"
-            echo ""
-            echo "- resolved by import graph: **$TOTAL** ($DIRECT direct, $((TOTAL - DIRECT)) transitive; \`@stable\`: $STABLE)"
-          } >> "$GITHUB_STEP_SUMMARY"
+          # The summary is BUFFERED from here on, and emitted at the end of the step in
+          # reading order: heading, the two counts, then the caveats (#1226). The counts
+          # cannot be written where they are computed, because the run count is only
+          # final after the provider verdict — and appending caveats as they occur put
+          # the cap's full dropped list (217 bullets on a suite-wide change) ABOVE the
+          # figure a reviewer is looking for, which is the grievance #1226 opened with.
+          # `$GITHUB_STEP_SUMMARY` is append-only, so ordering means buffering.
+          NOTES=/tmp/summary-notes.md
+          : > "$NOTES"
 
           # Same rule as the cap and the suite-wide signal: whatever this lane does
           # or does not cover is stated in the summary, never inferred from a green
@@ -265,24 +267,24 @@ jobs:
               echo "- 🐤 **CI-only change** — no spec imports it, so the lane runs the canary to prove the wiring boots:"
               jq -r '.canarySpecs[] | "  - `" + . + "`"' /tmp/ci-coverage.json
               echo "  This proves the lane RUNS, not that the changed behaviour is correct."
-            } >> "$GITHUB_STEP_SUMMARY"
+            } >> "$NOTES"
           elif [ -f /tmp/ci-coverage.json ] && [ "$(jq -r .verdict /tmp/ci-coverage.json)" = "dispatch" ]; then
             {
               echo "- ⚠️ **CI-only change with no runtime coverage here** — the changed surface belongs to another lane. Dispatch before merging:"
               jq -r '.dispatchWorkflows[] | "  - `" + . + "`"' /tmp/ci-coverage.json
-            } >> "$GITHUB_STEP_SUMMARY"
+            } >> "$NOTES"
           fi
 
           # A fixture/config change governs every spec. Say so loudly instead of
           # letting a bounded subset read as full coverage.
           if [ "$FULL_SUITE" = "true" ]; then
             echo "::warning::This PR changes a suite-wide surface (fixtures / playwright.config / global hooks): ALL $TOTAL specs are impacted. PR CI runs a bounded subset — dispatch manual.yml on this branch for the full suite before merging."
-            echo "- ⚠️ **suite-wide change** — every spec is impacted; the PR run is a subset. Dispatch \`manual.yml\` on this branch for the full suite." >> "$GITHUB_STEP_SUMMARY"
+            echo "- ⚠️ **suite-wide change** — every spec is impacted; the PR run is a subset. Dispatch \`manual.yml\` on this branch for the full suite." >> "$NOTES"
           fi
           if [ "$DROPPED" -gt 0 ]; then
             echo "::warning::Capped at $IMPACTED_SPEC_CAP of $TOTAL impacted specs — $DROPPED not run in this PR (listed in the step log)."
-            echo "- ⚠️ capped at \`$IMPACTED_SPEC_CAP\` — **$DROPPED impacted specs were NOT run**:" >> "$GITHUB_STEP_SUMMARY"
-            jq -r '.dropped[] | "  - `" + . + "`"' /tmp/impacted.json >> "$GITHUB_STEP_SUMMARY"
+            echo "- ⚠️ capped at \`$IMPACTED_SPEC_CAP\` — **$DROPPED impacted specs were NOT run**:" >> "$NOTES"
+            jq -r '.dropped[] | "  - `" + . + "`"' /tmp/impacted.json >> "$NOTES"
           fi
 
           # `has_specs` and `specs` are emitted at the END of this step, after the
@@ -338,21 +340,28 @@ jobs:
 
           # The run count is COUNTED FROM $SPECS, here — after everything that can
           # shorten it has run, and never as `TOTAL - DROPPED` up in the resolution
-          # block (#1226). That arithmetic lied in two ways, and the second predates
-          # #1216:
-          #   - an excluded provider-dependent spec was still counted as executed,
-          #     and the `@stable` tally with it — the spec that motivated #1216
-          #     (`agent-component-regression`) is `@stable`, so the headline figure
-          #     contradicted the exclusion warning printed directly below it;
+          # block (#1226). That arithmetic lied in three ways:
+          #   - an excluded provider-dependent spec was still counted as executed;
           #   - on a CANARY run `TOTAL` is 0 by definition (no spec imports a
           #     workflow), so the line read "running in this PR: 0" while the canary
-          #     block below it listed the three specs that do run.
-          # Same defect both times: a figure a reviewer reads as coverage the lane did
-          # not deliver (#1012's rule). Counting the list actually handed to Playwright
-          # cannot drift from it, and `wc -w` is exact here because `$SPECS` is a
-          # space-joined list of paths with no spaces.
+          #     block below it listed the three specs that do run;
+          #   - the `@stable` tally beside it was the resolver's `.stableSelected`,
+          #     which is over `selected` (POST-cap) while `$TOTAL` is `.specs`
+          #     (PRE-cap) — so on any capped run the pair read as a breakdown of a
+          #     number it was not about. It now comes from `.stableRun`, counted by
+          #     the verdict script over the surviving list, which already holds every
+          #     selected spec's source.
+          # Same defect all three times: a figure a reviewer reads as coverage the lane
+          # did not deliver (#1012's rule). Counting the list actually handed to
+          # Playwright cannot drift from it, and `wc -w` is exact here because `$SPECS`
+          # is a space-joined list of paths with no spaces — the same premise
+          # `npx playwright test $SPECS` already rests on.
           RUN_COUNT=$(printf '%s' "$SPECS" | wc -w | tr -d ' ')
-          echo "- running in this PR: **$RUN_COUNT**" >> "$GITHUB_STEP_SUMMARY"
+          STABLE_RUN=$(jq -r '.stableRun' /tmp/provider.json)
+          # On a canary the run list comes from `ci-change-coverage.mjs`, so the
+          # verdict never saw those specs and its `.stableRun` is 0. Say nothing rather
+          # than publish a zero that is an artefact of where the list came from.
+          if [ "$CANARY" = "true" ]; then STABLE_NOTE=""; else STABLE_NOTE=" (of which \`@stable\`: $STABLE_RUN)"; fi
 
           if [ "$EXCLUDED" -gt 0 ]; then
             echo "::warning::$(jq -r '.warning' /tmp/provider.json)"
@@ -360,7 +369,7 @@ jobs:
               echo "- ⚠️ **$EXCLUDED impacted spec(s) NOT run** — they need a provider configured, were pulled in only transitively, and this lane skips the models sweep (#1216):"
               jq -r '.excluded[] | "  - `" + .file + "` (" + (.reasons | join(", ")) + ")"' /tmp/provider.json
               echo "  Covered by \`daily-stable.yml\`; dispatch \`manual.yml\` on this branch to run them against a provider now."
-            } >> "$GITHUB_STEP_SUMMARY"
+            } >> "$NOTES"
           fi
           # Only when a spec demanded it: on a canary the sweep is forced for the
           # health gate's sake and `forcedBy` is legitimately empty, so this would
@@ -369,15 +378,29 @@ jobs:
             {
               echo "- 🔑 provider sweep **required** by:"
               jq -r '.forcedBy[] | "  - `" + .file + "`" + (if .isChanged then " (changed by this PR)" else " (consumes the sweep output)" end)' /tmp/provider.json
-            } >> "$GITHUB_STEP_SUMMARY"
+            } >> "$NOTES"
           fi
           if [ "$(jq -r '.forcedToAvoidEmptyRun' /tmp/provider.json)" = "true" ]; then
             echo "::warning::Every impacted spec needs a provider, so the sweep runs rather than leaving this lane with nothing to execute — decoupling from key health is not worth ALL of a PR's coverage (#1216)."
-            echo "- 🔑 provider sweep forced: every impacted spec needs a provider, so excluding them would have left nothing to run." >> "$GITHUB_STEP_SUMMARY"
+            echo "- 🔑 provider sweep forced: every impacted spec needs a provider, so excluding them would have left nothing to run." >> "$NOTES"
           fi
 
           echo "Needs provider models: $NEEDS_MODELS"
           echo "Running after the provider verdict: ${SPECS:-<none>}"
+
+          # The whole summary, in reading order, written once (#1226). The counts come
+          # first because they are what a reviewer opens this for; every caveat that
+          # qualifies them — canary/dispatch, suite-wide, the cap and its dropped list,
+          # the provider exclusions — follows from the buffer. `$STABLE` is deliberately
+          # absent from the resolution line: `.stableSelected` is scoped to `selected`,
+          # not to `$TOTAL`.
+          {
+            echo "### Impacted specs"
+            echo ""
+            echo "- resolved by import graph: **$TOTAL** ($DIRECT direct, $((TOTAL - DIRECT)) transitive)"
+            echo "- running in this PR: **$RUN_COUNT**$STABLE_NOTE"
+            cat "$NOTES"
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # The run list is whatever survived the verdict — emitted here and only
           # here. An empty list skips the E2E job through `has_specs`, which is the

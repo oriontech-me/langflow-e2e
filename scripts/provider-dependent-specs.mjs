@@ -127,8 +127,16 @@ export class UndecidableError extends Error {}
  * Classify one spec from its path and source.
  *
  * @returns `consumesModelData` — needs the sweep's OUTPUT (fails at setup without
- *   it); `providerDependent` — needs a provider configured at all; `reasons` — why,
- *   in words fit for a run summary.
+ *   it); `providerDependent` — needs a provider configured at all; `isStable` —
+ *   carries `@stable`, so the run summary can tally what actually runs rather than
+ *   reusing a count scoped to a different set (#1226); `reasons` — why, in words fit
+ *   for a run summary.
+ *
+ * Note the tag scan is FILE-scoped, not `test()`-scoped: one `@agents` test marks the
+ * whole file provider-dependent, so its provider-free tests are excluded with it.
+ * That errs on the safe side — the alternative is running a test bare against no
+ * provider, which is the defect #1216 exists to end — and no spec in the suite mixes
+ * the two today. Revisit here if one starts to.
  */
 export function classifySpec(file, source) {
   if (typeof source !== "string") {
@@ -150,6 +158,7 @@ export function classifySpec(file, source) {
   return {
     consumesModelData,
     providerDependent: consumesModelData || tags.length > 0,
+    isStable: source.includes("@stable"),
     reasons,
   };
 }
@@ -192,6 +201,7 @@ export function decideProviderCoverage({
     isChanged: changed.has(file),
     ...classifySpec(file, read(file)),
   }));
+  const classifiedByFile = new Map(classified.map((spec) => [spec.file, spec]));
 
   const forced = classified.filter(
     (spec) => spec.consumesModelData || (spec.isChanged && spec.providerDependent),
@@ -215,10 +225,18 @@ export function decideProviderCoverage({
     : providerDependent.map((spec) => ({ file: spec.file, reasons: spec.reasons }));
 
   const excludedFiles = new Set(excluded.map((spec) => spec.file));
+  const run = selected.filter((file) => !excludedFiles.has(file));
   return {
     needsModels,
     canary,
-    run: selected.filter((file) => !excludedFiles.has(file)),
+    run,
+    // `@stable` among what actually RUNS, counted here because this function already
+    // holds every selected spec's source — so the summary needs no `grep` in the YAML
+    // (the `grep -q … 2>/dev/null` #1216 removed from that step) and no count scoped
+    // to a different set. `stableSelected` from the resolver is over `selected`, i.e.
+    // POST-cap, while the resolution line's total is PRE-cap; pairing them read as a
+    // breakdown of a number it was not about (#1226).
+    stableRun: run.filter((file) => classifiedByFile.get(file)?.isStable).length,
     excluded,
     forcedBy: forced.map((spec) => ({
       file: spec.file,

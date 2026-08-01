@@ -24,7 +24,6 @@ import {
   classifySpec,
   decideProviderCoverage,
   formatExclusionWarning,
-  main,
 } from "./provider-dependent-specs.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
@@ -323,6 +322,44 @@ test("pr-validation calls the verdict and emits the run list ONLY after it", () 
   assert.ok(emitAt > rederiveAt, "the run list must be emitted after it is re-derived");
 });
 
+test("the @stable tally is counted over the RUN list, not the pre-cap total", () => {
+  // #1226, second round. `.stableSelected` from the resolver is over `selected`
+  // (POST-cap) while the summary's total is `.specs` (PRE-cap), so printing them as
+  // one parenthetical stated a breakdown of a number it was not about — wrong on
+  // every capped run, which is the common case for a helper change. And the exclusion
+  // can shorten the set again after that. Counted here, it cannot disagree with `run`.
+  const verdict = decideProviderCoverage({
+    // AGENT_CANVAS and LLM_AREA are `@stable`; RUN_FLOW is too; EDIT_FLOW_NAME is.
+    selected: [AGENT_CANVAS, EDIT_FLOW_NAME, RUN_FLOW],
+    changedSpecs: [],
+    read,
+  });
+  // The agent spec is excluded, so it must NOT be in the tally.
+  assert.deepEqual(verdict.run, [EDIT_FLOW_NAME, RUN_FLOW]);
+  assert.equal(verdict.stableRun, 2, "@stable is counted over `run`, not `selected`");
+
+  // With the sweep on, nothing is excluded and all three count.
+  const swept = decideProviderCoverage({
+    selected: [AGENT_CANVAS, EDIT_FLOW_NAME, LLM_AREA],
+    changedSpecs: [],
+    read,
+  });
+  assert.equal(swept.needsModels, true);
+  assert.equal(swept.stableRun, 3);
+});
+
+test("classifySpec reports @stable so the tally needs no grep in the workflow", () => {
+  // The reason this lives in the script and not in the YAML: `decideProviderCoverage`
+  // already reads every selected spec's source, so the count is free here — whereas
+  // in shell it would mean reinstating the `grep -q … 2>/dev/null` that #1216 removed
+  // from that step for treating an unreadable spec as "no match".
+  assert.equal(classifySpec(AGENT_CANVAS, SPECS[AGENT_CANVAS]).isStable, true);
+  assert.equal(
+    classifySpec("x.spec.ts", 'test("t", { tag: ["@release"] }, () => {});').isStable,
+    false,
+  );
+});
+
 test("the run COUNT is derived from the final run list, not from the resolution arithmetic", () => {
   // #1226. The summary used to print `running in this PR: **$((TOTAL - DROPPED))**`
   // up in the resolution block, before the provider verdict could shorten the list —
@@ -351,6 +388,76 @@ test("the run COUNT is derived from the final run list, not from the resolution 
   assert.ok(rederiveAt > 0, "the run list is re-derived from the verdict");
   assert.ok(countAt > rederiveAt, "the count comes after the re-derivation");
   assert.ok(printAt > countAt, "the summary line comes after the count");
+
+  // The `@stable` tally must come from the verdict's `.stableRun`, never from the
+  // resolver's `.stableSelected` — the latter is post-cap while the total beside it
+  // is pre-cap, so the pair misreported itself on every capped run.
+  //
+  // Asserted over CODE with comments stripped, and without depending on how the jq
+  // filter happens to be quoted. The first version of this guard checked for the
+  // exact string `'.stableSelected' /tmp/impacted.json`, and a mutation writing
+  // `jq -r .stableSelected` unquoted sailed straight through it — a guard that only
+  // catches the spelling it was written against is not a guard.
+  const code = workflow
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+  assert.doesNotMatch(
+    code,
+    /stableSelected/,
+    "the summary must not read .stableSelected in any form — it is scoped to `selected`, not to the resolved total (#1226)",
+  );
+  assert.match(
+    code,
+    /STABLE_RUN=\$\(jq -r ['"]?\.stableRun['"]? \/tmp\/provider\.json\)/,
+    "the @stable tally comes from the verdict",
+  );
+  // Presence of `STABLE_RUN=` proves nothing on its own — it must actually reach the
+  // run-count line, and nothing but it may.
+  const runLine = code
+    .split("\n")
+    .find((line) => line.includes("- running in this PR:"));
+  assert.ok(runLine, "the run-count line exists");
+  assert.match(runLine, /\$STABLE_NOTE/, "the tally reaches the run-count line");
+  assert.match(
+    code,
+    /STABLE_NOTE=" \(of which \\`@stable\\`: \$STABLE_RUN\)"/,
+    "and STABLE_NOTE is built from STABLE_RUN, not from anything else",
+  );
+  const resolvedLine = code
+    .split("\n")
+    .find((line) => line.includes("- resolved by import graph:"));
+  assert.ok(resolvedLine, "the resolution line exists");
+  assert.doesNotMatch(
+    resolvedLine,
+    /@stable/,
+    "the resolution line must carry no @stable count — its total is pre-cap, any tally is post-cap",
+  );
+});
+
+test("the summary is buffered so the counts precede the caveats that qualify them", () => {
+  // #1226's grievance was "the number a reviewer reads FIRST". Appending each caveat
+  // as it occurs put the cap's dropped list — 217 nested bullets on a suite-wide
+  // change — above the run count, which answers the grievance in letter and not in
+  // substance. `$GITHUB_STEP_SUMMARY` is append-only, so ordering means buffering.
+  const workflow = readFileSync(
+    path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"),
+    "utf8",
+  );
+  assert.match(workflow, /NOTES=\/tmp\/summary-notes\.md/, "the caveat buffer exists");
+  assert.match(workflow, /: > "\$NOTES"/, "the buffer is truncated before use");
+  // Every caveat writes to the buffer; only the final block writes the summary.
+  const summaryWrites = workflow.split('>> "$GITHUB_STEP_SUMMARY"').length - 1;
+  assert.equal(summaryWrites, 1, "the step summary is written exactly once");
+  const finalBlockAt = workflow.indexOf('cat "$NOTES"');
+  assert.ok(finalBlockAt > workflow.indexOf("RUN_COUNT="), "the caveats are flushed after the counts");
+  // The heading must ride in that same final block, or the caveats would render
+  // above it.
+  assert.match(
+    workflow,
+    /echo "### Impacted specs"[\s\S]{0,600}?cat "\$NOTES"/,
+    "the heading, the counts and the flushed caveats are one ordered block",
+  );
 });
 
 test("an exclusion is announced, never silent", () => {
