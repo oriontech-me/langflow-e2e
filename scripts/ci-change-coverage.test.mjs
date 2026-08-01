@@ -214,7 +214,25 @@ test("a canary run performs the sweep, so the health gate is actually exercised"
   // health gate with it, since that step is `if: needs_models`. A canary meant to
   // cover #1045 would have skipped #1045's action.
   const text = fs.readFileSync(path.join(REPO_ROOT, PR_LANE), "utf8");
-  assert.match(text, /if \[ "\$CANARY" = "true" \]; then\n\s+NEEDS_MODELS=true/);
+  // The invariant is "a canary forces the sweep". Where it is EXPRESSED moved in
+  // #1216: the needs_models decision left this workflow's inline shell for
+  // `scripts/provider-dependent-specs.mjs`, which forces it on `--canary` (asserted
+  // directly in that script's own unit lane). What this file must still pin is the
+  // WIRING — that the workflow actually tells the script when the run is a canary,
+  // since a dropped flag would silently restore the #1045 hole this test exists for.
+  assert.match(
+    text,
+    /CANARY_FLAG="--canary"/,
+    "the canary must still force the sweep — see provider-dependent-specs.mjs",
+  );
+  // Matched loosely across the invocation's line continuations: what must hold is
+  // that `$CANARY_FLAG` reaches THIS script's command line, not the exact order of
+  // its other flags.
+  assert.match(
+    text,
+    /provider-dependent-specs\.mjs[\s\S]{0,240}?\$CANARY_FLAG/,
+    "the canary flag must reach the verdict script",
+  );
   assert.match(text, /canary: \$\{\{ steps\.diff\.outputs\.canary \}\}/, "the canary flag is not a job output");
   // …and neither consequence of forcing the sweep may block a CI-only PR.
   assert.match(

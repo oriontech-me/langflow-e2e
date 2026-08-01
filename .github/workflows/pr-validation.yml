@@ -280,59 +280,92 @@ jobs:
             jq -r '.dropped[] | "  - `" + . + "`"' /tmp/impacted.json >> "$GITHUB_STEP_SUMMARY"
           fi
 
-          HAS_SPECS=false
-          if [ -n "$SPECS" ]; then HAS_SPECS=true; fi
+          # `has_specs` and `specs` are emitted at the END of this step, after the
+          # provider-coverage verdict below may have removed specs from the run
+          # list. Emitting them here as well would write the key twice and leave
+          # which value wins up to the runner (#1216).
           {
-            echo "has_specs=$HAS_SPECS"
-            echo "specs=$SPECS"
             echo "full_suite=$FULL_SUITE"
             echo "impacted_total=$TOTAL"
             echo "dropped_count=$DROPPED"
           } >> "$GITHUB_OUTPUT"
 
-          # Decide whether the impacted specs need provider model data. Only
-          # LLM-dependent specs consume collect-models output (models.json), so
-          # running "Collect models" for an LLM-free PR needlessly gates it on
-          # provider key health — a provider billing/quota outage then reddens a
-          # PR that never touches that provider (the recurring #915/#910/#911
-          # class). A spec needs models if it lives in an always-LLM area
-          # (llm-agents/ or model-provider/) OR its content references a
-          # collect-models consumer (resolveTestTargets / SimpleAgentTemplatePage /
-          # provider-setup / models.json / MODEL_TEST_ID / initialGPTsetup /
-          # setupOpenAI / resolveGptModel / resolveGeminiModel) — this catches the
-          # cross-area consumers (mcp/client agent specs, the loop-component
-          # regression, the ui-ux message-history spec, which reaches the
-          # resolvers indirectly through initialGPTsetup — #946), and leaves
-          # LLM-free specs (e.g. mcp/server/*) out.
-          # A canary run INVERTS this trade deliberately. The canary specs need no
-          # model data, so the rule above would skip `Collect models` — and with it
-          # the post-collect-models health gate, which is `if: needs_models`. The
-          # canary would then prove nothing about the very sequence it exists to
-          # prove: #1045's action would have been skipped by the run meant to cover
-          # it. So a canary run performs the sweep, and the two consequences are
-          # neutralised where they would otherwise bite:
-          #   - `Collect models` becomes non-fatal (see its `continue-on-error`), so
-          #     a drained provider key cannot block a CI-only PR — the same trade
-          #     the daily makes (#980), for the same reason: nothing in the canary
-          #     consumes that key;
-          #   - the credential pre-flight is skipped for the run itself (#884), for
-          #     the same reason.
-          NEEDS_MODELS=false
-          if [ "$CANARY" = "true" ]; then
-            NEEDS_MODELS=true
-            echo "Canary run: forcing the Collect models sweep so the health gate is exercised (#1159)."
+          # Decide (a) whether the impacted specs need the Collect models sweep and
+          # (b) whether any of them would otherwise run WITHOUT a provider they
+          # need. The second question used to resolve silently to "run it anyway",
+          # which is how PR #1152 — a one-helper change — produced a red in
+          # `agent-component-regression.spec.ts` (`value-dropdown-model_model` never
+          # renders with no provider configured) that had nothing to do with its
+          # diff. That spec is `@stable` and green in the daily, where the sweep runs.
+          #
+          # The verdict turns on what the PR is ABOUT, because forcing the sweep for
+          # every provider-dependent spec would re-couple unrelated PRs to provider
+          # key health (`Collect models` is a HARD gate here) — the #915/#910/#911
+          # cost this gate exists to avoid:
+          #   - provider-dependent AND changed directly ⇒ sweep, and run it;
+          #   - provider-dependent only transitively     ⇒ EXCLUDE it, and say so.
+          # A spec that CONSUMES the sweep's output still forces it either way; that
+          # asymmetry is deliberate and argued in the script's header.
+          #
+          # A canary still forces the sweep (#1159), for the health gate below.
+          # Logic and wording live in the script so `npm run test:scripts` covers
+          # them; a verdict it cannot produce exits 2 and fails this step rather
+          # than degrading to "LLM-free" (#1012).
+          CANARY_FLAG=""
+          if [ "$CANARY" = "true" ]; then CANARY_FLAG="--canary"; fi
+          node scripts/provider-dependent-specs.mjs --stdin --format=json \
+            --changed-file=/tmp/changed.txt $CANARY_FLAG \
+            < /tmp/impacted.json > /tmp/provider.json \
+            || { echo "::error::provider-coverage verdict failed"; exit 1; }
+          NEEDS_MODELS=$(jq -r '.needsModels' /tmp/provider.json)
+          EXCLUDED=$(jq -r '.excluded | length' /tmp/provider.json)
+
+          # Re-derive the run list from the verdict, so an excluded spec cannot reach
+          # Playwright — but NEVER on a canary run. A canary's specs come from
+          # `ci-change-coverage.mjs`, not from the import graph, so `impacted.selected`
+          # is empty there and overwriting `$SPECS` with the verdict's (empty) run list
+          # would blank it, trip `has_specs=false`, and skip the whole E2E job — taking
+          # `Collect models` and the health gate with it, since both live in that job.
+          # That is precisely the "green check, nothing ran" hole #1159 exists to close.
+          if [ "$CANARY" != "true" ]; then
+            SPECS=$(jq -r '.run | join(" ")' /tmp/provider.json)
           fi
-          for f in $SPECS; do
-            case "$f" in
-              tests/tests-automations/regression/core-functionality/llm-agents/*|tests/tests-automations/regression/core-functionality/model-provider/*)
-                NEEDS_MODELS=true; break;;
-            esac
-            if grep -qE 'resolveTestTargets|SimpleAgentTemplatePage|provider-setup|models\.json|MODEL_TEST_ID|initialGPTsetup|setupOpenAI|resolveGptModel|resolveGeminiModel' "$f" 2>/dev/null; then
-              NEEDS_MODELS=true; break
-            fi
-          done
+
+          if [ "$EXCLUDED" -gt 0 ]; then
+            echo "::warning::$(jq -r '.warning' /tmp/provider.json)"
+            {
+              echo "- ⚠️ **$EXCLUDED impacted spec(s) NOT run** — they need a provider configured, were pulled in only transitively, and this lane skips the models sweep (#1216):"
+              jq -r '.excluded[] | "  - `" + .file + "` (" + (.reasons | join(", ")) + ")"' /tmp/provider.json
+              echo "  Covered by \`daily-stable.yml\`; dispatch \`manual.yml\` on this branch to run them against a provider now."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # Only when a spec demanded it: on a canary the sweep is forced for the
+          # health gate's sake and `forcedBy` is legitimately empty, so this would
+          # otherwise print a header over nothing.
+          if [ "$(jq -r '.forcedBy | length' /tmp/provider.json)" -gt 0 ]; then
+            {
+              echo "- 🔑 provider sweep **required** by:"
+              jq -r '.forcedBy[] | "  - `" + .file + "`" + (if .isChanged then " (changed by this PR)" else " (consumes the sweep output)" end)' /tmp/provider.json
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$(jq -r '.forcedToAvoidEmptyRun' /tmp/provider.json)" = "true" ]; then
+            echo "::warning::Every impacted spec needs a provider, so the sweep runs rather than leaving this lane with nothing to execute — decoupling from key health is not worth ALL of a PR's coverage (#1216)."
+            echo "- 🔑 provider sweep forced: every impacted spec needs a provider, so excluding them would have left nothing to run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           echo "Needs provider models: $NEEDS_MODELS"
+          echo "Running after the provider verdict: ${SPECS:-<none>}"
+
+          # The run list is whatever survived the verdict — emitted here and only
+          # here. An empty list skips the E2E job through `has_specs`, which is the
+          # only safe outcome: `npx playwright test` with no paths runs the whole
+          # suite. The ::warning:: above is what keeps that skip from reading as a
+          # pass (#1012).
+          HAS_SPECS=false
+          if [ -n "$SPECS" ]; then HAS_SPECS=true; fi
           {
+            echo "has_specs=$HAS_SPECS"
+            echo "specs=$SPECS"
             echo "needs_models=$NEEDS_MODELS"
             echo "canary=$CANARY"
           } >> "$GITHUB_OUTPUT"
