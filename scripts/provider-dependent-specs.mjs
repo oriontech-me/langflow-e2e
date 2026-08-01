@@ -120,6 +120,26 @@ export const PROVIDER_TAGS = ["@agents", "@model-provider"];
 
 const MARKER_RE = new RegExp(MODEL_DATA_MARKERS.join("|"));
 
+/**
+ * `@stable` inside a `tag:` array, not anywhere in the file.
+ *
+ * A bare `source.includes("@stable")` overcounts by 8 of the suite's 235 specs, and one
+ * of the eight says the opposite of what it was counted as —
+ * `api/flows/api-request-component-ui.spec.ts`'s only occurrence is the comment
+ * "(`@release`, never `@stable`)". Since `stableRun` is published as the corrected
+ * figure (#1226), it cannot itself be off by eight.
+ *
+ * `[^\]]*` spans newlines, so a multi-line `tag: [ … ]` array matches. Measured against
+ * the suite: 170 files, which is exactly what `scripts/stable-tests.ts` reports from the
+ * spec ASTs — so this cheap regex agrees with the repo's authoritative parser, and there
+ * are no false negatives to trade for the eight false positives it removes.
+ *
+ * `impacted-specs-by-import.mjs` still uses the loose test for `stableSelected` and its
+ * `@stable`-first ordering. That is not a divergence this file can fix from here, and it
+ * no longer matters for anything printed: `stableSelected` is not read by the workflow.
+ */
+const STABLE_TAG_RE = /tag:\s*\[[^\]]*@stable/;
+
 /** Raised for anything that leaves the verdict unknown. */
 export class UndecidableError extends Error {}
 
@@ -127,8 +147,22 @@ export class UndecidableError extends Error {}
  * Classify one spec from its path and source.
  *
  * @returns `consumesModelData` — needs the sweep's OUTPUT (fails at setup without
- *   it); `providerDependent` — needs a provider configured at all; `reasons` — why,
- *   in words fit for a run summary.
+ *   it); `providerDependent` — needs a provider configured at all; `isStable` —
+ *   carries `@stable`, so the run summary can tally what actually runs rather than
+ *   reusing a count scoped to a different set (#1226); `reasons` — why, in words fit
+ *   for a run summary.
+ *
+ * Note the tag scan is FILE-scoped, not `test()`-scoped: one `@agents` test marks the
+ * whole file provider-dependent, so its provider-free tests are excluded with it.
+ * That errs on the safe side — the alternative is running a test bare against no
+ * provider, which is the defect #1216 exists to end.
+ *
+ * One spec in the suite is already in that position, so this is a live cost and not a
+ * hypothetical: `core-components/duplicate-dom-ids-regression.spec.ts` has an
+ * `@agents` test and a provider-free one, and a transitive impact excludes both. A
+ * `test()`-scoped scan would need the run list to carry a per-test grep expression
+ * rather than file paths, which is a larger change than #1216 or #1226 called for.
+ * Revisit if more specs start mixing the two.
  */
 export function classifySpec(file, source) {
   if (typeof source !== "string") {
@@ -150,6 +184,7 @@ export function classifySpec(file, source) {
   return {
     consumesModelData,
     providerDependent: consumesModelData || tags.length > 0,
+    isStable: STABLE_TAG_RE.test(source),
     reasons,
   };
 }
@@ -192,6 +227,7 @@ export function decideProviderCoverage({
     isChanged: changed.has(file),
     ...classifySpec(file, read(file)),
   }));
+  const classifiedByFile = new Map(classified.map((spec) => [spec.file, spec]));
 
   const forced = classified.filter(
     (spec) => spec.consumesModelData || (spec.isChanged && spec.providerDependent),
@@ -215,10 +251,18 @@ export function decideProviderCoverage({
     : providerDependent.map((spec) => ({ file: spec.file, reasons: spec.reasons }));
 
   const excludedFiles = new Set(excluded.map((spec) => spec.file));
+  const run = selected.filter((file) => !excludedFiles.has(file));
   return {
     needsModels,
     canary,
-    run: selected.filter((file) => !excludedFiles.has(file)),
+    run,
+    // `@stable` among what actually RUNS, counted here because this function already
+    // holds every selected spec's source — so the summary needs no `grep` in the YAML
+    // (the `grep -q … 2>/dev/null` #1216 removed from that step) and no count scoped
+    // to a different set. `stableSelected` from the resolver is over `selected`, i.e.
+    // POST-cap, while the resolution line's total is PRE-cap; pairing them read as a
+    // breakdown of a number it was not about (#1226).
+    stableRun: run.filter((file) => classifiedByFile.get(file)?.isStable).length,
     excluded,
     forcedBy: forced.map((spec) => ({
       file: spec.file,
@@ -304,7 +348,12 @@ export function main(
   // precisely the helper-only diff this exists to fix (#1216's own first attempt).
   let changedSpecs;
   try {
-    changedSpecs = changedSpecsFrom(readFile(changedFlag.split("=")[1]));
+    // `slice`, not `split("=")[1]`: a path containing `=` would be truncated, and
+    // the failure would be "could not read the changed-file list" pointing at a
+    // path the caller never passed (#1226).
+    changedSpecs = changedSpecsFrom(
+      readFile(changedFlag.slice(changedFlag.indexOf("=") + 1)),
+    );
   } catch (error) {
     process.stderr.write(`::error::could not read the changed-file list: ${error}\n`);
     return 2;

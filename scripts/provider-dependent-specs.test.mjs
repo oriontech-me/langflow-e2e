@@ -24,7 +24,6 @@ import {
   classifySpec,
   decideProviderCoverage,
   formatExclusionWarning,
-  main,
 } from "./provider-dependent-specs.mjs";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "..");
@@ -52,6 +51,16 @@ const SPECS = {
   // Always-LLM area.
   [`${REGRESSION}core-functionality/llm-agents/agent-system-prompt.spec.ts`]: `
     test("Agent Instructions are respected", { tag: ["@stable", "@agents"] }, async () => {});`,
+  // NOT `@stable`, and provider-free. Without this fixture every spec in the map
+  // carried `@stable`, so `stableRun: run.length` passed the whole lane — the tally's
+  // defining filter was unpinned (#1226 round two).
+  [`${REGRESSION}ui-ux/unstable-thing.spec.ts`]: `
+    test("something not yet validated", { tag: ["@release", "@ui-ux"] }, async () => {});`,
+  // The trap the strict predicate exists for: mentions `@stable` only to say it is not
+  // one. A substring test counts this as `@stable`; eight real specs do this.
+  [`${REGRESSION}api/flows/mentions-stable-in-prose.spec.ts`]: `
+    // Left off the stable lane on purpose (\`@release\`, never \`@stable\`).
+    test("api thing", { tag: ["@release", "@api"] }, async () => {});`,
 };
 
 const read = (file) => {
@@ -64,6 +73,8 @@ const EDIT_FLOW_NAME = `${REGRESSION}core-functionality/project-management/edit-
 const RUN_FLOW = `${REGRESSION}flow-functionality/run-flow.spec.ts`;
 const MCP_AGENT = `${REGRESSION}mcp/client/mcp-client-agent.spec.ts`;
 const LLM_AREA = `${REGRESSION}core-functionality/llm-agents/agent-system-prompt.spec.ts`;
+const NOT_STABLE = `${REGRESSION}ui-ux/unstable-thing.spec.ts`;
+const PROSE_STABLE = `${REGRESSION}api/flows/mentions-stable-in-prose.spec.ts`;
 
 // ---------- classifySpec ----------
 
@@ -323,6 +334,76 @@ test("pr-validation calls the verdict and emits the run list ONLY after it", () 
   assert.ok(emitAt > rederiveAt, "the run list must be emitted after it is re-derived");
 });
 
+test("the @stable tally is counted over the RUN list, not the pre-cap total", () => {
+  // #1226, second round. `.stableSelected` from the resolver is over `selected`
+  // (POST-cap) while the summary's total is `.specs` (PRE-cap), so printing them as
+  // one parenthetical stated a breakdown of a number it was not about — wrong on
+  // every capped run, which is the common case for a helper change. And the exclusion
+  // can shorten the set again after that. Counted here, it cannot disagree with `run`.
+  const verdict = decideProviderCoverage({
+    // AGENT_CANVAS (`@stable`, excluded), EDIT_FLOW_NAME + RUN_FLOW (`@stable`, run),
+    // NOT_STABLE (runs, but must not be tallied).
+    selected: [AGENT_CANVAS, EDIT_FLOW_NAME, RUN_FLOW, NOT_STABLE],
+    changedSpecs: [],
+    read,
+  });
+  assert.deepEqual(verdict.run, [EDIT_FLOW_NAME, RUN_FLOW, NOT_STABLE]);
+  // 3 specs run, only 2 are `@stable`. This is the assertion that pins the FILTER:
+  // with the set previously used here every fixture was `@stable`, so replacing the
+  // whole predicate with `run.length` passed the entire lane.
+  assert.equal(verdict.stableRun, 2, "@stable is counted over `run`, and it is a filter");
+  assert.notEqual(verdict.stableRun, verdict.run.length);
+
+  // With the sweep on, nothing is excluded and every `@stable` spec counts.
+  const swept = decideProviderCoverage({
+    selected: [AGENT_CANVAS, EDIT_FLOW_NAME, LLM_AREA],
+    changedSpecs: [],
+    read,
+  });
+  assert.equal(swept.needsModels, true);
+  assert.equal(swept.stableRun, 3);
+});
+
+test("@stable is read from a tag array, not from prose that says the opposite", () => {
+  // Eight of the suite's 235 specs mention `@stable` outside a `tag:` array, and one of
+  // them does it to state it is NOT stable ("`@release`, never `@stable`"). A substring
+  // test counted all eight. `stableRun` is published as the CORRECTED figure (#1226), so
+  // being off by eight is not an option. The strict predicate yields 170 files, which is
+  // exactly what `scripts/stable-tests.ts` derives from the spec ASTs.
+  assert.equal(classifySpec(PROSE_STABLE, SPECS[PROSE_STABLE]).isStable, false);
+  assert.equal(classifySpec(NOT_STABLE, SPECS[NOT_STABLE]).isStable, false);
+  assert.equal(classifySpec(AGENT_CANVAS, SPECS[AGENT_CANVAS]).isStable, true);
+  // Multi-line tag arrays are common in this suite and must still match.
+  assert.equal(
+    classifySpec(
+      "x.spec.ts",
+      'test("t", {\n  tag: [\n    "@stable",\n    "@release",\n  ],\n}, () => {});',
+    ).isStable,
+    true,
+  );
+});
+
+test("classifySpec reports @stable so the tally needs no grep in the workflow", () => {
+  // The reason this lives in the script and not in the YAML: `decideProviderCoverage`
+  // already reads every selected spec's source, so the count is free here — whereas
+  // in shell it would mean reinstating the `grep -q … 2>/dev/null` that #1216 removed
+  // from that step for treating an unreadable spec as "no match".
+  assert.equal(classifySpec(AGENT_CANVAS, SPECS[AGENT_CANVAS]).isStable, true);
+  assert.equal(
+    classifySpec("x.spec.ts", 'test("t", { tag: ["@release"] }, () => {});').isStable,
+    false,
+  );
+});
+
+// The two guards that used to live here — "the run count is derived from $SPECS" and
+// "the summary is buffered so the counts come first" — are GONE, deliberately. They were
+// regexes over `pr-validation.yml`, and both were shown to miss their own mutation:
+// swapping the printed `$RUN_COUNT` for `$TOTAL`, and hoisting the caveats above the
+// counts, each passed a green lane. That rendering now lives in
+// `scripts/render-impacted-summary.mjs`, where `render-impacted-summary.test.mjs`
+// asserts the same two invariants on OUTPUT — what the number is, and what it sits
+// above — which is what a regex over YAML could never do (#1226).
+
 test("an exclusion is announced, never silent", () => {
   // #1012's rule: whatever the lane does not cover is stated, not inferred from a
   // green check. The wording lives in this script (and is asserted above), so the
@@ -481,6 +562,27 @@ test("a changed spec file reaches the verdict through the changed-file list", ()
   assert.equal(verdict.warning, "");
 });
 
+test("a --changed-file path containing '=' is read whole, not truncated", () => {
+  // #1226: parsed with `split("=")[1]`, this path became `/tmp/changed` and the CLI
+  // failed with "could not read the changed-file list" naming a path nobody passed.
+  const weird = path.join(os.tmpdir(), `changed=${process.pid}=eq.txt`);
+  writeFileSync(weird, `${AGENT_CANVAS}\n`);
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [CLI, "--stdin", "--format=json", `--changed-file=${weird}`],
+      { input: JSON.stringify({ selected: [AGENT_CANVAS] }), encoding: "utf8" },
+    );
+    assert.equal(result.status, 0, result.stderr);
+    // The spec reached the verdict as CHANGED, which is only possible if the whole
+    // path was read — a truncated one yields no changed specs and the opposite verdict.
+    const verdict = JSON.parse(result.stdout);
+    assert.deepEqual(verdict.forcedBy.map((spec) => spec.isChanged), [true]);
+  } finally {
+    rmSync(weird, { force: true });
+  }
+});
+
 test("the CLI exits 2 on a missing --changed-file, malformed JSON, or a bad flag", () => {
   // Three ways to be undecidable, all of which must fail the step rather than
   // degrade to "LLM-free" (#1012).
@@ -491,11 +593,7 @@ test("the CLI exits 2 on a missing --changed-file, malformed JSON, or a bad flag
   assert.equal(noFlag.status, 2);
   assert.match(noFlag.stderr, /usage:/);
 
-  const malformed = runCli(["--stdin"], {
-    impacted: "not json at all",
-    changedFiles: "",
-  });
-  // A quoted string IS valid JSON, so force the parse failure explicitly instead.
+  // Unparseable input.
   const trulyMalformed = spawnSync(
     process.execPath,
     [CLI, "--stdin", "--changed-file=/dev/null"],
@@ -503,7 +601,17 @@ test("the CLI exits 2 on a missing --changed-file, malformed JSON, or a bad flag
   );
   assert.equal(trulyMalformed.status, 2);
   assert.match(trulyMalformed.stderr, /malformed impacted-specs JSON|verdict failed/);
-  assert.ok(malformed.status === 2 || malformed.status === 0);
+
+  // Parseable but the WRONG SHAPE — a bare JSON string. This used to be asserted
+  // as `status === 2 || status === 0`, which accepted the pass-through the whole
+  // script exists to forbid (#1226). The exit is deterministic: the string parses,
+  // `.selected` is `undefined`, and `decideProviderCoverage` refuses to guess.
+  const wrongShape = runCli(["--stdin"], {
+    impacted: "not json at all",
+    changedFiles: "",
+  });
+  assert.equal(wrongShape.status, 2, "a parseable non-object is still undecidable");
+  assert.match(wrongShape.stderr, /selected must be an array/);
 
   const badFlag = runCli(["--stdin", "--bogus"], {
     impacted: { selected: [] },
