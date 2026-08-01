@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/llm-agents/agent-system-prompt.spec.ts`
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -97,11 +97,27 @@ reliable signal (fail — invalidates the positive assertion).
 
 ## Model strategy
 
-- Parameterized per provider/model from `models.json` (inline `getTestTargets`,
-  mirroring `agent-component-regression.spec.ts` in this folder — there is no
-  shared export yet).
+- Parameterized per provider/model from `models.json` via the shared
+  `resolveTestTargets({ tier: "any-completion" })` in
+  `helpers/provider-setup/test-targets.ts` (#1184 replaced the inline copy this
+  spec used to mirror from `agent-component-regression.spec.ts`).
+- **Tier: `any-completion`, and this spec is the pilot for it (#1187).** The tier
+  states that the deciding assertion reads Langflow's plumbing, not model quality:
+  what is asserted is that the instruction travelled UI → flow → backend → model
+  call, and *any* model that returns text can carry that proof. It was declared
+  `tool-calling` until #1187 only because all 17 parametrized agent specs were
+  migrated to the resolver with one tier; the assertion here never needed a
+  tool-capable model, and this doc already said so ("even small models comply with
+  'always include this word'").
+- Consequence: with `ANY_COMPLETION_PROVIDER=ollama` (plus `OLLAMA_TEST_MODEL`) the
+  lane runs this spec against a **local, keyless** model instead of a hosted one —
+  no credit, no quota, no key. That routing outranks `MODEL_TEST_ID` /
+  `MODEL_TEST_PROVIDER` **for this tier only**, because #1185's weekday pin is
+  global to the run; the override is announced in the run log, never silent.
+  Adoption is per spec behind a measured 3/3 CI gate — see #1187.
 - Requires `collect-models.spec.ts` to have run and at least one provider API key
-  in `.env`. Without keys/data, every target skips with a reason (no false pass).
+  in `.env` — **unless** the run is routed to a local model, which needs neither.
+  Without keys/data, every target skips with a reason (no false pass).
 - Run with `--workers=1` (agent specs create named flows that collide in parallel).
 - File-level `test.describe.configure({ mode: "serial" })` — `load()` deletes all
   flows before loading the template, so parallel provider blocks would wipe each
@@ -111,8 +127,18 @@ reliable signal (fail — invalidates the positive assertion).
 
 ## External dependencies
 
-- **A live provider API key** (e.g. `OPENAI_API_KEY`) in `.env` and collected
-  `providers.json` / `models.json`. This is a real model call — no mock.
+- **A live model, in one of two shapes** — this is a real model call, no mock:
+  - **Hosted (default):** a provider API key (e.g. `OPENAI_API_KEY`) in `.env` plus
+    collected `providers.json` / `models.json`.
+  - **Local (routed, #1187):** a reachable Ollama instance and no key at all —
+    `ANY_COMPLETION_PROVIDER=ollama`, `OLLAMA_TEST_MODEL=<tag the instance serves>`,
+    `OLLAMA_BASE_URL` (probed by the test host) and
+    `OLLAMA_BASE_URL_FROM_LANGFLOW` (what Langflow calls — `http://ollama:11434` in
+    CI, `http://host.docker.internal:11434` for a dockerized local Langflow).
+    Langflow must be started with `LANGFLOW_SSRF_ALLOWED_HOSTS` covering that
+    address, or `POST /api/v1/models/validate-provider` answers **HTTP 200** with
+    `{"valid": false, "error": "Invalid Ollama base URL"}` — a rejection that does
+    not look like one at the status level.
 - `textarea_str_system_prompt` — Agent Instructions field on the Agent node.
 - `SimpleAgentTemplatePage` / `providerSetupMap` — template load + provider config.
 - Playground testids: `playground-btn-flow-io`, `input-chat-playground`,
@@ -145,6 +171,13 @@ reliable signal (fail — invalidates the positive assertion).
   the instruction was applied: even small models comply with "always include this
   word", and the assertion is a deterministic `contains`, not a fuzzy semantic
   match. Asserting a persona/language/format would be flakier across models.
+  Measured for #1187 against `llama3.2:1b` (the model the CI Ollama image bakes),
+  calling the model directly so the result is the model's, not the harness's: the
+  sentinel was echoed **3/3** and the neutral prompt emitted no `PINEAPPLE` stem —
+  i.e. both this spec's assertions survive a 1B-parameter local model. That is what
+  makes it the pilot; a spec whose assertion needs the model to *choose a tool*
+  (e.g. `agent-max-iterations`) has no such guarantee, which is the #570 trap and
+  the reason adoption is per spec.
 - **Per-run sentinel + negative control** are the two false-positive guards:
   randomising the sentinel each run rules out a cached/leaked match, and the
   negative-control test rules out the model emitting the stem spontaneously.

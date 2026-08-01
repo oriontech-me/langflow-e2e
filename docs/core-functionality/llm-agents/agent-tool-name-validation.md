@@ -66,7 +66,7 @@ Playground.
 
 ## Step by step *(required)*
 
-The spec generates **2 tests per active model** via `getTestTargets()`
+The spec generates **2 tests per active model** via `resolveTestTargets()`
 (default: 1 model per active provider — same machinery as
 `agent-max-iterations.spec.ts`).
 

@@ -1,6 +1,5 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
@@ -10,10 +9,10 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
+import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
 
 if (!process.env.CI) {
   dotenv.config({ path: path.resolve(__dirname, "../../../../.env") });
@@ -31,70 +30,6 @@ const MCP_JSON_CONFIG = JSON.stringify({
     },
   },
 });
-
-interface ModelRecord {
-  provider: string;
-  model: string;
-}
-
-interface TestTarget {
-  label: string;
-  options: LoadSimpleAgentOptions;
-  skipReason?: string;
-}
-
-function getModelsFromJson(): ModelRecord[] {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/models.json",
-  );
-  if (!fs.existsSync(jsonPath)) return [];
-  return JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ModelRecord[];
-}
-
-function getTestTargets(): TestTarget[] {
-  const skipReasons = providerSkipReasons();
-
-  if (process.env.MODEL_TEST_ID) {
-    const model = process.env.MODEL_TEST_ID;
-    const allModels = getModelsFromJson();
-    const record = allModels.find((m) => m.model === model);
-    const provider = record?.provider as Provider | undefined;
-    return [{
-      label: `model:${model}`,
-      options: { provider, model },
-      skipReason: provider ? skipReasons.get(provider) : undefined,
-    }];
-  }
-
-  const allModels = getModelsFromJson();
-  if (allModels.length === 0) {
-    const fallbackProvider = Object.keys(providerConfigMap)[0] as Provider;
-    return [{
-      label: `provider:${fallbackProvider} (fallback)`,
-      options: { provider: fallbackProvider },
-      skipReason: skipReasons.get(fallbackProvider),
-    }];
-  }
-
-  let models = allModels;
-  if (process.env.MODEL_TEST_PROVIDER) {
-    models = models.filter((m) => m.provider === process.env.MODEL_TEST_PROVIDER);
-  } else if (process.env.ALL_MODELS !== "true") {
-    const seen = new Set<string>();
-    models = models.filter((m) => {
-      if (seen.has(m.provider)) return false;
-      seen.add(m.provider);
-      return true;
-    });
-  }
-
-  return models.map((m) => ({
-    label: `${m.provider} / ${m.model}`,
-    options: { provider: m.provider as Provider, model: m.model },
-    skipReason: skipReasons.get(m.provider),
-  }));
-}
 
 // Id of the flow the running test created; teardown deletes only this one via
 // the API (scoped) — never a global cleanAllFlows, which wipes flows other
@@ -118,7 +53,7 @@ async function waitForAgentToFinish(page: Page): Promise<void> {
   }
 }
 
-const targets = getTestTargets();
+const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // Serial mode prevents parallel provider blocks from racing autosaves of the
 // template flow. (load() no longer deletes all flows — that cross-worker wipe

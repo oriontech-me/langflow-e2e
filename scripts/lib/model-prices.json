@@ -1,0 +1,27 @@
+{
+  "_comment": "USD per 1M tokens. Hand-edited in a PR. A model absent here keeps its token counts and reports usd_estimated: null — see scripts/lib/token-cost.mjs. Sourced 2026-07-31 (#1197 review, finding I6; gemini-3.5-flash added #1197 re-review, finding B, from run 30647253368 — the run's largest consumer, 13 calls / 14,690 tokens, previously unpriced; the three gemini-*-lite rows added #1211 review round 2) from Anthropic's published pricing (platform.claude.com/docs/en/pricing) and Google's public Gemini pricing page — re-verify before trusting a number more than a few months old. A model id absent EXACTLY is also matched by substring against every key here (both directions — a dated/preview/latest id contains its family key, a short alias is contained by a longer one), longest key wins when more than one matches, gated on the leftover being recognizable version/alias noise (a date, `-latest`, `-preview`, `-search-preview`) rather than a different product's name — see token-cost.mjs's isAllowedSuffix() — so a rotated `-preview`/`-latest`/dated id does not need its own row unless its rate actually differs from its family's, but a TIER id (Lite, Mini, Nano, Pro, ...) always needs its own row: the substring pass deliberately refuses to guess a tier's price from its non-tier sibling. A model's value is either a flat rate ({inputPerMillion, outputPerMillion} — the common case) or a dated-bands array ([{since, inputPerMillion, outputPerMillion}, ...], see claude-sonnet-5 below) when the rate has actually changed over time; `--summarize` selects the band effective on the run's own date (RUN_DATE), never the newest by default. gemini-flash-latest and gemini-3.5-flash are priced the same as gemini-2.5-flash — the Flash tier's pricing has stayed stable across recent dot-releases and gemini-flash-latest resolves to this exact class on Langflow 1.12.0.dev10 (measured: the trace's modelName is the bare alias, not a dated id) — re-check these two rows if either moves to pricing distinct from 2.5-flash. Same reasoning extends to the Lite tier: gemini-2.5-flash-lite, gemini-3.5-flash-lite and gemini-flash-lite-latest are all priced at Google's published Gemini 2.5 Flash-Lite rate ($0.10/$0.40 per 1M, ai.google.dev/gemini-api/docs/pricing, sourced 2026-07-31) — re-check if 3.5's Lite tier is ever priced separately from 2.5's.",
+  "gpt-4o-mini": { "inputPerMillion": 0.15, "outputPerMillion": 0.6 },
+  "gpt-4o": { "inputPerMillion": 2.5, "outputPerMillion": 10.0 },
+  "claude-sonnet-4-6": { "inputPerMillion": 3.0, "outputPerMillion": 15.0 },
+  "claude-sonnet-5": [
+    {
+      "_comment": "Introductory rate (#1211). `since` is the earliest date this table needs to answer for, not a verified launch date — only its ordering relative to the next band matters. Effective through 2026-08-31 per Anthropic's announced promotional window.",
+      "since": "2026-01-01",
+      "inputPerMillion": 2.0,
+      "outputPerMillion": 10.0
+    },
+    {
+      "_comment": "Standard list rate, effective 2026-09-01 once the introductory window ends.",
+      "since": "2026-09-01",
+      "inputPerMillion": 3.0,
+      "outputPerMillion": 15.0
+    }
+  ],
+  "claude-opus-5": { "inputPerMillion": 5.0, "outputPerMillion": 25.0 },
+  "gemini-2.5-flash": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 },
+  "gemini-flash-latest": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 },
+  "gemini-3.5-flash": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 },
+  "gemini-2.5-flash-lite": { "inputPerMillion": 0.1, "outputPerMillion": 0.4 },
+  "gemini-3.5-flash-lite": { "inputPerMillion": 0.1, "outputPerMillion": 0.4 },
+  "gemini-flash-lite-latest": { "inputPerMillion": 0.1, "outputPerMillion": 0.4 }
+}

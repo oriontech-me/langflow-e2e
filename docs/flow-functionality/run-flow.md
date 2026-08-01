@@ -26,7 +26,9 @@ If this breaks, users cannot compose flows via the Run Flow component — a core
 2. Add ChatOutput and ChatInput components to the canvas
 3. Connect: ChatInput → ChatOutput
 4. Rename the built flow to a unique name (for deterministic selection later)
-5. Return to main page and create a second blank flow
+5. Return to main page with `leaveFlowEditor(page)` — the `icon-ChevronLeft`
+   click, preceded by a save barrier and followed by an attributed throw if the
+   exit is blocked (#1153) — and create a second blank flow
 6. Add the Run Flow component to the second flow
 7. Open the flow name dropdown in Run Flow and refresh the list
 8. Select the built flow by its unique name from the dropdown
@@ -104,6 +106,36 @@ re-validated there. The helper gate keeps the suite out of the broken window; it
 does not fix the product, and the suite must not claim a validated behavior that
 upstream still breaks. `#966` stays open tracking that.
 
+### A second product defect on the same back-navigation (issue #1153)
+
+Distinct from LE-2019 above and with a different mechanism: LE-2019 is a click
+that lands and does nothing while the list loads; this one is a click that lands,
+starts the navigation, and is then held by react-router's `useBlocker` behind
+`SaveChangesModal`. In autosave mode that dialog renders **no confirm and no
+cancel**, so only `FlowPage.handleSave` can complete the navigation — and it
+calls `saveFlow()` with **no `.catch()`**, so a save that fails or never settles
+leaves `proceed` false and the dialog up indefinitely. Reproduced
+deterministically on 1.12.0.dev10 by aborting every flow-save PATCH: the modal
+appears, does not clear in 30 s, and the URL stays on `/flow/{id}`.
+
+Why it matters here specifically: this call site had **nothing** waiting on the
+navigation, so a blocked exit surfaced downstream inside
+`openNewFlowTemplatesModal` — wearing LE-2019's signature on a run where LE-2019
+was not what happened.
+
+Step 5 now goes through `leaveFlowEditor(page)`, which drains in-flight flow
+saves before the click (prevention — `changesNotSaved` is exactly what
+`useBlocker` gates on) and throws with the mechanism named if the dialog is still
+up after 15 s. That 15 s is charged **only** to a dialog that is demonstrably on
+screen; an exit where nothing has rendered yet is an ordinary in-flight
+navigation and keeps the full 30 s the listing assertion has always had —
+otherwise a slow-but-healthy exit would be reported as the swallowed-click class
+above, which is the same mis-attribution with a more confident label.
+The recovery-by-page-load that helper also offers is deliberately
+**not** enabled here: everything the rest of this spec asserts lives in the flow
+built on the canvas, so discarding it would trade a clean failure at the exit for
+an inscrutable one at the Run Flow dropdown.
+
 ---
 
 ## External dependencies *(required)*
@@ -111,6 +143,7 @@ upstream still breaks. `#966` stays open tracking that.
 - `src/frontend/src/components/core/nodeToolbarComponents/` — Run Flow component UI and flow name dropdown
 - `src/backend/base/langflow/api/v1/flows.py` — flow listing API used by the dropdown refresh
 - `src/backend/base/langflow/processing/` — flow execution chain that runs the pipeline
+- `tests/helpers/flows/leave-flow-editor.ts` — the editor exit: drains in-flight flow saves, clicks `icon-ChevronLeft`, and distinguishes the #1153 blocker deadlock from a swallowed click. It depends on upstream `src/frontend/src/pages/FlowPage/index.tsx` (`useBlocker` / `handleSave`), `src/frontend/src/modals/saveChangesModal/index.tsx`, and the `flow.unsavedChangesTitle` string in `src/frontend/src/locales/en.json` — if that title is reworded the dialog stops being recognised and every deadlock silently reclassifies as a swallowed click
 
 ---
 

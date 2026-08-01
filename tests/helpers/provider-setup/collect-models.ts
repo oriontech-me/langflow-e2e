@@ -3,7 +3,7 @@ import type { Page } from "@playwright/test";
 import path from "path";
 import fs from "fs";
 import { SettingsPage } from "../../pages/SettingsPage";
-import { providerConfigMap, type Provider } from "./provider-config";
+import { keyedProviders, keyedProviderNames, type Provider } from "./provider-config";
 import { probeBuildAxis, type ProviderVerdict } from "./probe-component-buildable";
 
 const DATA_DIR = path.join(__dirname, "data");
@@ -145,10 +145,33 @@ const CANDIDATE_PREFS: Record<string, RegExp[]> = {
     /^gemini-3\.5-flash$/,
     /^gemini-flash-latest$/,
   ],
-  anthropic: [/^claude-sonnet-5$/, /sonnet/, /haiku/],
+  // Haiku-first (#1171). The Anthropic entry is the one place in this map where
+  // the leading model is chosen for PRICE rather than only for agent
+  // compatibility, so the reasoning is worth stating: `claude-haiku-4-5` is
+  // $1/$5 per MTok against `claude-sonnet-5` at $2/$10 (introductory, through
+  // 2026-08-31) and $3/$15 after — 2x today, 3x from September. After #1185's
+  // weekday rotation, Anthropic runs twice a week but carries ~87% of the
+  // daily's remaining agentic spend, because it is ~13x the openai target's
+  // price. That makes this the dominant cost lever left on the lane.
+  //
+  // Sonnet stays at the tail, and that matters: without it a catalog with no
+  // haiku falls through to raw catalog order, which currently leads with
+  // `claude-opus-5` — the most expensive model Anthropic exposes here. The
+  // generic /haiku/ after the exact id is future-proofing for a later
+  // `claude-haiku-5`.
+  //
+  // NOT extended to the other two providers, deliberately. openai's cheaper
+  // catalog entries (`gpt-5-nano`, `gpt-5.4-mini`, …) are reasoning models,
+  // which hang the playground for 120 s (#569) — the gpt-4-family list below is
+  // that constraint, not an oversight. google's entries are already the flash
+  // tier.
+  anthropic: [/^claude-haiku-4-5$/, /haiku/, /^claude-sonnet-5$/, /sonnet/],
 };
 
-function rankCandidates(provider: string, candidates: string[]): string[] {
+/** Exported for `collect-models.test.ts`: the ordering is the whole of what a
+ *  unit test can prove here (agent compatibility needs a real run — #570), so
+ *  it is pinned rather than left to inspection. */
+export function rankCandidates(provider: string, candidates: string[]): string[] {
   const prefs = CANDIDATE_PREFS[provider] ?? [];
   const preferred: string[] = [];
   for (const pref of prefs) {
@@ -411,7 +434,10 @@ async function collectModels(page: Page): Promise<ModelRecord[]> {
 
   const allModels: ModelRecord[] = [];
 
-  for (const [provider, config] of Object.entries(providerConfigMap) as [Provider, typeof providerConfigMap[Provider]][]) {
+  // Keyed providers only. This sweep SAVES an API key per provider through the
+  // Settings UI, so a keyless one (Ollama, #1187) has nothing for it to do here —
+  // and its model list is the live instance's, not a catalog to collect.
+  for (const [provider, config] of keyedProviders) {
     allModels.push(
       ...(await collectModelsForProvider(
         page,
@@ -469,8 +495,7 @@ export async function collectAll(page: Page): Promise<void> {
   // build, so the axis reported `unknown` for all three providers and produced no
   // signal at all. The probe needs only the component registry — not models.json,
   // not the keys — so it can and must run before that load.
-  const knownProviders = Object.keys(providerConfigMap) as Provider[];
-  const buildAxis = await probeBuildAxis(page.request, knownProviders);
+  const buildAxis = await probeBuildAxis(page.request, keyedProviderNames);
 
   // Step 2: Collect models from UI via Settings
   const models = await collectModels(page);

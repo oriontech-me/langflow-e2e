@@ -1,12 +1,10 @@
 import * as dotenv from "dotenv";
 import path from "path";
-import fs from "fs";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
-import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
-import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import {
   closeAdvancedOptions,
   openAdvancedOptions,
@@ -17,7 +15,7 @@ import {
   providerConfigMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
-import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
+import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 
 /**
  * Agent max_tokens (QA-CHECKLIST §6.2 "max_tokens truncates response as
@@ -45,95 +43,41 @@ const TOKEN_LIMIT = 50;
 const ESSAY_PROMPT =
   "Write a detailed 500-word essay about the history of the ocean. Do not use any tools — answer directly.";
 
-interface ModelRecord {
-  provider: string;
-  model: string;
-}
+// Id-scoped flow cleanup via the shared tracker (#1108). It captures every
+// `POST /api/v1/flows` → 201 the page makes, which is what the previous
+// `afterEach` could not: that one only knew the id `load()` RETURNED, so a
+// `load()` throwing AFTER creating the flow leaked it — and the #751/#1072
+// credential-settle guard throws exactly there. Measured while working #1059: one
+// orphan `Simple Agent` per failed load, on both local bursts.
+// SimpleAgentTemplatePage.load() does not wipe existing flows (the cross-worker
+// wipe left in #553), and this is never a delete-all sweep either.
+let flows: ReturnType<typeof trackCreatedFlows>;
 
-interface TestTarget {
-  label: string;
-  options: LoadSimpleAgentOptions;
-  skipReason?: string;
-}
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
 
-function getModelsFromJson(): ModelRecord[] {
-  const jsonPath = path.resolve(
-    __dirname,
-    "../../../../helpers/provider-setup/data/models.json",
-  );
-  if (!fs.existsSync(jsonPath)) {
-    console.warn("models.json not found — run collect-models.spec.ts first.");
-    return [];
-  }
-  return JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as ModelRecord[];
-}
-
-function getTestTargets(): TestTarget[] {
-  const skipReasons = providerSkipReasons();
-
-  if (process.env.MODEL_TEST_ID) {
-    const model = process.env.MODEL_TEST_ID;
-    const allModels = getModelsFromJson();
-    const record = allModels.find((m) => m.model === model);
-    if (!record) {
-      console.warn(`MODEL_TEST_ID="${model}" not found in models.json — provider cannot be inferred.`);
-      return [{ label: `model:${model}`, options: { model } }];
-    }
-    const provider = record.provider as Provider;
-    return [{
-      label: `${provider} / ${model}`,
-      options: { provider, model },
-      skipReason: skipReasons.get(provider),
-    }];
-  }
-
-  const allModels = getModelsFromJson();
-  if (allModels.length === 0) {
-    const fallbackProvider = Object.keys(providerConfigMap)[0] as Provider;
-    console.warn("models.json not found or empty — run collect-models.spec.ts first.");
-    return [{
-      label: `provider:${fallbackProvider} (fallback)`,
-      options: { provider: fallbackProvider },
-      skipReason: skipReasons.get(fallbackProvider),
-    }];
-  }
-
-  let models = allModels;
-  if (process.env.MODEL_TEST_PROVIDER) {
-    models = models.filter((m) => m.provider === process.env.MODEL_TEST_PROVIDER);
-  } else if (process.env.ALL_MODELS !== "true") {
-    const seen = new Set<string>();
-    models = models.filter((m) => {
-      if (seen.has(m.provider)) return false;
-      seen.add(m.provider);
-      return true;
-    });
-  }
-
-  return models.map((m) => ({
-    label: `${m.provider} / ${m.model}`,
-    options: { provider: m.provider as Provider, model: m.model },
-    skipReason: skipReasons.get(m.provider),
-  }));
-}
-
-// Ids of flows created by loadAgent — deleted id-scoped in afterEach.
-// SimpleAgentTemplatePage.load() no longer wipes existing flows (the cross-worker
-// wipe was removed in #553), so each loaded template persists until cleaned up.
-const createdFlowIds: string[] = [];
-
-test.afterEach(async ({ request }) => {
-  if (createdFlowIds.length === 0) return;
-  const bearer = await getAuthToken(request);
-  for (const id of createdFlowIds.splice(0)) {
-    await deleteFlow(request, id, { headers: { Authorization: bearer } });
-  }
+// Names this spec on the traces its flows produced, for the token consumption
+// monitor (#1197). One call site, by explicit human-partner decision (this is
+// the only spec edit the token-monitor branch is allowed) — proves the
+// attribution path end to end without a full-suite migration. `testInfo.title`
+// / `testInfo.file` are Playwright's own per-test metadata; the sidecar stays
+// inert (no request, no file) whenever TOKENS_ATTRIB is unset, so this changes
+// nothing about local runs or the PR lane — no new unconditional await is
+// introduced, just an extra option on the one that already existed.
+test.afterEach(async ({ request }, testInfo) => {
+  await flows.cleanup(request, {
+    attribution: {
+      test: testInfo.title,
+      file: path.relative(testInfo.project.testDir, testInfo.file),
+    },
+  });
+  flows.dispose();
 });
 
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
   try {
-    const flowId = await new SimpleAgentTemplatePage(page).load(options);
-    createdFlowIds.push(flowId);
+    await new SimpleAgentTemplatePage(page).load(options);
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
@@ -195,7 +139,21 @@ async function getSavedMaxTokens(page: Page): Promise<unknown> {
 // Seed the prompt on the ChatInput node (the Playground prefill re-injects the
 // template default asynchronously and would corrupt typed text — see
 // agent-multimodal-image-input.md), then send it and wait for the response to
-// complete (token-usage badge renders only on completion).
+// complete on a MODEL-AGNOSTIC signal before touching the token-usage badge.
+//
+// The badge count used to BE the completion gate, which is what made #1059
+// unattributable: "still generating", "finished without a badge" and "finished
+// with an error" all surfaced as `toHaveCount … Received: 0` after 120 s, with the
+// Stop-button wait before it swallowed by a `.catch(() => {})`. #569 had already
+// root-caused that exact pattern on memory-history-regression.spec.ts — not every
+// model/response emits the badge, so its count cannot mean "done". Gate on the
+// same pair that spec uses (the turn mounts, then the generating indicator
+// clears), then assert the badge separately so each failure names its own cause.
+// No timeout was loosened: the worst case went from ~248 s to ~205 s.
+//
+// The third state — "finished with an error" — is resolved explicitly at both
+// points it can appear, because upstream renders the error card INSTEAD of the
+// bot bubble, so every wait keyed on the bubble outlives it (#1188).
 async function runPrompt(page: Page): Promise<string> {
   const node = page.locator(
     '[data-testid^="rf__node-ChatInput"] [data-testid="textarea_str_input_value"]',
@@ -208,15 +166,94 @@ async function runPrompt(page: Page): Promise<string> {
 
   await page.getByTestId("playground-btn-flow-io").click();
   await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({ timeout: 30000 });
+
+  const messages = page.getByTestId("div-chat-message");
+  const errorCard = page.getByTestId("error-card-stack");
+  const before = await messages.count();
   await page.getByTestId("button-send").last().click();
 
-  const stop = page.getByRole("button", { name: "Stop" });
-  if (await stop.isVisible({ timeout: 8000 }).catch(() => false)) {
-    await stop.waitFor({ state: "hidden", timeout: 120000 }).catch(() => {});
-  }
-  await expect(page.getByTestId("chat-message-token-usage")).toHaveCount(1, { timeout: 120000 });
+  // 1. The turn actually started — guards the "checked completion before
+  //    generation started" race that an indicator-only wait returns early on
+  //    (#354). `toBeGreaterThan` rather than an exact count, so it holds whether
+  //    or not the user bubble carries this testid. An errored turn is accepted
+  //    here as a start too: upstream renders `ErrorView` INSTEAD of the bot
+  //    bubble (`chat-message.tsx`: `chat.category === "error"`), so a run that
+  //    fails before any bubble mounts would otherwise wait the full 60 s for an
+  //    element that is never coming (#1188).
+  await expect
+    .poll(
+      async () => (await errorCard.count()) > 0 || (await messages.count()) > before,
+      {
+        timeout: 60000,
+        message: "the run neither started a reply nor rendered an error card",
+      },
+    )
+    .toBe(true);
+  await failIfRunErrored(page);
+  // 2. Generation finished. This is the completion signal because it is emitted
+  //    for every model and every response (#569).
+  await expect(page.getByTestId("button-stop")).toBeHidden({ timeout: 120000 });
+  await expect(page.getByTestId("button-send").last()).toBeVisible({ timeout: 10000 });
+  // The error can also arrive AFTER a bubble mounted, and that is the measured
+  // case on 1.12.0.dev10: the bubble is replaced by the error card, so
+  // `messages.last()` resolves to nothing and every later step waits on an
+  // element the error path does not render (#1188).
+  await failIfRunErrored(page);
 
-  return (await page.getByTestId("div-chat-message").last().innerText()).trim();
+  // A finished turn that rendered no bubble at all must still reach the badge
+  // assertion below — reading `.last()` unguarded is what turned that state into
+  // a bare `locator.innerText` timeout with no cause in it.
+  const reply =
+    (await messages.count()) > 0
+      ? (await messages.last().innerText({ timeout: 5000 }).catch(() => "")).trim()
+      : "";
+
+  // 3. Only now the observable itself. A finished turn that renders no badge is a
+  //    MISSING OBSERVABLE, not a slow model — and the message says so, quoting the
+  //    reply that did render instead of timing out blind.
+  await expect(
+    page.getByTestId("chat-message-token-usage"),
+    `the finished response must expose a token-usage badge — it is the max_tokens ` +
+      `observable this spec reads. Rendered reply: ${reply.slice(0, 300) || "(none rendered)"}`,
+  ).toHaveCount(1, { timeout: 15000 });
+
+  return reply;
+}
+
+// An errored run is a real outcome of this spec and must name itself. Without
+// this, the run fails several steps later on whatever element the error path
+// happens not to render — measured on `main` as `locator.innerText: Timeout
+// 20000ms exceeded` with the provider's 400 nowhere in the message (#1188).
+async function failIfRunErrored(page: Page): Promise<void> {
+  if ((await page.getByTestId("error-card-stack").count()) === 0) return;
+  throw new Error(
+    `the agent run errored instead of returning a response — ${await readRunError(page)}`,
+  );
+}
+
+// The provider's message sits in a collapsed accordion inside the error card
+// (upstream `error-message.tsx`), so expand it before reading — otherwise the
+// failure says "An error occurred" and nothing else, which is the same dead end
+// the timeout was.
+async function readRunError(page: Page): Promise<string> {
+  // `.last()`: the throw is gated on "any error card", so read the newest one.
+  const stack = page.getByTestId("error-card-stack").last();
+  // Best-effort: expanding is how we reach the provider text, never how we
+  // decide the run failed.
+  await stack
+    .getByText("An error occurred")
+    .last()
+    .click({ timeout: 5000 })
+    .catch(() => {});
+  const text = (await stack.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+  // Upstream renders the provider message only when the error carries a
+  // component (`error-message.tsx`), so a bare label is a real outcome — and it
+  // must not read as "here is the cause", or this helper reproduces the dead end
+  // it exists to remove.
+  return text && text.replace(/an error occurred/i, "").trim().length > 0
+    ? text
+    : `${text || "(empty error card)"} — the error card carried no provider message; ` +
+        `check the run's flow-error advisory in the test log or the flow's build log`;
 }
 
 // "1.9K" -> 1900, "46" -> 46, missing/empty -> 0 (a tight cap can be fully
@@ -243,12 +280,12 @@ async function readOutputTokens(page: Page): Promise<number> {
   return parseTokenCount(match?.[1]);
 }
 
-const targets = getTestTargets();
+const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // Each test loads the Simple Agent template (creating a flow) and runs it in the
 // shared Playground; serial mode + --workers=1 keeps that shared instance state
 // deterministic and avoids named-flow collisions. Flows are deleted id-scoped in
-// afterEach (load() no longer wipes them — see #553).
+// afterEach from the tracker above (load() does not wipe them — see #553).
 test.describe.configure({ mode: "serial" });
 
 for (const { label, options, skipReason } of targets) {

@@ -1,4 +1,5 @@
 import { readFileSync } from "fs";
+import { leaveFlowEditor } from "../../../helpers/flows/leave-flow-editor";
 import path from "path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
@@ -111,11 +112,16 @@ test.describe("Export and Import Flow (IDs 173 + 120)", () => {
         )
         .toBeGreaterThan(0);
 
-      await page.getByTestId("icon-ChevronLeft").click();
-
-      await page.waitForSelector('[data-testid="home-dropdown-menu"]', {
-        timeout: 30000,
-      });
+      // Back to the listing through the helper: the bare chevron click can land
+      // behind `SaveChangesModal`, which in autosave mode offers no confirm or
+      // cancel and can spin indefinitely, turning this into an unattributed
+      // `home-dropdown-menu` timeout (#1153).
+      //
+      // `escapeDeadlock` is safe here — and mildly helpful. The poll above
+      // already proved the node reached the backend, and the export reads the
+      // card's CLIENT-side data, so a reload makes that data fresher rather than
+      // losing it (the axis #518 was about).
+      await leaveFlowEditor(page, { escapeDeadlock: true });
 
       // Arm the download capture BEFORE clicking the export button to avoid a
       // race between the download event and modal interaction.

@@ -34,19 +34,19 @@ await new SimpleAgentTemplatePage(page).load(options);
 ### 3. Parameterize the test by model (project standard)
 
 ```typescript
-import { providerSkipReasons } from "../../../../helpers/provider-setup/provider-health";
+import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 
-// The target list is built per spec from models.json — copy the `getTestTargets()`
-// in agent-component-regression.spec.ts. The inactive-provider skip map is NOT:
-// it is one shared implementation, and inlining a copy of it is the drift #1043
-// removed from 18 specs.
-function getTestTargets(): TestTarget[] {
-  const skipReasons = providerSkipReasons();
-  // ... filter models.json by MODEL_TEST_ID / MODEL_TEST_PROVIDER, then attach
-  // skipReasons.get(provider) as each target's skipReason
-}
-
-for (const { label, options, skipReason } of getTestTargets()) {
+// The target list comes from ONE shared resolver — never copy it into the spec
+// (#1184). It reads models.json, applies the .env strategy and attaches each
+// provider's inactive-skip reason. Seventeen specs used to carry their own copy and
+// they had drifted into five variants, two of which silently ignored MODEL_TEST_ID —
+// the same drift #1043 removed for providerSkipReasons.
+//
+// `tier` is what the spec needs from a lane, so a lane can resolve the cheapest
+// target that satisfies it in one place (#1185, #1187) instead of guessing per spec.
+// Add `requires: "vision" | "chat"` when the assertion needs a specific capability
+// within the provider — see agent-multimodal-image-input / agent-markdown-output.
+for (const { label, options, skipReason } of resolveTestTargets({ tier: "tool-calling" })) {
   test.describe.serial(`My Test [${label}]`, () => {
     test("should ...", async ({ page }) => {
       test.skip(!!skipReason, skipReason ?? "");

@@ -12,8 +12,31 @@ Files in this directory are **machine-written and human-read only**. Do not hand
 |---|---|---|
 | `daily-history.jsonl` | `.github/workflows/daily-stable.yml` → `scripts/append-weekly-history.mjs` (via `HISTORY_FILE` override) | One line per scheduled run (daily 08:00 UTC). Manual dispatches do **not** write to this file — the series is intentionally restricted to the cron cadence so longitudinal queries have predictable spacing (one entry per day, same image tag, same trigger). **Active source.** |
 | `weekly-history.jsonl` | `.github/workflows/weekly-stable.yml` → `scripts/append-weekly-history.mjs` | One line per scheduled run (Mondays 06:00 UTC), from the now-disabled weekly workflow — **frozen**. Manual dispatches do **not** write to this file — the series is intentionally restricted to the cron cadence so longitudinal queries have predictable spacing (one entry per week, same image tag, same trigger). |
+| `token-history.jsonl` | `scripts/watch-tokens.mjs --summarize` (issue #1197) | One line per run of a lane that ran the token poller. Schema version 1; additive optional fields do not bump the version. `totals.usd_estimated` and every `by_model[].usd_estimated` / `by_spec[].usd_estimated` cover **priced models only** — a non-empty `unpriced_models` means every dollar figure in that line is a FLOOR, not a total. A model absent from `scripts/lib/model-prices.json` by exact key is still resolved by substring against every table key, longest-key-first (a dated/preview/`-latest` id contains its family's key, or a short alias is contained by a longer one — #1211); genuinely unmatched ids fall through to `unpriced_models` as before. A model whose price has changed over time (`model-prices.json` entry is a dated-bands array rather than a flat rate) is priced against the band effective **on the line's own `date`**, never the newest band by default — a run whose date predates every recorded band for that model is named in `unpriced_models` rather than guessed. **`totals.total_tokens` and `totals.prompt_tokens` + `totals.completion_tokens` come from two different sources and can legitimately disagree.** `total_tokens` is TRACE-authoritative — Langflow's own reported total per trace, summed across traces (design §2.1: Langflow emits the same usage twice per call, so summing spans directly would double-count). `prompt_tokens`/`completion_tokens` are SPAN sums — summed from each trace's per-model spans, the only place a prompt/completion split exists. The two are additively consistent (`total_tokens === prompt_tokens + completion_tokens`) **only when every trace's own total agrees with the sum of its own spans**; whenever one doesn't, that trace is named in `mismatches[]` on the same line (never silently reconciled), and the run's `total_tokens` legitimately drifts from the span-derived sum by exactly that trace's discrepancy. A non-empty `mismatches[]` is therefore the signal that explains a gap between the two totals — don't read the gap itself as a bug before checking there. **No line is written for a run with zero traces or zero tests** — that absence is deliberate: a zero would enter the anomaly baseline (`scripts/lib/token-anomaly.mjs`) and lower the bar for every later run, the same reasoning `daily-history.jsonl` applies to a zero-test infra abort. Machine-written by the summarizer; never hand-edited. |
 
 Each line is one [JSON object](#schema-version-1) terminated by `\n`. The file is JSONL (newline-delimited JSON), not a JSON array — append-only, diff-friendly.
+
+### What the token monitor cannot see
+
+`token-history.jsonl` reads Langflow's own traces, so it can only ever cover what those traces
+carry. Four known blind spots (#1211), stated here rather than only in a PR body or issue
+comment so a reader of a number finds its limits in the same place:
+
+- **A local instance records nothing.** `scripts/start-langflow-docker.sh` sets
+  `LANGFLOW_DEACTIVATE_TRACING=true`, so the poller has no traces to read at all when developing
+  against a local container — this is expected, not a bug in the monitor.
+- **`Collect models` spend enters the totals with no spec name.** That pre-flight sweep drives the
+  same Langflow instance the token poller watches, but it is not a spec run, so its traces land in
+  `unattributed`, never in `by_spec`.
+- **Per-spec attribution covers only the specs that pass `attribution` to `cleanup()`.** The
+  sidecar is opt-in per spec (design §4.2) — one spec does this today
+  (`agent-max-tokens.spec.ts`). Every other spec's cost is real and counted in the run's `totals`,
+  but lands in `unattributed`, never broken out by test.
+- **`pr-validation` and `manual` measure but deliberately do not write history.** Both run the
+  poller and render the step-summary table so a PR/dispatch's own spend is visible, but neither
+  appends to this file (`TOKENS_SUPPRESS_HISTORY`, #1183) — their scope (a capped PR subset, an
+  arbitrary manual grep) is not comparable to the daily's fixed `@stable` sweep, and mixing it in
+  would corrupt the trend and the anomaly baseline.
 
 ### Known gaps
 

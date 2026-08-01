@@ -1,6 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
 import { getAuthToken } from "../auth/get-auth-token";
-import type { Provider } from "./provider-config";
+import type { KeyedProvider } from "./provider-config";
 
 // The BUILD axis of collect-models (#900): can THIS Langflow image actually
 // instantiate a provider's component? Independent of the key axis, which calls
@@ -54,8 +54,14 @@ const DISPLAY_NAMES_CATEGORY = "component_display_names";
  * (#1039) and are gated per-spec by `isProviderComponentAvailable`. Keeping them
  * out is what makes a declared "expected in this image?" flag unnecessary —
  * every provider listed here is one the image is expected to ship.
+ *
+ * Keyed to `KeyedProvider`, not `Provider` (#1187): `collect-models` sweeps the keyed
+ * providers, so Ollama is out of scope for this axis rather than missing from it. Its
+ * component IS gated — `ollama-provider.spec.ts` calls `isProviderComponentAvailable`
+ * for exactly the `lfx-ollama` packaging regression that broke the daily on
+ * 2026-07-23/24 (#931) — just through the catalog probe, not through this table.
  */
-export const PROVIDER_COMPONENTS: Record<Provider, readonly string[]> = {
+export const PROVIDER_COMPONENTS: Record<KeyedProvider, readonly string[]> = {
   openai: [
     "ext:openai:OpenAIModelComponent@official",
     "ext:openai:OpenAIEmbeddingsComponent@official",
@@ -349,7 +355,7 @@ async function buildOne(
  */
 export async function probeBuildAxis(
   request: APIRequestContext,
-  providers: readonly Provider[],
+  providers: readonly KeyedProvider[],
 ): Promise<Record<string, ProviderVerdict>> {
   const results: Record<string, ProviderVerdict> = {};
   const started = Date.now();
@@ -367,7 +373,7 @@ export async function probeBuildAxis(
     const registry = (await res.json()) as Record<string, Record<string, unknown>>;
 
     // Layer 1 — catalog. One request, every provider.
-    const toBuild: { provider: Provider; key: string; nodeId: string }[] = [];
+    const toBuild: { provider: KeyedProvider; key: string; nodeId: string }[] = [];
     for (const provider of providers) {
       const keys = PROVIDER_COMPONENTS[provider] ?? [];
       const missing = missingComponentKeys(registry, keys);
@@ -410,7 +416,7 @@ export async function probeBuildAxis(
     if (!created.ok()) throw new Error(`flow create failed: HTTP ${created.status()}`);
     flowId = (await created.json()).id as string;
 
-    const verdicts = new Map<Provider, ComponentVerdict[]>();
+    const verdicts = new Map<KeyedProvider, ComponentVerdict[]>();
     for (const { provider, key, nodeId } of toBuild) {
       const verdict =
         Date.now() - started > TOTAL_BUDGET_MS

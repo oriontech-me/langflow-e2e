@@ -30,12 +30,47 @@ const applyFlowSettings = async (
   // not race a PATCH that would re-render the dialog and detach its inputs.
   await waitForFlowSaveSettled(page);
 
-  // Open the flow-settings modal from the header.
+  // Open the flow-settings modal from the header. Assert the header first: it
+  // renders only under `onFlowPage`, so its absence means the editor never
+  // mounted — a caller that has not landed on the canvas yet, which is a very
+  // different failure from the gate below (#1005).
   await expect(page.getByTestId("flow_name")).toBeVisible({
     timeout: MODAL_TIMEOUT,
   });
-  await page.getByTestId("flow_name").hover();
-  await page.getByTestId("flow_name").click();
+
+  // Drive the BUTTON, and only once write permission has RESOLVED. Upstream
+  // renders the header as
+  //   <button data-testid="menu_bar_display" disabled={isReadOnly}>
+  //     <span aria-hidden data-testid="flow_name">…</span>
+  // with `useIsFlowReadOnly = Boolean(flowId) && (isLoading || !can(flowId,"write"))`,
+  // which fails CLOSED for the whole time `POST /api/v1/authz/me/permissions` is
+  // in flight (deliberately, per its own docstring). Two consequences, both of
+  // which cost this helper flakes:
+  //  - Clicking the aria-hidden span does not exercise Playwright's disabled
+  //    check — a span is not a form control — so a click landed in that window
+  //    is swallowed by the browser with no error at all. Targeting the button
+  //    makes the wait explicit AND puts the check back.
+  //  - `<Popover open={openSettings && !isReadOnly}>` means a read-only flip
+  //    AFTER the dialog opened tears it down; remounting `FlowSettingsComponent`
+  //    re-runs its `useEffect` and resets `name` to the flow's own, leaving
+  //    `save-flow-settings` disabled for the rest of the budget (#1005).
+  // Same gate #1063/#1147 added for `useAddComponent`, which bails out silently
+  // under the identical predicate.
+  //
+  // The gate NARROWS this window, it does not close it, and the next triager
+  // should not have to re-derive why. `PermissionsProvider` (mounted around the
+  // app header in `DashboardWrapperPage`) keys its query on
+  // `domain: project:{folder_id}` read off `currentFlow`, and `use-save-flow`
+  // replaces that object via `setCurrentFlow(updatedFlow)` on every save — so a
+  // response that changes or drops `folder_id` changes the query key, re-enters
+  // `isLoading`, and re-disables the button. Landing between the assertion and
+  // the click below, the click is swallowed again and the failure surfaces at the
+  // `input-flow-name` assertion instead. If that is ever observed, the fix is to
+  // retry open→dialog-visible rather than to widen a timeout.
+  const flowHeaderButton = page.getByTestId("menu_bar_display");
+  await expect(flowHeaderButton).toBeEnabled({ timeout: MODAL_TIMEOUT });
+  await flowHeaderButton.hover();
+  await flowHeaderButton.click();
 
   // Wait for the modal's name input to be present and interactable before
   // reading/editing it (avoids acting on a half-rendered dialog).
@@ -46,6 +81,13 @@ const applyFlowSettings = async (
   const flowNameInput = await nameInput.inputValue();
   if (flowName) {
     await nameInput.fill(flowName);
+    // Prove the edit actually registered before waiting on the save button.
+    // `save-flow-settings` is `disabled={disableSave || isReadOnly}`, and
+    // `disableSave` is recomputed from `flow.name !== name` — so a dialog that
+    // remounted between the fill and here (see the read-only note above) has
+    // silently reset `name`, and the save button then stays disabled for the
+    // full budget with nothing in the failure naming the cause (#1005).
+    await expect(nameInput).toHaveValue(flowName, { timeout: MODAL_TIMEOUT });
   }
 
   const descriptionInput = page.getByTestId("input-flow-description");
@@ -131,6 +173,14 @@ const applyFlowSettings = async (
  * received our response. For that one the rename is re-applied once, after the
  * trailing autosave burst has drained. The final assertion is unconditional, so
  * a rename that genuinely never persists still fails the caller.
+ *
+ * Hardening (issue #1005): the modal is opened through the `menu_bar_display`
+ * BUTTON once it reports enabled, instead of clicking the aria-hidden
+ * `flow_name` span inside it. Upstream disables that button for the whole time
+ * the effective-permissions query is in flight, and a click on the span is
+ * swallowed with no error in that window; the same flip landing *after* the
+ * dialog opened unmounts it and resets the typed name. Both surfaced here as a
+ * `save-flow-settings` that never enables.
  *
  * @returns the name/description present in the inputs *before* any edit.
  */

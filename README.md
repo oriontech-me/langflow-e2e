@@ -85,6 +85,17 @@ MODEL_TEST_PROVIDER=openai
 # Run all models from the JSON (default — leave variables empty)
 ```
 
+For specs declared `tier: "any-completion"` — the ones whose assertion reads
+Langflow's plumbing, not model quality — a fourth option runs them against a
+**local, keyless** model (no API key, no quota), and takes priority over the two
+variables above for that tier only:
+
+```bash
+# Needs `ollama serve` with the model pulled; see .env.example for the full block
+ANY_COMPLETION_PROVIDER=ollama
+OLLAMA_TEST_MODEL=llama3.2:1b
+```
+
 ### 3. Run with --workers=1
 
 Agent tests create flows in Langflow and require `--workers=1` to avoid name conflicts:
@@ -210,8 +221,8 @@ tests/
 | `daily-stable.yml` | Mon–Fri 05:00 BRT + manual | Runs `@stable` tests against `langflow-nightly:latest`; opens a triage issue on failure and uploads a navigable HTML report. **Active stable workflow.** |
 | `weekly-stable.yml` | Disabled (fallback) | Superseded by `daily-stable.yml`; kept in the repo, disabled. Same `@stable` machinery on a weekly cron when enabled |
 | `manual.yml` | Manual | Runs against any Docker tag or external URL, filters by suite/tag |
-| `file-watcher.yml` | Daily 05:00 BRT | Monitors changes in Langflow source and opens a review issue |
-| `adaptive-impacted.yml` | Daily 04:00 BRT + manual | Runs only the specs whose `External dependencies` reference the Langflow source paths that changed since the last nightly we tested; skips entirely when no new nightly was published |
+| `file-watcher.yml` | **Disabled in Actions** — cannot even be dispatched | Monitors changes in Langflow source and opens a review issue. Accepts a `since` window; guards its monitored paths against the checkout first (`scripts/watch-upstream-areas.mjs`). Re-enabling needs the Actions toggle **and** a cron (removed in `9da85fa`) |
+| `adaptive-impacted.yml` | **Disabled in Actions** (was daily 04:00 BRT) | Runs only the specs whose `External dependencies` reference the Langflow source paths that changed since the last nightly we tested; skips entirely when no new nightly was published |
 
 ---
 
