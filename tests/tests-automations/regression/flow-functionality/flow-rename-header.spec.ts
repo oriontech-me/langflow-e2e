@@ -23,6 +23,13 @@ const FLOW_BASE = {
 // `request` fixture, a separate `APIRequestContext` that emits no page-level
 // response events, so this tracker cannot see that flow (#1147) — two cleanup
 // paths here is the correct shape, not a leftover.
+//
+// One cost of putting the tracker in a file-scoped `beforeEach` rather than inside
+// the UI test: the hook asks for `page`, so Playwright now instantiates a browser
+// page for the API test too, which took only `{ request }` and never touched one.
+// Accepted for uniformity — a test added to this file is covered without anyone
+// remembering to wire it — and priced at one context launch per API run. Move the
+// tracker into the UI test if that ever stops being a fair trade.
 let flows: FlowTracker | undefined;
 
 test.beforeEach(({ page }) => {
@@ -33,9 +40,22 @@ test.afterEach(async ({ request }) => {
   const tracker = flows;
   // Null out BEFORE awaiting. `flows?.` alone only protects the FIRST test in a
   // worker: for a later test whose `beforeEach` threw, the binding still holds
-  // the PREVIOUS test's tracker, and the optional chain waves it through. (The
-  // three pre-#1154 adopters declare `flows` non-nullable, which also makes
-  // their `?.` a guard TypeScript treats as dead.)
+  // the PREVIOUS test's tracker, and the optional chain waves it through.
+  //
+  // None of the three pre-#1154 adopters of the shared helper does this, and they
+  // are exposed to different degrees rather than uniformly latent —
+  // `api-request-component-ui.spec.ts` is the one to fix first, not last:
+  //
+  //  - `edit-flow-name` / `flowSettings` declare `flows` non-nullable and still
+  //    write `flows?.cleanup(...)`, so TypeScript treats that `?.` as a dead guard.
+  //    Both are single-test today, which is the only reason it stays latent.
+  //  - `api-request-component-ui` has FOUR tests and writes `flows.cleanup(...)`
+  //    with no chain at all. If its first test's `beforeEach` fails, the teardown
+  //    throws `TypeError: Cannot read properties of undefined` and buries the real
+  //    error — the exact failure `flowSettings`' own comment says the `?.` exists
+  //    to prevent.
+  //
+  // Latent is not the same as safe, so the shape here does not inherit any of it.
   flows = undefined;
   // Default (log and continue), not `strict`: this file had no teardown at all
   // before, so failing an otherwise-green test on a cleanup blip would be a new

@@ -21,9 +21,12 @@ test.beforeEach(({ page }) => {
 
 test.afterEach(async ({ request }) => {
   const tracker = flows;
-  // Null out BEFORE awaiting — see the identical block in
-  // `flow-functionality/flow-rename-header.spec.ts` for why `flows?.` alone is
-  // not enough once a file has more than one test.
+  // Null out BEFORE awaiting. This file has ONE test today, so the hazard the
+  // null-out closes cannot occur here — it needs a later test whose `beforeEach`
+  // threw while the binding still holds the previous test's tracker. Kept anyway
+  // so both files this issue touches carry one shape, and so a second test added
+  // here is covered without anyone re-deriving the reasoning. See the block in
+  // `flow-functionality/flow-rename-header.spec.ts`, where it IS load-bearing.
   flows = undefined;
   // Default (log and continue), not `strict`: there was no teardown to preserve
   // the contract of, and failing an otherwise-green test on a cleanup blip would
