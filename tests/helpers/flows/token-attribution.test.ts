@@ -15,7 +15,7 @@
 // `buildProbe()` — the shared, pure function in scripts/lib/token-spans.mjs
 // that both this sidecar and the poller import, so the anti-double-count rule
 // lives in exactly one place.
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -70,6 +70,14 @@ function fakeRequest(
   } as unknown as APIRequestContext;
 }
 
+// §2.1: reset the attempted-flow guard before each test, ensuring tests are
+// isolated by default. Tests that exercise cross-call persistence (calling
+// recordTokenAttribution twice within a single test) are unaffected — the reset
+// happens before the test, not between calls within it.
+beforeEach(() => {
+  resetAttributedFlows();
+});
+
 test("writes one self-sufficient line per trace — trace_id, flow_id, its own tokens, AND the attribution fields (finding A)", async () => {
   const out = tmpFile();
   const request = fakeRequest(
@@ -120,7 +128,6 @@ test("does nothing at all when the out path is unset — no request, no file", a
 });
 
 test("a failing backend is reported on the result, never thrown", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   const request = fakeRequest({}, {}, { fail: true });
   const result = await recordTokenAttribution({
@@ -136,7 +143,6 @@ test("a failing backend is reported on the result, never thrown", async () => {
 });
 
 test("an unwritable out path is reported, never thrown", async () => {
-  resetAttributedFlows();
   const request = fakeRequest({ f1: [{ id: "t1" }] }, { t1: { spans: [] } });
   const result = await recordTokenAttribution({
     request,
@@ -156,7 +162,6 @@ test("an unwritable out path is reported, never thrown", async () => {
 // traces yet" — `{recorded: 0, skipped: []}` — with no warning anywhere. That
 // is the exact regression the bearer-token fix (#1197 §S2) exists to catch.
 test("a non-ok response (e.g. 403 unauthenticated) is reported, never read as zero traces", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   const request = {
     get: async () => ({
@@ -173,14 +178,21 @@ test("a non-ok response (e.g. 403 unauthenticated) is reported, never read as ze
 
 test("a flow with no trace yet is simply not recorded — no polling", async () => {
   const out = tmpFile();
-  const request = fakeRequest({ f1: [] });
+  let getCalls = 0;
+  const baseRequest = fakeRequest({ f1: [] });
+  const request = {
+    get: async (url: string) => {
+      getCalls++;
+      return baseRequest.get(url);
+    },
+  } as unknown as APIRequestContext;
   const result = await recordTokenAttribution({ request, flowIds: ["f1"], test: "t", file: "f", out });
   assert.equal(result.recorded, 0);
   assert.equal(result.skipped.length, 0);
+  assert.equal(getCalls, 1, "the list request must be issued, not short-circuited by the guard");
 });
 
 test("appends rather than truncating, so parallel workers coexist", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   const request = fakeRequest(
     { f1: [{ id: "t1" }], f2: [{ id: "t2" }] },
@@ -194,7 +206,6 @@ test("appends rather than truncating, so parallel workers coexist", async () => 
 // --- Finding A (#1197 re-review) ---
 
 test("a detail-fetch failure still yields a line for that trace, with a null total, not a lost line", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   // No totalTokens on the list item, and no detail entry for "t1" → the
   // detail GET behaves like a real 404 (the flow raced ahead and deleted this
@@ -212,7 +223,6 @@ test("a detail-fetch failure still yields a line for that trace, with a null tot
 });
 
 test("a detail-fetch failure still keeps the trace's own total already in hand from the list response", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   // The list response already carries totalTokens — buildProbe uses that
   // regardless of whether the (separate) detail fetch for spans succeeds.
@@ -225,7 +235,6 @@ test("a detail-fetch failure still keeps the trace's own total already in hand f
 });
 
 test("a network error fetching ONE trace's detail degrades that trace only — the rest of the flow is unaffected", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   const request = {
     get: async (url: string) => {
@@ -289,7 +298,6 @@ test("a failing buildProbe import degrades to a named skip — never a silent {r
 // twice. Two lines for one trace is not a visible defect downstream -- it is a
 // plausible number, twice as large, with no marker saying so.
 test("a flow already attempted is never attributed a second time (§2.1)", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   const request = fakeRequest({ f1: [{ id: "t1", totalTokens: 88 }] }, { t1: { spans: SPANS } });
   const args = { request, flowIds: ["f1"], test: "spec", file: "x.spec.ts", out };
@@ -308,7 +316,6 @@ test("a flow already attempted is never attributed a second time (§2.1)", async
 // eligible for a second try. Recording it as "attempted" is what keeps a failure
 // from silently turning into the retry the no-polling rule forbids.
 test("a flow whose list request failed is still not retried on a second pass (§2.1)", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   let calls = 0;
   const request = {
