@@ -69,11 +69,17 @@ interface FakeTrace {
 function fakeRequest(
   traces: Record<string, FakeTrace[]>,
   detail: Record<string, { spans?: unknown[] }> = {},
-  opts: { fail?: boolean } = {},
+  opts: { fail?: boolean; delayMs?: number } = {},
 ): APIRequestContext {
   return {
     get: async (url: string) => {
       if (opts.fail) throw new Error("backend wedged");
+      // `delayMs` makes a request cost REAL wall-clock, which is what the
+      // per-call budget (§4.4) reads. Injecting a fake clock instead would let
+      // the budget be satisfied by a seam rather than by elapsed time — and the
+      // failure it exists to prevent (#1077's wedged monitor endpoint) is
+      // precisely elapsed time.
+      if (opts.delayMs) await new Promise((r) => setTimeout(r, opts.delayMs));
       if (url.includes("?flow_id=")) {
         const flowId = new URL(url, "http://x").searchParams.get("flow_id") ?? "";
         return { ok: () => true, status: () => 200, json: async () => ({ traces: traces[flowId] ?? [] }) };
@@ -856,4 +862,151 @@ test("the sidecar appends synchronously — the property the interleaving argume
     "an async append or a stream yields between open and write — the window that produces half a JSON line " +
       "when two concurrent flows (or two Playwright workers) share this file",
   );
+});
+
+// =============================================================================
+// §4.4 — the per-CALL wall-clock budget
+// =============================================================================
+//
+// Why a second bound on top of `timeoutMs`: the per-request timeout bounds ONE
+// request, and the detail loop is sequential within a flow, so the call's own
+// ceiling is `maxDetail x timeout` — 25 x 8000 = 208s with the shipped defaults,
+// against a 5-minute budget for the WHOLE test that `afterEach` spends from. A
+// teardown deleting three flows through `deleteFlow` makes three such calls and
+// can reach ~624s: the sidecar keeps its promise never to throw and still fails
+// the test, by starving it. That is #1077's wedged monitor endpoint arriving by
+// way of telemetry — the exact failure `deleteFlow` exists to surface.
+//
+// The budget does NOT replace `timeoutMs`, and the two are not alternatives: a
+// deadline checked BETWEEN requests never fires on a request that has not
+// returned, and a per-request timeout never sees the sum. Together the ceiling
+// is `budget + timeout` per call, which is the bound the doc comment always
+// claimed and could not enforce.
+//
+// The budget is deliberately NOT enforced across the concurrent list fan-out:
+// every flow's list request starts in the same tick, so no elapsed time
+// separates them. That fan-out is already bounded at roughly one round trip;
+// the sequential detail loop is the unbounded part, and it is what this guards.
+
+/** Counts every GET so an absence can be asserted as an absence, not inferred. */
+function countingRequest(
+  traces: Record<string, FakeTrace[]>,
+  detail: Record<string, { spans?: unknown[] }>,
+  opts: { delayMs?: number } = {},
+): { request: APIRequestContext; urls: string[] } {
+  const urls: string[] = [];
+  const inner = fakeRequest(traces, detail, opts);
+  const request = {
+    get: async (url: string, options?: unknown) => {
+      urls.push(url);
+      return (inner as unknown as { get: (u: string, o?: unknown) => Promise<unknown> }).get(url, options);
+    },
+  } as unknown as APIRequestContext;
+  return { request, urls };
+}
+
+test("a call over its budget issues no further request, and names every trace it curtailed (§4.4)", async () => {
+  const out = tmpFile();
+  // The list request alone spends 6ms against a 1ms budget, so every detail
+  // fetch that follows is over the line. Real elapsed time, not a fake clock.
+  const { request, urls } = countingRequest(
+    { f1: [{ id: "t1", totalTokens: 88 }, { id: "t2", totalTokens: 50 }, { id: "t3", totalTokens: 12 }] },
+    { t1: { spans: SPANS }, t2: { spans: SPANS }, t3: { spans: SPANS } },
+    { delayMs: 6 },
+  );
+
+  const result = await recordTokenAttribution({
+    request,
+    flowIds: ["f1"],
+    test: "budget suite",
+    file: "x.spec.ts",
+    out,
+    budgetMs: 1,
+  });
+
+  assert.deepEqual(
+    urls.filter((u) => !u.includes("?flow_id=")),
+    [],
+    "once the budget is spent the sidecar must issue NO detail request — that sum is what starves the test",
+  );
+  assert.equal(result.recorded, 3, "the budget costs the per-model breakdown, never the trace's tokens");
+  assert.equal(result.skipped.length, 3, "every curtailed trace must be named, the same rule the cap follows");
+  for (const entry of result.skipped) {
+    assert.match(
+      entry,
+      /budget of 1ms/,
+      "the message must name the BUDGET, not the cap — a reader has to know which bound bit",
+    );
+  }
+});
+
+test("a trace curtailed by the budget keeps its own tokens and reports an unknown breakdown (§4.4)", async () => {
+  const out = tmpFile();
+  const { request } = countingRequest(
+    { f1: [{ id: "t1", totalTokens: 88, startTime: "2026-08-03T10:00:00Z", status: "ok" }] },
+    { t1: { spans: SPANS } },
+    { delayMs: 6 },
+  );
+
+  await recordTokenAttribution({
+    request,
+    flowIds: ["f1"],
+    test: "budget suite",
+    file: "x.spec.ts",
+    out,
+    budgetMs: 1,
+  });
+
+  const [line] = traceLines(out);
+  assert.equal(line.total_tokens, 88, "the list response already held the total — the budget must not discard it");
+  assert.deepEqual(line.models, [], "the breakdown is UNKNOWN, and the named skip is what says so");
+});
+
+test("a healthy call never trips its own budget (§4.4)", async () => {
+  const out = tmpFile();
+  const { request, urls } = countingRequest(
+    { f1: [{ id: "t1", totalTokens: 88 }, { id: "t2", totalTokens: 50 }] },
+    { t1: { spans: SPANS }, t2: { spans: SPANS } },
+  );
+
+  const result = await recordTokenAttribution({
+    request,
+    flowIds: ["f1"],
+    test: "budget suite",
+    file: "x.spec.ts",
+    out,
+  });
+
+  assert.equal(urls.length, 3, "one list + one detail per trace — the default budget must not curtail a fast call");
+  assert.deepEqual(result.skipped, [], "a bound that fires on a healthy teardown is worse than no bound");
+});
+
+test("a non-positive budget falls back to the default, never to 'skip everything' (§4.4)", async () => {
+  const out = tmpFile();
+  // `delayMs` is load-bearing, and this test was VACUOUS without it. With a
+  // zero-cost fake the elapsed time at the detail check is 0, so the mutant
+  // `budgetMs ?? default` (budget 0) evaluates `0 > 0` as false and behaves
+  // exactly like the correct code -- the test passed against both. Six real
+  // milliseconds is what makes the two distinguishable.
+  const { request, urls } = countingRequest(
+    { f1: [{ id: "t1", totalTokens: 88 }] },
+    { t1: { spans: SPANS } },
+    { delayMs: 6 },
+  );
+
+  // 0 is the trap: read literally it means "no time at all", which would silently
+  // disable attribution suite-wide the moment a lane set the variable to 0 or a
+  // caller passed a computed 0. Same coercion as `timeoutMs`/`detailCap`.
+  const result = await recordTokenAttribution({
+    request,
+    flowIds: ["f1"],
+    test: "budget suite",
+    file: "x.spec.ts",
+    out,
+    budgetMs: 0,
+  });
+
+  assert.equal(urls.length, 2, "budgetMs: 0 must resolve to the default, so the detail fetch still happens");
+  assert.deepEqual(result.skipped, []);
+  assert.equal(result.recorded, 1);
 });

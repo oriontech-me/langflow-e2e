@@ -200,6 +200,37 @@ export interface RecordTokenAttributionOptions {
    * would mean serialising the flows again -- the cost this whole section removes.
    */
   detailCap?: number;
+  /**
+   * Wall-clock budget for the WHOLE call, in milliseconds. Falls back to
+   * `TOKENS_BUDGET_MS`, then to 15000. Same coercion as the two knobs above, so a
+   * non-positive value resolves to the default rather than to "no time at all"
+   * (which would disable attribution suite-wide the moment a lane set it to 0).
+   *
+   * **This is not a second copy of `timeoutMs`, and the two are not
+   * alternatives.** `timeoutMs` bounds ONE request and never sees the sum; a
+   * deadline checked BETWEEN requests never fires on a request that has not
+   * returned. Only together do they bound a call.
+   *
+   * Without it the call's own ceiling is `detailCap x timeoutMs` -- 25 x 8000 =
+   * 208s with the shipped defaults, because the detail loop is sequential within a
+   * flow. `deleteFlow` makes one call per flow id and teardowns iterate flows in
+   * series, so a three-flow teardown reaches ~624s against the 5-minute budget
+   * Playwright gives the WHOLE test, hooks included. The sidecar would keep its
+   * promise never to throw and still fail the test, by starving it -- #1077's
+   * wedged monitor endpoint arriving by way of telemetry, which is the exact
+   * failure `deleteFlow` exists to surface. With the budget the ceiling is
+   * `budget + timeoutMs` per call: 23s on the defaults, ~69s for that same
+   * three-flow teardown.
+   *
+   * 15000 against a normal call of 20-100ms: two orders of magnitude of headroom,
+   * so this fires on a wedge and never on a slow-but-healthy backend.
+   *
+   * Deliberately NOT enforced across the list fan-out: those requests all start in
+   * the same tick (`Promise.all`), so no elapsed time separates them and a check
+   * there would be a no-op. That fan-out is already bounded at roughly one round
+   * trip -- the sequential detail loop is the unbounded part.
+   */
+  budgetMs?: number;
 }
 
 export interface TokenAttributionResult {
@@ -218,6 +249,7 @@ export async function recordTokenAttribution({
   loadBuildProbe: loadBuildProbeOverride = loadBuildProbe,
   timeoutMs,
   detailCap,
+  budgetMs,
 }: RecordTokenAttributionOptions): Promise<TokenAttributionResult> {
   const result: TokenAttributionResult = { recorded: 0, skipped: [] };
   if (!out || !flowIds?.length) return result;
@@ -260,6 +292,15 @@ export async function recordTokenAttribution({
   // rejected. One rule, both paths, so the code matches what it says.
   const timeout = positive(timeoutMs, positive(process.env.TOKENS_TIMEOUT_MS, 8000));
   const maxDetail = positive(detailCap, positive(process.env.TOKENS_DETAIL_CAP, 25));
+  // §4.4: the bound `detailCap` alone cannot give. See `budgetMs`'s own comment for
+  // why a per-request timeout and a between-request deadline are complements rather
+  // than alternatives, and for the arithmetic (208s -> 23s per call).
+  //
+  // Read against `callStartedAt`, which is set before the `buildProbe` import above:
+  // that import is time the teardown pays too, so a call slowed there has less
+  // budget left, not the same amount.
+  const budget = positive(budgetMs, positive(process.env.TOKENS_BUDGET_MS, 15000));
+  const overBudget = () => Date.now() - callStartedAt > budget;
   // Shared across the concurrent tasks below. Safe without synchronisation
   // because JS runs them on a single thread, and it is incremented BEFORE its
   // await so two tasks cannot both pass the check on the same slot.
@@ -322,7 +363,20 @@ export async function recordTokenAttribution({
           // whose total had not landed yet.
           const knownZero = typeof trace.totalTokens === "number" && trace.totalTokens === 0;
           if (!knownZero) {
-            if (detailFetches >= maxDetail) {
+            if (overBudget()) {
+              // Named separately from the cap, and checked first: both curtail the
+              // same fan-out, but a reader has to know WHICH bound bit. The cap
+              // firing means a test produced more traces than expected; the budget
+              // firing means the monitor endpoint is slow or wedged, which is a
+              // backend symptom and not a property of the spec at all.
+              //
+              // Same degradation as the cap: the trace is still recorded below with
+              // the tokens the list already gave us, and only its per-model
+              // breakdown is lost.
+              result.skipped.push(
+                `${flowId}: attribution budget of ${budget}ms exhausted before trace ${trace.id}`,
+              );
+            } else if (detailFetches >= maxDetail) {
               // The cap must NAME itself wherever it curtails work. Silently
               // dropping the spans would leave `models: []` on a trace whose
               // breakdown is merely unknown -- indistinguishable from a trace whose
