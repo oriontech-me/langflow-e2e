@@ -89,6 +89,9 @@ test.describe("API Invalid Key Handling", () => {
     async ({ request }) => {
       const fakeId = "00000000-0000-0000-0000-000000000002";
 
+      // Raw DELETE on purpose: this call's status IS the assertion. `deleteFlow`
+      // absorbs 404-as-done and retries one 5xx, which would erase what this test
+      // checks (§3.1).
       const res = await request.delete(`/api/v1/flows/${fakeId}`, {
         headers: {},
       });

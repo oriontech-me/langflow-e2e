@@ -5,6 +5,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { updateOldComponents } from "../../../../helpers/flows/update-old-components";
 import { loadTemplateByName } from "../../../../helpers/flows/load-template-by-name";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { PlaygroundPage } from "../../../../pages";
 import {
   setupLanguageModelOpenAI,
@@ -86,7 +87,15 @@ test.describe("Memory Chatbot Regression", () => {
       // this flow's /events endpoint; otherwise the delete below races those
       // in-flight requests, which then 404 ("Flow not found") as teardown noise.
       await page.goto("/").catch(() => {});
-      await page.request.delete(`/api/v1/flows/${createdFlowId}`).catch(() => {});
+      // `deleteFlow` rather than a raw DELETE: it absorbs 404-as-done and one
+      // transient 5xx, surfaces a real failure instead of silence, and -- the
+      // reason this spec was migrated -- it is where token attribution happens,
+      // immediately before the DELETE that 404s the trace (§3.1).
+      try {
+        await deleteFlow(page.request, createdFlowId);
+      } catch {
+        // Deliberately silent, matching the `.catch(() => {})` this replaces.
+      }
       createdFlowId = null;
     }
   });

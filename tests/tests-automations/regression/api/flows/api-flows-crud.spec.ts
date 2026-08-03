@@ -191,6 +191,9 @@ test.describe("CRUD /api/v1/flows", () => {
       });
 
       await test.step("DELETE /api/v1/flows/{id} returns 200", async () => {
+        // Raw DELETE on purpose: this call's status IS the assertion. `deleteFlow`
+        // absorbs 404-as-done and retries one 5xx, which would erase what this test
+        // checks (§3.1).
         const deleteRes = await request.delete(`/api/v1/flows/${id}`, {
           headers: { Authorization: authToken },
         });
@@ -217,9 +220,7 @@ test.describe("CRUD /api/v1/flows", () => {
       });
 
       await test.step("DELETE the flow", async () => {
-        await request.delete(`/api/v1/flows/${id}`, {
-          headers: { Authorization: authToken },
-        });
+        await deleteFlow(request, id, { headers: { Authorization: authToken } });
       });
 
       await test.step("GET /api/v1/flows/{id} returns 404 after deletion", async () => {
@@ -283,9 +284,7 @@ test.describe("CRUD /api/v1/flows", () => {
       });
 
       await test.step("DELETE the flow", async () => {
-        await request.delete(`/api/v1/flows/${id}`, {
-          headers: { Authorization: authToken },
-        });
+        await deleteFlow(request, id, { headers: { Authorization: authToken } });
       });
 
       await test.step("GET /api/v1/flows/ does not include the deleted flow", async () => {
