@@ -39,6 +39,7 @@ const MODULES: ModuleConfig[] = [
   { label: "`core-functionality/playground/`",               sectionStart: "### core-functionality/playground/" },
   { label: "`core-functionality/project-management/`",       sectionStart: "### core-functionality/project-management/" },
   { label: "`core-functionality/templates/`",                sectionStart: "### core-functionality/templates/" },
+  { label: "`core-functionality/a2a/`",                      sectionStart: "### core-functionality/a2a/" },
   { label: "`flow-functionality/`",                          sectionStart: "## flow-functionality/" },
   { label: "`mcp/client/`",                                  sectionStart: "### mcp/client/" },
   { label: "`mcp/server/`",                                  sectionStart: "### mcp/server/" },
