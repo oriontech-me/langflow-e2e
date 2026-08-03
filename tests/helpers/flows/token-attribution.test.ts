@@ -336,9 +336,10 @@ test("a flow already attempted is never attributed a second time (§2.1)", async
   assert.equal(first.recorded, 1);
   assert.equal(second.recorded, 0, "the second pass must record nothing for the same flow");
   assert.equal(traceLines(out).length, 1, "exactly one line for one trace, across both passes");
-  // Two CALLS were made, so two teardowns paid a cost — the second one being cheap
-  // (it issued no request) is a fact about the run, not a reason to hide it.
-  assert.equal(costRecords(out).length, 2, "one cost record per call, including the one that re-attributed nothing");
+  // The repeat call claimed nothing, issued no request and cost approximately zero, so
+  // it writes NO cost record (§4.3, fix round 3). One record per teardown that did
+  // work is what makes `attrib_ms / attrib_calls` an average worth reading.
+  assert.equal(costRecords(out).length, 1, "the repeat call claimed nothing, so it must not pad attrib_calls");
 });
 
 // ATTEMPTED, not RECORDED. The contract is one list request per flow, never
@@ -646,6 +647,49 @@ test("a call whose every flow THREW still records its cost (§4.3)", async () =>
 // "no file must be written when the import itself fails" test pins that. Asserted
 // here too, from the cost record's side, so the exception is explicit rather than
 // discovered later as an inconsistency.
+// Fix round 3, item 1: `attrib_calls` has to count TEARDOWNS THAT DID WORK, or the
+// average the README tells people to derive is wrong. On the tracked path the sidecar
+// is called twice for the same flows -- `cleanup()` attributes its whole captured
+// batch, then `deleteFlow` re-calls per id -- and every repeat issued no request at
+// all. Measured with the real sidecar: one spec, 4 flows, a 20ms list request gave
+// `attrib_ms: 24, attrib_calls: 5`, so the average read 4.8ms against a real 24ms
+// teardown. It also inverted the diagnostic: `attrib_calls` ran LARGER than the number
+// of flow-deleting specs, so a reader checking "is the sidecar running where we think"
+// would read it backwards.
+test("a call that claimed no flows writes no cost record at all (§4.3)", async () => {
+  const out = tmpFile();
+  const request = fakeRequest({ f1: [{ id: "t1", totalTokens: 88 }] }, { t1: { spans: SPANS } });
+  const args = { request, flowIds: ["f1"], test: "spec", file: "x.spec.ts", out };
+
+  await recordTokenAttribution(args);
+  assert.equal(costRecords(out).length, 1, "the first call did the work and reports it");
+
+  await recordTokenAttribution(args);
+  assert.equal(
+    costRecords(out).length,
+    1,
+    "a repeat whose ids were all pre-claimed issues no request — a ~0ms record for it is noise that skews the average",
+  );
+});
+
+// A PARTIAL repeat: one id already claimed, one new. The call did work, so it reports
+// -- but `flows` must name what it actually attempted, not the whole argument list, or
+// the cost is divided by work that was never done.
+test("a partially repeated call reports only the flows it actually claimed (§4.3)", async () => {
+  const out = tmpFile();
+  const request = fakeRequest(
+    { f1: [{ id: "t1", totalTokens: 10 }], f2: [{ id: "t2", totalTokens: 20 }] },
+    { t1: { spans: [] }, t2: { spans: [] } },
+  );
+  await recordTokenAttribution({ request, flowIds: ["f1"], test: "spec", file: "x.spec.ts", out });
+  await recordTokenAttribution({ request, flowIds: ["f1", "f2"], test: "spec", file: "x.spec.ts", out });
+
+  const costs = costRecords(out);
+  assert.equal(costs.length, 2, "both calls claimed something, so both report");
+  assert.equal(costs[0].flows, 1);
+  assert.equal(costs[1].flows, 1, "f1 was already claimed; only f2 was attempted");
+});
+
 test("a failing buildProbe import writes NO cost record — it made no request (§4.3)", async () => {
   const out = tmpFile();
   const request = fakeRequest({ f1: [{ id: "t1", totalTokens: 88 }] }, { t1: { spans: SPANS } });

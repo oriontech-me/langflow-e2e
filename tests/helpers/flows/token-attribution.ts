@@ -264,6 +264,10 @@ export async function recordTokenAttribution({
   // because JS runs them on a single thread, and it is incremented BEFORE its
   // await so two tasks cannot both pass the check on the same slot.
   let detailFetches = 0;
+  // How many ids this call actually CLAIMED, i.e. genuinely attempted. Drives both
+  // whether a cost record is written at all and the `flows` it reports -- see the
+  // comment on the record below.
+  let attemptedFlows = 0;
 
   // Concurrent, not serial (§4.2): N flows cost roughly one round trip instead of
   // N. `result` is mutated from several tasks, which is safe because JS runs them
@@ -275,6 +279,7 @@ export async function recordTokenAttribution({
       // eligible for a retry the contract forbids (§2.1).
       if (attempted.has(flowId)) return;
       attempted.add(flowId);
+      attemptedFlows += 1;
 
       try {
         const res = await request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, { headers, timeout });
@@ -389,17 +394,32 @@ export async function recordTokenAttribution({
   // One record per call means a PLAIN SUM downstream is correct, and the
   // distinct-flow_id reduction the old shape needed (and its trap) is gone with it.
   //
-  // `flows` is how many ids this call was ASKED to attribute. An id already claimed
-  // by an earlier call issues no request, so a repeat teardown legitimately reports
-  // its flow count with a near-zero `attrib_ms`.
+  // Written only when this call CLAIMED at least one flow, so that one record really
+  // does mean one teardown-that-did-work and `attrib_ms / attrib_calls` is the average
+  // a reader expects. Without this condition the sidecar is called twice for the same
+  // flows on the tracked path -- `cleanup()` attributes its whole captured batch, then
+  // `deleteFlow` re-calls per id -- and every repeat, having issued no request at all,
+  // added a ~0ms record. Measured: one spec, 4 flows, a 20ms list request produced
+  // `attrib_ms: 24, attrib_calls: 5`, so the average read 4.8ms against a real 24ms
+  // teardown, a 5x understatement. It also inverted the field's use as a diagnostic:
+  // `attrib_calls` ran LARGER than the number of flow-deleting specs, so a reader
+  // checking "is the sidecar running where we think" would have read it backwards.
+  //
+  // `flows` is the CLAIMED count for the same reason -- a partially-repeated call did
+  // work for only its new ids, and reporting the whole argument list would overstate
+  // what the elapsed bought.
+  //
+  // A call that claimed flows and found no traces still writes its record: that is the
+  // dominant case this shape exists to capture (§4.1), not an empty one.
   //
   // Deliberate exception: a failing `buildProbe` import returns above, before this
   // point, and writes nothing at all. That path made no request, and "no file is
   // written when the import itself fails" is pinned by its own test.
+  if (!attemptedFlows) return result;
   try {
     const cost = {
       kind: "attrib_cost",
-      flows: flowIds.length,
+      flows: attemptedFlows,
       attrib_ms: Date.now() - callStartedAt,
       test,
       file,

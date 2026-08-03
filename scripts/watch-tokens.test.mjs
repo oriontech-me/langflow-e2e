@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import realFs from "node:fs";
-import { collectOnce, parseAttribLines, parseProbeLines, poll, summarize } from "./watch-tokens.mjs";
+import { collectOnce, parseAttribLines, parseProbeLines, poll, splitAttribRecords, summarize } from "./watch-tokens.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
 
@@ -546,10 +546,31 @@ test("a teardown that attributed NOTHING still reports its cost on the history l
   assert.equal(line.by_spec[0].file, "tests-automations/regression/core-functionality/llm-agents/x.spec.ts");
 });
 
-// Integration fact 1: summarize() pushes EVERY line of the attrib file into
-// `attributions` (:327-330), so cost records have to be filtered out explicitly.
-// Left to a falsy check downstream, a cost record would sit in `byTrace` as a
-// phantom attribution.
+// Integration fact 1, asserted DIRECTLY (fix round 3, item 2). The previous version of
+// this test could only observe collection, never exclusion: a cost record left in
+// `attributions` is invisible downstream, because aggregate() guards on `trace_id`, so
+// dropping just the exclusion left the whole file green. splitAttribRecords() exists so
+// the exclusion can be named -- the attributions array handed to aggregate() must not
+// contain the cost record, whatever downstream would tolerate.
+test("splitAttribRecords EXCLUDES a cost record from attributions, not merely collects it (§4.3)", () => {
+  const attribLine = JSON.parse(ATTRIB_LINE);
+  const costRecord = JSON.parse(COST_RECORD);
+  const { attributions, costs } = splitAttribRecords([attribLine, costRecord, attribLine]);
+
+  // The exclusion itself — the assertion the old test was missing.
+  assert.equal(
+    attributions.some((r) => r?.kind === "attrib_cost"),
+    false,
+    "a cost record must never reach aggregate() as an attribution — it names no trace",
+  );
+  assert.deepEqual(attributions, [attribLine, attribLine], "every non-cost record survives, in order");
+  assert.deepEqual(costs, [costRecord], "and the cost record is collected exactly once");
+  // Order-independent: the cost record first must not swallow what follows it.
+  assert.deepEqual(splitAttribRecords([costRecord, attribLine]).attributions, [attribLine]);
+  assert.deepEqual(splitAttribRecords([]).costs, []);
+});
+
+// The same property observed through summarize(), one level up.
 test("a cost record is never treated as an attribution (§4.3)", async () => {
   const fs2 = fakeFs({
     "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,

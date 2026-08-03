@@ -774,13 +774,16 @@ test("one trace produces exactly one line, through cleanup AND deleteFlow (§2.1
   const records = fs.readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l));
   const lines = records.filter((r) => r.kind !== "attrib_cost");
   assert.equal(lines.length, 1, "cleanup's batch call and deleteFlow's per-id hook must not both record");
-  // Both CALLS still happen and both still report their cost (§4.3): the guard stops
-  // the second from re-attributing the trace, not from existing. Two cost records for
-  // one trace line is the correct picture of what teardown did.
+  // ONE cost record, on the real tracked path (§4.3, fix round 3). Both calls happen —
+  // cleanup() attributes the captured batch, then deleteFlow re-calls per id — but the
+  // second claims nothing, issues no request and costs approximately zero, so it writes
+  // no record. This is what keeps `attrib_calls` counting teardowns that did work: with
+  // a record per CALL, a 4-flow spec reported 5 calls for one teardown and the derived
+  // average understated the real cost 5x.
   assert.equal(
     records.filter((r) => r.kind === "attrib_cost").length,
-    2,
-    "one cost record per call — cleanup's batch call and deleteFlow's per-id call",
+    1,
+    "cleanup's batch call did the work; deleteFlow's repeat must not pad attrib_calls",
   );
   assert.equal(lines[0].total_tokens, 42);
   // And the request side of the same guarantee: one list request per flow, ever

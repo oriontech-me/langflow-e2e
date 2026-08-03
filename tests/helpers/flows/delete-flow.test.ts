@@ -71,12 +71,20 @@ test("attributes the flow before deleting it, deriving test and file (§1.1)", a
     // The artifact carries the sidecar's own cost record too (§4.3, one per call,
     // `kind: "attrib_cost"`), so pick the TRACE line rather than parsing the file
     // as a single object.
-    const line = fs
+    const records = fs
       .readFileSync(out, "utf8")
       .trim()
       .split("\n")
-      .map((l) => JSON.parse(l))
-      .find((r) => r.kind !== "attrib_cost");
+      .map((l) => JSON.parse(l));
+    // Exactly ONE trace line and exactly one cost record. The count matters: this
+    // assertion used to be a whole-file `JSON.parse`, which implicitly proved the
+    // artifact held a single line — dropping it would let the sidecar duplicate every
+    // trace line with all of this file's tests still green (fix round 3, item 3).
+    assert.equal(records.length, 2, JSON.stringify(records));
+    const traceLines = records.filter((r) => r.kind !== "attrib_cost");
+    assert.equal(traceLines.length, 1, "one trace, one line");
+    assert.equal(records.filter((r) => r.kind === "attrib_cost").length, 1, "one call, one cost record");
+    const line = traceLines[0];
     assert.equal(line.test, "a test that spent tokens");
     assert.equal(line.file, "tests-automations/regression/x.spec.ts");
     assert.equal(line.flow_id, "f1");

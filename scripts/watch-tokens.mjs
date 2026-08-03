@@ -170,6 +170,26 @@ export function parseAttribLines(text) {
   return parseJsonLines(text).filter((rec) => rec?.trace_id || rec?.kind === "attrib_cost");
 }
 
+// Split the token-attrib file's two record shapes apart. A cost record is NOT an
+// attribution: it names no trace, and leaving one in `attributions` would put a
+// phantom entry in aggregate()'s `byTrace` map and let a teardown be mistaken for a
+// spec that spent nothing.
+//
+// A pure function with its own test, deliberately (§4.3, fix round 3). Inlined in
+// summarize() the EXCLUSION was untestable — a cost record left in `attributions` is
+// invisible downstream, because aggregate() happens to guard on `trace_id` — so the
+// test that claimed to cover it could only ever observe the collection. Exported so
+// the exclusion itself can be asserted directly.
+export function splitAttribRecords(records = []) {
+  const attributions = [];
+  const costs = [];
+  for (const rec of records) {
+    if (rec?.kind === "attrib_cost") costs.push(rec);
+    else attributions.push(rec);
+  }
+  return { attributions, costs };
+}
+
 async function login(fetchImpl, base, timeoutMs) {
   const res = await getJson(fetchImpl, `${base}/api/v1/auto_login`, undefined, timeoutMs);
   const token = res.body?.access_token;
@@ -344,17 +364,13 @@ export async function summarize({
   }
   const attributions = [];
   // The sidecar's own COST records (§4.3) share the token-attrib file with the
-  // attribution lines, so they are split out EXPLICITLY here rather than left to be
-  // ignored by some falsy check downstream. A cost record is not an attribution: it
-  // names no trace, and treating it as one would put a phantom entry in `byTrace`
-  // and let a teardown look like a spec that spent nothing.
+  // attribution lines. splitAttribRecords() separates them EXPLICITLY — see its own
+  // comment for why that split is a tested function rather than an inline branch.
   const costs = [];
   for (const file of listDir(attribDir).filter((f) => f.includes("token-attrib"))) {
-    for (const rec of parseAttribLines(read(file))) {
-      if (rec?.kind === "attrib_cost") {
-        costs.push(rec);
-        continue;
-      }
+    const split = splitAttribRecords(parseAttribLines(read(file)));
+    costs.push(...split.costs);
+    for (const rec of split.attributions) {
       attributions.push(rec);
       // The sidecar now writes the trace's own total + spans ALONGSIDE the
       // attribution fields in the same line (finding A), so an attributed
