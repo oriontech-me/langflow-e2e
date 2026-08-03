@@ -42,8 +42,20 @@ updates:
       # seen would have been six separate PRs, each booting a Langflow container
       # in the PR lane. There is exactly one production dependency (dotenv), so a
       # production group would be a group of one — it is left ungrouped on purpose.
+      #
+      # Minor and patch ONLY. A major does not belong in a group: the group is a
+      # single diff that merges as a unit, so one unreviewable major takes every
+      # reviewable minor down with it. PR #1204 is the measurement — six bumps,
+      # two majors, and all three npm lanes died at `npm ci` before running a
+      # single check, carrying four fine minors (eslint, eslint-plugin-playwright,
+      # typescript-eslint, @types/node) with them. Excluded majors are not
+      # blocked, they are UNBUNDLED: Dependabot proposes each one as its own PR,
+      # where it can be reviewed — or rejected — on its own evidence.
       dev-dependencies:
         dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "*"
 
@@ -65,6 +77,44 @@ updates:
       # and the image tags together.
       - dependency-name: "@playwright/test"
       - dependency-name: "playwright"
+
+      # PERMANENT. typescript 7 is the native (Go) port, and it is not a version
+      # bump for this repo — it is three migrations at once, measured on #1204:
+      #
+      #   1. It has no JS compiler API (`ts.transpileModule` and `ts.createProgram`
+      #      are `undefined`), so ts-node@10 throws on load. That is the
+      #      `test:units` PR gate, `regressions:check`, `check:checklist-coverage`,
+      #      `coverage:summary`, `regressions:summary`, `impacted`,
+      #      `validate:specs` — and `update-coverage-summary.yml` on `main`, which
+      #      is what keeps the QA-CHECKLIST generated blocks in sync.
+      #   2. `tsconfig.json` stops compiling: `TS5108: Option
+      #      'moduleResolution=node10' has been removed`.
+      #   3. typescript-eslint 8.x peers `typescript >=4.8.4 <6.1.0`, so `npm ci`
+      #      cannot even resolve the tree.
+      #
+      # Adopting TS 7 means replacing ts-node, rewriting moduleResolution against
+      # the repo's imports, and waiting for typescript-eslint support. A bot
+      # cannot do that — same reasoning as the @playwright/test pin above. Minor
+      # and patch updates within the current major still flow.
+      - dependency-name: "typescript"
+        update-types:
+          - "version-update:semver-major"
+
+      # TEMPORARY — remove once the lanes run Node 22. @flakiness/playwright 2.x
+      # requires `node >= 22.9.0` (1.18.0 accepted `^20.17.0 || >=22.9.0`), while
+      # every workflow that calls actions/setup-node pins "20": pr-validation.yml
+      # (3 jobs), nightly.yml, manual.yml, update-coverage-summary.yml and
+      # adaptive-impacted.yml. The reporter is configured in playwright.config.ts
+      # for every CI=true run, so accepting v2 first risks losing the Flakiness.io
+      # upload on those lanes — silently, since a manifest change resolves to zero
+      # impacted specs and the PR still looks green. daily-stable.yml is the one
+      # lane unaffected: it runs inside the Playwright image and sets up no Node.
+      #
+      # scripts/dependabot-config.test.mjs fails when the lanes no longer justify
+      # this entry, so the removal condition is enforced rather than remembered.
+      - dependency-name: "@flakiness/playwright"
+        update-types:
+          - "version-update:semver-major"
 
   - package-ecosystem: "github-actions"
     directory: "/"
