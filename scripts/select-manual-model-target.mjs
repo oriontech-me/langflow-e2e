@@ -97,10 +97,31 @@
  *
  * That is the release-gate dispatch reporting multi-provider coverage it did not have —
  * the shape #1012 forbids, in the one branch a "reads nothing" argument would exempt. So
- * `auto` reads the catalog **for reporting only** (never failing on it) and warns when
- * the fan-out it is about to get is not the one that was asked for: no catalog, an empty
- * one, or fewer than two providers in it. A warning rather than a failure, because this
- * value is also the default and a default dispatch must not depend on the sweep.
+ * `auto` reads both files **for reporting only** (never failing on either) and warns when
+ * the fan-out it is about to get is not the one that was asked for.
+ *
+ * **Both files, and the second one is the likelier failure.** Counting the catalog's
+ * providers answers "how many did `collect-models` list", not "how many will run": the
+ * resolver takes its targets from `models.json` and then attaches `providerSkipReasons()`
+ * from `providers.json`, so a provider the probe recorded `inactive` still yields a target
+ * — one that `test.skip()`s. And the two files disagree by construction, not by accident:
+ * `collectAll()` scrapes the model lists in step 2 and validates the keys in step 3, so
+ * `models.json` mirrors the Langflow catalog rather than the validation. That is how a
+ * capped Google key left all 36 google models in the catalog (#1029). A catalog-only count
+ * would print "Resolves 3 target(s)" for a dispatch where two of the three skip — the same
+ * overstatement as the absent-catalog case, reached by the route this account has actually
+ * been down three times (#772 openai, #1029 google, #1169 anthropic). So the count, the
+ * warning and the printed line are all over the **runnable** targets, and the skipped ones
+ * are named with the reason `collect-models` recorded.
+ *
+ * Reading `providers.json` here is **fail-open**, mirroring `readProviderHealth()`: absent
+ * or unparseable means "no health signal", the skip map is empty and nothing skips, so
+ * those providers are reported as runnable (with a warning that the fan-out is unverified)
+ * rather than assumed dead. Assuming the opposite would be the same overstatement pointing
+ * the other way.
+ *
+ * All of it warns rather than fails, because this value is also the default and a default
+ * dispatch must not depend on the sweep.
  *
  * Run:
  *   node scripts/select-manual-model-target.mjs --selection anthropic
@@ -195,21 +216,105 @@ function readCatalogSafely(readModels) {
 }
 
 /**
+ * The health signal `auto` needs, read without ever failing — and FAIL-OPEN, mirroring
+ * `readProviderHealth()`: an absent or unparseable providers.json means "no signal", so
+ * `providerSkipReasons()` returns an empty map and nothing skips at run time. Reporting
+ * that state as "everything is skipped" would be as wrong as the overstatement this
+ * exists to fix, in the other direction.
+ * @param {() => { providers: unknown, missing: boolean }} readProviders
+ * @returns {{ status: "ok"|"absent", skipReasons: Map<string, string> }}
+ */
+function readHealthSafely(readProviders) {
+  let payload;
+  try {
+    payload = readProviders();
+  } catch {
+    return { status: "absent", skipReasons: new Map() };
+  }
+  if (payload.missing || !Array.isArray(payload.providers)) {
+    return { status: "absent", skipReasons: new Map() };
+  }
+  const skipReasons = new Map();
+  for (const record of payload.providers) {
+    if (!record || typeof record.provider !== "string") continue;
+    if (record.status === "inactive") {
+      // Shape kept close to `inactiveReason()` in provider-health.ts — the message the
+      // specs themselves print when they skip — without importing a TypeScript module
+      // into this `.mjs` lane.
+      skipReasons.set(
+        record.provider,
+        record.error ?? `probed "${record.status}", no error message recorded`,
+      );
+    }
+  }
+  return { status: "ok", skipReasons };
+}
+
+/**
+ * The one warning that belongs to this lane and no other: `manual.yml` is the only
+ * workflow that can set BOTH `any_completion_provider` (#1187) and `provider` (#1186),
+ * and `resolveTestTargets()` makes the routing OUTRANK the pin for every spec declaring
+ * `tier: "any-completion"` — deliberately, since the pin only says which hosted provider
+ * the run would have used while the tier says it needs no hosted provider at all.
+ *
+ * The specs announce that override themselves (`console.warn`), but only in the
+ * Playwright log, one line per routed spec, long after the dispatch is committed. This
+ * lane's whole argument is that a dispatch which cannot be honoured as asked must say so
+ * where the dispatcher is looking — so a selection that is partially overridden is
+ * reported here too, at the step that resolved it.
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string} selection
+ * @returns {string[]} zero or one warning
+ */
+function routedTierWarnings(env, selection) {
+  const routed = env.ANY_COMPLETION_PROVIDER;
+  if (!routed) return [];
+  return [
+    `any_completion_provider="${routed}" is set alongside provider="${selection}", and ` +
+      `routing OUTRANKS the pin for every spec declaring tier: "any-completion" ` +
+      `(#1187): those specs run the local keyless model, NOT ${
+        selection === ALL_MODELS ? "the sweep" : selection
+      }. Deliberate — the tier needs no hosted provider — but it means this dispatch ` +
+      `does not answer "${selection}" for that tier. Dispatch without the routing to ` +
+      `cover it`,
+  ];
+}
+
+/**
  * The targets `auto` will actually resolve: the catalog's FIRST entry per provider,
  * which is what `resolveTestTargets()`' default branch produces (`collect-models`
- * promotes the settled model to the front, #570/#964). Derived from `models.json` and
- * not from `providers.json` on purpose — the catalog is the file the resolver reads, so
- * anything computed from the other one could disagree with the run.
+ * promotes the settled model to the front, #570/#964). The *models* are derived from
+ * `models.json` and never from `providers.json` — the catalog is the file the resolver
+ * reads, so a model computed from the other one could disagree with the run.
+ *
+ * `skipReason` comes from providers.json because the resolver reads BOTH: it takes the
+ * targets from the catalog and then attaches `providerSkipReasons()` to each one, so a
+ * provider present in the catalog but recorded `inactive` produces a target that
+ * `test.skip()`s. And the two files disagree routinely — `models.json` mirrors the
+ * Langflow catalog, not the validation (`collect-models` collects the model lists in its
+ * step 2 and only validates the keys in step 3), which is why a capped Google key left
+ * all 36 google models in the catalog on run 30374528125 (#1029). Counting those as
+ * coverage is the same overstatement as claiming a fan-out with no catalog at all: the
+ * log would promise three providers while two of them skip.
  * @param {Array<{provider: string, model: string}>} models
- * @returns {Array<{provider: string, model: string}>}
+ * @param {Map<string, string>} skipReasons
+ * @returns {Array<{provider: string, model: string, skipReason?: string}>}
  */
-function autoFanout(models) {
+function autoFanout(models, skipReasons = new Map()) {
   const seen = new Map();
   for (const record of models) {
     if (!record || typeof record.provider !== "string") continue;
     if (!seen.has(record.provider)) seen.set(record.provider, record.model);
   }
-  return [...seen].map(([provider, model]) => ({ provider, model }));
+  return [...seen].map(([provider, model]) => {
+    const skipReason = skipReasons.get(provider);
+    // The key is added only when there IS one: an `undefined` property would make every
+    // runnable target structurally different from the `{ provider, model }` record the
+    // typedef documents.
+    return skipReason === undefined
+      ? { provider, model }
+      : { provider, model, skipReason };
+  });
 }
 
 /**
@@ -219,8 +324,9 @@ function autoFanout(models) {
  * @property {string[]} env          `KEY=value` lines to export (empty for `auto`)
  * @property {string|null} provider  the pinned provider, when pinning
  * @property {string|null} model     the settled model, when pinning
- * @property {Array<{provider: string, model: string}>} fanout
- *   what `auto` will resolve; empty on every other mode
+ * @property {Array<{provider: string, model: string, skipReason?: string}>} fanout
+ *   what `auto` will resolve, each target carrying the reason it will skip when
+ *   providers.json records its provider `inactive`; empty on every other mode
  * @property {string|null} reason    why the request could not be honoured
  * @property {string[]} warnings     deviations worth printing on a honoured request
  */
@@ -232,11 +338,13 @@ function autoFanout(models) {
  * branch is unit-testable without a filesystem.
  *
  * @param {string} selection
- * @param {{ readProviders?: () => { providers: unknown, missing: boolean },
- *           readModels?: () => { models: unknown, missing: boolean } }} io
+ * @param {{ readProviders: () => { providers: unknown, missing: boolean },
+ *           readModels: () => { models: unknown, missing: boolean },
+ *           env?: NodeJS.ProcessEnv }} io
  * @returns {ManualTargetDecision}
- * @throws {Error} when a payload it needs is unreadable, or the selection is not one
- *   of the documented values — both undecidable, not "nothing to pin" (#1035).
+ * @throws {Error} when a payload it needs is unreadable, when a reader is missing, or
+ *   when the selection is not one of the documented values — all undecidable, not
+ *   "nothing to pin" (#1035).
  */
 export function selectManualModelTarget(selection, io = {}) {
   const known = [AUTO, ...PIN_PROVIDERS, ALL_MODELS];
@@ -249,13 +357,32 @@ export function selectManualModelTarget(selection, io = {}) {
     );
   }
 
+  // Both readers are required on every path, checked before branching. `auto` swallows a
+  // reader that THROWS on purpose (an unreadable file is a state, not a bug), and an
+  // absent seam would be swallowed the same way — reported as "models.json cannot be
+  // parsed" when the real fault is a caller that forgot to wire the reader. A
+  // programming error must reach exit 2 with its own name on it.
+  for (const seam of ["readProviders", "readModels"]) {
+    if (typeof io[seam] !== "function") {
+      throw new Error(
+        `io.${seam} must be a function — the decision reads both files and cannot ` +
+          `substitute a default for either`,
+      );
+    }
+  }
+  const env = io.env ?? {};
+
   if (selection === AUTO) {
-    // No file is REQUIRED — no state of the catalog can fail this path. It is still
+    // No file is REQUIRED — no state of either file can fail this path. Both are still
     // read, because "emits nothing" is not the property a dispatcher relies on:
-    // "delivers multi-provider" is, and an absent catalog silently collapses that to a
-    // single fallback target. See the header.
+    // "delivers multi-provider" is, and it fails in two directions. An absent catalog
+    // collapses the fan-out to a single fallback target; a catalog whose providers
+    // providers.json records `inactive` resolves targets that all skip. See the header.
     const { status, models } = readCatalogSafely(io.readModels);
-    const fanout = autoFanout(models);
+    const health = readHealthSafely(io.readProviders);
+    const fanout = autoFanout(models, health.skipReasons);
+    const runnable = fanout.filter((t) => t.skipReason === undefined);
+    const skipped = fanout.filter((t) => t.skipReason !== undefined);
     const collapsed =
       `so resolveTestTargets() takes its empty-catalog branch and every parametrized ` +
       `spec resolves ONE "provider:openai (fallback)" target with no skip reason — ` +
@@ -275,13 +402,45 @@ export function selectManualModelTarget(selection, io = {}) {
           `specs read the same file and fail loudly on it (readCatalog throws), which ` +
           `is the honest outcome — but this dispatch is not going to run`,
       );
-    } else if (fanout.length < 2) {
+    } else if (runnable.length < 2) {
+      // Counted over the RUNNABLE targets, not the catalog's providers. Both halves of
+      // the gap read as multi-provider when counted the other way: a catalog with one
+      // provider, and a catalog with three of which two are recorded `inactive`. The
+      // second is the one the account has actually been in (#772 openai, #1029 google,
+      // #1169 anthropic), and it is the one the previous count could not see.
       warnings.push(
-        `models.json lists only ${fanout.length} provider ` +
-          `(${fanout.map((t) => t.provider).join(", ")}), so "auto" is single-provider ` +
-          `in practice on this dispatch — the others failed their probe. A ` +
-          `release-gate dispatch expecting multi-provider coverage should read this as ` +
-          `the sweep having partially failed`,
+        `"auto" is single-provider in practice on this dispatch: ${runnable.length} of ` +
+          `${fanout.length} catalog provider(s) can run` +
+          `${runnable.length ? ` (${runnable.map((t) => t.provider).join(", ")})` : ""}` +
+          `${
+            skipped.length
+              ? `, and ${skipped.length} resolve(s) a target that test.skip()s because ` +
+                `providers.json records it inactive — ` +
+                `${skipped.map((t) => `${t.provider}: ${t.skipReason}`).join("; ")}`
+              : ` — the others are absent from the catalog, so their probe failed`
+          }. A release-gate dispatch expecting multi-provider coverage should read this ` +
+          `as the sweep having partially failed`,
+      );
+    } else if (skipped.length) {
+      // Still multi-provider, so not the failure above — but the fan-out is smaller than
+      // the catalog, and the line the CLI prints must not imply otherwise.
+      warnings.push(
+        `${skipped.length} of ${fanout.length} catalog provider(s) will resolve a target ` +
+          `that test.skip()s (providers.json records them inactive) — ` +
+          `${skipped.map((t) => `${t.provider}: ${t.skipReason}`).join("; ")}. This ` +
+          `dispatch still covers ${runnable.length} providers, so it is multi-provider, ` +
+          `just narrower than the catalog suggests`,
+      );
+    }
+    if (status === "ok" && health.status === "absent") {
+      // Fail-open, exactly as the specs do: no health signal means nothing skips. Worth
+      // one line, because the fan-out above is then unverified against the probe — a
+      // provider whose key is dead is counted as runnable and will fail live instead.
+      warnings.push(
+        `providers.json is absent or unparseable, so the fan-out above is the raw ` +
+          `catalog: providerSkipReasons() returns an empty map, nothing will skip, and a ` +
+          `provider whose credential is dead will fail live rather than skip. Reported ` +
+          `rather than assumed-skipped, which is what the specs do (#1029)`,
       );
     }
     return {
@@ -334,6 +493,23 @@ export function selectManualModelTarget(selection, io = {}) {
         warnings: [],
       };
     }
+    // Per-record validation, not just the array shape: everything below counts and
+    // names providers, so one malformed entry would either crash with a bare
+    // `Cannot read properties of null` or quietly land `undefined` in the sweep-size
+    // warning this dispatch is meant to read before spending an hour.
+    for (const [i, record] of models.entries()) {
+      if (record === null || typeof record !== "object") {
+        throw new Error(
+          `models.json[${i}] must be an object, got ` +
+            `${record === null ? "null" : typeof record}`,
+        );
+      }
+      for (const field of ["provider", "model"]) {
+        if (typeof record[field] !== "string" || record[field] === "") {
+          throw new Error(`models.json[${i}] has no "${field}"`);
+        }
+      }
+    }
     const providers = Array.from(new Set(models.map((m) => m.provider)));
     return {
       ok: true,
@@ -347,6 +523,7 @@ export function selectManualModelTarget(selection, io = {}) {
       fanout: [],
       reason: null,
       warnings: [
+        ...routedTierWarnings(env, ALL_MODELS),
         `ALL_MODELS=true resolves up to ${models.length} target(s) across ` +
           `${providers.length} provider(s) (${providers.join(", ")}) per parametrized ` +
           `spec — the two that declare a "requires" capability ` +
@@ -412,7 +589,7 @@ export function selectManualModelTarget(selection, io = {}) {
     model: attempt.model,
     fanout: [],
     reason: null,
-    warnings: [],
+    warnings: routedTierWarnings(env, selection),
   };
 }
 
@@ -477,6 +654,9 @@ if (import.meta.url === `file://${process.argv[1]}`) {
     decision = selectManualModelTarget(selection, {
       readProviders: () => readProvidersFile(args.providersFile),
       readModels: () => readModelsFile(args.modelsFile),
+      // Read for ONE reason: `ANY_COMPLETION_PROVIDER` is set at job level on this lane
+      // and outranks whatever this step resolves, for one tier (#1187).
+      env: process.env,
     });
   } catch (error) {
     // Fail loud (#1035): a payload or a value this cannot read must not resolve to
@@ -503,16 +683,25 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   if (decision.mode === AUTO) {
-    // States what the catalog says WILL happen, not what the default is supposed to do:
-    // the two diverge exactly when the sweep failed, which is the case the ::warning::
-    // above covers.
+    // States what the two files say WILL happen, not what the default is supposed to do:
+    // they diverge exactly when the sweep failed, which is the case the ::warning::
+    // above covers. The skipped targets are named on the same line rather than left to
+    // the warning — a count that includes them reads as coverage, and this line is the
+    // one a dispatcher screenshots.
+    const runnable = decision.fanout.filter((t) => t.skipReason === undefined);
+    const skipped = decision.fanout.filter((t) => t.skipReason !== undefined);
     process.stderr.write(
       `provider=auto — the parametrized specs keep their default fan-out, one model ` +
         `per provider in the catalog. ${
-          decision.fanout.length
-            ? `Resolves ${decision.fanout.length} target(s): ` +
-              `${decision.fanout.map((t) => `${t.provider} / ${t.model}`).join(", ")}.`
-            : `The catalog lists NONE — see the warning above.`
+          runnable.length
+            ? `Runs ${runnable.length} target(s): ` +
+              `${runnable.map((t) => `${t.provider} / ${t.model}`).join(", ")}.`
+            : `NONE will run — see the warning above.`
+        }${
+          skipped.length
+            ? ` Skips ${skipped.length} (recorded inactive): ` +
+              `${skipped.map((t) => t.provider).join(", ")}.`
+            : ""
         } This is the only lane that still runs multi-provider (#1186).\n`,
     );
   } else if (decision.mode === ALL_MODELS) {

@@ -324,8 +324,12 @@ jobs:
       # (openai's key is forwarded here, so nothing skips to make that visible), and
       # `Collect models` above is continue-on-error. `auto` warns in that state rather
       # than letting a release-gate dispatch report multi-provider coverage it did not
-      # have — the fan-out it prints is derived from the catalog, so the log cannot
-      # claim a sweep the run will not do.
+      # have — the fan-out it prints is derived from BOTH files, so the log cannot claim
+      # a sweep the run will not do. Both halves are needed: the resolver takes its
+      # targets from models.json and its skips from providers.json, and those disagree by
+      # construction (collect-models scrapes the model lists before it validates the
+      # keys), so a drained provider stays in the catalog and yields a target that
+      # test.skip()s. The count is over the RUNNABLE targets for that reason.
       - name: Resolve the run's provider selection
         run: |
           node scripts/select-manual-model-target.mjs --selection "$SELECTION"

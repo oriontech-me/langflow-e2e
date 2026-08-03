@@ -104,25 +104,37 @@ test("auto emits nothing at all — the default dispatch behaves as it did pre-#
   assert.equal(d.model, null);
 });
 
-test("auto never fails on the catalog, whatever state it is in", () => {
+test("auto never fails on either file, whatever state they are in", () => {
   // The default path must not depend on a sweep that is continue-on-error here — not
-  // even on a payload that throws.
-  for (const readModels of [
+  // even on a payload that throws. Both files are read now (the fan-out is only honest
+  // when it accounts for the health map), so both must be survivable.
+  const badReads = [
     () => {
       throw new Error("boom");
     },
-    () => ({ models: null, missing: true }),
-    () => ({ models: [], missing: false }),
-    () => ({ models: { openai: [] }, missing: false }),
+    () => ({ models: null, providers: null, missing: true }),
+    () => ({ models: [], providers: [], missing: false }),
+    () => ({ models: { openai: [] }, providers: { openai: "active" }, missing: false }),
+  ];
+  for (const readModels of badReads) {
+    for (const readProviders of badReads) {
+      const d = selectManualModelTarget(AUTO, { readModels, readProviders });
+      assert.equal(d.ok, true);
+      assert.deepEqual(d.env, []);
+    }
+  }
+});
+
+test("auto fails LOUDLY when a reader seam is missing — that is a bug, not a state", () => {
+  // An absent reader used to be swallowed by the same try/catch that tolerates an
+  // unreadable file, and reported as "models.json cannot be parsed": a caller's wiring
+  // mistake diagnosed as a CI file state, on the one path that never fails.
+  for (const io of [
+    {},
+    { readModels: () => ({ models: [], missing: false }) },
+    { readProviders: () => ({ providers: [], missing: false }) },
   ]) {
-    const d = selectManualModelTarget(AUTO, {
-      readProviders: () => {
-        throw new Error("auto must not read providers.json");
-      },
-      readModels,
-    });
-    assert.equal(d.ok, true);
-    assert.deepEqual(d.env, []);
+    assert.throws(() => selectManualModelTarget(AUTO, io), /must be a function/);
   }
 });
 
@@ -168,18 +180,105 @@ test("auto warns when the catalog leaves it single-provider in practice", () => 
   // Not an error — one provider probing active is a legitimate state — but a dispatch
   // made for the release gate is asking for multi-provider, so a partially failed sweep
   // must not read as a successful one.
-  const d = selectManualModelTarget(AUTO, {
-    readProviders: () => {
-      throw new Error("auto must not read providers.json");
-    },
-    readModels: () => ({
-      models: [{ provider: "openai", model: "gpt-4o-mini" }],
-      missing: false,
-    }),
-  });
+  const d = selectManualModelTarget(
+    AUTO,
+    io({ models: [{ provider: "openai", model: "gpt-4o-mini" }] }),
+  );
   assert.equal(d.ok, true);
   assert.equal(d.fanout.length, 1);
   assert.match(d.warnings[0], /single-provider in practice/);
+  assert.match(d.warnings[0], /absent from the catalog/);
+});
+
+test("auto counts the RUNNABLE targets, not the catalog's providers", () => {
+  // The gap this closes. models.json mirrors the Langflow catalog, NOT the probe:
+  // collectAll() scrapes the model lists in step 2 and validates the keys in step 3, so a
+  // drained provider keeps every one of its models in the catalog (#1029 left all 36
+  // google models there under a spending cap). resolveTestTargets() then resolves a
+  // target for it and providerSkipReasons() makes that target test.skip().
+  //
+  // Counting the catalog therefore reported "3 target(s)" for a dispatch that ran ONE —
+  // the release-gate dispatch claiming multi-provider coverage it did not have, which is
+  // the exact shape the auto guard exists to prevent, reached through the file it was
+  // not reading. This is also the state the account has been in three times: #772
+  // (openai), #1029 (google), #1169 (anthropic).
+  const providers = healthy().map((p) =>
+    p.provider === "openai"
+      ? p
+      : { ...p, status: "inactive", model: null, error: `${p.provider} key is drained` },
+  );
+  const d = selectManualModelTarget(
+    AUTO,
+    io({
+      providers,
+      models: [
+        { provider: "openai", model: "gpt-4o-mini" },
+        { provider: "anthropic", model: "claude-sonnet-5" },
+        { provider: "google", model: "gemini-2.5-flash" },
+      ],
+    }),
+  );
+  assert.equal(d.ok, true, "auto must still not fail");
+  assert.equal(d.fanout.length, 3, "the fan-out still describes the whole catalog");
+  // Each skipped target carries the reason collect-models recorded, so the dispatcher
+  // does not have to open the job log to learn which credential is dead.
+  assert.deepEqual(
+    d.fanout.filter((t) => t.skipReason).map((t) => t.provider),
+    ["anthropic", "google"],
+  );
+  assert.match(d.warnings[0], /single-provider in practice/);
+  assert.match(d.warnings[0], /1 of 3 catalog provider\(s\) can run/);
+  assert.match(d.warnings[0], /anthropic: anthropic key is drained/);
+  assert.match(d.warnings[0], /google: google key is drained/);
+});
+
+test("a runnable target carries no skipReason key at all", () => {
+  // Not cosmetic: `{ provider, model }` is the record the typedef documents and what the
+  // fan-out assertions compare against, so an always-present `skipReason: undefined`
+  // would make every one of them structurally unequal.
+  const d = selectManualModelTarget(AUTO, io());
+  assert.deepEqual(Object.keys(d.fanout[0]), ["provider", "model"]);
+});
+
+test("auto still warns when a provider is skipped but two remain — multi-provider, narrower", () => {
+  // Above the single-provider threshold, so not the failure the warning above reports,
+  // but the printed fan-out is smaller than the catalog and the line must not imply
+  // otherwise.
+  const providers = healthy().map((p) =>
+    p.provider === "google" ? { ...p, status: "inactive", model: null } : p,
+  );
+  const d = selectManualModelTarget(
+    AUTO,
+    io({
+      providers,
+      models: [
+        { provider: "openai", model: "gpt-4o-mini" },
+        { provider: "anthropic", model: "claude-haiku-4-5" },
+        { provider: "google", model: "gemini-2.5-flash" },
+      ],
+    }),
+  );
+  assert.equal(d.ok, true);
+  assert.equal(d.warnings.length, 1);
+  assert.match(d.warnings[0], /1 of 3 catalog provider\(s\) will resolve a target/);
+  assert.match(d.warnings[0], /still covers 2 providers/);
+});
+
+test("an absent providers.json is FAIL-OPEN: nothing is assumed skipped, and it says so", () => {
+  // readProviderHealth() returns null on an absent file and providerSkipReasons() then
+  // returns an empty map, so nothing skips at run time — a provider with a dead key
+  // fails live instead. Reporting those targets as skipped would be the same
+  // overstatement pointing the other way, so they count as runnable and the gap is
+  // named.
+  const d = selectManualModelTarget(AUTO, io({ providersMissing: true }));
+  assert.equal(d.ok, true);
+  assert.deepEqual(
+    d.fanout.map((t) => t.skipReason),
+    [undefined, undefined],
+  );
+  assert.equal(d.warnings.length, 1);
+  assert.match(d.warnings[0], /providers\.json is absent or unparseable/);
+  assert.match(d.warnings[0], /nothing will skip/);
 });
 
 // ─── a provider pin ──────────────────────────────────────────────────────────
@@ -289,6 +388,64 @@ test("a malformed models.json throws rather than sweeping nothing", () => {
     () => selectManualModelTarget(ALL_MODELS, io({ models: { openai: [] } })),
     /must be an array of \{ provider, model \} records/,
   );
+});
+
+test("all-models validates each record, not just the array shape", () => {
+  // Everything after this point counts and names providers. A null entry used to crash
+  // with a bare "Cannot read properties of null" and a missing field used to put
+  // `undefined` into the sweep-size warning — the one line a dispatcher reads before
+  // committing an hour of agent runs. Undecidable payload, so exit 2 (#1035).
+  assert.throws(
+    () => selectManualModelTarget(ALL_MODELS, io({ models: [null] })),
+    /models\.json\[0\] must be an object, got null/,
+  );
+  assert.throws(
+    () => selectManualModelTarget(ALL_MODELS, io({ models: [{ model: "gpt-4o-mini" }] })),
+    /models\.json\[0\] has no "provider"/,
+  );
+  assert.throws(
+    () => selectManualModelTarget(ALL_MODELS, io({ models: [{ provider: "openai" }] })),
+    /models\.json\[0\] has no "model"/,
+  );
+});
+
+// ─── the one interaction only this lane can have (#1186 × #1187) ──────────────
+
+test("a pin announces that any-completion routing OUTRANKS it", () => {
+  // This is the only workflow that can set both inputs, and resolveTestTargets() makes
+  // ANY_COMPLETION_PROVIDER win for `tier: "any-completion"` on purpose (#1187). The
+  // specs warn about the override themselves, but only in the Playwright log, one line
+  // per routed spec, long after the dispatch is committed — and this lane's whole
+  // argument is that a request it cannot honour as asked must say so where the
+  // dispatcher is looking.
+  const d = selectManualModelTarget("anthropic", {
+    ...io(),
+    env: { ANY_COMPLETION_PROVIDER: "ollama" },
+  });
+  assert.equal(d.ok, true, "the pin is still honoured — routing is scoped to one tier");
+  assert.deepEqual(d.env, [
+    "MODEL_TEST_ID=claude-haiku-4-5",
+    "MODEL_TEST_PROVIDER=anthropic",
+  ]);
+  assert.equal(d.warnings.length, 1);
+  assert.match(d.warnings[0], /routing OUTRANKS the pin/);
+  assert.match(d.warnings[0], /any-completion/);
+});
+
+test("all-models announces the same override, and no selection warns without routing", () => {
+  const routed = selectManualModelTarget(ALL_MODELS, {
+    ...io(),
+    env: { ANY_COMPLETION_PROVIDER: "ollama" },
+  });
+  assert.match(routed.warnings[0], /routing OUTRANKS the pin/);
+  assert.match(routed.warnings[1], /up to 3 target\(s\)/);
+
+  // "hosted" maps to an EMPTY variable in manual.yml, which is what resolveTestTargets
+  // reads as "not routed" — so an empty value must not produce the warning.
+  for (const env of [{}, { ANY_COMPLETION_PROVIDER: "" }]) {
+    const d = selectManualModelTarget("openai", { ...io(), env });
+    assert.equal(d.warnings.length, 0);
+  }
 });
 
 // ─── the selection vocabulary ────────────────────────────────────────────────
@@ -445,6 +602,46 @@ test("auto writes NOTHING to GITHUB_ENV and exits 0", () => {
   assert.equal(r.json.ok, true);
 });
 
+test("the auto line reports what RUNS and names what skips, never the raw catalog", () => {
+  // The line a dispatcher screenshots. Printing "Resolves 3 target(s)" while two of the
+  // three test.skip() is the overstatement the fan-out guard exists to prevent, so the
+  // count is over the runnable targets and the skipped ones are named on the same line —
+  // not left to a ::warning:: that scrolls past.
+  const providers = healthy().map((p) =>
+    p.provider === "openai"
+      ? p
+      : { ...p, status: "inactive", model: null, error: "credit balance is too low" },
+  );
+  const r = runCli(["--selection", "auto"], {
+    providers,
+    models: [
+      { provider: "openai", model: "gpt-4o-mini" },
+      { provider: "anthropic", model: "claude-sonnet-5" },
+      { provider: "google", model: "gemini-2.5-flash" },
+    ],
+  });
+  assert.equal(r.code, 0);
+  assert.equal(r.githubEnv.trim(), "");
+  assert.match(r.stderr, /Runs 1 target\(s\): openai \/ gpt-4o-mini\./);
+  assert.match(r.stderr, /Skips 2 \(recorded inactive\): anthropic, google\./);
+  assert.doesNotMatch(r.stderr, /Runs 3 target/);
+  assert.match(r.stderr, /::warning::select-manual-model-target/);
+});
+
+test("the routing override reaches the log through the process environment", () => {
+  const r = runCli(["--selection", "openai"], {
+    providers: healthy(),
+    env: { ANY_COMPLETION_PROVIDER: "ollama" },
+  });
+  assert.equal(r.code, 0);
+  assert.match(r.stderr, /::warning::.*routing OUTRANKS the pin/);
+  // Still pinned: the override is scoped to one tier, so the variables must still be set.
+  assert.deepEqual(r.githubEnv.trim().split("\n").sort(), [
+    "MODEL_TEST_ID=gpt-4o-mini",
+    "MODEL_TEST_PROVIDER=openai",
+  ]);
+});
+
 test("no --selection at all is auto, and so is an empty one", () => {
   // A workflow_dispatch queued before this input existed sends no value; failing it
   // would break the re-run of an older dispatch.
@@ -510,7 +707,13 @@ test("manual.yml offers exactly the selections this script accepts", () => {
   // The choice list and the script's vocabulary are two halves of one contract; a
   // drift makes the workflow offer a value that exits 2, or hide one that works.
   const yml = fs.readFileSync(WORKFLOW, "utf-8");
-  const input = yml.slice(yml.indexOf("      provider:"));
+  const from = yml.indexOf("      provider:");
+  assert.ok(from > -1, "the provider input is gone");
+  // Closed at the NEXT input rather than run to end of file: a slice that reaches the
+  // rest of the workflow would satisfy the `default: "auto"` assertion from any other
+  // input's default, so deleting this one's would still pass.
+  const next = yml.slice(from + 1).search(/^ {6}\w+:$/m);
+  const input = next === -1 ? yml.slice(from) : yml.slice(from, from + 1 + next);
   const options = input.slice(input.indexOf("options:"), input.indexOf("default:"));
   const offered = [...options.matchAll(/^ +- (\S+)$/gm)].map((m) => m[1]);
   assert.deepEqual(offered, [AUTO, ...PIN_PROVIDERS, ALL_MODELS]);
