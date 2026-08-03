@@ -68,8 +68,17 @@ docker run -d \
   -e LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
   -e LANGFLOW_DEACTIVATE_TRACING=true \
   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS="${LANGFLOW_ALLOW_CUSTOM_COMPONENTS:-true}" \
+  -e LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
   -e LANGFLOW_WORKERS="${LANGFLOW_WORKERS:-1}" \
   "${IMAGE}"
+
+# LANGFLOW_A2A_ENABLED defaults to true here for the same reason
+# LANGFLOW_ALLOW_CUSTOM_COMPONENTS does: the product default is OFF and the
+# surface disappears silently. A2A's router is ALWAYS mounted and a per-request
+# guard 404s every /api/v1/a2a/* route when the flag is off, so a disabled
+# server is indistinguishable from an unmounted one — a spec written against it
+# passes while testing nothing (#1240; surface scoped in #1195). Set
+# LANGFLOW_A2A_ENABLED=false to reproduce the disabled state on purpose.
 
 # LANGFLOW_WORKERS defaults to 1 here on purpose. Langflow's own default is
 # (2 * cpu_count) + 1 gunicorn workers, each inheriting the full in-memory

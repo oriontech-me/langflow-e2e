@@ -52,6 +52,13 @@ jobs:
           # (custom-component creation disabled → sidebar button hidden, API
           # 403). Enable it so the custom-component specs exercise the feature.
           LANGFLOW_ALLOW_CUSTOM_COMPONENTS: "true"
+          # A2A is off by default (lfx `a2a_enabled=False`) and its router is ALWAYS
+          # mounted, so with the flag off the three /api/v1/a2a/* routes answer 404 —
+          # indistinguishable from "not mounted". Enable it so the
+          # core-functionality/a2a specs exercise the surface instead of asserting
+          # against a disabled one, which would pass while testing nothing (#1240;
+          # surface scoped in #1195).
+          LANGFLOW_A2A_ENABLED: "true"
           # Keep tracing ON: the @stable observability/traces specs probe
           # /api/v1/monitor/traces, which is populated by the internal native
           # tracer. That tracer's worker never starts when tracing is
