@@ -30,7 +30,14 @@ updates:
     # Langflow service container, and the daily is the run that must not contend
     # for the runner.
 
-    open-pull-requests-limit: 3
+    # Raised from 3 with the group's minor/patch limit below: the limit counts the
+    # group PR PLUS every now-unbundled major, and majors are by construction the
+    # slowest to merge, so they hold slots. Today that is already 3 (the group,
+    # @types/node 26, dotenv 17) — at the old limit the next major would have been
+    # suppressed, reintroducing this change's own failure mode (minors held up by a
+    # major) through the limit instead of through the diff. Security-update PRs do
+    # not count against it.
+    open-pull-requests-limit: 6
     labels:
       - "infra"
     commit-message:
@@ -42,12 +49,32 @@ updates:
       # seen would have been six separate PRs, each booting a Langflow container
       # in the PR lane. There is exactly one production dependency (dotenv), so a
       # production group would be a group of one — it is left ungrouped on purpose.
+      #
+      # Minor and patch ONLY. A major does not belong in a group: the group is a
+      # single diff that merges as a unit, so one unreviewable major takes every
+      # reviewable minor down with it. PR #1204 is the measurement — six bumps,
+      # two majors, and all three npm lanes died at `npm ci` before running a
+      # single check, carrying four fine minors (eslint, eslint-plugin-playwright,
+      # typescript-eslint, @types/node) with them. Excluded majors are not
+      # blocked, they are UNBUNDLED: Dependabot proposes each one as its own PR,
+      # where it can be reviewed — or rejected — on its own evidence.
       dev-dependencies:
         dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
         patterns:
           - "*"
 
     ignore:
+      # NOTE on everything in this list: `ignore` is one of the options that also
+      # applies to Dependabot SECURITY updates, not just version updates (it carries
+      # the shield icon in the options reference; `allow`'s `update-types` has an
+      # explicit version-updates-only carve-out and `ignore` has no equivalent). So
+      # an advisory whose fixed version falls inside an ignored range produces no PR
+      # at all — the alert simply stays open. That is the cost of every entry here,
+      # and the reason each is scoped as narrowly as its own evidence allows.
+      #
       # @playwright/test and playwright are pinned to an EXACT version on purpose,
       # and the pin is load-bearing across files Dependabot cannot edit. Bumping
       # the runner means 8 coordinated edits across 3 files:
@@ -65,6 +92,49 @@ updates:
       # and the image tags together.
       - dependency-name: "@playwright/test"
       - dependency-name: "playwright"
+
+      # typescript >= 7 ONLY, and scoped by version range rather than by
+      # `update-types: semver-major` on purpose. TS 7 is the native (Go) port, and it
+      # is not a version bump for this repo — it is three migrations at once, each
+      # measured against 7.0.2 on #1204:
+      #
+      #   1. It has no JS compiler API (`ts.transpileModule` and `ts.createProgram`
+      #      are `undefined`), so ts-node@10 throws on load. That is the
+      #      `test:units` PR gate, `regressions:check`, `check:checklist-coverage`,
+      #      `coverage:summary`, `regressions:summary`, `impacted`,
+      #      `validate:specs` — and `update-coverage-summary.yml` on `main`, which
+      #      is what keeps the QA-CHECKLIST generated blocks in sync.
+      #   2. `tsconfig.json` stops compiling: `TS5108: Option
+      #      'moduleResolution=node10' has been removed`.
+      #   3. typescript-eslint 8.x peers `typescript >=4.8.4 <6.1.0`, so `npm ci`
+      #      cannot even resolve the tree.
+      #
+      # Adopting TS 7 means replacing ts-node, rewriting moduleResolution against
+      # the repo's imports, and waiting for typescript-eslint support. A bot cannot
+      # do that — same reasoning as the @playwright/test pin above.
+      #
+      # None of it is true of TS 6, and a `semver-major` scope would have blocked TS 6
+      # while citing those three reasons. Measured against 6.0.3, the version
+      # Dependabot is proposing today (#1228): the JS compiler API is intact and
+      # ts-node runs; the same tsconfig yields `TS5107 ... is deprecated and will stop
+      # functioning in TypeScript 7.0`, silenced by one `ignoreDeprecations: "6.0"`
+      # line; and typescript-eslint 8.65.0's peer range (`<6.1.0`) admits it. So TS 6
+      # is deliberately let through — as its own PR, since the group takes no majors —
+      # for a reviewer to decide on. Blocking a major nobody has evidence against is
+      # how a rationale rots into a rule.
+      - dependency-name: "typescript"
+        versions:
+          - ">=7"
+
+      # There is deliberately NO entry for @flakiness/playwright. 2.0.0 dropped Node
+      # 20 (`engines` went to `>=22.9.0`) while every lane here pins "20" — but 2.0.1,
+      # `latest` since 2026-07-30, restored `^20.17.0 || >=22.9.0`. An ignore written
+      # against 2.0.0 would have blocked a release that was already compatible, and a
+      # guard tying its removal to the Node pins would have failed the PR that removed
+      # it. v2 arrives as its own PR, which is where its two real breaking changes
+      # (the dropped `flakiness-playwright-shard` bin, unused here — sharding is
+      # scripts/partition-shards.mjs; and `shardBalancing` needing Playwright 1.62+,
+      # also unused) can be checked against what this repo does.
 
   - package-ecosystem: "github-actions"
     directory: "/"
