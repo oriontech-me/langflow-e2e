@@ -24,12 +24,19 @@ import {
   AUTO,
   ALL_MODELS,
   PIN_PROVIDERS,
-  describeAutoFanout,
   readModelsFile,
   selectManualModelTarget,
 } from "./select-manual-model-target.mjs";
 
 const SCRIPT = path.join(import.meta.dirname, "select-manual-model-target.mjs");
+const RUN_E2E = path.join(
+  import.meta.dirname,
+  "..",
+  ".github",
+  "actions",
+  "run-e2e",
+  "action.yml",
+);
 const WORKFLOW = path.join(
   import.meta.dirname,
   "..",
@@ -97,18 +104,82 @@ test("auto emits nothing at all — the default dispatch behaves as it did pre-#
   assert.equal(d.model, null);
 });
 
-test("auto needs no file: it resolves even with providers.json and models.json absent", () => {
-  // The default path must not depend on a sweep that is continue-on-error here.
+test("auto never fails on the catalog, whatever state it is in", () => {
+  // The default path must not depend on a sweep that is continue-on-error here — not
+  // even on a payload that throws.
+  for (const readModels of [
+    () => {
+      throw new Error("boom");
+    },
+    () => ({ models: null, missing: true }),
+    () => ({ models: [], missing: false }),
+    () => ({ models: { openai: [] }, missing: false }),
+  ]) {
+    const d = selectManualModelTarget(AUTO, {
+      readProviders: () => {
+        throw new Error("auto must not read providers.json");
+      },
+      readModels,
+    });
+    assert.equal(d.ok, true);
+    assert.deepEqual(d.env, []);
+  }
+});
+
+test("auto reports the fan-out it will actually get: first model per provider", () => {
+  // The catalog is the file resolveTestTargets() reads, and its default branch takes the
+  // first entry per provider — so this must be derived from models.json, not from
+  // providers.json, or the log could disagree with the run.
+  const d = selectManualModelTarget(AUTO, io());
+  assert.deepEqual(d.fanout, [
+    { provider: "openai", model: "gpt-4o-mini" },
+    { provider: "anthropic", model: "claude-haiku-4-5" },
+  ]);
+  assert.deepEqual(d.warnings, []);
+});
+
+test("auto WARNS when an absent catalog will collapse it to a single fallback target", () => {
+  // The regression this exists for: collect-models writes models.json at the END of its
+  // sweep and is continue-on-error here, so a sweep that throws part-way leaves no
+  // catalog. resolveTestTargets() then returns ONE "provider:openai (fallback)" target
+  // with skipReason undefined (the health map is empty on an absent providers.json),
+  // openai's key IS forwarded on this lane, so nothing skips: ~30 parametrized agent
+  // tests run one provider and the release-gate dispatch reads green.
+  const d = selectManualModelTarget(AUTO, io({ modelsMissing: true }));
+  assert.equal(d.ok, true, "auto must still not fail");
+  assert.deepEqual(d.fanout, []);
+  assert.equal(d.warnings.length, 1);
+  assert.match(d.warnings[0], /does not exist/);
+  assert.match(d.warnings[0], /NOT deliver multi-provider/);
+});
+
+test("auto warns on an empty catalog and on an unreadable one, distinctly", () => {
+  const empty = selectManualModelTarget(AUTO, io({ models: [] }));
+  assert.equal(empty.ok, true);
+  assert.match(empty.warnings[0], /is empty/);
+  assert.match(empty.warnings[0], /NOT deliver multi-provider/);
+
+  const bad = selectManualModelTarget(AUTO, io({ models: { openai: [] } }));
+  assert.equal(bad.ok, true);
+  assert.match(bad.warnings[0], /cannot be parsed/);
+});
+
+test("auto warns when the catalog leaves it single-provider in practice", () => {
+  // Not an error — one provider probing active is a legitimate state — but a dispatch
+  // made for the release gate is asking for multi-provider, so a partially failed sweep
+  // must not read as a successful one.
   const d = selectManualModelTarget(AUTO, {
     readProviders: () => {
       throw new Error("auto must not read providers.json");
     },
-    readModels: () => {
-      throw new Error("auto must not read models.json");
-    },
+    readModels: () => ({
+      models: [{ provider: "openai", model: "gpt-4o-mini" }],
+      missing: false,
+    }),
   });
   assert.equal(d.ok, true);
-  assert.deepEqual(d.env, []);
+  assert.equal(d.fanout.length, 1);
+  assert.match(d.warnings[0], /single-provider in practice/);
 });
 
 // ─── a provider pin ──────────────────────────────────────────────────────────
@@ -189,7 +260,12 @@ test("all-models emits ALL_MODELS alone — never narrowed by a pin variable", (
 test("all-models announces the size of the sweep it is about to run", () => {
   const d = selectManualModelTarget(ALL_MODELS, io());
   assert.equal(d.warnings.length, 1);
-  assert.match(d.warnings[0], /3 target\(s\) across 2 provider\(s\)/);
+  assert.match(d.warnings[0], /up to 3 target\(s\) across 2 provider\(s\)/);
+  // "for EVERY parametrized spec" was wrong: the two specs that declare a `requires`
+  // capability sweep a capability-filtered subset (CAPABILITY_EXCLUDES in
+  // test-targets.ts), so a dispatcher multiplying this by the spec count mis-counts.
+  assert.match(d.warnings[0], /requires/);
+  assert.match(d.warnings[0], /90-minute timeout/);
 });
 
 test("all-models over an ABSENT catalog declines — a fallback target is not a sweep", () => {
@@ -226,42 +302,65 @@ test("an unknown selection throws — it must not resolve to auto", () => {
   assert.throws(() => selectManualModelTarget("all_models", io()), /is not one of/);
 });
 
-test("PIN_PROVIDERS is exactly the set of keys run-e2e forwards to the specs", () => {
+test("PIN_PROVIDERS is exactly the set of keys run-e2e DECLARES", () => {
   // A spec calls hasProviderEnvKeys(<provider>) and skips itself when its own key is
-  // absent (#967), so pinning to a provider whose key this lane never passes would
-  // skip everything and read green.
-  const action = fs.readFileSync(
-    path.join(import.meta.dirname, "..", ".github", "actions", "run-e2e", "action.yml"),
-    "utf-8",
-  );
-  const forwarded = [...action.matchAll(/^ {2}(\w+)_api_key:$/gm)].map((m) => m[1]);
-  assert.deepEqual(forwarded.slice().sort(), PIN_PROVIDERS.slice().sort());
+  // absent (#967), so pinning to a provider whose key this lane never passes would skip
+  // everything and read green.
+  const action = fs.readFileSync(RUN_E2E, "utf-8");
+  const declared = [...action.matchAll(/^ {2}(\w+)_api_key:$/gm)].map((m) => m[1]);
+  assert.deepEqual(declared.slice().sort(), PIN_PROVIDERS.slice().sort());
 });
 
-// ─── the log-only helper ─────────────────────────────────────────────────────
-
-test("describeAutoFanout lists the active providers and never throws", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manual-target-"));
-  try {
-    const file = path.join(dir, "providers.json");
-    fs.writeFileSync(file, JSON.stringify(healthy()));
-    assert.match(describeAutoFanout(file), /openai \/ gpt-4o-mini/);
-
-    // A file it cannot read must not turn the default dispatch red: the auto path
-    // needs no file, and this listing is a convenience.
-    fs.writeFileSync(file, "{ not json");
-    assert.equal(describeAutoFanout(file), null);
-    assert.equal(describeAutoFanout(path.join(dir, "absent.json")), null);
-
-    fs.writeFileSync(
-      file,
-      JSON.stringify([{ provider: "openai", status: "inactive", model: null }]),
+test("every run-e2e step that forwards ONE provider key forwards ALL of them", () => {
+  // Declaring the input is not forwarding it. Deleting a single
+  // `GOOGLE_API_KEY: ${{ inputs.google_api_key }}` line from a step's `env:` leaves the
+  // input declared and the guard above green, while `provider=google` pins fine and then
+  // every google spec skips on hasProviderEnvKeys — #967 reached from the other side.
+  // run-e2e starts Playwright twice (the main run and the destructive lane), so this
+  // holds per step, not once per file.
+  const action = fs.readFileSync(RUN_E2E, "utf-8");
+  const counts = PIN_PROVIDERS.map((p) => [
+    p,
+    [
+      ...action.matchAll(
+        new RegExp(
+          `${p.toUpperCase()}_API_KEY: \\$\\{\\{ inputs\\.${p}_api_key \\}\\}`,
+          "g",
+        ),
+      ),
+    ].length,
+  ]);
+  const [firstProvider, first] = counts[0];
+  assert.ok(first > 0, "run-e2e forwards no provider key at all");
+  for (const [provider, count] of counts) {
+    assert.equal(
+      count,
+      first,
+      `run-e2e forwards ${provider}'s key ${count} time(s) and ${firstProvider}'s ` +
+        `${first} — a step that forwards one must forward all three`,
     );
-    assert.equal(describeAutoFanout(file), "none probed active");
-  } finally {
-    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("the Docker job passes every provider key it can pin to into run-e2e", () => {
+  // The caller's side of the same failure: dropping `google_api_key:` from the `with:`
+  // block leaves both guards above green and still makes `provider=google` a green
+  // all-skip (#967 is exactly this, found the hard way).
+  const yml = fs.readFileSync(WORKFLOW, "utf-8");
+  const docker = yml.slice(yml.indexOf("  e2e-docker:"), yml.indexOf("  e2e-url:"));
+  const call = docker.slice(docker.indexOf("uses: ./.github/actions/run-e2e"));
+  for (const provider of PIN_PROVIDERS) {
+    assert.match(
+      call,
+      new RegExp(
+        `${provider}_api_key: \\$\\{\\{ secrets\\.${provider.toUpperCase()}_API_KEY \\}\\}`,
+      ),
+      `the Docker job does not pass ${provider}'s key to run-e2e`,
+    );
+  }
+});
+
+// ─── the file readers ────────────────────────────────────────────────────────
 
 test("readModelsFile reports a missing file rather than throwing", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "manual-target-"));
@@ -436,21 +535,50 @@ test("the Docker job resolves the selection between the health gate and the run"
   assert.ok(pin < run, "the selection must resolve BEFORE the run");
 });
 
-test("the selection step is NOT continue-on-error", () => {
-  // The daily's rotation is continue-on-error on purpose (#980). Here the input is
-  // the request: continuing past a failed pin runs the other providers, answers a
-  // different question and reports success (#1012).
-  const yml = fs.readFileSync(WORKFLOW, "utf-8");
-  const body = stepBody(yml, "Resolve the run's provider selection");
-  assert.doesNotMatch(body, /continue-on-error/);
+test("the selection step passes the dispatch INPUT through, not a fixed value", () => {
+  // Hardcoding `--selection auto` (or dropping the env binding, which resolves to the
+  // empty string and therefore to auto) makes the whole input decorative: every dispatch
+  // runs multi-provider whatever was chosen, and the log agrees with itself. No
+  // behavioural test can catch that — the value is bound in YAML.
+  const body = stepBody(
+    fs.readFileSync(WORKFLOW, "utf-8"),
+    "Resolve the run's provider selection",
+  );
+  assert.match(body, /--selection "\$SELECTION"/);
+  assert.match(body, /SELECTION: \$\{\{ github\.event\.inputs\.provider \}\}/);
+});
+
+test("the selection step cannot be softened into a non-gate", () => {
+  // The daily's rotation is continue-on-error on purpose (#980). Here the input is the
+  // request: continuing past a failed pin runs the other providers, answers a different
+  // question and reports success (#1012). `continue-on-error` is only ONE spelling of
+  // that — `|| true` after the node call achieves it with different characters, and an
+  // `if:` would let the step be skipped entirely.
+  const body = stepBody(
+    fs.readFileSync(WORKFLOW, "utf-8"),
+    "Resolve the run's provider selection",
+  );
+  for (const softener of [/continue-on-error/, /\|\|\s*true/, /;\s*true/, /^\s+if:/m]) {
+    assert.doesNotMatch(body, softener);
+  }
 });
 
 test("the pin variables reach the run through GITHUB_ENV, never an inline env:", () => {
   // Two inline lines would reintroduce both failure modes the script exists to
   // prevent: a hardcoded id that skips silently when access is lost (#570/#1012),
   // and a provider without an id (the catalog sweep, #1169).
-  const yml = fs.readFileSync(WORKFLOW, "utf-8");
-  assert.doesNotMatch(yml, /^\s+(MODEL_TEST_(ID|PROVIDER)|ALL_MODELS):/m);
+  //
+  // run-e2e is checked too, and it is the more dangerous of the two: a step-level `env:`
+  // OUTRANKS $GITHUB_ENV, so a MODEL_TEST_ID declared there would silently shadow
+  // everything this step resolved — and that is where the Playwright process actually
+  // starts, for both jobs.
+  for (const file of [WORKFLOW, RUN_E2E]) {
+    assert.doesNotMatch(
+      fs.readFileSync(file, "utf-8"),
+      /^\s+(MODEL_TEST_(ID|PROVIDER)|ALL_MODELS):/m,
+      `${path.basename(file)} sets a pin variable inline`,
+    );
+  }
 });
 
 test("the external-URL job rejects any selection other than auto", () => {
@@ -464,8 +592,18 @@ test("the external-URL job rejects any selection other than auto", () => {
   assert.ok(reject < run, "the rejection must come BEFORE the run");
   const body = stepBody(urlJob, "Reject a provider selection on an external target");
   assert.match(body, /exit 1/);
-  // Empty is accepted alongside auto so a dispatch queued before the input existed
-  // can still be re-run.
-  assert.match(body, /inputs\.provider != ''/);
-  assert.match(body, /inputs\.provider != 'auto'/);
+  // The whole condition, normalized — not two substring probes. Asserting that both
+  // operands appear says nothing about the OPERATOR, and flipping `&&` to `||` makes it
+  // always true: EVERY external-URL dispatch would fail, `auto` and empty included.
+  // Empty is accepted alongside auto so a dispatch queued before the input existed can
+  // still be re-run, which is why the condition has two clauses at all.
+  const condition = body
+    .slice(body.indexOf("if:"), body.indexOf("env:"))
+    .replace(/^\s*if: >-/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  assert.equal(
+    condition,
+    "github.event.inputs.provider != '' && github.event.inputs.provider != 'auto'",
+  );
 });

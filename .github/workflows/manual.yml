@@ -36,7 +36,9 @@ on:
           (#1169) and daily-stable rotates one provider per weekday (#1185).
             • auto       — one model per active provider (multi-provider, unchanged)
             • openai / anthropic / google — pin to that provider's SETTLED model
-            • all-models — every model in the catalog (deliberate, expensive sweep)
+            • all-models — every model in the catalog (deliberate, expensive sweep;
+              NARROW it with test_tag/test_grep — ~30 parametrized agent tests over a
+              90-model catalog does not finish inside this job's 90-minute timeout)
           Docker targets only: the external-URL job rejects anything but "auto"
           (it runs no collect-models and receives no provider key).
         required: false
@@ -315,8 +317,15 @@ jobs:
       # providers, answer a different question and report success, which is the shape
       # #1012 forbids. This lane is never scheduled, so failing costs a re-dispatch.
       #
-      # `auto` (the default) emits nothing and cannot fail, which is what makes
-      # "unchanged behaviour" a property rather than a promise.
+      # `auto` (the default) emits nothing, and no state of providers.json/models.json
+      # can fail it — that is what makes "unchanged behaviour" a property rather than a
+      # promise. It is not silent, though: an absent or empty catalog collapses the
+      # default fan-out to ONE "provider:openai (fallback)" target with no skip reason
+      # (openai's key is forwarded here, so nothing skips to make that visible), and
+      # `Collect models` above is continue-on-error. `auto` warns in that state rather
+      # than letting a release-gate dispatch report multi-provider coverage it did not
+      # have — the fan-out it prints is derived from the catalog, so the log cannot
+      # claim a sweep the run will not do.
       - name: Resolve the run's provider selection
         run: |
           node scripts/select-manual-model-target.mjs --selection "$SELECTION"

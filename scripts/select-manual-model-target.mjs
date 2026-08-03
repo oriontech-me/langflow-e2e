@@ -17,13 +17,18 @@
  * as tightly as #1185's "≤3 days" reads. That figure is the *intra-week* gap; the
  * schedule is Mon-Fri only, so the real per-provider latency is:
  *
- *   openai     Mon, Thu  → ≤4 days
- *   anthropic  Tue, Fri  → ≤4 days
- *   google     Wed       →  7 days
+ *   openai     Mon, Thu  → ≤4 days (Thu → Mon)
+ *   anthropic  Tue, Fri  → ≤4 days (Fri → Tue)
+ *   google     Wed       → ≤7 days
  *
  * `google` runs once a week, and google is the provider of #963 (`mcp-client-agent`
  * returning "Message empty." on gemini while the tool fires). That gap is what this
  * escape hatch exists for.
+ *
+ * Those are BEST cases, not bounds: `selectDailyModelTarget` advances past an inactive
+ * provider, so a Wednesday with a dry google key gives google no coverage that week and
+ * pushes its latency past 14 days. The rotation is right to advance (#980) — it just
+ * means the numbers above are what the schedule promises when every key is healthy.
  *
  * ## The four values
  *
@@ -73,9 +78,29 @@
  *   requested selection impossible → exit 1 with an `::error::` naming the cause
  *   payload undecidable            → exit 2 (#1035)
  *
- * `auto` is inert by construction: it emits nothing, reads nothing it needs, and can
- * never fail. That is what makes "the default reproduces today's behaviour exactly" a
- * property rather than a claim.
+ * `auto` never takes the exit-1 path: it emits nothing and needs no file, so the
+ * default dispatch has no decision-path failure mode. (The *step* still runs — a broken
+ * import or a missing `node_modules` fails it like any other step; what is guaranteed is
+ * that no state of `providers.json` / `models.json` can.)
+ *
+ * ## `auto` is guarded too, because "emits nothing" is not the property that matters
+ *
+ * The property a dispatcher relies on is "`auto` delivers multi-provider", and that one
+ * is NOT free. `collect-models` writes `models.json` at the very END of its Settings
+ * sweep, so a sweep that throws part-way (the #922/#927 wedge, a broken Model Providers
+ * page) leaves no catalog at all — and `Collect models` is `continue-on-error` on this
+ * lane. In that state `resolveTestTargets()` takes its empty-catalog branch and returns
+ * **one** target, `provider:openai (fallback)`, whose `skipReason` is `undefined`
+ * (`readProviderHealth()` returns null on an absent file, so the skip map is empty).
+ * OpenAI's key IS forwarded on this lane, so nothing skips: ~30 parametrized agent tests
+ * run one provider and the job is green.
+ *
+ * That is the release-gate dispatch reporting multi-provider coverage it did not have —
+ * the shape #1012 forbids, in the one branch a "reads nothing" argument would exempt. So
+ * `auto` reads the catalog **for reporting only** (never failing on it) and warns when
+ * the fan-out it is about to get is not the one that was asked for: no catalog, an empty
+ * one, or fewer than two providers in it. A warning rather than a failure, because this
+ * value is also the default and a default dispatch must not depend on the sweep.
  *
  * Run:
  *   node scripts/select-manual-model-target.mjs --selection anthropic
@@ -151,12 +176,51 @@ function declineReason(providers, provider) {
 }
 
 /**
+ * Read the catalog without ever failing, for the `auto` path. Every unhappy state is a
+ * status rather than a throw: the default dispatch must not depend on a sweep that is
+ * `continue-on-error`, but it must also not claim a fan-out it will not get.
+ * @param {() => { models: unknown, missing: boolean }} readModels
+ * @returns {{ status: "ok"|"missing"|"empty"|"unreadable", models: Array<{provider: string, model: string}> }}
+ */
+function readCatalogSafely(readModels) {
+  let payload;
+  try {
+    payload = readModels();
+  } catch {
+    return { status: "unreadable", models: [] };
+  }
+  if (payload.missing) return { status: "missing", models: [] };
+  if (!Array.isArray(payload.models)) return { status: "unreadable", models: [] };
+  return { status: payload.models.length ? "ok" : "empty", models: payload.models };
+}
+
+/**
+ * The targets `auto` will actually resolve: the catalog's FIRST entry per provider,
+ * which is what `resolveTestTargets()`' default branch produces (`collect-models`
+ * promotes the settled model to the front, #570/#964). Derived from `models.json` and
+ * not from `providers.json` on purpose — the catalog is the file the resolver reads, so
+ * anything computed from the other one could disagree with the run.
+ * @param {Array<{provider: string, model: string}>} models
+ * @returns {Array<{provider: string, model: string}>}
+ */
+function autoFanout(models) {
+  const seen = new Map();
+  for (const record of models) {
+    if (!record || typeof record.provider !== "string") continue;
+    if (!seen.has(record.provider)) seen.set(record.provider, record.model);
+  }
+  return [...seen].map(([provider, model]) => ({ provider, model }));
+}
+
+/**
  * @typedef {object} ManualTargetDecision
  * @property {boolean} ok            the request was honoured
  * @property {string} mode           the selection, verbatim
  * @property {string[]} env          `KEY=value` lines to export (empty for `auto`)
  * @property {string|null} provider  the pinned provider, when pinning
  * @property {string|null} model     the settled model, when pinning
+ * @property {Array<{provider: string, model: string}>} fanout
+ *   what `auto` will resolve; empty on every other mode
  * @property {string|null} reason    why the request could not be honoured
  * @property {string[]} warnings     deviations worth printing on a honoured request
  */
@@ -186,17 +250,49 @@ export function selectManualModelTarget(selection, io = {}) {
   }
 
   if (selection === AUTO) {
-    // Inert on purpose: no file is required, so nothing about the default path can
-    // fail. `providers.json` is read only to make the fan-out visible in the log, and
-    // a failure to read it is reported as a missing listing, never as an error.
+    // No file is REQUIRED — no state of the catalog can fail this path. It is still
+    // read, because "emits nothing" is not the property a dispatcher relies on:
+    // "delivers multi-provider" is, and an absent catalog silently collapses that to a
+    // single fallback target. See the header.
+    const { status, models } = readCatalogSafely(io.readModels);
+    const fanout = autoFanout(models);
+    const collapsed =
+      `so resolveTestTargets() takes its empty-catalog branch and every parametrized ` +
+      `spec resolves ONE "provider:openai (fallback)" target with no skip reason — ` +
+      `this dispatch will NOT deliver multi-provider coverage, and openai's key is ` +
+      `forwarded here so nothing will skip to make that visible`;
+    const warnings = [];
+    if (status === "missing") {
+      warnings.push(
+        `models.json does not exist (collect-models is continue-on-error on this lane ` +
+          `and writes the catalog only at the END of its sweep), ${collapsed}`,
+      );
+    } else if (status === "empty") {
+      warnings.push(`models.json is empty — every provider probe failed, ${collapsed}`);
+    } else if (status === "unreadable") {
+      warnings.push(
+        `models.json cannot be parsed, so the fan-out cannot be verified here. The ` +
+          `specs read the same file and fail loudly on it (readCatalog throws), which ` +
+          `is the honest outcome — but this dispatch is not going to run`,
+      );
+    } else if (fanout.length < 2) {
+      warnings.push(
+        `models.json lists only ${fanout.length} provider ` +
+          `(${fanout.map((t) => t.provider).join(", ")}), so "auto" is single-provider ` +
+          `in practice on this dispatch — the others failed their probe. A ` +
+          `release-gate dispatch expecting multi-provider coverage should read this as ` +
+          `the sweep having partially failed`,
+      );
+    }
     return {
       ok: true,
       mode: AUTO,
       env: [],
       provider: null,
       model: null,
+      fanout,
       reason: null,
-      warnings: [],
+      warnings,
     };
   }
 
@@ -209,6 +305,7 @@ export function selectManualModelTarget(selection, io = {}) {
         env: [],
         provider: null,
         model: null,
+        fanout: [],
         reason:
           `models.json does not exist — collect-models did not write it, so ` +
           `ALL_MODELS=true would sweep an EMPTY catalog: the resolver falls back to ` +
@@ -230,6 +327,7 @@ export function selectManualModelTarget(selection, io = {}) {
         env: [],
         provider: null,
         model: null,
+        fanout: [],
         reason:
           `models.json is empty — every provider probe failed, so ALL_MODELS=true ` +
           `has nothing to sweep and each spec would resolve one "(fallback)" target`,
@@ -246,12 +344,18 @@ export function selectManualModelTarget(selection, io = {}) {
       env: ["ALL_MODELS=true"],
       provider: null,
       model: null,
+      fanout: [],
       reason: null,
       warnings: [
-        `ALL_MODELS=true resolves ${models.length} target(s) across ` +
-          `${providers.length} provider(s) (${providers.join(", ")}) for EVERY ` +
-          `parametrized spec — a deliberate sweep, and the most expensive shape this ` +
-          `lane can run`,
+        `ALL_MODELS=true resolves up to ${models.length} target(s) across ` +
+          `${providers.length} provider(s) (${providers.join(", ")}) per parametrized ` +
+          `spec — the two that declare a "requires" capability ` +
+          `(agent-multimodal-image-input, agent-markdown-output) sweep a ` +
+          `capability-filtered SUBSET, so the run's test count is NOT this number times ` +
+          `the spec count. It is still the most expensive shape this lane can run: ~30 ` +
+          `parametrized agent test() declarations against a catalog this size is ` +
+          `thousands of multi-turn agent runs, well past the job's 90-minute timeout ` +
+          `unless test_tag/test_grep narrows it. Narrow the dispatch`,
       ],
     };
   }
@@ -267,6 +371,7 @@ export function selectManualModelTarget(selection, io = {}) {
       env: [],
       provider: selection,
       model: null,
+      fanout: [],
       reason:
         `providers.json does not exist — collect-models did not write it (it is ` +
         `continue-on-error on this lane), so there is no settled model to pin to. ` +
@@ -284,6 +389,7 @@ export function selectManualModelTarget(selection, io = {}) {
       env: [],
       provider: selection,
       model: null,
+      fanout: [],
       reason:
         `${declineReason(providers, selection)}. This dispatch asked for ` +
         `"${selection}" specifically, and a run on the other providers would answer ` +
@@ -304,6 +410,7 @@ export function selectManualModelTarget(selection, io = {}) {
     ],
     provider: attempt.provider,
     model: attempt.model,
+    fanout: [],
     reason: null,
     warnings: [],
   };
@@ -320,25 +427,6 @@ export function readModelsFile(modelsFile, { readFile, exists } = {}) {
 
   if (!fileExists(modelsFile)) return { models: null, missing: true };
   return { models: JSON.parse(read(modelsFile)), missing: false };
-}
-
-/**
- * The active providers `auto` will fan out over, for the log only. Never throws: on
- * the `auto` path a payload this cannot read must not turn the default dispatch red
- * (that path needs no file at all).
- * @returns {string|null} a human-readable list, or null when it cannot be determined
- */
-export function describeAutoFanout(providersFile) {
-  try {
-    const { providers, missing } = readProvidersFile(providersFile);
-    if (missing || !Array.isArray(providers)) return null;
-    const active = providers
-      .filter((p) => p && p.status === "active")
-      .map((p) => `${p.provider} / ${p.model}`);
-    return active.length ? active.join(", ") : "none probed active";
-  } catch {
-    return null;
-  }
 }
 
 function parseArgs(argv) {
@@ -415,14 +503,16 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   }
 
   if (decision.mode === AUTO) {
-    const fanout = describeAutoFanout(args.providersFile);
+    // States what the catalog says WILL happen, not what the default is supposed to do:
+    // the two diverge exactly when the sweep failed, which is the case the ::warning::
+    // above covers.
     process.stderr.write(
-      `provider=auto — the parametrized specs keep their default fan-out: one model ` +
-        `per active provider. ${
-          fanout === null
-            ? `(providers.json is missing or unreadable, so the fan-out cannot be ` +
-              `listed here — the specs report their own skip reasons.)`
-            : `Active: ${fanout}.`
+      `provider=auto — the parametrized specs keep their default fan-out, one model ` +
+        `per provider in the catalog. ${
+          decision.fanout.length
+            ? `Resolves ${decision.fanout.length} target(s): ` +
+              `${decision.fanout.map((t) => `${t.provider} / ${t.model}`).join(", ")}.`
+            : `The catalog lists NONE — see the warning above.`
         } This is the only lane that still runs multi-provider (#1186).\n`,
     );
   } else if (decision.mode === ALL_MODELS) {
