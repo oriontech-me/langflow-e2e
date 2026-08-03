@@ -574,8 +574,13 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-          # Turns the cleanup sidecar on for this lane only: with it unset (local
-          # runs, the PR lane) the helper makes no request and writes no file.
+          # Turns the cleanup sidecar on: with TOKENS_ATTRIB unset the helper makes
+          # no request and writes no file, which is every LOCAL run and nothing
+          # else. NOT "the PR lane" — pr-validation.yml:711 sets it too, on purpose,
+          # because the PR lane is the one place a teardown-cost regression is
+          # catchable before merge (manual.yml:346 sets it as well). That stale
+          # parenthetical was copied into a design as a project-wide constraint;
+          # state which lanes set it, never guess from here.
           TOKENS_ATTRIB: token-attrib-${{ matrix.shard }}.jsonl
 
       # always(): the liveness data is most valuable precisely when the shard

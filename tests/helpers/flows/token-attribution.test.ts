@@ -381,8 +381,10 @@ test("reads every flow's traces concurrently, not one round trip per flow (§4.2
 
   assert.equal(result.recorded, 3);
   assert.ok(peak > 1, `the list requests must overlap; peak concurrency was ${peak}`);
-  // appendFileSync is synchronous, so concurrent appends cannot interleave a
-  // line -- the property the comment at token-attribution.ts:187 relies on.
+  // Every line is whole and parseable after three concurrent appends. This is
+  // necessary but NOT sufficient evidence for the synchronous-append claim -- an
+  // awaited async append would satisfy it too. The mechanism itself is pinned by
+  // "the sidecar appends synchronously" below.
   const lines = fs.readFileSync(out, "utf8").trim().split("\n");
   assert.equal(lines.length, 3);
   for (const line of lines) assert.doesNotThrow(() => JSON.parse(line));
@@ -540,4 +542,150 @@ test("records attrib_ms on every line, as the elapsed for that flow (§4.3)", as
   // Two traces of ONE flow carry the SAME per-flow figure. Anything totalling it
   // must reduce over distinct flow_id, which is what the aggregate test pins.
   assert.equal(lines[0].attrib_ms, lines[1].attrib_ms);
+});
+
+// Fix round 1, item 5: the rule that a non-positive value falls back applied to the
+// env var only, so `timeoutMs: 0` reached Playwright as `timeout: 0` -- which means
+// NO timeout, the exact wedge the option exists to close -- while the doc comment
+// claimed 0 was rejected. Same rule on both paths now, matching the poller's num()
+// (scripts/watch-tokens.mjs:63-66).
+test("a non-positive timeout falls back to 8000 instead of disabling the timeout (§4.2)", async () => {
+  const seen: Array<number | undefined> = [];
+  const request = {
+    get: async (url: string, opts?: { timeout?: number }) => {
+      seen.push(opts?.timeout);
+      if (url.includes("?flow_id=")) {
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1" }] }) };
+      }
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+  } as unknown as APIRequestContext;
+
+  await recordTokenAttribution({
+    request,
+    flowIds: ["f1"],
+    test: "spec",
+    file: "x.spec.ts",
+    out: tmpFile(),
+    timeoutMs: 0,
+  });
+
+  assert.deepEqual(seen, [8000, 8000], "Playwright reads timeout: 0 as unbounded — a bound must never resolve to it");
+});
+
+// --- The two ordering invariants concurrency can break (fix round 1, item 1) ---
+//
+// Both were correct in the implementation and pinned by NOTHING: the reviewer moved
+// `attempted.add(flowId)` to after the list `await`, and separately moved
+// `detailFetches += 1` to after the detail `await`, and the whole suite stayed
+// green. The pre-existing §2.1 tests only exercise the guard across SEQUENTIAL
+// calls, and the cap test uses a single flow whose detail loop is serial, so a
+// post-increment still lands exactly on the cap. On a branch whose recurring defect
+// has been precisely "a comment is the only thing holding an invariant", that is the
+// gap worth closing.
+
+// The counter must be claimed BEFORE its await. Three flows, one detail slot, and
+// BOTH fakes delayed so that all three tasks are sitting in the cap check before any
+// detail request resolves: pre-increment lets exactly one through, post-increment
+// lets all three see a counter still reading 0.
+test("the detail counter is claimed before its await, so concurrent flows cannot both take the last slot (§4.2)", async () => {
+  let detailCalls = 0;
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("?flow_id=")) {
+        // Delayed on purpose: all three list requests must be in flight together,
+        // so all three tasks arrive at the cap check in the same timer batch.
+        await new Promise((r) => setTimeout(r, 10));
+        const flowId = new URL(url, "http://x").searchParams.get("flow_id") ?? "";
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: `t-${flowId}` }] }) };
+      }
+      detailCalls += 1;
+      // Also delayed: this is the window a post-increment would leave open.
+      await new Promise((r) => setTimeout(r, 10));
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+  } as unknown as APIRequestContext;
+
+  const result = await recordTokenAttribution({
+    request,
+    flowIds: ["f1", "f2", "f3"],
+    test: "spec",
+    file: "x.spec.ts",
+    out: tmpFile(),
+    detailCap: 1,
+  });
+
+  assert.equal(
+    detailCalls,
+    1,
+    `the cap must hold across CONCURRENT flows, not just within one; got ${detailCalls} detail requests for a cap of 1`,
+  );
+  // The cap costs a breakdown, never a trace: all three are still recorded, and the
+  // two that lost their spans are named.
+  assert.equal(result.recorded, 3);
+  assert.equal(
+    result.skipped.filter((s) => s.includes("detail cap")).length,
+    2,
+    `both curtailed flows must name the cap; got ${JSON.stringify(result.skipped)}`,
+  );
+});
+
+// The flow id must be claimed BEFORE the list await. Two tasks for the SAME id in
+// one call: claiming first means the second returns immediately; claiming after the
+// await means both pass a check on a set that is still empty, and one trace gets two
+// lines -- which is not a visible defect downstream, just a plausible number, twice
+// as large (§2.1).
+//
+// `cleanup()` cannot reach this today, because its `captured` list is a Set. That is
+// the reason the invariant needs a TEST rather than a caller to protect it: nothing
+// in the code stops the next caller from passing a plain array with a repeat.
+test("a flow id repeated inside ONE call is claimed once, not raced twice (§2.1)", async () => {
+  const out = tmpFile();
+  let listCalls = 0;
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("?flow_id=")) {
+        listCalls += 1;
+        // Delayed, so the duplicate task has a real window in which to slip past a
+        // guard that is claimed too late.
+        await new Promise((r) => setTimeout(r, 10));
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1", totalTokens: 88 }] }) };
+      }
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: SPANS }) };
+    },
+  } as unknown as APIRequestContext;
+
+  const result = await recordTokenAttribution({
+    request,
+    flowIds: ["f1", "f1"],
+    test: "spec",
+    file: "x.spec.ts",
+    out,
+  });
+
+  assert.equal(listCalls, 1, "one list request per flow, never two for the same id (the no-polling contract)");
+  assert.equal(result.recorded, 1, "the duplicate must be claimed away, not attributed a second time");
+  const lines = fs.readFileSync(out, "utf8").trim().split("\n");
+  assert.equal(lines.length, 1, "two lines for one trace is a plausible number, twice as large -- exactly what §2.1 forbids");
+});
+
+// Fix round 1, item 4: the interleaving argument rests on the append being
+// SYNCHRONOUS, and no behavioural test can see the difference -- the reviewer
+// swapped in `await fs.promises.appendFile` and all 20 tests stayed green. So pin
+// the mechanism structurally, the way scripts/lib/token-cost.test.mjs pins "never
+// reads the clock". A comment asserting coverage the assertions do not provide is
+// the shape this branch keeps getting bitten by.
+test("the sidecar appends synchronously — the property the interleaving argument rests on (§4.2)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "token-attribution.ts"), "utf8");
+  // Comments stripped first: that file's own prose NAMES the async APIs it refuses
+  // to use, and a guard that its own justification trips is a guard someone deletes
+  // rather than keeps. Match the CODE.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  assert.match(code, /fs\.appendFileSync\(/, "the JSONL append must be fs.appendFileSync");
+  assert.doesNotMatch(
+    code,
+    /fs\.promises|appendFile\s*\(|createWriteStream|writeFile\s*\(/,
+    "an async append or a stream yields between open and write — the window that produces half a JSON line " +
+      "when two concurrent flows (or two Playwright workers) share this file",
+  );
 });

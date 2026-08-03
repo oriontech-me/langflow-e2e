@@ -56,6 +56,16 @@ import type { APIRequestContext } from "@playwright/test";
 // defect downstream -- it is a plausible number, twice as large.
 const attempted = new Set<string>();
 
+// The poller's own coercion, copied rather than approximated: `num()` at
+// scripts/watch-tokens.mjs:63-66. A value that is not a finite number GREATER THAN
+// ZERO falls back, so neither a malformed lane value nor a literal 0 can poison a
+// request with `timeout: NaN` or `timeout: 0` (Playwright reads 0 as "no
+// timeout" -- unbounded, the opposite of what a bound is for).
+function positive(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 /** Clear the attempted-flow guard. **Unit tests only** -- a spec must not call
  *  it. Production has no reason to: the set is process-scoped and a worker's
  *  flow ids are never reused. */
@@ -127,8 +137,20 @@ export interface RecordTokenAttributionOptions {
   loadBuildProbe?: () => Promise<BuildProbeFn>;
   /**
    * Per-request timeout in milliseconds, applied to EVERY request this sidecar
-   * makes. Defaults to `TOKENS_TIMEOUT_MS`, then to 8000 -- the same knob and the
-   * same default the poller uses (`scripts/watch-tokens.mjs` DEFAULTS.timeoutMs).
+   * makes. Falls back to `TOKENS_TIMEOUT_MS`, then to 8000 -- the same default the
+   * poller uses (`scripts/watch-tokens.mjs` DEFAULTS.timeoutMs).
+   *
+   * **In CI the effective value is always the hard-coded 8000.** The identically
+   * named `TOKENS_TIMEOUT_MS` in `daily-stable.yml:542`, `pr-validation.yml:676`
+   * and `manual.yml:320` sits in the POLLER step's own `env:` block, and a
+   * step-level `env:` does not cross into another step -- this sidecar runs in the
+   * Playwright step. `manual.yml:327-336` spells out that same gap for
+   * `TOKENS_ATTRIB`: `$GITHUB_ENV` is the only mechanism that propagates a value
+   * to later steps (composite-action internals included). So the lanes do not
+   * configure this today; they merely happen to set the number that is already the
+   * default. The env read stays because it makes the knob real for a local run and
+   * live the moment that wiring lands -- but do not read a lane value as reaching
+   * here, and do not change a lane's number expecting the sidecar to notice.
    *
    * This is not belt-and-braces. Without it Playwright's 30s default applies, and
    * a monitor endpoint wedged during teardown (#1077) consumes the test's own
@@ -142,14 +164,27 @@ export interface RecordTokenAttributionOptions {
    */
   timeoutMs?: number;
   /**
-   * Maximum number of per-trace detail requests for the whole call. Defaults to
-   * `TOKENS_DETAIL_CAP`, then to 25 -- again the poller's own knob and default.
+   * Maximum number of per-trace detail requests for the whole call. Falls back to
+   * `TOKENS_DETAIL_CAP`, then to 25 -- again the poller's own default.
+   *
+   * **In CI the effective value is always the hard-coded 25**, for exactly the
+   * reason given on `timeoutMs` above: `daily-stable.yml:546`,
+   * `pr-validation.yml:681` and `manual.yml:325` set `TOKENS_DETAIL_CAP` inside the
+   * POLLER step's `env:`, which never reaches the Playwright step this runs in.
    *
    * The list requests are one per flow and all start together, so they are already
    * bounded at roughly one round trip. The detail fan-out is the unbounded part:
-   * one fetch per trace, and a flow can carry many. `daily-stable.yml:640` models
-   * the worst case as CAP x TIMEOUT, so capping the count is what makes that
-   * product finite.
+   * one fetch per trace, and a flow can carry many -- capping the count is what
+   * makes the worst case finite instead of proportional to how many traces a test
+   * happened to produce.
+   *
+   * The ceiling that follows is per CALL: CAP x TIMEOUT, because a capped call
+   * issues at most CAP detail requests and each is bounded by TIMEOUT. It is NOT
+   * the sidecar's ceiling for a spec's whole teardown. `deleteFlow` calls this once
+   * per flow, and every call starts with a fresh allowance, so that path costs up
+   * to FLOWS x CAP x TIMEOUT. (`daily-stable.yml:640` computes CAP x TIMEOUT for
+   * the POLLER's worst in-flight tick -- a different component, one call per tick;
+   * do not read it as this sidecar's bound.)
    *
    * A capped trace is NAMED on `skipped`, and still recorded: the cap costs its
    * per-model breakdown, never its tokens. Dropping the spans silently would leave
@@ -208,20 +243,18 @@ export async function recordTokenAttribution({
     return result;
   }
 
-  // The poller's own knobs and defaults (scripts/watch-tokens.mjs DEFAULTS), not a
-  // third set invented here. `Number(x) || d` deliberately falls back on NaN too,
-  // so a malformed lane value degrades to the default instead of poisoning every
-  // request with `timeout: NaN`. (The parentheses are obligatory: `??` and `||`
-  // cannot be mixed unparenthesised — TS5076.)
+  // The poller's own defaults (scripts/watch-tokens.mjs DEFAULTS), not a third set
+  // invented here -- and the poller's own coercion too: `positive()` above is
+  // `num()` from scripts/watch-tokens.mjs:63-66, which requires
+  // `Number.isFinite(n) && n > 0` and falls back otherwise.
   //
-  // A lane exporting `TOKENS_TIMEOUT_MS=0` therefore resolves to 8000, which is
-  // the semantics this repo already practises: the poller coerces the very same
-  // variable through `num()` (scripts/watch-tokens.mjs:63-66), which requires
-  // `Number.isFinite(n) && n > 0` and falls back otherwise. Rejecting 0 is also
-  // the only safe reading here, since Playwright's `timeout: 0` means NO timeout
-  // and would reopen the exact wedge this option exists to close.
-  const timeout = timeoutMs ?? (Number(process.env.TOKENS_TIMEOUT_MS) || 8000);
-  const maxDetail = detailCap ?? (Number(process.env.TOKENS_DETAIL_CAP) || 25);
+  // Applied to BOTH the option and the env var, deliberately. An earlier version
+  // rejected a non-positive value only on the env path, which left
+  // `timeoutMs: 0` reaching Playwright as `timeout: 0` -- meaning NO timeout, the
+  // exact wedge this option exists to close -- while the comment claimed 0 was
+  // rejected. One rule, both paths, so the code matches what it says.
+  const timeout = positive(timeoutMs, positive(process.env.TOKENS_TIMEOUT_MS, 8000));
+  const maxDetail = positive(detailCap, positive(process.env.TOKENS_DETAIL_CAP, 25));
   // Shared across the concurrent tasks below. Safe without synchronisation
   // because JS runs them on a single thread, and it is incremented BEFORE its
   // await so two tasks cannot both pass the check on the same slot.
@@ -318,8 +351,17 @@ export async function recordTokenAttribution({
         const lines = pending.map(({ trace, spans }) =>
           JSON.stringify({ ...buildProbe(trace, spans), flow_id: flowId, test, file, attrib_ms: elapsed }),
         );
-        // appendFileSync, not a stream: parallel workers share this file, and a single
-        // sub-4KB append is what keeps their lines from interleaving.
+        // appendFileSync, not a stream and not `fs.promises.appendFile`: parallel
+        // workers share this file, the flows above run concurrently, and a single
+        // synchronous sub-4KB append is what keeps two writers from interleaving a
+        // line. An async write yields between the open and the write, which is
+        // exactly the window that produces half a JSON object.
+        //
+        // No behavioural test can tell the two apart from outside (an awaited async
+        // append also leaves a complete file by the time this function returns), so
+        // the synchrony is pinned STRUCTURALLY -- "the sidecar appends
+        // synchronously" in token-attribution.test.ts reads this source and fails if
+        // the call becomes async. Change one and the other must change with it.
         fs.appendFileSync(out, `${lines.join("\n")}\n`);
         result.recorded += lines.length;
       } catch (error) {
