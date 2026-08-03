@@ -136,20 +136,38 @@ export async function collectOnce({
   return { probes, errors, deferred, refreshAuth: false };
 }
 
-export function parseProbeLines(text) {
-  const probes = [];
+function parseJsonLines(text) {
+  const records = [];
   for (const line of String(text || "").split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const rec = JSON.parse(trimmed);
-      if (rec?.trace_id) probes.push(rec);
+      records.push(JSON.parse(trimmed));
     } catch {
       // A torn last line is expected: the recorder is killed mid-append when the
       // job moves on. Skip it rather than failing the summary.
     }
   }
-  return probes;
+  return records;
+}
+
+export function parseProbeLines(text) {
+  return parseJsonLines(text).filter((rec) => rec?.trace_id);
+}
+
+// The token-attrib file carries TWO record shapes, and this is why it is not read
+// through parseProbeLines (§4.3, fix round 2):
+//
+//   - attribution lines, which carry a `trace_id` (and, since finding A, the
+//     trace's own probe fields alongside);
+//   - the sidecar's own COST records — `kind: "attrib_cost"`, one per teardown,
+//     carrying no trace_id at all.
+//
+// parseProbeLines filters on `trace_id`, so it would drop every cost record on the
+// floor and the teardown cost would silently never reach the history line. Keep both
+// shapes here; summarize() splits them explicitly, immediately.
+export function parseAttribLines(text) {
+  return parseJsonLines(text).filter((rec) => rec?.trace_id || rec?.kind === "attrib_cost");
 }
 
 async function login(fetchImpl, base, timeoutMs) {
@@ -325,8 +343,18 @@ export async function summarize({
     for (const probe of parseProbeLines(read(file))) mergeProbe(probe);
   }
   const attributions = [];
+  // The sidecar's own COST records (§4.3) share the token-attrib file with the
+  // attribution lines, so they are split out EXPLICITLY here rather than left to be
+  // ignored by some falsy check downstream. A cost record is not an attribution: it
+  // names no trace, and treating it as one would put a phantom entry in `byTrace`
+  // and let a teardown look like a spec that spent nothing.
+  const costs = [];
   for (const file of listDir(attribDir).filter((f) => f.includes("token-attrib"))) {
-    for (const rec of parseProbeLines(read(file))) {
+    for (const rec of parseAttribLines(read(file))) {
+      if (rec?.kind === "attrib_cost") {
+        costs.push(rec);
+        continue;
+      }
       attributions.push(rec);
       // The sidecar now writes the trace's own total + spans ALONGSIDE the
       // attribution fields in the same line (finding A), so an attributed
@@ -384,7 +412,7 @@ export async function summarize({
   // disagree, or a dated model's USD would be priced against a different date
   // than the one the line claims it ran on.
   const runDate = env.RUN_DATE || new Date().toISOString().slice(0, 10);
-  const agg = aggregate({ probes: [...probesById.values()], attributions, prices, date: runDate });
+  const agg = aggregate({ probes: [...probesById.values()], attributions, costs, prices, date: runDate });
   const history = suppressHistory ? [] : parseHistory(read(historyPath));
   const runLine = {
     version: 1,
@@ -401,16 +429,23 @@ export async function summarize({
     by_spec: agg.bySpec,
     unattributed: agg.unattributed,
     unpriced_models: agg.unpricedModels,
-    // §4.3: what the attribution sidecar COST this run, in milliseconds of
-    // teardown — the price, on the same line as the benefit it bought. Without
-    // this field the ceiling is a claim in a doc comment that nobody can check
-    // against a real run.
+    // §4.3: what the attribution sidecar COST this run — the price, on the same
+    // line as the benefit it bought. Without it the ceiling is a claim in a doc
+    // comment that nobody can check against a real run.
     //
-    // Already reduced over DISTINCT flow_id by aggregate(): `attrib_ms` is a
-    // per-FLOW figure repeated on every one of that flow's lines, so summing the
-    // lines would multiply it by traces-per-flow. Copy `agg.attrib_ms`; never
-    // re-derive it from `attributions` here.
+    // What the number IS: milliseconds spent in attribution, SUMMED ACROSS EVERY
+    // TEARDOWN that paid it. It is NOT the run's wall-clock cost — Playwright's
+    // workers run in parallel, so their teardowns overlap and this total exceeds
+    // the time the run actually lost. `attrib_calls` is how many teardowns are in
+    // that sum, so a reader can take the per-teardown average rather than reading a
+    // total whose size mostly reflects how many specs ran.
+    //
+    // One record per teardown means a plain sum is correct. The earlier per-flow,
+    // per-line shape needed a distinct-flow_id reduction AND could not see a flow
+    // that produced no traces — the dominant cost. Copy both fields from `agg`;
+    // never re-derive either from `attributions`.
     attrib_ms: agg.attrib_ms,
+    attrib_calls: agg.attrib_calls,
     anomalies: [],
   };
   // token-anomaly.mjs computes a plain median over whatever `history` it is

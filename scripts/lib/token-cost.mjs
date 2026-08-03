@@ -183,20 +183,33 @@ export function usdFor(model, promptTokens, completionTokens, prices, date) {
 // that lands on the history line's own `date` field, so a line's USD and its
 // date can never disagree. Omitted, a model priced only by dated bands
 // resolves to unpriced rather than guessing a band.
-export function aggregate({ probes = [], attributions = [], prices = {}, date } = {}) {
+export function aggregate({ probes = [], attributions = [], costs = [], prices = {}, date } = {}) {
   const byTrace = new Map();
   for (const a of attributions) {
     if (a?.trace_id) byTrace.set(a.trace_id, a);
   }
 
-  // §4.3: attrib_ms is a PER-FLOW value repeated on every line of that flow, so
-  // it is reduced over DISTINCT flow_id. Summing the lines would multiply it by
-  // traces-per-flow and report a teardown cost several times the real one.
-  const attribMsByFlow = new Map();
-  for (const a of attributions) {
-    if (a?.flow_id && typeof a.attrib_ms === "number" && !attribMsByFlow.has(a.flow_id)) {
-      attribMsByFlow.set(a.flow_id, a.attrib_ms);
-    }
+  // §4.3 (fix round 2): `costs` are the sidecar's own COST records — one per
+  // `recordTokenAttribution` CALL, i.e. one per teardown, carrying that call's
+  // wall-clock. One record per call is what makes a PLAIN SUM correct here.
+  //
+  // The previous shape put a per-FLOW `attrib_ms` on every trace line, which forced
+  // a reduction over distinct flow_id and still measured the wrong thing twice over:
+  // a flow that produced no traces wrote no line and so cost nothing on paper (the
+  // dominant case — one list request per deleted flow, paid by specs that burn no
+  // tokens at all), and summing per-flow elapsed over-reported by roughly the flow
+  // count because the flows run concurrently. Both are gone with the per-line field;
+  // do not reintroduce one, and do not re-derive this from `attributions`.
+  //
+  // `attrib_calls` rides along so a reader gets the per-teardown average and not
+  // only a total. A record whose `attrib_ms` is not a finite number counts toward
+  // neither, keeping the pair consistent.
+  let attribMs = 0;
+  let attribCalls = 0;
+  for (const c of costs) {
+    if (!Number.isFinite(c?.attrib_ms)) continue;
+    attribMs += c.attrib_ms;
+    attribCalls += 1;
   }
 
   const models = new Map();
@@ -295,7 +308,8 @@ export function aggregate({ probes = [], attributions = [], prices = {}, date } 
     totals,
     byModel: [...models.values()].sort((a, b) => b.total_tokens - a.total_tokens),
     bySpec: [...specs.values()].sort((a, b) => b.total_tokens - a.total_tokens),
-    attrib_ms: [...attribMsByFlow.values()].reduce((sum, ms) => sum + ms, 0),
+    attrib_ms: attribMs,
+    attrib_calls: attribCalls,
     unattributed,
     unpricedModels: [...unpriced].sort(),
     mismatches,

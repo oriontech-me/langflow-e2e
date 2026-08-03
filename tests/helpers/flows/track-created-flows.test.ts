@@ -771,9 +771,18 @@ test("one trace produces exactly one line, through cleanup AND deleteFlow (§2.1
     info: () => ({ title: "counted once", file: "/repo/tests/w.spec.ts", project: { testDir: "/repo/tests" } }),
   });
 
-  const lines = fs.readFileSync(out, "utf8").trim().split("\n");
+  const records = fs.readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  const lines = records.filter((r) => r.kind !== "attrib_cost");
   assert.equal(lines.length, 1, "cleanup's batch call and deleteFlow's per-id hook must not both record");
-  assert.equal(JSON.parse(lines[0]).total_tokens, 42);
+  // Both CALLS still happen and both still report their cost (§4.3): the guard stops
+  // the second from re-attributing the trace, not from existing. Two cost records for
+  // one trace line is the correct picture of what teardown did.
+  assert.equal(
+    records.filter((r) => r.kind === "attrib_cost").length,
+    2,
+    "one cost record per call — cleanup's batch call and deleteFlow's per-id call",
+  );
+  assert.equal(lines[0].total_tokens, 42);
   // And the request side of the same guarantee: one list request per flow, ever
   // (Global Constraints). Asserting only on the line count would pass even if the
   // second pass made the request and then discarded the result.

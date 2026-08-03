@@ -222,6 +222,11 @@ export async function recordTokenAttribution({
   const result: TokenAttributionResult = { recorded: 0, skipped: [] };
   if (!out || !flowIds?.length) return result;
 
+  // The clock for the COST record written at the end (§4.3). It starts here, so it
+  // covers everything this call does on behalf of telemetry -- the `buildProbe`
+  // import included, since that is time the teardown pays too.
+  const callStartedAt = Date.now();
+
   // The import itself can reject — a future refactor moves the shared
   // module, fd exhaustion, a transient resolution failure (#1197 re-review,
   // Important). Unguarded, that rejection would propagate straight out of
@@ -270,8 +275,6 @@ export async function recordTokenAttribution({
       // eligible for a retry the contract forbids (§2.1).
       if (attempted.has(flowId)) return;
       attempted.add(flowId);
-
-      const startedAt = Date.now();
 
       try {
         const res = await request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, { headers, timeout });
@@ -345,11 +348,8 @@ export async function recordTokenAttribution({
           pending.push({ trace, spans });
         }
 
-        const elapsed = Date.now() - startedAt;
-        // Per-FLOW elapsed, repeated on each of that flow's lines (§4.3).
-        // Anything totalling this must reduce over distinct flow_id.
         const lines = pending.map(({ trace, spans }) =>
-          JSON.stringify({ ...buildProbe(trace, spans), flow_id: flowId, test, file, attrib_ms: elapsed }),
+          JSON.stringify({ ...buildProbe(trace, spans), flow_id: flowId, test, file }),
         );
         // appendFileSync, not a stream and not `fs.promises.appendFile`: parallel
         // workers share this file, the flows above run concurrently, and a single
@@ -369,5 +369,48 @@ export async function recordTokenAttribution({
       }
     }),
   );
+
+  // ONE cost record per CALL, wall-clock, written whenever `out` is set and at least
+  // one flow id was passed -- including when there were zero traces, when the list
+  // came back non-ok, and when a flow threw (§4.3, fix round 2).
+  //
+  // This replaces a per-flow `attrib_ms` repeated on every trace line, which could
+  // not measure what §4.3 exists to measure, in two ways:
+  //
+  //   - a flow that produced NO traces wrote no line, so it contributed nothing --
+  //     yet §4.1's dominant cost is "one list request per deleted flow, paid even by
+  //     specs that burn nothing". The artifact was blind to precisely the ~140 UI
+  //     specs whose single GET each IS the cost;
+  //   - summing a per-flow elapsed over-reported by roughly the flow count, because
+  //     `.map` starts every task at once so each flow measures nearly the same
+  //     interval -- and that sum barely moves when the loop goes serial->concurrent,
+  //     so the one field added to demonstrate the improvement could not show it.
+  //
+  // One record per call means a PLAIN SUM downstream is correct, and the
+  // distinct-flow_id reduction the old shape needed (and its trap) is gone with it.
+  //
+  // `flows` is how many ids this call was ASKED to attribute. An id already claimed
+  // by an earlier call issues no request, so a repeat teardown legitimately reports
+  // its flow count with a near-zero `attrib_ms`.
+  //
+  // Deliberate exception: a failing `buildProbe` import returns above, before this
+  // point, and writes nothing at all. That path made no request, and "no file is
+  // written when the import itself fails" is pinned by its own test.
+  try {
+    const cost = {
+      kind: "attrib_cost",
+      flows: flowIds.length,
+      attrib_ms: Date.now() - callStartedAt,
+      test,
+      file,
+    };
+    fs.appendFileSync(out, `${JSON.stringify(cost)}\n`);
+  } catch (error) {
+    // Named, never thrown -- same contract as every other failure here. Silence
+    // would make an unwritable path look like a teardown that cost nothing.
+    result.skipped.push(
+      `attrib_cost: ${(error as Error)?.message?.split("\n")[0] ?? String(error)}`,
+    );
+  }
   return result;
 }

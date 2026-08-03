@@ -490,22 +490,77 @@ test("the shipped table records claude-sonnet-5's introductory rate through 2026
   assert.equal(usdFor("claude-sonnet-5", 1_000_000, 0, prices, "2026-09-01"), 3.0);
 });
 
-// §4.3: attrib_ms is a PER-FLOW value repeated on every line of that flow, so a
-// naive sum over lines multiplies it by traces-per-flow. This is the same shape
-// as the bug that made a window-level field print 204.0M instead of 17.0M on the
-// platform side -- the fixture below has two traces on one flow and one on
-// another, so a line-wise sum yields 30 and the correct reduction yields 20.
-test("aggregate totals attrib_ms over distinct flows, not over lines (§4.3)", () => {
-  const attributions = [
-    { trace_id: "t1", flow_id: "f1", total_tokens: 10, models: [], test: "a", file: "x.spec.ts", attrib_ms: 10 },
-    { trace_id: "t2", flow_id: "f1", total_tokens: 10, models: [], test: "a", file: "x.spec.ts", attrib_ms: 10 },
-    { trace_id: "t3", flow_id: "f2", total_tokens: 10, models: [], test: "b", file: "y.spec.ts", attrib_ms: 10 },
+// §4.3 (fix round 2): `costs` are the sidecar's own cost records — ONE per
+// recordTokenAttribution call, i.e. one per teardown. One record per call is what
+// makes a plain sum correct; the previous per-FLOW field forced a reduction over
+// distinct flow_id AND still measured the wrong thing (a flow with no traces wrote
+// no line and so cost nothing on paper, and summing per-flow elapsed over-reported
+// by roughly the flow count because the flows run concurrently).
+test("aggregate sums attrib_ms across cost records and reports how many teardowns paid it (§4.3)", () => {
+  const costs = [
+    { kind: "attrib_cost", flows: 3, attrib_ms: 214, test: "a", file: "x.spec.ts" },
+    { kind: "attrib_cost", flows: 1, attrib_ms: 86, test: "b", file: "y.spec.ts" },
   ];
-  const result = aggregate({ probes: attributions, attributions, prices: PRICES, date: "2026-08-03" });
-  assert.equal(result.attrib_ms, 20, "f1 contributes 10 once, not 10 per trace");
+  const result = aggregate({ probes: [probe()], attributions: [], costs, prices: PRICES, date: "2026-08-03" });
+  assert.equal(result.attrib_ms, 300, "a plain sum — one record per call, so nothing is double-counted");
+  // Without the call count a reader cannot tell 300ms across 2 teardowns from 300ms
+  // across 200 of them, and the total's size mostly reflects how many specs ran.
+  assert.equal(result.attrib_calls, 2);
 });
 
-test("aggregate reports attrib_ms of 0 when no line carries one", () => {
+test("aggregate reports attrib_ms and attrib_calls of 0 when no cost record exists", () => {
   const result = aggregate({ probes: [probe()], attributions: [], prices: PRICES, date: "2026-08-03" });
   assert.equal(result.attrib_ms, 0);
+  assert.equal(result.attrib_calls, 0);
+});
+
+// A record with no usable figure must count toward NEITHER, or the average silently
+// drifts: a denominator that includes a record contributing nothing to the numerator
+// reports a cheaper teardown than really happened.
+test("a cost record with no numeric attrib_ms counts toward neither the total nor the call count", () => {
+  const costs = [
+    { kind: "attrib_cost", flows: 1, attrib_ms: 50 },
+    { kind: "attrib_cost", flows: 1 },
+    { kind: "attrib_cost", flows: 1, attrib_ms: null },
+    { kind: "attrib_cost", flows: 1, attrib_ms: "80" },
+  ];
+  const result = aggregate({ probes: [probe()], attributions: [], costs, prices: PRICES, date: "2026-08-03" });
+  assert.equal(result.attrib_ms, 50);
+  assert.equal(result.attrib_calls, 1);
+});
+
+// The property this whole change rests on: a cost record carries no trace_id and no
+// total_tokens, so it can never enter the token figures. Asserted by DIFFERENCE — the
+// same fixture with and without the cost record must agree on every token field —
+// because that is the claim, not merely that some individual number looks right.
+test("a cost record perturbs no token figure — totals, by_model, by_spec, unattributed all identical (§4.3)", () => {
+  const probes = [probe(), probe({ trace_id: "t2", flow_id: "f2", total_tokens: 12 })];
+  const attributions = [
+    { trace_id: "t1", flow_id: "f1", test: "agent suite", file: "a.spec.ts" },
+  ];
+  const args = { probes, attributions, prices: PRICES, date: "2026-08-03" };
+
+  const without = aggregate(args);
+  const with_ = aggregate({
+    ...args,
+    costs: [{ kind: "attrib_cost", flows: 4, attrib_ms: 999, test: "some spec", file: "z.spec.ts" }],
+  });
+
+  assert.deepEqual(with_.totals, without.totals);
+  assert.deepEqual(with_.byModel, without.byModel);
+  assert.deepEqual(with_.bySpec, without.bySpec);
+  assert.deepEqual(with_.unattributed, without.unattributed);
+  assert.deepEqual(with_.mismatches, without.mismatches);
+  assert.deepEqual(with_.unpricedModels, without.unpricedModels);
+  // ...and the only difference is the cost itself.
+  assert.equal(without.attrib_ms, 0);
+  assert.equal(with_.attrib_ms, 999);
+  assert.equal(with_.attrib_calls, 1);
+  // Its test/file must NOT become a by_spec row: a teardown is not a spec that spent
+  // tokens, and bySpec is keyed off probes, never off these records.
+  assert.equal(
+    with_.bySpec.some((r) => r.file === "z.spec.ts"),
+    false,
+    "a cost record must never appear as a spending spec",
+  );
 });

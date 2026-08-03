@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import realFs from "node:fs";
-import { collectOnce, parseProbeLines, poll, summarize } from "./watch-tokens.mjs";
+import { collectOnce, parseAttribLines, parseProbeLines, poll, summarize } from "./watch-tokens.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
 
@@ -506,51 +506,133 @@ test("a trace the poller never saw still reaches totals and by_spec via the side
 });
 
 // §4.3: the price must land in the SAME artifact as the benefit. aggregate()
-// computing `attrib_ms` is not enough on its own -- summarize() builds the
-// history line field by field (no spread), so a field it does not name is a
-// field a reader of reports/token-history.jsonl never sees. That is exactly what
-// happened here: aggregate() was taught to total the teardown cost and the line
-// silently dropped it, leaving the ceiling as a claim in a doc comment.
+// computing the cost is not enough on its own -- summarize() builds the history line
+// field by field (no spread), so a field it does not name is a field no reader of
+// reports/token-history.jsonl ever sees.
 //
-// The fixture is deliberately two traces on ONE flow: `attrib_ms` is a per-FLOW
-// figure repeated on each of that flow's lines, so a line-wise sum would report
-// 24ms of teardown for 12ms of real work. Pinned end to end, through summarize(),
-// not just at the aggregate() seam.
-test("the history line carries attrib_ms, reduced over distinct flows, not summed per line (\u00a74.3)", async () => {
-  const attrib = (traceId, flowId, attribMs) =>
-    JSON.stringify({
-      trace_id: traceId,
-      flow_id: flowId,
-      test: "agent suite",
-      file: "tests-automations/regression/core-functionality/llm-agents/x.spec.ts",
-      start_time: "2026-07-31T16:35:00Z",
-      status: "ok",
-      total_tokens: 10,
-      models: [{ model: "gpt-4o-mini", prompt_tokens: 5, completion_tokens: 5, total_tokens: 10, calls: 1 }],
-      attrib_ms: attribMs,
-    });
+// Fix round 2 changed the mechanism: the sidecar now writes ONE cost record per
+// teardown (`kind: "attrib_cost"`, no trace_id, no total_tokens) instead of a
+// per-flow `attrib_ms` on every trace line. These tests pin the integration facts
+// that change depends on, rather than relying on them by accident.
+
+const COST_RECORD = JSON.stringify({
+  kind: "attrib_cost",
+  flows: 3,
+  attrib_ms: 214,
+  test: "ui spec that burns nothing",
+  file: "tests-automations/regression/ui/no-tokens.spec.ts",
+});
+
+// THE case the old shape was blind to, and the whole reason for the change: a spec
+// that created flows, ran none of them, and so wrote no attribution line at all. Its
+// list requests are the dominant cost of this sidecar across ~140 UI specs. The run
+// as a whole still has traces (a real daily does), which is what allows a history
+// line to exist at all -- see the suppression test below.
+test("a teardown that attributed NOTHING still reports its cost on the history line (§4.3)", async () => {
   const fs2 = fakeFs({
-    "all-tokens/token-attrib-1.jsonl": `${attrib("t1", "f1", 12)}\n${attrib("t2", "f1", 12)}\n`,
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    // One real attribution (a spec that did spend) plus a cost record from a spec
+    // whose flows yielded no traces whatsoever.
+    "all-tokens/token-attrib-1.jsonl": `${ATTRIB_LINE}\n${COST_RECORD}\n`,
     "prices.json": PRICES,
   });
   await summarize({ env: baseEnv, ...fs2, log: () => {} });
   const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
-  assert.equal(line.totals.traces, 2, "both traces must reach the line — the fixture is not degenerate");
-  assert.equal(line.attrib_ms, 12, "one flow costs 12ms once, not 12ms per trace");
+  assert.equal(line.attrib_ms, 214, "the zero-trace teardown's cost must reach the line");
+  assert.equal(line.attrib_calls, 1, "and the reader must be able to average it");
+  // It bought no tokens, so it must not look like a spec that spent any.
+  assert.equal(line.totals.total_tokens, 88, "the cost record adds no tokens");
+  assert.equal(line.by_spec.length, 1, "one spending spec, not two");
+  assert.equal(line.by_spec[0].file, "tests-automations/regression/core-functionality/llm-agents/x.spec.ts");
 });
 
-// The absence of a cost must read as zero cost, not as a missing field: a
-// consumer doing arithmetic on `attrib_ms` would get NaN from `undefined`, and a
-// human would not be able to tell "cheap" from "not measured".
-test("the history line still carries attrib_ms when no attribution line reports one (\u00a74.3)", async () => {
+// Integration fact 1: summarize() pushes EVERY line of the attrib file into
+// `attributions` (:327-330), so cost records have to be filtered out explicitly.
+// Left to a falsy check downstream, a cost record would sit in `byTrace` as a
+// phantom attribution.
+test("a cost record is never treated as an attribution (§4.3)", async () => {
   const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "all-tokens/token-attrib-1.jsonl": `${COST_RECORD}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  // The probe has no matching attribution, so it belongs in `unattributed` -- the
+  // cost record must not "attribute" it, and must not create a by_spec row of its own.
+  assert.equal(line.by_spec.length, 0, "a teardown is not a spec that spent tokens");
+  assert.equal(line.unattributed.traces, 1);
+  assert.equal(line.unattributed.total_tokens, 88);
+  assert.equal(line.attrib_ms, 214);
+});
+
+// Integration fact 2 -- the property the whole change rests on, asserted by
+// DIFFERENCE: a line is merged into probesById only when `"total_tokens" in rec`
+// (:338), and mergeProbe additionally requires a trace_id (:318). A cost record
+// carries neither, so it cannot corrupt the token figures. Same fixture with and
+// without it must agree on every token field.
+test("a cost record cannot corrupt the token figures — identical totals with and without it (§4.3)", async () => {
+  const files = {
     "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
     "all-tokens/token-attrib-1.jsonl": `${ATTRIB_LINE}\n`,
     "prices.json": PRICES,
+  };
+  const plain = fakeFs(files);
+  await summarize({ env: baseEnv, ...plain, log: () => {} });
+  const withoutCost = JSON.parse(plain.appended["reports/token-history.jsonl"].trim());
+
+  const withCostFs = fakeFs({
+    ...files,
+    "all-tokens/token-attrib-1.jsonl": `${ATTRIB_LINE}\n${COST_RECORD}\n`,
   });
-  await summarize({ env: baseEnv, ...fs2, log: () => {} });
-  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
-  assert.equal(line.attrib_ms, 0);
+  await summarize({ env: baseEnv, ...withCostFs, log: () => {} });
+  const withCost = JSON.parse(withCostFs.appended["reports/token-history.jsonl"].trim());
+
+  assert.deepEqual(withCost.totals, withoutCost.totals);
+  assert.deepEqual(withCost.by_model, withoutCost.by_model);
+  assert.deepEqual(withCost.by_spec, withoutCost.by_spec);
+  assert.deepEqual(withCost.unattributed, withoutCost.unattributed);
+  // The ONLY difference is the cost.
+  assert.equal(withoutCost.attrib_ms, 0);
+  assert.equal(withoutCost.attrib_calls, 0);
+  assert.equal(withCost.attrib_ms, 214);
+  assert.equal(withCost.attrib_calls, 1);
+});
+
+// A cost record carries no trace_id, and parseProbeLines filters on exactly that --
+// so reading the attrib file through it would drop every cost record on the floor and
+// the teardown cost would silently never reach the line. parseAttribLines is why this
+// works; this test is what stops someone "simplifying" the two back into one.
+test("parseAttribLines keeps cost records that parseProbeLines drops (§4.3)", () => {
+  const text = `${ATTRIB_LINE}\n${COST_RECORD}\n`;
+  const probes = parseProbeLines(text);
+  assert.equal(probes.length, 1, "parseProbeLines keeps only trace-bearing records");
+  assert.equal(probes.every((r) => r.kind !== "attrib_cost"), true);
+  const all = parseAttribLines(text);
+  assert.equal(all.length, 2, "parseAttribLines must keep both shapes");
+  assert.equal(all.filter((r) => r.kind === "attrib_cost").length, 1);
+  // A torn last line must still be tolerated, on both paths.
+  assert.equal(parseAttribLines(`${COST_RECORD}\n{"kind":"attrib_c`).length, 1);
+});
+
+// Integration fact 3, asserted so the silence is documented rather than discovered:
+// `if (!probesById.size || zeroTestRun)` (:354) suppresses the history line entirely,
+// so a run with NO traces at all reports no cost either -- even though cost records
+// exist. That is pre-existing and deliberate (a zero would enter the anomaly baseline
+// and lower the bar for every later run), and out of scope here. What fix round 2
+// captures is the zero-trace SPECS inside a run that does have traces.
+test("a run whose ONLY attrib data is cost records still writes no history line (pre-existing silence, §4.3)", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-attrib-1.jsonl": `${COST_RECORD}\n`,
+    "prices.json": PRICES,
+  });
+  assert.equal(await summarize({ env: baseEnv, ...fs2, log: () => {} }), 0);
+  assert.equal(
+    fs2.appended["reports/token-history.jsonl"],
+    undefined,
+    "no traces means no line at all — a zero would poison the anomaly baseline",
+  );
+  assert.match(fs2.written["summary.md"], /no traces recorded/i);
 });
 
 test("a trace present in BOTH the poller's file and the sidecar's merged line is counted once (finding A)", async () => {

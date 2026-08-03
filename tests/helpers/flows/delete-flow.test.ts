@@ -68,7 +68,15 @@ test("attributes the flow before deleting it, deriving test and file (§1.1)", a
     const { request, deletes } = fakeRequest();
     await deleteFlow(request, "f1", undefined, { info: INFO });
     assert.deepEqual(deletes, ["/api/v1/flows/f1"], "the delete still happens");
-    const line = JSON.parse(fs.readFileSync(out, "utf8").trim());
+    // The artifact carries the sidecar's own cost record too (§4.3, one per call,
+    // `kind: "attrib_cost"`), so pick the TRACE line rather than parsing the file
+    // as a single object.
+    const line = fs
+      .readFileSync(out, "utf8")
+      .trim()
+      .split("\n")
+      .map((l) => JSON.parse(l))
+      .find((r) => r.kind !== "attrib_cost");
     assert.equal(line.test, "a test that spent tokens");
     assert.equal(line.file, "tests-automations/regression/x.spec.ts");
     assert.equal(line.flow_id, "f1");
