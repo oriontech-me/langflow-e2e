@@ -14,9 +14,14 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 // `default_fields`, which the old payload lacked. Every step is a hard
 // assertion now.
 
-test(
+// Quarantined for #1235 — recurrent flake (dailies 2026-07-27, 2026-08-03): after
+// ticking the row's checkbox the header trash action stays disabled, so the click
+// retries for the full 20 s as `element is not enabled`. Same Global Variables
+// ag-grid surface as global-variable-edit.spec.ts:76. Lifting the quarantine and
+// restoring @stable is a deliverable of #1235.
+test.fixme(
   "a provider credential variable can be removed through the Global Variables UI",
-  { tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"] },
+  { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
   async ({ page, request }) => {
     const bearer = await getAuthToken(request);
     const uniqueName = `provider-key-${Date.now()}`;
