@@ -179,6 +179,7 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 | `@templates` | Starter projects and flow templates |
 | `@settings` | Navigation and configuration on the Settings page |
 | `@ui-ux` | General interface, shortcuts, appearance |
+| `@a2a` | Agent-to-Agent protocol — publishing a flow as an A2A agent (card, discovery, JSON-RPC) and consuming remote agents via the `A2AAgent` component. **Needs `LANGFLOW_A2A_ENABLED=true`** (set on every lane and both start scripts since #1240); with it off the whole surface answers 404 and these specs would pass while testing nothing, so they call `requireA2aEnabled()` first |
 
 ## CI/CD
 
