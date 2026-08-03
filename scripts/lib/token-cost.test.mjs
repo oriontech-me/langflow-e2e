@@ -167,6 +167,10 @@ test("the shipped price table covers the models measured against Langflow 1.12.0
     "claude-sonnet-4-6",
     "claude-sonnet-5",
     "claude-opus-5",
+    // §7.2: added after 2026-08-03 proved an unpriced haiku silences the whole
+    // Anthropic provider — it is the cost-preferred model, so it is the one that
+    // most needs to resolve.
+    "claude-haiku-4-5",
     "gemini-2.5-flash",
     "gemini-flash-latest",
     // #1197 re-review, finding B: gemini-3.5-flash was the run's largest
@@ -177,6 +181,50 @@ test("the shipped price table covers the models measured against Langflow 1.12.0
     const usd = usdFor(model, 1, 1, prices, REPRESENTATIVE_DATE);
     assert.ok(Number.isFinite(usd), `${model} must resolve to a numeric price on ${REPRESENTATIVE_DATE}`);
   }
+});
+
+// §7.2: `claude-haiku-4-5` is what `resolveClaudeModel("haiku")` selects in
+// anthropic-provider.spec.ts, and CANDIDATE_PREFS.anthropic leads with it — the
+// one entry in that map chosen for PRICE rather than compatibility
+// (collect-models.ts:148-155). It had no price entry, so on 2026-08-03 an entire
+// provider's spend priced to nothing: four Anthropic tests passed, at least three
+// real Claude completions ran, and `by_model` carried no Claude row at all.
+//
+// Rate verified 2026-08-03 against Anthropic's published pricing page: $1/$5 per
+// MTok, which also matches the figure already written down at
+// collect-models.ts:150-152.
+test("the shipped table prices claude-haiku-4-5 at exactly $1/$5 per MTok (§7.2)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  // One million prompt tokens and one million completion tokens: the USD figure
+  // IS the per-MTok pair, so this asserts the rate itself rather than a rounding
+  // of it.
+  const usd = usdFor("claude-haiku-4-5", 1_000_000, 1_000_000, prices, "2026-08-03");
+  assert.equal(usd, 6, "1 MTok in + 1 MTok out must price at $1 + $5");
+});
+
+// #1211's substring resolution, exercised on haiku rather than only on sonnet.
+// Langflow reports whatever id the provider returns, which for a snapshot build
+// is the dated form — so the family key has to catch it or the verified rate
+// above never applies to a real run.
+test("a dated claude-haiku-4-5 snapshot resolves to the family band (§ Testing 12)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  const flat = usdFor("claude-haiku-4-5", 1_000_000, 1_000_000, prices, "2026-08-03");
+  const dated = usdFor("claude-haiku-4-5-20251001", 1_000_000, 1_000_000, prices, "2026-08-03");
+  assert.equal(dated, flat, "the dated snapshot must price identically to its family key");
+});
+
+// Both directions (§7.2.1). The fix must not become a blanket Claude fallback:
+// `claude-fable-5` sits in the collected catalog at $10/$50 — ten times haiku,
+// twice opus-5 — and CANDIDATE_PREFS.anthropic falls through to raw catalog order
+// when neither haiku nor sonnet is present. Pricing it at haiku's rate would be a
+// 10x understatement reported as exact.
+test("an unpriced Claude id stays unpriced — no blanket family fallback (§7.2.1)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  assert.equal(
+    usdFor("claude-fable-5", 1_000_000, 1_000_000, prices, "2026-08-03"),
+    null,
+    "claude-fable-5 has no entry and must resolve to null, not to a sibling's rate",
+  );
 });
 
 // --- #1211: two-phase lookup (exact, then longest-substring-first) ---

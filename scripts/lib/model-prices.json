@@ -18,6 +18,11 @@
     }
   ],
   "claude-opus-5": { "inputPerMillion": 5.0, "outputPerMillion": 25.0 },
+  "claude-haiku-4-5": {
+    "_comment": "Verified 2026-08-03 against Anthropic's published pricing page ($1/$5 per MTok). Flat: no dated band is announced for this model, unlike claude-sonnet-5's introductory window. This is the model CANDIDATE_PREFS.anthropic leads with (collect-models.ts:148-155) — chosen for price — so it is the Anthropic id a real daily is most likely to report.",
+    "inputPerMillion": 1,
+    "outputPerMillion": 5
+  },
   "gemini-2.5-flash": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 },
   "gemini-flash-latest": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 },
   "gemini-3.5-flash": { "inputPerMillion": 0.3, "outputPerMillion": 2.5 },
