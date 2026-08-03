@@ -21,7 +21,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { APIRequestContext } from "@playwright/test";
-import { recordTokenAttribution } from "./token-attribution";
+import { recordTokenAttribution, resetAttributedFlows } from "./token-attribution";
 
 function tmpFile(): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "attrib-")), "token-attrib.jsonl");
@@ -120,6 +120,7 @@ test("does nothing at all when the out path is unset — no request, no file", a
 });
 
 test("a failing backend is reported on the result, never thrown", async () => {
+  resetAttributedFlows();
   const out = tmpFile();
   const request = fakeRequest({}, {}, { fail: true });
   const result = await recordTokenAttribution({
@@ -135,6 +136,7 @@ test("a failing backend is reported on the result, never thrown", async () => {
 });
 
 test("an unwritable out path is reported, never thrown", async () => {
+  resetAttributedFlows();
   const request = fakeRequest({ f1: [{ id: "t1" }] }, { t1: { spans: [] } });
   const result = await recordTokenAttribution({
     request,
@@ -154,6 +156,7 @@ test("an unwritable out path is reported, never thrown", async () => {
 // traces yet" — `{recorded: 0, skipped: []}` — with no warning anywhere. That
 // is the exact regression the bearer-token fix (#1197 §S2) exists to catch.
 test("a non-ok response (e.g. 403 unauthenticated) is reported, never read as zero traces", async () => {
+  resetAttributedFlows();
   const out = tmpFile();
   const request = {
     get: async () => ({
@@ -177,6 +180,7 @@ test("a flow with no trace yet is simply not recorded — no polling", async () 
 });
 
 test("appends rather than truncating, so parallel workers coexist", async () => {
+  resetAttributedFlows();
   const out = tmpFile();
   const request = fakeRequest(
     { f1: [{ id: "t1" }], f2: [{ id: "t2" }] },
@@ -190,6 +194,7 @@ test("appends rather than truncating, so parallel workers coexist", async () => 
 // --- Finding A (#1197 re-review) ---
 
 test("a detail-fetch failure still yields a line for that trace, with a null total, not a lost line", async () => {
+  resetAttributedFlows();
   const out = tmpFile();
   // No totalTokens on the list item, and no detail entry for "t1" → the
   // detail GET behaves like a real 404 (the flow raced ahead and deleted this
@@ -207,6 +212,7 @@ test("a detail-fetch failure still yields a line for that trace, with a null tot
 });
 
 test("a detail-fetch failure still keeps the trace's own total already in hand from the list response", async () => {
+  resetAttributedFlows();
   const out = tmpFile();
   // The list response already carries totalTokens — buildProbe uses that
   // regardless of whether the (separate) detail fetch for spans succeeds.
@@ -219,6 +225,7 @@ test("a detail-fetch failure still keeps the trace's own total already in hand f
 });
 
 test("a network error fetching ONE trace's detail degrades that trace only — the rest of the flow is unaffected", async () => {
+  resetAttributedFlows();
   const out = tmpFile();
   const request = {
     get: async (url: string) => {
@@ -274,4 +281,59 @@ test("a failing buildProbe import degrades to a named skip — never a silent {r
   assert.match(result.skipped[0], /buildProbe import failed/);
   assert.match(result.skipped[0], /Cannot find module/);
   assert.equal(fs.existsSync(out), false, "no file must be written when the import itself fails");
+});
+
+// §2.1: the anti-double-count guard. `cleanup()` attributes the whole captured
+// batch (track-created-flows.ts:263) and then calls `deleteFlow` per id (:296).
+// Once `deleteFlow` carries its own hook, every tracked spec's flows arrive here
+// twice. Two lines for one trace is not a visible defect downstream -- it is a
+// plausible number, twice as large, with no marker saying so.
+test("a flow already attempted is never attributed a second time (§2.1)", async () => {
+  resetAttributedFlows();
+  const out = tmpFile();
+  const request = fakeRequest({ f1: [{ id: "t1", totalTokens: 88 }] }, { t1: { spans: SPANS } });
+  const args = { request, flowIds: ["f1"], test: "spec", file: "x.spec.ts", out };
+
+  const first = await recordTokenAttribution(args);
+  const second = await recordTokenAttribution(args);
+
+  assert.equal(first.recorded, 1);
+  assert.equal(second.recorded, 0, "the second pass must record nothing for the same flow");
+  const lines = fs.readFileSync(out, "utf8").trim().split("\n");
+  assert.equal(lines.length, 1, "exactly one line for one trace, across both passes");
+});
+
+// ATTEMPTED, not RECORDED. The contract is one list request per flow, never
+// retried (Global Constraints) -- so a flow whose list came back 403 is spent, not
+// eligible for a second try. Recording it as "attempted" is what keeps a failure
+// from silently turning into the retry the no-polling rule forbids.
+test("a flow whose list request failed is still not retried on a second pass (§2.1)", async () => {
+  resetAttributedFlows();
+  const out = tmpFile();
+  let calls = 0;
+  const request = {
+    get: async () => {
+      calls += 1;
+      return { ok: () => false, status: () => 403, json: async () => ({ detail: "Not authenticated" }) };
+    },
+  } as unknown as APIRequestContext;
+  const args = { request, flowIds: ["f1"], test: "spec", file: "x.spec.ts", out };
+
+  const first = await recordTokenAttribution(args);
+  const second = await recordTokenAttribution(args);
+
+  assert.deepEqual(first.skipped, ["f1: HTTP 403"]);
+  assert.equal(calls, 1, "the second pass must not issue another list request");
+  assert.equal(second.recorded, 0);
+  assert.deepEqual(second.skipped, [], "already-attempted is not a new failure to report");
+});
+
+test("resetAttributedFlows clears the guard, so a fresh worker starts clean", async () => {
+  resetAttributedFlows();
+  const out = tmpFile();
+  const request = fakeRequest({ f1: [{ id: "t1", totalTokens: 10 }] }, { t1: { spans: [] } });
+  const args = { request, flowIds: ["f1"], test: "spec", file: "x.spec.ts", out };
+  assert.equal((await recordTokenAttribution(args)).recorded, 1);
+  resetAttributedFlows();
+  assert.equal((await recordTokenAttribution(args)).recorded, 1);
 });

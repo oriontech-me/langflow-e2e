@@ -31,6 +31,31 @@
 import fs from "node:fs";
 import type { APIRequestContext } from "@playwright/test";
 
+// §2.1: flows this process has already ATTEMPTED to attribute.
+//
+// Attempted, not recorded, and the distinction is the contract: one list request
+// per flow, never retried. A flow whose list came back 403 has spent its single
+// request, so a second pass must not issue another -- recording only successes
+// would turn every failure into exactly the retry the no-polling rule forbids.
+//
+// Process-scoped is the right scope: Playwright runs each worker as its own
+// process and a flow belongs to one test in one worker, so there is nothing to
+// share across workers and nothing to synchronise.
+//
+// This exists because `cleanup()` attributes its whole captured batch
+// (track-created-flows.ts:263) and then deletes per id (:296) through
+// `deleteFlow`, which carries its own hook. Without this guard every tracked
+// spec's flows are attributed twice, and two lines for one trace is not a visible
+// defect downstream -- it is a plausible number, twice as large.
+const attempted = new Set<string>();
+
+/** Clear the attempted-flow guard. **Unit tests only** -- a spec must not call
+ *  it. Production has no reason to: the set is process-scoped and a worker's
+ *  flow ids are never reused. */
+export function resetAttributedFlows(): void {
+  attempted.clear();
+}
+
 // `buildProbe` is pure, dependency-free ESM under scripts/lib — the poller
 // (scripts/watch-tokens.mjs) imports it the normal, static way. This file is
 // TypeScript compiled to CommonJS (tsconfig: `module: commonjs`), and a CJS
@@ -135,6 +160,10 @@ export async function recordTokenAttribution({
   }
 
   for (const flowId of flowIds) {
+    // Claimed BEFORE the request, so a throw below cannot leave the flow eligible
+    // for a retry the contract forbids.
+    if (attempted.has(flowId)) continue;
+    attempted.add(flowId);
     try {
       const res = await request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, { headers });
       // `res.json()` used to run regardless of `res.ok()`. Langflow answers an

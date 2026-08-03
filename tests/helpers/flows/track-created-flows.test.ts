@@ -39,6 +39,7 @@ import {
   type TrackedPage,
   type TrackedResponse,
 } from "./track-created-flows";
+import { resetAttributedFlows } from "./token-attribution";
 
 const BASE = "http://localhost:7860";
 
@@ -593,6 +594,7 @@ test("no attribution option means no attribution request at all", async () => {
 });
 
 test("a throwing attribution never fails the cleanup", async (t) => {
+  resetAttributedFlows();
   const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-attrib-")), "a.jsonl");
   const { page, emit } = fakePage();
   const tracker = trackCreatedFlows(page);
@@ -613,6 +615,7 @@ test("a throwing attribution never fails the cleanup", async (t) => {
 });
 
 test("the attribution GET carries the same bearer the deletes use, not just cookies", async (t) => {
+  resetAttributedFlows();
   // Measured against a real Langflow (langflowai/langflow-nightly 1.12.0.dev10):
   // an unauthenticated `GET /monitor/traces` answers 403. Pinning this so the
   // sidecar cannot silently regress back to running on cookies alone.
