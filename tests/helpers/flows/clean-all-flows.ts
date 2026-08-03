@@ -59,7 +59,11 @@ export const cleanAllFlows = async (page: Page) => {
   const failures: string[] = [];
   for (const flow of flows) {
     try {
-      await deleteFlow(page.request, flow.id, { headers });
+      // `attribute: false` (§2.2): this sweep deletes every user flow on the
+      // shared instance, including flows another worker is mid-test on. Naming
+      // those after whichever spec called the sweep would write wrong rows into
+      // by_spec -- worse than none, because a wrong number carries no marker.
+      await deleteFlow(page.request, flow.id, { headers }, { attribute: false });
     } catch (err) {
       failures.push(`${flow.id}: ${err instanceof Error ? err.message : String(err)}`);
     }

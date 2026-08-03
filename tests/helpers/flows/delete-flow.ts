@@ -1,4 +1,6 @@
 import type { APIRequestContext } from "@playwright/test";
+import { recordTokenAttribution } from "./token-attribution";
+import { resolveTestAttribution } from "./resolve-test-attribution";
 
 /**
  * Deletes a flow via the Langflow REST API and surfaces a failed deletion.
@@ -24,11 +26,75 @@ import type { APIRequestContext } from "@playwright/test";
  * @param id       The flow ID to delete.
  * @param options  Optional Playwright request options (same shape as `request.delete`'s), e.g. `{ headers: { Authorization } }`.
  */
+export interface DeleteFlowHooks {
+  /**
+   * Attribute this flow's tokens before deleting it. Defaults to `true`.
+   *
+   * `cleanAllFlows` passes `false`, and that is not a preference: it deletes
+   * EVERY user flow on the shared instance, including flows another worker is
+   * actively using. Naming those after whichever spec called the sweep writes
+   * WRONG rows into `by_spec` -- strictly worse than a missing row, because a
+   * wrong number carries no marker saying so (§2.2).
+   */
+  attribute?: boolean;
+  /**
+   * Override the source of test metadata. **Unit tests only** -- a spec must not
+   * pass it. See `resolveTestAttribution`.
+   */
+  info?: Parameters<typeof resolveTestAttribution>[0];
+}
+
 export async function deleteFlow(
   request: APIRequestContext,
   id: string,
   options?: Parameters<APIRequestContext["delete"]>[1],
+  hooks?: DeleteFlowHooks,
 ): Promise<void> {
+  // BEFORE the DELETE, on purpose: a trace 404s the moment its flow is deleted
+  // (#1197 design §2/S4), so this is the last instant the data exists. 157 specs
+  // reach this helper, which is what makes one hook here worth 148 spec edits.
+  //
+  // Wrapped in its own try/catch even though `recordTokenAttribution` is
+  // documented not to throw: this helper's contract is that it throws on a failed
+  // DELETION, and telemetry must never be able to counterfeit that signal. An
+  // unguarded rejection here would fail a spec's teardown for a reason that has
+  // nothing to do with the flow (§2.3).
+  if (hooks?.attribute !== false) {
+    try {
+      const attribution = resolveTestAttribution(hooks?.info);
+      // No attribution means there is no running test to name -- this helper is
+      // reachable from module scope and from setup helpers, not only from hooks.
+      // That is an expected state, not a failure, so it is silent: warning here
+      // would fire on every helper-invoked delete in the suite.
+      if (attribution) {
+        const result = await recordTokenAttribution({
+          request,
+          flowIds: [id],
+          test: attribution.test,
+          file: attribution.file,
+          headers: (options as { headers?: Record<string, string> } | undefined)?.headers,
+        });
+        // A failure WITH a test to name is different, and it must not be silent.
+        // This helper returns void, so `skipped` has nowhere to go -- and
+        // discarding it would make a wedged monitor endpoint indistinguishable
+        // from "no traces yet", which is exactly finding I8 of the #1197 review.
+        // Warning is what `cleanup()` already does with the same list
+        // (track-created-flows.ts:270-275), so this matches the established shape.
+        if (result.skipped.length > 0) {
+          console.warn(
+            `⚠️  token attribution skipped ${result.skipped.length} flow(s): ` +
+              result.skipped.join("; "),
+          );
+        }
+      }
+    } catch {
+      // Last resort. `recordTokenAttribution` is documented not to throw, but this
+      // helper's contract is that it throws on a failed DELETION -- telemetry must
+      // never be able to counterfeit that signal. Losing an attribution is
+      // acceptable; failing a teardown over one is not.
+    }
+  }
+
   const url = `/api/v1/flows/${id}`;
   // 404 means the flow is already gone — for idempotent cleanup that IS the
   // desired end state (e.g. a concurrent worker's sweep removed it first), not
