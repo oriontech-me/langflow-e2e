@@ -59,7 +59,14 @@ export async function deleteFlow(
   // DELETION, and telemetry must never be able to counterfeit that signal. An
   // unguarded rejection here would fail a spec's teardown for a reason that has
   // nothing to do with the flow (§2.3).
-  if (hooks?.attribute !== false) {
+  //
+  // `process.env.TOKENS_ATTRIB` is checked HERE, not left to
+  // `recordTokenAttribution`'s own default-parameter guard: inertness with the
+  // variable unset is this helper's own contract (every local run, every PR
+  // lane pays nothing), and that must not live one module away where a future
+  // change to that function's prologue could silently put a `test.info()` call
+  // and an awaited round-trip on every teardown in the suite.
+  if (hooks?.attribute !== false && process.env.TOKENS_ATTRIB) {
     try {
       const attribution = resolveTestAttribution(hooks?.info);
       // No attribution means there is no running test to name -- this helper is
@@ -80,10 +87,21 @@ export async function deleteFlow(
         // from "no traces yet", which is exactly finding I8 of the #1197 review.
         // Warning is what `cleanup()` already does with the same list
         // (track-created-flows.ts:270-275), so this matches the established shape.
-        if (result.skipped.length > 0) {
+        //
+        // A 404 from the monitor endpoint is excluded from the warning, though
+        // not from `result.skipped` itself: `isDone()` below treats a 404 on the
+        // DELETE as the desired end state (a concurrent worker's sweep, or an
+        // already-idempotent cleanup) rather than a failure, and the monitor
+        // lookup racing the same deletion would 404 for the identical, expected
+        // reason. Warning there would print on the teardown path of every one of
+        // the ~148 specs this hook now reaches for something this helper calls
+        // success. Kept in the list regardless, so a systematically wrong
+        // endpoint path still shows up in the result rather than vanishing.
+        const worthWarning = result.skipped.filter((entry) => !/: HTTP 404$/.test(entry));
+        if (worthWarning.length > 0) {
           console.warn(
-            `⚠️  token attribution skipped ${result.skipped.length} flow(s): ` +
-              result.skipped.join("; "),
+            `⚠️  token attribution skipped ${worthWarning.length} flow(s): ` +
+              worthWarning.join("; "),
           );
         }
       }

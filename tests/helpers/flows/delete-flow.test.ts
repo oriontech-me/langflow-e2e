@@ -10,7 +10,7 @@
 // failed deletion on purpose (#545 -- an unchecked cleanup call lets a failed
 // delete pass silently and the suite quietly re-accumulates leftover flows). The
 // hook may not add a throw path, and may not remove the existing one.
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -18,6 +18,17 @@ import path from "node:path";
 import type { APIRequestContext } from "@playwright/test";
 import { deleteFlow } from "./delete-flow";
 import { resetAttributedFlows } from "./token-attribution";
+
+// One mechanism, not two (round-1 review): a per-test reset line is a line
+// someone forgets when adding test number ten, and four of the tests below
+// assert an ABSENCE (no gets, no file, no warnings) that would pass vacuously
+// -- silently, forever -- if "f1" were already in the attempted set from a
+// prior test. `token-attribution.test.ts` made this same fix one commit
+// before this file existed; this converts to the identical single-`beforeEach`
+// shape rather than repeating the per-test line ten times.
+beforeEach(() => {
+  resetAttributedFlows();
+});
 
 function tmpFile(): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "delflow-")), "token-attrib.jsonl");
@@ -51,7 +62,6 @@ const INFO = () => ({
 });
 
 test("attributes the flow before deleting it, deriving test and file (§1.1)", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   process.env.TOKENS_ATTRIB = out;
   try {
@@ -68,15 +78,25 @@ test("attributes the flow before deleting it, deriving test and file (§1.1)", a
   }
 });
 
-test("reads the traces BEFORE issuing the delete — a trace 404s once its flow is gone", async () => {
-  resetAttributedFlows();
+test("reads the traces BEFORE issuing the delete — every read must fully resolve, not just start, before the delete fires", async () => {
   const out = tmpFile();
   process.env.TOKENS_ATTRIB = out;
   try {
     const order: string[] = [];
     const request = {
       get: async (url: string) => {
-        order.push("get");
+        order.push("get:start");
+        // A microtask tick between start and resolution, standing in for
+        // network latency. Round-1 review: the previous version of this test
+        // pushed a "get" marker SYNCHRONOUSLY on call, so a fire-and-forget
+        // refactor (issuing the reads without awaiting them before the
+        // delete -- a plausible "make teardown faster" change, and Task 6 of
+        // this plan is explicitly about speed) would still record "get"
+        // before "delete" and this test would stay green while the reads
+        // raced the DELETE. Asserting against the RESOLUTION marker instead
+        // of the call marker is what makes that race visible.
+        await Promise.resolve();
+        order.push("get:resolved");
         if (url.includes("?flow_id=")) {
           return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1", totalTokens: 5 }] }) };
         }
@@ -88,15 +108,17 @@ test("reads the traces BEFORE issuing the delete — a trace 404s once its flow 
       },
     } as unknown as APIRequestContext;
     await deleteFlow(request, "f1", undefined, { info: INFO });
-    assert.equal(order[order.length - 1], "delete", "every read must precede the delete");
-    assert.ok(order.includes("get"));
+    assert.ok(order.includes("get:resolved"), "at least one read must have completed");
+    assert.ok(
+      order.lastIndexOf("get:resolved") < order.indexOf("delete"),
+      `every read must fully RESOLVE before the delete fires, not just start; got ${JSON.stringify(order)}`,
+    );
   } finally {
     delete process.env.TOKENS_ATTRIB;
   }
 });
 
 test("makes no request and touches no file when TOKENS_ATTRIB is unset (Global Constraints)", async () => {
-  resetAttributedFlows();
   delete process.env.TOKENS_ATTRIB;
   const { request, gets, deletes } = fakeRequest();
   await deleteFlow(request, "f1", undefined, { info: INFO });
@@ -105,7 +127,6 @@ test("makes no request and touches no file when TOKENS_ATTRIB is unset (Global C
 });
 
 test("deletes normally with no running test, and does not pretend it attributed (§2.3)", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   process.env.TOKENS_ATTRIB = out;
   try {
@@ -128,7 +149,6 @@ test("deletes normally with no running test, and does not pretend it attributed 
 // traces yet" (#1197 review, finding I8). Warning is what cleanup() already does
 // with the same list.
 test("names an attribution failure on the console rather than swallowing it (§2.3)", async () => {
-  resetAttributedFlows();
   process.env.TOKENS_ATTRIB = tmpFile();
   const warnings: string[] = [];
   const realWarn = console.warn;
@@ -149,11 +169,45 @@ test("names an attribution failure on the console rather than swallowing it (§2
   }
 });
 
+// Round-1 review, item 5: deleteFlow's own `isDone()` treats a 404 on the
+// DELETE as the desired end state (a concurrent worker's sweep, or an
+// already-idempotent cleanup), not a failure. A 404 from the MONITOR endpoint
+// racing that same deletion is the identical, expected shape -- so it must not
+// print a warning on the teardown path of every idempotent/raced delete in the
+// suite. It still counts toward the sidecar's own `skipped` result (that part
+// is `recordTokenAttribution`'s own contract, covered in
+// token-attribution.test.ts); this test is only about deleteFlow's console.
+//
+// Caveat, stated rather than assumed: this does NOT assert what Langflow's real
+// `/api/v1/monitor/traces` endpoint returns for an unknown/already-deleted
+// `flow_id` -- that was not verified against a live backend. It asserts
+// deleteFlow's own handling GIVEN a 404, whatever produces one.
+test("does not warn about a 404 from the monitor endpoint (§2.3)", async () => {
+  process.env.TOKENS_ATTRIB = tmpFile();
+  const warnings: string[] = [];
+  const realWarn = console.warn;
+  console.warn = (msg: string) => warnings.push(String(msg));
+  try {
+    const request = {
+      get: async () => ({ ok: () => false, status: () => 404, json: async () => ({ detail: "Not found" }) }),
+      delete: async () => ({ ok: () => true, status: () => 204, text: async () => "" }),
+    } as unknown as APIRequestContext;
+    await deleteFlow(request, "f1", undefined, { info: INFO });
+    assert.deepEqual(
+      warnings,
+      [],
+      "a 404 on the monitor endpoint is the same expected shape as a 404 on the DELETE itself, and must not warn",
+    );
+  } finally {
+    console.warn = realWarn;
+    delete process.env.TOKENS_ATTRIB;
+  }
+});
+
 // The inverse: no running test is an EXPECTED state, not a failure. deleteFlow is
 // reachable from module scope and from setup helpers, so warning there would fire
 // across the whole suite for no reason.
 test("stays silent when there is simply no test to name (§2.3)", async () => {
-  resetAttributedFlows();
   process.env.TOKENS_ATTRIB = tmpFile();
   const warnings: string[] = [];
   const realWarn = console.warn;
@@ -173,8 +227,16 @@ test("stays silent when there is simply no test to name (§2.3)", async () => {
 });
 
 test("an attribution failure never changes whether deleteFlow throws (§2.3)", async () => {
-  resetAttributedFlows();
   process.env.TOKENS_ATTRIB = tmpFile();
+  // Round-1 review, item 4: the wedged-backend scenario below drives the
+  // skipped-warning branch, which used to print
+  // "⚠️  token attribution skipped 1 flow(s): f1: backend wedged" straight
+  // into a green test run. Stub it like the other warn-asserting tests, and
+  // restore it in `finally` -- a leaked stub here would corrupt every test
+  // that runs after this one in the file and the failure would look like
+  // something else entirely.
+  const realWarn = console.warn;
+  console.warn = () => {};
   try {
     // The monitor endpoint is wedged; the delete succeeds.
     const request = {
@@ -187,20 +249,21 @@ test("an attribution failure never changes whether deleteFlow throws (§2.3)", a
 
     // And the inverse: attribution succeeds, the delete fails, and the delete's
     // own error still surfaces unchanged. That throw is the whole point of this
-    // helper (#545).
-    resetAttributedFlows();
+    // helper (#545). No extra reset needed here: "f2" is a different id from
+    // "f1" above, so the attempted-flow guard has nothing to do with this
+    // assertion.
     const failing = fakeRequest({ deleteStatus: 422 });
     await assert.rejects(
       () => deleteFlow(failing.request, "f2", undefined, { info: INFO }),
       /Flow cleanup failed: 422/,
     );
   } finally {
+    console.warn = realWarn;
     delete process.env.TOKENS_ATTRIB;
   }
 });
 
 test("attribute: false suppresses the hook entirely — the cleanAllFlows case (§2.2)", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   process.env.TOKENS_ATTRIB = out;
   try {
@@ -215,7 +278,6 @@ test("attribute: false suppresses the hook entirely — the cleanAllFlows case (
 });
 
 test("passes the caller's Authorization header through to the sidecar", async () => {
-  resetAttributedFlows();
   const out = tmpFile();
   process.env.TOKENS_ATTRIB = out;
   try {
