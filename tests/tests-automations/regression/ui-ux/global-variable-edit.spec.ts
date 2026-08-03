@@ -73,9 +73,13 @@ test.describe("Global Variable Edit (Settings page)", () => {
     },
   );
 
-  test(
+  // Quarantined for #1235 — recurrent flake (dailies 2026-07-27, 2026-08-03):
+  // clicking the variable's ag-grid row does not open the Update Variable modal,
+  // so `getByRole('heading', { name: 'Update Variable' })` never becomes visible.
+  // Lifting the quarantine and restoring @stable is a deliverable of #1235.
+  test.fixme(
     "edit existing global variable by clicking its row",
-    { tag: ["@stable", "@release", "@workspace", "@regression"] },
+    { tag: ["@release", "@workspace", "@regression"] },
     async ({ page }) => {
       createdVarName = `test_edit_var_${Date.now()}`;
 

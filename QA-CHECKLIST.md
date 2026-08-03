@@ -306,7 +306,7 @@
 #### 4.3 Global Variables (API Keys)
 - [x] Create global variable
 - [-] Use global variable in component (API key) → `ui-ux/use-global-variable-in-component.spec.ts`
-- [x] Edit existing global variable → `ui-ux/global-variable-edit.spec.ts`
+- [!] Edit existing global variable — quarantined (#1235): clicking the variable's ag-grid row does not open the Update Variable modal, recurrent on the dailies of 2026-07-27 and 2026-08-03. Same surface and same shape as the provider-credential removal below (§7.5) — filed as one cause → `ui-ux/global-variable-edit.spec.ts`
 - [x] Delete global variable → `ui-ux/global-variables-crud.spec.ts`
 - [x] Create global variable of type "Generic" → `ui-ux/global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `ui-ux/global-variables-crud.spec.ts`
@@ -424,7 +424,7 @@
 - [x] Language Model component — configuration → `llm-agents/language-model-regression.spec.ts`
 - [x] Model Input component → `llm-agents/modelInputComponent.spec.ts`
 - [x] Add new provider via modal → `llm-agents/model-provider-api-key.spec.ts` (positive add validated via invalid-key rejection + Replace edit surface — a real re-add poisons a backend credential cache, see #505)
-- [x] Remove API key from existing provider → `llm-agents/remove-provider-api-key.spec.ts`
+- [~] Remove API key from existing provider — the API path (`DELETE /api/v1/variables/{id}`) stays validated; the **UI** path is quarantined (#1235): after ticking the row's checkbox the header trash action stays disabled, recurrent on the dailies of 2026-07-27 and 2026-08-03. Same Global Variables ag-grid surface as §4.3's edit entry — filed as one cause → `llm-agents/remove-provider-api-key.spec.ts`
 - [x] Per-model enable/disable toggle changes immediately and persists across reopen → `llm-agents/model-provider-model-toggle.spec.ts`
 - [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
