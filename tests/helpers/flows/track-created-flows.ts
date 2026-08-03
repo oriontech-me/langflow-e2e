@@ -308,7 +308,16 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
       const errors: unknown[] = [];
       for (const id of captured) {
         try {
-          await deleteFlow(request, id, options);
+          // Forward the same `info` seam `cleanup()` was given: in production no
+          // spec passes it, so `deleteFlow` keeps resolving through the real
+          // `test.info()`, unchanged. In the unit lane, forwarding it is what lets
+          // `deleteFlow`'s OWN hook genuinely attempt its attribution here too —
+          // the attempted-flow guard in `token-attribution.ts` is then the thing
+          // standing between one trace and two lines, rather than this call simply
+          // never trying. `attribute` is deliberately left unset (not `false`):
+          // making the collision impossible by construction would turn this into
+          // an assertion about an absence, and only the guard proves it's handled.
+          await deleteFlow(request, id, options, { info });
           result.deleted.push(id);
         } catch (error) {
           // `deleteFlow` throws on purpose — it already absorbs 404-as-done and one
