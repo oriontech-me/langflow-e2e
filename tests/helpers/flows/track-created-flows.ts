@@ -32,6 +32,7 @@ import type { APIRequestContext } from "@playwright/test";
 import { deleteFlow } from "./delete-flow";
 import { getAuthToken } from "../auth/get-auth-token";
 import { recordTokenAttribution, type TokenAttributionResult } from "./token-attribution";
+import { resolveTestAttribution } from "./resolve-test-attribution";
 
 /**
  * The `Page` surface the tracker uses. Narrow on purpose: it is what lets the unit
@@ -117,11 +118,22 @@ export interface FlowCleanupOptions {
   authRetryDelaysMs?: number[];
   /**
    * Name this spec on the traces its flows produced, for the token consumption
-   * monitor (#1197). Omitted ⇒ nothing happens: no request, no file. Even when
-   * passed, the sidecar is inert unless `TOKENS_ATTRIB` is set, so only the CI lane
+   * monitor (#1197).
+   *
+   * Omitting it no longer disables attribution (§1.1): the same two fields are
+   * derived from the running test, so the 28 specs that never passed this are
+   * armed without being edited. Passing it still WINS, so the call sites that do
+   * are unchanged and a spec with a reason to override keeps one.
+   *
+   * The sidecar remains inert unless `TOKENS_ATTRIB` is set, so only the CI lane
    * that runs the poller pays for it.
    */
   attribution?: { test: string; file: string };
+  /**
+   * Override the source of test metadata. **Unit tests only** — a spec must not
+   * set it. See `resolveTestAttribution`.
+   */
+  info?: Parameters<typeof resolveTestAttribution>[0];
 }
 
 export interface FlowTracker {
@@ -214,7 +226,7 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
     dispose: () => page.off("response", onResponse),
     async cleanup(
       request: APIRequestContext,
-      { strict = false, authRetryDelaysMs, attribution }: FlowCleanupOptions = {},
+      { strict = false, authRetryDelaysMs, attribution, info }: FlowCleanupOptions = {},
     ): Promise<FlowCleanupResult> {
       await settle();
       const result: FlowCleanupResult = { deleted: [], failed: [] };
@@ -259,12 +271,15 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
       // unless the lane asked for it. Shares the bearer resolved above: when it could
       // not be obtained, this runs unauthenticated too and its failures land in
       // `skipped` — the same documented, counted outcome as everywhere else here.
-      if (attribution) {
+      // Explicit first, derived second (§1.1). Passing `attribution` is now an
+      // override rather than the switch that turns the feature on.
+      const resolvedAttribution = attribution ?? resolveTestAttribution(info);
+      if (resolvedAttribution) {
         result.attribution = await recordTokenAttribution({
           request,
           flowIds: captured,
-          test: attribution.test,
-          file: attribution.file,
+          test: resolvedAttribution.test,
+          file: resolvedAttribution.file,
           headers: options?.headers,
         });
         if (result.attribution.skipped.length > 0) {

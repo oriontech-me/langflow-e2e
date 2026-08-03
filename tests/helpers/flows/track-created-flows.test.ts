@@ -26,7 +26,7 @@
 // `TrackedResponse` types: the tracker drives real `deleteFlow` and real
 // `getAuthToken` against a fake `APIRequestContext`, so the integration is covered
 // without a browser or a backend.
-import { test } from "node:test";
+import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -40,6 +40,17 @@ import {
   type TrackedResponse,
 } from "./track-created-flows";
 import { resetAttributedFlows } from "./token-attribution";
+
+// One mechanism, not two (round-1 review): a per-test reset line is a line
+// someone forgets when adding test number ten, and a test reusing an
+// already-claimed flow id becomes a silent no-op that stays green, because the
+// guard's short-circuit produces a result byte-identical to what the test
+// already expected. `token-attribution.test.ts` and `delete-flow.test.ts` both
+// made this same fix; this converts to the identical single-`beforeEach` shape
+// rather than repeating the per-test line.
+beforeEach(() => {
+  resetAttributedFlows();
+});
 
 const BASE = "http://localhost:7860";
 
@@ -540,7 +551,7 @@ test("settle() drains the queue, so a later cleanup does not re-await it", async
 
 // ─── Token attribution sidecar (#1197) ───────────────────────────────────────
 
-test("cleanup records token attribution BEFORE deleting, and only when asked", async (t) => {
+test("cleanup records token attribution BEFORE deleting", async (t) => {
   const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-attrib-")), "a.jsonl");
   const order: string[] = [];
   const { page, emit } = fakePage();
@@ -574,7 +585,7 @@ test("cleanup records token attribution BEFORE deleting, and only when asked", a
   assert.deepEqual(result.deleted, ["f1"]);
 });
 
-test("no attribution option means no attribution request at all", async () => {
+test("with neither an explicit attribution NOR an ambient test, nothing is attributed", async () => {
   const { page, emit } = fakePage();
   const tracker = trackCreatedFlows(page);
   emit(creationResponse("f1"));
@@ -587,14 +598,21 @@ test("no attribution option means no attribution request at all", async () => {
     },
     delete: async () => ({ ok: () => true, status: () => 200, json: async () => ({}) }),
   } as unknown as APIRequestContext;
-  const result = await tracker.cleanup(request);
+  // Explicit about WHY nothing is derived, so this stays a real assertion rather
+  // than an accident of the lane: under `node --test` there is no Playwright test
+  // running, so `test.info()` throws and the resolver returns null. Passing `info`
+  // is what the tests below use to simulate a real spec.
+  const result = await tracker.cleanup(request, {
+    info: () => {
+      throw new Error("test.info() can only be called while test is running");
+    },
+  });
   assert.equal(sawTraceCall, false);
   assert.equal(result.attribution, undefined);
   assert.deepEqual(result.deleted, ["f1"]);
 });
 
 test("a throwing attribution never fails the cleanup", async (t) => {
-  resetAttributedFlows();
   const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-attrib-")), "a.jsonl");
   const { page, emit } = fakePage();
   const tracker = trackCreatedFlows(page);
@@ -615,7 +633,6 @@ test("a throwing attribution never fails the cleanup", async (t) => {
 });
 
 test("the attribution GET carries the same bearer the deletes use, not just cookies", async (t) => {
-  resetAttributedFlows();
   // Measured against a real Langflow (langflowai/langflow-nightly 1.12.0.dev10):
   // an unauthenticated `GET /monitor/traces` answers 403. Pinning this so the
   // sidecar cannot silently regress back to running on cookies alone.
@@ -644,4 +661,121 @@ test("the attribution GET carries the same bearer the deletes use, not just cook
 
   assert.equal(tracesAuthHeader, "Bearer tok-abc");
   assert.equal(result.attribution?.recorded, 1);
+});
+
+// §1.1: the 30 specs using this helper pass no `attribution` today, and two of
+// 180 pass one. Deriving it is what arms the other 28 without touching them.
+test("cleanup() attributes without being asked, deriving from the ambient test (§1.1)", async (t) => {
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-derived-")), "a.jsonl");
+  process.env.TOKENS_ATTRIB = out;
+  t.after(() => delete process.env.TOKENS_ATTRIB);
+
+  const { page, emit } = fakePage();
+  const tracker = trackCreatedFlows(page);
+  emit(creationResponse("f1"));
+  await tracker.settle();
+
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("auto_login")) {
+        return { ok: () => true, status: () => 200, json: async () => ({ access_token: "tok" }) };
+      }
+      if (url.includes("?flow_id=")) {
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1", totalTokens: 42 }] }) };
+      }
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+    delete: async () => ({ ok: () => true, status: () => 204, text: async () => "" }),
+  } as unknown as APIRequestContext;
+
+  const result = await tracker.cleanup(request, {
+    info: () => ({
+      title: "derived, not passed",
+      file: "/repo/tests/tests-automations/regression/y.spec.ts",
+      project: { testDir: "/repo/tests" },
+    }),
+  });
+
+  assert.equal(result.attribution?.recorded, 1);
+  const line = JSON.parse(fs.readFileSync(out, "utf8").trim().split("\n")[0]);
+  assert.equal(line.test, "derived, not passed");
+  assert.equal(line.file, "tests-automations/regression/y.spec.ts");
+});
+
+// The two call sites that pass `attribution` explicitly must keep working
+// unchanged, and an explicit value must WIN -- a spec with a reason to override
+// still has one.
+test("an explicit attribution still takes precedence over the derived one (§1.1)", async (t) => {
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-explicit-")), "a.jsonl");
+  process.env.TOKENS_ATTRIB = out;
+  t.after(() => delete process.env.TOKENS_ATTRIB);
+
+  const { page, emit } = fakePage();
+  const tracker = trackCreatedFlows(page);
+  emit(creationResponse("f1"));
+  await tracker.settle();
+
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("auto_login")) {
+        return { ok: () => true, status: () => 200, json: async () => ({ access_token: "tok" }) };
+      }
+      if (url.includes("?flow_id=")) {
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1", totalTokens: 42 }] }) };
+      }
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+    delete: async () => ({ ok: () => true, status: () => 204, text: async () => "" }),
+  } as unknown as APIRequestContext;
+
+  await tracker.cleanup(request, {
+    attribution: { test: "explicit wins", file: "explicit.spec.ts" },
+    info: () => ({ title: "derived loses", file: "/repo/tests/z.spec.ts", project: { testDir: "/repo/tests" } }),
+  });
+
+  const line = JSON.parse(fs.readFileSync(out, "utf8").trim().split("\n")[0]);
+  assert.equal(line.test, "explicit wins");
+  assert.equal(line.file, "explicit.spec.ts");
+});
+
+// THE test that matters most in this plan (§2.1). cleanup() attributes the batch
+// and then calls deleteFlow per id, and deleteFlow now carries its own hook. One
+// trace must produce ONE line -- a second would be a plausible number, twice as
+// large, with nothing marking it.
+test("one trace produces exactly one line, through cleanup AND deleteFlow (§2.1)", async (t) => {
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "tracker-once-")), "a.jsonl");
+  process.env.TOKENS_ATTRIB = out;
+  t.after(() => delete process.env.TOKENS_ATTRIB);
+
+  const { page, emit } = fakePage();
+  const tracker = trackCreatedFlows(page);
+  emit(creationResponse("f1"));
+  await tracker.settle();
+
+  let listCalls = 0;
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("auto_login")) {
+        return { ok: () => true, status: () => 200, json: async () => ({ access_token: "tok" }) };
+      }
+      if (url.includes("?flow_id=")) {
+        listCalls += 1;
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1", totalTokens: 42 }] }) };
+      }
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+    delete: async () => ({ ok: () => true, status: () => 204, text: async () => "" }),
+  } as unknown as APIRequestContext;
+
+  await tracker.cleanup(request, {
+    info: () => ({ title: "counted once", file: "/repo/tests/w.spec.ts", project: { testDir: "/repo/tests" } }),
+  });
+
+  const lines = fs.readFileSync(out, "utf8").trim().split("\n");
+  assert.equal(lines.length, 1, "cleanup's batch call and deleteFlow's per-id hook must not both record");
+  assert.equal(JSON.parse(lines[0]).total_tokens, 42);
+  // And the request side of the same guarantee: one list request per flow, ever
+  // (Global Constraints). Asserting only on the line count would pass even if the
+  // second pass made the request and then discarded the result.
+  assert.equal(listCalls, 1, "the flow's traces must be listed exactly once");
 });
