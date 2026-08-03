@@ -102,9 +102,9 @@ updates:
 
       # TEMPORARY — remove once the lanes run Node 22. @flakiness/playwright 2.x
       # requires `node >= 22.9.0` (1.18.0 accepted `^20.17.0 || >=22.9.0`), while
-      # every workflow that calls actions/setup-node pins "20": pr-validation.yml
-      # (3 jobs), nightly.yml, manual.yml, update-coverage-summary.yml and
-      # adaptive-impacted.yml. The reporter is configured in playwright.config.ts
+      # all 11 `node-version:` pins in this repo say "20": pr-validation.yml (x4),
+      # adaptive-impacted.yml (x3), manual.yml (x2), nightly.yml and
+      # update-coverage-summary.yml. The reporter is configured in playwright.config.ts
       # for every CI=true run, so accepting v2 first risks losing the Flakiness.io
       # upload on those lanes — silently, since a manifest change resolves to zero
       # impacted specs and the PR still looks green. daily-stable.yml is the one
