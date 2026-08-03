@@ -122,7 +122,11 @@ test("makes no request and touches no file when TOKENS_ATTRIB is unset (Global C
   delete process.env.TOKENS_ATTRIB;
   const { request, gets, deletes } = fakeRequest();
   await deleteFlow(request, "f1", undefined, { info: INFO });
-  assert.deepEqual(gets, [], "the PR lane and every local run must pay nothing");
+  // Every LOCAL run pays nothing, unconditionally — nothing outside CI sets
+  // TOKENS_ATTRIB. Not the PR lane, though: pr-validation.yml:711 sets it on
+  // purpose, since the PR lane is the one place a cost regression is catchable
+  // before merge. This assertion is about the variable, not about any lane.
+  assert.deepEqual(gets, [], "with TOKENS_ATTRIB unset, every local run must pay nothing");
   assert.deepEqual(deletes, ["/api/v1/flows/f1"]);
 });
 

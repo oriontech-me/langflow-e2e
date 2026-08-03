@@ -102,6 +102,9 @@ test("writes one self-sufficient line per trace — trace_id, flow_id, its own t
     models: [{ model: "gpt-4o-mini", prompt_tokens: 40, completion_tokens: 48, total_tokens: 88, calls: 1 }],
     test: "agent suite",
     file: "x.spec.ts",
+    // Per-flow elapsed (§4.3), not a literal: the value is timing-dependent, and
+    // the test that pins its MEANING is "records attrib_ms on every line" below.
+    attrib_ms: lines[0].attrib_ms,
   });
   assert.equal(lines[1].trace_id, "t2");
   assert.equal(lines[1].total_tokens, 50);
@@ -343,4 +346,198 @@ test("resetAttributedFlows clears the guard, so a fresh worker starts clean", as
   assert.equal((await recordTokenAttribution(args)).recorded, 1);
   resetAttributedFlows();
   assert.equal((await recordTokenAttribution(args)).recorded, 1);
+});
+
+// --- §4: bounding the teardown cost, and measuring it ---
+
+// §4.2: the per-flow loop was strictly serial, so N flows cost N round trips on
+// the teardown path of nearly every spec in the suite. Concurrency collapses that
+// to roughly one round trip regardless of flow count.
+test("reads every flow's traces concurrently, not one round trip per flow (§4.2)", async () => {
+  const out = tmpFile();
+  let inFlight = 0;
+  let peak = 0;
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("?flow_id=")) {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((r) => setTimeout(r, 10));
+        inFlight -= 1;
+        const flowId = new URL(url, "http://x").searchParams.get("flow_id") ?? "";
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: `t-${flowId}`, totalTokens: 5 }] }) };
+      }
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+  } as unknown as APIRequestContext;
+
+  const result = await recordTokenAttribution({
+    request,
+    flowIds: ["f1", "f2", "f3"],
+    test: "spec",
+    file: "x.spec.ts",
+    out,
+  });
+
+  assert.equal(result.recorded, 3);
+  assert.ok(peak > 1, `the list requests must overlap; peak concurrency was ${peak}`);
+  // appendFileSync is synchronous, so concurrent appends cannot interleave a
+  // line -- the property the comment at token-attribution.ts:187 relies on.
+  const lines = fs.readFileSync(out, "utf8").trim().split("\n");
+  assert.equal(lines.length, 3);
+  for (const line of lines) assert.doesNotThrow(() => JSON.parse(line));
+});
+
+// §4.2: an explicit numeric zero means the per-model spans buy nothing. Absent or
+// null means NOT YET COMPUTED, which is the whole reason for the
+// total_tokens: null-not-0 rule (#1197 review, finding I3) -- conflating the two
+// would discard a real trace whose total simply had not landed.
+test("skips the detail fetch on totalTokens === 0, but never on absent or null (§4.2)", async () => {
+  const details: string[] = [];
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("?flow_id=")) {
+        const flowId = new URL(url, "http://x").searchParams.get("flow_id") ?? "";
+        const byFlow: Record<string, Array<Record<string, unknown>>> = {
+          zero: [{ id: "t-zero", totalTokens: 0 }],
+          absent: [{ id: "t-absent" }],
+          nulled: [{ id: "t-null", totalTokens: null }],
+        };
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: byFlow[flowId] ?? [] }) };
+      }
+      details.push(url);
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+  } as unknown as APIRequestContext;
+
+  await recordTokenAttribution({
+    request,
+    flowIds: ["zero", "absent", "nulled"],
+    test: "spec",
+    file: "x.spec.ts",
+    out: tmpFile(),
+  });
+
+  assert.equal(details.some((u) => u.endsWith("t-zero")), false, "an explicit 0 needs no spans");
+  assert.equal(details.some((u) => u.endsWith("t-absent")), true, "absent means unknown, so fetch");
+  assert.equal(details.some((u) => u.endsWith("t-null")), true, "null means unknown, so fetch");
+});
+
+// §4.2: EVERY request the sidecar makes must carry a timeout. Without one,
+// Playwright's 30s default applies, and a wedged monitor endpoint during teardown
+// eats the test's 5-minute budget inside afterEach -- so `request.delete` never
+// runs and the flow leaks silently. That is the failure `deleteFlow` exists to
+// prevent, caused by telemetry. A wall-clock deadline checked BETWEEN requests
+// cannot bound a request that never returns; only a per-request timeout can.
+test("every request carries the timeout, list and detail alike (§4.2)", async () => {
+  const seen: Array<{ url: string; timeout?: number }> = [];
+  const request = {
+    get: async (url: string, opts?: { timeout?: number }) => {
+      seen.push({ url, timeout: opts?.timeout });
+      if (url.includes("?flow_id=")) {
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1" }] }) };
+      }
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+  } as unknown as APIRequestContext;
+
+  await recordTokenAttribution({
+    request,
+    flowIds: ["f1"],
+    test: "spec",
+    file: "x.spec.ts",
+    out: tmpFile(),
+    timeoutMs: 1234,
+  });
+
+  assert.equal(seen.length, 2, "one list request plus one detail request");
+  for (const call of seen) {
+    assert.equal(call.timeout, 1234, `${call.url} was issued without the timeout`);
+  }
+});
+
+test("the timeout defaults to TOKENS_TIMEOUT_MS, then to 8000 (§4.2)", async (t) => {
+  const seen: number[] = [];
+  const request = {
+    get: async (url: string, opts?: { timeout?: number }) => {
+      seen.push(opts?.timeout as number);
+      if (url.includes("?flow_id=")) {
+        return { ok: () => true, status: () => 200, json: async () => ({ traces: [{ id: "t1" }] }) };
+      }
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+  } as unknown as APIRequestContext;
+  const args = { request, flowIds: ["f1"], test: "spec", file: "x.spec.ts", out: tmpFile() };
+
+  process.env.TOKENS_TIMEOUT_MS = "500";
+  t.after(() => delete process.env.TOKENS_TIMEOUT_MS);
+  await recordTokenAttribution(args);
+  assert.deepEqual(seen, [500, 500], "the lane's own value must be honoured");
+
+  delete process.env.TOKENS_TIMEOUT_MS;
+  resetAttributedFlows();
+  seen.length = 0;
+  await recordTokenAttribution({ ...args, flowIds: ["f2"] });
+  assert.deepEqual(seen, [8000, 8000], "the default must match the poller's DEFAULTS.timeoutMs");
+});
+
+// §4.2: the detail fan-out is the unbounded part -- one fetch per trace, and a
+// flow can carry many. The poller caps its own at TOKENS_DETAIL_CAP (25); the
+// sidecar adopts the same knob rather than inventing a third. Counted, so this is
+// deterministic and needs no sleep.
+test("stops fetching detail at the cap and names what it skipped (§4.2)", async () => {
+  let detailCalls = 0;
+  const request = {
+    get: async (url: string) => {
+      if (url.includes("?flow_id=")) {
+        return {
+          ok: () => true,
+          status: () => 200,
+          json: async () => ({ traces: [{ id: "t1" }, { id: "t2" }, { id: "t3" }] }),
+        };
+      }
+      detailCalls += 1;
+      return { ok: () => true, status: () => 200, json: async () => ({ spans: [] }) };
+    },
+  } as unknown as APIRequestContext;
+
+  const result = await recordTokenAttribution({
+    request,
+    flowIds: ["f1"],
+    test: "spec",
+    file: "x.spec.ts",
+    out: tmpFile(),
+    detailCap: 2,
+  });
+
+  assert.equal(detailCalls, 2, "the cap must stop the fan-out");
+  // Named, not silent. Dropping the spans quietly would leave `models: []` on a
+  // trace whose tokens are unknown -- identical to a trace whose detail genuinely
+  // came back empty, so the line would read as complete.
+  assert.ok(
+    result.skipped.some((s) => s.includes("detail cap")),
+    `the cap must name itself on skipped; got ${JSON.stringify(result.skipped)}`,
+  );
+  // The capped trace still contributes its own total_tokens -- the cap costs the
+  // per-model breakdown, never the tokens.
+  assert.equal(result.recorded, 3, "every trace is still recorded, capped or not");
+});
+
+// §4.3: the price lands in the same artifact as the benefit, so neither the
+// estimate nor the ceiling has to be believed.
+test("records attrib_ms on every line, as the elapsed for that flow (§4.3)", async () => {
+  const out = tmpFile();
+  const request = fakeRequest(
+    { f1: [{ id: "t1", totalTokens: 88 }, { id: "t2", totalTokens: 50 }] },
+    { t1: { spans: SPANS }, t2: { spans: [] } },
+  );
+  await recordTokenAttribution({ request, flowIds: ["f1"], test: "spec", file: "x.spec.ts", out });
+  const lines = fs.readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+  for (const line of lines) {
+    assert.equal(typeof line.attrib_ms, "number");
+    assert.ok(line.attrib_ms >= 0);
+  }
+  // Two traces of ONE flow carry the SAME per-flow figure. Anything totalling it
+  // must reduce over distinct flow_id, which is what the aggregate test pins.
+  assert.equal(lines[0].attrib_ms, lines[1].attrib_ms);
 });

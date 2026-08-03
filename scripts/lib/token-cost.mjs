@@ -189,6 +189,16 @@ export function aggregate({ probes = [], attributions = [], prices = {}, date } 
     if (a?.trace_id) byTrace.set(a.trace_id, a);
   }
 
+  // §4.3: attrib_ms is a PER-FLOW value repeated on every line of that flow, so
+  // it is reduced over DISTINCT flow_id. Summing the lines would multiply it by
+  // traces-per-flow and report a teardown cost several times the real one.
+  const attribMsByFlow = new Map();
+  for (const a of attributions) {
+    if (a?.flow_id && typeof a.attrib_ms === "number" && !attribMsByFlow.has(a.flow_id)) {
+      attribMsByFlow.set(a.flow_id, a.attrib_ms);
+    }
+  }
+
   const models = new Map();
   const specs = new Map();
   const unpriced = new Set();
@@ -285,6 +295,7 @@ export function aggregate({ probes = [], attributions = [], prices = {}, date } 
     totals,
     byModel: [...models.values()].sort((a, b) => b.total_tokens - a.total_tokens),
     bySpec: [...specs.values()].sort((a, b) => b.total_tokens - a.total_tokens),
+    attrib_ms: [...attribMsByFlow.values()].reduce((sum, ms) => sum + ms, 0),
     unattributed,
     unpricedModels: [...unpriced].sort(),
     mismatches,

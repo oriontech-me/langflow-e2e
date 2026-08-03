@@ -489,3 +489,23 @@ test("the shipped table records claude-sonnet-5's introductory rate through 2026
   assert.equal(usdFor("claude-sonnet-5", 1_000_000, 0, prices, "2026-08-31"), 2.0);
   assert.equal(usdFor("claude-sonnet-5", 1_000_000, 0, prices, "2026-09-01"), 3.0);
 });
+
+// §4.3: attrib_ms is a PER-FLOW value repeated on every line of that flow, so a
+// naive sum over lines multiplies it by traces-per-flow. This is the same shape
+// as the bug that made a window-level field print 204.0M instead of 17.0M on the
+// platform side -- the fixture below has two traces on one flow and one on
+// another, so a line-wise sum yields 30 and the correct reduction yields 20.
+test("aggregate totals attrib_ms over distinct flows, not over lines (§4.3)", () => {
+  const attributions = [
+    { trace_id: "t1", flow_id: "f1", total_tokens: 10, models: [], test: "a", file: "x.spec.ts", attrib_ms: 10 },
+    { trace_id: "t2", flow_id: "f1", total_tokens: 10, models: [], test: "a", file: "x.spec.ts", attrib_ms: 10 },
+    { trace_id: "t3", flow_id: "f2", total_tokens: 10, models: [], test: "b", file: "y.spec.ts", attrib_ms: 10 },
+  ];
+  const result = aggregate({ probes: attributions, attributions, prices: PRICES, date: "2026-08-03" });
+  assert.equal(result.attrib_ms, 20, "f1 contributes 10 once, not 10 per trace");
+});
+
+test("aggregate reports attrib_ms of 0 when no line carries one", () => {
+  const result = aggregate({ probes: [probe()], attributions: [], prices: PRICES, date: "2026-08-03" });
+  assert.equal(result.attrib_ms, 0);
+});
