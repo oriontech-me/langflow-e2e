@@ -491,12 +491,15 @@ test("the shipped table records claude-sonnet-5's introductory rate through 2026
 });
 
 // §4.3 (fix round 2): `costs` are the sidecar's own cost records — ONE per
-// recordTokenAttribution call, i.e. one per teardown. One record per call is what
+// recordTokenAttribution call. That is one per teardown ONLY on the batch-attributing
+// `cleanup()` path; the ~132 `@stable` specs that call `deleteFlow` once per id write
+// one record per flow, so `attrib_calls` counts calls and not teardowns, and the sum
+// is the honest figure rather than any derived average. One record per call is what
 // makes a plain sum correct; the previous per-FLOW field forced a reduction over
 // distinct flow_id AND still measured the wrong thing (a flow with no traces wrote
 // no line and so cost nothing on paper, and summing per-flow elapsed over-reported
 // by roughly the flow count because the flows run concurrently).
-test("aggregate sums attrib_ms across cost records and reports how many teardowns paid it (§4.3)", () => {
+test("aggregate sums attrib_ms across cost records and reports how many calls paid it (§4.3)", () => {
   const costs = [
     { kind: "attrib_cost", flows: 3, attrib_ms: 214, test: "a", file: "x.spec.ts" },
     { kind: "attrib_cost", flows: 1, attrib_ms: 86, test: "b", file: "y.spec.ts" },

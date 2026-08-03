@@ -337,8 +337,10 @@ test("a flow already attempted is never attributed a second time (§2.1)", async
   assert.equal(second.recorded, 0, "the second pass must record nothing for the same flow");
   assert.equal(traceLines(out).length, 1, "exactly one line for one trace, across both passes");
   // The repeat call claimed nothing, issued no request and cost approximately zero, so
-  // it writes NO cost record (§4.3, fix round 3). One record per teardown that did
-  // work is what makes `attrib_ms / attrib_calls` an average worth reading.
+  // it writes NO cost record (§4.3, fix round 3) — a repeat must not pad `attrib_calls`.
+  // That does NOT make one record equal one teardown: on the dominant per-id
+  // `deleteFlow` path a teardown writes one record per flow, so `attrib_calls` counts
+  // CALLS and the sum is the honest figure.
   assert.equal(costRecords(out).length, 1, "the repeat call claimed nothing, so it must not pad attrib_calls");
 });
 

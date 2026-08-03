@@ -394,9 +394,13 @@ export async function recordTokenAttribution({
   // One record per call means a PLAIN SUM downstream is correct, and the
   // distinct-flow_id reduction the old shape needed (and its trap) is gone with it.
   //
-  // Written only when this call CLAIMED at least one flow, so that one record really
-  // does mean one teardown-that-did-work and `attrib_ms / attrib_calls` is the average
-  // a reader expects. Without this condition the sidecar is called twice for the same
+  // Written only when this call CLAIMED at least one flow, so a repeat that issued no
+  // request adds no padding to `attrib_calls`. What it does NOT mean is one record per
+  // teardown: that holds only on the batch-attributing `cleanup()` path (2 specs). The
+  // ~132 `@stable` specs that call `deleteFlow` once per id get one record PER FLOW, so
+  // `attrib_ms / attrib_calls` is a per-CALL average and never a per-teardown one, and
+  // `attrib_calls` is not a spec count. The sum is the honest figure. Without this
+  // condition the sidecar is called twice for the same
   // flows on the tracked path -- `cleanup()` attributes its whole captured batch, then
   // `deleteFlow` re-calls per id -- and every repeat, having issued no request at all,
   // added a ~0ms record. Measured: one spec, 4 flows, a 20ms list request produced
