@@ -4,31 +4,32 @@
 // artifact IS the declarative config, so these are structural guards over its text,
 // in the style of scripts/manual-dispatch-inputs.test.mjs. Text is the available
 // instrument: no YAML parser is declared in package.json, and adding a dependency
-// to lint one 90-line config is a worse trade than the parsing below.
+// to lint one 100-line config is a worse trade than the parsing below.
 //
 // CLAUDE.md is right that a guard pinning a SPELLING does not pin a BEHAVIOUR
 // (#1226), and the first version of this file proved the point: `- major` without
-// quotes, and a commented-out `# node-version: "20"`, both walked straight past it
-// while it reported 5/5. So nothing here matches a literal any more. Values are
-// extracted (quotes stripped, block and flow sequences alike) and compared as sets,
-// and every scan is anchored to a real YAML key so a comment cannot impersonate one.
+// quotes walked straight past it while it reported 5/5. So nothing here matches a
+// literal. Values are extracted (quotes stripped, block and flow sequences alike)
+// and compared as sets or as numbers.
 //
-// Two things this file exists to catch, both of which fail SILENTLY:
+// What is worth guarding, and what is not, moved once already. The first version
+// tied the @flakiness/playwright ignore to the repo's `node-version:` pins, on the
+// premise that 2.x required Node >= 22.9.0 — which review showed was false by the
+// time it was written (2.0.1, `latest` since 2026-07-30, restored
+// `^20.17.0 || >=22.9.0`). A guard enforcing a condition that is not the real one is
+// worse than no guard: it would have failed every PR that removed the entry, which
+// was the correct change. The entry and its guard are both gone; the lesson kept is
+// that a guard must encode the reason, not a proxy for it.
+//
+// So the two things pinned here are the two whose failure is SILENT:
 //
 //   1. Majors back inside the `dev-dependencies` group. The symptom is not a red
 //      guard, it is a grouped PR that dies at `npm ci` and takes its reviewable
 //      minors with it (PR #1204: six bumps, two majors, four fine minors that could
 //      not be verified because the install never completed).
-//   2. The TEMPORARY @flakiness/playwright ignore outliving its condition. It exists
-//      only because the lanes pin Node 20 while v2.x requires >= 22.9.0. A comment
-//      cannot enforce its own removal, so the last test reads the actual pins and
-//      fails when they stop justifying the entry.
-//
-// Where a pin cannot be read (an expression, a `node-version-file:`), the guard
-// FAILS naming the file and line rather than dropping it from the minimum — the
-// undecidable-is-not-clean rule this repo applies in provider-dependent-specs.mjs
-// and #1012. Silently ignoring an unreadable pin is how the temporary ignore would
-// get deleted while a lane is still on Node 20.
+//   2. An `ignore` widening past its own rationale. `ignore` suppresses SECURITY
+//      updates too, so an over-broad entry does not merely delay a bump — it can
+//      leave an advisory with no PR at all, and nothing about that is visible.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -39,6 +40,7 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "..");
 const CONFIG_PATH = ".github/dependabot.yml";
 const CONFIG = fs.readFileSync(path.join(REPO_ROOT, CONFIG_PATH), "utf8");
 const LINES = CONFIG.split("\n");
+const PKG = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
 
 const indentOf = (line) => line.search(/\S/);
 const unquote = (s) => s.trim().replace(/^["']|["']$/g, "");
@@ -136,24 +138,59 @@ test("the dev-dependencies group takes minor and patch only", () => {
   assert.deepEqual(types, new Set(["minor", "patch"]));
 });
 
-// ── the two ignores, and what distinguishes them ────────────────────────────
+// ── the typescript ignore stays as narrow as its evidence ───────────────────
 
-for (const name of ["typescript", "@flakiness/playwright"]) {
-  test(`the ${name} ignore is scoped to majors, and to nothing else`, () => {
-    const entry = entryFor(name);
+test("the typescript ignore blocks 7.x and up, not every major", () => {
+  const entry = entryFor("typescript");
+  const versions = listValues(entry.body, "versions");
 
-    assert.deepEqual(listValues(entry.body, "update-types"), new Set(["version-update:semver-major"]));
-    // `versions:` is the other key that can freeze a dependency, and it would do so
-    // without touching update-types — leaving the entry looking correctly scoped
-    // while security patches inside the current major stop arriving.
-    assert.equal(listValues(entry.body, "versions"), null, `${name} carries a versions: range — patches inside the current major would stop`);
+  assert.ok(versions, "the typescript ignore lost its versions: range");
+  // `update-types: semver-major` is the tempting shorthand and it is wrong here: it
+  // would also block TS 6, against which this repo has no evidence — the JS compiler
+  // API is intact there, ts-node runs, and typescript-eslint's peer range admits it.
+  assert.equal(
+    listValues(entry.body, "update-types"),
+    null,
+    "scoped by update-types instead of a version range — that blocks TS 6 too, which the file's own rationale does not justify",
+  );
+
+  const bounds = [...versions].map((v) => {
+    const m = v.match(/^>=?\s*(\d+)/);
+    assert.ok(m, `\`${v}\` is not a lower-bound range this guard can read`);
+    return Number(m[1]);
   });
-}
+  assert.deepEqual(bounds, [7], "the ignore no longer starts at the major the rationale is about");
+});
+
+test("no ignore range can block the major this repo is actually on", () => {
+  // The failure this catches: package.json moves to a new major while an ignore
+  // still starts at or below it, so the line the repo depends on stops receiving
+  // updates — including security ones — with the config looking untouched.
+  for (const entry of ENTRIES) {
+    const versions = listValues(entry.body, "versions");
+    if (!versions) continue;
+
+    const declared = PKG.devDependencies?.[entry.name] ?? PKG.dependencies?.[entry.name];
+    assert.ok(declared, `${CONFIG_PATH} ignores "${entry.name}", which package.json does not declare`);
+    const onMajor = Number(declared.match(/(\d+)/)[1]);
+
+    for (const v of versions) {
+      const lower = Number(v.match(/^>=?\s*(\d+)/)[1]);
+      assert.ok(
+        lower > onMajor,
+        `the ignore for "${entry.name}" starts at ${lower}, but package.json is on ${onMajor} — it would block the current line`,
+      );
+    }
+  }
+});
+
+// ── every entry says why ────────────────────────────────────────────────────
 
 test("each ignore entry carries a rationale in the file", () => {
   // A Dependabot ignore is invisible at the point it acts: the PR that would have
-  // existed simply never appears. Whoever finds that surprising has only this file
-  // to read, so an entry with no comment above it is a defect.
+  // existed simply never appears, and for a security advisory that means an alert
+  // with nothing attached to it. Whoever finds that surprising has only this file to
+  // read, so an entry with no comment above it is a defect.
   //
   // One comment may cover a run of consecutive entries — @playwright/test and
   // playwright share theirs. The walk-up therefore skips anything indented deeper
@@ -172,84 +209,5 @@ test("each ignore entry carries a rationale in the file", () => {
       break;
     }
     assert.ok(j >= 0 && LINES[j].trim().startsWith("#"), `no rationale comment above the ignore entry for "${entry.name}"`);
-  }
-});
-
-// ── the temporary ignore vs. the condition that removes it ──────────────────
-
-/** Every .yml/.yaml under .github, at any depth. */
-function ciFiles(dir = path.join(REPO_ROOT, ".github")) {
-  const out = [];
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) out.push(...ciFiles(full));
-    else if (/\.ya?ml$/.test(entry.name)) out.push(full);
-  }
-  return out;
-}
-
-/**
- * Node pins across CI, as { satisfied, undecidable }. A pin satisfies the
- * requirement when it is >= 22.9.0 — the floor @flakiness/playwright 2.x declares.
- * A bare major ("22") is treated as satisfying: setup-node resolves it to the
- * latest 22.x, which is past 22.9.0.
- */
-function readNodePins() {
-  const satisfied = [];
-  const undecidable = [];
-
-  for (const file of ciFiles()) {
-    const rel = path.relative(REPO_ROOT, file);
-    fs.readFileSync(file, "utf8")
-      .split("\n")
-      .forEach((line, i) => {
-        // Anchored at the start of the line: a `#` before the key kills the match,
-        // so a commented-out pin and prose mentioning one are both excluded.
-        const m = line.match(/^\s*(node-version|node-version-file):\s*(.+)$/);
-        if (!m) return;
-        const where = `${rel}:${i + 1}`;
-        if (m[1] === "node-version-file") {
-          undecidable.push(`${where} — pinned via node-version-file, which this guard cannot resolve`);
-          return;
-        }
-        const value = unquote(m[2].replace(/\s+#.*$/, ""));
-        const parsed = value.match(/^(\d+)(?:\.(\d+))?/);
-        if (!parsed) {
-          undecidable.push(`${where} — \`${value}\` is not a literal version`);
-          return;
-        }
-        const [major, minor] = [Number(parsed[1]), parsed[2] === undefined ? null : Number(parsed[2])];
-        const ok = major > 22 || (major === 22 && (minor === null || minor >= 9));
-        satisfied.push({ where, value, ok });
-      });
-  }
-
-  return { satisfied, undecidable };
-}
-
-test("the @flakiness/playwright ignore is removed once the lanes leave Node 20", () => {
-  const { satisfied, undecidable } = readNodePins();
-
-  assert.ok(satisfied.length > 0 || undecidable.length > 0, "no `node-version:` pin found anywhere under .github — this guard would pass vacuously");
-  // Fail loud rather than quietly shrinking the sample: an unreadable pin dropped
-  // from the minimum is how this guard would tell you to delete an ignore that a
-  // Node 20 lane still needs.
-  assert.deepEqual(undecidable, [], `unreadable Node pin(s); teach this guard to read them before trusting its verdict:\n  ${undecidable.join("\n  ")}`);
-
-  const behind = satisfied.filter((p) => !p.ok);
-  // Read from the parsed entries, not a substring: a commented-out entry is not an
-  // ignore, and must not read as one.
-  const ignored = ENTRIES.some((e) => e.name === "@flakiness/playwright");
-
-  if (behind.length > 0) {
-    assert.ok(
-      ignored,
-      `${behind.length} lane(s) pin Node below 22.9.0 (e.g. ${behind[0].where} → ${behind[0].value}), so @flakiness/playwright 2.x (engines: >=22.9.0) must stay ignored`,
-    );
-  } else {
-    assert.ok(
-      !ignored,
-      `every Node pin is now >= 22.9.0 — drop the TEMPORARY @flakiness/playwright ignore from ${CONFIG_PATH}`,
-    );
   }
 });
