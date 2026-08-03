@@ -623,6 +623,34 @@
 
 ---
 
+### core-functionality/a2a/ — Agent-to-Agent Protocol (1.11.0)
+
+> ⚠️ Every bullet below needs `LANGFLOW_A2A_ENABLED=true` on the instance — the flag is off by default (`lfx/services/settings/groups/mcp.py`), and with it off all three `/api/v1/a2a/*` routes answer `404` and the flow editor's Agent tab only renders "A2A is turned off on this server". Surface map, testability decisions and the full out-of-scope list: `docs/core-functionality/a2a/a2a-coverage-scope.md` (scoping issue #1195, upstream `langflow-ai/langflow#13831`, Jira epic `LE-1588`). Numbering starts at 16 because §12–§15 are already taken; the section sits here, with its area, on purpose.
+
+#### 16.1 A2A Server
+- [ ] Agent card served for a published flow — `GET /api/v1/a2a/{flow_id}/.well-known/agent-card.json` returns `protocolVersion="0.3.0"`, `url` ending in `/api/v1/a2a/{flow_id}/jsonrpc`, `capabilities.streaming=true`, `defaultInputModes=["application/json"]`, `skills[0].id === flow_id`, `skills[0].tags=["langflow"]` and an `inputSchema` object
+- [ ] Card overrides applied — `a2a_card_overrides` (name / version / description / tags / examples) change exactly those card fields and nothing else
+- [ ] Card gated on publication state — `a2a_enabled=false`, `flow_type=workflow` and an unknown flow id each return `404` (indistinguishable from an unmounted route, by design)
+- [ ] Agent discovery list — `GET /api/v1/a2a/agents` lists the published flow with a `cardUrl` that resolves `200`, omits a `flow_type=workflow` flow and an `agent` flow with `a2a_enabled=false`, and drops the row when the flow is unpublished (owner-scoped, not a cross-user directory)
+- [ ] JSON-RPC `message/send` round-trip — a per-run sentinel sent to a Chat Input→Chat Output passthrough comes back in the task's artifact text with state `completed` (no LLM involved)
+- [ ] JSON-RPC error envelopes — an unknown method returns `-32601` and a malformed envelope `-32600`/`-32700`, both over **HTTP 200** (JSON-RPC-level errors are not HTTP errors here)
+- [ ] Multi-turn context continuity — the first `message/send` response carries a server-minted `contextId`; reusing it on a second call lands in the same `session_id` in `GET /api/v1/monitor/messages`, while a call without it mints a different one
+- [ ] Task lifecycle — `tasks/get` returns the task `message/send` created in a terminal state, `tasks/cancel` on a `message/stream` run moves it to `canceled`, and `tasks/get` for an unknown id is a JSON-RPC "task not found" error rather than a 500
+- [ ] API-key auth gate on the JSON-RPC endpoint — with the flow's project set to `auth_type=apikey`, the card advertises the `x-api-key` scheme in `securitySchemes`, a call with no header returns `401 "API key required"`, a wrong key `401 "Invalid API key"`, and the owner's key `200` + `completed` (the gate `LE-2081` lives behind; auth derives from the **project**, not the flow)
+- [ ] Agent tab publish flow — a blank flow shows the ineligible copy and cannot publish; adding Chat Input + Chat Output enables `agent-publish-switch`; publishing shows status `Live` with an `agent-card-url` that fetches `200`; editing Name/Description and pressing `agent-save` shows "Agent updated" **and** changes what the card serves
+- [ ] Agent tab "Try it" panel — a sentinel sent from the panel over the live endpoint renders in the agent bubble, the state reaches `completed`, the turn counter increments, and "View JSON-RPC exchange" exposes the request/response pair
+- [ ] Non-owner cannot publish a flow — `PATCH /api/v1/flows/{id}` flipping `a2a_enabled` returns `403 "Cannot change a2a_enabled of a flow you do not own."` (not automatable: needs two real users, and per-test user isolation is impossible under `AUTO_LOGIN` — measured in #1010)
+- [ ] Disabled-server state — all three `/api/v1/a2a/*` routes `404` and the Agent tab renders "A2A is turned off on this server. Set LANGFLOW_A2A_ENABLED=true…" (out of scope by lane decision on #1195: the flag is on in every lane, and an off-lane cannot coexist with it in the same run; revisit only as a dedicated `PW_A2A_OFF=1` lane)
+- [ ] Push notification config and delivery — `tasks/pushNotificationConfig/{set,get,list,delete}` (out of reach: proving delivery needs a receiver with an inspectable inbox, which the self-hosted `go-httpbin` echo endpoint does not provide — `LE-1706`)
+- [ ] JWS-signed agent cards (`LE-1718`) and rate limiting on the public endpoints (`LE-1701`) (out of reach: no URL-observable surface for the signature; driving the global v1 rate limits would make every parallel lane flaky)
+
+#### 16.2 A2A Client
+- [ ] A2A Agent component, Internal mode — the `mode=Internal` dropdown lists the locally published agent and a run returns a `Response` containing the sentinel the published passthrough flow echoes (no LLM on either side)
+- [ ] A2A Agent component, External mode — pointed at this instance's own card URL, the `agent_card` display renders the card chips (name; "Requires an API key" when the project is restricted) and a run returns the echoed sentinel; `@regression` for `LE-1845` (`NameError: name 'call_a2a_agent' is not defined`). Blocked until a loopback self-call is allowed past Langflow's SSRF layer (`LE-1904` class) — if it cannot be, `LE-1845` stays uncovered
+- [ ] A2A Agent used as a Tool — an Agent with the `A2AAgent` wired as a tool (`tool_mode`) calls the published agent and the reply reaches the playground; `@regression` for `LE-1963` (`self.user_id is None` → "badly formed hexadecimal UUID string" on tool-approval resume). The only LLM-dependent bullet of the area — `--workers=1` + `models.json`
+
+---
+
 ## flow-functionality/ — Graph Execution, Drag-and-Drop and JSON
 
 #### 12.1 Create Flow
