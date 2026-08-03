@@ -30,6 +30,19 @@ export function checkQaDiff(diff: string): string[] {
       problems.push('generated "Phase 0 — Validated" block touched')
     } else if (content.trim() === '' || /^\s*- \[/.test(content) || /^\s{2,}\S/.test(content)) {
       // ok: blank, checklist bullet, or indented continuation of a bullet
+    } else if (/^#{2,4} \S/.test(content) || /^> \S/.test(content) || content.trim() === '---') {
+      // ok: the structural lines a BRAND-NEW Part II area needs — its `###`
+      // section heading, its `#### N.M` subsections, an area-level `>` note, and
+      // the `---` separator between areas. The repo's authoritative guard
+      // (scripts/check-checklist-guard.mjs) only rejects GENERATED line shapes
+      // (table row / count note / Phase bullet) at or after the `## Coverage
+      // Summary` anchor, so these were never a violation there; forbidding them
+      // here made adding a checklist area impossible, because dropping the
+      // heading makes coverage-summary.ts fail with "Section start not found"
+      // for the module's `sectionStart` (found while scoping A2A, #1195). The
+      // generated blocks stay protected by the two branches above, which run
+      // first: a table row and any "Phase 0 — Validated" line are still
+      // rejected even when they look like a heading.
     } else {
       problems.push(`non-bullet top-level line changed: "${line.trim()}"`)
     }

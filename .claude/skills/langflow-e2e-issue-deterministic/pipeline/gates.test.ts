@@ -60,6 +60,25 @@ test('checkQaDiff rejects top-level non-bullet prose changes', () => {
   assert.ok(checkQaDiff('+Some new paragraph').length > 0)
 })
 
+test('checkQaDiff allows the structural lines a new Part II area needs', () => {
+  const diff = [
+    '--- a/QA-CHECKLIST.md', '+++ b/QA-CHECKLIST.md',
+    '+---',
+    '+### core-functionality/a2a/ — Agent-to-Agent Protocol (1.11.0)',
+    '+> ⚠️ Needs LANGFLOW_A2A_ENABLED=true; surface map in docs/.',
+    '+#### 16.1 A2A Server',
+    '+- [ ] Agent card served for a published flow — protocolVersion="0.3.0"',
+  ].join('\n')
+  assert.deepEqual(checkQaDiff(diff), [])
+})
+
+test('checkQaDiff still rejects a generated line that looks structural', () => {
+  // The generated-block branches run first, so heading/blockquote tolerance
+  // cannot be used to smuggle a table row or a Phase 0 edit past the gate.
+  assert.ok(checkQaDiff('+#### Phase 0 — Validated (12)').length > 0)
+  assert.ok(checkQaDiff('+| `core-functionality/a2a/` | 18 | 0 | 0 | 0 | 18 |').length > 0)
+})
+
 test('FF coverage requires one red entry per enumerated test', () => {
   const required = [{ file: 'a.spec.ts', titles: ['t1', 't2'] }]
   const ff = [{ file: 'a.spec.ts', test: 't1', mutation: 'inverted assert', unexpected: 1, at: 'x' }]
