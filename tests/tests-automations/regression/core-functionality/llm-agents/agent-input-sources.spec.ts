@@ -5,6 +5,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
@@ -73,12 +74,17 @@ test.afterEach(async ({ request }) => {
   if (createdFlowIds.length === 0) return;
   const bearer = await getAuthToken(request);
   for (const id of createdFlowIds.splice(0)) {
-    const res = await request.delete(`/api/v1/flows/${id}`, {
-      headers: { Authorization: bearer },
-    });
-    // 404 = transient flow the app already discarded — expected noise.
-    if (!res.ok() && res.status() !== 404) {
-      console.warn(`flow cleanup: DELETE ${id} -> ${res.status()}`);
+    // `deleteFlow` rather than a raw DELETE: it absorbs 404-as-done and one
+    // transient 5xx, surfaces a real failure instead of a warning nothing reads,
+    // and -- the reason this spec was migrated -- it is where token attribution
+    // happens, immediately before the DELETE that 404s the trace (§3.1).
+    try {
+      await deleteFlow(request, id, { headers: { Authorization: bearer } });
+    } catch (error) {
+      // Preserving this spec's existing posture: a failed teardown delete warns
+      // rather than failing an otherwise-green test. `deleteFlow` throws by
+      // contract, so the catch is what keeps that posture unchanged.
+      console.warn(`flow cleanup: DELETE ${id} -> ${(error as Error).message}`);
     }
   }
 });
