@@ -505,6 +505,54 @@ test("a trace the poller never saw still reaches totals and by_spec via the side
   assert.equal(line.unattributed.traces, 0, "the sidecar's own fields must attribute it, not strand it as unattributed");
 });
 
+// §4.3: the price must land in the SAME artifact as the benefit. aggregate()
+// computing `attrib_ms` is not enough on its own -- summarize() builds the
+// history line field by field (no spread), so a field it does not name is a
+// field a reader of reports/token-history.jsonl never sees. That is exactly what
+// happened here: aggregate() was taught to total the teardown cost and the line
+// silently dropped it, leaving the ceiling as a claim in a doc comment.
+//
+// The fixture is deliberately two traces on ONE flow: `attrib_ms` is a per-FLOW
+// figure repeated on each of that flow's lines, so a line-wise sum would report
+// 24ms of teardown for 12ms of real work. Pinned end to end, through summarize(),
+// not just at the aggregate() seam.
+test("the history line carries attrib_ms, reduced over distinct flows, not summed per line (\u00a74.3)", async () => {
+  const attrib = (traceId, flowId, attribMs) =>
+    JSON.stringify({
+      trace_id: traceId,
+      flow_id: flowId,
+      test: "agent suite",
+      file: "tests-automations/regression/core-functionality/llm-agents/x.spec.ts",
+      start_time: "2026-07-31T16:35:00Z",
+      status: "ok",
+      total_tokens: 10,
+      models: [{ model: "gpt-4o-mini", prompt_tokens: 5, completion_tokens: 5, total_tokens: 10, calls: 1 }],
+      attrib_ms: attribMs,
+    });
+  const fs2 = fakeFs({
+    "all-tokens/token-attrib-1.jsonl": `${attrib("t1", "f1", 12)}\n${attrib("t2", "f1", 12)}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.totals.traces, 2, "both traces must reach the line — the fixture is not degenerate");
+  assert.equal(line.attrib_ms, 12, "one flow costs 12ms once, not 12ms per trace");
+});
+
+// The absence of a cost must read as zero cost, not as a missing field: a
+// consumer doing arithmetic on `attrib_ms` would get NaN from `undefined`, and a
+// human would not be able to tell "cheap" from "not measured".
+test("the history line still carries attrib_ms when no attribution line reports one (\u00a74.3)", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "all-tokens/token-attrib-1.jsonl": `${ATTRIB_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  assert.equal(line.attrib_ms, 0);
+});
+
 test("a trace present in BOTH the poller's file and the sidecar's merged line is counted once (finding A)", async () => {
   const pollerLine = JSON.stringify({
     trace_id: "both-1",

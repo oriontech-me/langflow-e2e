@@ -401,6 +401,16 @@ export async function summarize({
     by_spec: agg.bySpec,
     unattributed: agg.unattributed,
     unpriced_models: agg.unpricedModels,
+    // §4.3: what the attribution sidecar COST this run, in milliseconds of
+    // teardown — the price, on the same line as the benefit it bought. Without
+    // this field the ceiling is a claim in a doc comment that nobody can check
+    // against a real run.
+    //
+    // Already reduced over DISTINCT flow_id by aggregate(): `attrib_ms` is a
+    // per-FLOW figure repeated on every one of that flow's lines, so summing the
+    // lines would multiply it by traces-per-flow. Copy `agg.attrib_ms`; never
+    // re-derive it from `attributions` here.
+    attrib_ms: agg.attrib_ms,
     anomalies: [],
   };
   // token-anomaly.mjs computes a plain median over whatever `history` it is

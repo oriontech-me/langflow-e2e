@@ -155,6 +155,14 @@ export interface RecordTokenAttributionOptions {
    * per-model breakdown, never its tokens. Dropping the spans silently would leave
    * `models: []` on a trace whose breakdown is merely unknown -- identical to a
    * trace whose detail genuinely came back empty, so the line would read complete.
+   *
+   * The cap is per-CALL and shared by every flow in it, and the flows run
+   * concurrently -- so WHICH trace loses its breakdown depends on interleaving,
+   * and two runs of the same suite can name different traces on `skipped`. That is
+   * by design, not a flake: the property the cap owes you is that the total number
+   * of detail requests is bounded and that every curtailed trace is named. Which
+   * ones they are was never part of the contract, and making it deterministic
+   * would mean serialising the flows again -- the cost this whole section removes.
    */
   detailCap?: number;
 }
@@ -203,11 +211,15 @@ export async function recordTokenAttribution({
   // The poller's own knobs and defaults (scripts/watch-tokens.mjs DEFAULTS), not a
   // third set invented here. `Number(x) || d` deliberately falls back on NaN too,
   // so a malformed lane value degrades to the default instead of poisoning every
-  // request with `timeout: NaN`. The parentheses are required, not stylistic: `??`
-  // and `||` cannot be mixed unparenthesised (TS5076), and this is the grouping
-  // that matters — a lane exporting `TOKENS_TIMEOUT_MS=0` or a non-number falls to
-  // 8000 rather than to Playwright's `timeout: 0`, which means NO timeout at all
-  // and would reopen exactly the wedge this option exists to close.
+  // request with `timeout: NaN`. (The parentheses are obligatory: `??` and `||`
+  // cannot be mixed unparenthesised — TS5076.)
+  //
+  // A lane exporting `TOKENS_TIMEOUT_MS=0` therefore resolves to 8000, which is
+  // the semantics this repo already practises: the poller coerces the very same
+  // variable through `num()` (scripts/watch-tokens.mjs:63-66), which requires
+  // `Number.isFinite(n) && n > 0` and falls back otherwise. Rejecting 0 is also
+  // the only safe reading here, since Playwright's `timeout: 0` means NO timeout
+  // and would reopen the exact wedge this option exists to close.
   const timeout = timeoutMs ?? (Number(process.env.TOKENS_TIMEOUT_MS) || 8000);
   const maxDetail = detailCap ?? (Number(process.env.TOKENS_DETAIL_CAP) || 25);
   // Shared across the concurrent tasks below. Safe without synchronisation
