@@ -794,10 +794,10 @@
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
 | `core-components/` — Core Components | 90 | 83 | 3 | 0 | 4 |
-| `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
+| `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
-| `core-functionality/model-provider/` | 34 | 30 | 2 | 0 | 2 |
+| `core-functionality/model-provider/` | 34 | 29 | 2 | 1 | 2 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 51 | 46 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
@@ -807,7 +807,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **480** | **377 (79%)** | **80 (17%)** | **11 (2%)** | **12 (3%)** |
+| **TOTAL** | **480** | **375 (78%)** | **80 (17%)** | **13 (3%)** | **12 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -823,7 +823,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 427 `test()` calls carrying the `@stable` tag, distributed across 170 spec
+> 425 `test()` calls carrying the `@stable` tag, distributed across 170 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1078,7 +1078,6 @@
 - [x] selecting a provider opens its API key configuration detail → `modelProviderModal.spec.ts`
 - [x] a configured provider shows its model selection panel → `modelProviderModal.spec.ts`
 - [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
-- [x] a provider credential variable can be removed through the Global Variables UI → `remove-provider-api-key.spec.ts`
 - [x] DELETE /api/v1/variables/{id} removes a provider API key variable → `remove-provider-api-key.spec.ts`
 
 #### core-functionality/model-provider/
@@ -1249,7 +1248,6 @@
 - [x] executing flow with server error shows error feedback → `execution-error-notification.spec.ts`
 - [x] user must see on handle click the possibility connections → `filterSidebar.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
-- [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
