@@ -151,7 +151,7 @@ test(
 
 test(
   "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
-  { tag: ["@stable", "@release", "@components", "@templates", "@playground"] },
+  { tag: ["@release", "@components", "@templates", "@playground"] },
   async ({ page }) => {
     // Two sequential real completions run below (one per ArXiv paper, under an
     // 8-minute budget), so gate on provider HEALTH rather than on the mere
