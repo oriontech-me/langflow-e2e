@@ -160,8 +160,11 @@ export function parseProbeLines(text) {
 //
 //   - attribution lines, which carry a `trace_id` (and, since finding A, the
 //     trace's own probe fields alongside);
-//   - the sidecar's own COST records — `kind: "attrib_cost"`, one per teardown,
-//     carrying no trace_id at all.
+//   - the sidecar's own COST records — `kind: "attrib_cost"`, one per
+//     `recordTokenAttribution` call (one per teardown only for a
+//     batch-attributing `cleanup()`; one per flow on the far more common
+//     per-id `deleteFlow` path — see the comment on `attrib_ms`/`attrib_calls`
+//     below), carrying no trace_id at all.
 //
 // parseProbeLines filters on `trace_id`, so it would drop every cost record on the
 // floor and the teardown cost would silently never reach the history line. Keep both
@@ -450,13 +453,19 @@ export async function summarize({
     // comment that nobody can check against a real run.
     //
     // What the number IS: milliseconds spent in attribution, SUMMED ACROSS EVERY
-    // TEARDOWN that paid it. It is NOT the run's wall-clock cost — Playwright's
-    // workers run in parallel, so their teardowns overlap and this total exceeds
-    // the time the run actually lost. `attrib_calls` is how many teardowns are in
-    // that sum, so a reader can take the per-teardown average rather than reading a
-    // total whose size mostly reflects how many specs ran.
+    // `recordTokenAttribution` CALL that paid it. It is NOT the run's wall-clock
+    // cost — Playwright's workers run in parallel, so their teardowns overlap and
+    // this total exceeds the time the run actually lost. `attrib_calls` is how many
+    // such CALLS are in that sum — not how many teardowns: that equivalence holds
+    // only for the two specs whose `cleanup()` (`trackCreatedFlows`) attributes a
+    // whole captured batch in one call. The far more common path — `deleteFlow`
+    // called once per flow id, ~132 `@stable` specs — makes one call per FLOW, so
+    // `attrib_calls` runs larger than the flow-deleting spec count and `attrib_ms /
+    // attrib_calls` is a per-CALL average, not a per-teardown one. Read the total
+    // (`attrib_ms`) as the honest figure; do not derive a per-teardown average from
+    // `attrib_calls` (see reports/README.md for a worked example).
     //
-    // One record per teardown means a plain sum is correct. The earlier per-flow,
+    // One record per CALL means a plain sum is correct. The earlier per-flow,
     // per-line shape needed a distinct-flow_id reduction AND could not see a flow
     // that produced no traces — the dominant cost. Copy both fields from `agg`;
     // never re-derive either from `attributions`.

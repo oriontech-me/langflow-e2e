@@ -62,10 +62,13 @@ export async function deleteFlow(
   //
   // `process.env.TOKENS_ATTRIB` is checked HERE, not left to
   // `recordTokenAttribution`'s own default-parameter guard: inertness with the
-  // variable unset is this helper's own contract (every local run, every PR
-  // lane pays nothing), and that must not live one module away where a future
-  // change to that function's prologue could silently put a `test.info()` call
-  // and an awaited round-trip on every teardown in the suite.
+  // variable unset is this helper's own contract (a LOCAL run pays nothing,
+  // unconditionally -- nothing outside CI sets the variable; CI is the
+  // exception, and deliberately, since all three lanes set it -- see
+  // token-attribution.ts), and that must not live one module away where a
+  // future change to that function's prologue could silently put a
+  // `test.info()` call and an awaited round-trip on every teardown in the
+  // suite.
   if (hooks?.attribute !== false && process.env.TOKENS_ATTRIB) {
     try {
       const attribution = resolveTestAttribution(hooks?.info);
