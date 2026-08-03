@@ -145,12 +145,24 @@ test("a failed refresh with no local copy fails loudly and starts nothing", () =
 });
 
 test("the superuser and worker defaults are passed to the container", () => {
-  // LANGFLOW_WORKERS=1 is load-bearing (#773: OOM on a small Docker VM) and
+  // LANGFLOW_WORKERS=1 is load-bearing (#773: OOM on a small Docker VM),
   // LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true is required by every custom-component
-  // spec (#668/#746). Both are easy to drop when editing the run block.
+  // spec (#668/#746), and LANGFLOW_A2A_ENABLED=true by every A2A spec (#1240 —
+  // with it off the /api/v1/a2a/* routes 404 and those specs pass while testing
+  // nothing). All are easy to drop when editing the run block.
   const r = runScript();
   const runCall = r.calls.find((c) => c.startsWith("run "));
   assert.match(runCall, /LANGFLOW_WORKERS=1/);
   assert.match(runCall, /LANGFLOW_ALLOW_CUSTOM_COMPONENTS=true/);
+  assert.match(runCall, /LANGFLOW_A2A_ENABLED=true/);
   assert.match(runCall, /LANGFLOW_AUTO_LOGIN=true/);
+});
+
+test("LANGFLOW_A2A_ENABLED can be forced off to reproduce the disabled surface", () => {
+  // The disabled state is a real thing to reproduce by hand (the Agent tab's
+  // serverDisabled copy, the 404 on all three routes), so the default must be a
+  // default — not a hardcoded "true" that makes the off state unreachable.
+  const r = runScript({ env: { LANGFLOW_A2A_ENABLED: "false" } });
+  const runCall = r.calls.find((c) => c.startsWith("run "));
+  assert.match(runCall, /LANGFLOW_A2A_ENABLED=false/);
 });

@@ -24,8 +24,14 @@ LANGFLOW_AUTO_LOGIN=true \
 LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
 LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
 LANGFLOW_DEACTIVATE_TRACING=true \
+LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
   langflow run --host 0.0.0.0 --port "${PORT}" --no-open-browser \
     --workers "${LANGFLOW_WORKERS:-1}" &
+# LANGFLOW_A2A_ENABLED defaults to true: the product default is OFF, A2A's router
+# is always mounted, and a per-request guard 404s every /api/v1/a2a/* route while
+# the flag is off — so a spec written against a disabled server passes while
+# testing nothing (#1240; surface scoped in #1195). Set it to false to reproduce
+# the disabled state deliberately.
 # --workers defaults to 1: Langflow's own default is (2*cpu)+1 workers, each
 # holding the full in-memory state, which exhausts memory on a constrained dev
 # box and gets a worker SIGKILLed mid-build (ERR_EMPTY_RESPONSE / node run never
