@@ -3,8 +3,8 @@ import { addComponentFromSidebar } from "../../../helpers/flows/add-component-fr
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
-import { dismissOnboardingIfPresent } from "../../../helpers/ui/dismiss-onboarding";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
 
 // Clicking `blank-flow` creates a real flow (POST /api/v1/flows → 201). Track
 // the ids the run creates and delete them id-scoped in afterEach — the
@@ -19,6 +19,20 @@ const createdFlowIds: string[] = [];
 // the node swallows `mod+…` keydowns before the canvas hotkey handler sees them,
 // so a Chat-Input-based spec silently fails to trigger Duplicate/Copy.
 const NODE_TITLE_TESTID = "title-Chat Output";
+
+// Suppress the assistant onboarding tooltip BEFORE the first document load, which
+// is the only point at which it can be suppressed: upstream reads the flag once, at
+// mount of the canvas-controls bar, and arms a 10 s timer when it is unset. The
+// tooltip is a 282×32 opaque rectangle over that bar, and this spec clicks the bar
+// (`adjustScreenView`) as well as the canvas.
+//
+// This replaces a `dismissOnboardingIfPresent(page)` call the spec ran right after
+// the `blank-flow` click. #1220 measured it on 1.12.0.dev15: in 3 of 3 runs it fired
+// BEFORE the canvas-controls bar had mounted at all — i.e. before the timer that
+// creates the thing it was dismissing had even started.
+test.beforeEach(async ({ page }) => {
+  await seedAssistantDiscovered(page);
+});
 
 test.afterEach(async ({ request }) => {
   if (createdFlowIds.length === 0) return;
@@ -75,11 +89,6 @@ test(
       timeout: 30000,
     });
     await page.getByTestId("blank-flow").click();
-
-    // The assistant onboarding tooltip opens over the editor on flow entry and
-    // its overlay intercepts canvas clicks — dismissed for the same reason the
-    // flow-lock specs do it (no-op when absent).
-    await dismissOnboardingIfPresent(page);
 
     await addComponentFromSidebar(
       page,

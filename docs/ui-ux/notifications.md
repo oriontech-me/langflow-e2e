@@ -45,6 +45,7 @@ center either fails to open or does not record successful builds.
 - The "built successfully" toast appears after running Chat Input
 - After opening the Notifications tab: the "Notifications" label, a `icon-Trash2`
   control, and the exact text **"Flow built successfully"** are all visible
+- **Assistant onboarding tooltip**: suppressed before the first document load via `seedAssistantDiscovered(page)` in `beforeEach` — the only point at which it can be suppressed, since upstream reads the flag at mount of the canvas-controls bar and then arms a 10 s timer. `expandFocusedNode` asserts the seed ran and fails loudly, naming the fix, if a test added later forgets it. This replaces a `dismissOnboardingIfPresent` probe that #1220 measured firing ~2 s after that mount, catching the tooltip in 0 of 39 executions on 1.12.0.dev15.
 
 ---
 

@@ -15,23 +15,25 @@
 //  2. **The seed is registered once per page.** A spec that enters three times
 //     would otherwise stack three identical init scripts on the same page, which
 //     is harmless today and exactly the kind of quiet growth nobody notices.
-//  3. **The storage key and the deadlines cannot drift unnoticed.** Stated
-//     honestly, because it is easy to oversell: nothing here reads the upstream
-//     source, so these are CHANGE-DETECTORS, not proof that the suite still
-//     matches Langflow. What they buy is that changing the key or inverting the
-//     two budgets requires editing an assertion that says why — instead of being
-//     a one-character edit whose consequence surfaces months later as a spec
-//     flaking behind an overlay.
+//  3. **The deadlines cannot drift unnoticed.** Stated honestly, because it is
+//     easy to oversell: nothing here reads the upstream source, so this is a
+//     CHANGE-DETECTOR, not proof that the suite still matches Langflow. What it
+//     buys is that inverting the two budgets requires editing an assertion that
+//     says why — instead of being a one-character edit whose consequence surfaces
+//     months later.
+//
+// The seed's own behaviour (registers once, writes the upstream key, survives a
+// throwing localStorage) moved to `helpers/ui/assistant-onboarding.test.ts` with the
+// seed itself (#1220). What stays here is the part that belongs to the ENTRY: the
+// ORDER of the two calls, which no test of the seed alone can pin.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  ASSISTANT_DISCOVERED_STORAGE_KEY,
   CANVAS_TIMEOUT_MS,
   WRITABLE_TIMEOUT_MS,
   navigateToFlow,
-  seedAssistantDiscovered,
   type NavigablePage,
 } from "./open-flow-by-id";
 
@@ -92,91 +94,6 @@ test("a different page gets its own seed", async () => {
   await navigateToFlow(second, "flow-2");
   assert.equal(first.initScripts.length, 1);
   assert.equal(second.initScripts.length, 1);
-});
-
-test("seedAssistantDiscovered reports whether it registered", async () => {
-  const page = fakePage();
-  assert.equal(await seedAssistantDiscovered(page), true, "first call registers");
-  assert.equal(
-    await seedAssistantDiscovered(page),
-    false,
-    "second call is a no-op",
-  );
-});
-
-test("the seeded key is the flag upstream reads", () => {
-  // `readAssistantDiscovered()` in
-  // `components/core/assistantPanel/hooks/assistant-discovery-storage.ts` reads
-  // exactly this key and compares against the string "true".
-  //
-  // This asserts a literal against a literal, and it cannot detect an upstream
-  // rename — nothing in this lane reads the Langflow source, and adding that
-  // dependency would make the unit lane require a checkout it does not have in
-  // CI. What it does buy: the key is the one thing here whose value is dictated
-  // by another codebase, so pinning it turns "someone tidied a constant" into a
-  // failing test that names where the real definition lives.
-  assert.equal(ASSISTANT_DISCOVERED_STORAGE_KEY, "langflow-assistant-discovered");
-});
-
-/**
- * Run `body` with `globalThis.localStorage` replaced by `stub`, then restore.
- *
- * Via `defineProperty` against the saved descriptor, not `globals.localStorage =`.
- * Node exposes `localStorage` as a getter-only global from v22.4 (unflagged in
- * v24), and a plain assignment to an accessor with no setter THROWS under the
- * `"use strict"` these modules compile to — so the direct form would fail both
- * tests below on a newer runtime, for a reason having nothing to do with what
- * they assert. Restoring the descriptor rather than the value keeps that global
- * a getter afterwards instead of flattening it into a data property.
- */
-function withLocalStorage(stub: unknown, body: () => void): void {
-  const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-  Object.defineProperty(globalThis, "localStorage", {
-    value: stub,
-    configurable: true,
-    writable: true,
-  });
-  try {
-    body();
-  } finally {
-    if (original) Object.defineProperty(globalThis, "localStorage", original);
-    else delete (globalThis as { localStorage?: unknown }).localStorage;
-  }
-}
-
-test("the init script writes the upstream key with the upstream value", async () => {
-  const page = fakePage();
-  await seedAssistantDiscovered(page);
-  const { script, arg } = page.initScripts[0];
-  const written: Record<string, string> = {};
-  withLocalStorage(
-    {
-      setItem: (key: string, value: string) => {
-        written[key] = value;
-      },
-    },
-    () => script(arg),
-  );
-  assert.deepEqual(written, { "langflow-assistant-discovered": "true" });
-});
-
-test("a localStorage that throws does not reject the seed", async () => {
-  const page = fakePage();
-  await seedAssistantDiscovered(page);
-  const { script, arg } = page.initScripts[0];
-  withLocalStorage(
-    {
-      setItem: () => {
-        throw new Error("private browsing");
-      },
-    },
-    () => {
-      // Upstream treats its own write as best-effort for the same reason; the
-      // consequence of swallowing it is a visible overlay and a loud spec
-      // failure, never a silent pass.
-      assert.doesNotThrow(() => script(arg));
-    },
-  );
 });
 
 test("the canvas budget is separate from, and longer than, the writable budget", () => {

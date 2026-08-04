@@ -74,6 +74,8 @@ All 4 tests carry `@stable` per the project rule "spec is born 100% @stable; tag
 - A file uploaded via the inspector sets the field value to the file name and switches the upload button to "value present" mode.
 - After running ChatInput → ChatOutput from the canvas, the Playground shows the user-side message with the inspector-attached image rendered as `<img alt$="chain.png">`.
 - Clicking the upload button while a value is present clears the field back to the `"Upload a file..."` placeholder.
+- **`afterEach`**: every flow the run created (one per test, from `blank-flow`) is deleted **id-scoped** via the shared tracker (`trackCreatedFlows`, #1108), and `GET /api/v1/flows/` shows no leftover `New Flow`. Added in #1220 — until then this spec had **no cleanup at all** and leaked one flow per test on the shared instance (measured together with its `chat-input-output` sibling: 24 orphans, purged while validating; the re-run left the flow count unchanged at 1). This is about the FLOWS, not the uploads — `temp_file=True` uploads still need no cleanup, as noted below.
+- **Assistant onboarding tooltip**: suppressed before the first document load via `seedAssistantDiscovered(page)` in `beforeEach` — the only point at which it can be suppressed, since upstream reads the flag at mount of the canvas-controls bar and then arms a 10 s timer. `expandFocusedNode` asserts the seed ran and fails loudly, naming the fix, if a test added to this file later forgets it (#1220).
 
 ---
 

@@ -4,6 +4,8 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
+import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
+import { trackCreatedFlows } from "../../../helpers/flows/track-created-flows";
 import { zoomOut } from "../../../helpers/ui/zoom-out";
 import { waitForFlowSaveSettled } from "../../../helpers/flows/wait-for-flow-save-settled";
 import {
@@ -13,6 +15,30 @@ import {
 
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
+
+// Every test here clicks `blank-flow`, which creates a real flow
+// (`POST /api/v1/flows` → 201). This spec had NO cleanup at all and leaked one flow
+// per test on the shared instance — measured while validating #1220, together with
+// its `chat-input-output` sibling: 24 orphan `New Flow` rows across two full runs and
+// four force-fail runs. Tracked and deleted id-scoped via the shared tracker (#1108),
+// never a delete-all sweep, which would wipe flows other workers are driving (#553).
+let flows: ReturnType<typeof trackCreatedFlows>;
+
+test.beforeEach(async ({ page }) => {
+  flows = trackCreatedFlows(page);
+  // Before the first document load — the only point at which the assistant
+  // onboarding tooltip can be suppressed, because upstream reads its flag once at
+  // mount of the canvas-controls bar and then arms a 10 s timer. `expandFocusedNode`
+  // asserts this ran; the probe it used to make instead fired ~2 s after that mount
+  // and never saw the tooltip in 39 measured executions (#1220). This spec also
+  // clicks the bar itself (`zoomOut`, `adjustScreenView`), which the tooltip covers.
+  await seedAssistantDiscovered(page);
+});
+
+test.afterEach(async ({ request }) => {
+  await flows.cleanup(request);
+  flows.dispose();
+});
 
 const IMAGE_NAME = "chain.png";
 const IMAGE_PATH = path.resolve(

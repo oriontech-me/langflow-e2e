@@ -1,5 +1,5 @@
 import { type Page, expect } from "@playwright/test";
-import { dismissOnboardingIfPresent } from "./dismiss-onboarding";
+import { assertAssistantOnboardingSeeded } from "./assistant-onboarding";
 
 // Expand the currently focused node from minimized to full view. Chat Input,
 // Chat Output and If-Else all default to `minimized = True` (see their component
@@ -18,10 +18,19 @@ import { dismissOnboardingIfPresent } from "./dismiss-onboarding";
 // instrumentation). The fix dispatches the pointer events directly on the ⋮
 // element (see the retry below) so the pane never sees a coordinate hit.
 export async function expandFocusedNode(page: Page): Promise<void> {
-  // The dev46 assistant-onboarding dialog opens over the flow editor on entry and
-  // its overlay steals node selection / intercepts canvas clicks, so the node
-  // toolbar (`more-options-modal`) never mounts. Dismiss it before interacting.
-  await dismissOnboardingIfPresent(page);
+  // The assistant onboarding tooltip overlays the canvas-controls region and can
+  // eat a hit-tested click, so a caller of this helper must have suppressed it —
+  // which only a PRE-LOAD seed can do (upstream snapshots the flag at mount, so
+  // there is nothing this helper could write here that would take effect).
+  //
+  // This used to be `dismissOnboardingIfPresent(page)`, on this line and again
+  // inside the retry below. #1220 measured both on 1.12.0.dev15: 39 executions
+  // each, firing 0.92–3.70 s after the canvas-controls bar mounted, against a
+  // tooltip that cannot appear before mount + 10 000 ms — so 0 of 78 ever saw
+  // anything, and the comment they carried claimed a protection that had never
+  // once been performed. Asserting the seed instead is deterministic: it reads the
+  // flag, needs no waiting, and names the fix when a spec forgets.
+  await assertAssistantOnboardingSeeded(page, "expandFocusedNode");
 
   if ((await page.getByTestId("hide-node-content").count()) === 0) return;
 
@@ -34,10 +43,8 @@ export async function expandFocusedNode(page: Page): Promise<void> {
   // Drive re-select → open-menu → expand → settle as ONE retried unit. `toPass`
   // re-runs the body until the node has actually left the minimized state,
   // replacing the manual attempt loop + fixed `waitForTimeout` (Playwright
-  // anti-patterns) with a web-first assertion. The onboarding dialog can reappear
-  // a beat after mount, so it is re-dismissed inside the retry.
+  // anti-patterns) with a web-first assertion.
   await expect(async () => {
-    await dismissOnboardingIfPresent(page);
     // A prior retry may already have expanded the node — nothing minimized left.
     if ((await minimizedNode.count()) === 0) return;
     // The ⋮ toolbar mounts only for the selected node; re-select it (a real click
