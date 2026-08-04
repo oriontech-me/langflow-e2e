@@ -1053,8 +1053,8 @@
 - [x] agent interaction suite → `agent-component-regression.spec.ts`
 - [x] agent stop button must halt execution mid-run → `agent-component-regression.spec.ts`
 - [x] Agent settings survive save and reopen → `agent-config-persistence.spec.ts`
-- [x] agent run persists every session message tagged with the custom context_id → `agent-context-id-continuity.spec.ts`
 - [x] context-scoped retrieval returns all turns of the context and not the untagged control → `agent-context-id-continuity.spec.ts`
+- [x] agent run persists every session message tagged with the custom context_id → `agent-context-id-continuity.spec.ts`
 - [x] mirrored context-scoped retrievals return only their own context's messages → `agent-context-id-isolation.spec.ts`
 - [x] switching the agent's context_id re-tags new turns without touching previous ones → `agent-context-id-isolation.spec.ts`
 - [x] toggle ON (default): agent's date tool returns today's date → `agent-current-date-tool.spec.ts`
