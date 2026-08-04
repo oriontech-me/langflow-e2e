@@ -1054,6 +1054,12 @@ jobs:
           TOKENS_DIR: all-tokens
           PAYLOAD_IN: payload.json
           PAYLOAD_OUT: payload-with-tokens.json
+          # How many shards were MEANT to report their resolved provider (#1255
+          # item 1). Nothing in the token artifacts records this, so without it a
+          # shard whose artifact never uploaded is invisible — neither a vote nor an
+          # abstention — and three shards of four naming one provider would resolve
+          # as a full pin. Same source the matrix itself uses.
+          TOKENS_SHARD_TOTAL: ${{ needs.prep.outputs.shard_total }}
         run: |
           merge_log=$(node scripts/merge-token-payload.mjs 2>&1) || true
           echo "$merge_log"

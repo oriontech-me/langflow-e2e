@@ -408,11 +408,198 @@ test("the POST step judges the ingest by its body, not by HTTP 200 alone", () =>
 });
 
 test("resolveTargetProvider is pure and reports its own verdict", () => {
-  assert.deepEqual(resolveTargetProvider(["anthropic", "anthropic"]), { provider: "anthropic", conflict: [] });
-  assert.deepEqual(resolveTargetProvider([]), { provider: null, conflict: [] });
-  assert.deepEqual(resolveTargetProvider(["", "  "]), { provider: null, conflict: [] });
+  // `shards` and `partial` joined the verdict in #1255 item 1 — an abstention is
+  // counted rather than filtered away, so a partial pin is distinguishable from a
+  // full one and from a disagreement.
+  assert.deepEqual(resolveTargetProvider(["anthropic", "anthropic"]), {
+    provider: "anthropic",
+    conflict: [],
+    shards: { named: 2, abstained: 0 },
+    partial: false,
+  });
+  assert.deepEqual(resolveTargetProvider([]), {
+    provider: null,
+    conflict: [],
+    shards: { named: 0, abstained: 0 },
+    partial: false,
+  });
+  assert.deepEqual(resolveTargetProvider(["", "  "]), {
+    provider: null,
+    conflict: [],
+    shards: { named: 0, abstained: 2 },
+    partial: false,
+  });
   assert.deepEqual(resolveTargetProvider(["google", "anthropic", "google"]), {
     provider: null,
     conflict: ["anthropic", "google"],
+    shards: { named: 3, abstained: 0 },
+    partial: false,
   });
+  // A single shard that pinned nothing is nobody pinning, not a partial pin.
+  assert.equal(resolveTargetProvider([""]).partial, false);
+  assert.equal(resolveTargetProvider(["openai"]).provider, "openai");
+  // Whitespace around a real value is not an abstention.
+  assert.deepEqual(resolveTargetProvider([" openai \n"]).shards, { named: 1, abstained: 0 });
+});
+
+// --- #1255 item 1: an abstention is not a vote ---
+//
+// The shard writes token-provider-<shard>.txt UNCONDITIONALLY, so "the rotation
+// declined to pin" arrives as an EMPTY file. `.filter(Boolean)` alone made that
+// identical to "this shard uploaded nothing", so one named provider among abstainers
+// resolved as if every shard had pinned it.
+
+const providerEnv = {
+  TOKENS_SUMMARY_OUT: "tokens-block.json",
+  PAYLOAD_IN: "payload.json",
+  PAYLOAD_OUT: "merged.json",
+  TOKENS_DIR: "all-tokens",
+};
+
+test("a partial pin publishes NO provider — one shard named it, another abstained", async () => {
+  const t = io({
+    files: {
+      "payload.json": JSON.stringify(PAYLOAD),
+      "tokens-block.json": JSON.stringify(BLOCK),
+      "all-tokens/token-provider-1.txt": "anthropic",
+      // Shard 2's `Rotate the lane` step failed (continue-on-error) → empty file.
+      "all-tokens/token-provider-2.txt": "",
+    },
+    dir: ["all-tokens/token-provider-1.txt", "all-tokens/token-provider-2.txt"],
+  });
+  const res = await mergeTokenPayload({ env: providerEnv, ...t, log: (m) => t.logged.push(m) });
+  assert.equal(res.written, true, "a partial pin must not cost the token rows");
+  const tokens = JSON.parse(t.written.get("merged.json")).tokens;
+  assert.equal(
+    "target_provider" in tokens,
+    false,
+    "shard 2 swept every provider — naming shard 1's pin as the run's would be a label that looks resolved",
+  );
+  // The information is recorded, not discarded.
+  assert.deepEqual(tokens.target_provider_shards, { named: 1, abstained: 1 });
+  assert.ok(
+    t.logged.some((m) => /abstained/.test(m) && /anthropic/.test(m)),
+    `the omission must name both the majority and the abstention: ${JSON.stringify(t.logged)}`,
+  );
+});
+
+test("a full pin still publishes the provider, and says nobody abstained", async () => {
+  const t = io({
+    files: {
+      "payload.json": JSON.stringify(PAYLOAD),
+      "tokens-block.json": JSON.stringify(BLOCK),
+      "all-tokens/token-provider-1.txt": "anthropic\n",
+      "all-tokens/token-provider-2.txt": "anthropic",
+    },
+    dir: ["all-tokens/token-provider-1.txt", "all-tokens/token-provider-2.txt"],
+  });
+  await mergeTokenPayload({ env: providerEnv, ...t, log: () => {} });
+  const tokens = JSON.parse(t.written.get("merged.json")).tokens;
+  assert.equal(tokens.target_provider, "anthropic");
+  assert.deepEqual(tokens.target_provider_shards, { named: 2, abstained: 0 });
+});
+
+test("the shard counts ride along even when no shard pinned anything", async () => {
+  // Otherwise "nobody pinned", "they disagreed" and "some abstained" are one
+  // indistinguishable silence on the platform's side.
+  const t = io({
+    files: {
+      "payload.json": JSON.stringify(PAYLOAD),
+      "tokens-block.json": JSON.stringify(BLOCK),
+      "all-tokens/token-provider-1.txt": "",
+      "all-tokens/token-provider-2.txt": "   ",
+    },
+    dir: ["all-tokens/token-provider-1.txt", "all-tokens/token-provider-2.txt"],
+  });
+  await mergeTokenPayload({ env: providerEnv, ...t, log: () => {} });
+  const tokens = JSON.parse(t.written.get("merged.json")).tokens;
+  assert.equal("target_provider" in tokens, false);
+  assert.deepEqual(tokens.target_provider_shards, { named: 0, abstained: 2 });
+});
+
+test("a shard that never reported is not a vote either — 3 of 4 is a partial pin", async () => {
+  // The third case, and the one no token artifact can see on its own: shard 4's
+  // upload never happened, so there is no file to read. Without the expected count
+  // this reads as {named: 3, abstained: 0} and resolves as a full pin.
+  const t = io({
+    files: {
+      "payload.json": JSON.stringify(PAYLOAD),
+      "tokens-block.json": JSON.stringify(BLOCK),
+      "all-tokens/token-provider-1.txt": "anthropic",
+      "all-tokens/token-provider-2.txt": "anthropic",
+      "all-tokens/token-provider-3.txt": "anthropic",
+    },
+    dir: [
+      "all-tokens/token-provider-1.txt",
+      "all-tokens/token-provider-2.txt",
+      "all-tokens/token-provider-3.txt",
+    ],
+  });
+  const res = await mergeTokenPayload({
+    env: { ...providerEnv, TOKENS_SHARD_TOTAL: "4" },
+    ...t,
+    log: (m) => t.logged.push(m),
+  });
+  assert.equal(res.written, true);
+  const tokens = JSON.parse(t.written.get("merged.json")).tokens;
+  assert.equal("target_provider" in tokens, false, "one shard's sweep is unaccounted for");
+  assert.deepEqual(tokens.target_provider_shards, { named: 3, abstained: 0, expected: 4, missing: 1 });
+  assert.ok(
+    t.logged.some((m) => /never reported/.test(m)),
+    `the missing shard must be named: ${JSON.stringify(t.logged)}`,
+  );
+});
+
+test("every shard reporting the same provider IS a full pin, expected or not", async () => {
+  // The regression this could introduce: making the ordinary case look partial.
+  for (const env of [providerEnv, { ...providerEnv, TOKENS_SHARD_TOTAL: "2" }]) {
+    const t = io({
+      files: {
+        "payload.json": JSON.stringify(PAYLOAD),
+        "tokens-block.json": JSON.stringify(BLOCK),
+        "all-tokens/token-provider-1.txt": "anthropic",
+        "all-tokens/token-provider-2.txt": "anthropic",
+      },
+      dir: ["all-tokens/token-provider-1.txt", "all-tokens/token-provider-2.txt"],
+    });
+    await mergeTokenPayload({ env, ...t, log: () => {} });
+    const tokens = JSON.parse(t.written.get("merged.json")).tokens;
+    assert.equal(tokens.target_provider, "anthropic", `full pin lost with env ${JSON.stringify(env)}`);
+  }
+});
+
+test("an unusable TOKENS_SHARD_TOTAL is ignored, not read as a missing shard", () => {
+  // A blank/garbage value must not omit the provider on every run — and the
+  // non-sharded lanes pass nothing at all.
+  for (const bad of [undefined, "", "  ", "0", "-3", "many"]) {
+    const v = resolveTargetProvider(["openai", "openai"], bad);
+    assert.equal(v.provider, "openai", `TOKENS_SHARD_TOTAL=${JSON.stringify(bad)} cost a real pin`);
+    assert.equal("expected" in v.shards, false, "an unusable count must not be published as one");
+  }
+  // A usable one is honoured.
+  assert.equal(resolveTargetProvider(["openai", "openai"], "3").partial, true);
+  assert.equal(resolveTargetProvider(["openai", "openai"], 2).provider, "openai");
+});
+
+test("the daily passes the shard total the matrix was built from", () => {
+  const body = postStep();
+  assert.match(
+    body,
+    /TOKENS_SHARD_TOTAL:\s*\$\{\{\s*needs\.prep\.outputs\.shard_total\s*\}\}/,
+    "without the run's own shard_total a shard that never uploaded is invisible, and the " +
+      "provider resolves as if it had agreed",
+  );
+});
+
+test("a disagreement is still a disagreement, not an abstention", () => {
+  // The two omissions have different causes and must stay distinguishable.
+  const disagree = resolveTargetProvider(["anthropic", "google"]);
+  const abstain = resolveTargetProvider(["anthropic", ""]);
+  assert.deepEqual(disagree.conflict, ["anthropic", "google"]);
+  assert.equal(disagree.partial, false);
+  assert.deepEqual(abstain.conflict, []);
+  assert.equal(abstain.partial, true);
+  assert.equal(abstain.majority, "anthropic");
+  assert.equal(disagree.provider, null);
+  assert.equal(abstain.provider, null);
 });

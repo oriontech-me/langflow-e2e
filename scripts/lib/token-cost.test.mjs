@@ -760,3 +760,78 @@ test("bySpecModel is empty when there are no probes", () => {
   assert.deepEqual(agg.bySpecModel, []);
   assert.equal(agg.spanTokens, 0);
 });
+
+// #1255 item 2: the row identity must depend only on what aggregate() was handed.
+//
+// The DB keys a row on (run_id, COALESCE(test_key,''), model), so a row whose
+// spec_path/title_path are null IS the unattributed bucket. An attribution record
+// that carries a trace_id but no file/test used to key on the literal text
+// "null" + NUL + "null" + NUL — a DIFFERENT producer key for the SAME DB identity.
+// The live ingest upserts and keeps the last, counting the loser in `rows_dropped`,
+// so one of the two numbers would be silently discarded. resolveTestAttribution()
+// makes that record impossible today, but it is a TypeScript helper two modules
+// away that this pure ESM module cannot see.
+
+test("an attribution with no file/test does not open a SECOND unattributed row", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1"), twoModelProbe("t2")],
+    // t1 has no attribution at all; t2 has a record that names neither field.
+    attributions: [{ trace_id: "t2" }],
+    prices: P,
+  });
+  const mini = agg.bySpecModel.filter((r) => r.model === "gpt-4o-mini");
+  assert.equal(
+    mini.length,
+    1,
+    "two producer rows on one DB identity — the ingest would keep one and count the " +
+      `other in rows_dropped: ${JSON.stringify(mini)}`,
+  );
+  assert.equal(mini[0].spec_path, null);
+  assert.equal(mini[0].title_path, null);
+  // And no token is lost to the merge: both traces' spans land in the one row.
+  assert.equal(mini[0].total_tokens, 400);
+  assert.equal(mini[0].calls, 4);
+});
+
+test("an attribution with a file but no test is not credited to that file", () => {
+  // Half an identity is not an identity: the DB's test_key is
+  // md5(normalize(spec_path) || '::' || title_path), which a null title_path makes
+  // NULL — i.e. the unattributed bucket. Stamping the spec_path onto that row would
+  // make it read as a real measurement of a file, with no test to point at.
+  const agg = aggregate({
+    probes: [twoModelProbe("t1")],
+    attributions: [{ trace_id: "t1", file: "a.spec.ts" }],
+    prices: P,
+  });
+  for (const row of agg.bySpecModel) {
+    assert.equal(row.spec_path, null, "a file without a test must not name the row");
+    assert.equal(row.title_path, null);
+  }
+});
+
+test("an empty-string test is treated as no identity, not as a real one", () => {
+  // resolveTestAttribution already refuses an empty title upstream; this pins that
+  // aggregate() does not depend on it having done so.
+  const agg = aggregate({
+    probes: [twoModelProbe("t1")],
+    attributions: [{ trace_id: "t1", file: "a.spec.ts", test: "" }],
+    prices: P,
+  });
+  assert.deepEqual(
+    agg.bySpecModel.map((r) => [r.spec_path, r.title_path]),
+    agg.bySpecModel.map(() => [null, null]),
+  );
+});
+
+test("a fully identified attribution is still credited exactly as before", () => {
+  // The guard above must not cost a real attribution its name — the regression this
+  // change could plausibly introduce.
+  const agg = aggregate({
+    probes: [twoModelProbe("t1")],
+    attributions: [{ trace_id: "t1", file: "a.spec.ts", test: "does a thing" }],
+    prices: P,
+  });
+  const mini = agg.bySpecModel.find((r) => r.model === "gpt-4o-mini");
+  assert.equal(mini.spec_path, "a.spec.ts");
+  assert.equal(mini.title_path, "does a thing");
+});
