@@ -306,3 +306,39 @@ test("reports a failed update instead of running against the wrong address", asy
   assert.match(result.detail, /elsewhere/);
   assert.match(result.detail, /ollama:11434/);
 });
+
+test("reports a variables listing that is not an array instead of throwing", async () => {
+  // Raised in review of PR #1254. Upstream declares `response_model=list[VariableRead]`
+  // and no reader in this repo handles a wrapper, so the answer is attribution, not a
+  // normalising fallback: a shape this cannot read must produce a named verdict rather
+  // than `rows.find is not a function` out of a preflight helper.
+  const req = fakeRequest({
+    "GET /api/v1/auto_login": AUTH,
+    "GET /api/v1/variables/": { body: { items: [] } },
+  });
+  const result = await preconfigureRoutedProvider(req, ROUTED_ENV);
+  assert.equal(result.configured, false);
+  assert.match(result.detail, /did not answer with an array/);
+});
+
+test("asserts the address when the listing omits the value", async () => {
+  // `VariableRead.value` is `str | None` upstream, so an absent value is a legitimate
+  // state. Treating unknown as "matches" would report configured for an address nobody
+  // verified — #1012's rule inverted. The write is server-validated, so asserting it is
+  // safe.
+  const recorded: Recorded[] = [];
+  const req = fakeRequest(
+    {
+      "GET /api/v1/auto_login": AUTH,
+      "GET /api/v1/variables/": { body: [{ name: "OLLAMA_BASE_URL", id: "v1" }] },
+      "POST /api/v1/models/enabled_models": ENABLED_OK,
+    },
+    recorded,
+  );
+  const result = await preconfigureRoutedProvider(req, ROUTED_ENV);
+
+  assert.equal(result.configured, true, result.detail);
+  const patched = recorded.find((r) => r.method === "PATCH");
+  assert.equal(patched?.url, "/api/v1/variables/v1");
+  assert.deepEqual((patched?.data as { value?: string })?.value, "http://ollama:11434");
+});
