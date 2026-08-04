@@ -110,8 +110,15 @@ let createdFlowId: string | undefined;
 // the provider throttles it (#922/#927). Returns false when the model is not offered.
 async function selectPinnedModel(page: Page, model: string): Promise<boolean> {
   await hideInspectorPanel(page);
+  // With no provider configured (fresh instance), 1.12 renders a "Setup Provider"
+  // button instead of the model dropdown — that state must fall back to the shared
+  // provider setup, not throw.
   const trigger = page.getByTestId("model_model");
-  await trigger.waitFor({ state: "visible", timeout: 15000 });
+  const triggerVisible = await trigger
+    .waitFor({ state: "visible", timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!triggerVisible) return false;
   await trigger.click();
 
   const option = page.locator('[data-testid$="-option"]', {
