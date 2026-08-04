@@ -972,25 +972,50 @@ jobs:
           case "$code" in 200|201) echo "Recorded.";; *) echo "::warning::QA platform POST failed ($code)";; esac
 
       # Refresh the duration table that drives duration-balanced sharding (#936).
-      # GREEN scheduled runs ONLY: a red run's per-spec times are distorted by
-      # retries and timeouts, which would poison the next partition — so we only
-      # trust a clean run's timings (stricter than the history file, which records
-      # every run). The committed reports/spec-durations.json is read by the prep
-      # job on the next daily; a missing/stale entry just falls back to a count balance.
-      # ALSO gated on runguard.empty (#1012), same class of hazard as the tag
+      #
+      # NO LONGER gated on a fully green run (#1252). It was, on the sound reasoning
+      # that a red run's per-spec times are distorted by retries and timeouts and
+      # would poison the next partition. What that missed is arithmetic: this suite
+      # has 1–10 hard failures on a normal day, so the gate was not strict, it was
+      # CLOSED. `reports/spec-durations.json` was NEVER committed — zero of the six
+      # scheduled dailies between #936 (2026-07-24) and #1252 qualified, and in the
+      # whole 23-entry history only 2026-07-03 ever had `failed: 0`, three weeks
+      # before the file existed. So every daily ran a cold start (`mode=count` in run
+      # 30809091241's prep log) and one red spec out of 430 discarded 429 valid
+      # measurements.
+      #
+      # The distortion is now excluded at the SOURCE instead: `extract` records a
+      # file only when every @stable test in it came back `expected` (Playwright's own
+      # word for "passed with no retry"), and every other current file CARRIES FORWARD
+      # its committed value — which is why the previous table is passed as the second
+      # argument, and why dropping the green-only gate is safe rather than a
+      # loosening. `flaky` and `skipped` are excluded too: a skipped file measures
+      # ~0 s and would ride free onto the heaviest shard, which the old gate did not
+      # prevent either (a green run still skips).
+      #
+      # Written via a temp file, NOT `> reports/spec-durations.json`: that path is now
+      # also the INPUT, and the redirect truncates it before node opens it — the
+      # carry-forward would silently degrade to "measured this run only", i.e. the
+      # exact behaviour this change removes, with nothing in the log to say so.
+      #
+      # STILL gated on runguard.empty (#1012), same class of hazard as the tag
       # mutation below: `extract` on an empty report emits `{"durations":{}}` and the
       # commit step below `git add`s the file, so a zero-test run would wipe the
       # duration table on main and silently drop duration-balanced sharding on every
-      # later daily. `needs.test.result == 'success'` does NOT cover that on its own —
-      # the shard step runs with `--pass-with-no-tests`, so a run matching no @stable
-      # test at all is GREEN with zero tests.
-      # ALSO gated on runguard.partial (#1058): durations extracted from a run where
-      # some shards aborted would record only the shards that ran, so the specs of a
-      # dead shard silently lose their timing and the partitioner mis-balances every
-      # later daily on stale data.
-      - name: Refresh spec durations (green runs only)
-        if: needs.test.result == 'success' && github.event_name == 'schedule' && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
-        run: node scripts/partition-shards.mjs extract results.json > reports/spec-durations.json
+      # later daily. That gate never depended on `needs.test.result` — the shard step
+      # runs with `--pass-with-no-tests`, so a run matching no @stable test at all is
+      # GREEN with zero tests.
+      # STILL gated on runguard.partial (#1058). The carry-forward makes a partial run
+      # survivable now (a dead shard's specs keep their previous value instead of
+      # vanishing), but a run where shards aborted is also a run where the surviving
+      # shards competed for a saturated backend, so their times are distorted in a way
+      # `expected` cannot detect. Kept out.
+      - name: Refresh spec durations
+        if: github.event_name == 'schedule' && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
+        run: |
+          node scripts/partition-shards.mjs extract results.json reports/spec-durations.json \
+            > /tmp/spec-durations.next.json
+          mv /tmp/spec-durations.next.json reports/spec-durations.json
 
       # Token consumption (#1197). Diagnostic: continue-on-error so a defect in the
       # cost report can never skip the steps that matter on a red day — the same
@@ -1144,7 +1169,7 @@ jobs:
           # and the commit/push back to main never happens (see issue #385).
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           # `git status --porcelain` (not `git diff --quiet`) so a brand-new,
-          # still-UNTRACKED reports/spec-durations.json (first green run) is
+          # still-UNTRACKED reports/spec-durations.json (its first write ever, #1252) is
           # detected too — `git diff` ignores untracked files.
           # reports/token-history.jsonl (#1197) rides the same commit: the token
           # summarizer is continue-on-error and a zero-test run writes no line at
@@ -1156,8 +1181,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add reports/daily-history.jsonl
-          # Present only after a green run's "Refresh spec durations" step; a no-op
-          # add on a red run (file unchanged / already tracked).
+          # Present after the "Refresh spec durations" step, which since #1252 runs on
+          # any scheduled run that produced a complete report — not only a green one.
+          # A no-op add when nothing changed (file unchanged / already tracked).
           [ -f reports/spec-durations.json ] && git add reports/spec-durations.json
           # Present only when the summarizer found at least one trace on a non-zero
           # test run (#1197); a no-op add otherwise.
