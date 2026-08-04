@@ -92,6 +92,8 @@ All 6 tests carry `@stable` per the project rule "spec is born 100% @stable; tag
 - A string set on Chat Input's `Input Text` reaches Chat Output's output inspection after running the flow from `button_run_chat output`.
 - Setting Chat Input's `sender_name` to `"QA"` and sending a message in the Playground produces the testid `chat-message-QA-{message}`.
 - Default `sender_name` field value is `"User"` for Chat Input and `"AI"` for Chat Output (no authenticated-username fallback).
+- **`afterEach`**: every flow the run created (one per test, from `blank-flow`) is deleted **id-scoped** via the shared tracker (`trackCreatedFlows`, #1108), and `GET /api/v1/flows/` shows no leftover `New Flow`. Added in #1220 — until then this spec had **no cleanup at all** and leaked one flow per test on the shared instance (measured: 24 orphans across two full runs plus four force-fail runs of this file and its `chat-input-files` sibling; purged while validating, and the re-run left the flow count unchanged at 1).
+- **Assistant onboarding tooltip**: suppressed before the first document load via `seedAssistantDiscovered(page)` in `beforeEach` — the only point at which it can be suppressed, since upstream reads the flag at mount of the canvas-controls bar and then arms a 10 s timer. `expandFocusedNode` asserts the seed ran and fails loudly, naming the fix, if a test added to this file later forgets it (#1220).
 
 ---
 

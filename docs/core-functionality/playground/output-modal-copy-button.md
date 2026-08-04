@@ -60,6 +60,7 @@ over the API never opens it. Full chain in
 - "Copied to clipboard" toast appears within 5s of clicking the copy button
 - Button shows `icon-Check` immediately after the click (success state)
 - Button returns to `icon-Copy` within 5s (state revert)
+- **Assistant onboarding tooltip**: suppressed before the first document load via `seedAssistantDiscovered(page)` in `beforeEach` — the only point at which it can be suppressed, since upstream reads the flag at mount of the canvas-controls bar and then arms a 10 s timer. `expandFocusedNode` asserts the seed ran and fails loudly, naming the fix, if a test added later forgets it. This replaces a `dismissOnboardingIfPresent` probe that #1220 measured firing ~2 s after that mount, catching the tooltip in 0 of 39 executions on 1.12.0.dev15.
 
 ---
 

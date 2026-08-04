@@ -57,9 +57,32 @@ One test walks a single **Chat Output** node through seven documented shortcuts:
    deletes it id-scoped in `afterEach`. The inherited version leaked one
    `New Flow` per run — orphans found on the shared instance were purged while
    validating this issue.
-6. **Onboarding tooltip dismissed** via the existing
-   `dismissOnboardingIfPresent(page)` helper (its overlay intercepts canvas
-   clicks; same reason the flow-lock specs call it).
+6. **Onboarding tooltip suppressed before the first document load**, via
+   `seedAssistantDiscovered(page)` in `beforeEach`
+   (`tests/helpers/ui/assistant-onboarding.ts`), which writes the
+   `langflow-assistant-discovered` localStorage flag upstream reads.
+
+   This **corrects** what item 6 claimed until #1220. It said the spec was protected
+   by a `dismissOnboardingIfPresent(page)` call placed after the `blank-flow` click,
+   and that protection never held. Measured on 1.12.0.dev15, 3 runs of 3: the probe
+   fired **before the canvas-controls bar had even mounted** — i.e. before the timer
+   that creates the tooltip had started — so it saw nothing every time. Its
+   `isVisible({ timeout: 2000 })` bought no wait either: Playwright ignores that
+   option (`locator.isVisible()` returns immediately).
+
+   Dismissing after the load cannot work in principle: upstream snapshots the flag at
+   mount (`useState(() => readAssistantDiscovered())` in `CanvasControls.tsx`) and
+   arms `ONBOARDING_TOOLTIP_DELAY_MS = 10 000` when it comes back unset, so the
+   tooltip appears at **mount + exactly 10 000 ms** and only a pre-load seed disarms
+   it. Confirmed rather than inferred: with the flag written 686 ms after the mount
+   the tooltip still appeared at 10 766 ms, against 10 713 ms with no write at all.
+
+   The hazard the seed removes is real but narrower than the #684 write-up implies on
+   1.12.x: the tooltip is a **282×32 px** opaque element at (378, 669) in a 1280×720
+   viewport, `z-index: 40`, `pointer-events: auto` — no body-wide blocking layer, but
+   it covers the canvas-controls bar that `adjustScreenView` clicks. Locally this spec
+   finishes ~2 s after that mount, well inside the 10 s window; the seed is what
+   protects a slower lane, where the tooltip would arrive mid-test.
 
 ## Tags
 
@@ -80,9 +103,10 @@ One test walks a single **Chat Output** node through seven documented shortcuts:
 - `src/frontend/src/constants/constants.ts` — `defaultShortcuts` entries `Duplicate` (`mod+d`), `Copy` (`mod+c`), `Paste` (`mod+v`), `Cut` (`mod+x`), `Delete` (`backspace`), `Undo` (`mod+z`), `Redo` (`mod+y`).
 - `src/frontend/src/stores/shortcuts.ts` — the store the canvas keybind handler reads.
 - Core `Chat Output` component (`add-component-button-chat-output`) — bundled in Langflow core, no provider extra required.
+- `src/frontend/src/components/core/canvasControlsComponent/CanvasControls.tsx` — `ONBOARDING_TOOLTIP_DELAY_MS` and the mount-time read of the discovery flag; `assistant-discovery-storage.ts` — the `langflow-assistant-discovered` key the seed writes.
 
 No provider API key needed.
 
 ## Last validated
 
-1.12.x (nightly `1.12.0.dev6`)
+1.12.x (nightly `1.12.0.dev15`)

@@ -5,6 +5,7 @@ import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
+import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
 import {
   closeAdvancedOptions,
   openAdvancedOptions,
@@ -16,6 +17,16 @@ import { zoomOut } from "../../../helpers/ui/zoom-out";
 // global cleanAllFlows / name-scoped / diff-based wipe, which races flows other
 // parallel workers are actively driving.
 const createdFlowIds: string[] = [];
+
+// Before the first document load — the only point at which the assistant onboarding
+// tooltip can be suppressed, because upstream reads its flag once at mount of the
+// canvas-controls bar and then arms a 10 s timer. `expandFocusedNode` asserts this
+// ran; the probe it used to make instead fired ~2 s after that mount and never saw
+// the tooltip in 39 measured executions (#1220). This spec also clicks the bar
+// itself (`zoomOut`, `adjustScreenView`), which is what the tooltip covers.
+test.beforeEach(async ({ page }) => {
+  await seedAssistantDiscovered(page);
+});
 
 test.afterEach(async ({ page }) => {
   const ids = createdFlowIds.splice(0);

@@ -22,7 +22,10 @@
 // and demands a full `manual.yml` run on each change (#1054). The same trade
 // `trackCreatedFlows` made (#1108). The seed is registered by the entry itself and
 // is idempotent per page, so a caller cannot forget it and a caller that enters
-// three times still pays for one registration.
+// three times still pays for one registration. The seed itself now lives in
+// `helpers/ui/assistant-onboarding.ts` — #1220 gave it seven more callers that
+// enter the editor by other routes, and leaving it here would have coupled them to
+// this module's deadlines in the impacted graph for nothing.
 //
 // What this does NOT do, stated so the next reader does not conclude the
 // duplication is gone: three callers is the whole reach today, and roughly twenty
@@ -40,6 +43,19 @@
 // deliberately, with a measurement behind it, not in passing.
 
 import { type Page, expect } from "@playwright/test";
+import {
+  type SeedablePage,
+  seedAssistantDiscovered,
+} from "../ui/assistant-onboarding";
+
+// Re-exported rather than redefined: the seed moved to
+// `helpers/ui/assistant-onboarding.ts` when #1220 gave it seven more callers, none
+// of which enters the editor by id. Kept reachable from here because the unit lane
+// and the three migrated specs already read these names off this module.
+export {
+  ASSISTANT_DISCOVERED_STORAGE_KEY,
+  seedAssistantDiscovered,
+} from "../ui/assistant-onboarding";
 
 /**
  * How long the canvas may take to render after the document load.
@@ -75,80 +91,12 @@ export const CANVAS_TIMEOUT_MS = 100000;
 export const WRITABLE_TIMEOUT_MS = 30000;
 
 /**
- * The localStorage flag upstream reads to decide whether the assistant
- * onboarding affordances still need to surface
- * (`assistant-discovery-storage.ts`). Pinned by the unit lane, because a rename
- * upstream would silently restore the overlay this suppresses.
+ * The `Page` surface this helper's navigation half needs. Narrow, so the unit lane
+ * can drive it with a fake. Extends the seed's surface, because the ORDER of the
+ * two calls is the invariant this module exists to hold.
  */
-export const ASSISTANT_DISCOVERED_STORAGE_KEY = "langflow-assistant-discovered";
-
-/**
- * Pages already carrying the seed, so a spec that enters three times registers
- * one init script instead of three. `WeakSet`, so a closed page is collectable.
- */
-const seededPages = new WeakSet<object>();
-
-/** The `Page` surface this helper's navigation half needs. Narrow, so the unit lane can drive it with a fake. */
-export interface NavigablePage {
-  addInitScript(script: (key: string) => void, arg: string): Promise<unknown>;
+export interface NavigablePage extends SeedablePage {
   goto(url: string): Promise<unknown>;
-}
-
-/**
- * Suppress the assistant onboarding affordances for every subsequent load.
- *
- * `assistant-onboarding-tooltip` renders in a Portal over the editor, anchored
- * beside `assistant-button` in the canvas controls bar, and the flag gating it
- * lives in localStorage — empty in every fresh Playwright context, so every test
- * is exposed on every entry.
- *
- * What it actually costs is worth stating precisely, because the #684 write-up
- * this helper inherited overstates it on 1.12.x. Upstream renders the popover as
- * `modal={false}` at `z-40`, with a comment saying the z-index is deliberately
- * capped below the z-50 dialog layer "so the onboarding tooltip never floats in
- * front of an open modal". So there is no body-wide blocking layer and no
- * interception of the Flow Settings modal any more — what remains is a small
- * opaque rectangle over the canvas-controls region, which is enough to eat a
- * hit-tested click on whatever it covers, and enough to have flaked
- * click-heavy specs before that cap landed.
- *
- * Seeding rather than dismissing is not a preference, it is what works: upstream
- * arms the tooltip on an **idle timer of 10 s** after mount
- * (`ONBOARDING_TOOLTIP_DELAY_MS` in `CanvasControls.tsx`), so the
- * `dismissOnboardingIfPresent` probe two of the three callers ran at entry looked
- * ~8 s too early, saw nothing, and left the tooltip to pop mid-test with a dialog
- * already open. Measured on 1.12.0.dev10, one run each: seed present → the
- * tooltip never appears; key renamed → it appears within 20 s.
- *
- * Scope, stated rather than implied: this replaces the ENTRY-time probes only.
- * `dismissOnboardingIfPresent` still has two callers this does not reach —
- * `helpers/ui/expand-focused-node.ts` and `ui-ux/langflowShortcuts.spec.ts` — and
- * the 10 s argument does **not** automatically condemn them: both probe further
- * into the test, where the timer may well have fired, so whether they catch the
- * tooltip is an open measurement, not a known no-op. Tracked separately; nothing
- * here changes their behaviour.
- *
- * @returns whether this call registered the script (false when already seeded).
- */
-export async function seedAssistantDiscovered(
-  page: NavigablePage,
-): Promise<boolean> {
-  if (seededPages.has(page)) return false;
-  // Marked AFTER the registration lands, never before: an `addInitScript` that
-  // rejects would otherwise leave the page permanently flagged as seeded, so no
-  // later entry would retry it and the overlay would be back with nothing saying
-  // so.
-  await page.addInitScript((key) => {
-    try {
-      localStorage.setItem(key, "true");
-    } catch {
-      // Best-effort, exactly as upstream treats it (private browsing, quota):
-      // the worst case is the affordance surfacing and the caller's own
-      // assertions failing loudly, never a silent pass.
-    }
-  }, ASSISTANT_DISCOVERED_STORAGE_KEY);
-  seededPages.add(page);
-  return true;
 }
 
 /**
