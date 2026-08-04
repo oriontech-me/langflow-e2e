@@ -225,6 +225,13 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
 
   const models = new Map();
   const specs = new Map();
+  // §5.3: the cross-tab the platform's fact table needs. Keyed to match the DB's
+  // own row identity -- (run_id, COALESCE(test_key,''), model), see
+  // 20260803130200_e2e_test_token_usage.sql:83 -- so an unattributed trace keys on
+  // the MODEL ALONE. Keying it on anything per-trace would emit rows the unique
+  // index treats as one and a re-POST would then duplicate.
+  const specModels = new Map();
+  let spanTokens = 0;
   const unpriced = new Set();
   const mismatches = [];
 
@@ -246,6 +253,17 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     if (!probe?.trace_id) continue;
     totals.traces += 1;
 
+    // Resolved BEFORE the span loop because the per-model cross-tab below needs
+    // the spec identity while it is walking the spans. The `unattributed`
+    // bookkeeping further down still uses the same value.
+    const attribution = byTrace.get(probe.trace_id);
+    const specPath = attribution?.file ?? null;
+    const titlePath = attribution?.test ?? null;
+    // Write the separator as the ESCAPE `\u0000`, never as a literal control
+    // character in the source. A raw NUL is invisible in an editor, in a diff and
+    // in a review, and the first draft of this plan shipped four of them by accident.
+    const specModelKey = attribution ? `${specPath}\u0000${titlePath}\u0000` : "\u0000\u0000";
+
     let spanTotal = 0;
     let traceUsd = 0;
     for (const m of probe.models ?? []) {
@@ -253,6 +271,7 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
       const completion = Number(m.completion_tokens) || 0;
       const total = Number(m.total_tokens) || prompt + completion;
       spanTotal += total;
+      spanTokens += total;
       totals.prompt_tokens += prompt;
       totals.completion_tokens += completion;
 
@@ -276,6 +295,25 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
       acc.total_tokens += total;
       if (acc.usd_estimated !== null && usd !== null) acc.usd_estimated += usd;
       models.set(m.model, acc);
+
+      const rowKey = `${specModelKey}${m.model}`;
+      const row =
+        specModels.get(rowKey) ??
+        {
+          spec_path: specPath,
+          title_path: titlePath,
+          model: m.model,
+          price_key: resolvePriceKey(m.model, prices),
+          calls: 0,
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+        };
+      row.calls += Number(m.calls) || 1;
+      row.prompt_tokens += prompt;
+      row.completion_tokens += completion;
+      row.total_tokens += total;
+      specModels.set(rowKey, row);
     }
 
     // The trace's own total is authoritative for the run (§2.1). When the two
@@ -298,7 +336,6 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     totals.total_tokens += runTotal;
     totals.usd_estimated += traceUsd;
 
-    const attribution = byTrace.get(probe.trace_id);
     if (!attribution) {
       unattributed.traces += 1;
       unattributed.total_tokens += runTotal;
@@ -319,6 +356,8 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     totals,
     byModel: [...models.values()].sort((a, b) => b.total_tokens - a.total_tokens),
     bySpec: [...specs.values()].sort((a, b) => b.total_tokens - a.total_tokens),
+    bySpecModel: [...specModels.values()].sort((a, b) => b.total_tokens - a.total_tokens),
+    spanTokens,
     attrib_ms: attribMs,
     attrib_calls: attribCalls,
     unattributed,
