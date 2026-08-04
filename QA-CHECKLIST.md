@@ -441,7 +441,7 @@
 
 #### 7.8 Unified Provider Setup — 1.11.0 additions
 - [ ] OpenAI Compatible as a first-class unified model provider: setup with base URL + key, models discovered, usable by a flow → `core-functionality/model-provider/openai-compatible-provider-setup.spec.ts`
-- [ ] Azure AI Foundry in the unified provider setup: configuration accepts deployment names, provider appears configured (requires Azure credentials in CI) → `core-functionality/model-provider/azure-ai-foundry-provider-setup.spec.ts`
+- [x] Azure AI Foundry in the unified provider setup: configuration accepts deployment names, provider appears configured → `core-functionality/model-provider/azure-ai-foundry-provider-setup.spec.ts` (6 tests, all validated against a live Azure resource on 1.12.0.dev15 — 3/3 clean `--retries=0 --workers=1` runs, every test force-failed. 4 of them need **no** Azure account and carry the surface on every lane: the two-variable form, the Foundry-only deployment hint asserted differentially against OpenRouter, the read-only unconfigured panel, an unresolvable endpoint rejected with `valid:false` and nothing persisted, and a deployment name absent from every catalog accepted and stored as `Azure AI Foundry::llm::<name>`. The other two — real credentials configuring the provider through Settings, and a real inference addressed by the deployment name — **skip with an explicit reason in CI** until `AZURE_AI_FOUNDRY_API_KEY` / `AZURE_AI_FOUNDRY_ENDPOINT` / `AZURE_AI_FOUNDRY_TEST_DEPLOYMENT` land as secrets, a maintainer action flagged on #1194)
 
 ---
 
