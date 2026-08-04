@@ -166,9 +166,25 @@ export async function preconfigureRoutedProvider(
   //    case for our purposes — some earlier run or worker created it — so it is
   //    treated as configured rather than retried or reported.
   const existing = await ctx.get("/api/v1/variables/", { headers });
-  const rows = existing.ok()
-    ? ((await existing.json()) as Array<{ id?: string; name?: string; value?: string }>)
-    : [];
+  const listed = existing.ok() ? await existing.json().catch(() => null) : [];
+  // A shape this cannot read is REPORTED, not normalised. Upstream declares
+  // `response_model=list[VariableRead]`, and every other reader in this repo casts the
+  // body straight to an array (`globalSetup`, `ui-ux/global-variable-edit.spec.ts`), so
+  // inventing a wrapper fallback here would add a branch upstream does not emit — and
+  // silently accepting an unexpected shape is the failure this repo avoids, not the one
+  // it wants. What IS worth having is the attribution: without this, a shape change
+  // surfaces as a bare `rows.find is not a function` from a preflight helper.
+  if (!Array.isArray(listed)) {
+    return {
+      attempted: true,
+      configured: false,
+      detail:
+        `GET /api/v1/variables/ did not answer with an array (got ` +
+        `${listed === null ? "unparseable body" : typeof listed}) — cannot tell whether ` +
+        `${variableName} exists`,
+    };
+  }
+  const rows = listed as Array<{ id?: string; name?: string; value?: string }>;
   const current = rows.find((v) => v.name === variableName);
 
   // A STALE value is the case a name check alone misses, and it is reachable: a
@@ -190,7 +206,15 @@ export async function preconfigureRoutedProvider(
   // on 1.12.0.dev10 — loopback and an un-allow-listed private IP both rejected, the
   // reachable host accepted with 200). So a stale value cannot be replaced by an
   // unreachable one silently: the rejection is reported with its cause.
-  if (current && current.value && current.value !== url && current.id) {
+  //
+  // An ABSENT value counts as a mismatch, not as a match. `VariableRead.value` is
+  // `str | None` upstream, so "the listing did not tell us the address" is a legitimate
+  // state even though a `Global` variable does carry it in practice (measured: the
+  // warning this very code printed on a dev box quoted the stale address back). Treating
+  // unknown as equal would report `configured: true` for an address nobody verified,
+  // which is precisely #1012's rule inverted; the write is server-validated, so
+  // asserting the address costs one call and cannot install an unreachable one quietly.
+  if (current?.id && current.value !== url) {
     const patched = await ctx.patch(`/api/v1/variables/${current.id}`, {
       headers,
       data: { id: current.id, name: variableName, value: url, type: "Global", default_fields: [] },
