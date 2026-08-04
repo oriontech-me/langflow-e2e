@@ -347,6 +347,31 @@ test("a fetch that never reaches the platform warns and never throws", async () 
   );
 });
 
+test("the warning names the cause Node hides, not just \"fetch failed\"", async () => {
+  // Node's fetch reports EVERY network failure with that same message and puts
+  // the useful half in `cause`. Measured against a real host that does not
+  // resolve, the warning read "(fetch failed)" -- true, and useless for deciding
+  // whether the platform is down, the URL is wrong, or the runner has no egress.
+  const logged = [];
+  const err = new Error("fetch failed");
+  err.cause = new Error("getaddrinfo ENOTFOUND nao-existe.invalid");
+  const res = await syncModelPrices({
+    env: {
+      GITHUB_SHA: SHA,
+      QA_MODEL_PRICES_ENDPOINT: "https://x.example/sync",
+      QA_E2E_MODEL_PRICES_TOKEN: "s3cret",
+    },
+    readFile: () => FILE,
+    fetchImpl: () => { throw err; },
+    log: (m) => logged.push(m),
+  });
+  assert.equal(res.reason, "transport");
+  assert.ok(
+    logged.some(m => /::warning::/.test(m) && /ENOTFOUND nao-existe\.invalid/.test(m)),
+    `the cause must reach the log; got ${JSON.stringify(logged)}`,
+  );
+});
+
 test("an unreadable response body still lets the status decide", async () => {
   // A body that cannot be read is not evidence the install failed: the POST may
   // well have landed. The status is what decides, so this must not be reported as
