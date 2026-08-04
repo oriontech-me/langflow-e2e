@@ -1,0 +1,72 @@
+name: Sync Model Prices
+
+# Pushes scripts/lib/model-prices.json into the QA Platform's own price table.
+#
+# WHY THIS WORKFLOW EXISTS
+#
+# The platform does not read this repo. It keeps a copy of the price table and
+# costs every token row by joining a run's date against it. That copy is installed
+# by an edge function (`e2e-model-prices-sync`) whose own header says the caller is
+# "a CI job in the sibling repo" — and no such job existed. The function has no
+# cron either, so nothing renewed the copy: a model added here never reached the
+# platform, which then reported it as a price gap while this repo priced it fine.
+#
+# Measured, not hypothetical: `claude-haiku-4-5` was added here 2026-08-03, the
+# daily on 2026-08-04 spent 62k tokens on it, and the platform's Cost tab read
+# "claude-haiku-4-5 · no band covers run_date · 1 run" with every dollar a floor.
+#
+# WHY THE TRIGGER IS THE FILE AND NOT A SCHEDULE
+#
+# The table is a dimension, not a measurement — it changes only when a human edits
+# a rate in a PR. A cron would re-run a DELETE + INSERT every day to install the
+# same rows, churning `synced_at` and making a real change indistinguishable from
+# the daily no-op in the run history. `workflow_dispatch` covers the cases a path
+# filter cannot: the first install, and re-installing after the platform's table
+# has been restored from a backup.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/lib/model-prices.json"
+      - "scripts/sync-model-prices.mjs"
+      - ".github/workflows/sync-model-prices.yml"
+  workflow_dispatch:
+
+# One installer at a time. The RPC behind this is a DELETE followed by an INSERT
+# in one transaction, so two overlapping runs cannot corrupt the table — but they
+# can land in either order, and the loser would leave the table reflecting the
+# older commit while `repo_commit_sha` claims otherwise.
+concurrency:
+  group: sync-model-prices
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Install the price table on the QA Platform
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      # No `npm ci`: the script imports nothing outside node: builtins, on
+      # purpose. A price install that cannot run because a dependency tree failed
+      # to resolve is a worse failure than the gap it exists to close.
+      - name: Sync model prices
+        # continue-on-error, and the script never exits non-zero on a transport
+        # failure either: this is telemetry plumbing. A platform outage must not
+        # turn a merge red. The ::warning:: in the log is the signal, and the
+        # platform's table simply stays as it was.
+        #
+        # A MALFORMED PRICE FILE IS DIFFERENT and does throw — see the script. That
+        # is a data error in this repo, and it fails on the PR lane too, via
+        # `npm run test:scripts` ("the real model-prices.json is syncable").
+        continue-on-error: true
+        env:
+          QA_PLATFORM_ENDPOINT: ${{ vars.QA_PLATFORM_ENDPOINT }}
+          QA_MODEL_PRICES_ENDPOINT: ${{ vars.QA_MODEL_PRICES_ENDPOINT }}
+          QA_E2E_MODEL_PRICES_TOKEN: ${{ secrets.QA_E2E_MODEL_PRICES_TOKEN }}
+        run: node scripts/sync-model-prices.mjs
