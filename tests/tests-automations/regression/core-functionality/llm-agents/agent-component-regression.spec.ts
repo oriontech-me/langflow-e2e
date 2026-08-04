@@ -55,7 +55,15 @@ async function waitForAgentToFinish(page: Page): Promise<void> {
   }
 }
 
-const targets = resolveTestTargets({ tier: "tool-calling" });
+// `any-completion` (#1187): every assertion here reads node behaviour, not the
+// answer. The interaction suite checks the playground input returns and the run
+// completes (`node_duration`, the Stop button clearing); the second test checks that
+// Stop actually halts a run mid-flight. Nothing depends on the model choosing to
+// comply with anything — it only has to be slow enough to be stopped and finish.
+//
+// MEASUREMENT PENDING — the rate on the routed lane is recorded here before this
+// declaration ships.
+const targets = resolveTestTargets({ tier: "any-completion" });
 
 // File-level serial mode: each provider block creates a named Simple Agent flow;
 // serial execution avoids "flow must be unique" collisions across blocks.

@@ -335,7 +335,19 @@ async function retrieveViaMessageHistory(
   return textarea.inputValue();
 }
 
-const targets = resolveTestTargets({ tier: "tool-calling" });
+// `any-completion` (#1187). This tier governs ONE test in this file — the
+// parametrized "agent run persists every session message tagged with the custom
+// context_id". The "retrieval layer (model-free)" describe below sits OUTSIDE the
+// `targets` loop, so it never resolved a target and this declaration does not touch
+// it; counting it as routed coverage would overstate what changes here.
+//
+// The routed test needs the model to CHOOSE nothing: it asserts which context_id the
+// PERSISTED turns carry, and the model only has to answer something for turns to
+// exist at all. The deciding observable is Langflow's context tagging.
+//
+// MEASUREMENT PENDING — the rate on the routed lane is recorded here before this
+// declaration ships.
+const targets = resolveTestTargets({ tier: "any-completion" });
 
 // Test 1 loads the Simple Agent template — serial + --workers=1 per the
 // agent-area rule. Cleanup is id-scoped; nothing here wipes flows.

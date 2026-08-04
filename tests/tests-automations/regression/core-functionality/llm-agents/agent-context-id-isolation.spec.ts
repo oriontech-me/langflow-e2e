@@ -484,7 +484,18 @@ async function runRetrievalScopedTo(page: Page, contextId: string): Promise<stri
   return text;
 }
 
-const targets = resolveTestTargets({ tier: "tool-calling" });
+// `any-completion` (#1187). As in `agent-context-id-continuity`, this governs ONE
+// test — the parametrized "switching the agent's context_id re-tags new turns". The
+// "retrieval layer (model-free)" describe above is outside the `targets` loop and
+// already resolves no provider, so it is not part of what this declaration routes.
+//
+// The routed test reads which context_id the PERSISTED turns carry, never what the
+// agent said, so the model chooses nothing. The deciding observable is Langflow's
+// per-context isolation.
+//
+// MEASUREMENT PENDING — the rate on the routed lane is recorded here before this
+// declaration ships.
+const targets = resolveTestTargets({ tier: "any-completion" });
 
 // Test 2 loads the Simple Agent template — serial + --workers=1 per the
 // agent-area rule. Cleanup is id-scoped; nothing here wipes flows.
