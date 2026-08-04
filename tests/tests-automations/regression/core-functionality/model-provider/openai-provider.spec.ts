@@ -136,7 +136,7 @@ test.describe.configure({ mode: "serial" });
 test.describe("OpenAI Provider", () => {
   test(
     "OpenAI API key is configured via Settings → Model Providers",
-    { tag: ["@stable", "@model-provider", "@settings"] },
+    { tag: ["@model-provider", "@settings"] },
     async ({ page }) => {
       test.skip(
         !hasProviderEnvKeys(PROVIDER),
