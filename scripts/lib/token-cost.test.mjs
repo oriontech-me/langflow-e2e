@@ -177,10 +177,67 @@ test("the shipped price table covers the models measured against Langflow 1.12.0
     // consumer (13 calls / 14,690 tokens on run 30647253368) and had no
     // price entry — the headline printed a FLOOR with `n/a` on the biggest row.
     "gemini-3.5-flash",
+    // Added 2026-08-04: reported by run 30920300880 from the Azure AI Foundry
+    // provider spec, where 584 unpriced tokens made the whole run a floor.
+    "gpt-5-mini",
   ]) {
     const usd = usdFor(model, 1, 1, prices, REPRESENTATIVE_DATE);
     assert.ok(Number.isFinite(usd), `${model} must resolve to a numeric price on ${REPRESENTATIVE_DATE}`);
   }
+});
+
+// The Azure AI Foundry deployment. Its id in the trace is the PORTAL DEPLOYMENT
+// NAME an operator typed, not an identity the API vouches for -- so this row
+// prices a name, and these three tests pin the parts that can go wrong.
+//
+// Rate verified 2026-08-04 against OpenAI's published pricing ($0.25/$2.00 per
+// MTok) and cross-checked against Azure, which lists the same figures.
+test("the shipped table prices gpt-5-mini at exactly $0.25/$2.00 per MTok", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  // One MTok each way, so the USD figure IS the per-MTok pair rather than a
+  // rounding of it -- same construction as the haiku test below.
+  const usd = usdFor("gpt-5-mini", 1_000_000, 1_000_000, prices, "2026-08-04");
+  assert.equal(usd, 2.25, "1 MTok in + 1 MTok out must price at $0.25 + $2.00");
+});
+
+// The exact row that made run 30920300880 a floor. Worth pinning as itself
+// because it shows why a floor is not "roughly right": these 584 tokens are 7%
+// of that run's tokens and about 60% of its cost, since gpt-5-mini's output rate
+// is 3.3x gpt-4o-mini's.
+test("the row that made run 30920300880 a floor now prices exactly", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  const usd = usdFor("gpt-5-mini", 51, 533, prices, "2026-08-04");
+  // Same ASSOCIATION as usdFor's own expression -- `tokens * (rate / 1e6)`, not
+  // `tokens * rate / 1e6`. The two differ in the last bit of a double
+  // (…4999999999998 vs …5), and the first version of this assertion used the
+  // wrong one and failed. Writing the expected value as a decimal literal would
+  // have the same problem; matching the association is what makes it exact.
+  assert.equal(usd, 51 * (0.25 / 1e6) + 533 * (2.0 / 1e6));
+  assert.ok(usd > 0.001, "the run's previously-unpriced share is over a tenth of a cent");
+});
+
+// The tier rule, in the direction that costs money. `gpt-5` is a PREFIX of
+// `gpt-5-mini`, so without the suffix gate a bare `gpt-5` deployment -- or a
+// `gpt-5-nano` one -- would inherit Mini's rate. Both are different SKUs at
+// different prices, and an operator can name a Foundry deployment either thing.
+// Nano is the dangerous one: it is CHEAPER than Mini, so inheriting would
+// overstate, while a bare gpt-5 is dearer and would understate. Neither may
+// resolve.
+test("a sibling gpt-5 tier does not inherit gpt-5-mini's rate", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  for (const id of ["gpt-5", "gpt-5-nano", "gpt-5-pro"]) {
+    assert.equal(
+      resolvePriceKey(id, prices),
+      null,
+      `${id} is a different tier and must stay unpriced rather than take gpt-5-mini's rate`,
+    );
+  }
+  // The dated/alias forms of the SAME tier must still resolve, or the verified
+  // rate above never reaches a real run.
+  assert.equal(resolvePriceKey("gpt-5-mini-2026-08-01", prices), "gpt-5-mini");
+  // And the new key must not have disturbed the openai family already here.
+  assert.equal(resolvePriceKey("gpt-4o", prices), "gpt-4o");
+  assert.equal(resolvePriceKey("gpt-4o-mini", prices), "gpt-4o-mini");
 });
 
 // §7.2: `claude-haiku-4-5` is what `resolveClaudeModel("haiku")` selects in
