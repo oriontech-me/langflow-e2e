@@ -120,6 +120,15 @@ export async function mergeTokenPayload({
     log("merge-token-payload: no shard recorded a resolved provider — omitting target_provider.");
   }
 
+  // Second, deliberate guard: `resolveTargetProvider` is the first line of
+  // defense (it already filters blank/whitespace values out before a `provider`
+  // ever reaches here, so today `provider` is always exactly `null` or a
+  // non-empty string). This ternary re-checks truthiness anyway, on purpose --
+  // if that upstream filter is ever loosened, an empty string must still fail
+  // to produce a `target_provider` key rather than silently publishing one.
+  // The two guards are redundant today by design, not by accident; a change to
+  // either one alone, with the other left intact, is not expected to be
+  // independently observable from outside this module.
   const tokens = { ...block.value, ...(provider ? { target_provider: provider } : {}) };
   writeFile(payloadOut, JSON.stringify({ ...payload.value, tokens }));
   log(

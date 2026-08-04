@@ -157,9 +157,22 @@ test("omits the provider when no shard recorded one", async () => {
   assert.equal("target_provider" in JSON.parse(t.written.get("merged.json")).tokens, false);
 });
 
-test("an empty provider file is not a provider", async () => {
+test("omits target_provider end-to-end when the only recorded file is empty", async () => {
   // The shard writes the file unconditionally, so "the rotation declined to pin"
   // arrives as an empty file, not a missing one.
+  //
+  // NAMING NOTE (fix round 1): this used to be named "an empty provider file is
+  // not a provider", which implied it was pinning down resolveTargetProvider's
+  // own filtering. It is not -- resolveTargetProvider already has a dedicated
+  // unit test below ("resolveTargetProvider is pure and reports its own
+  // verdict") that covers `["", "  "]` directly. This test instead proves the
+  // END-TO-END outcome through the full mergeTokenPayload pipeline: today that
+  // outcome is guaranteed twice over (resolveTargetProvider's filter AND the
+  // merge-site ternary in merge-token-payload.mjs), so this test cannot, by
+  // itself, tell you which guard is doing the work -- only that the observable
+  // result is still correct. See the comment on the merge-site ternary for why
+  // the two guards are intentionally redundant and why a break in exactly one
+  // of them, with the other intact, is not expected to turn this test red.
   const t = io({
     files: {
       "payload.json": JSON.stringify(PAYLOAD),
