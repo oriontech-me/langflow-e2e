@@ -1,3 +1,9 @@
+# Both forms on purpose. `node_modules/` matches a DIRECTORY only, so it does not
+# cover a SYMLINK named node_modules — which is how one reached main in #1253: a
+# worktree symlinked the repo's own install to avoid a second `npm ci`, and
+# `git add -A` committed the link (mode 120000) pointing at an absolute path on
+# one machine. The bare form below covers both.
+node_modules
 node_modules/
 .DS_Store
 playwright-report/
