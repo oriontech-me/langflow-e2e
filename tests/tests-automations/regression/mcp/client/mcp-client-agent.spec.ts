@@ -2,16 +2,19 @@ import * as dotenv from "dotenv";
 import path from "path";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
+import type { LoadSimpleAgentOptions } from "../../../../pages";
 import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
   providerConfigMap,
+  providerSetupMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { loadTemplateByName } from "../../../../helpers/flows/load-template-by-name";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
+import { hideInspectorPanel } from "../../../../helpers/ui/hide-inspector-panel";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 
 if (!process.env.CI) {
@@ -36,9 +39,74 @@ const MCP_JSON_CONFIG = JSON.stringify({
 // parallel workers are actively building mid-run (#515).
 let createdFlowId: string | undefined;
 
+// Picks the pinned model from the Agent dropdown without opening the Model Providers
+// panel, whose setup enables EVERY model of the provider — each enable runs a live
+// synchronous credential validation that blocks the single-worker backend for ~35s when
+// the provider throttles it (#922/#927). Returns false when the model is not offered.
+async function selectPinnedModel(page: Page, model: string): Promise<boolean> {
+  await hideInspectorPanel(page);
+  // With no provider configured (fresh instance), 1.12 renders a "Setup Provider"
+  // button instead of the model dropdown — that state must fall back to the shared
+  // provider setup, not throw.
+  const trigger = page.getByTestId("model_model");
+  const triggerVisible = await trigger
+    .waitFor({ state: "visible", timeout: 15000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!triggerVisible) return false;
+  await trigger.click();
+
+  const option = page.locator('[data-testid$="-option"]', {
+    hasText: new RegExp(`^${model}$`),
+  });
+  if (!(await option.isVisible({ timeout: 10000 }).catch(() => false))) {
+    await page.keyboard.press("Escape");
+    return false;
+  }
+  await option.click();
+  return true;
+}
+
+// #751: the model selection rebinds `api_key` via a debounced autosave — running the
+// Playground before it lands builds with the wrong provider's key.
+async function waitForAgentCredentialSettled(
+  page: Page,
+  flowId: string,
+  expectedCredential: string,
+): Promise<void> {
+  const auth = await getAuthToken(page.request);
+  const headers = auth ? { Authorization: auth } : undefined;
+  await expect(async () => {
+    const res = await page.request.get(`/api/v1/flows/${flowId}`, { headers });
+    expect(res.ok()).toBe(true);
+    const flow = await res.json();
+    const agent = (flow?.data?.nodes ?? []).find(
+      (n: { data?: { type?: string } }) => n?.data?.type === "Agent",
+    );
+    expect(agent?.data?.node?.template?.api_key?.value).toBe(expectedCredential);
+  }).toPass({ timeout: 20000, intervals: [500, 1000, 2000] });
+}
+
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
+  const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
   try {
-    createdFlowId = await new SimpleAgentTemplatePage(page).load(options);
+    createdFlowId = await loadTemplateByName(page, "Simple Agent");
+    await adjustScreenView(page);
+
+    // Fall back to the shared setup when the model is not selectable yet — that path
+    // also configures the provider credential from scratch.
+    const picked = options.model
+      ? await selectPinnedModel(page, options.model)
+      : false;
+    if (!picked) {
+      await providerSetupMap[provider](page, options.model);
+    }
+
+    await waitForAgentCredentialSettled(
+      page,
+      createdFlowId,
+      providerConfigMap[provider].envKeys[0],
+    );
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
     throw e;
