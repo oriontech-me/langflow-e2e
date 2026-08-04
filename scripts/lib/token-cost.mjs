@@ -153,9 +153,13 @@ function isAllowedSuffix(leftover) {
 // survives the gate. A tie in key length falls back to a plain lexical sort
 // so the result never depends on which key the price table happened to
 // declare first.
-function resolveBands(model, prices) {
+//
+// Split into resolvePriceKey() + resolveBands() for #1217: the platform's
+// e2e_test_token_usage.price_key column records which key priced a row, so the
+// key itself became a return value rather than an intermediate.
+export function resolvePriceKey(model, prices) {
   if (!model || !prices) return null;
-  if (prices[model]) return toBands(prices[model]);
+  if (prices[model]) return model;
   const candidates = Object.keys(prices)
     .filter((key) => {
       if (model === key) return false;
@@ -164,7 +168,12 @@ function resolveBands(model, prices) {
       return isAllowedSuffix(longer.slice(shorter.length));
     })
     .sort((a, b) => b.length - a.length || a.localeCompare(b));
-  return candidates.length ? toBands(prices[candidates[0]]) : null;
+  return candidates.length ? candidates[0] : null;
+}
+
+function resolveBands(model, prices) {
+  const key = resolvePriceKey(model, prices);
+  return key ? toBands(prices[key]) : null;
 }
 
 export function usdFor(model, promptTokens, completionTokens, prices, date) {

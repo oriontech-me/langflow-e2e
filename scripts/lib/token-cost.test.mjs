@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { usdFor, aggregate, parsePrices, loadPrices } from "./token-cost.mjs";
+import { usdFor, aggregate, parsePrices, loadPrices, resolvePriceKey } from "./token-cost.mjs";
 
 const PRICES = {
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
@@ -566,4 +566,52 @@ test("a cost record perturbs no token figure — totals, by_model, by_spec, unat
     false,
     "a cost record must never appear as a spending spec",
   );
+});
+
+// #1217 §5.3: the platform's e2e_test_token_usage.price_key records WHICH table
+// key priced a row. resolveBands() already computes it and discards it; these
+// tests pin the extracted function to the resolver's real behaviour, including
+// the two refusals that exist to stop a wrong number (#1211).
+const KEYS = {
+  "gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
+  "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  "gemini-2.5-flash": { inputPerMillion: 0.3, outputPerMillion: 2.5 },
+  "claude-opus-4": { inputPerMillion: 15, outputPerMillion: 75 },
+};
+
+test("resolvePriceKey returns the exact key when the model is priced by name", () => {
+  assert.equal(resolvePriceKey("gpt-4o-mini", KEYS), "gpt-4o-mini");
+});
+
+test("resolvePriceKey resolves a dated id to its family key", () => {
+  assert.equal(resolvePriceKey("claude-opus-4-20250514", KEYS), "claude-opus-4");
+});
+
+test("resolvePriceKey prefers the longest matching key", () => {
+  // Matches both gpt-4o (leftover "-mini-search-preview", refused) and
+  // gpt-4o-mini (leftover "-search-preview", allowed).
+  assert.equal(resolvePriceKey("gpt-4o-mini-search-preview", KEYS), "gpt-4o-mini");
+});
+
+test("resolvePriceKey refuses a separately-priced tier suffix", () => {
+  // "-lite" is a real cheaper tier, not alias noise (#1211). Pricing it at the
+  // non-Lite rate is worse than admitting we cannot price it.
+  assert.equal(resolvePriceKey("gemini-2.5-flash-lite", KEYS), null);
+});
+
+test("resolvePriceKey returns null for an unknown family", () => {
+  assert.equal(resolvePriceKey("mistral-large", KEYS), null);
+});
+
+test("resolvePriceKey returns null on missing arguments", () => {
+  assert.equal(resolvePriceKey("", KEYS), null);
+  assert.equal(resolvePriceKey("gpt-4o", null), null);
+});
+
+test("usdFor is unchanged by the resolvePriceKey extraction", () => {
+  // The refactor's whole risk is a behaviour change in pricing. Pin the three
+  // paths that matter: exact key, substring family, refused suffix.
+  assert.equal(usdFor("gpt-4o-mini", 1_000_000, 0, KEYS), 0.15);
+  assert.equal(usdFor("claude-opus-4-20250514", 1_000_000, 0, KEYS), 15);
+  assert.equal(usdFor("gemini-2.5-flash-lite", 1_000_000, 0, KEYS), null);
 });
