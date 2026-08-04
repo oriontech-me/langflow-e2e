@@ -60,9 +60,13 @@ test.describe("ModelInputComponent", () => {
     }
   });
 
-  test(
+  // Quarantined for #1265 — recurrent flake: the wait that times out is
+  // `sidebar-search-input`, not the model selector this test is named for
+  // (same signature on the 2026-07-15 and 2026-08-04 dailies). Lifting the
+  // quarantine (remove test.fixme + restore @stable) is a deliverable of #1265.
+  test.fixme(
     "the Language Model node renders its model selector",
-    { tag: ["@stable", "@release", "@components", "@workspace", "@model-provider"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       const node = await addLanguageModelNode(page);
       await expect(node.getByTestId("model_model")).toBeVisible({ timeout: 10000 });
