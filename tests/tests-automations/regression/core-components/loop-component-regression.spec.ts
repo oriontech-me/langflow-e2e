@@ -149,7 +149,25 @@ test(
 // Wiring + Iteration — Research Translation Loop template: wiring and real execution
 // =============================================================================
 
-test(
+// Quarantined for #1234 — the template this test loads does not exist in the
+// image. The nightly refuses to register it on startup:
+//
+//   [warning] Skipping starter project 'Research Translation Loop';
+//   unavailable components: ArXivComponent
+//
+// so `template-research-translation-loop` never renders in the all-templates
+// sidebar and the 10s wait at the top of the body cannot pass. Deterministic:
+// 3/3 attempts on the 2026-08-03 daily (run 30809091241) and again on the
+// 2026-08-04 PR lane, plus a control run at `origin/main` on 1.12.0.dev15.
+// `@stable` was already auto-removed by the workflow (`32ac9a1`); `test.fixme`
+// is added here because the impacted-specs gate selects by import graph, not by
+// tag (#871/#1054), so tag removal alone left this reddening every PR that
+// touches a helper it imports — it did exactly that to #1279.
+//
+// Lifting the quarantine (remove test.fixme + restore @stable) is a deliverable
+// of #1234, and gated on the component returning to the image — not on a
+// test-side change here.
+test.fixme(
   "Loop component — Research Translation Loop template: full wiring and iterates over 2 ArXiv papers",
   { tag: ["@release", "@components", "@templates", "@playground"] },
   async ({ page }) => {
