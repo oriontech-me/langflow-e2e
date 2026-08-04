@@ -128,9 +128,17 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-test(
+// Quarantined for #1266 — recurrent flake on a TRANSPORT-level signature:
+// `apiRequestContext.get: Timeout 20000ms exceeded.` on GET
+// /api/v2/mcp/servers?action_count=true, same signature on the 2026-07-30,
+// 2026-08-03 and 2026-08-04 dailies. Filed as load/reachability about this
+// spec, not about changing tool mode (CONTRIBUTING.md -> Infra-signature
+// exemption: a spec that keeps appearing as collateral while others do not).
+// Lifting the quarantine (remove test.fixme + restore @stable) is a
+// deliverable of #1266.
+test.fixme(
   "user must be able to change mode of MCP tools without any issues",
-  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
     await page.waitForTimeout(5000);

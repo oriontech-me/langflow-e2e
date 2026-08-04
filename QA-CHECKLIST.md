@@ -440,8 +440,8 @@
 - [x] Output formatting (JSON via output_schema, Markdown, plain text) → `agent-structured-output.spec.ts`
 
 #### 7.8 Unified Provider Setup — 1.11.0 additions
-- [ ] OpenAI Compatible as a first-class unified model provider: setup with base URL + key, models discovered, usable by a flow → `core-functionality/model-provider/openai-compatible-provider-setup.spec.ts`
-- [ ] Azure AI Foundry in the unified provider setup: configuration accepts deployment names, provider appears configured (requires Azure credentials in CI) → `core-functionality/model-provider/azure-ai-foundry-provider-setup.spec.ts`
+- [~] OpenAI Compatible as a first-class unified model provider: setup with base URL + key, models discovered, usable by a flow → `core-functionality/model-provider/openai-compatible-provider-setup.spec.ts` (6 tests, validated on 1.12.0.dev15 against `https://api.openai.com/v1` — the endpoint the issue itself suggests, so **no new CI secret**: the base URL defaults there and the bearer is the existing `OPENAI_API_KEY`, overridable via `OPENAI_COMPATIBLE_TEST_BASE_URL` / `_API_KEY` / `_MODEL`. **5 are `@stable`**: the two-variable form with its asymmetric required/optional Save gate; the live-only catalog — this is the first provider with **no static rows at all**, so unconfigured it contributes 0 models, asserted differentially against Azure AI Foundry's seed catalog in the same run; an unresolvable `.invalid` base URL and a real endpoint with a bogus key both rejected on the `validate-provider` **body** (HTTP 200 + `valid:false`, DNS vs `Authentication failed for the OpenAI-compatible endpoint`) with nothing persisted; live discovery returning **exactly** the endpoint's own `/v1/models` id set, twice over (once per model type); and one discovered id running a Basic Prompting flow to a sentinel reply through the provider-qualified `OpenAI Compatible-<id>-option`. **Partial because the 6th — configuring the provider through Settings — is quarantined (`test.fixme`, no `@stable`) against a confirmed product defect:** Save persists **only the base URL**, because the frontend fires the two `POST /api/v1/variables/` writes concurrently and the primary (secret) key write is rejected `400 Invalid OpenAI-compatible base URL` — validated against provider variables that do not yet include the base URL its sibling request is creating — with **nothing surfaced in the UI**. Measured 3/3 through the UI and isolated against the API on the same instance: sequential writes 201/201, concurrent 201/400. So an authenticated OpenAI-compatible endpoint cannot be configured from Settings at all; the assertions are unchanged and lifting the quarantine is a deliverable of [LE-2124](https://datastax.jira.com/browse/LE-2124))
+- [x] Azure AI Foundry in the unified provider setup: configuration accepts deployment names, provider appears configured → `core-functionality/model-provider/azure-ai-foundry-provider-setup.spec.ts` (6 tests, all validated against a live Azure resource on 1.12.0.dev15 — 3/3 clean `--retries=0 --workers=1` runs, every test force-failed. 4 of them need **no** Azure account and carry the surface on every lane: the two-variable form, the Foundry-only deployment hint asserted differentially against OpenRouter, the read-only unconfigured panel, an unresolvable endpoint rejected with `valid:false` and nothing persisted, and a deployment name absent from every catalog accepted and stored as `Azure AI Foundry::llm::<name>`. The other two — real credentials configuring the provider through Settings, and a real inference addressed by the deployment name — now run there too: the three `AZURE_AI_FOUNDRY_*` secrets are wired into the daily shard step and `manual.yml`'s Docker job by #1270, proven by a dispatch that reported `6 passed` where the lane had said `4 passed, 2 skipped`. They still skip with the concrete reason wherever the credentials are absent — a local run without the `.env` block, `pr-validation.yml` and the external-URL job, both unwired on purpose: #1216 keeps an unrelated PR off that account's health, and #1055 keeps us from storing our credentials in an instance we do not own)
 
 ---
 
@@ -825,7 +825,7 @@
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
-| `core-functionality/model-provider/` | 34 | 29 | 2 | 1 | 2 |
+| `core-functionality/model-provider/` | 34 | 30 | 2 | 2 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 51 | 46 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
@@ -836,7 +836,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **498** | **375 (75%)** | **89 (18%)** | **14 (3%)** | **20 (4%)** |
+| **TOTAL** | **498** | **376 (76%)** | **89 (18%)** | **15 (3%)** | **18 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -852,7 +852,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 421 `test()` calls carrying the `@stable` tag, distributed across 170 spec
+> 431 `test()` calls carrying the `@stable` tag, distributed across 172 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1097,7 +1097,6 @@
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
 - [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
-- [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
 - [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
 - [x] the trigger shows the selected model name → `modelInputComponent.spec.ts`
@@ -1111,9 +1110,21 @@
 - [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
 - [x] configured Anthropic selects a Claude model in the Agent and executes the flow → `anthropic-provider.spec.ts`
 - [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
+- [x] Azure AI Foundry is offered with a two-variable form and a Foundry-only deployment surface → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] an unconfigured Azure AI Foundry panel is read-only: no enable toggle, no add-deployment control → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] credentials that do not validate are rejected and nothing is persisted → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] a portal deployment name absent from every catalog is accepted and rendered → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] real credentials configure the provider and enable a portal deployment through the UI → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] the configured deployment answers a real inference through the Language Model component → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
 - [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
+- [x] the provider is offered with two variables and a live-only, empty catalog → `openai-compatible-provider-setup.spec.ts`
+- [x] an unreachable base URL is rejected and nothing is persisted → `openai-compatible-provider-setup.spec.ts`
+- [x] a reachable endpoint with a bogus key is rejected as an authentication failure → `openai-compatible-provider-setup.spec.ts`
+- [x] the configured provider discovers exactly the models its endpoint serves → `openai-compatible-provider-setup.spec.ts`
+- [x] a discovered model runs a flow through the OpenAI Compatible provider → `openai-compatible-provider-setup.spec.ts`
+- [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
 - [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
@@ -1252,7 +1263,6 @@
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
-- [x] user must be able to change mode of MCP tools without any issues → `mcp-server.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
 - [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
@@ -1318,7 +1328,7 @@
 | `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 5 | 2 |
-| `core-functionality/model-provider/` | 2 | 2 |
+| `core-functionality/model-provider/` | 2 | 0 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
