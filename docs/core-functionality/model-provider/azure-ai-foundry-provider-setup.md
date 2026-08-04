@@ -70,21 +70,29 @@ validating.
 phase (3 clean `--retries=0 --workers=1` runs) plus the force-fail proof per
 test, per `CONTRIBUTING.md`.
 
-**Why `@stable` on the credential-gated tests too, and what it means there.**
-Issue #1194 assumed the whole spec needed Azure credentials and therefore
-shipped untagged. The surface triage disproved the premise for tests 1–4, and
-the credentials turned out to exist for the author's environment, so tests 5–6
-are validated for real rather than shipped blind. In CI, tests 5–6 **skip with
-an explicit reason** until `AZURE_AI_FOUNDRY_API_KEY` /
-`AZURE_AI_FOUNDRY_ENDPOINT` / `AZURE_AI_FOUNDRY_TEST_DEPLOYMENT` land as
-secrets — the same missing-dependency skip contract `google-provider.spec.ts`
-carries for `GOOGLE_API_KEY`, and a skip is never a green (it is reported as a
-skip). Leaving the whole file untagged was the worse option: `nightly.yml` is
-dormant and `daily-stable.yml` runs `--grep @stable`, so an untagged spec runs
-in **no** recurring workflow at all — the invisible-red pattern from #945/#940.
+**Why `@stable` on the credential-gated tests too.** Issue #1194 assumed the
+whole spec needed Azure credentials and therefore shipped untagged. The surface
+triage disproved the premise for tests 1–4, and the credentials turned out to
+exist, so tests 5–6 were validated for real rather than shipped blind. Leaving
+the file untagged was the worse option: `nightly.yml` is dormant and
+`daily-stable.yml` runs `--grep @stable`, so an untagged spec runs in **no**
+recurring workflow at all — the invisible-red pattern from #945/#940.
 
-**Adding the CI secrets is a maintainer action, flagged on the PR.** Until then
-the daily's real coverage of §7.8 is tests 1–4.
+**All six run in CI.** `AZURE_AI_FOUNDRY_API_KEY` /
+`AZURE_AI_FOUNDRY_ENDPOINT` / `AZURE_AI_FOUNDRY_TEST_DEPLOYMENT` are repository
+secrets, wired into `daily-stable.yml`'s shard step and `manual.yml`'s Docker job
+by #1270 — proven by a dispatch on that branch: `6 passed (48.7s)`, where the
+lane had reported `4 passed, 2 skipped` before. Deliberately NOT wired into
+`pr-validation.yml` (an unrelated PR must not spend a real Azure inference or
+depend on that account's health — #1216) nor into `manual.yml`'s external-URL job
+(these two tests STORE the credential pair in the target Langflow, which is not
+ours to do on an instance we do not own — #1055); a PR that touches this spec is
+covered by a manual dispatch.
+
+Where the credentials are absent — a local run without the `.env` block, or a
+lane not listed above — tests 5–6 **skip with the concrete reason**, the same
+missing-dependency contract `google-provider.spec.ts` carries for
+`GOOGLE_API_KEY`. A skip is never a green: it is reported as a skip.
 
 ---
 
