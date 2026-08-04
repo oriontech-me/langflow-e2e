@@ -92,6 +92,34 @@ import { ollamaTestModel } from "./ollama-endpoint";
  *   model toggles). A paid call added to such a spec later is a defect, not a cost.
  * - `any-completion` — any model that returns text; the assertion is plumbing, not
  *   model quality. The tier #1187 routes to a local model.
+ *
+ *   **The test is "does any assertion depend on the model CHOOSING to comply", not
+ *   "is the reply's content read".** #1187 used the second wording and it admitted a
+ *   spec that fails ~40 % of the time: `agent-system-prompt` reads the reply only for
+ *   a sentinel the instruction told the model to include, which sounds like plumbing
+ *   and is adherence — measured 9/15 through the Agent on `llama3.2:1b` while the same
+ *   model, called directly with the same prompt, complied 10/10. So the reply may be
+ *   read (`agent-context-id-*` runs the agent and reads nothing of what it says) and a
+ *   sentinel may be asserted, as long as its presence is produced by Langflow or by
+ *   the test, never by the model deciding to obey. Anything the model must *choose* to
+ *   do — comply with an instruction, echo a token on request, attempt a tool call,
+ *   keep going after a tool error — is `tool-calling`, whatever the assertion looks at.
+ *
+ *   Two consequences worth knowing before declaring this tier:
+ *
+ *    - **Evidence must be the spec on the lane.** A direct model probe measures a
+ *      different system: the Agent wraps the instruction in tool-calling scaffolding
+ *      and a small model spends its reply on that. 10/10 direct vs 60 % through the
+ *      Agent is the same model, same prompt (#1187).
+ *    - **N/N gating cannot certify a stochastic model.** At p=0.60, the "3/3, no
+ *      retries" gate passes with probability ≈22 % — which is how the pilot was
+ *      adopted. Record the measured rate over a stated N instead; a spec that is not
+ *      ~100 % does not belong in this tier at all.
+ *
+ *   The declaration is per FILE, not per test: one `resolveTestTargets()` call feeds
+ *   the `describe` parametrization, so a file holding even one model-dependent test
+ *   cannot be routed. That is why `agent-tool-name-validation` stays `tool-calling`
+ *   although its first test makes no model call (#1187).
  * - `tool-calling` — the assertion *is* model capability: tool selection, structured
  *   output, iteration caps. Needs a capable hosted model.
  * - `provider-contract` — this spec exists to exercise *that* provider specifically

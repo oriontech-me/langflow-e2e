@@ -154,20 +154,46 @@ async function askAndGetReply(page: Page, message: string): Promise<string> {
   return chatMessage.innerText();
 }
 
-// `any-completion`, not `tool-calling` — the pilot for #1187.
+// `tool-calling`. This spec was #1187's `any-completion` pilot (PR #1212) and the
+// adoption is REVERTED here on measurement. Kept as a record because the reasoning
+// that adopted it is the reasoning to avoid, and it is not obviously wrong.
 //
-// What decides this spec is whether the instruction travelled UI → flow → backend →
-// model call, and any model that returns text can carry that proof: the assertion is
-// `reply.contains(sentinel)`, and the spec doc has always said "even small models
-// comply with 'always include this word'". It was declared `tool-calling` only
-// because #1184 migrated all 17 parametrized agent specs to the resolver under one
-// tier. Declaring what it actually needs is what lets a lane route it to a keyless
-// local model — no key, no quota, no credit — which is the point of #1187: this lane
-// recorded ZERO tests on 2026-07-28 and 2026-07-31 with the account drained.
+// The adoption argued that any model returning text can carry the proof, since what
+// the spec checks is whether the instruction travelled UI → flow → backend → model
+// call. It measured `llama3.2:1b` (the model the CI Ollama image bakes) by calling it
+// DIRECTLY: sentinel echoed 3/3, neutral control clean. Then the gate — three
+// consecutive `manual.yml` dispatches, no retries — came back 3/3, and it was adopted.
 //
-// Measured before adopting it, calling `llama3.2:1b` (the model the CI Ollama image
-// bakes) directly: sentinel echoed 3/3, and the neutral control emitted no stem.
-const targets = resolveTestTargets({ tier: "any-completion" });
+// Both measurements were real and neither predicts the lane:
+//
+//  - **Direct model call ≠ the spec's path.** Re-measured on the same model with the
+//    same system prompt and user message: **10/10 compliant** (default sampling and
+//    `temperature: 0` alike). Through the Agent it is **9/15** — 6/10 local, 3/5 on
+//    the CI lane, the two agreeing on ~60%. The Agent wraps the instruction in
+//    tool-calling scaffolding and a small model spends the reply on that instead:
+//    observed failures are `"THE CAPITAL OF FRANCE IS PARIS."`, `"I CAN'T PROVIDE THE
+//    CAPITAL OF FRANCE."`, and (on llama3.1:8b, 1/3 — size does not fix it) `"I CAN
+//    CALL A TOOL TO RETRIEVE INFORMATION."` So evidence must come from the spec on
+//    the lane; a model-alone probe measures a different system.
+//  - **3/3 cannot certify a stochastic model.** At p=0.60 a three-run gate passes
+//    with probability 0.6³ ≈ 22 %, and that is what happened. No feasible number of
+//    consecutive CI dispatches fixes this: ~59 would be needed for 95 % confidence in
+//    p ≥ 0.95. The instrument is wrong, not undersized.
+//
+// The classification error underneath both is the one worth carrying forward: the
+// tier question is NOT "is the reply's content read" but "does any assertion depend
+// on the model CHOOSING to comply" (see `ModelTier` in `helpers/provider-setup/
+// test-targets.ts`). Instruction adherence IS model quality — that is the whole
+// subject of this spec — so `tool-calling` is what it needs, and no local model
+// makes it `any-completion`.
+//
+// Rewriting the assertion to a model-independent observable was considered and
+// declined: `expectSentinelPersistedInFlows()` below ALREADY proves the instruction
+// reached the persisted flow. Dropping `reply.contains(sentinel)` would leave the
+// spec asserting persistence twice and would stop covering the end-to-end contract
+// this `@stable @release` test exists for — paying with coverage for spend, the
+// opposite of the trade this repo makes elsewhere (#980).
+const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // SimpleAgentTemplatePage.load() deletes all flows before loading the template.
 // File-level serial mode prevents parallel provider blocks from wiping each

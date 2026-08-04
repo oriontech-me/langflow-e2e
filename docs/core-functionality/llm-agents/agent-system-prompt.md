@@ -98,26 +98,34 @@ reliable signal (fail — invalidates the positive assertion).
 ## Model strategy
 
 - Parameterized per provider/model from `models.json` via the shared
-  `resolveTestTargets({ tier: "any-completion" })` in
+  `resolveTestTargets({ tier: "tool-calling" })` in
   `helpers/provider-setup/test-targets.ts` (#1184 replaced the inline copy this
   spec used to mirror from `agent-component-regression.spec.ts`).
-- **Tier: `any-completion`, and this spec is the pilot for it (#1187).** The tier
-  states that the deciding assertion reads Langflow's plumbing, not model quality:
-  what is asserted is that the instruction travelled UI → flow → backend → model
-  call, and *any* model that returns text can carry that proof. It was declared
-  `tool-calling` until #1187 only because all 17 parametrized agent specs were
-  migrated to the resolver with one tier; the assertion here never needed a
-  tool-capable model, and this doc already said so ("even small models comply with
-  'always include this word'").
-- Consequence: with `ANY_COMPLETION_PROVIDER=ollama` (plus `OLLAMA_TEST_MODEL`) the
-  lane runs this spec against a **local, keyless** model instead of a hosted one —
-  no credit, no quota, no key. That routing outranks `MODEL_TEST_ID` /
-  `MODEL_TEST_PROVIDER` **for this tier only**, because #1185's weekday pin is
-  global to the run; the override is announced in the run log, never silent.
-  Adoption is per spec behind a measured 3/3 CI gate — see #1187.
+- **Tier: `tool-calling`. This spec was #1187's `any-completion` pilot and the
+  adoption is reverted on measurement.** The adoption read the assertion as plumbing
+  — the instruction travelled UI → flow → backend → model call, so any model that
+  returns text carries the proof — and this doc supported it, saying "even small
+  models comply with 'always include this word'". That sentence is now measured and
+  it is false through the Agent: `llama3.2:1b`, the model the CI Ollama image bakes,
+  passes **9 of 15** routed runs (6/10 local, 3/5 on the CI lane), and `llama3.1:8b`
+  1 of 3 — size does not fix it. Called **directly** with the same system prompt and
+  user message, the same 1B complies **10/10**, so the loss is the Agent's
+  tool-calling scaffolding: the failing replies are the plain answer
+  (`"THE CAPITAL OF FRANCE IS PARIS."`) or talk about the tools
+  (`"I CAN CALL A TOOL TO RETRIEVE INFORMATION."`).
+- **What the tier question actually is:** not "is the reply's content read" but
+  "does any assertion depend on the model **choosing** to comply". Instruction
+  adherence is model quality, and it is this spec's whole subject — so no local model
+  makes this `any-completion`. Rewriting the assertion to something
+  model-independent was declined: the "the instruction reached the flow" half is
+  **already** asserted by `expectSentinelPersistedInFlows()`, so dropping
+  `reply.contains(sentinel)` would assert persistence twice and stop covering the
+  end-to-end contract this `@stable @release` spec exists for.
+- Consequence: `ANY_COMPLETION_PROVIDER=ollama` no longer routes this spec — it runs
+  against a hosted provider on every lane. The routing mechanism itself is unchanged
+  and still available to specs that qualify (#1187 / PR #1212).
 - Requires `collect-models.spec.ts` to have run and at least one provider API key
-  in `.env` — **unless** the run is routed to a local model, which needs neither.
-  Without keys/data, every target skips with a reason (no false pass).
+  in `.env`. Without keys/data, every target skips with a reason (no false pass).
 - Run with `--workers=1` (agent specs create named flows that collide in parallel).
 - File-level `test.describe.configure({ mode: "serial" })` — `load()` deletes all
   flows before loading the template, so parallel provider blocks would wipe each
@@ -127,18 +135,11 @@ reliable signal (fail — invalidates the positive assertion).
 
 ## External dependencies
 
-- **A live model, in one of two shapes** — this is a real model call, no mock:
-  - **Hosted (default):** a provider API key (e.g. `OPENAI_API_KEY`) in `.env` plus
-    collected `providers.json` / `models.json`.
-  - **Local (routed, #1187):** a reachable Ollama instance and no key at all —
-    `ANY_COMPLETION_PROVIDER=ollama`, `OLLAMA_TEST_MODEL=<tag the instance serves>`,
-    `OLLAMA_BASE_URL` (probed by the test host) and
-    `OLLAMA_BASE_URL_FROM_LANGFLOW` (what Langflow calls — `http://ollama:11434` in
-    CI, `http://host.docker.internal:11434` for a dockerized local Langflow).
-    Langflow must be started with `LANGFLOW_SSRF_ALLOWED_HOSTS` covering that
-    address, or `POST /api/v1/models/validate-provider` answers **HTTP 200** with
-    `{"valid": false, "error": "Invalid Ollama base URL"}` — a rejection that does
-    not look like one at the status level.
+- **A live hosted model** — a real model call, no mock: a provider API key (e.g.
+  `OPENAI_API_KEY`) in `.env` plus collected `providers.json` / `models.json`. The
+  keyless local route is **not** available to this spec any more (see *Model
+  strategy*); with `ANY_COMPLETION_PROVIDER=ollama` set, this spec still resolves
+  hosted targets, because the routing only reaches `tier: "any-completion"`.
 - `textarea_str_system_prompt` — Agent Instructions field on the Agent node.
 - `SimpleAgentTemplatePage` / `providerSetupMap` — template load + provider config.
 - Playground testids: `playground-btn-flow-io`, `input-chat-playground`,
@@ -167,17 +168,18 @@ reliable signal (fail — invalidates the positive assertion).
 
 ## Notes
 
-- **Why a sentinel code word?** It is the strongest model-agnostic signal that
-  the instruction was applied: even small models comply with "always include this
-  word", and the assertion is a deterministic `contains`, not a fuzzy semantic
-  match. Asserting a persona/language/format would be flakier across models.
-  Measured for #1187 against `llama3.2:1b` (the model the CI Ollama image bakes),
-  calling the model directly so the result is the model's, not the harness's: the
-  sentinel was echoed **3/3** and the neutral prompt emitted no `PINEAPPLE` stem —
-  i.e. both this spec's assertions survive a 1B-parameter local model. That is what
-  makes it the pilot; a spec whose assertion needs the model to *choose a tool*
-  (e.g. `agent-max-iterations`) has no such guarantee, which is the #570 trap and
-  the reason adoption is per spec.
+- **Why a sentinel code word?** It is the strongest signal that the instruction was
+  applied: the assertion is a deterministic `contains`, not a fuzzy semantic match,
+  and asserting a persona/language/format would be flakier across models.
+  **Model-agnostic it is not**, and the older wording here ("even small models comply
+  with 'always include this word'") was the premise #1187 adopted this spec on. It is
+  refuted: through the Agent, `llama3.2:1b` complies in **9 of 15** runs and
+  `llama3.1:8b` in 1 of 3, while the same 1B called directly complies **10/10**. So
+  the sentinel is deterministic *given* a model that follows instructions reliably —
+  which is a property of hosted-grade models, not of the assertion. A spec whose
+  assertion needs the model to *choose a tool* (e.g. `agent-max-iterations`) is worse
+  still, and this one is the same class: the #570 trap is a weak-model failure that
+  reads as a product regression.
 - **Per-run sentinel + negative control** are the two false-positive guards:
   randomising the sentinel each run rules out a cached/leaked match, and the
   negative-control test rules out the model emitting the stem spontaneously.
