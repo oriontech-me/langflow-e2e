@@ -189,33 +189,23 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     if (a?.trace_id) byTrace.set(a.trace_id, a);
   }
 
-  // §4.3 (fix round 2): `costs` are the sidecar's own COST records — one per
-  // `recordTokenAttribution` CALL, carrying that call's wall-clock. One record
-  // per call is what makes a PLAIN SUM correct here.
+  // §4.3: `costs` are the sidecar's own COST records — one per
+  // `recordTokenAttribution` CALL, carrying that call's wall-clock. One record per
+  // call is what makes the PLAIN SUM below correct.
   //
-  // "One per call" is NOT "one per teardown" on the dominant path. It coincides
-  // with one-per-teardown only for the two specs whose `cleanup()`
-  // (`trackCreatedFlows`) attributes a whole captured batch in a single call;
-  // the far more common path — `deleteFlow` called once per flow id, ~132
-  // `@stable` specs — makes one call, and therefore writes one record, PER
-  // FLOW. So `attrib_calls` counts calls, not teardowns: on that path it runs
-  // larger than the number of flow-deleting specs, and `attrib_ms /
-  // attrib_calls` is a per-CALL average, not a per-teardown one (see
-  // reports/README.md for a worked example: a 3-flow teardown produces three
-  // records and a real 63ms of teardown cost, but the "average" reads 21ms).
+  // **What the pair means, and the trap in dividing one by the other, is defined
+  // ONCE — in `reports/README.md`'s `token-history.jsonl` row.** That is the schema
+  // doc a reader of the file has open; this comment deliberately does not restate
+  // it. The short version, enough to review this loop: `attrib_calls` counts CALLS,
+  // not teardowns, so their ratio is a per-call average and never a per-teardown
+  // one; the total is the honest figure.
   //
-  // The previous shape put a per-FLOW `attrib_ms` on every trace line, which forced
-  // a reduction over distinct flow_id and still measured the wrong thing twice over:
-  // a flow that produced no traces wrote no line and so cost nothing on paper (the
-  // dominant case — one list request per deleted flow, paid by specs that burn no
-  // tokens at all), and summing per-flow elapsed over-reported by roughly the flow
-  // count because the flows run concurrently. Both are gone with the per-line field;
-  // do not reintroduce one, and do not re-derive this from `attributions`.
-  //
-  // `attrib_calls` rides along so a reader gets a call count alongside the total.
-  // The total (the plain sum) is the figure to read; do not derive a
-  // per-teardown average from it. A record whose `attrib_ms` is not a finite
-  // number counts toward neither, keeping the pair consistent.
+  // Two invariants that live here because they are properties of THIS code, not of
+  // the field: do not re-derive either value from `attributions` (the previous
+  // per-flow, per-line shape needed a distinct-flow_id reduction and was blind to a
+  // flow that produced no traces — the dominant cost), and a record whose
+  // `attrib_ms` is not a finite number counts toward neither, keeping the pair
+  // consistent.
   let attribMs = 0;
   let attribCalls = 0;
   for (const c of costs) {

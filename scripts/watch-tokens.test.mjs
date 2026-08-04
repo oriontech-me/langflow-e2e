@@ -1286,3 +1286,44 @@ test("the token recorder is NOT wired into manual's e2e-url job (it targets an e
     "the token recorder must not be started in the e2e-url job — it targets an external Langflow, not the localhost the recorder polls",
   );
 });
+
+// §4.3 / #1217 review F6: the `attrib_ms` + `attrib_calls` semantics existed as
+// FOUR near-verbatim copies — reports/README.md, token-cost.mjs's aggregate(),
+// this file's summarize() runLine, and token-attribution.ts. Four copies drift,
+// and this branch has already paid for that once: the "every PR lane is inert"
+// claim was false in five places and became a premise in a design document.
+//
+// So the definition lives in exactly one place and the rest point at it. This
+// guard is what keeps that true, because prose duplication is invisible to every
+// other check in the repo — nothing type-checks a comment.
+//
+// It matches on the DISTINGUISHING phrases, not on the whole paragraph: a
+// paraphrase is the realistic way a copy comes back, and a copy that says the
+// same thing in different words is the same maintenance problem.
+test("the attrib_ms / attrib_calls semantics are defined in exactly ONE place (#1217 F6)", () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const CANONICAL = "reports/README.md";
+  const FILES = [
+    CANONICAL,
+    "scripts/lib/token-cost.mjs",
+    "scripts/watch-tokens.mjs",
+    "tests/helpers/flows/token-attribution.ts",
+  ];
+  // Each phrase carries the definition rather than a pointer to it. A file that
+  // only points at the canonical row will not contain them.
+  const DEFINING = [
+    /per-CALL average, not a per-teardown/i,
+    /is not a spec count/i,
+    /not the wall-clock time the run lost|exceeds the (real )?elapsed|exceeds the time the run actually lost/i,
+  ];
+
+  for (const phrase of DEFINING) {
+    const carriers = FILES.filter((f) => phrase.test(realFs.readFileSync(path.join(root, f), "utf8")));
+    assert.deepEqual(
+      carriers,
+      [CANONICAL],
+      `"${phrase}" defines the pair and must appear only in ${CANONICAL}; found in ${carriers.join(", ") || "nowhere"}. ` +
+        `Either a copy came back, or the canonical row lost the sentence.`,
+    );
+  }
+});

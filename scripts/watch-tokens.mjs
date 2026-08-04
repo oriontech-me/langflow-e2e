@@ -452,23 +452,13 @@ export async function summarize({
     // line as the benefit it bought. Without it the ceiling is a claim in a doc
     // comment that nobody can check against a real run.
     //
-    // What the number IS: milliseconds spent in attribution, SUMMED ACROSS EVERY
-    // `recordTokenAttribution` CALL that paid it. It is NOT the run's wall-clock
-    // cost — Playwright's workers run in parallel, so their teardowns overlap and
-    // this total exceeds the time the run actually lost. `attrib_calls` is how many
-    // such CALLS are in that sum — not how many teardowns: that equivalence holds
-    // only for the two specs whose `cleanup()` (`trackCreatedFlows`) attributes a
-    // whole captured batch in one call. The far more common path — `deleteFlow`
-    // called once per flow id, ~132 `@stable` specs — makes one call per FLOW, so
-    // `attrib_calls` runs larger than the flow-deleting spec count and `attrib_ms /
-    // attrib_calls` is a per-CALL average, not a per-teardown one. Read the total
-    // (`attrib_ms`) as the honest figure; do not derive a per-teardown average from
-    // `attrib_calls` (see reports/README.md for a worked example).
+    // **Both fields are DEFINED in `reports/README.md`'s `token-history.jsonl`
+    // row** — what they measure, what they do not, and the trap in dividing one by
+    // the other. Not restated here: the field appeared in four places with four
+    // copies of the same paragraph, and four copies drift.
     //
-    // One record per CALL means a plain sum is correct. The earlier per-flow,
-    // per-line shape needed a distinct-flow_id reduction AND could not see a flow
-    // that produced no traces — the dominant cost. Copy both fields from `agg`;
-    // never re-derive either from `attributions`.
+    // The only rule that belongs at THIS site: copy both from `agg`, never
+    // re-derive either from `attributions`.
     attrib_ms: agg.attrib_ms,
     attrib_calls: agg.attrib_calls,
     anomalies: [],
