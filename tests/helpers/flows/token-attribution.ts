@@ -140,17 +140,14 @@ export interface RecordTokenAttributionOptions {
    * makes. Falls back to `TOKENS_TIMEOUT_MS`, then to 8000 -- the same default the
    * poller uses (`scripts/watch-tokens.mjs` DEFAULTS.timeoutMs).
    *
-   * **In CI the effective value is always the hard-coded 8000.** The identically
-   * named `TOKENS_TIMEOUT_MS` in `daily-stable.yml:542`, `pr-validation.yml:676`
-   * and `manual.yml:320` sits in the POLLER step's own `env:` block, and a
-   * step-level `env:` does not cross into another step -- this sidecar runs in the
-   * Playwright step. `manual.yml:327-336` spells out that same gap for
-   * `TOKENS_ATTRIB`: `$GITHUB_ENV` is the only mechanism that propagates a value
-   * to later steps (composite-action internals included). So the lanes do not
-   * configure this today; they merely happen to set the number that is already the
-   * default. The env read stays because it makes the knob real for a local run and
-   * live the moment that wiring lands -- but do not read a lane value as reaching
-   * here, and do not change a lane's number expecting the sidecar to notice.
+   * **A lane value reaches here once #1250 lands, and not before.** The gap:
+   * `TOKENS_TIMEOUT_MS` sat in the POLLER step's own `env:` block, a step-level
+   * `env:` does not cross into another step, and this sidecar runs in the
+   * Playwright step -- so the lanes did not configure this at all, they merely
+   * happened to set the number that was already the default. #1250 moves it to JOB
+   * level in all three lanes, the one place both readers see, and pins that
+   * placement with `scripts/token-sidecar-knobs.test.mjs` rather than leaving it to
+   * review. Until it merges, the effective value here is the hard-coded 8000.
    *
    * This is not belt-and-braces. Without it Playwright's 30s default applies, and
    * a monitor endpoint wedged during teardown (#1077) consumes the test's own
@@ -160,17 +157,19 @@ export interface RecordTokenAttributionOptions {
    * throw and still fails the test, by starving it.
    *
    * A wall-clock deadline checked BETWEEN requests cannot do this job: it never
-   * fires on a request that has not returned.
+   * fires on a request that has not returned. It is not an alternative to this
+   * option but its complement -- see `budgetMs`, which bounds the SUM this one
+   * cannot see.
    */
   timeoutMs?: number;
   /**
    * Maximum number of per-trace detail requests for the whole call. Falls back to
    * `TOKENS_DETAIL_CAP`, then to 25 -- again the poller's own default.
    *
-   * **In CI the effective value is always the hard-coded 25**, for exactly the
-   * reason given on `timeoutMs` above: `daily-stable.yml:546`,
-   * `pr-validation.yml:681` and `manual.yml:325` set `TOKENS_DETAIL_CAP` inside the
-   * POLLER step's `env:`, which never reaches the Playwright step this runs in.
+   * **A lane value reaches here once #1250 lands**, for exactly the reason given
+   * on `timeoutMs` above: it moves `TOKENS_DETAIL_CAP` to JOB level, out of the
+   * POLLER step's `env:` where it could never reach the Playwright step this runs
+   * in. Same guard pins it. Until then the effective value here is 25.
    *
    * The list requests are one per flow and all start together, so they are already
    * bounded at roughly one round trip. The detail fan-out is the unbounded part:
@@ -178,13 +177,14 @@ export interface RecordTokenAttributionOptions {
    * makes the worst case finite instead of proportional to how many traces a test
    * happened to produce.
    *
-   * The ceiling that follows is per CALL: CAP x TIMEOUT, because a capped call
-   * issues at most CAP detail requests and each is bounded by TIMEOUT. It is NOT
-   * the sidecar's ceiling for a spec's whole teardown. `deleteFlow` calls this once
-   * per flow, and every call starts with a fresh allowance, so that path costs up
-   * to FLOWS x CAP x TIMEOUT. (`daily-stable.yml:640` computes CAP x TIMEOUT for
-   * the POLLER's worst in-flight tick -- a different component, one call per tick;
-   * do not read it as this sidecar's bound.)
+   * The ceiling CAP alone gives is per CALL and is CAP x TIMEOUT -- 208s on the
+   * defaults, which is why `budgetMs` exists: the effective per-call ceiling is
+   * `min(CAP x TIMEOUT, BUDGET + TIMEOUT)` = 23s. Neither is the sidecar's ceiling
+   * for a spec's whole teardown: `deleteFlow` calls this once per flow and every
+   * call starts with a fresh allowance, so that path costs up to FLOWS x that.
+   * (`daily-stable.yml` computes CAP x TIMEOUT for the POLLER's worst in-flight
+   * tick -- a different component, one call per tick; do not read it as this
+   * sidecar's bound.)
    *
    * A capped trace is NAMED on `skipped`, and still recorded: the cap costs its
    * per-model breakdown, never its tokens. Dropping the spans silently would leave
