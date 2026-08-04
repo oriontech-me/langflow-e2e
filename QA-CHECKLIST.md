@@ -825,7 +825,7 @@
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
-| `core-functionality/model-provider/` | 34 | 29 | 2 | 1 | 2 |
+| `core-functionality/model-provider/` | 34 | 30 | 2 | 1 | 1 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 51 | 46 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
@@ -836,7 +836,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **498** | **375 (75%)** | **89 (18%)** | **14 (3%)** | **20 (4%)** |
+| **TOTAL** | **498** | **376 (76%)** | **89 (18%)** | **14 (3%)** | **19 (4%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -852,7 +852,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 419 `test()` calls carrying the `@stable` tag, distributed across 170 spec
+> 425 `test()` calls carrying the `@stable` tag, distributed across 171 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1110,6 +1110,12 @@
 - [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
 - [x] configured Anthropic selects a Claude model in the Agent and executes the flow → `anthropic-provider.spec.ts`
 - [x] switches between Claude model families (Haiku → Sonnet → Opus) → `anthropic-provider.spec.ts`
+- [x] Azure AI Foundry is offered with a two-variable form and a Foundry-only deployment surface → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] an unconfigured Azure AI Foundry panel is read-only: no enable toggle, no add-deployment control → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] credentials that do not validate are rejected and nothing is persisted → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] a portal deployment name absent from every catalog is accepted and rendered → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] real credentials configure the provider and enable a portal deployment through the UI → `azure-ai-foundry-provider-setup.spec.ts`
+- [x] the configured deployment answers a real inference through the Language Model component → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
 - [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
@@ -1316,7 +1322,7 @@
 | `core-components/` — Core Components | 3 | 4 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 5 | 2 |
-| `core-functionality/model-provider/` | 2 | 2 |
+| `core-functionality/model-provider/` | 2 | 1 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 1 | 2 |
 | `mcp/server/` | 1 | 1 |
