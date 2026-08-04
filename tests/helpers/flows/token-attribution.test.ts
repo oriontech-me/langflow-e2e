@@ -1010,3 +1010,97 @@ test("a non-positive budget falls back to the default, never to 'skip everything
   assert.deepEqual(result.skipped, []);
   assert.equal(result.recorded, 1);
 });
+
+// =============================================================================
+// §4.2 — one append per record
+// =============================================================================
+//
+// The interleaving argument rests on a single `appendFileSync` being indivisible
+// against a concurrent writer. That is true of ONE `write(2)` under `O_APPEND` on
+// a regular file, which is what Node issues for a small buffer -- but Node's
+// `writeSync` LOOPS on a short write, and a short write is what a large buffer
+// invites. Two loop iterations with another worker's append between them is a
+// torn JSON line, and the file is shared by every Playwright worker in the job.
+//
+// The previous shape batched every trace of a flow into one append
+// (`lines.join("\n")`), and the trace count is NOT capped -- `detailCap` bounds
+// the detail FETCHES, not how many traces a flow's list returns. So the buffer
+// grew with whatever the test happened to produce, which is exactly the input
+// nobody controls.
+//
+// One append per line removes the question. Interleaving BETWEEN complete records
+// is harmless -- the file is JSONL and the summarizer parses line by line, torn
+// tails included. Only a torn line costs a record.
+
+/** Records every append the sidecar makes. `fs.appendFileSync` is read off the
+ *  module object at call time, so replacing the property is enough. */
+function spyOnAppends(): { payloads: string[]; restore: () => void } {
+  const payloads: string[] = [];
+  const real = fs.appendFileSync;
+  (fs as unknown as { appendFileSync: unknown }).appendFileSync = (
+    file: string,
+    data: string,
+  ) => {
+    payloads.push(String(data));
+    return (real as (f: string, d: string) => void)(file, data);
+  };
+  return {
+    payloads,
+    restore: () => {
+      (fs as unknown as { appendFileSync: unknown }).appendFileSync = real;
+    },
+  };
+}
+
+test("appends one record per call, never a batch of them (§4.2)", async () => {
+  const out = tmpFile();
+  const traces = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, totalTokens: 10 + i }));
+  const detail = Object.fromEntries(traces.map((t) => [t.id, { spans: SPANS }]));
+  const request = fakeRequest({ f1: traces }, detail);
+
+  const spy = spyOnAppends();
+  try {
+    await recordTokenAttribution({
+      request,
+      flowIds: ["f1"],
+      test: "append suite",
+      file: "x.spec.ts",
+      out,
+    });
+  } finally {
+    spy.restore();
+  }
+
+  // 5 trace lines + 1 cost record, each on its own call.
+  assert.equal(spy.payloads.length, 6, "one append per record — a batch is one buffer Node may write in two");
+  for (const payload of spy.payloads) {
+    assert.equal(
+      payload.trimEnd().split("\n").length,
+      1,
+      `an append carried more than one record: ${payload.slice(0, 80)}…`,
+    );
+    assert.ok(payload.endsWith("\n"), "every record must terminate its own line");
+  }
+});
+
+test("every record still lands, in order, when appended one at a time (§4.2)", async () => {
+  const out = tmpFile();
+  const traces = Array.from({ length: 5 }, (_, i) => ({ id: `t${i}`, totalTokens: 10 + i }));
+  const detail = Object.fromEntries(traces.map((t) => [t.id, { spans: SPANS }]));
+
+  const result = await recordTokenAttribution({
+    request: fakeRequest({ f1: traces }, detail),
+    flowIds: ["f1"],
+    test: "append suite",
+    file: "x.spec.ts",
+    out,
+  });
+
+  assert.equal(result.recorded, 5, "splitting the append must not lose a line");
+  assert.deepEqual(
+    traceLines(out).map((l) => l.trace_id),
+    ["t0", "t1", "t2", "t3", "t4"],
+    "nor reorder them",
+  );
+  assert.equal(costRecords(out).length, 1, "and the cost record still rides on the same file");
+});

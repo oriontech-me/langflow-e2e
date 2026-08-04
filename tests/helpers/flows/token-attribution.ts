@@ -410,19 +410,40 @@ export async function recordTokenAttribution({
         const lines = pending.map(({ trace, spans }) =>
           JSON.stringify({ ...buildProbe(trace, spans), flow_id: flowId, test, file }),
         );
-        // appendFileSync, not a stream and not `fs.promises.appendFile`: parallel
-        // workers share this file, the flows above run concurrently, and a single
-        // synchronous sub-4KB append is what keeps two writers from interleaving a
-        // line. An async write yields between the open and the write, which is
-        // exactly the window that produces half a JSON object.
+        // ONE append per line, not one per flow. The interleaving argument below
+        // rests on a single append being indivisible against a concurrent writer,
+        // and that holds for ONE `write(2)` under `O_APPEND` on a regular file --
+        // which is what Node issues for a small buffer. But `writeSync` LOOPS on a
+        // short write, and a short write is what a large buffer invites; two
+        // iterations with another worker's append in between is a torn JSON line.
         //
-        // No behavioural test can tell the two apart from outside (an awaited async
-        // append also leaves a complete file by the time this function returns), so
-        // the synchrony is pinned STRUCTURALLY -- "the sidecar appends
-        // synchronously" in token-attribution.test.ts reads this source and fails if
-        // the call becomes async. Change one and the other must change with it.
-        fs.appendFileSync(out, `${lines.join("\n")}\n`);
-        result.recorded += lines.length;
+        // Batching every trace of a flow into one call made that buffer grow with
+        // an input nobody controls: `detailCap` bounds the detail FETCHES, not how
+        // many traces a flow's list returns, so a chatty flow wrote an arbitrarily
+        // large single append. (The often-quoted 4KB figure is PIPE_BUF -- a pipe
+        // rule, not a regular-file one -- so it was never the real threshold
+        // either, in either direction.)
+        //
+        // Interleaving BETWEEN complete records is harmless: the file is JSONL and
+        // the summarizer parses line by line, torn tails included. Only a torn LINE
+        // costs a record, and a one-line buffer is the smallest this can be.
+        // appendFileSync, not a stream and not `fs.promises.appendFile`: parallel
+        // workers share this file and the flows above run concurrently. An async
+        // write yields between the open and the write, which is exactly the window
+        // that produces half a JSON object. Synchronous + one line per call is the
+        // pair that closes it; neither half is sufficient alone.
+        //
+        // No behavioural test can tell sync from async apart from outside (an
+        // awaited async append also leaves a complete file by the time this
+        // function returns), so the SYNCHRONY is pinned STRUCTURALLY -- "the
+        // sidecar appends synchronously" in token-attribution.test.ts reads this
+        // source and fails if the call becomes async. Change one and the other must
+        // change with it. The one-record-per-call half IS observable and is pinned
+        // behaviourally, by the test of that name.
+        for (const line of lines) {
+          fs.appendFileSync(out, `${line}\n`);
+          result.recorded += 1;
+        }
       } catch (error) {
         result.skipped.push(`${flowId}: ${(error as Error)?.message?.split("\n")[0] ?? String(error)}`);
       }
@@ -433,39 +454,27 @@ export async function recordTokenAttribution({
   // one flow id was passed -- including when there were zero traces, when the list
   // came back non-ok, and when a flow threw (§4.3, fix round 2).
   //
-  // This replaces a per-flow `attrib_ms` repeated on every trace line, which could
-  // not measure what §4.3 exists to measure, in two ways:
+  // **What the resulting `attrib_ms` / `attrib_calls` pair MEANS downstream is
+  // defined once, in `reports/README.md`'s `token-history.jsonl` row** -- including
+  // why their ratio is not a per-teardown average. Not restated here; four copies
+  // of that paragraph is what this comment used to be part of.
   //
-  //   - a flow that produced NO traces wrote no line, so it contributed nothing --
-  //     yet §4.1's dominant cost is "one list request per deleted flow, paid even by
-  //     specs that burn nothing". The artifact was blind to precisely the ~140 UI
-  //     specs whose single GET each IS the cost;
-  //   - summing a per-flow elapsed over-reported by roughly the flow count, because
-  //     `.map` starts every task at once so each flow measures nearly the same
-  //     interval -- and that sum barely moves when the loop goes serial->concurrent,
-  //     so the one field added to demonstrate the improvement could not show it.
+  // What belongs at this site is the WRITE condition, because it is a property of
+  // this function and of nothing else:
   //
-  // One record per call means a PLAIN SUM downstream is correct, and the
-  // distinct-flow_id reduction the old shape needed (and its trap) is gone with it.
-  //
-  // Written only when this call CLAIMED at least one flow, so a repeat that issued no
-  // request adds no padding to `attrib_calls`. What it does NOT mean is one record per
-  // teardown: that holds only on the batch-attributing `cleanup()` path (2 specs). The
-  // ~132 `@stable` specs that call `deleteFlow` once per id get one record PER FLOW, so
-  // `attrib_ms / attrib_calls` is a per-CALL average and never a per-teardown one, and
-  // `attrib_calls` is not a spec count. The sum is the honest figure. Without this
-  // condition the sidecar is called twice for the same
-  // flows on the tracked path -- `cleanup()` attributes its whole captured batch, then
-  // `deleteFlow` re-calls per id -- and every repeat, having issued no request at all,
-  // added a ~0ms record. Measured: one spec, 4 flows, a 20ms list request produced
-  // `attrib_ms: 24, attrib_calls: 5`, so the average read 4.8ms against a real 24ms
-  // teardown, a 5x understatement. It also inverted the field's use as a diagnostic:
-  // `attrib_calls` ran LARGER than the number of flow-deleting specs, so a reader
-  // checking "is the sidecar running where we think" would have read it backwards.
-  //
-  // `flows` is the CLAIMED count for the same reason -- a partially-repeated call did
-  // work for only its new ids, and reporting the whole argument list would overstate
-  // what the elapsed bought.
+  //   - written only when the call CLAIMED at least one flow. Without it the
+  //     tracked path double-counts: `cleanup()` attributes its whole captured
+  //     batch, then `deleteFlow` re-calls per id, and every repeat -- having issued
+  //     no request at all -- added a ~0ms record. Measured: one spec, 4 flows, a
+  //     20ms list request produced `attrib_ms: 24, attrib_calls: 5`, so the average
+  //     read 4.8ms against a real 24ms teardown;
+  //   - written even when the call found NO traces. That is the dominant case this
+  //     shape exists to capture (§4.1) -- one list request per deleted flow, paid by
+  //     specs that burn nothing -- and the per-flow, per-line shape this replaced
+  //     was blind to exactly it, because a flow with no traces wrote no line;
+  //   - `flows` is the CLAIMED count, not the argument list: a partially-repeated
+  //     call did work for only its new ids, and reporting the rest would overstate
+  //     what the elapsed bought.
   //
   // A call that claimed flows and found no traces still writes its record: that is the
   // dominant case this shape exists to capture (§4.1), not an empty one.
