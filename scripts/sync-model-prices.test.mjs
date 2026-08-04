@@ -2,13 +2,14 @@
 // Run with: npm run test:scripts
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 import {
   buildPricePayload,
   resolveSyncEndpoint,
   syncModelPrices,
   FLAT_SINCE,
+  PRICES_PATH,
 } from "./sync-model-prices.mjs";
 
 const SHA = "abc1234def";
@@ -202,6 +203,42 @@ test("resolveSyncEndpoint is null when neither is set", () => {
   assert.equal(resolveSyncEndpoint({}), null);
 });
 
+test("resolveSyncEndpoint replaces the last path segment, not the trailing slash", () => {
+  // A repo variable is typed by a human, and a trailing slash is the likeliest
+  // way one differs. Appending to it posts to a URL that does not exist, and the
+  // only symptom would be an HTTP error in a job that is continue-on-error.
+  assert.equal(
+    resolveSyncEndpoint({ QA_PLATFORM_ENDPOINT: "https://kong.example/functions/v1/e2e-automation-runs-create/" }),
+    "https://kong.example/functions/v1/e2e-model-prices-sync",
+  );
+});
+
+test("resolveSyncEndpoint refuses a base with no path segment to replace", () => {
+  // Substring surgery on a bare origin used to yield "https://e2e-model-prices-sync"
+  // -- the function name eating the HOST. A URL that cannot be derived is an
+  // error, never a guess.
+  assert.throws(
+    () => resolveSyncEndpoint({ QA_PLATFORM_ENDPOINT: "https://kong.example" }),
+    /QA_PLATFORM_ENDPOINT has no path segment/,
+  );
+  assert.throws(
+    () => resolveSyncEndpoint({ QA_PLATFORM_ENDPOINT: "not a url" }),
+    /QA_PLATFORM_ENDPOINT is not a valid URL/,
+  );
+});
+
+test("resolveSyncEndpoint ignores a blank override and a blank base", () => {
+  // An unset GitHub `vars.X` reaches the process as "", not as undefined.
+  assert.equal(
+    resolveSyncEndpoint({
+      QA_MODEL_PRICES_ENDPOINT: "   ",
+      QA_PLATFORM_ENDPOINT: "https://kong.example/functions/v1/e2e-automation-runs-create",
+    }),
+    "https://kong.example/functions/v1/e2e-model-prices-sync",
+  );
+  assert.equal(resolveSyncEndpoint({ QA_PLATFORM_ENDPOINT: "  " }), null);
+});
+
 // ── syncModelPrices ─────────────────────────────────────────────────────
 
 const FILE = JSON.stringify({ "gpt-4o": { provider: "openai", inputPerMillion: 1, outputPerMillion: 2 } });
@@ -282,4 +319,131 @@ test("a rejected sync warns and never throws", async () => {
   assert.equal(res.posted, false);
   assert.equal(res.reason, "http 401");
   assert.ok(logged.some(m => /::warning::/.test(m) && /401/.test(m)));
+});
+
+test("a fetch that never reaches the platform warns and never throws", async () => {
+  // THE failure this job is most likely to meet, and the one the header promises
+  // it handles: DNS, ECONNREFUSED, TLS, socket hangup, or the abort below. Only
+  // an HTTP status used to be caught, so a network error escaped the await,
+  // exited non-zero, and printed a stack trace INSTEAD of the ::warning:: that is
+  // supposed to be the signal -- swallowed by the job's continue-on-error into a
+  // green run with nothing installed.
+  const logged = [];
+  const res = await syncModelPrices({
+    env: {
+      GITHUB_SHA: SHA,
+      QA_MODEL_PRICES_ENDPOINT: "https://x.example/sync",
+      QA_E2E_MODEL_PRICES_TOKEN: "s3cret",
+    },
+    readFile: () => FILE,
+    fetchImpl: () => { throw new Error("getaddrinfo ENOTFOUND x.example"); },
+    log: (m) => logged.push(m),
+  });
+  assert.equal(res.posted, false);
+  assert.equal(res.reason, "transport");
+  assert.ok(
+    logged.some(m => /::warning::/.test(m) && /ENOTFOUND/.test(m)),
+    "the cause must reach the log — a warning that does not name it is not attribution",
+  );
+});
+
+test("an unreadable response body still lets the status decide", async () => {
+  // A body that cannot be read is not evidence the install failed: the POST may
+  // well have landed. The status is what decides, so this must not be reported as
+  // a transport failure, and must not throw either.
+  const logged = [];
+  const res = await syncModelPrices({
+    env: {
+      GITHUB_SHA: SHA,
+      QA_MODEL_PRICES_ENDPOINT: "https://x.example/sync",
+      QA_E2E_MODEL_PRICES_TOKEN: "s3cret",
+    },
+    readFile: () => FILE,
+    fetchImpl: () => ({ ok: true, status: 200, text: async () => { throw new Error("aborted"); } }),
+    log: (m) => logged.push(m),
+  });
+  assert.equal(res.posted, true);
+  assert.ok(logged.some(m => /body could not be read/.test(m)));
+});
+
+test("a request that hangs is aborted rather than held to the job timeout", async () => {
+  // Without a signal the only backstop is the job's own timeout-minutes, and the
+  // run would sit there spending it on a platform that is never going to answer.
+  let seen = null;
+  await syncModelPrices({
+    env: {
+      GITHUB_SHA: SHA,
+      QA_MODEL_PRICES_ENDPOINT: "https://x.example/sync",
+      QA_E2E_MODEL_PRICES_TOKEN: "s3cret",
+    },
+    readFile: () => FILE,
+    fetchImpl: (url, init) => { seen = init; return okFetch(); },
+    log: () => {},
+  });
+  assert.ok(seen.signal, "the POST must carry an abort signal");
+});
+
+test("a malformed endpoint warns and never throws, and never posts", async () => {
+  const logged = [];
+  let fetched = false;
+  const res = await syncModelPrices({
+    env: {
+      GITHUB_SHA: SHA,
+      QA_PLATFORM_ENDPOINT: "https://kong.example",
+      QA_E2E_MODEL_PRICES_TOKEN: "s3cret",
+    },
+    readFile: () => FILE,
+    fetchImpl: () => { fetched = true; return okFetch(); },
+    log: (m) => logged.push(m),
+  });
+  assert.equal(res.posted, false);
+  assert.equal(res.reason, "bad endpoint");
+  assert.equal(fetched, false);
+  assert.ok(logged.some(m => /::warning::/.test(m) && /no path segment/.test(m)));
+  // The file was still validated: that half works without a usable endpoint.
+  assert.equal(res.payload.prices.length, 1);
+});
+
+// ── the workflow that calls this script ──────────────────────────────────
+
+test("sync-model-prices.yml still calls a script that exists, with the env it needs", () => {
+  // A guard that pins a SPELLING does not pin a behaviour (#1226), so this one
+  // resolves the path it finds and asserts the file is there. Renaming the script
+  // without the workflow -- or the reverse -- used to leave the suite at 611/0
+  // green while the job in CI ran `node` against nothing, and continue-on-error
+  // painted that green too. Measured before the guard existed.
+  const wf = readFileSync(".github/workflows/sync-model-prices.yml", "utf8");
+
+  const invocation = /run:\s*node\s+(\S+\.mjs)/.exec(wf);
+  assert.ok(invocation, "the workflow must invoke a node script — none found");
+  assert.ok(
+    existsSync(invocation[1]),
+    `sync-model-prices.yml runs ${invocation[1]}, which does not exist in this checkout`,
+  );
+
+  for (const knob of ["QA_PLATFORM_ENDPOINT", "QA_E2E_MODEL_PRICES_TOKEN"]) {
+    assert.ok(wf.includes(knob), `sync-model-prices.yml no longer passes ${knob} — the sync would go unconfigured`);
+  }
+
+  // The file this whole job exists to install must stay in the path filter, or
+  // the very edit that needs syncing stops triggering the sync.
+  assert.ok(wf.includes(PRICES_PATH), `sync-model-prices.yml must trigger on ${PRICES_PATH}`);
+
+  // Bounded and least-privileged, per the repo's other lanes. Without a
+  // timeout-minutes a hung POST spends the runner's default 6h.
+  assert.match(wf, /^\s*timeout-minutes:\s*\d+/m, "the sync job needs a timeout-minutes");
+  assert.match(wf, /^permissions:/m, "the sync job needs a top-level permissions block");
+  assert.match(wf, /^concurrency:/m, "two installers must not race — see the workflow's own comment");
+});
+
+test("the script the workflow runs is dependency-free", () => {
+  // The workflow deliberately skips `npm ci`. An import outside node: builtins
+  // would make the install fail on a lane that never installs anything.
+  const src = readFileSync("scripts/sync-model-prices.mjs", "utf8");
+  for (const [, spec] of src.matchAll(/^import[^"']*["']([^"']+)["']/gm)) {
+    assert.ok(
+      spec.startsWith("node:"),
+      `${spec} is not a node: builtin, but sync-model-prices.yml runs this script without npm ci`,
+    );
+  }
 });

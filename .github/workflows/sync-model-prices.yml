@@ -33,6 +33,12 @@ on:
       - ".github/workflows/sync-model-prices.yml"
   workflow_dispatch:
 
+# This job reads a file and POSTs it to a third party. It needs the checkout and
+# nothing else — no issue, no commit, no package write — so the token gets exactly
+# that. The platform's own credential travels as a secret, never as GITHUB_TOKEN.
+permissions:
+  contents: read
+
 # One installer at a time. The RPC behind this is a DELETE followed by an INSERT
 # in one transaction, so two overlapping runs cannot corrupt the table — but they
 # can land in either order, and the loser would leave the table reflecting the
@@ -45,6 +51,10 @@ jobs:
   sync:
     name: Install the price table on the QA Platform
     runs-on: ubuntu-latest
+    # Reading one file and POSTing it takes seconds. The script aborts its own
+    # request at 30 s, so this is the backstop for everything around that — and
+    # without it a wedged step would spend the runner's 6-hour default.
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
 
@@ -60,6 +70,13 @@ jobs:
         # failure either: this is telemetry plumbing. A platform outage must not
         # turn a merge red. The ::warning:: in the log is the signal, and the
         # platform's table simply stays as it was.
+        #
+        # THAT MAKES THE WARNING LOAD-BEARING, and this pairing is only safe
+        # because the script now emits one on EVERY path that gives up. It did not
+        # always: a network-level failure rejected out of the fetch, exited
+        # non-zero, and continue-on-error painted the job green with no warning at
+        # all — the exact combination that hides an install that never happened.
+        # `scripts/sync-model-prices.test.mjs` pins each of those paths.
         #
         # A MALFORMED PRICE FILE IS DIFFERENT and does throw — see the script. That
         # is a data error in this repo, and it fails on the PR lane too, via
