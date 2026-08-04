@@ -228,8 +228,16 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
   // §5.3: the cross-tab the platform's fact table needs. Keyed to match the DB's
   // own row identity -- (run_id, COALESCE(test_key,''), model), see
   // 20260803130200_e2e_test_token_usage.sql:83 -- so an unattributed trace keys on
-  // the MODEL ALONE. Keying it on anything per-trace would emit rows the unique
-  // index treats as one and a re-POST would then duplicate.
+  // the MODEL ALONE.
+  //
+  // WHY ONE ROW PER IDENTITY (the reason, corrected -- #1253 review, finding 7):
+  // NOT "a re-POST would duplicate". The live ingest
+  // (20260803130600_e2e_token_ingest_preserve_upsert_clamp.sql) upserts with
+  // ON CONFLICT ... DO UPDATE, so it cannot duplicate. What it does instead is
+  // keep the LAST occurrence of an identity and count the losers in
+  // `rows_dropped`. So emitting two rows the unique index treats as one does not
+  // create a duplicate -- it silently DISCARDS one of the two numbers. That is
+  // the failure this key avoids.
   const specModels = new Map();
   let spanTokens = 0;
   const unpriced = new Set();

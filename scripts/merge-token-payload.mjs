@@ -18,8 +18,12 @@
  *
  * `tokens` is opaque jsonb to the edge function, which passes it straight to
  * `public.e2e_ingest_run_tokens`. That function is the authority on which keys
- * mean anything -- see quality-platform's
- * supabase/migrations/20260803130300_e2e_ingest_run_tokens.sql:103-131. Unknown
+ * mean anything -- and the LIVE definition is quality-platform's
+ * supabase/migrations/20260803130600_e2e_token_ingest_preserve_upsert_clamp.sql,
+ * which DROPped and replaced the original 20260803130300_e2e_ingest_run_tokens.sql
+ * (#1253 review, finding 7: three files cited the dead one). Field names are
+ * identical across the two, so nothing behaved wrongly -- but the semantics did
+ * change: it upserts with DO UPDATE now, not ON CONFLICT DO NOTHING. Unknown
  * keys are accepted and ignored, which is what lets this script carry
  * `target_provider` and the coverage fields before the platform reads them
  * (design §6.3).
@@ -42,6 +46,18 @@ const realIo = {
   writeFile: (p, body) => writeFileSync(p, body),
   listDir: (dir) => readdirSync(dir).map((f) => path.join(dir, f)),
 };
+
+// The verdicts this script can reach, as the CLI prints them (`code=<…>`). Named
+// here rather than inline so the workflow's own structural guard can assert that
+// every one of them is handled by the step that reads them — a new code that the
+// YAML silently falls through on would report a real outcome as the default one.
+export const MERGE_CODES = [
+  "merged",
+  "block_missing",
+  "block_unparseable",
+  "payload_missing",
+  "payload_unparseable",
+];
 
 // Every shard resolves the day's provider independently -- the rotation walks on
 // to the next provider when the day's own is dry, and that verdict depends on the
@@ -68,17 +84,24 @@ export async function mergeTokenPayload({
   const payloadOut = env.PAYLOAD_OUT || "payload-with-tokens.json";
   const tokensDir = env.TOKENS_DIR || "all-tokens";
 
+  // `kind` separates ABSENT from UNPARSEABLE. Both end the same way here — no
+  // POST — but they are different facts about the run, and the caller (the
+  // workflow step) is the place where collapsing them does damage: an absent
+  // block is a run that captured nothing, while an unparseable one is a run
+  // whose numbers were computed and then lost. Reporting the second as the
+  // first is the absent-vs-zero conflation this whole path exists to prevent,
+  // reproduced one layer up (#1253 review, finding 3).
   const readJson = (p) => {
     let raw;
     try {
       raw = readFile(p);
     } catch (error) {
-      return { error: `could not read ${p}: ${error?.message || error}` };
+      return { kind: "missing", error: `could not read ${p}: ${error?.message || error}` };
     }
     try {
       return { value: JSON.parse(raw) };
     } catch (error) {
-      return { error: `could not parse ${p}: ${error?.message || error}` };
+      return { kind: "unparseable", error: `could not parse ${p}: ${error?.message || error}` };
     }
   };
 
@@ -86,14 +109,14 @@ export async function mergeTokenPayload({
   if (block.error) {
     const reason = `no tokens block to merge (${block.error})`;
     log(`merge-token-payload: ${reason} — skipping the token POST.`);
-    return { written: false, reason };
+    return { written: false, reason, code: `block_${block.kind}` };
   }
 
   const payload = readJson(payloadIn);
   if (payload.error) {
     const reason = `no run payload to merge into (${payload.error})`;
     log(`merge-token-payload: ${reason} — skipping the token POST.`);
-    return { written: false, reason };
+    return { written: false, reason, code: `payload_${payload.kind}` };
   }
 
   let providerFiles = [];
@@ -135,7 +158,7 @@ export async function mergeTokenPayload({
     `merge-token-payload: wrote ${payloadOut} — ${tokens.rows?.length ?? 0} token row(s), ` +
       `${tokens.total_tokens ?? "?"} tokens, provider ${provider ?? "unreported"}.`,
   );
-  return { written: true, reason: "merged" };
+  return { written: true, reason: "merged", code: "merged" };
 }
 
 // `import.meta.url` guard: the test imports this module, and importing it must
@@ -145,5 +168,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   // the workflow gates on whether PAYLOAD_OUT exists, not on this process's
   // status. A non-zero exit here would only make the step's continue-on-error
   // swallow a message the log already carries.
-  await mergeTokenPayload();
+  const result = await mergeTokenPayload();
+  // The LAST line, and machine-readable on purpose: daily-stable.yml greps this
+  // to tell "captured nothing" from "computed and then lost". The prose above is
+  // for a human reading the log; `code=` is the contract, and MERGE_CODES below
+  // is the list the workflow's own guard is pinned against.
+  console.log(`merge-token-payload: code=${result.code}`);
 }

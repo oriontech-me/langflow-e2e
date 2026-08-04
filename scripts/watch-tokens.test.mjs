@@ -1067,7 +1067,7 @@ test("a summary-write failure is logged and summarize still resolves 0", async (
 // --- §5.2: the tokens block the merge step POSTs ---
 //
 // Field names are the INGEST RPC's, not this module's -- quality-platform's
-// 20260803130300_e2e_ingest_run_tokens.sql:103-131 destructures exactly
+// live 20260803130600_e2e_token_ingest_preserve_upsert_clamp.sql destructures exactly
 // `traces`, `total_tokens`, `span_tokens`, `mismatch_traces` and `rows[]`.
 
 // A second trace whose OWN total disagrees with its spans, so span_tokens and

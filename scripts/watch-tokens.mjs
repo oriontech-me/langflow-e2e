@@ -504,7 +504,9 @@ export async function summarize({
 
   // §5.2: the block the merge step folds into payload.json and re-POSTs. Field
   // names are the INGEST RPC's, not this module's -- the authority is
-  // quality-platform's 20260803130300_e2e_ingest_run_tokens.sql, which
+  // quality-platform's live 20260803130600_e2e_token_ingest_preserve_upsert_clamp.sql
+  // (it DROPped and replaced 20260803130300_e2e_ingest_run_tokens.sql, which three
+  // files here used to cite -- #1253 review, finding 7), which
   // destructures exactly `traces`, `total_tokens`, `span_tokens`,
   // `mismatch_traces` and `rows[]`. Everything else here (unattributed,
   // attrib_*) is accepted and ignored until the platform reads it (§6.3).

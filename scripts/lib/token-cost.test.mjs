@@ -695,7 +695,9 @@ test("bySpecModel keeps two different tests in the same file apart", () => {
 
 test("unattributed traces collapse to ONE row per model with null identity", () => {
   // The DB's unique index treats two NULL test_keys as the SAME row
-  // (COALESCE(test_key,'')), so emitting two would collide on re-POST.
+  // (COALESCE(test_key,'')), so emitting two would not duplicate — the live
+  // ingest upserts and keeps the LAST, counting the loser in `rows_dropped`.
+  // One of the two numbers would be silently discarded (#1253 review, finding 7).
   const agg = aggregate({
     probes: [twoModelProbe("t1"), twoModelProbe("t2")],
     attributions: [],
