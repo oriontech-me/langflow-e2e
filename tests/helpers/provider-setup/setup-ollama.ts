@@ -86,6 +86,11 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
     .isVisible({ timeout: 1000 })
     .catch(() => false);
 
+  // Set when a concurrent worker won the base-URL write (see the listener below).
+  // Read by Step 6, which otherwise attributes the resulting empty dropdown to an
+  // unreachable instance.
+  let lostBaseUrlWriteRace = false;
+
   if (!alreadyConfigured && (await urlInput.count()) > 0) {
     const url = ollamaBaseUrlFromLangflow();
     await urlInput.fill(url);
@@ -106,6 +111,25 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
         { timeout: 60000 },
       )
       .catch(() => null);
+
+    // Armed alongside it: the base URL is persisted as a `Global` variable, and a
+    // CONCURRENT save loses that write with `400 {"detail":"Variable name already
+    // exists"}` while `validate-provider` still answers `valid: true` — the URL is
+    // reachable, it is the second writer that is redundant. Without reading this the
+    // helper walks on to an empty dropdown and blames the instance for a race
+    // (#1187). `globalSetup` pre-configures the provider precisely so this window
+    // closes; capturing it here keeps the attribution right if it ever reopens (two
+    // shards starting in the same instant, or a failed pre-configuration).
+    const duplicatePromise = page
+      .waitForResponse(
+        (r) =>
+          new URL(r.url()).pathname === "/api/v1/variables/" &&
+          r.request().method() === "POST" &&
+          r.status() === 400,
+        { timeout: 15000 },
+      )
+      .then(async (r) => /already exists/i.test(await r.text().catch(() => "")))
+      .catch(() => false);
 
     await page.getByRole("button", { name: /Save|Replace|Retry/i }).click();
 
@@ -132,6 +156,8 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
           `layer blocks loopback outright and private addresses unless allow-listed.`,
       );
     }
+
+    lostBaseUrlWriteRace = await duplicatePromise;
 
     // Wait for the configured state so the model list has been enumerated from the
     // live instance before Step 6 opens the dropdown.
@@ -165,12 +191,33 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
     ? page.getByTestId(`Ollama-${modelTestId}-option`)
     : page.locator('[data-testid^="Ollama-"][data-testid$="-option"]').first();
 
-  const isAvailable = await option.isVisible({ timeout: 10000 }).catch(() => false);
+  let isAvailable = await option.isVisible({ timeout: 10000 }).catch(() => false);
+  let offered = isAvailable
+    ? []
+    : await page
+        .locator('[data-testid^="Ollama-"][data-testid$="-option"]')
+        .allTextContents()
+        .catch(() => [] as string[]);
+
+  // One re-read before deciding, and ONLY when the list came back empty. The
+  // dropdown's options are fetched, so "no options yet" and "no options at all"
+  // render identically, and the verdict below is severe enough (a FAILURE, naming an
+  // unreachable instance) to be worth one close-and-reopen. A list that is non-empty
+  // but lacks the tag is a real answer and is not retried — the instance told us what
+  // it serves.
+  if (!isAvailable && offered.length === 0) {
+    await page.keyboard.press("Escape");
+    await page.getByTestId("model_model").click();
+    isAvailable = await option.isVisible({ timeout: 15000 }).catch(() => false);
+    offered = isAvailable
+      ? []
+      : await page
+          .locator('[data-testid^="Ollama-"][data-testid$="-option"]')
+          .allTextContents()
+          .catch(() => [] as string[]);
+  }
+
   if (!isAvailable) {
-    const offered = await page
-      .locator('[data-testid^="Ollama-"][data-testid$="-option"]')
-      .allTextContents()
-      .catch(() => [] as string[]);
     await page.keyboard.press("Escape");
 
     // NOTHING offered is a different fault from THIS TAG not offered, and only one
@@ -184,12 +231,32 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
     // MODEL_NOT_AVAILABLE it becomes a `test.skip`, which is exactly the silent
     // coverage loss #976 recorded and the reason Step 4 throws instead of skipping.
     //
-    // An empty Ollama list has no benign reading: Langflow enumerates the live
-    // instance on save, so zero options means it enumerated nothing — unreachable,
-    // or reachable and serving no model at all. Both are lane misconfigurations a
-    // dispatcher must fix, so both FAIL, attributed. A non-empty list that lacks
-    // the requested tag is the genuine "this instance does not serve it" case and
-    // keeps skipping.
+    // An empty Ollama list has ONE benign reading, and it is not the instance's
+    // fault: a concurrent worker won the base-URL write, so THIS save never landed
+    // and Langflow never enumerated anything for it. That is what
+    // `lostBaseUrlWriteRace` records, and it changes only the message — the failure
+    // stands either way, because a lane that asked for a local model must not lose
+    // coverage quietly (#976) and because the run is misconfigured in both cases.
+    // Getting the attribution right is the point: the original text sends a
+    // dispatcher to check SSRF and pulled models on an instance that was serving
+    // both correctly, which cost this issue a full measurement round.
+    //
+    // Otherwise: zero options means Langflow enumerated nothing — unreachable, or
+    // reachable and serving no model. Both are lane misconfigurations. A non-empty
+    // list that lacks the requested tag is the genuine "this instance does not serve
+    // it" case and keeps skipping.
+    if (offered.length === 0 && lostBaseUrlWriteRace) {
+      throw new Error(
+        `OLLAMA_PROVIDER_UNREACHABLE: the base-URL write for this run was REJECTED as ` +
+          `a duplicate (POST /api/v1/variables/ → 400 "Variable name already exists"), ` +
+          `so Langflow never enumerated the instance for it and the model dropdown is ` +
+          `empty. The instance itself is almost certainly fine — another worker ` +
+          `configured the provider concurrently. This is the race \`globalSetup\`'s ` +
+          `routed pre-configuration exists to close, so check its warning above: it ` +
+          `runs before any worker and makes every spec take the already-configured ` +
+          `path (#1187).`,
+      );
+    }
     if (offered.length === 0) {
       throw new Error(
         `OLLAMA_PROVIDER_UNREACHABLE: the Agent's model dropdown offers NO Ollama ` +
