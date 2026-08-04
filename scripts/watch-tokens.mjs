@@ -311,6 +311,13 @@ const realIo = {
   // section on exactly the red days it matters (#1197 review, finding C1).
   writeFile: (p, text) => fs.appendFileSync(p, text),
   appendFile: (p, text) => fs.appendFileSync(p, text),
+  // A genuine overwrite seam, distinct from writeFile/appendFile above: the
+  // tokens block (below) is a single JSON document, not a log line, and
+  // TOKENS_SUMMARY_OUT is a dedicated file this script owns outright — nothing
+  // else appends to it the way other steps append to GITHUB_STEP_SUMMARY. A
+  // second `--summarize` against the same path must replace the block, not
+  // concatenate onto it (`{…}{…}` is not JSON).
+  writeOut: (p, text) => fs.writeFileSync(p, text),
 };
 
 export async function summarize({
@@ -319,6 +326,7 @@ export async function summarize({
   listDir = realIo.listDir,
   writeFile = realIo.writeFile,
   appendFile = realIo.appendFile,
+  writeOut = realIo.writeOut,
   log = console.log,
 } = {}) {
   const dir = env.TOKENS_DIR || "all-tokens";
@@ -505,6 +513,13 @@ export async function summarize({
   // zero-capture early return on purpose. A block of zeros would clamp the run's
   // token columns to 0, which is indistinguishable from a run that genuinely
   // spent nothing -- the distinction that table exists to keep.
+  //
+  // Through `writeOut`, NOT `writeFile`: `writeFile`'s real implementation is
+  // `fs.appendFileSync` (required for GITHUB_STEP_SUMMARY's append-only
+  // contract, see realIo above). This block is a single JSON document, and a
+  // second `--summarize` against the same TOKENS_SUMMARY_OUT must replace it,
+  // not append `{…}{…}` — the merge step would then read invalid JSON and
+  // silently skip the token POST.
   if (summaryOutPath) {
     const block = {
       traces: agg.totals.traces,
@@ -517,7 +532,7 @@ export async function summarize({
       rows: agg.bySpecModel,
     };
     try {
-      writeFile(summaryOutPath, JSON.stringify(block));
+      writeOut(summaryOutPath, JSON.stringify(block));
     } catch (error) {
       log(`token summary: could not write the tokens block: ${error?.message || error}`);
     }

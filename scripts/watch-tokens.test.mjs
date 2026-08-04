@@ -267,6 +267,14 @@ function fakeFs(files, { throwAppend = false, throwWrite = false } = {}) {
       if (throwAppend) throw new Error("ENOSPC: no space left on device");
       appended[p] = (appended[p] || "") + text;
     },
+    // Overwrite, NOT append — models fs.writeFileSync (realIo.writeOut), unlike
+    // writeFile above. Backs the tokens-block seam: a second `--summarize`
+    // against the same path must replace the prior document, never concatenate
+    // onto it, or a re-POST reads `{…}{…}` and silently fails to parse.
+    writeOut: (p, text) => {
+      if (throwWrite) throw new Error("ENOSPC: no space left on device");
+      written[p] = text;
+    },
   };
 }
 
@@ -1142,14 +1150,15 @@ test("a failed tokens-block write degrades the telemetry, not the run", async ()
     "prices.json": PRICES,
   });
   const logged = [];
-  // Throw for the tokens block ONLY, so the failure is isolated from the
-  // step-summary write that fakeFs's own `throwWrite` would also break.
+  // Throw for the tokens block ONLY (via its own `writeOut` seam), so the
+  // failure is isolated from the step-summary write that fakeFs's own
+  // `throwWrite` would also break.
   const result = await summarize({
     env: { ...baseEnv, TOKENS_SUMMARY_OUT: "tokens-block.json" },
     ...fs2,
-    writeFile: (p, text) => {
+    writeOut: (p, text) => {
       if (p === "tokens-block.json") throw new Error("ENOSPC: no space left on device");
-      return fs2.writeFile(p, text);
+      return fs2.writeOut(p, text);
     },
     log: (m) => logged.push(m),
   });
@@ -1158,6 +1167,28 @@ test("a failed tokens-block write degrades the telemetry, not the run", async ()
     logged.some((m) => /tokens block/i.test(m) && /ENOSPC/.test(m)),
     `expected a named failure in the log, got: ${JSON.stringify(logged)}`,
   );
+});
+
+// Regression guard: the tokens block used to go through `writeFile`, whose real
+// implementation is `fs.appendFileSync` (needed for GITHUB_STEP_SUMMARY's
+// append-only contract). That seam is correct for the step summary but wrong
+// for this block -- a single JSON document, not a log line -- so a second
+// `--summarize` against the same TOKENS_SUMMARY_OUT used to concatenate
+// `{…}{…}`, which merge-token-payload.mjs then reads as unparseable and
+// silently skips. `writeOut` exists precisely so this cannot happen again.
+test("a second --summarize against the same TOKENS_SUMMARY_OUT still parses", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TOKENS_SUMMARY_OUT: "tokens-block.json" };
+
+  await summarize({ env, ...fs2, log: () => {} });
+  await summarize({ env, ...fs2, log: () => {} });
+
+  const block = JSON.parse(fs2.written["tokens-block.json"]);
+  assert.equal(block.traces, 1);
+  assert.equal(block.total_tokens, 88);
 });
 
 // --- Structural guard: is the daily workflow actually wired to this script? ---
