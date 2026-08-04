@@ -152,11 +152,15 @@ string checks on persisted/rendered data — no model judgment anywhere.
   managing to do anything: the parametrized test reads which `context_id` the PERSISTED
   turns carry, never what the agent replied. The model only has to answer something, so
   the deciding observable is Langflow's context tagging.
-- **Measured 5/5** against `llama3.2:1b` on the CI lane — five `manual.yml` dispatches
-  with `any_completion_provider: ollama`, `retries: 0`, nightly `1.12.0.dev15`,
-  `workers: 2`, 2.3–3.6 min for the 4 declarations in the run. The rate is necessary and
-  not sufficient: `agent-component-regression` also passed 5/5 and stays `tool-calling`
-  because its assertions depend on the model's timing.
+- **Measured 6/7** routed against `llama3.2:1b` on the CI lane (`manual.yml`,
+  `any_completion_provider: ollama`, `retries: 0`, nightly `1.12.0.dev15`, `workers: 2`,
+  2.3–3.6 min per run). The one failure was not this assertion and not the model — it was
+  `separateOverlappingNodes()` timing out during template load, a shared canvas helper
+  every provider path runs. Read against the baseline: this spec hard-failed on **5 of
+  22** hosted dailies before any of this, so its instability is pre-existing and
+  provider-independent. The rate is also necessary and not sufficient —
+  `agent-component-regression` passed 5/5 routed and stays `tool-calling` because its
+  assertions depend on the model's timing.
 - Consequence: with `ANY_COMPLETION_PROVIDER=ollama` (+ `OLLAMA_TEST_MODEL`) the
   parametrized test runs against a **local, keyless** model — no key, no quota — and that
   routing outranks `MODEL_TEST_ID` / `MODEL_TEST_PROVIDER` for this tier only.

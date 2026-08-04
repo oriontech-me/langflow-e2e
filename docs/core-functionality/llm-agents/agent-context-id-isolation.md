@@ -183,14 +183,15 @@ persisted/rendered data — no model judgment anywhere.
   managing to do anything: the parametrized test reads which `context_id` the PERSISTED
   turns carry after the agent's context is switched, never what the agent replied. The model only has to answer something, so
   the deciding observable is Langflow's context tagging.
-- **Measured 5/5** against `llama3.2:1b` on the CI lane — the same five dispatches
-  recorded in `agent-context-id-continuity.md`; five `manual.yml` dispatches
-  with `any_completion_provider: ollama`, `retries: 0`, nightly `1.12.0.dev15`,
-  `workers: 2`, 2.3–3.6 min for the 4 declarations in the run. The rate is necessary and
-  not sufficient: `agent-component-regression` also passed 5/5 and stays `tool-calling`
-  because its assertions depend on the model's timing. This is the heavier of the two
-  context-id specs — two turns plus up to three reload cycles inside the 5-minute cap —
-  so it carries the thinner margin of the pair.
+- **Measured 7/7** routed against `llama3.2:1b` on the CI lane — the same dispatches
+  recorded in `agent-context-id-continuity.md` (which measured 6/7 there; its one failure
+  was a canvas-layout helper, not an assertion of its own). Read against the baseline
+  rather than as a clean bill: this spec hard-failed on **6 of 22** hosted dailies and was
+  flaky on 4 more before any of this. The rate is also necessary and not sufficient —
+  `agent-component-regression` passed 5/5 routed and stays `tool-calling` because its
+  assertions depend on the model's timing. This is the heavier of the two context-id
+  specs — two turns plus up to three reload cycles inside the 5-minute cap — so it carries
+  the thinner margin of the pair.
 - Consequence: with `ANY_COMPLETION_PROVIDER=ollama` (+ `OLLAMA_TEST_MODEL`) the
   parametrized test runs against a **local, keyless** model — no key, no quota — and that
   routing outranks `MODEL_TEST_ID` / `MODEL_TEST_PROVIDER` for this tier only.

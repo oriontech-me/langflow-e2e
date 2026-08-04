@@ -345,14 +345,21 @@ async function retrieveViaMessageHistory(
 // PERSISTED turns carry (≥2 turns tagged), never what the agent said. The deciding
 // observable is Langflow's context tagging.
 //
-// **Measured 5/5** on the CI lane against `llama3.2:1b` — five `manual.yml` dispatches
-// with `any_completion_provider: ollama`, `retries: 0`, nightly 1.12.0.dev15, 2.3–3.6
-// min for the 4 declarations that ran at `workers: 2`. The rate is necessary and not
-// sufficient: `agent-component-regression` also passed 5/5 and stays `tool-calling`
-// because assertions there depend on the model's timing. What this file depends on is
-// only that the run COMPLETES and persists an AI turn — with the two tools the Simple
-// Agent template wires in, which is the residual risk here and the reason the rate is
-// recorded rather than assumed permanent.
+// **Measured 6/7** routed on the CI lane against `llama3.2:1b` (`manual.yml`,
+// `any_completion_provider: ollama`, `retries: 0`, nightly 1.12.0.dev15, `workers: 2`).
+// The one failure was NOT this assertion and not the model: it was
+// `separateOverlappingNodes()` timing out during template load ("canvas nodes should
+// not overlap after being separated"), a shared canvas helper every provider path runs.
+// That matters for reading the number: this spec hard-failed on **5 of 22** hosted
+// dailies before any of this (`agent-context-id-isolation` on 6, plus 4 flaky), so its
+// baseline instability is pre-existing and provider-independent — routing neither
+// caused it nor cures it.
+//
+// The rate is necessary and not sufficient: `agent-component-regression` passed 5/5
+// routed and stays `tool-calling` because assertions there depend on the model's
+// timing. What this file depends on is only that the run COMPLETES and persists an AI
+// turn — with the two tools the Simple Agent template wires in, which is the residual
+// risk here and the reason the rate is recorded rather than assumed permanent.
 const targets = resolveTestTargets({ tier: "any-completion" });
 
 // Test 1 loads the Simple Agent template — serial + --workers=1 per the
