@@ -1189,7 +1189,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add reports/daily-history.jsonl
           # Present after the "Refresh spec durations" step, which since #1252 runs on
-          # any scheduled run that produced a complete report — not only a green one.
+          # any run that produced a complete report — not only a green one, and not only
+          # a scheduled one. THIS step is where "schedule only" is enforced, so a manual
+          # dispatch refreshes the file inside the job and commits nothing.
           # A no-op add when nothing changed (file unchanged / already tracked).
           [ -f reports/spec-durations.json ] && git add reports/spec-durations.json
           # Present only when the summarizer found at least one trace on a non-zero
