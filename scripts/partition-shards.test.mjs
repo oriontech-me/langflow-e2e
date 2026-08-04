@@ -246,3 +246,19 @@ test("the refresh passes the previous table in, and never redirects onto its own
   );
   assert.match(refreshStep, /mv .*reports\/spec-durations\.json/);
 });
+
+test("the refresh runs on a manual dispatch too, while only the COMMIT is schedule-only", () => {
+  // Split deliberately (#1252): a manual dispatch must be able to exercise the extract
+  // — otherwise the only proof of a change to it is the next scheduled daily — while
+  // the write to main stays schedule-only, which the commit step enforces itself.
+  assert.ok(
+    !/github\.event_name\s*==\s*'schedule'/.test(refreshStep),
+    "the refresh must not be schedule-gated; that makes it unverifiable by dispatch",
+  );
+  const commitStep = daily.slice(daily.indexOf("- name: Commit daily history"));
+  assert.match(
+    commitStep.slice(0, 400),
+    /github\.event_name\s*==\s*'schedule'/,
+    "the commit back to main MUST stay schedule-only",
+  );
+});

@@ -1010,8 +1010,15 @@ jobs:
       # vanishing), but a run where shards aborted is also a run where the surviving
       # shards competed for a saturated backend, so their times are distorted in a way
       # `expected` cannot detect. Kept out.
+      #
+      # NOT gated on `schedule`, unlike the commit step below — deliberately, and it is
+      # what makes this step verifiable at all. The write to `main` is what must be
+      # schedule-only, and `Commit daily history` already enforces that on its own; a
+      # manual dispatch that also SKIPPED the extract could never exercise it, so the
+      # only proof of a change here would be the next scheduled daily. Running it
+      # unconditionally costs one file write inside the job and prints the accounting.
       - name: Refresh spec durations
-        if: github.event_name == 'schedule' && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
+        if: steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
         run: |
           node scripts/partition-shards.mjs extract results.json reports/spec-durations.json \
             > /tmp/spec-durations.next.json
