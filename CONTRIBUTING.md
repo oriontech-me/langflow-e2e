@@ -177,8 +177,24 @@ if (!process.env.CI) {
 // ANY_COMPLETION_PROVIDER=ollama (+ OLLAMA_TEST_MODEL) those specs run against a
 // keyless local model — no key, no quota — and that routing outranks MODEL_TEST_ID /
 // MODEL_TEST_PROVIDER for that tier, because #1185's daily pin is global to the run.
-// Declare `any-completion` only when the assertion truly does not read model
-// quality, and prove it: adoption is per spec behind a measured 3/3 CI gate (#1187).
+//
+// The test for `any-completion` is "does ANY assertion depend on the model CHOOSING
+// or MANAGING to do something", NOT "is the reply's content read" (#1187). The looser
+// wording admitted a spec that fails ~40 % of the time: agent-system-prompt reads the
+// reply only for a sentinel its own instruction demanded, which sounds like plumbing
+// and is adherence. Dependence includes timing and throughput, not just compliance —
+// a test that needs the run to still be in flight, or to finish three turns inside
+// the 5-minute cap, depends on the model too. And the declaration is per FILE, so one
+// model-dependent test disqualifies the whole file.
+//
+// Adoption is per spec, on a MEASURED rate over a stated N — never an N/N gate. At
+// p=0.60 the old "3/3, no retries" gate certifies with probability ≈22 %, which is
+// exactly how the pilot was adopted; no feasible number of consecutive CI dispatches
+// fixes that (~59 runs for 95 % confidence in p ≥ 0.95). The rate is necessary and
+// not sufficient: agent-component-regression passed 5/5 routed and is still
+// `tool-calling`, because the criterion is dependence, not the observed count.
+// Measure the SPEC on the LANE — a direct model probe measures a different system
+// (10/10 called directly vs 60 % through the Agent, same model, same prompt).
 // Add `requires: "vision" | "chat"` when the spec needs a specific capability
 // WITHIN the provider.
 const targets = resolveTestTargets({ tier: "tool-calling" });

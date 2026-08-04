@@ -19,14 +19,21 @@ const OLLAMA = providerConfigMap.ollama;
  *     re-saving a masked secret; here re-saving is merely redundant, so a configured
  *     provider is left alone for the same reason (a disabled Save button would hang
  *     the click).
- *  2. **The model list is the live instance, not a static catalog.** Saving the URL
- *     makes Langflow enumerate `GET /api/tags` and auto-enable exactly what that
- *     instance serves. Measured on 1.12.0.dev10: with one model pulled, saving left
- *     `enabled_models.Ollama = {"llama3.1:latest": true}`; after pulling a second,
- *     re-saving produced both, every toggle already `aria-checked="true"`. So the
- *     keyed helpers' "enable every model toggle" loop has nothing to do here — it is
- *     kept only as a repair path for a toggle someone turned off, never as the step
- *     that makes a model selectable.
+ *  2. **The model list is the live instance, not a static catalog** — and it is
+ *     enumerated at READ time, not at save time. `fetch_live_ollama_models()` hits
+ *     `GET /api/tags` on every options build, and a provider counts as configured
+ *     purely because its base-URL variable exists (`skip_validation=True` in
+ *     `unified_models/credentials.py`). The first **five** live tags come back
+ *     `default=True` (`MIN_DEFAULT_MODELS`), which is why a single pulled model is
+ *     selectable with nothing else configured.
+ *
+ *     Corrected in #1187: this block used to say saving the URL "auto-enables what
+ *     the instance serves", read off the observation that
+ *     `enabled_models.Ollama` held both tags after a save. It does — but that is the
+ *     live default flag being reported, not state the save wrote, and reading it the
+ *     other way makes an empty dropdown look like proof the save failed. So the
+ *     keyed helpers' "enable every model toggle" loop still has nothing to do here,
+ *     for a different reason: the tags are already default-enabled on read.
  *
  * That live enumeration is also why this helper cannot invent a model name: a target
  * must arrive pinned (`OLLAMA_TEST_MODEL`), and a name the instance does not serve
@@ -86,10 +93,12 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
     .isVisible({ timeout: 1000 })
     .catch(() => false);
 
-  // Set when a concurrent worker won the base-URL write (see the listener below).
-  // Read by Step 6, which otherwise attributes the resulting empty dropdown to an
-  // unreachable instance.
-  let lostBaseUrlWriteRace = false;
+  // Resolves true when a concurrent worker won the base-URL write (see the listener
+  // below). Read ONLY by Step 6's empty-dropdown branch, which otherwise attributes
+  // the empty list to an unreachable instance. Defaults to a settled `false` so the
+  // already-configured path — where no save is attempted at all — needs no special
+  // case.
+  let duplicateWritePromise: Promise<boolean> = Promise.resolve(false);
 
   if (!alreadyConfigured && (await urlInput.count()) > 0) {
     const url = ollamaBaseUrlFromLangflow();
@@ -115,18 +124,35 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
     // Armed alongside it: the base URL is persisted as a `Global` variable, and a
     // CONCURRENT save loses that write with `400 {"detail":"Variable name already
     // exists"}` while `validate-provider` still answers `valid: true` — the URL is
-    // reachable, it is the second writer that is redundant. Without reading this the
-    // helper walks on to an empty dropdown and blames the instance for a race
-    // (#1187). `globalSetup` pre-configures the provider precisely so this window
+    // reachable, it is the second writer that is redundant. The loser's dropdown then
+    // comes up empty, and without reading this the helper blames the instance for a
+    // race (#1187). `globalSetup` pre-configures the provider precisely so this window
     // closes; capturing it here keeps the attribution right if it ever reopens (two
-    // shards starting in the same instant, or a failed pre-configuration).
-    const duplicatePromise = page
+    // shards starting in the same instant, a failed pre-configuration, or
+    // `model-provider/ollama-provider.spec.ts`, which DELETES this variable mid-run on
+    // purpose so it can exercise a real first-time configure).
+    //
+    // It is NEVER awaited on the healthy path, and that is the whole reason it is
+    // shaped this way. On a first-time configure no 400 arrives, so this promise can
+    // only settle by timing out — awaiting it inline would add that timeout to every
+    // successful configure, once per routed spec. So the window stays wide (a slow
+    // runner can put the save round-trip seconds out) and the value is read only in
+    // the empty-dropdown branch, where several seconds have already passed and the
+    // answer is waiting. `.catch()` keeps the unawaited rejection handled; it is safe
+    // here in a way it would not be for a verdict promise (see CLAUDE.md on the v1
+    // flow-error read) because this one only ever picks the wording of a failure that
+    // happens either way.
+    // The un-awaited `waitForResponse` is the point of this block, not an oversight —
+    // see above. `.catch()` below keeps the rejection handled, and the value is awaited
+    // in Step 6's empty-dropdown branch.
+    // eslint-disable-next-line playwright/missing-playwright-await
+    duplicateWritePromise = page
       .waitForResponse(
         (r) =>
           new URL(r.url()).pathname === "/api/v1/variables/" &&
           r.request().method() === "POST" &&
           r.status() === 400,
-        { timeout: 15000 },
+        { timeout: 30000 },
       )
       .then(async (r) => /already exists/i.test(await r.text().catch(() => "")))
       .catch(() => false);
@@ -156,8 +182,6 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
           `layer blocks loopback outright and private addresses unless allow-listed.`,
       );
     }
-
-    lostBaseUrlWriteRace = await duplicatePromise;
 
     // Wait for the configured state so the model list has been enumerated from the
     // live instance before Step 6 opens the dropdown.
@@ -207,7 +231,12 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
   // it serves.
   if (!isAvailable && offered.length === 0) {
     await page.keyboard.press("Escape");
-    await page.getByTestId("model_model").click();
+    // `hideInspectorPanel` for the same reason Step 2 needs it: a selected node
+    // re-opens the right-side Inspector Panel over this control on 1.11+. Without it
+    // the re-click can die on an interception at `actionTimeout`, which throws neither
+    // attributed prefix and loses exactly the attribution this branch exists to give.
+    await hideInspectorPanel(page);
+    await page.getByTestId("model_model").click().catch(() => {});
     isAvailable = await option.isVisible({ timeout: 15000 }).catch(() => false);
     offered = isAvailable
       ? []
@@ -232,9 +261,12 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
     // coverage loss #976 recorded and the reason Step 4 throws instead of skipping.
     //
     // An empty Ollama list has ONE benign reading, and it is not the instance's
-    // fault: a concurrent worker won the base-URL write, so THIS save never landed
-    // and Langflow never enumerated anything for it. That is what
-    // `lostBaseUrlWriteRace` records, and it changes only the message — the failure
+    // fault: a concurrent worker won the base-URL write, so THIS page's create was
+    // rejected and its options cache was never invalidated (the frontend refetches
+    // only after its own create succeeds). The backend is fine — enumeration is live
+    // per read and the winner's variable satisfies it — which is why the fix is to
+    // configure once up front rather than to make this page retry. That is what
+    // `duplicateWritePromise` records, and it changes only the message — the failure
     // stands either way, because a lane that asked for a local model must not lose
     // coverage quietly (#976) and because the run is misconfigured in both cases.
     // Getting the attribution right is the point: the original text sends a
@@ -245,7 +277,7 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
     // reachable and serving no model. Both are lane misconfigurations. A non-empty
     // list that lacks the requested tag is the genuine "this instance does not serve
     // it" case and keeps skipping.
-    if (offered.length === 0 && lostBaseUrlWriteRace) {
+    if (offered.length === 0 && (await duplicateWritePromise)) {
       throw new Error(
         `OLLAMA_PROVIDER_UNREACHABLE: the base-URL write for this run was REJECTED as ` +
           `a duplicate (POST /api/v1/variables/ → 400 "Variable name already exists"), ` +

@@ -55,15 +55,35 @@ async function waitForAgentToFinish(page: Page): Promise<void> {
   }
 }
 
-// `any-completion` (#1187): every assertion here reads node behaviour, not the
-// answer. The interaction suite checks the playground input returns and the run
-// completes (`node_duration`, the Stop button clearing); the second test checks that
-// Stop actually halts a run mid-flight. Nothing depends on the model choosing to
-// comply with anything — it only has to be slow enough to be stopped and finish.
+// `tool-calling`, and this file is worth a note because it is the case that shows
+// why a measured pass rate is NOT the adoption criterion (#1187).
 //
-// MEASUREMENT PENDING — the rate on the routed lane is recorded here before this
-// declaration ships.
-const targets = resolveTestTargets({ tier: "any-completion" });
+// It was declared `any-completion` on the argument that every assertion here reads
+// node behaviour rather than the answer, and it then passed **5/5 routed** to
+// `llama3.2:1b` on the CI lane (20/20 declarations, `retries=0`). It is still
+// `tool-calling`, because the criterion is whether an assertion DEPENDS on the model,
+// and three of them do — the rate just did not expose it in five runs:
+//
+//  - **The Stop-button test depends on the model being slow.** `expect(stopButton)
+//    .toBeVisible({ timeout: 30000 })` requires generation to still be in flight, and
+//    `dispatchEvent("click")` requires the button to still be mounted. A model that
+//    finishes first turns this red for a non-defect — or, worse, makes `toBeHidden`
+//    pass trivially, which is precisely the silent no-op #992 fixed here.
+//  - **The interaction suite reads the answer.** `expect.soft(text.trim().length)
+//    .toBeGreaterThan(1)` runs on all three turns, and a soft failure still fails the
+//    test — so a reply that ends empty (the `"Message empty."` shape) is a red.
+//  - **Three turns, one long-form, inside the 5-minute cap.** The third asks for a
+//    5-paragraph summary, and `model-provider/ollama-provider.spec.ts` measures
+//    `llama3.2:1b` at **>100 s per call on a runner** (daily 2026-07-15 failed 3/3 on
+//    `div-chat-message not found` after ~100 s, #931). That is not a margin.
+//
+// Timing and throughput are model dependence just as much as compliance is. Routing
+// this file would make it pass because the runner is slow, which is the dependency
+// inverted rather than removed — and the first fast local model would collect the
+// bill. The template also wires two tools into the Agent (`URLComponent`,
+// `UnifiedWebSearch` in `Simple Agent.json`), so every turn asks a 1B to drive a
+// tool-bearing agent without derailing.
+const targets = resolveTestTargets({ tier: "tool-calling" });
 
 // File-level serial mode: each provider block creates a named Simple Agent flow;
 // serial execution avoids "flow must be unique" collisions across blocks.

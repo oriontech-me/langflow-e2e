@@ -1,6 +1,6 @@
 # Agent context_id — switching isolates history between contexts
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev8`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev15`)
 
 ---
 
@@ -66,8 +66,9 @@ surface; `@components` — Message History node drives the read-side assert;
 ## Preconditions *(optional)*
 
 - Langflow running at `PLAYWRIGHT_BASE_URL` (fresh nightly).
-- Test 2 needs `models.json`/`providers.json` (collect-models) + an active
-  provider key; test 1 is model-free (passthrough seeding).
+- The parametrized test needs `models.json`/`providers.json` (collect-models) + an
+  active provider key — **unless the run is routed** (see *Model strategy*), which needs
+  no key at all. The "retrieval layer (model-free)" test needs neither.
 - Run with `--workers=1` — test 2 loads the Simple Agent template (agent-area
   rule). Flows are id-scoped-deleted in cleanup (`deleteFlow` helper).
 
@@ -171,9 +172,42 @@ persisted/rendered data — no model judgment anywhere.
 
 ---
 
+## Model strategy
+
+- Parameterized per provider/model via the shared
+  `resolveTestTargets({ tier: "any-completion" })`
+  (`helpers/provider-setup/test-targets.ts`). The parametrized test is the only one the
+  tier governs; the "retrieval layer (model-free)" test is declared outside the loop and
+  resolves no provider at all.
+- **Tier: `any-completion` (#1187).** No assertion depends on the model choosing or
+  managing to do anything: the parametrized test reads which `context_id` the PERSISTED
+  turns carry after the agent's context is switched, never what the agent replied. The model only has to answer something, so
+  the deciding observable is Langflow's context tagging.
+- **Measured 5/5** against `llama3.2:1b` on the CI lane — the same five dispatches
+  recorded in `agent-context-id-continuity.md`; five `manual.yml` dispatches
+  with `any_completion_provider: ollama`, `retries: 0`, nightly `1.12.0.dev15`,
+  `workers: 2`, 2.3–3.6 min for the 4 declarations in the run. The rate is necessary and
+  not sufficient: `agent-component-regression` also passed 5/5 and stays `tool-calling`
+  because its assertions depend on the model's timing. This is the heavier of the two
+  context-id specs — two turns plus up to three reload cycles inside the 5-minute cap —
+  so it carries the thinner margin of the pair.
+- Consequence: with `ANY_COMPLETION_PROVIDER=ollama` (+ `OLLAMA_TEST_MODEL`) the
+  parametrized test runs against a **local, keyless** model — no key, no quota — and that
+  routing outranks `MODEL_TEST_ID` / `MODEL_TEST_PROVIDER` for this tier only.
+- Run with `--workers=1` locally (the parametrized test loads the Simple Agent
+  template — agent-area rule).
+
+---
+
 ## External dependencies *(required)*
 
-- **LLM provider API** (test 2 only): two completions.
+- **A model that returns text**, for the parametrized test only — two completions, in
+  one of two shapes:
+  - **Hosted (default):** a provider API key plus collected `providers.json` /
+    `models.json`.
+  - **Local (routed, #1187):** `ANY_COMPLETION_PROVIDER=ollama` + `OLLAMA_TEST_MODEL`
+    and a reachable Ollama — **no key at all**. `globalSetup` configures the provider
+    once before any worker (see `preconfigure-routed-provider.ts`).
 - `tests/helpers/provider-setup/data/models.json` + `providers.json`
   (collect-models) — test 2.
 - No external network for test 1 (API passthrough + local retrieval).

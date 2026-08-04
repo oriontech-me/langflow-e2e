@@ -158,7 +158,11 @@ export interface TestTarget {
 }
 
 export interface ResolveTestTargetsOptions {
-  /** What the spec needs from a lane. Every migrated agent spec is `tool-calling`. */
+  /**
+   * What the spec needs from a lane. Every migrated agent spec was `tool-calling`
+   * until #1187; two are now `any-completion` (`agent-context-id-continuity`,
+   * `agent-context-id-isolation`).
+   */
   tier: ModelTier;
   /** Capability filter within a provider. Omit for "any model this provider lists". */
   requires?: ModelCapability;

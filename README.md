@@ -85,8 +85,9 @@ MODEL_TEST_PROVIDER=openai
 # Run all models from the JSON (default — leave variables empty)
 ```
 
-For specs declared `tier: "any-completion"` — the ones whose assertion reads
-Langflow's plumbing, not model quality — a fourth option runs them against a
+For specs declared `tier: "any-completion"` — the ones where **no** assertion depends
+on the model choosing or managing to do anything (not merely "the reply's content is
+not read"; see `CONTRIBUTING.md`, #1187) — a fourth option runs them against a
 **local, keyless** model (no API key, no quota), and takes priority over the two
 variables above for that tier only:
 

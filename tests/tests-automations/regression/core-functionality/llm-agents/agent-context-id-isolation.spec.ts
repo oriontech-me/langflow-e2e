@@ -493,8 +493,11 @@ async function runRetrievalScopedTo(page: Page, contextId: string): Promise<stri
 // agent said, so the model chooses nothing. The deciding observable is Langflow's
 // per-context isolation.
 //
-// MEASUREMENT PENDING — the rate on the routed lane is recorded here before this
-// declaration ships.
+// **Measured 5/5** on the CI lane against `llama3.2:1b` — the same five `manual.yml`
+// dispatches recorded in `agent-context-id-continuity.spec.ts`. This test is the
+// heavier of the two: two turns plus up to three `prepareTurn` reload cycles inside
+// the 5-minute cap, so it has the thinner margin of the pair even though neither
+// assertion reads the reply.
 const targets = resolveTestTargets({ tier: "any-completion" });
 
 // Test 2 loads the Simple Agent template — serial + --workers=1 per the
