@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { BasePage } from "./BasePage";
 import { SidebarComponent } from "./SidebarComponent";
 import { addFlowToTestOnEmptyLangflow } from "../helpers/flows/add-flow-to-test-on-empty-langflow";
+import { waitForPageEntry } from "../helpers/other/page-entry-barrier";
 
 export class MainPage extends BasePage {
   readonly sidebar: SidebarComponent;
@@ -13,18 +14,15 @@ export class MainPage extends BasePage {
 
   async waitForLoad({ skipModal = false }: { skipModal?: boolean } = {}) {
     await this.page.goto("/");
-    await this.page.waitForSelector('[data-testid="mainpage_title"]', {
-      timeout: 30000,
-    });
+    // Attributed barrier (#1262) — see helpers/other/page-entry-barrier.ts.
+    await waitForPageEntry(this.page, '[data-testid="mainpage_title"]', 30000);
 
     const emptyPageBtn = this.page.getByTestId("new_project_btn_empty_page");
     if ((await emptyPageBtn.count()) > 0) {
       await addFlowToTestOnEmptyLangflow(this.page);
     }
 
-    await this.page.waitForSelector('[id="new-project-btn"]', {
-      timeout: 30000,
-    });
+    await waitForPageEntry(this.page, '[id="new-project-btn"]', 30000);
 
     if (!skipModal) {
       await this.openNewProjectModal();

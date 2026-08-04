@@ -134,7 +134,7 @@ test.describe("Language Model Component Regression", () => {
 
   test(
     "language model must respond with Google provider",
-    { tag: ["@release", "@components", "@model-provider"] },
+    { tag: ["@stable", "@release", "@components", "@model-provider"] },
     async ({ page }) => {
       const gate = providerSkipGate("google");
       test.skip(gate.skip, gate.reason);
