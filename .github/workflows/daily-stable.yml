@@ -258,6 +258,29 @@ jobs:
       OLLAMA_BASE_URL: http://ollama:11434
       OLLAMA_BASE_URL_FROM_LANGFLOW: http://ollama:11434
       OLLAMA_TEST_MODEL: llama3.2:1b
+      # The token sidecar's bounds, at JOB level because TWO steps read them: the
+      # poller below and the Playwright step, where the attribution sidecar runs inside
+      # `deleteFlow`'s teardown hook. They used to live in the poller step's own
+      # `env:`, which does not cross into another step -- so the sidecar never saw
+      # either one and silently used its hard-coded defaults. The numbers happened
+      # to match, so nothing was wrong in the run and nothing could be seen in a
+      # diff; the only symptom was a knob that did not turn, precisely when a
+      # wedged monitor endpoint made someone want to turn it.
+      #
+      # Defined ONCE, here, so the poller and the sidecar cannot end up bounded by
+      # different numbers. Pinned by scripts/token-sidecar-knobs.test.mjs.
+      TOKENS_TIMEOUT_MS: "8000"
+      TOKENS_DETAIL_CAP: "25"
+      # Per-CALL wall-clock ceiling for the attribution sidecar. Wired AHEAD of its
+      # reader on purpose: the budget itself lands with #1217's `deleteFlow` hook,
+      # and adding it from that PR would mean touching pr-validation.yml from a
+      # spec change, which flips that lane's coverage verdict to `canary` and drops
+      # its impacted-spec run. An unread variable costs nothing; a lane that cannot
+      # turn the knob when a monitor endpoint wedges costs a shard. With the two
+      # above it bounds a call at budget + timeout = 23s instead of
+      # cap x timeout = 208s. Read by the sidecar only; the poller has its own
+      # TOKENS_MAX_SECONDS.
+      TOKENS_BUDGET_MS: "15000"
 
     steps:
       - uses: actions/checkout@v7
@@ -539,11 +562,12 @@ jobs:
           TOKENS_BASE_URL: http://localhost:7860
           TOKENS_OUT: token-probes-${{ matrix.shard }}.jsonl
           TOKENS_INTERVAL_MS: "15000"
-          TOKENS_TIMEOUT_MS: "8000"
+          # TOKENS_TIMEOUT_MS and TOKENS_DETAIL_CAP are deliberately NOT here: they
+          # are defined once at job level, because the attribution sidecar in the
+          # Playwright step reads them too and a step-level env: does not reach it.
           # Same reasoning as WATCH_MAX_SECONDS: below the job's timeout-minutes so
           # it is a real backstop rather than dead configuration.
           TOKENS_MAX_SECONDS: "3600"
-          TOKENS_DETAIL_CAP: "25"
 
       - name: Run @stable tests (shard ${{ matrix.shard }})
         # Sharded run. The reporter list is NOT overridden on the CLI: setting
