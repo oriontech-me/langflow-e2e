@@ -65,8 +65,14 @@ on:
         description: |
           Playwright retries for the run. Empty = the config default (2 in CI).
           Set "0" to measure a spec honestly — a retry hides an intermittent
-          failure, and the #1187 adoption gate is "passes 3/3 with no retries".
+          failure, which is what any measurement dispatched here is looking for.
           Honoured by BOTH target kinds (Docker and external URL).
+
+          NOT "passes 3/3" any more, which this input used to name as the #1187
+          adoption gate. Measured: the pilot passes ~60 % (9/15) and a three-run
+          gate certifies that with probability 0.6³ ≈ 22 % — which is exactly how
+          it was adopted. Dispatch a stated N, record the RATE, and read a spec
+          that is not ~100 % as ineligible for the tier.
         required: false
         default: ""
 

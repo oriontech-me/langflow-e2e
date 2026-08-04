@@ -10,6 +10,7 @@ import {
   readProviderHealth,
   writeProviderHealth,
 } from "./helpers/provider-setup/provider-health";
+import { preconfigureRoutedProvider } from "./helpers/provider-setup/preconfigure-routed-provider";
 
 dotenv.config();
 
@@ -193,6 +194,38 @@ async function checkProviderCredentials(ctx: APIRequestContext): Promise<void> {
   console.warn(`${message}\n(local run — warning only, not blocking.)`);
 }
 
+/**
+ * Configure the routed keyless provider once, before any worker starts (#1187).
+ *
+ * A no-op unless `ANY_COMPLETION_PROVIDER` is set. It exists because the UI-driven
+ * `setupOllama` races itself across workers on the very first configuration — see the
+ * header of `preconfigure-routed-provider.ts` for the measured failure.
+ *
+ * Never fatal, deliberately. `setupOllama` is still the authority on whether the
+ * provider is usable and FAILS with an attributed reason per spec, so aborting the
+ * whole run here would replace a precise per-spec verdict with a vague preflight one.
+ * But it is never silent either (#1012): a failed pre-configuration is the likely
+ * cause of whatever `setupOllama` reports next, so it is printed as a warning that
+ * names the gap.
+ */
+async function preconfigureRouting(ctx: APIRequestContext): Promise<void> {
+  const result = await preconfigureRoutedProvider(ctx).catch((e) => ({
+    attempted: true,
+    configured: false,
+    detail: `pre-configuration threw: ${String(e)}`,
+  }));
+  if (!result.attempted) return;
+  if (result.configured) {
+    console.log(`[preflight] routed provider ready — ${result.detail}`);
+    return;
+  }
+  console.warn(
+    `[preflight] WARNING: could not pre-configure the routed provider — ${result.detail}. ` +
+      `Specs will try to configure it themselves, which is what races across workers ` +
+      `(#1187); expect OLLAMA_PROVIDER_UNREACHABLE on one of them.`,
+  );
+}
+
 export default async function globalSetup(): Promise<void> {
   const ctx = await playwrightRequest.newContext({ baseURL: BASE_URL });
   try {
@@ -204,6 +237,7 @@ export default async function globalSetup(): Promise<void> {
     } else {
       await checkProviderCredentials(ctx);
     }
+    await preconfigureRouting(ctx);
   } finally {
     await ctx.dispose();
   }

@@ -335,11 +335,68 @@ async function retrieveViaMessageHistory(
   return textarea.inputValue();
 }
 
-const targets = resolveTestTargets({ tier: "tool-calling" });
+// `any-completion` (#1187). This tier governs ONE test in this file — the
+// parametrized "agent run persists every session message tagged with the custom
+// context_id". The "retrieval layer (model-free)" describe below sits OUTSIDE the
+// `targets` loop, so it never resolved a target and this declaration does not touch
+// it; counting it as routed coverage would overstate what changes here.
+//
+// The routed test needs the model to CHOOSE nothing: it asserts which context_id the
+// PERSISTED turns carry (≥2 turns tagged), never what the agent said. The deciding
+// observable is Langflow's context tagging.
+//
+// **Measured 6/7** routed on the CI lane against `llama3.2:1b` (`manual.yml`,
+// `any_completion_provider: ollama`, `retries: 0`, nightly 1.12.0.dev15, `workers: 2`).
+// The one failure was NOT this assertion and not the model: it was
+// `separateOverlappingNodes()` timing out during template load ("canvas nodes should
+// not overlap after being separated"), a shared canvas helper every provider path runs.
+// That matters for reading the number: this spec hard-failed on **5 of 22** hosted
+// dailies before any of this (`agent-context-id-isolation` on 6, plus 4 flaky), so its
+// baseline instability is pre-existing and provider-independent — routing neither
+// caused it nor cures it.
+//
+// The rate is necessary and not sufficient: `agent-component-regression` passed 5/5
+// routed and stays `tool-calling` because assertions there depend on the model's
+// timing. What this file depends on is only that the run COMPLETES and persists an AI
+// turn — with the two tools the Simple Agent template wires in, which is the residual
+// risk here and the reason the rate is recorded rather than assumed permanent.
+const targets = resolveTestTargets({ tier: "any-completion" });
 
 // Test 1 loads the Simple Agent template — serial + --workers=1 per the
 // agent-area rule. Cleanup is id-scoped; nothing here wipes flows.
 test.describe.configure({ mode: "serial" });
+
+// Declared BEFORE the parametrized loop deliberately (#1187). This file is
+// `mode: "serial"`, and in serial mode a failure SKIPS every later test in the
+// file — so with the routed test first, a weak-model failure there would skip this
+// one, which needs no provider at all. Ordering it first makes the model-free
+// coverage independent of whatever the routed target does.
+test.describe("Context ID continuity — retrieval layer (model-free)", () => {
+  test(
+    "context-scoped retrieval returns all turns of the context and not the untagged control",
+    { tag: ["@stable", "@regression", "@agents", "@components"] },
+    async ({ page, request }) => {
+      const seeded = await seedContextSession(request);
+      try {
+        const retrieved = await test.step(
+          "retrieve the session scoped to the custom context",
+          () => retrieveViaMessageHistory(page, seeded.flowId, seeded.session, seeded.contextId),
+        );
+
+        await test.step("all 3 tagged turns present; untagged control absent", async () => {
+          expect(retrieved).toContain(`${seeded.sentinel}-1`);
+          expect(retrieved).toContain(`${seeded.sentinel}-2`);
+          expect(retrieved).toContain(`${seeded.sentinel}-3`);
+          // The negative that makes the positive falsifiable: an unfiltered
+          // retrieve-everything bug returns the control too.
+          expect(retrieved).not.toContain(`${seeded.sentinel}-CTRL`);
+        });
+      } finally {
+        await seeded.cleanup();
+      }
+    },
+  );
+});
 
 for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
@@ -384,29 +441,3 @@ for (const { label, options, skipReason } of targets) {
   });
 }
 
-test.describe("Context ID continuity — retrieval layer (model-free)", () => {
-  test(
-    "context-scoped retrieval returns all turns of the context and not the untagged control",
-    { tag: ["@stable", "@regression", "@agents", "@components"] },
-    async ({ page, request }) => {
-      const seeded = await seedContextSession(request);
-      try {
-        const retrieved = await test.step(
-          "retrieve the session scoped to the custom context",
-          () => retrieveViaMessageHistory(page, seeded.flowId, seeded.session, seeded.contextId),
-        );
-
-        await test.step("all 3 tagged turns present; untagged control absent", async () => {
-          expect(retrieved).toContain(`${seeded.sentinel}-1`);
-          expect(retrieved).toContain(`${seeded.sentinel}-2`);
-          expect(retrieved).toContain(`${seeded.sentinel}-3`);
-          // The negative that makes the positive falsifiable: an unfiltered
-          // retrieve-everything bug returns the control too.
-          expect(retrieved).not.toContain(`${seeded.sentinel}-CTRL`);
-        });
-      } finally {
-        await seeded.cleanup();
-      }
-    },
-  );
-});
