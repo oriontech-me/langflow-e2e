@@ -1017,12 +1017,30 @@ jobs:
       # manual dispatch that also SKIPPED the extract could never exercise it, so the
       # only proof of a change here would be the next scheduled daily. Running it
       # unconditionally costs one file write inside the job and prints the accounting.
+      # `always() &&` is load-bearing, not decoration: a step `if:` with no status
+      # function gets an implicit `success()`, so without it an unrelated earlier
+      # failure in THIS job silently skips the refresh — `Upload Playwright report`
+      # and `Build run payload` both run un-`continue-on-error`, and a transient
+      # artifact upload failure would reopen a milder version of the very "the step
+      # never runs" defect above, with no line in the log saying so. The two runguard
+      # conditions are the real gate and they still decide; an unset output (the guard
+      # itself died) is not 'false', so a missing verdict still skips.
       - name: Refresh spec durations
-        if: steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
+        if: always() && steps.runguard.outputs.empty == 'false' && steps.runguard.outputs.partial == 'false'
+        # continue-on-error, #980's trade: the duration table is an OPTIMISATION, not a
+        # verdict, and this step now runs every day instead of never. A crash in it
+        # (unreadable report, a corrupt committed table) would otherwise turn a GREEN
+        # daily red while `Create issue on failure` — gated on the test job — opens
+        # nothing, leaving a red run with no triage attached to it. The temp-file write
+        # means a crash leaves the committed table exactly as it was.
+        continue-on-error: true
         run: |
-          node scripts/partition-shards.mjs extract results.json reports/spec-durations.json \
-            > /tmp/spec-durations.next.json
-          mv /tmp/spec-durations.next.json reports/spec-durations.json
+          next="${RUNNER_TEMP:-/tmp}/spec-durations.next.json"
+          if ! node scripts/partition-shards.mjs extract results.json reports/spec-durations.json > "$next"; then
+            echo "::warning::The spec durations refresh FAILED — reports/spec-durations.json is unchanged, so the next partition reuses the values it already had (or falls back to a file-count balance if it has none). See the error above (#1252)."
+            exit 1
+          fi
+          mv "$next" reports/spec-durations.json
 
       # Token consumption (#1197). Diagnostic: continue-on-error so a defect in the
       # cost report can never skip the steps that matter on a red day — the same

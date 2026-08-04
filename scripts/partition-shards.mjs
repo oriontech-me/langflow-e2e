@@ -12,6 +12,10 @@
 //   extract  — after a daily, read the merged results.json and emit
 //              reports/spec-durations.json (file -> seconds). Committed back to
 //              main by the merge job, same machinery as reports/daily-history.jsonl.
+//   matrix   — at "Prepare shard matrix" time, read the current @stable file set
+//              (from `playwright test --grep @stable --list --reporter=json`) and
+//              the committed durations, then print the GitHub Actions matrix with
+//              an explicit file list per shard.
 //
 // ## The loop never closed, and that is what #1252 fixes
 //
@@ -41,10 +45,10 @@
 //     skipped (an inactive provider — routine here, #570/#1029) would record ~0 s
 //     and then ride free onto whatever shard is heaviest. That hazard exists under
 //     the old green-only gate too: a green run still skips.
-//   matrix   — at "Prepare shard matrix" time, read the current @stable file set
-//              (from `playwright test --grep @stable --list --reporter=json`) and
-//              the committed durations, then print the GitHub Actions matrix with
-//              an explicit file list per shard.
+// Same reasoning one step further: a file that measures 0 s while looking clean is
+// excluded as UNMEASURED, because a 0 in the table is not a light file — it is a
+// file `buildShards` can never find a lighter shard than, so every file joins it
+// on shard 1.
 //
 // Cold start / new specs: a file with no recorded duration is weighted at the
 // median of the known durations (never 0, which would let it ride free onto a
@@ -77,32 +81,6 @@ export function stableFilesFromReport(report) {
 }
 
 /**
- * Sum every attempt's duration (ms) of every @stable spec, grouped by file, and
- * return seconds per file. Retries are intentionally included: they are the real
- * wall-clock cost the file imposes on its worker.
- * @param {any} report
- * @returns {Record<string, number>}
- */
-export function stableDurationsByFile(report) {
-  const ms = new Map();
-  const walk = (suite, inherited) => {
-    const file = suite.file || inherited;
-    for (const spec of suite.specs || []) {
-      if (!(spec.tags || []).includes("stable")) continue;
-      const key = spec.file || file;
-      let d = 0;
-      for (const t of spec.tests || []) for (const r of t.results || []) d += r.duration || 0;
-      ms.set(key, (ms.get(key) || 0) + d);
-    }
-    for (const child of suite.suites || []) walk(child, file);
-  };
-  for (const s of report.suites || []) walk(s, s.file);
-  const out = {};
-  for (const [k, v] of ms) out[k] = Math.round((v / 1000) * 10) / 10; // seconds, 1 dp
-  return out;
-}
-
-/**
  * Which @stable files of a report carry a duration worth recording, and why the
  * others do not (#1252).
  *
@@ -116,11 +94,16 @@ export function stableDurationsByFile(report) {
  * prints it: a file silently absent from the table looks identical to a file that
  * was never selected (#1012).
  *
+ * `files` is the full @stable file set this walk classified — identical to what
+ * `stableFilesFromReport` derives from the same report, so `refreshDurations` reads
+ * it from here instead of walking the report a second time under a predicate that
+ * could drift out of step with this one.
+ *
  * @param {any} report
- * @returns {{usable: Record<string, number>, excluded: {file: string, reason: string}[]}}
+ * @returns {{usable: Record<string, number>, excluded: {file: string, reason: string}[], files: string[]}}
  */
 export function classifyDurations(report) {
-  const perFile = new Map(); // file -> { seconds, reasons:Set }
+  const perFile = new Map(); // file -> { ms, reasons:Set }
   const walk = (suite, inherited) => {
     const file = suite.file || inherited;
     for (const spec of suite.specs || []) {
@@ -144,13 +127,27 @@ export function classifyDurations(report) {
   /** @type {{file: string, reason: string}[]} */
   const excluded = [];
   for (const [file, { ms, reasons }] of perFile) {
-    if (reasons.size === 0) {
-      usable[file] = Math.round((ms / 1000) * 10) / 10; // seconds, 1 dp
+    const seconds = Math.round((ms / 1000) * 10) / 10; // seconds, 1 dp
+    if (reasons.size === 0 && seconds > 0) {
+      usable[file] = seconds;
       continue;
     }
-    excluded.push({ file, reason: [...reasons].sort().join(", ") });
+    // A clean file measuring 0 s is UNMEASURED, not cheap, and a zero must never
+    // reach the committed table: `buildShards` compares `b.load < best.load`, so
+    // over all-zero weights nothing is ever lighter than shard 1 and every file
+    // lands there. That is reachable now the table is written from every run — a
+    // reporter that stops emitting `duration` would zero all 171 entries at once.
+    // Excluded here, so it carries forward / falls to the median instead.
+    excluded.push({
+      file,
+      reason: reasons.size ? [...reasons].sort().join(", ") : "measured 0 s",
+    });
   }
-  return { usable, excluded: excluded.sort((a, b) => (a.file < b.file ? -1 : 1)) };
+  return {
+    usable,
+    excluded: excluded.sort((a, b) => (a.file < b.file ? -1 : 1)),
+    files: [...perFile.keys()],
+  };
 }
 
 /**
@@ -170,8 +167,7 @@ export function classifyDurations(report) {
  * @returns {{durations: Record<string, number>, recorded: string[], carried: string[], unknown: string[], excluded: {file: string, reason: string}[]}}
  */
 export function refreshDurations(report, previous = {}) {
-  const { usable, excluded } = classifyDurations(report);
-  const files = stableFilesFromReport(report);
+  const { usable, excluded, files } = classifyDurations(report);
 
   /** @type {Record<string, number>} */
   const durations = {};
@@ -211,9 +207,15 @@ function median(nums) {
  * @returns {{shard:number, files:string[]}[]}
  */
 export function buildShards(files, durations, n) {
-  const known = files.map((f) => durations[f]).filter((v) => typeof v === "number");
+  // A 0 (or negative) duration counts as UNKNOWN, not as a free file: with every
+  // weight at 0 the `b.load < best.load` comparison below is never true and all
+  // files pile onto shard 1 — the opposite of balancing. `extract` already refuses
+  // to record a zero (#1252), so this only ever catches a hand-edited or
+  // legacy-shaped table, which is exactly when a silent pile-up would be worst.
+  const positive = (v) => typeof v === "number" && v > 0;
+  const known = files.map((f) => durations[f]).filter(positive);
   const fallback = known.length ? median(known) : 1;
-  const weightOf = (f) => (typeof durations[f] === "number" ? durations[f] : fallback);
+  const weightOf = (f) => (positive(durations[f]) ? durations[f] : fallback);
 
   const sorted = [...files].sort((a, b) => weightOf(b) - weightOf(a) || (a < b ? -1 : a > b ? 1 : 0));
 
@@ -261,7 +263,8 @@ function main(argv) {
     const lines = [
       `durations: ${Object.keys(durations).length} file(s) in the table ` +
         `(${recorded.length} measured now, ${carried.length} carried forward, ` +
-        `${unknown.length} still unknown; previous table had ${Object.keys(previous).length})`,
+        `${unknown.length} still unknown; the previous table had ` +
+        `${Object.keys(previous).length} file(s))`,
     ];
     if (excluded.length) {
       lines.push(`  excluded from measurement (kept previous value where one exists):`);
@@ -297,9 +300,17 @@ function main(argv) {
 
     const shards = buildShards(files, durations, n);
     const include = shards.map((s) => ({ shard: s.shard, files: s.files.join(" ") }));
-    const mode = Object.keys(durations).length ? "duration" : "count";
+    // `mode` is over the INTERSECTION with the files being partitioned, not over the
+    // table's size: a table whose every key is stale (a spec directory rename lands
+    // that in one commit) leaves `buildShards` weighting all 171 files at the same
+    // fallback — a file-COUNT balance in everything but the label. Counting keys
+    // reported `mode=duration` for exactly that run and suppressed the warning below
+    // on the one day it was true.
+    const measured = files.filter((f) => typeof durations[f] === "number" && durations[f] > 0);
+    const mode = measured.length ? "duration" : "count";
     process.stderr.write(
-      `partition: ${files.length} @stable files -> ${n} shards (mode=${mode})\n` +
+      `partition: ${files.length} @stable files -> ${n} shards (mode=${mode}, ` +
+        `${measured.length}/${files.length} with a recorded duration)\n` +
         shards.map((s) => `  shard ${s.shard}: ${s.files.length} files`).join("\n") +
         "\n",
     );
@@ -310,15 +321,19 @@ function main(argv) {
     // it is flagged as a `::warning::` because that is what surfaces in the job
     // summary rather than scrolling past in step output.
     if (expected && mode === "count") {
-      const why = present
-        ? `${durPath} exists but contains no durations`
-        : `${durPath} does not exist`;
+      const entries = Object.keys(durations).length;
+      const why = !present
+        ? `${durPath} does not exist`
+        : entries === 0
+          ? `${durPath} exists but contains no durations`
+          : `${durPath} holds ${entries} entr${entries === 1 ? "y" : "ies"}, none of ` +
+            `which match the current @stable file set (a spec rename or move?)`;
       process.stderr.write(
         `::warning::Shard partition fell back to a FILE-COUNT balance: ${why}. The ` +
           `heavy real-LLM specs can pile onto one shard, which is the load-induced ` +
           `timeout #936 exists to prevent. The table is refreshed by the daily's ` +
           `"Refresh spec durations" step and committed to main; if this persists, that ` +
-          `step is not running (#1252).\n`,
+          `step is not running, or it is not recording these files (#1252).\n`,
       );
     }
     process.stdout.write(JSON.stringify({ shard_total: n, mode, include }) + "\n");
