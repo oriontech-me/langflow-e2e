@@ -676,6 +676,13 @@ jobs:
           mkdir -p tokens
           cp token-probes-${{ matrix.shard }}.jsonl tokens/ 2>/dev/null || true
           cp token-attrib-${{ matrix.shard }}.jsonl tokens/ 2>/dev/null || true
+          # §6.4: the provider this shard actually resolved, carried to the merge
+          # job. $GITHUB_ENV reaches later steps of THIS job only, and the POST
+          # lives in the merge job -- so the value rides the artifact that already
+          # crosses that boundary. Written unconditionally: an EMPTY file means
+          # the rotation declined to pin (every provider dry), which is a real
+          # outcome and must not be confused with a shard that failed to report.
+          printf '%s' "${MODEL_TEST_PROVIDER:-}" > "tokens/token-provider-${{ matrix.shard }}.txt"
           echo "--- token recorder stdout (tail) ---"
           tail -n 5 /tmp/tokens.log 2>/dev/null || true
 
@@ -1022,6 +1029,46 @@ jobs:
           # dispatch → "1" (suppressed), scheduled run → "" (not suppressed, the
           # knob's own truthiness check treats an empty string as "not set").
           TOKENS_SUPPRESS_HISTORY: ${{ github.event_name != 'schedule' && '1' || '' }}
+          TOKENS_SUMMARY_OUT: tokens-block.json
+
+      # §5.2 — the run's token spend, POSTed after the summarize computed it.
+      #
+      # The run's own POST (above) happens ~40 steps before this number exists,
+      # and must NOT be moved behind a telemetry step. So this re-POSTs the same
+      # payload with a `tokens` block added; the platform's edge function calls
+      # its token ingest on the already-recorded path too, so the run row is
+      # untouched and only the token rows land.
+      #
+      # Gated on the FILE, not on an exit code: merge-token-payload.mjs writes
+      # nothing when the run captured nothing, because a zeroed token block would
+      # clamp the run's token columns and read as "this run spent nothing".
+      - name: POST token consumption to QA Platform
+        if: always()
+        continue-on-error: true            # telemetry must never fail the suite
+        env:
+          QA_PLATFORM_ENDPOINT: ${{ vars.QA_PLATFORM_ENDPOINT }}
+          QA_E2E_AUTOMATION_TOKEN: ${{ secrets.QA_E2E_AUTOMATION_TOKEN }}
+          TOKENS_SUMMARY_OUT: tokens-block.json
+          TOKENS_DIR: all-tokens
+          PAYLOAD_IN: payload.json
+          PAYLOAD_OUT: payload-with-tokens.json
+        run: |
+          node scripts/merge-token-payload.mjs
+          if [ ! -f payload-with-tokens.json ]; then
+            echo "::notice::No token block for this run — nothing to POST."; exit 0; fi
+          if [ -z "$QA_PLATFORM_ENDPOINT" ] || [ -z "$QA_E2E_AUTOMATION_TOKEN" ]; then
+            echo "::warning::QA platform endpoint/token not configured — skipping token POST."; exit 0; fi
+          code=$(curl -s -o /tmp/tokresp.json -w '%{http_code}' -X POST "$QA_PLATFORM_ENDPOINT" \
+            -H "Authorization: Bearer $QA_E2E_AUTOMATION_TOKEN" -H "Content-Type: application/json" \
+            --data @payload-with-tokens.json)
+          echo "HTTP $code"; cat /tmp/tokresp.json || true
+          # tokens_received/tokens_inserted/tokens_dropped come back in the body;
+          # a dropped-row count is the signal that the block and the ingest
+          # disagree, so surface a mismatch instead of trusting HTTP 200 alone.
+          case "$code" in
+            200|201) echo "Token rows delivered.";;
+            *) echo "::warning::QA platform token POST failed ($code)";;
+          esac
 
       # Long-lived run history: append one JSON line per scheduled run to
       # reports/daily-history.jsonl and commit it back to main. See
