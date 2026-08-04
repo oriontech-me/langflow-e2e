@@ -598,6 +598,21 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          # Azure AI Foundry (§7.8, #1194 → #1270). Three variables because it is
+          # the first provider on the Model Providers page configured by a PAIR
+          # (key + the portal's OpenAI-compatible endpoint), plus the DEPLOYMENT
+          # NAME its inference is addressed by — a portal name, not a catalog id,
+          # which is the whole point of that coverage.
+          #
+          # Read ONLY here, never by the `Collect models` step above: Azure is
+          # deliberately absent from `providerConfigMap` (a two-variable provider
+          # does not fit its `api-key | base-url` union — see
+          # tests/helpers/provider-setup/provider-config.ts), so the sweep neither
+          # imports nor validates these. Absent, the spec's own probe skips its two
+          # credential tests with the concrete reason; the other four run regardless.
+          AZURE_AI_FOUNDRY_API_KEY: ${{ secrets.AZURE_AI_FOUNDRY_API_KEY }}
+          AZURE_AI_FOUNDRY_ENDPOINT: ${{ secrets.AZURE_AI_FOUNDRY_ENDPOINT }}
+          AZURE_AI_FOUNDRY_TEST_DEPLOYMENT: ${{ secrets.AZURE_AI_FOUNDRY_TEST_DEPLOYMENT }}
           # Turns the cleanup sidecar on: with TOKENS_ATTRIB unset the helper makes
           # no request and writes no file, which is every LOCAL run and nothing
           # else. NOT "the PR lane" — pr-validation.yml:711 sets it too, on purpose,

@@ -218,6 +218,24 @@ jobs:
       ANY_COMPLETION_PROVIDER: >-
         ${{ github.event.inputs.any_completion_provider == 'ollama' && 'ollama' || '' }}
       PLAYWRIGHT_RETRIES: ${{ github.event.inputs.retries }}
+      # Azure AI Foundry (§7.8, #1194 → #1270). At JOB level for the reason spelled
+      # out above the OLLAMA_* block: `.github/actions/run-e2e` declares per-step
+      # `env`, which ADDS to the job environment rather than replacing it, so the
+      # shared action needs no new inputs and no other lane moves.
+      #
+      # This lane is where a dispatch can PROVE the wiring: with the three secrets
+      # present the spec's two credential tests execute; without them they skip
+      # naming which variable is missing, and a wrong value skips naming the
+      # resource's answer instead — the probe distinguishes the two.
+      #
+      # Scoped to the Docker job on purpose. The external-URL job below runs no
+      # `collect-models` because writing our provider credentials as global
+      # variables into an instance we do not own is not ours to do (#1055), and
+      # these two tests STORE the credential pair in the target Langflow — the same
+      # rule, so it is not wired there.
+      AZURE_AI_FOUNDRY_API_KEY: ${{ secrets.AZURE_AI_FOUNDRY_API_KEY }}
+      AZURE_AI_FOUNDRY_ENDPOINT: ${{ secrets.AZURE_AI_FOUNDRY_ENDPOINT }}
+      AZURE_AI_FOUNDRY_TEST_DEPLOYMENT: ${{ secrets.AZURE_AI_FOUNDRY_TEST_DEPLOYMENT }}
       # The token sidecar's bounds, at JOB level because TWO steps read them: the
       # poller below and the test step of the `run-e2e` composite, where the attribution sidecar runs inside
       # `deleteFlow`'s teardown hook. They used to live in the poller step's own
