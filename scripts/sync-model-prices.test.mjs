@@ -461,6 +461,34 @@ test("sync-model-prices.yml still calls a script that exists, with the env it ne
   assert.match(wf, /^concurrency:/m, "two installers must not race — see the workflow's own comment");
 });
 
+test("the sync sources stay reviewable — no raw control byte makes git call them binary", () => {
+  // Not a style rule. `buildPricePayload` separates its composite key with a NUL,
+  // and that NUL was written as a RAW BYTE, so git classified the script as binary
+  // and GitHub rendered the whole thing as "Binary files differ" — the review of
+  // the file this PR exists to add had nothing in it to read. The escape `\u0000`
+  // is the same value at runtime and leaves the file text.
+  for (const file of ["scripts/sync-model-prices.mjs", "scripts/sync-model-prices.test.mjs"]) {
+    const bytes = readFileSync(file);
+    const offset = bytes.findIndex(
+      (b) => b < 0x09 || b === 0x0b || b === 0x0c || (b >= 0x0e && b <= 0x1f),
+    );
+    assert.equal(
+      offset,
+      -1,
+      `${file} carries a raw control byte at offset ${offset} (0x${bytes[offset]?.toString(16)}) — ` +
+        `git will diff this file as binary and the next reviewer will see nothing. Write it as an escape.`,
+    );
+  }
+});
+
+test("the dedup key still separates on a NUL, escape and all", () => {
+  // The escape must not have quietly become a space: " " appears inside no
+  // price_key today, but a separator that can occur in the data is how
+  // ("a b", "c") and ("a", "b c") collide into one key and a duplicate goes unseen.
+  const src = readFileSync("scripts/sync-model-prices.mjs", "utf8");
+  assert.match(src, /\$\{r\.price_key\}\\u0000\$\{r\.since\}/);
+});
+
 test("the script the workflow runs is dependency-free", () => {
   // The workflow deliberately skips `npm ci`. An import outside node: builtins
   // would make the install fail on a lane that never installs anything.
