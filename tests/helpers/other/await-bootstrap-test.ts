@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 import { addFlowToTestOnEmptyLangflow } from "../flows/add-flow-to-test-on-empty-langflow";
 import { openNewFlowTemplatesModal } from "../flows/open-new-flow-templates-modal";
+import { waitForPageEntry } from "./page-entry-barrier";
 
 export const awaitBootstrapTest = async (
   page: Page,
@@ -13,9 +14,10 @@ export const awaitBootstrapTest = async (
     await page.goto("/");
   }
 
-  await page.waitForSelector('[data-testid="mainpage_title"]', {
-    timeout: 30000,
-  });
+  // Attributed barrier, not a bare waitForSelector: a backend that is down or
+  // restarting produces the identical timeout as a UI regression here, and that
+  // ambiguity mis-triaged #1262. See helpers/other/page-entry-barrier.ts.
+  await waitForPageEntry(page, '[data-testid="mainpage_title"]', 30000);
 
   const countEmptyButton = await page
     .getByTestId("new_project_btn_empty_page")
@@ -24,9 +26,7 @@ export const awaitBootstrapTest = async (
     await addFlowToTestOnEmptyLangflow(page);
   }
 
-  await page.waitForSelector('[id="new-project-btn"]', {
-    timeout: 30000,
-  });
+  await waitForPageEntry(page, '[id="new-project-btn"]', 30000);
 
   if (!options?.skipModal) {
     let modalCount = 0;
@@ -58,9 +58,7 @@ export const awaitBootstrapTest = async (
         // new-project-btn is present again — otherwise the retry clicks into
         // the canvas and times out.
         await page.goto("/");
-        await page.waitForSelector('[id="new-project-btn"]', {
-          timeout: 30000,
-        });
+        await waitForPageEntry(page, '[id="new-project-btn"]', 30000);
         await page.waitForTimeout(1000);
       }
     }

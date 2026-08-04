@@ -2,6 +2,7 @@ import type { Page, Response } from "@playwright/test";
 import { openNewFlowTemplatesModal } from "./open-new-flow-templates-modal";
 import { getAuthToken } from "../auth/get-auth-token";
 import { deleteFlow } from "./delete-flow";
+import { waitForPageEntry } from "../other/page-entry-barrier";
 
 /** How many times the template pick is retried when its creation POST fails. */
 const MAX_PICK_ATTEMPTS = 3;
@@ -204,9 +205,7 @@ export const loadTemplateByName = async (
 
   try {
     await page.goto("/");
-    await page.waitForSelector('[data-testid="mainpage_title"]', {
-      timeout: 30000,
-    });
+    await waitForPageEntry(page, '[data-testid="mainpage_title"]', 30000);
 
     let flowId: string | undefined;
     let lastCreation: FlowPost | undefined;
@@ -246,9 +245,7 @@ export const loadTemplateByName = async (
         // The failed pick leaves the app on the flows list with a toast; start
         // the next attempt from a known state.
         await page.goto("/");
-        await page.waitForSelector('[data-testid="mainpage_title"]', {
-          timeout: 30000,
-        });
+        await waitForPageEntry(page, '[data-testid="mainpage_title"]', 30000);
       }
     }
 
