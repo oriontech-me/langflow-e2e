@@ -116,15 +116,20 @@ jobs:
 
       - name: Run E2E tests
         run: |
-          GREP="${{ github.event.inputs.test_grep }}"
-          if [ -n "$GREP" ]; then
-            npx playwright test --grep "$GREP" --reporter=github
+          FILTER="$(node scripts/build-grep-filter.mjs --grep="$TEST_GREP")"
+          if [ -n "$FILTER" ]; then
+            npx playwright test --grep "$FILTER" --reporter=github
           else
             npx playwright test --reporter=github
           fi
         env:
           CI: "true"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          # Through env, never interpolated into the script body — the rule
+          # `.github/actions/run-e2e` states for its own inputs. As `${{ … }}` inside
+          # `run:`, a dispatch value like `"; rm -rf` is substituted before bash parses
+          # the line and breaks out of the string.
+          TEST_GREP: ${{ github.event.inputs.test_grep }}
 
       # Destructive lane (#1010). `@destructive` tests mutate account-wide state
       # (deleting every project of the shared superuser), so playwright.config.ts
@@ -140,16 +145,17 @@ jobs:
       - name: Run destructive lane
         if: always()
         run: |
-          GREP="${{ github.event.inputs.test_grep }}"
-          if [ -n "$GREP" ]; then
-            npx playwright test --grep "(?=.*@destructive)(?=.*${GREP})" --pass-with-no-tests --reporter=github --output=test-results-destructive
-          else
-            npx playwright test --grep "@destructive" --pass-with-no-tests --reporter=github --output=test-results-destructive
-          fi
+          # @destructive, narrowed by the optional dispatch filter. Composed by the
+          # script so an alternation in `test_grep` is ANDed as a unit — interpolated
+          # inline it split the lookahead and ran a narrower lane (#1275).
+          FILTER="$(node scripts/build-grep-filter.mjs --require=@destructive --grep="$TEST_GREP")"
+          npx playwright test --grep "$FILTER" --pass-with-no-tests \
+            --reporter=github --output=test-results-destructive
         env:
           CI: "true"
           PW_DESTRUCTIVE: "1"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          TEST_GREP: ${{ github.event.inputs.test_grep }}
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@v7
