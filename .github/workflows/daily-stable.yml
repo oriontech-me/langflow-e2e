@@ -676,6 +676,13 @@ jobs:
           mkdir -p tokens
           cp token-probes-${{ matrix.shard }}.jsonl tokens/ 2>/dev/null || true
           cp token-attrib-${{ matrix.shard }}.jsonl tokens/ 2>/dev/null || true
+          # §6.4: the provider this shard actually resolved, carried to the merge
+          # job. $GITHUB_ENV reaches later steps of THIS job only, and the POST
+          # lives in the merge job -- so the value rides the artifact that already
+          # crosses that boundary. Written unconditionally: an EMPTY file means
+          # the rotation declined to pin (every provider dry), which is a real
+          # outcome and must not be confused with a shard that failed to report.
+          printf '%s' "${MODEL_TEST_PROVIDER:-}" > "tokens/token-provider-${{ matrix.shard }}.txt"
           echo "--- token recorder stdout (tail) ---"
           tail -n 5 /tmp/tokens.log 2>/dev/null || true
 
@@ -762,8 +769,10 @@ jobs:
 
       # Token consumption artifacts from every shard (#1197). Flattened like the
       # blob download above: each shard names its files uniquely
-      # (token-probes-<shard>.jsonl / token-attrib-<shard>.jsonl), so
-      # merge-multiple cannot collide them.
+      # (token-probes-<shard>.jsonl / token-attrib-<shard>.jsonl /
+      # token-provider-<shard>.txt), so merge-multiple cannot collide them.
+      # NOTE: this `path:` is the value merge-token-payload.mjs is given as
+      # TOKENS_DIR — the provider files are read from here, so the two must agree.
       # continue-on-error: same reasoning as the liveness download — a shard that
       # never uploaded (an old job, a run that died in prep) must not fail the merge.
       - name: Download shard token consumption data
@@ -1022,6 +1031,87 @@ jobs:
           # dispatch → "1" (suppressed), scheduled run → "" (not suppressed, the
           # knob's own truthiness check treats an empty string as "not set").
           TOKENS_SUPPRESS_HISTORY: ${{ github.event_name != 'schedule' && '1' || '' }}
+          TOKENS_SUMMARY_OUT: tokens-block.json
+
+      # §5.2 — the run's token spend, POSTed after the summarize computed it.
+      #
+      # The run's own POST (above) happens ~40 steps before this number exists,
+      # and must NOT be moved behind a telemetry step. So this re-POSTs the same
+      # payload with a `tokens` block added; the platform's edge function calls
+      # its token ingest on the already-recorded path too, so the run row is
+      # untouched and only the token rows land.
+      #
+      # Gated on the FILE, not on an exit code: merge-token-payload.mjs writes
+      # nothing when the run captured nothing, because a zeroed token block would
+      # clamp the run's token columns and read as "this run spent nothing".
+      - name: POST token consumption to QA Platform
+        if: always()
+        continue-on-error: true            # telemetry must never fail the suite
+        env:
+          QA_PLATFORM_ENDPOINT: ${{ vars.QA_PLATFORM_ENDPOINT }}
+          QA_E2E_AUTOMATION_TOKEN: ${{ secrets.QA_E2E_AUTOMATION_TOKEN }}
+          TOKENS_SUMMARY_OUT: tokens-block.json
+          TOKENS_DIR: all-tokens
+          PAYLOAD_IN: payload.json
+          PAYLOAD_OUT: payload-with-tokens.json
+        run: |
+          merge_log=$(node scripts/merge-token-payload.mjs 2>&1) || true
+          echo "$merge_log"
+          verdict=$(printf '%s\n' "$merge_log" | sed -n 's/^merge-token-payload: code=//p' | tail -n 1)
+          if [ ! -f payload-with-tokens.json ]; then
+            # The three no-POST outcomes are NOT the same fact, and the script
+            # already tells them apart. Collapsing them here would report a block
+            # that was computed and then LOST as a run that captured nothing —
+            # the absent-vs-zero conflation this path exists to prevent (#1012).
+            case "$verdict" in
+              block_missing)
+                echo "::notice::No token block for this run — the run captured nothing to POST.";;
+              block_unparseable)
+                echo "::warning::The token block exists but is unparseable — this run's token spend was computed and then LOST, not zero. See the merge log above.";;
+              payload_missing|payload_unparseable)
+                echo "::warning::The run payload ($verdict) is unusable, so the token block could not be attached — the tokens were computed and are being discarded.";;
+              *)
+                echo "::warning::merge-token-payload reached no verdict (code='$verdict') — treat this run's token spend as UNKNOWN, not zero.";;
+            esac
+            exit 0; fi
+          if [ -z "$QA_PLATFORM_ENDPOINT" ] || [ -z "$QA_E2E_AUTOMATION_TOKEN" ]; then
+            echo "::warning::QA platform endpoint/token not configured — skipping token POST."; exit 0; fi
+          code=$(curl -s -o /tmp/tokresp.json -w '%{http_code}' -X POST "$QA_PLATFORM_ENDPOINT" \
+            -H "Authorization: Bearer $QA_E2E_AUTOMATION_TOKEN" -H "Content-Type: application/json" \
+            --data @payload-with-tokens.json)
+          echo "HTTP $code"; cat /tmp/tokresp.json || true
+          # HTTP 200 is NOT the verdict (#1253 review, finding 2). The ingest is
+          # diagnostic on the platform's side too, so it never fails the request:
+          # a rejected or lost block comes back inside a 200. What the body says,
+          # verified against the edge function's own contract
+          # (quality-platform, e2e-automation-runs-create/index.ts — `tokenFields`):
+          #   tokens_status ∈ skipped | ingested | rejected | failed  (always present)
+          #   tokens_dropped  — the RPC's own count of payload rows that did NOT land
+          #   tokens_superseded — a newer attempt already holds this run's rows
+          # `ingested` requires the RPC to have updated the run; `rejected` is
+          # "no such run" or "this attempt is older than the one recorded". So the
+          # only success is `ingested` with nothing dropped, and every other shape
+          # gets named rather than printed as delivered.
+          if [ "$code" != "200" ] && [ "$code" != "201" ]; then
+            echo "::warning::QA platform token POST failed ($code)"; exit 0; fi
+          # Read through node, not grep: the four values are read from ONE parse of
+          # the body, so a field that is present-but-null cannot be confused with a
+          # field that is absent. `absent` is a literal the branches below check for
+          # — an unreadable body must not resolve to a plausible-looking "0".
+          fields=$(node -e 'let r={};try{r=JSON.parse(require("node:fs").readFileSync("/tmp/tokresp.json","utf8"))}catch{};process.stdout.write([r.tokens_status??"absent",r.tokens_dropped??"absent",r.tokens_received??"absent",r.tokens_superseded??"absent"].join(" "))')
+          # shellcheck disable=SC2086  # deliberate word splitting: four space-free fields
+          set -- $fields
+          t_status="${1:-absent}"; t_dropped="${2:-absent}"; t_received="${3:-absent}"; t_superseded="${4:-absent}"
+          echo "tokens_status=$t_status dropped=$t_dropped received=$t_received superseded=$t_superseded"
+          if [ "$t_status" = "absent" ]; then
+            echo "::warning::HTTP $code but the response carries no tokens_status — cannot confirm the rows landed. Treat this run's token spend as UNKNOWN."
+          elif [ "$t_status" != "ingested" ]; then
+            echo "::warning::QA platform did not ingest the token rows (tokens_status=$t_status, superseded=$t_superseded) — the run row is fine, the token rows are NOT recorded."
+          elif [ "$t_dropped" != "0" ]; then
+            echo "::warning::QA platform dropped $t_dropped of $t_received token rows — the block and the ingest disagree (missing model, or two payload rows on one identity)."
+          else
+            echo "Token rows delivered — $t_received row(s) ingested, none dropped."
+          fi
 
       # Long-lived run history: append one JSON line per scheduled run to
       # reports/daily-history.jsonl and commit it back to main. See

@@ -311,6 +311,13 @@ const realIo = {
   // section on exactly the red days it matters (#1197 review, finding C1).
   writeFile: (p, text) => fs.appendFileSync(p, text),
   appendFile: (p, text) => fs.appendFileSync(p, text),
+  // A genuine overwrite seam, distinct from writeFile/appendFile above: the
+  // tokens block (below) is a single JSON document, not a log line, and
+  // TOKENS_SUMMARY_OUT is a dedicated file this script owns outright — nothing
+  // else appends to it the way other steps append to GITHUB_STEP_SUMMARY. A
+  // second `--summarize` against the same path must replace the block, not
+  // concatenate onto it (`{…}{…}` is not JSON).
+  writeOut: (p, text) => fs.writeFileSync(p, text),
 };
 
 export async function summarize({
@@ -319,12 +326,14 @@ export async function summarize({
   listDir = realIo.listDir,
   writeFile = realIo.writeFile,
   appendFile = realIo.appendFile,
+  writeOut = realIo.writeOut,
   log = console.log,
 } = {}) {
   const dir = env.TOKENS_DIR || "all-tokens";
   const attribDir = env.TOKENS_ATTRIB_DIR || dir;
   const historyPath = env.TOKENS_HISTORY || "reports/token-history.jsonl";
   const summaryPath = env.TOKENS_SUMMARY_MD || env.GITHUB_STEP_SUMMARY;
+  const summaryOutPath = env.TOKENS_SUMMARY_OUT;
   // Measurement-only lanes (#1183 — pr-validation.yml, manual.yml). Those lanes
   // want the step-summary table (so the run's own spend is visible) but must
   // NEVER add a line to reports/token-history.jsonl: that file is the daily's
@@ -490,6 +499,44 @@ export async function summarize({
       appendFile(historyPath, `${JSON.stringify(runLine)}\n`);
     } catch (error) {
       log(`token summary: could not append the history line: ${error?.message || error}`);
+    }
+  }
+
+  // §5.2: the block the merge step folds into payload.json and re-POSTs. Field
+  // names are the INGEST RPC's, not this module's -- the authority is
+  // quality-platform's live 20260803130600_e2e_token_ingest_preserve_upsert_clamp.sql
+  // (it DROPped and replaced 20260803130300_e2e_ingest_run_tokens.sql, which three
+  // files here used to cite -- #1253 review, finding 7), which
+  // destructures exactly `traces`, `total_tokens`, `span_tokens`,
+  // `mismatch_traces` and `rows[]`. Everything else here (unattributed,
+  // attrib_*) is accepted and ignored until the platform reads it (§6.3).
+  //
+  // Written ONLY on a run that captured something: this code sits below the
+  // zero-capture early return on purpose. A block of zeros would clamp the run's
+  // token columns to 0, which is indistinguishable from a run that genuinely
+  // spent nothing -- the distinction that table exists to keep.
+  //
+  // Through `writeOut`, NOT `writeFile`: `writeFile`'s real implementation is
+  // `fs.appendFileSync` (required for GITHUB_STEP_SUMMARY's append-only
+  // contract, see realIo above). This block is a single JSON document, and a
+  // second `--summarize` against the same TOKENS_SUMMARY_OUT must replace it,
+  // not append `{…}{…}` — the merge step would then read invalid JSON and
+  // silently skip the token POST.
+  if (summaryOutPath) {
+    const block = {
+      traces: agg.totals.traces,
+      total_tokens: agg.totals.total_tokens,
+      span_tokens: agg.spanTokens,
+      mismatch_traces: agg.mismatches.length,
+      unattributed: agg.unattributed,
+      attrib_ms: agg.attrib_ms,
+      attrib_calls: agg.attrib_calls,
+      rows: agg.bySpecModel,
+    };
+    try {
+      writeOut(summaryOutPath, JSON.stringify(block));
+    } catch (error) {
+      log(`token summary: could not write the tokens block: ${error?.message || error}`);
     }
   }
 

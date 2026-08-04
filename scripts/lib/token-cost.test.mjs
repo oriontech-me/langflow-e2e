@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { usdFor, aggregate, parsePrices, loadPrices } from "./token-cost.mjs";
+import { usdFor, aggregate, parsePrices, loadPrices, resolvePriceKey } from "./token-cost.mjs";
 
 const PRICES = {
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
@@ -566,4 +566,197 @@ test("a cost record perturbs no token figure — totals, by_model, by_spec, unat
     false,
     "a cost record must never appear as a spending spec",
   );
+});
+
+// #1217 §5.3: the platform's e2e_test_token_usage.price_key records WHICH table
+// key priced a row. resolveBands() already computes it and discards it; these
+// tests pin the extracted function to the resolver's real behaviour, including
+// the two refusals that exist to stop a wrong number (#1211).
+const KEYS = {
+  "gpt-4o": { inputPerMillion: 2.5, outputPerMillion: 10 },
+  "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  "gemini-2.5-flash": { inputPerMillion: 0.3, outputPerMillion: 2.5 },
+  "claude-opus-4": { inputPerMillion: 15, outputPerMillion: 75 },
+};
+
+test("resolvePriceKey returns the exact key when the model is priced by name", () => {
+  assert.equal(resolvePriceKey("gpt-4o-mini", KEYS), "gpt-4o-mini");
+});
+
+test("resolvePriceKey resolves a dated id to its family key", () => {
+  assert.equal(resolvePriceKey("claude-opus-4-20250514", KEYS), "claude-opus-4");
+});
+
+test("resolvePriceKey prefers the longest matching key", () => {
+  // Matches both gpt-4o (leftover "-mini-search-preview", refused) and
+  // gpt-4o-mini (leftover "-search-preview", allowed).
+  assert.equal(resolvePriceKey("gpt-4o-mini-search-preview", KEYS), "gpt-4o-mini");
+});
+
+test("resolvePriceKey refuses a separately-priced tier suffix", () => {
+  // "-lite" is a real cheaper tier, not alias noise (#1211). Pricing it at the
+  // non-Lite rate is worse than admitting we cannot price it.
+  assert.equal(resolvePriceKey("gemini-2.5-flash-lite", KEYS), null);
+});
+
+test("resolvePriceKey returns null for an unknown family", () => {
+  assert.equal(resolvePriceKey("mistral-large", KEYS), null);
+});
+
+test("resolvePriceKey returns null on missing arguments", () => {
+  assert.equal(resolvePriceKey("", KEYS), null);
+  assert.equal(resolvePriceKey("gpt-4o", null), null);
+});
+
+test("usdFor is unchanged by the resolvePriceKey extraction", () => {
+  // The refactor's whole risk is a behaviour change in pricing. Pin the three
+  // paths that matter: exact key, substring family, refused suffix.
+  assert.equal(usdFor("gpt-4o-mini", 1_000_000, 0, KEYS), 0.15);
+  assert.equal(usdFor("claude-opus-4-20250514", 1_000_000, 0, KEYS), 15);
+  assert.equal(usdFor("gemini-2.5-flash-lite", 1_000_000, 0, KEYS), null);
+});
+
+// #1217 §5.3: bySpecModel is the row shape e2e_ingest_run_tokens destructures.
+// Its identity must match the DB's unique index — (run_id, COALESCE(test_key,''),
+// model) — so one row per (spec_path, title_path, model) and exactly ONE
+// unattributed row per model. See 20260803130200_e2e_test_token_usage.sql:83.
+const P = { "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 } };
+
+const twoModelProbe = (traceId, over = {}) => ({
+  trace_id: traceId,
+  flow_id: "f1",
+  start_time: "2026-08-03T13:00:00.000Z",
+  status: "ok",
+  total_tokens: 300,
+  models: [
+    { model: "gpt-4o-mini", prompt_tokens: 100, completion_tokens: 100, total_tokens: 200, calls: 2 },
+    { model: "gemini-3.5-flash", prompt_tokens: 60, completion_tokens: 40, total_tokens: 100, calls: 1 },
+  ],
+  ...over,
+});
+
+test("bySpecModel crosses spec and model, and carries the price key", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1")],
+    attributions: [{ trace_id: "t1", file: "a.spec.ts", test: "does a thing" }],
+    prices: P,
+  });
+  const rows = [...agg.bySpecModel].sort((x, y) => x.model.localeCompare(y.model));
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[0], {
+    spec_path: "a.spec.ts",
+    title_path: "does a thing",
+    model: "gemini-3.5-flash",
+    price_key: null,
+    calls: 1,
+    prompt_tokens: 60,
+    completion_tokens: 40,
+    total_tokens: 100,
+  });
+  assert.deepEqual(rows[1], {
+    spec_path: "a.spec.ts",
+    title_path: "does a thing",
+    model: "gpt-4o-mini",
+    price_key: "gpt-4o-mini",
+    calls: 2,
+    prompt_tokens: 100,
+    completion_tokens: 100,
+    total_tokens: 200,
+  });
+});
+
+test("bySpecModel accumulates repeat traces of the same spec and model", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1"), twoModelProbe("t2")],
+    attributions: [
+      { trace_id: "t1", file: "a.spec.ts", test: "does a thing" },
+      { trace_id: "t2", file: "a.spec.ts", test: "does a thing" },
+    ],
+    prices: P,
+  });
+  const row = agg.bySpecModel.find((r) => r.model === "gpt-4o-mini");
+  assert.equal(agg.bySpecModel.length, 2, "two traces of one spec must not make four rows");
+  assert.equal(row.calls, 4);
+  assert.equal(row.total_tokens, 400);
+});
+
+test("bySpecModel keeps two different tests in the same file apart", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1"), twoModelProbe("t2")],
+    attributions: [
+      { trace_id: "t1", file: "a.spec.ts", test: "first" },
+      { trace_id: "t2", file: "a.spec.ts", test: "second" },
+    ],
+    prices: P,
+  });
+  const titles = agg.bySpecModel.filter((r) => r.model === "gpt-4o-mini").map((r) => r.title_path).sort();
+  assert.deepEqual(titles, ["first", "second"]);
+});
+
+test("unattributed traces collapse to ONE row per model with null identity", () => {
+  // The DB's unique index treats two NULL test_keys as the SAME row
+  // (COALESCE(test_key,'')), so emitting two would not duplicate — the live
+  // ingest upserts and keeps the LAST, counting the loser in `rows_dropped`.
+  // One of the two numbers would be silently discarded (#1253 review, finding 7).
+  const agg = aggregate({
+    probes: [twoModelProbe("t1"), twoModelProbe("t2")],
+    attributions: [],
+    prices: P,
+  });
+  assert.equal(agg.bySpecModel.length, 2);
+  for (const row of agg.bySpecModel) {
+    assert.equal(row.spec_path, null);
+    assert.equal(row.title_path, null);
+  }
+  const row = agg.bySpecModel.find((r) => r.model === "gpt-4o-mini");
+  assert.equal(row.calls, 4);
+  assert.equal(row.total_tokens, 400);
+});
+
+test("an attributed and an unattributed trace of the same model stay separate rows", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1"), twoModelProbe("t2")],
+    attributions: [{ trace_id: "t1", file: "a.spec.ts", test: "named" }],
+    prices: P,
+  });
+  const mini = agg.bySpecModel.filter((r) => r.model === "gpt-4o-mini");
+  assert.equal(mini.length, 2);
+  assert.deepEqual(
+    mini.map((r) => r.spec_path).sort((a, b) => String(a).localeCompare(String(b))),
+    [null, "a.spec.ts"].sort((a, b) => String(a).localeCompare(String(b))),
+  );
+});
+
+test("spanTokens is the span-derived total, independent of the trace totals", () => {
+  // G3: trace-authoritative vs span-derived are two numbers and neither wins.
+  // This probe's own total (300) disagrees with its spans (200+100=300 here, so
+  // make one disagree deliberately).
+  const agg = aggregate({
+    probes: [twoModelProbe("t1", { total_tokens: 999 })],
+    attributions: [],
+    prices: P,
+  });
+  assert.equal(agg.spanTokens, 300, "spans sum to 300 regardless of the trace's claim");
+  assert.equal(agg.totals.total_tokens, 999, "the trace's own total stays authoritative");
+  assert.equal(agg.mismatches.length, 1, "and the disagreement is named");
+});
+
+test("spanTokens falls back to prompt+completion when a span omits its total", () => {
+  const agg = aggregate({
+    probes: [
+      {
+        trace_id: "t1",
+        models: [{ model: "gpt-4o-mini", prompt_tokens: 7, completion_tokens: 3, calls: 1 }],
+      },
+    ],
+    attributions: [],
+    prices: P,
+  });
+  assert.equal(agg.spanTokens, 10);
+});
+
+test("bySpecModel is empty when there are no probes", () => {
+  const agg = aggregate({ probes: [], attributions: [], prices: P });
+  assert.deepEqual(agg.bySpecModel, []);
+  assert.equal(agg.spanTokens, 0);
 });

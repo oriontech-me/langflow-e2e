@@ -267,6 +267,14 @@ function fakeFs(files, { throwAppend = false, throwWrite = false } = {}) {
       if (throwAppend) throw new Error("ENOSPC: no space left on device");
       appended[p] = (appended[p] || "") + text;
     },
+    // Overwrite, NOT append — models fs.writeFileSync (realIo.writeOut), unlike
+    // writeFile above. Backs the tokens-block seam: a second `--summarize`
+    // against the same path must replace the prior document, never concatenate
+    // onto it, or a re-POST reads `{…}{…}` and silently fails to parse.
+    writeOut: (p, text) => {
+      if (throwWrite) throw new Error("ENOSPC: no space left on device");
+      written[p] = text;
+    },
   };
 }
 
@@ -1054,6 +1062,133 @@ test("a summary-write failure is logged and summarize still resolves 0", async (
     logs.some((l) => /could not write the step summary/.test(l)),
     `expected a summary-write-failure log, got: ${JSON.stringify(logs)}`,
   );
+});
+
+// --- §5.2: the tokens block the merge step POSTs ---
+//
+// Field names are the INGEST RPC's, not this module's -- quality-platform's
+// live 20260803130600_e2e_token_ingest_preserve_upsert_clamp.sql destructures exactly
+// `traces`, `total_tokens`, `span_tokens`, `mismatch_traces` and `rows[]`.
+
+// A second trace whose OWN total disagrees with its spans, so span_tokens and
+// total_tokens are different numbers in the fixture. Without this the two fields
+// are equal and a test asserting span_tokens cannot tell them apart (G3).
+const MISMATCH_PROBE_LINE = JSON.stringify({
+  trace_id: "t2",
+  flow_id: "f2",
+  start_time: "2026-07-31T13:40:00Z",
+  status: "ok",
+  total_tokens: 500,
+  models: [
+    { model: "gpt-4o-mini", prompt_tokens: 10, completion_tokens: 10, total_tokens: 20, calls: 1 },
+  ],
+});
+
+test("summarize writes the tokens block to TOKENS_SUMMARY_OUT", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n${MISMATCH_PROBE_LINE}\n`,
+    "all-tokens/token-attrib-1.jsonl": `${ATTRIB_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({
+    env: { ...baseEnv, TOKENS_SUMMARY_OUT: "tokens-block.json" },
+    ...fs2,
+    log: () => {},
+  });
+
+  const block = JSON.parse(fs2.written["tokens-block.json"]);
+  assert.equal(block.traces, 2);
+  assert.equal(block.total_tokens, 588, "trace-authoritative: 88 + 500");
+  assert.equal(block.span_tokens, 108, "span-derived: 88 + 20 -- a DIFFERENT number (G3)");
+  assert.equal(block.mismatch_traces, 1, "and the disagreement is counted, not reconciled");
+
+  // t1 is attributed, t2 is not -- same model, so this also pins that the two
+  // stay separate rows (the DB's unique index keys on test_key AND model).
+  assert.equal(block.rows.length, 2);
+  const named = block.rows.find((r) => r.spec_path !== null);
+  assert.equal(named.spec_path, "tests-automations/regression/core-functionality/llm-agents/x.spec.ts");
+  assert.equal(named.title_path, "agent suite");
+  assert.equal(named.model, "gpt-4o-mini");
+  assert.equal(named.price_key, "gpt-4o-mini");
+  const anon = block.rows.find((r) => r.spec_path === null);
+  assert.equal(anon.title_path, null);
+  assert.equal(anon.total_tokens, 20);
+
+  // A1: the coverage signal is the residue that already exists, not a spec ratio.
+  assert.equal(block.unattributed.traces, 1);
+  assert.equal(block.unattributed.total_tokens, 500);
+  assert.ok("attrib_calls" in block && "attrib_ms" in block);
+});
+
+test("summarize writes NO tokens block when the run captured nothing", async () => {
+  // G4: a block of zeros would clamp the run's token columns to 0, which is
+  // indistinguishable from a run that genuinely spent nothing -- the one
+  // distinction that table exists to keep
+  // (20260803130100_e2e_run_token_columns.sql:14-16).
+  const fs2 = fakeFs({ "prices.json": PRICES });
+  await summarize({
+    env: { ...baseEnv, TOKENS_SUMMARY_OUT: "tokens-block.json" },
+    ...fs2,
+    log: () => {},
+  });
+  assert.equal("tokens-block.json" in fs2.written, false);
+});
+
+test("summarize writes no tokens block when TOKENS_SUMMARY_OUT is unset", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  assert.equal("tokens-block.json" in fs2.written, false);
+  assert.ok(fs2.written["summary.md"], "the step summary still got written — summarize DID run");
+});
+
+test("a failed tokens-block write degrades the telemetry, not the run", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const logged = [];
+  // Throw for the tokens block ONLY (via its own `writeOut` seam), so the
+  // failure is isolated from the step-summary write that fakeFs's own
+  // `throwWrite` would also break.
+  const result = await summarize({
+    env: { ...baseEnv, TOKENS_SUMMARY_OUT: "tokens-block.json" },
+    ...fs2,
+    writeOut: (p, text) => {
+      if (p === "tokens-block.json") throw new Error("ENOSPC: no space left on device");
+      return fs2.writeOut(p, text);
+    },
+    log: (m) => logged.push(m),
+  });
+  assert.equal(result, 0, "a telemetry write failure must not change summarize's exit code");
+  assert.ok(
+    logged.some((m) => /tokens block/i.test(m) && /ENOSPC/.test(m)),
+    `expected a named failure in the log, got: ${JSON.stringify(logged)}`,
+  );
+});
+
+// Regression guard: the tokens block used to go through `writeFile`, whose real
+// implementation is `fs.appendFileSync` (needed for GITHUB_STEP_SUMMARY's
+// append-only contract). That seam is correct for the step summary but wrong
+// for this block -- a single JSON document, not a log line -- so a second
+// `--summarize` against the same TOKENS_SUMMARY_OUT used to concatenate
+// `{…}{…}`, which merge-token-payload.mjs then reads as unparseable and
+// silently skips. `writeOut` exists precisely so this cannot happen again.
+test("a second --summarize against the same TOKENS_SUMMARY_OUT still parses", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TOKENS_SUMMARY_OUT: "tokens-block.json" };
+
+  await summarize({ env, ...fs2, log: () => {} });
+  await summarize({ env, ...fs2, log: () => {} });
+
+  const block = JSON.parse(fs2.written["tokens-block.json"]);
+  assert.equal(block.traces, 1);
+  assert.equal(block.total_tokens, 88);
 });
 
 // --- Structural guard: is the daily workflow actually wired to this script? ---
