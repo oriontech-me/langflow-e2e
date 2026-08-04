@@ -325,6 +325,7 @@ export async function summarize({
   const attribDir = env.TOKENS_ATTRIB_DIR || dir;
   const historyPath = env.TOKENS_HISTORY || "reports/token-history.jsonl";
   const summaryPath = env.TOKENS_SUMMARY_MD || env.GITHUB_STEP_SUMMARY;
+  const summaryOutPath = env.TOKENS_SUMMARY_OUT;
   // Measurement-only lanes (#1183 — pr-validation.yml, manual.yml). Those lanes
   // want the step-summary table (so the run's own spend is visible) but must
   // NEVER add a line to reports/token-history.jsonl: that file is the daily's
@@ -490,6 +491,35 @@ export async function summarize({
       appendFile(historyPath, `${JSON.stringify(runLine)}\n`);
     } catch (error) {
       log(`token summary: could not append the history line: ${error?.message || error}`);
+    }
+  }
+
+  // §5.2: the block the merge step folds into payload.json and re-POSTs. Field
+  // names are the INGEST RPC's, not this module's -- the authority is
+  // quality-platform's 20260803130300_e2e_ingest_run_tokens.sql, which
+  // destructures exactly `traces`, `total_tokens`, `span_tokens`,
+  // `mismatch_traces` and `rows[]`. Everything else here (unattributed,
+  // attrib_*) is accepted and ignored until the platform reads it (§6.3).
+  //
+  // Written ONLY on a run that captured something: this code sits below the
+  // zero-capture early return on purpose. A block of zeros would clamp the run's
+  // token columns to 0, which is indistinguishable from a run that genuinely
+  // spent nothing -- the distinction that table exists to keep.
+  if (summaryOutPath) {
+    const block = {
+      traces: agg.totals.traces,
+      total_tokens: agg.totals.total_tokens,
+      span_tokens: agg.spanTokens,
+      mismatch_traces: agg.mismatches.length,
+      unattributed: agg.unattributed,
+      attrib_ms: agg.attrib_ms,
+      attrib_calls: agg.attrib_calls,
+      rows: agg.bySpecModel,
+    };
+    try {
+      writeFile(summaryOutPath, JSON.stringify(block));
+    } catch (error) {
+      log(`token summary: could not write the tokens block: ${error?.message || error}`);
     }
   }
 
