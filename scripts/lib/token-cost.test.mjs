@@ -167,6 +167,10 @@ test("the shipped price table covers the models measured against Langflow 1.12.0
     "claude-sonnet-4-6",
     "claude-sonnet-5",
     "claude-opus-5",
+    // §7.2: added after 2026-08-03 proved an unpriced haiku silences the whole
+    // Anthropic provider — it is the cost-preferred model, so it is the one that
+    // most needs to resolve.
+    "claude-haiku-4-5",
     "gemini-2.5-flash",
     "gemini-flash-latest",
     // #1197 re-review, finding B: gemini-3.5-flash was the run's largest
@@ -177,6 +181,50 @@ test("the shipped price table covers the models measured against Langflow 1.12.0
     const usd = usdFor(model, 1, 1, prices, REPRESENTATIVE_DATE);
     assert.ok(Number.isFinite(usd), `${model} must resolve to a numeric price on ${REPRESENTATIVE_DATE}`);
   }
+});
+
+// §7.2: `claude-haiku-4-5` is what `resolveClaudeModel("haiku")` selects in
+// anthropic-provider.spec.ts, and CANDIDATE_PREFS.anthropic leads with it — the
+// one entry in that map chosen for PRICE rather than compatibility
+// (collect-models.ts:148-155). It had no price entry, so on 2026-08-03 an entire
+// provider's spend priced to nothing: four Anthropic tests passed, at least three
+// real Claude completions ran, and `by_model` carried no Claude row at all.
+//
+// Rate verified 2026-08-03 against Anthropic's published pricing page: $1/$5 per
+// MTok, which also matches the figure already written down at
+// collect-models.ts:150-152.
+test("the shipped table prices claude-haiku-4-5 at exactly $1/$5 per MTok (§7.2)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  // One million prompt tokens and one million completion tokens: the USD figure
+  // IS the per-MTok pair, so this asserts the rate itself rather than a rounding
+  // of it.
+  const usd = usdFor("claude-haiku-4-5", 1_000_000, 1_000_000, prices, "2026-08-03");
+  assert.equal(usd, 6, "1 MTok in + 1 MTok out must price at $1 + $5");
+});
+
+// #1211's substring resolution, exercised on haiku rather than only on sonnet.
+// Langflow reports whatever id the provider returns, which for a snapshot build
+// is the dated form — so the family key has to catch it or the verified rate
+// above never applies to a real run.
+test("a dated claude-haiku-4-5 snapshot resolves to the family band (§ Testing 12)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  const flat = usdFor("claude-haiku-4-5", 1_000_000, 1_000_000, prices, "2026-08-03");
+  const dated = usdFor("claude-haiku-4-5-20251001", 1_000_000, 1_000_000, prices, "2026-08-03");
+  assert.equal(dated, flat, "the dated snapshot must price identically to its family key");
+});
+
+// Both directions (§7.2.1). The fix must not become a blanket Claude fallback:
+// `claude-fable-5` sits in the collected catalog at $10/$50 — ten times haiku,
+// twice opus-5 — and CANDIDATE_PREFS.anthropic falls through to raw catalog order
+// when neither haiku nor sonnet is present. Pricing it at haiku's rate would be a
+// 10x understatement reported as exact.
+test("an unpriced Claude id stays unpriced — no blanket family fallback (§7.2.1)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  assert.equal(
+    usdFor("claude-fable-5", 1_000_000, 1_000_000, prices, "2026-08-03"),
+    null,
+    "claude-fable-5 has no entry and must resolve to null, not to a sibling's rate",
+  );
 });
 
 // --- #1211: two-phase lookup (exact, then longest-substring-first) ---
@@ -440,4 +488,82 @@ test("the shipped table records claude-sonnet-5's introductory rate through 2026
   const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
   assert.equal(usdFor("claude-sonnet-5", 1_000_000, 0, prices, "2026-08-31"), 2.0);
   assert.equal(usdFor("claude-sonnet-5", 1_000_000, 0, prices, "2026-09-01"), 3.0);
+});
+
+// §4.3 (fix round 2): `costs` are the sidecar's own cost records — ONE per
+// recordTokenAttribution call. That is one per teardown ONLY on the batch-attributing
+// `cleanup()` path; the ~132 `@stable` specs that call `deleteFlow` once per id write
+// one record per flow, so `attrib_calls` counts calls and not teardowns, and the sum
+// is the honest figure rather than any derived average. One record per call is what
+// makes a plain sum correct; the previous per-FLOW field forced a reduction over
+// distinct flow_id AND still measured the wrong thing (a flow with no traces wrote
+// no line and so cost nothing on paper, and summing per-flow elapsed over-reported
+// by roughly the flow count because the flows run concurrently).
+test("aggregate sums attrib_ms across cost records and reports how many calls paid it (§4.3)", () => {
+  const costs = [
+    { kind: "attrib_cost", flows: 3, attrib_ms: 214, test: "a", file: "x.spec.ts" },
+    { kind: "attrib_cost", flows: 1, attrib_ms: 86, test: "b", file: "y.spec.ts" },
+  ];
+  const result = aggregate({ probes: [probe()], attributions: [], costs, prices: PRICES, date: "2026-08-03" });
+  assert.equal(result.attrib_ms, 300, "a plain sum — one record per call, so nothing is double-counted");
+  // Without the call count a reader cannot tell 300ms across 2 teardowns from 300ms
+  // across 200 of them, and the total's size mostly reflects how many specs ran.
+  assert.equal(result.attrib_calls, 2);
+});
+
+test("aggregate reports attrib_ms and attrib_calls of 0 when no cost record exists", () => {
+  const result = aggregate({ probes: [probe()], attributions: [], prices: PRICES, date: "2026-08-03" });
+  assert.equal(result.attrib_ms, 0);
+  assert.equal(result.attrib_calls, 0);
+});
+
+// A record with no usable figure must count toward NEITHER, or the average silently
+// drifts: a denominator that includes a record contributing nothing to the numerator
+// reports a cheaper teardown than really happened.
+test("a cost record with no numeric attrib_ms counts toward neither the total nor the call count", () => {
+  const costs = [
+    { kind: "attrib_cost", flows: 1, attrib_ms: 50 },
+    { kind: "attrib_cost", flows: 1 },
+    { kind: "attrib_cost", flows: 1, attrib_ms: null },
+    { kind: "attrib_cost", flows: 1, attrib_ms: "80" },
+  ];
+  const result = aggregate({ probes: [probe()], attributions: [], costs, prices: PRICES, date: "2026-08-03" });
+  assert.equal(result.attrib_ms, 50);
+  assert.equal(result.attrib_calls, 1);
+});
+
+// The property this whole change rests on: a cost record carries no trace_id and no
+// total_tokens, so it can never enter the token figures. Asserted by DIFFERENCE — the
+// same fixture with and without the cost record must agree on every token field —
+// because that is the claim, not merely that some individual number looks right.
+test("a cost record perturbs no token figure — totals, by_model, by_spec, unattributed all identical (§4.3)", () => {
+  const probes = [probe(), probe({ trace_id: "t2", flow_id: "f2", total_tokens: 12 })];
+  const attributions = [
+    { trace_id: "t1", flow_id: "f1", test: "agent suite", file: "a.spec.ts" },
+  ];
+  const args = { probes, attributions, prices: PRICES, date: "2026-08-03" };
+
+  const without = aggregate(args);
+  const with_ = aggregate({
+    ...args,
+    costs: [{ kind: "attrib_cost", flows: 4, attrib_ms: 999, test: "some spec", file: "z.spec.ts" }],
+  });
+
+  assert.deepEqual(with_.totals, without.totals);
+  assert.deepEqual(with_.byModel, without.byModel);
+  assert.deepEqual(with_.bySpec, without.bySpec);
+  assert.deepEqual(with_.unattributed, without.unattributed);
+  assert.deepEqual(with_.mismatches, without.mismatches);
+  assert.deepEqual(with_.unpricedModels, without.unpricedModels);
+  // ...and the only difference is the cost itself.
+  assert.equal(without.attrib_ms, 0);
+  assert.equal(with_.attrib_ms, 999);
+  assert.equal(with_.attrib_calls, 1);
+  // Its test/file must NOT become a by_spec row: a teardown is not a spec that spent
+  // tokens, and bySpec is keyed off probes, never off these records.
+  assert.equal(
+    with_.bySpec.some((r) => r.file === "z.spec.ts"),
+    false,
+    "a cost record must never appear as a spending spec",
+  );
 });

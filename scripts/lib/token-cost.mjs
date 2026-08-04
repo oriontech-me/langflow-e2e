@@ -183,10 +183,35 @@ export function usdFor(model, promptTokens, completionTokens, prices, date) {
 // that lands on the history line's own `date` field, so a line's USD and its
 // date can never disagree. Omitted, a model priced only by dated bands
 // resolves to unpriced rather than guessing a band.
-export function aggregate({ probes = [], attributions = [], prices = {}, date } = {}) {
+export function aggregate({ probes = [], attributions = [], costs = [], prices = {}, date } = {}) {
   const byTrace = new Map();
   for (const a of attributions) {
     if (a?.trace_id) byTrace.set(a.trace_id, a);
+  }
+
+  // §4.3: `costs` are the sidecar's own COST records — one per
+  // `recordTokenAttribution` CALL, carrying that call's wall-clock. One record per
+  // call is what makes the PLAIN SUM below correct.
+  //
+  // **What the pair means, and the trap in dividing one by the other, is defined
+  // ONCE — in `reports/README.md`'s `token-history.jsonl` row.** That is the schema
+  // doc a reader of the file has open; this comment deliberately does not restate
+  // it. The short version, enough to review this loop: `attrib_calls` counts CALLS,
+  // not teardowns, so their ratio is a per-call average and never a per-teardown
+  // one; the total is the honest figure.
+  //
+  // Two invariants that live here because they are properties of THIS code, not of
+  // the field: do not re-derive either value from `attributions` (the previous
+  // per-flow, per-line shape needed a distinct-flow_id reduction and was blind to a
+  // flow that produced no traces — the dominant cost), and a record whose
+  // `attrib_ms` is not a finite number counts toward neither, keeping the pair
+  // consistent.
+  let attribMs = 0;
+  let attribCalls = 0;
+  for (const c of costs) {
+    if (!Number.isFinite(c?.attrib_ms)) continue;
+    attribMs += c.attrib_ms;
+    attribCalls += 1;
   }
 
   const models = new Map();
@@ -285,6 +310,8 @@ export function aggregate({ probes = [], attributions = [], prices = {}, date } 
     totals,
     byModel: [...models.values()].sort((a, b) => b.total_tokens - a.total_tokens),
     bySpec: [...specs.values()].sort((a, b) => b.total_tokens - a.total_tokens),
+    attrib_ms: attribMs,
+    attrib_calls: attribCalls,
     unattributed,
     unpricedModels: [...unpriced].sort(),
     mismatches,

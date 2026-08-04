@@ -1,6 +1,7 @@
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../helpers/flows/delete-flow";
 
 // Log in via the REST API and return a Bearer token. The login endpoint takes
 // application/x-www-form-urlencoded (same shape as helpers/auth/auth-helpers.ts).
@@ -129,11 +130,19 @@ test(
       // see or delete another user's flow — a corollary of the isolation under
       // test), then User A is removed with the admin token.
       if (userAFlowId && userAToken) {
-        await request
-          .delete(`/api/v1/flows/${userAFlowId}`, {
+        // `deleteFlow` rather than a raw DELETE: the raw call never inspected
+        // `res.ok()`, and `.catch(() => {})` catches only network errors — so a
+        // transient 5xx resolved as success and the flow leaked silently. The
+        // helper retries one 5xx before giving up. Its throw is swallowed here to
+        // keep this teardown best-effort: this `finally` still has User A to
+        // remove, and a failed flow delete must not preempt that.
+        try {
+          await deleteFlow(request, userAFlowId, {
             headers: { Authorization: userAToken },
-          })
-          .catch(() => {});
+          });
+        } catch {
+          // Deliberately silent, matching the `.catch(() => {})` this replaces.
+        }
       }
       if (userAId && adminToken) {
         await request

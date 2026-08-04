@@ -1,5 +1,22 @@
 import type { Page } from "@playwright/test";
 import { deleteFlow } from "./delete-flow";
+import type { resolveTestAttribution } from "./resolve-test-attribution";
+
+/** Seams for the unit lane. A spec must never pass these. */
+export interface CleanAllFlowsHooks {
+  /**
+   * Override the source of test metadata handed to `deleteFlow`. **Unit tests
+   * only.** It exists so the `attribute: false` below is provable: under
+   * `node --test` there is no running test, so `test.info()` throws,
+   * `resolveTestAttribution` returns null, and the sidecar issues no request
+   * whatever this helper passes. A test asserting "no attribution request" would
+   * then hold for the wrong reason and survive the removal of `attribute: false`
+   * -- an assertion about an absence in a path that never runs, the exact shape
+   * this branch keeps being bitten by. With the seam, the absence is caused by
+   * the flag and nothing else.
+   */
+  info?: Parameters<typeof resolveTestAttribution>[0];
+}
 
 /**
  * Deletes all user-created flows via the Langflow REST API.
@@ -31,7 +48,7 @@ import { deleteFlow } from "./delete-flow";
  * that would let it drop this helper and let this file be deleted. Do NOT add
  * new callers.
  */
-export const cleanAllFlows = async (page: Page) => {
+export const cleanAllFlows = async (page: Page, hooks?: CleanAllFlowsHooks) => {
   // Obtain a bearer token via auto_login (no credentials required in dev/test).
   const loginRes = await page.request.get("/api/v1/auto_login");
   let headers: Record<string, string> = {};
@@ -59,7 +76,11 @@ export const cleanAllFlows = async (page: Page) => {
   const failures: string[] = [];
   for (const flow of flows) {
     try {
-      await deleteFlow(page.request, flow.id, { headers });
+      // `attribute: false` (§2.2): this sweep deletes every user flow on the
+      // shared instance, including flows another worker is mid-test on. Naming
+      // those after whichever spec called the sweep would write wrong rows into
+      // by_spec -- worse than none, because a wrong number carries no marker.
+      await deleteFlow(page.request, flow.id, { headers }, { attribute: false, info: hooks?.info });
     } catch (err) {
       failures.push(`${flow.id}: ${err instanceof Error ? err.message : String(err)}`);
     }

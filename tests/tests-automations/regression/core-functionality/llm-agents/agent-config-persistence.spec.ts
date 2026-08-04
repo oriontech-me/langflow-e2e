@@ -9,6 +9,7 @@ import {
 } from "../../../../helpers/ui/open-advanced-options";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 /**
  * Agent config persistence (QA-CHECKLIST §6.2 "Flow with Agent saved and
@@ -79,7 +80,15 @@ let createdFlowId: string | null = null;
 // would kill parallel workers' in-flight flows (#553).
 test.afterEach(async ({ page }) => {
   if (createdFlowId) {
-    await page.request.delete(`/api/v1/flows/${createdFlowId}`).catch(() => {});
+    // `deleteFlow` rather than a raw DELETE: it absorbs 404-as-done and one
+    // transient 5xx, surfaces a real failure instead of silence, and -- the
+    // reason this spec was migrated -- it is where token attribution happens,
+    // immediately before the DELETE that 404s the trace (§3.1).
+    try {
+      await deleteFlow(page.request, createdFlowId);
+    } catch {
+      // Deliberately silent, matching the `.catch(() => {})` this replaces.
+    }
     createdFlowId = null;
   }
 });

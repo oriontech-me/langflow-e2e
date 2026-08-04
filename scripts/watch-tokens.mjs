@@ -136,20 +136,61 @@ export async function collectOnce({
   return { probes, errors, deferred, refreshAuth: false };
 }
 
-export function parseProbeLines(text) {
-  const probes = [];
+function parseJsonLines(text) {
+  const records = [];
   for (const line of String(text || "").split("\n")) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
-      const rec = JSON.parse(trimmed);
-      if (rec?.trace_id) probes.push(rec);
+      records.push(JSON.parse(trimmed));
     } catch {
       // A torn last line is expected: the recorder is killed mid-append when the
       // job moves on. Skip it rather than failing the summary.
     }
   }
-  return probes;
+  return records;
+}
+
+export function parseProbeLines(text) {
+  return parseJsonLines(text).filter((rec) => rec?.trace_id);
+}
+
+// The token-attrib file carries TWO record shapes, and this is why it is not read
+// through parseProbeLines (§4.3, fix round 2):
+//
+//   - attribution lines, which carry a `trace_id` (and, since finding A, the
+//     trace's own probe fields alongside);
+//   - the sidecar's own COST records — `kind: "attrib_cost"`, one per
+//     `recordTokenAttribution` call (one per teardown only for a
+//     batch-attributing `cleanup()`; one per flow on the far more common
+//     per-id `deleteFlow` path — see the comment on `attrib_ms`/`attrib_calls`
+//     below), carrying no trace_id at all.
+//
+// parseProbeLines filters on `trace_id`, so it would drop every cost record on the
+// floor and the teardown cost would silently never reach the history line. Keep both
+// shapes here; summarize() splits them explicitly, immediately.
+export function parseAttribLines(text) {
+  return parseJsonLines(text).filter((rec) => rec?.trace_id || rec?.kind === "attrib_cost");
+}
+
+// Split the token-attrib file's two record shapes apart. A cost record is NOT an
+// attribution: it names no trace, and leaving one in `attributions` would put a
+// phantom entry in aggregate()'s `byTrace` map and let a teardown be mistaken for a
+// spec that spent nothing.
+//
+// A pure function with its own test, deliberately (§4.3, fix round 3). Inlined in
+// summarize() the EXCLUSION was untestable — a cost record left in `attributions` is
+// invisible downstream, because aggregate() happens to guard on `trace_id` — so the
+// test that claimed to cover it could only ever observe the collection. Exported so
+// the exclusion itself can be asserted directly.
+export function splitAttribRecords(records = []) {
+  const attributions = [];
+  const costs = [];
+  for (const rec of records) {
+    if (rec?.kind === "attrib_cost") costs.push(rec);
+    else attributions.push(rec);
+  }
+  return { attributions, costs };
 }
 
 async function login(fetchImpl, base, timeoutMs) {
@@ -325,8 +366,14 @@ export async function summarize({
     for (const probe of parseProbeLines(read(file))) mergeProbe(probe);
   }
   const attributions = [];
+  // The sidecar's own COST records (§4.3) share the token-attrib file with the
+  // attribution lines. splitAttribRecords() separates them EXPLICITLY — see its own
+  // comment for why that split is a tested function rather than an inline branch.
+  const costs = [];
   for (const file of listDir(attribDir).filter((f) => f.includes("token-attrib"))) {
-    for (const rec of parseProbeLines(read(file))) {
+    const split = splitAttribRecords(parseAttribLines(read(file)));
+    costs.push(...split.costs);
+    for (const rec of split.attributions) {
       attributions.push(rec);
       // The sidecar now writes the trace's own total + spans ALONGSIDE the
       // attribution fields in the same line (finding A), so an attributed
@@ -384,7 +431,7 @@ export async function summarize({
   // disagree, or a dated model's USD would be priced against a different date
   // than the one the line claims it ran on.
   const runDate = env.RUN_DATE || new Date().toISOString().slice(0, 10);
-  const agg = aggregate({ probes: [...probesById.values()], attributions, prices, date: runDate });
+  const agg = aggregate({ probes: [...probesById.values()], attributions, costs, prices, date: runDate });
   const history = suppressHistory ? [] : parseHistory(read(historyPath));
   const runLine = {
     version: 1,
@@ -401,6 +448,19 @@ export async function summarize({
     by_spec: agg.bySpec,
     unattributed: agg.unattributed,
     unpriced_models: agg.unpricedModels,
+    // §4.3: what the attribution sidecar COST this run — the price, on the same
+    // line as the benefit it bought. Without it the ceiling is a claim in a doc
+    // comment that nobody can check against a real run.
+    //
+    // **Both fields are DEFINED in `reports/README.md`'s `token-history.jsonl`
+    // row** — what they measure, what they do not, and the trap in dividing one by
+    // the other. Not restated here: the field appeared in four places with four
+    // copies of the same paragraph, and four copies drift.
+    //
+    // The only rule that belongs at THIS site: copy both from `agg`, never
+    // re-derive either from `attributions`.
+    attrib_ms: agg.attrib_ms,
+    attrib_calls: agg.attrib_calls,
     anomalies: [],
   };
   // token-anomaly.mjs computes a plain median over whatever `history` it is

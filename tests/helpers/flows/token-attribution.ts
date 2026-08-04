@@ -12,8 +12,15 @@
 //     never retried. A trace that has not landed yet is simply missed, and its
 //     tokens fall to whatever the poller's own tick manages (or the summary's
 //     `unattributed` bucket — counted and named, never hidden);
-//   - it must be inert by default. With `TOKENS_ATTRIB` unset (every local run,
-//     every PR lane) it makes no request and touches no file.
+//   - it must be inert by default. With `TOKENS_ATTRIB` unset it makes no request
+//     and touches no file. A LOCAL run pays nothing, unconditionally — nothing
+//     outside CI sets the variable. CI is the exception, and deliberately: all
+//     three lanes set it (`daily-stable.yml:579`, `pr-validation.yml:711`,
+//     `manual.yml:346`). The PR lane included, because that is the one place a
+//     cost regression is catchable before merge. An earlier version of this
+//     comment claimed "every PR lane" was inert; it was already false when
+//     written, and a later design read it as a project-wide constraint — so state
+//     the lanes, not a guess about them.
 //
 // Making an attributed trace SELF-SUFFICIENT (#1197 re-review, finding A): a
 // real daily-stable run (30647253368) proved that of 6 traces this sidecar
@@ -30,6 +37,41 @@
 // only needs to merge one file's worth of records, not two.
 import fs from "node:fs";
 import type { APIRequestContext } from "@playwright/test";
+
+// §2.1: flows this process has already ATTEMPTED to attribute.
+//
+// Attempted, not recorded, and the distinction is the contract: one list request
+// per flow, never retried. A flow whose list came back 403 has spent its single
+// request, so a second pass must not issue another -- recording only successes
+// would turn every failure into exactly the retry the no-polling rule forbids.
+//
+// Process-scoped is the right scope: Playwright runs each worker as its own
+// process and a flow belongs to one test in one worker, so there is nothing to
+// share across workers and nothing to synchronise.
+//
+// This exists because `cleanup()` attributes its whole captured batch
+// (track-created-flows.ts:263) and then deletes per id (:296) through
+// `deleteFlow`, which carries its own hook. Without this guard every tracked
+// spec's flows are attributed twice, and two lines for one trace is not a visible
+// defect downstream -- it is a plausible number, twice as large.
+const attempted = new Set<string>();
+
+// The poller's own coercion, copied rather than approximated: `num()` at
+// scripts/watch-tokens.mjs:63-66. A value that is not a finite number GREATER THAN
+// ZERO falls back, so neither a malformed lane value nor a literal 0 can poison a
+// request with `timeout: NaN` or `timeout: 0` (Playwright reads 0 as "no
+// timeout" -- unbounded, the opposite of what a bound is for).
+function positive(value: unknown, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** Clear the attempted-flow guard. **Unit tests only** -- a spec must not call
+ *  it. Production has no reason to: the set is process-scoped and a worker's
+ *  flow ids are never reused. */
+export function resetAttributedFlows(): void {
+  attempted.clear();
+}
 
 // `buildProbe` is pure, dependency-free ESM under scripts/lib — the poller
 // (scripts/watch-tokens.mjs) imports it the normal, static way. This file is
@@ -93,6 +135,102 @@ export interface RecordTokenAttributionOptions {
    * impractical. Defaults to the real loader.
    */
   loadBuildProbe?: () => Promise<BuildProbeFn>;
+  /**
+   * Per-request timeout in milliseconds, applied to EVERY request this sidecar
+   * makes. Falls back to `TOKENS_TIMEOUT_MS`, then to 8000 -- the same default the
+   * poller uses (`scripts/watch-tokens.mjs` DEFAULTS.timeoutMs).
+   *
+   * **A lane value reaches here once #1250 lands, and not before.** The gap:
+   * `TOKENS_TIMEOUT_MS` sat in the POLLER step's own `env:` block, a step-level
+   * `env:` does not cross into another step, and this sidecar runs in the
+   * Playwright step -- so the lanes did not configure this at all, they merely
+   * happened to set the number that was already the default. #1250 moves it to JOB
+   * level in all three lanes, the one place both readers see, and pins that
+   * placement with `scripts/token-sidecar-knobs.test.mjs` rather than leaving it to
+   * review. Until it merges, the effective value here is the hard-coded 8000.
+   *
+   * This is not belt-and-braces. Without it Playwright's 30s default applies, and
+   * a monitor endpoint wedged during teardown (#1077) consumes the test's own
+   * 5-minute budget from inside `afterEach` -- so `request.delete` never runs and
+   * the flow leaks silently. That is precisely the failure `deleteFlow` exists to
+   * surface, arriving by way of telemetry. The sidecar keeps its promise never to
+   * throw and still fails the test, by starving it.
+   *
+   * A wall-clock deadline checked BETWEEN requests cannot do this job: it never
+   * fires on a request that has not returned. It is not an alternative to this
+   * option but its complement -- see `budgetMs`, which bounds the SUM this one
+   * cannot see.
+   */
+  timeoutMs?: number;
+  /**
+   * Maximum number of per-trace detail requests for the whole call. Falls back to
+   * `TOKENS_DETAIL_CAP`, then to 25 -- again the poller's own default.
+   *
+   * **A lane value reaches here once #1250 lands**, for exactly the reason given
+   * on `timeoutMs` above: it moves `TOKENS_DETAIL_CAP` to JOB level, out of the
+   * POLLER step's `env:` where it could never reach the Playwright step this runs
+   * in. Same guard pins it. Until then the effective value here is 25.
+   *
+   * The list requests are one per flow and all start together, so they are already
+   * bounded at roughly one round trip. The detail fan-out is the unbounded part:
+   * one fetch per trace, and a flow can carry many -- capping the count is what
+   * makes the worst case finite instead of proportional to how many traces a test
+   * happened to produce.
+   *
+   * The ceiling CAP alone gives is per CALL and is CAP x TIMEOUT -- 208s on the
+   * defaults, which is why `budgetMs` exists: the effective per-call ceiling is
+   * `min(CAP x TIMEOUT, BUDGET + TIMEOUT)` = 23s. Neither is the sidecar's ceiling
+   * for a spec's whole teardown: `deleteFlow` calls this once per flow and every
+   * call starts with a fresh allowance, so that path costs up to FLOWS x that.
+   * (`daily-stable.yml` computes CAP x TIMEOUT for the POLLER's worst in-flight
+   * tick -- a different component, one call per tick; do not read it as this
+   * sidecar's bound.)
+   *
+   * A capped trace is NAMED on `skipped`, and still recorded: the cap costs its
+   * per-model breakdown, never its tokens. Dropping the spans silently would leave
+   * `models: []` on a trace whose breakdown is merely unknown -- identical to a
+   * trace whose detail genuinely came back empty, so the line would read complete.
+   *
+   * The cap is per-CALL and shared by every flow in it, and the flows run
+   * concurrently -- so WHICH trace loses its breakdown depends on interleaving,
+   * and two runs of the same suite can name different traces on `skipped`. That is
+   * by design, not a flake: the property the cap owes you is that the total number
+   * of detail requests is bounded and that every curtailed trace is named. Which
+   * ones they are was never part of the contract, and making it deterministic
+   * would mean serialising the flows again -- the cost this whole section removes.
+   */
+  detailCap?: number;
+  /**
+   * Wall-clock budget for the WHOLE call, in milliseconds. Falls back to
+   * `TOKENS_BUDGET_MS`, then to 15000. Same coercion as the two knobs above, so a
+   * non-positive value resolves to the default rather than to "no time at all"
+   * (which would disable attribution suite-wide the moment a lane set it to 0).
+   *
+   * **This is not a second copy of `timeoutMs`, and the two are not
+   * alternatives.** `timeoutMs` bounds ONE request and never sees the sum; a
+   * deadline checked BETWEEN requests never fires on a request that has not
+   * returned. Only together do they bound a call.
+   *
+   * Without it the call's own ceiling is `detailCap x timeoutMs` -- 25 x 8000 =
+   * 208s with the shipped defaults, because the detail loop is sequential within a
+   * flow. `deleteFlow` makes one call per flow id and teardowns iterate flows in
+   * series, so a three-flow teardown reaches ~624s against the 5-minute budget
+   * Playwright gives the WHOLE test, hooks included. The sidecar would keep its
+   * promise never to throw and still fail the test, by starving it -- #1077's
+   * wedged monitor endpoint arriving by way of telemetry, which is the exact
+   * failure `deleteFlow` exists to surface. With the budget the ceiling is
+   * `budget + timeoutMs` per call: 23s on the defaults, ~69s for that same
+   * three-flow teardown.
+   *
+   * 15000 against a normal call of 20-100ms: two orders of magnitude of headroom,
+   * so this fires on a wedge and never on a slow-but-healthy backend.
+   *
+   * Deliberately NOT enforced across the list fan-out: those requests all start in
+   * the same tick (`Promise.all`), so no elapsed time separates them and a check
+   * there would be a no-op. That fan-out is already bounded at roughly one round
+   * trip -- the sequential detail loop is the unbounded part.
+   */
+  budgetMs?: number;
 }
 
 export interface TokenAttributionResult {
@@ -109,9 +247,17 @@ export async function recordTokenAttribution({
   out = process.env.TOKENS_ATTRIB,
   headers,
   loadBuildProbe: loadBuildProbeOverride = loadBuildProbe,
+  timeoutMs,
+  detailCap,
+  budgetMs,
 }: RecordTokenAttributionOptions): Promise<TokenAttributionResult> {
   const result: TokenAttributionResult = { recorded: 0, skipped: [] };
   if (!out || !flowIds?.length) return result;
+
+  // The clock for the COST record written at the end (§4.3). It starts here, so it
+  // covers everything this call does on behalf of telemetry -- the `buildProbe`
+  // import included, since that is time the teardown pays too.
+  const callStartedAt = Date.now();
 
   // The import itself can reject — a future refactor moves the shared
   // module, fd exhaustion, a transient resolution failure (#1197 re-review,
@@ -134,62 +280,224 @@ export async function recordTokenAttribution({
     return result;
   }
 
-  for (const flowId of flowIds) {
-    try {
-      const res = await request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, { headers });
-      // `res.json()` used to run regardless of `res.ok()`. Langflow answers an
-      // unauthenticated/forbidden request with a JSON body too (e.g. 403
-      // `{"detail": "Not authenticated"}`), so `body.traces` was `undefined`,
-      // the loop below `continue`d, and the result read exactly like "no
-      // traces yet" — `{recorded: 0, skipped: []}` — with no warning anywhere.
-      // That is the exact regression the bearer-token fix (design §S2) exists
-      // to catch: a 403 must be distinguishable from "nothing to attribute
-      // yet" (#1197 review, finding I8).
-      if (!res.ok()) {
-        result.skipped.push(`${flowId}: HTTP ${res.status()}`);
-        continue;
-      }
-      const body = (await res.json()) as {
-        traces?: Array<{ id?: string; flowId?: string; startTime?: string; status?: string; totalTokens?: number }>;
-      };
-      const traces = (body?.traces ?? []).filter(
-        (t): t is { id: string; flowId?: string; startTime?: string; status?: string; totalTokens?: number } =>
-          typeof t?.id === "string" && t.id.length > 0,
-      );
-      if (!traces.length) continue;
+  // The poller's own defaults (scripts/watch-tokens.mjs DEFAULTS), not a third set
+  // invented here -- and the poller's own coercion too: `positive()` above is
+  // `num()` from scripts/watch-tokens.mjs:63-66, which requires
+  // `Number.isFinite(n) && n > 0` and falls back otherwise.
+  //
+  // Applied to BOTH the option and the env var, deliberately. An earlier version
+  // rejected a non-positive value only on the env path, which left
+  // `timeoutMs: 0` reaching Playwright as `timeout: 0` -- meaning NO timeout, the
+  // exact wedge this option exists to close -- while the comment claimed 0 was
+  // rejected. One rule, both paths, so the code matches what it says.
+  const timeout = positive(timeoutMs, positive(process.env.TOKENS_TIMEOUT_MS, 8000));
+  const maxDetail = positive(detailCap, positive(process.env.TOKENS_DETAIL_CAP, 25));
+  // §4.4: the bound `detailCap` alone cannot give. See `budgetMs`'s own comment for
+  // why a per-request timeout and a between-request deadline are complements rather
+  // than alternatives, and for the arithmetic (208s -> 23s per call).
+  //
+  // Read against `callStartedAt`, which is set before the `buildProbe` import above:
+  // that import is time the teardown pays too, so a call slowed there has less
+  // budget left, not the same amount.
+  const budget = positive(budgetMs, positive(process.env.TOKENS_BUDGET_MS, 15000));
+  const overBudget = () => Date.now() - callStartedAt > budget;
+  // Shared across the concurrent tasks below. Safe without synchronisation
+  // because JS runs them on a single thread, and it is incremented BEFORE its
+  // await so two tasks cannot both pass the check on the same slot.
+  let detailFetches = 0;
+  // How many ids this call actually CLAIMED, i.e. genuinely attempted. Drives both
+  // whether a cost record is written at all and the `flows` it reports -- see the
+  // comment on the record below.
+  let attemptedFlows = 0;
 
-      const lines: string[] = [];
-      for (const trace of traces) {
-        // At most ONE detail fetch per trace this flow's list turned up — never
-        // repeated, never retried (the "must not poll" contract above). A
-        // failure here (404 — the flow raced ahead and 404'd this trace too,
-        // S4; or any other non-2xx) must not lose the line: `buildProbe`
-        // degrades a missing/undefined spans array to `models: []` on its own,
-        // the exact same degradation the poller applies when ITS OWN detail
-        // fetch comes back empty. The trace's own `total_tokens` — already in
-        // hand from the list response above — survives either way.
-        let spans: unknown;
-        try {
-          const detailRes = await request.get(`/api/v1/monitor/traces/${trace.id}`, { headers });
-          if (detailRes.ok()) {
-            const detailBody = (await detailRes.json()) as { spans?: unknown };
-            spans = detailBody?.spans;
-          }
-        } catch {
-          // Network-level failure fetching THIS ONE trace's detail must not
-          // lose the whole flow's attribution — degrade to no spans, same as
-          // a non-ok response.
+  // Concurrent, not serial (§4.2): N flows cost roughly one round trip instead of
+  // N. `result` is mutated from several tasks, which is safe because JS runs them
+  // on one thread -- and `appendFileSync` is synchronous, so concurrent appends
+  // cannot interleave a line (the property the comment below relies on).
+  await Promise.all(
+    flowIds.map(async (flowId) => {
+      // Claimed BEFORE the request, so a throw below cannot leave the flow
+      // eligible for a retry the contract forbids (§2.1).
+      if (attempted.has(flowId)) return;
+      attempted.add(flowId);
+      attemptedFlows += 1;
+
+      try {
+        const res = await request.get(`/api/v1/monitor/traces?flow_id=${flowId}`, { headers, timeout });
+        // `res.json()` used to run regardless of `res.ok()`. Langflow answers an
+        // unauthenticated/forbidden request with a JSON body too (e.g. 403
+        // `{"detail": "Not authenticated"}`), so `body.traces` was `undefined`,
+        // the loop below bailed out, and the result read exactly like "no
+        // traces yet" — `{recorded: 0, skipped: []}` — with no warning anywhere.
+        // That is the exact regression the bearer-token fix (design §S2) exists
+        // to catch: a 403 must be distinguishable from "nothing to attribute
+        // yet" (#1197 review, finding I8).
+        if (!res.ok()) {
+          result.skipped.push(`${flowId}: HTTP ${res.status()}`);
+          return;
         }
-        const probe = buildProbe(trace, spans);
-        lines.push(JSON.stringify({ ...probe, flow_id: flowId, test, file }));
+        const body = (await res.json()) as {
+          traces?: Array<{ id?: string; flowId?: string; startTime?: string; status?: string; totalTokens?: number }>;
+        };
+        const traces = (body?.traces ?? []).filter(
+          (t): t is { id: string; flowId?: string; startTime?: string; status?: string; totalTokens?: number } =>
+            typeof t?.id === "string" && t.id.length > 0,
+        );
+        if (!traces.length) return;
+
+        const pending: Array<{ trace: (typeof traces)[number]; spans: unknown }> = [];
+        for (const trace of traces) {
+          // At most ONE detail fetch per trace this flow's list turned up — never
+          // repeated, never retried (the "must not poll" contract above). A
+          // failure here (404 — the flow raced ahead and 404'd this trace too,
+          // S4; or any other non-2xx) must not lose the line: `buildProbe`
+          // degrades a missing/undefined spans array to `models: []` on its own,
+          // the exact same degradation the poller applies when ITS OWN detail
+          // fetch comes back empty. The trace's own `total_tokens` — already in
+          // hand from the list response above — survives either way.
+          let spans: unknown;
+          // An EXPLICIT numeric zero means the per-model spans buy nothing
+          // (§4.2). Absent or null means NOT YET COMPUTED -- the
+          // total_tokens: null-not-0 rule (#1197 review, finding I3) -- so those
+          // are still fetched. Conflating the two would discard a real trace
+          // whose total had not landed yet.
+          const knownZero = typeof trace.totalTokens === "number" && trace.totalTokens === 0;
+          if (!knownZero) {
+            if (overBudget()) {
+              // Named separately from the cap, and checked first: both curtail the
+              // same fan-out, but a reader has to know WHICH bound bit. The cap
+              // firing means a test produced more traces than expected; the budget
+              // firing means the monitor endpoint is slow or wedged, which is a
+              // backend symptom and not a property of the spec at all.
+              //
+              // Same degradation as the cap: the trace is still recorded below with
+              // the tokens the list already gave us, and only its per-model
+              // breakdown is lost.
+              result.skipped.push(
+                `${flowId}: attribution budget of ${budget}ms exhausted before trace ${trace.id}`,
+              );
+            } else if (detailFetches >= maxDetail) {
+              // The cap must NAME itself wherever it curtails work. Silently
+              // dropping the spans would leave `models: []` on a trace whose
+              // breakdown is merely unknown -- indistinguishable from a trace whose
+              // detail genuinely came back empty, and the line would read complete.
+              // The trace is still recorded below: the cap costs the per-model
+              // breakdown, never the tokens.
+              result.skipped.push(
+                `${flowId}: detail cap of ${maxDetail} reached before trace ${trace.id}`,
+              );
+            } else {
+              // Incremented BEFORE the await, so two concurrent tasks cannot both
+              // pass the check on the same slot and exceed the cap.
+              detailFetches += 1;
+              try {
+                const detailRes = await request.get(`/api/v1/monitor/traces/${trace.id}`, { headers, timeout });
+                if (detailRes.ok()) {
+                  const detailBody = (await detailRes.json()) as { spans?: unknown };
+                  spans = detailBody?.spans;
+                }
+              } catch {
+                // A network-level failure on THIS ONE trace's detail must not lose
+                // the whole flow's attribution -- degrade to no spans, exactly as a
+                // non-ok response does. `buildProbe` renders that as `models: []`,
+                // the same degradation the poller applies to its own empty detail.
+              }
+            }
+          }
+          pending.push({ trace, spans });
+        }
+
+        const lines = pending.map(({ trace, spans }) =>
+          JSON.stringify({ ...buildProbe(trace, spans), flow_id: flowId, test, file }),
+        );
+        // ONE append per line, not one per flow. The interleaving argument below
+        // rests on a single append being indivisible against a concurrent writer,
+        // and that holds for ONE `write(2)` under `O_APPEND` on a regular file --
+        // which is what Node issues for a small buffer. But `writeSync` LOOPS on a
+        // short write, and a short write is what a large buffer invites; two
+        // iterations with another worker's append in between is a torn JSON line.
+        //
+        // Batching every trace of a flow into one call made that buffer grow with
+        // an input nobody controls: `detailCap` bounds the detail FETCHES, not how
+        // many traces a flow's list returns, so a chatty flow wrote an arbitrarily
+        // large single append. (The often-quoted 4KB figure is PIPE_BUF -- a pipe
+        // rule, not a regular-file one -- so it was never the real threshold
+        // either, in either direction.)
+        //
+        // Interleaving BETWEEN complete records is harmless: the file is JSONL and
+        // the summarizer parses line by line, torn tails included. Only a torn LINE
+        // costs a record, and a one-line buffer is the smallest this can be.
+        // appendFileSync, not a stream and not `fs.promises.appendFile`: parallel
+        // workers share this file and the flows above run concurrently. An async
+        // write yields between the open and the write, which is exactly the window
+        // that produces half a JSON object. Synchronous + one line per call is the
+        // pair that closes it; neither half is sufficient alone.
+        //
+        // No behavioural test can tell sync from async apart from outside (an
+        // awaited async append also leaves a complete file by the time this
+        // function returns), so the SYNCHRONY is pinned STRUCTURALLY -- "the
+        // sidecar appends synchronously" in token-attribution.test.ts reads this
+        // source and fails if the call becomes async. Change one and the other must
+        // change with it. The one-record-per-call half IS observable and is pinned
+        // behaviourally, by the test of that name.
+        for (const line of lines) {
+          fs.appendFileSync(out, `${line}\n`);
+          result.recorded += 1;
+        }
+      } catch (error) {
+        result.skipped.push(`${flowId}: ${(error as Error)?.message?.split("\n")[0] ?? String(error)}`);
       }
-      // appendFileSync, not a stream: parallel workers share this file, and a single
-      // sub-4KB append is what keeps their lines from interleaving.
-      fs.appendFileSync(out, `${lines.join("\n")}\n`);
-      result.recorded += lines.length;
-    } catch (error) {
-      result.skipped.push(`${flowId}: ${(error as Error)?.message?.split("\n")[0] ?? String(error)}`);
-    }
+    }),
+  );
+
+  // ONE cost record per CALL, wall-clock, written whenever `out` is set and at least
+  // one flow id was passed -- including when there were zero traces, when the list
+  // came back non-ok, and when a flow threw (§4.3, fix round 2).
+  //
+  // **What the resulting `attrib_ms` / `attrib_calls` pair MEANS downstream is
+  // defined once, in `reports/README.md`'s `token-history.jsonl` row** -- including
+  // why their ratio is not a per-teardown average. Not restated here; four copies
+  // of that paragraph is what this comment used to be part of.
+  //
+  // What belongs at this site is the WRITE condition, because it is a property of
+  // this function and of nothing else:
+  //
+  //   - written only when the call CLAIMED at least one flow. Without it the
+  //     tracked path double-counts: `cleanup()` attributes its whole captured
+  //     batch, then `deleteFlow` re-calls per id, and every repeat -- having issued
+  //     no request at all -- added a ~0ms record. Measured: one spec, 4 flows, a
+  //     20ms list request produced `attrib_ms: 24, attrib_calls: 5`, so the average
+  //     read 4.8ms against a real 24ms teardown;
+  //   - written even when the call found NO traces. That is the dominant case this
+  //     shape exists to capture (§4.1) -- one list request per deleted flow, paid by
+  //     specs that burn nothing -- and the per-flow, per-line shape this replaced
+  //     was blind to exactly it, because a flow with no traces wrote no line;
+  //   - `flows` is the CLAIMED count, not the argument list: a partially-repeated
+  //     call did work for only its new ids, and reporting the rest would overstate
+  //     what the elapsed bought.
+  //
+  // A call that claimed flows and found no traces still writes its record: that is the
+  // dominant case this shape exists to capture (§4.1), not an empty one.
+  //
+  // Deliberate exception: a failing `buildProbe` import returns above, before this
+  // point, and writes nothing at all. That path made no request, and "no file is
+  // written when the import itself fails" is pinned by its own test.
+  if (!attemptedFlows) return result;
+  try {
+    const cost = {
+      kind: "attrib_cost",
+      flows: attemptedFlows,
+      attrib_ms: Date.now() - callStartedAt,
+      test,
+      file,
+    };
+    fs.appendFileSync(out, `${JSON.stringify(cost)}\n`);
+  } catch (error) {
+    // Named, never thrown -- same contract as every other failure here. Silence
+    // would make an unwritable path look like a teardown that cost nothing.
+    result.skipped.push(
+      `attrib_cost: ${(error as Error)?.message?.split("\n")[0] ?? String(error)}`,
+    );
   }
   return result;
 }
