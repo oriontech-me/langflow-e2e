@@ -38,7 +38,10 @@ const HUMAN_INPUT = {
 const CUSTOM_CHOICE = "Request Changes";
 const CUSTOM_CHOICE_OUTPUT = "branch_request_changes";
 
-// Branch handles, in the order the node renders them.
+// Branch handles, in the order the node renders them. `CUSTOM_HANDLE` is spelled
+// out rather than derived from `CUSTOM_CHOICE.toLowerCase()` on purpose: the
+// frontend lowercases the display name to build the testid, and deriving it the
+// same way would make the assertion agree with itself no matter what the app did.
 const APPROVE_HANDLE = "handle-humaninput-shownode-approve-right";
 const REJECT_HANDLE = "handle-humaninput-shownode-reject-right";
 const CUSTOM_HANDLE = "handle-humaninput-shownode-request changes-right";
@@ -104,13 +107,22 @@ async function expectPersistedOutputs(
   flowId: string,
   expected: string[],
 ) {
+  // `getAuthToken` resolves to "" on an environment without auth (it throws only
+  // when the backend never answers), and an empty `Authorization` header is not
+  // the same as no header — it would override the browser context's own auth and
+  // turn this poll into a 401 loop that reports as "the outputs never persisted".
+  // Same guard the repo's own helpers use (`setup-blank-flow.ts`).
   const authToken = await getAuthToken(page.request);
+  const authOptions = authToken
+    ? { headers: { Authorization: authToken } }
+    : undefined;
   await expect
     .poll(
       async () => {
-        const res = await page.request.get(`/api/v1/flows/${flowId}`, {
-          headers: { Authorization: authToken },
-        });
+        const res = await page.request.get(
+          `/api/v1/flows/${flowId}`,
+          authOptions,
+        );
         if (!res.ok()) return `GET /api/v1/flows/${flowId} → ${res.status()}`;
         const body = await res.json();
         const node = (body?.data?.nodes ?? []).find(
@@ -227,7 +239,27 @@ test.describe("Human Input node configuration (HITL branch handles)", () => {
         // store is dirty, and Playwright ACCEPTS a beforeunload dialog only while
         // no handler is registered — one here would cancel this reload
         // (see `helpers/flows/leave-flow-editor.ts`).
+        //
+        // The sentinel is what makes the reload load-bearing rather than
+        // decorative: every assertion below is ALSO satisfied by the pre-reload
+        // DOM, so a navigation that silently did not happen would pass all of
+        // them (reproduced in review by dismissing that dialog). A `window`
+        // property cannot survive a document load, so its absence is proof the
+        // page really reloaded — without it this step asserts nothing about
+        // rehydration.
+        await page.evaluate(() => {
+          (window as Window & { __reloadSentinel?: true }).__reloadSentinel =
+            true;
+        });
+
         await page.reload();
+
+        expect(
+          await page.evaluate(
+            () =>
+              (window as Window & { __reloadSentinel?: true }).__reloadSentinel,
+          ),
+        ).toBeUndefined();
 
         await expect(page.getByTestId(HUMAN_INPUT.title)).toBeVisible({
           timeout: 30000,

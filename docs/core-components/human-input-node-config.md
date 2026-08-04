@@ -13,15 +13,27 @@ Confirms the **configuration surface** of the `Human Input` node shipped with La
 derived from its `User Choices` field**, one handle per choice, and that derivation
 holds on three occasions.
 
-1. **On add** — a freshly dragged node already renders the two default branch handles
-   (`Approve`, `Reject`), before any field is touched. Upstream relies on a hardcoded
-   `outputs` list for exactly this case, because `update_outputs()` only fires on a
-   field change (`lfx/components/flow_controls/human_input.py`).
+1. **On add** — a freshly added node presents **exactly** the two default branch handles
+   (`Approve`, `Reject`), before any field is touched: both present, and no third branch
+   nobody asked for.
+   **Scope caveat, measured rather than assumed:** this does *not* isolate the hardcoded
+   `outputs` list in `lfx/components/flow_controls/human_input.py`. That list carries the
+   comment *"update_outputs only fires on a field change"*, but the frontend fires
+   `POST /api/v1/custom_component/update` **on mount** for any `real_time_refresh` field
+   whose `options` are empty (`hooks/use-fetch-data-on-mount.ts`), and `decisions` is such
+   a field — so the handles would be rebuilt on add even with that list removed. Isolating
+   the fallback needs a different oracle (delay that response with `page.route` and assert
+   the handles are already there); out of scope here.
 2. **On change (live)** — adding a custom choice creates its branch handle **without a
    reload**: the `real_time_refresh` field round-trips through
    `POST /api/v1/custom_component/update` and the node re-renders with the new handle.
-3. **After save + reload** — the configured choices and their handles survive a full
-   page load, rebuilt from the persisted `decisions` by `update_frontend_node()`.
+3. **After save + reload** — the configured choices and their handles survive a full page
+   load. **Two** mechanisms can rebuild them — `update_frontend_node()` on the backend and
+   the frontend's own on-mount round trip — so the spec asserts the **observable** (the
+   handles are there after the reload) without attributing it to either. What it does pin
+   is that the reload actually happened: a `window` sentinel set before it must be gone
+   after, because every DOM assertion in that step is *also* satisfied by the pre-reload
+   page, so a silently-cancelled navigation would otherwise pass it.
 
 The custom choice is deliberately a **two-word label** (`Request Changes`), because the
 label→handle mapping is where the two ends of this feature have to agree: the backend
@@ -95,10 +107,13 @@ is first-time coverage of a new feature, not a previously fixed bug.
    are exactly `["branch_approve", "branch_reject", "branch_request_changes"]` — this is
    also the assertion that the `Request Changes` → `branch_request_changes` slug survived
    the round trip.
-3. `page.reload()`. No `page.on("dialog")` handler is registered anywhere in the spec, on
-   purpose: `FlowPage` installs a `beforeunload` that `preventDefault()`s while the store
-   is dirty, and Playwright's default ACCEPTS a `beforeunload` dialog — registering a
-   handler would silently cancel the reload (documented in
+3. Set a `window.__reloadSentinel` marker, then `page.reload()`, then assert the marker is
+   **gone** — the proof that the navigation happened. Every DOM assertion in step 4 is also
+   satisfied by the pre-reload page, so without this a reload that never occurred would
+   pass the whole step. No `page.on("dialog")` handler is registered anywhere in the spec,
+   on purpose: `FlowPage` installs a `beforeunload` that `preventDefault()`s while the
+   store is dirty, and Playwright's default ACCEPTS a `beforeunload` dialog — registering a
+   handler would cancel the reload (documented in
    `helpers/flows/leave-flow-editor.ts`).
 4. Assert the rehydrated node renders all three chips (`action-edit-Approve`,
    `action-edit-Reject`, `action-edit-Request Changes`) and all three branch handles, with
@@ -117,7 +132,7 @@ is first-time coverage of a new feature, not a previously fixed bug.
 |---|---|
 | Human Input renders the default Approve and Reject branch handles when added to the canvas | `handle-humaninput-shownode-approve-right` **and** `handle-humaninput-shownode-reject-right` visible, with the node's output-handle count exactly `2` |
 | adding a custom User Action creates its branch handle without a reload | after committing `Request Changes` in `action-add-input`, `handle-humaninput-shownode-request changes-right` becomes visible on the same page and the output-handle count goes `2` → `3` |
-| the configured branch handles persist after save and reload | `GET /api/v1/flows/{id}` reports the node's `outputs` names as exactly `branch_approve, branch_reject, branch_request_changes`, and after `page.reload()` the three chips and three handles render again |
+| the configured branch handles persist after save and reload | `GET /api/v1/flows/{id}` reports the node's `outputs` names as exactly `branch_approve, branch_reject, branch_request_changes`; the `window.__reloadSentinel` marker is gone after `page.reload()` (the navigation really happened); and the three chips and three handles render again |
 
 ---
 
