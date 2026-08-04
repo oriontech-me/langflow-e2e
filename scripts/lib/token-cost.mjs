@@ -270,7 +270,21 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     // Write the separator as the ESCAPE `\u0000`, never as a literal control
     // character in the source. A raw NUL is invisible in an editor, in a diff and
     // in a review, and the first draft of this plan shipped four of them by accident.
-    const specModelKey = attribution ? `${specPath}\u0000${titlePath}\u0000` : "\u0000\u0000";
+    //
+    // Keyed on the two VALUES, not on whether `attribution` exists (#1255 item 2).
+    // An attribution record carrying a trace_id but no file/test used to key on
+    // `"null\u0000null\u0000"` while emitting a row whose spec_path and title_path are
+    // both null -- the same DB identity as the unattributed bucket
+    // (`COALESCE(test_key,'')`), reached from a different producer key. Two rows on
+    // one identity do not duplicate: the live ingest upserts, keeps the LAST, and
+    // counts the loser in `rows_dropped`, so one of the two numbers is silently
+    // discarded. Unreachable through the sidecar today -- resolveTestAttribution()
+    // returns null unless title, file and project.testDir are all present -- but that
+    // is an invariant enforced two modules away, in a TypeScript helper this pure ESM
+    // module cannot see. Enforcing it here makes the row identity depend only on what
+    // this function was handed.
+    const identified = Boolean(specPath && titlePath);
+    const specModelKey = identified ? `${specPath}\u0000${titlePath}\u0000` : "\u0000\u0000";
 
     let spanTotal = 0;
     let traceUsd = 0;
@@ -308,8 +322,13 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
       const row =
         specModels.get(rowKey) ??
         {
-          spec_path: specPath,
-          title_path: titlePath,
+          // The row's identity fields must be exactly what `specModelKey` was built
+          // from, or a half-identified trace (a `file` with no `test`, say) would key
+          // into the unattributed bucket while stamping its own spec_path onto it --
+          // and whichever trace happened to create the row first would decide what
+          // the merged row claims to measure.
+          spec_path: identified ? specPath : null,
+          title_path: identified ? titlePath : null,
           model: m.model,
           price_key: resolvePriceKey(m.model, prices),
           calls: 0,
