@@ -79,6 +79,21 @@ export async function postA2AJsonRpc(
  * `contextId` is what makes a second call land in the same session (server-minted on
  * the first response). It goes **inside `message`**, not on `params` — measured.
  */
+/**
+ * Build a `tasks/get` / `tasks/cancel` envelope.
+ *
+ * Both take the same `{ id }` params shape, and both answer over **HTTP 200** —
+ * including their errors (`-32001` "Task not found", `-32002` "Task cannot be
+ * canceled"), which is the same contract `message/send` follows for `-32601`.
+ */
+export function taskRpcEnvelope(
+  method: "tasks/get" | "tasks/cancel",
+  taskId: string,
+  { id }: { id: string },
+): Record<string, unknown> {
+  return { jsonrpc: "2.0", id, method, params: { id: taskId } };
+}
+
 export function messageSendEnvelope(
   text: string,
   { id, messageId, contextId, taskId }: {
