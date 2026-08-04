@@ -468,6 +468,30 @@ jobs:
         ports:
           - 8080:8080
 
+    # The token sidecar's bounds, at JOB level because TWO steps read them: the
+    # poller below and the Playwright step, where the attribution sidecar runs
+    # inside `deleteFlow`'s teardown hook. They used to live in the poller step's
+    # own `env:`, which does not cross into another step -- so the sidecar never
+    # saw either one and silently used its hard-coded defaults. The numbers
+    # happened to match, so nothing was wrong in the run and nothing could be seen
+    # in a diff; the only symptom was a knob that did not turn, precisely when a
+    # wedged monitor endpoint made someone want to turn it.
+    #
+    # Defined ONCE, here, so the poller and the sidecar cannot end up bounded by
+    # different numbers. Pinned by scripts/token-sidecar-knobs.test.mjs.
+    env:
+      TOKENS_TIMEOUT_MS: "8000"
+      TOKENS_DETAIL_CAP: "25"
+      # Per-CALL wall-clock ceiling for the attribution sidecar. Wired AHEAD of its
+      # reader on purpose: the budget itself lands with #1217's `deleteFlow` hook,
+      # and adding it from that PR would mean touching THIS file from a spec change,
+      # which flips this lane's coverage verdict to `canary` and drops its
+      # impacted-spec run. An unread variable costs nothing; a lane that cannot turn
+      # the knob when a monitor endpoint wedges costs a run. With the two above it
+      # bounds a call at budget + timeout = 23s instead of cap x timeout = 208s.
+      # Read by the sidecar only; the poller has its own TOKENS_MAX_SECONDS.
+      TOKENS_BUDGET_MS: "15000"
+
     steps:
       - uses: actions/checkout@v7
 
@@ -673,12 +697,13 @@ jobs:
           TOKENS_BASE_URL: http://localhost:7860
           TOKENS_OUT: token-probes.jsonl
           TOKENS_INTERVAL_MS: "15000"
-          TOKENS_TIMEOUT_MS: "8000"
+          # TOKENS_TIMEOUT_MS and TOKENS_DETAIL_CAP are deliberately NOT here: they
+          # are defined once at job level, because the attribution sidecar in the
+          # Playwright step reads them too and a step-level env: does not reach it.
           # Below the job's timeout-minutes: 60 so this is a real backstop, not
           # dead configuration reached only after the runner already killed the
           # job. Same reasoning as the daily's TOKENS_MAX_SECONDS.
           TOKENS_MAX_SECONDS: "3300"
-          TOKENS_DETAIL_CAP: "25"
 
       - name: Run impacted specs
         env:
