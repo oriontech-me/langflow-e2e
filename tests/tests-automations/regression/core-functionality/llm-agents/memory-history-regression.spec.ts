@@ -60,29 +60,58 @@ async function openConfiguredPlayground(page: Page, flowId: string): Promise<Pla
 }
 
 /**
- * The same Playground open, for a target resolved by `resolveTestTargets` (#1251).
+ * The Playground open for a target resolved by `resolveTestTargets` (#1251).
  *
- * Two things differ from the hosted path above, and only for providers other than
- * OpenAI. `setupLanguageModelOpenAI` is replaced by the shared `providerSetupMap`
- * dispatch, which reaches this template's Agent node through the same unified
- * `ModelInput` surface (`model_model` / "Setup Provider" / `manage-model-providers`) —
- * measured on 1.12.0.dev17, no separate keyless helper is required.
+ * ## Which providers this path accepts, and why it is not all of them
  *
- * And `setAgentModelViaApi` is NOT called. That pin exists because the template
- * defaults `model` to `gpt-5.5-pro` and a UI selection does not always reach the
- * executed graph; on the routed path the selection does persist (measured:
- * `model.value=[{name:"qwen2.5:0.5b", provider:"Ollama"}]`). Pinning here would mean
- * re-implementing its OpenAI-specific non-reasoning resolution for every provider. So
- * the persisted name is ASSERTED instead — a selection that silently dropped back to
- * the workspace default must fail loudly rather than run an unrequested model, which
- * is the #596/#491 failure class this suite keeps re-learning.
+ * The KEYLESS target (Ollama) goes through `providerSetupMap`, which reaches this
+ * template's Agent node via the same unified `ModelInput` surface the hosted helper
+ * uses (`model_model` / "Setup Provider" / `manage-model-providers`) — measured on
+ * 1.12.0.dev17, so no separate keyless helper is required.
+ *
+ * OPENAI keeps the original path verbatim: `setupLanguageModelOpenAI` plus the
+ * `setAgentModelViaApi` pin.
+ *
+ * Any OTHER hosted provider SKIPS, and that is the fix for what the first cut of
+ * this routing got wrong. The pin is not an OpenAI-flavoured nicety — on this
+ * template a UI model selection does not reliably reach the executed graph at all,
+ * which is the whole reason the pin exists. Asserting the persisted name instead
+ * (what the first cut did for every non-OpenAI provider) therefore turned a genuine
+ * product behaviour into test flake: on PR #1317's CI run, `anthropic /
+ * claude-haiku-4-5` and `google / gemini-3.5-flash` both reported
+ *
+ *     the Agent's persisted model never became "<model>"
+ *
+ * and landed as **flaky**, which does not redden a job — a green check over a test
+ * that failed twice, the exact invisibility #1251 exists to remove. Locally the same
+ * targets passed, because the debounced autosave lands on an idle box and not on a
+ * loaded runner.
+ *
+ * So hosted coverage here stays **openai-only**, which is what it always was — this
+ * spec was never parametrized before #1251 — and the skip NAMES the gap instead of
+ * manufacturing coverage that cannot hold. Generalising the pin per provider is a
+ * larger change than routing one declaration, and there is no evidence yet that it
+ * works on this template for google or anthropic.
  */
+const HOSTED_PIN_UNSUPPORTED =
+  "This template needs its executable model pinned through the flows API " +
+  "(`setAgentModelViaApi`), and that pin resolves OpenAI models only: a UI selection " +
+  "does not reliably reach the executed graph here. Hosted coverage for this " +
+  "declaration is openai-only by design; the keyless (Ollama) target is what #1251 " +
+  "routes. Measured on PR #1317: asserting the persisted model instead made " +
+  "anthropic and google flaky on CI while passing locally.";
+
 async function openRoutedPlayground(
   page: Page,
   flowId: string,
   provider: Provider,
   model?: string,
 ): Promise<PlaygroundPage> {
+  const keyless = providerConfigMap[provider].credential !== "api-key";
+  test.skip(!keyless && provider !== "openai", HOSTED_PIN_UNSUPPORTED);
+
+  if (provider === "openai") return openConfiguredPlayground(page, flowId);
+
   // A target that the running build does not offer is a SKIP, not a failure — the
   // area convention every parametrized agent spec follows. Measured: resolving
   // google's whole catalog yields image/live/omni entries that no dropdown lists, and
@@ -95,11 +124,11 @@ async function openRoutedPlayground(
     throw error;
   }
 
-  if (provider === "openai") {
-    await setAgentModelViaApi(page, flowId);
-  } else {
-    await expectPersistedAgentModel(page, flowId, model);
-  }
+  // Keyless only: the selection DOES persist here (measured
+  // `model.value=[{name:"qwen2.5:0.5b", provider:"Ollama"}]`), so it is asserted
+  // rather than pinned — a selection that dropped back to the workspace default must
+  // fail loudly instead of running an unrequested model (#596/#491).
+  await expectPersistedAgentModel(page, flowId, model);
   await page.reload();
 
   return openPlayground(page);
