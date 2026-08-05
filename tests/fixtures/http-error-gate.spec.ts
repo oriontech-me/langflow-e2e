@@ -27,6 +27,19 @@
 // flow. The fixture only cares that the pathname contains `/api/` and the status
 // is 4xx/5xx.
 //
+// MEASURED COVERAGE, and one accepted gap. Ten mutations of the production code
+// were applied one at a time and run against `npm run test:units` plus this file:
+// nine are killed — matching on pathname alone, on status alone, by substring
+// instead of equality, checking the declaration before `IGNORED`, keying the
+// stale check on `expectedStatus`, removing the stale throw, printing the gate
+// string in the `📌` line, never incrementing the hit counter, and announcing on
+// every occurrence instead of the first. The tenth SURVIVES and is accepted:
+// dropping the `else` so a declared defect is *also* tallied in
+// `ignoredByPolicy`. That only double-counts it inside the
+// `PW_HTTP_ERROR_DEBUG=1` breakdown — no verdict, no count and no gate string
+// changes — so there is no behaviour to pin. Recorded rather than left unknown
+// (#1012's rule); if that breakdown ever becomes load-bearing, this is the gap.
+//
 // WHY `@stable` — the same reasoning as `flow-error-gate.spec.ts`, and it is load
 // bearing there too. `daily-stable.yml` selects with `--grep @stable` and is the
 // only recurring lane; `pr-validation.yml` caps the impacted set at 20 with
@@ -120,7 +133,14 @@ test.describe("fixture declared-known-defect hatch", () => {
 
       const log = await withCapturedLog(async () => {
         await page.goto(`${origin}/`);
-        expect(await fetchFromPage(hooked, DECLARED_PATH)).toBe(422);
+        // Fired THREE times on purpose. The fixture announces a declared defect
+        // on its first occurrence only and puts the count in the teardown
+        // summary, so that the log of a defect firing on every render stays
+        // readable — re-noising the log is what #1084 was raised about. Firing it
+        // once could not tell the two designs apart.
+        for (let i = 0; i < 3; i++) {
+          expect(await fetchFromPage(hooked, DECLARED_PATH)).toBe(422);
+        }
         await page.waitForTimeout(1000);
       });
 
@@ -129,9 +149,10 @@ test.describe("fixture declared-known-defect hatch", () => {
         "the declared 422 was not announced — a silenced error and an announced one must not look alike",
       ).toContain("📌 Known backend defect");
       expect(log).toContain(DECLARED.reason);
-      // The load-bearing spelling: the deterministic pipeline greps for exactly
-      // this string, and the whole point of #1008 is that this response stops
-      // producing it.
+      expect(
+        log.match(/📌 Known backend defect/g) ?? [],
+        "the declared defect was announced once per occurrence — three identical lines is the log noise the summary count exists to avoid",
+      ).toHaveLength(1);
       // The load-bearing spelling, and — because `errors.push(entry)` sits in the
       // same branch as that log line — also proof the response was never counted
       // in the `📋 Found N backend error(s)` total. That total itself is printed
