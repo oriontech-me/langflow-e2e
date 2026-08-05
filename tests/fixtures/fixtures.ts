@@ -1,6 +1,9 @@
 // tests/fixtures.ts
 import { test as base, expect, type Page } from "@playwright/test";
-import { classifyHttpError } from "./http-error-policy";
+import {
+  classifyHttpError,
+  type KnownHttpDefect,
+} from "./http-error-policy";
 import {
   classifyFlowError,
   isUnreadableStream,
@@ -47,11 +50,31 @@ export type PageWithErrorHooks = Page & {
    * not more (#1084).
    */
   allowHttpErrors: () => void;
+  /**
+   * Declare ONE backend error this test expects, from a known and filed defect.
+   *
+   * The narrow counterpart to `allowHttpErrors()`, added for #1008: the
+   * destructive test in `folder-deletion-integrity.spec.ts` has to reach the
+   * zero-project state, where the frontend fires `GET /api/v1/projects/undefined`
+   * and the backend correctly answers `422`. Silencing the whole test would also
+   * have silenced `DELETE /api/v1/projects/{id}` → 500 (#965/LE-2020), which its
+   * own delete loop can produce and which is worth seeing.
+   *
+   * The declaration is **verified**: a declared defect that does not fire fails
+   * the test, naming the declaration to delete. That is the point — an exemption
+   * whose justification has expired is the thing #1084 was raised about, and a
+   * printed warning would be one more line nobody reads.
+   *
+   * Call it **before** the test reaches the state that fires the defect —
+   * declarations are not retroactive, so a late call gets the worst of both: the
+   * response already reported as an error, and the declaration counted as stale.
+   */
+  expectKnownHttpError: (defect: KnownHttpDefect) => void;
 };
 
 // Extend test to log backend errors
 export const test = base.extend({
-  page: async ({ page }, use) => {
+  page: async ({ page }, use, testInfo) => {
     const errors: Array<{
       url: string;
       status: number;
@@ -75,6 +98,17 @@ export const test = base.extend({
     let allowFlowErrors = false;
     // Same, for backend HTTP errors the test provokes deliberately.
     let allowHttpErrors = false;
+    /**
+     * Known, filed product defects this test declared it expects (#1008), and how
+     * many times each was actually seen.
+     *
+     * Kept as a parallel count map rather than a mutable field on the declaration
+     * so the objects a spec passes in are never written to — a spec is free to
+     * hoist one to module scope and share it between tests, and a per-test count
+     * must not leak across them.
+     */
+    const declaredDefects: KnownHttpDefect[] = [];
+    const declaredDefectHits = new Map<KnownHttpDefect, number>();
     /**
      * Responses the policy chose not to report, by reason. Not printed unless
      * asked for: the Store 500s alone would put a line in every test's log, and
@@ -145,6 +179,10 @@ export const test = base.extend({
     (page as any).allowHttpErrors = () => {
       allowHttpErrors = true;
     };
+    (page as any).expectKnownHttpError = (defect: KnownHttpDefect) => {
+      declaredDefects.push(defect);
+      declaredDefectHits.set(defect, 0);
+    };
 
     // Capture v2 run-stream bodies as they arrive. This is what makes the v2
     // verdict deterministic: the old `response.text()` path lost every run whose
@@ -164,12 +202,28 @@ export const test = base.extend({
       // and the reason for each exemption — live in `http-error-policy.ts`,
       // where they are unit-tested; this used to be an inline list of four
       // status codes that silently missed 401/403/405/409/502/503 (#1084).
-      const verdict = classifyHttpError({ url, status });
+      const verdict = classifyHttpError({ url, status }, declaredDefects);
       if (!verdict.monitored) {
-        // Only 4xx/5xx are worth accounting for. Counting every 2xx would put
-        // "32× not an error status" in the debug breakdown and bury the entries
-        // that answer the question it exists to answer.
-        if (status >= 400) {
+        if ("knownDefect" in verdict) {
+          // Printed on the FIRST occurrence only, and never with the `🚨 Backend
+          // Error` prefix — that string is what the deterministic pipeline's
+          // VALIDATE gate greps for (`runners.ts` → `backendErrors`), and this
+          // response is precisely the one the gate must stop hard-stopping on.
+          // The occurrence count goes in the teardown summary instead: a defect
+          // that fires 40× is a different observation from one that fires once,
+          // and 40 identical lines is the noise #1084 was raised about.
+          const seen = declaredDefectHits.get(verdict.knownDefect) ?? 0;
+          declaredDefectHits.set(verdict.knownDefect, seen + 1);
+          if (seen === 0) {
+            console.log(
+              `📌 Known backend defect (declared by this test): ${status} ${response.statusText()} - ${url}`,
+            );
+            console.log(`   ${verdict.knownDefect.reason}`);
+          }
+        } else if (status >= 400) {
+          // Only 4xx/5xx are worth accounting for. Counting every 2xx would put
+          // "32× not an error status" in the debug breakdown and bury the entries
+          // that answer the question it exists to answer.
           ignoredByPolicy.set(
             verdict.ignoreReason,
             (ignoredByPolicy.get(verdict.ignoreReason) ?? 0) + 1,
@@ -346,6 +400,18 @@ export const test = base.extend({
       );
     }
 
+    // Account for every declared known defect (#1008). A declaration is a claim
+    // about the product — "this filed bug still fires here" — so it is checked
+    // like one, in both directions.
+    for (const defect of declaredDefects) {
+      const hits = declaredDefectHits.get(defect) ?? 0;
+      if (hits > 0) {
+        console.log(
+          `\n📌 ${hits}× declared known backend defect: ${defect.status} ${defect.pathname} — NOT counted as a backend error.\n   ${defect.reason}`,
+        );
+      }
+    }
+
     // Check for errors and fail test if not allowed
     if (errors.length > 0) {
       const flowErrors = errors.filter((e) => e.type === "flow_error");
@@ -385,6 +451,36 @@ export const test = base.extend({
             `If this error is expected, call page.allowFlowErrors() at the start of your test.`,
         );
       }
+    }
+
+    // A declared known defect that did NOT fire (#1008). Last, so it can never
+    // pre-empt the summary above or the flow-error throw, both of which say more
+    // about the run than this does.
+    //
+    // Only when the test itself passed: a test that failed usually never reached
+    // the state the defect fires in, so throwing here would replace the real
+    // failure with a bookkeeping one — the same branch the spec-level teardown in
+    // `folder-deletion-integrity.spec.ts` makes, for the same reason.
+    //
+    // `status === "passed"`, deliberately, and NOT `status === expectedStatus`.
+    // The two differ under `test.fail()`, where `expectedStatus` is `"failed"`:
+    // comparing against it would suppress this throw for exactly the body that
+    // ran cleanly, which is the case it exists to catch — and it is how
+    // `http-error-gate.spec.ts` pins this branch at all.
+    const staleDefects = declaredDefects.filter(
+      (defect) => (declaredDefectHits.get(defect) ?? 0) === 0,
+    );
+    if (staleDefects.length > 0 && testInfo.status === "passed") {
+      const details = staleDefects
+        .map((d) => `\n  - ${d.status} ${d.pathname}\n    ${d.reason}`)
+        .join("");
+      throw new Error(
+        `${staleDefects.length} declared known backend defect(s) did NOT occur:${details}\n\n` +
+          `That is good news about Langflow and a stale exemption here. Confirm the\n` +
+          `defect is really gone on the version under test, then delete the\n` +
+          `page.expectKnownHttpError() call and close the issue it names — while it\n` +
+          `stands, it hides whatever that endpoint does next.`,
+      );
     }
   },
 });

@@ -1,6 +1,6 @@
 # Folder Deletion Integrity
 
-**Last validated:** Langflow 1.12.x (`1.12.0.dev9`)
+**Last validated:** Langflow 1.12.x (`1.12.0.dev10`)
 
 ---
 
@@ -26,13 +26,19 @@ is the only place in the suite that exercises the zero-project state at all.
 
 ## Tags *(required)*
 
-`@release` `@api` — and `@destructive` on test 4 only.
+`@release` `@api` — plus `@stable` on tests 1–3, and `@destructive` on test 4 only.
 
-**No `@stable` yet**, on purpose: the empty-project screen that test 4 reaches
-makes the frontend fire `GET /api/v1/projects/undefined` and the suite's fixture
-logs the resulting `422` (issue #1008, a product-side defect). Until that is
-resolved, this file always carries a `🚨 Backend Error` line, and `@stable` would
-put that noise in the daily. The tag is restored once #1008 lands.
+**`@stable` was withheld until #1008** and is restored here. The reason it was
+withheld: the empty-project screen test 4 reaches makes the frontend fire `GET
+/api/v1/projects/undefined`, and the fixture logged the resulting `422` as a
+`🚨 Backend Error` on every run of the file. That is now *declared* rather than
+logged as an error — see the #1008 section below for the verdict and why the
+declaration is narrow.
+
+**Test 4 stays untagged**, and not as an oversight: `@destructive` must never be
+combined with `@stable` (#1010), because `daily-stable.yml` has no destructive lane
+and the pair would silently mean "runs nowhere". Test 4 runs in the destructive
+lane of `pr-validation.yml`, `nightly.yml` and `adaptive-impacted.yml`.
 
 **`@destructive` (introduced by #1010)** marks a test that mutates account-wide
 state and therefore cannot run beside anything else. It is a lane selector, not a
@@ -162,6 +168,83 @@ two tags as mutually exclusive — noted in `CONTRIBUTING.md` next to the tag ta
 
 ---
 
+## `GET /api/v1/projects/undefined` → 422 — verdict (#1008)
+
+**Verdict: upstream frontend defect.** Nothing in this spec produces the request —
+it is a `GET` issued by the app, and it fires for any user who deletes their last
+project. Reproduced on `1.12.0.dev7`, `dev8` and `dev10`; the code path is
+identical on `origin/release-1.12.0`, which is the branch the nightly image is
+built from (not `main` — the two lines diverge).
+
+The chain is three files, and each link is needed:
+
+1. `controllers/API/queries/folders/use-get-folders.ts` sets
+   `myCollectionId = data?.find((f) => f.name === defaultFolderName)?.id ?? data?.[0]?.id`.
+   With no project left, `data` is `[]` and **both** sides are `undefined`.
+2. `pages/MainPage/pages/homePage/index.tsx` passes
+   `id: folderId ?? myCollectionId!` into `useGetFolderQuery`. On the `/all` route
+   there is no `folderId`, so the id is `undefined` — the `!` silences the type
+   error, not the value.
+3. `controllers/API/queries/folders/use-get-folder.ts` nests its existence guard
+   inside `if (params.id)`:
+
+   ```ts
+   if (params.id) {
+     …
+     const existingFolder = folders.find((f) => f.id === params.id);
+     if (!existingFolder) return;      // never reached when id is undefined
+   }
+   const url = addQueryParams(`${getURL("PROJECTS")}/${params.id}`, params);
+   ```
+
+   So the one guard that would have blocked the request is skipped **precisely for
+   the `undefined` case it should block**, and the template interpolates the string
+   `"undefined"` into the path.
+
+The backend's answer is correct: `422 uuid_parsing`, `"Input should be a valid
+UUID, invalid character: found \`u\` at 1"`. The defect is that the request is sent
+at all.
+
+**It is a property of the zero-project state, not of test 4.** Measured while
+resolving this: with the account *already* empty — the state a destructive run
+leaves behind — tests 1–3 emit the same `422` at bootstrap, before their own
+project exists. Test 4 is simply the only test in the suite that reaches that state
+deliberately.
+
+**Which is exactly why the declaration is on test 4 only.** Tests 1–3 do not
+declare it, and must not: on a normal (non-empty) account the `422` does *not*
+fire there, so an unconditional declaration would be stale on every healthy run
+and the verification would fail them. Left undeclared, the `422` in tests 1–3
+carries real information — *this run started with no projects*, which under
+`fullyParallel` is the lane-ordering fingerprint #1010 is about. The rule the hatch
+implies is worth stating once: **declare a known defect only in a test whose own
+body guarantees the state that fires it.**
+
+### Why the response is declared rather than silenced
+
+Test 4 declares it with `page.expectKnownHttpError()` (see `CONTRIBUTING.md` step 5
+and `tests/fixtures/http-error-policy.ts`). `page.allowHttpErrors()` was rejected:
+test 4's body deletes N projects through the UI, and `DELETE
+/api/v1/projects/{id}` → `500` while the toast reads "deleted successfully" is a
+*separate* filed defect (#965/LE-2020) that this loop is unusually well placed to
+observe. Blanket silence would have traded one known error for blindness to the
+other. An `IGNORED` entry in the policy was rejected for the opposite reason: it
+would hide the response from all 235 specs, permanently.
+
+The declaration names the exact status **and** pathname, and is **verified** — if
+the `422` stops firing, the fixture fails the test and names the call to delete.
+That is what retires the exemption instead of letting it outlive its justification.
+
+**Still open upstream.** The verdict and the reproducer are recorded here; filing
+it with the Langflow team (Jira `LE-####` or a `langflow-ai/langflow` issue) and
+tracking it until the fix reaches `langflowai/langflow-nightly:latest` stays with
+#1008. One caveat on the alarm's reach: test 4 is `@destructive`, and no scheduled
+lane runs `@destructive` (`daily-stable.yml` has none, `nightly.yml` is dormant) —
+so the "defect is gone" signal arrives on a PR that touches this file or on a
+`manual.yml` dispatch, not the day after the upstream fix merges.
+
+---
+
 ## Teardown order and id-scoped folder cleanup (#1023)
 
 Two teardown defects survived the destructive lane (#1010) and are fixed here.
@@ -249,9 +332,23 @@ seeded on the same instance:
   one at a time (force-fail), including test 4 inside the lane.
 - **No leaks:** the folders/flows each test creates are gone at the end, and the
   project count returns to its baseline.
-- Expected residue while #1008 is open: exactly one `🚨 Backend Error: 422 …
-  /api/v1/projects/undefined` from test 4. It is product-side and must not be
-  silenced here.
+- **No `🚨 Backend Error` line, in either lane (#1008).** The `422` on
+  `/api/v1/projects/undefined` that test 4 provokes is now *declared*, so it prints
+  as `📌 Known backend defect` instead. Measured on `1.12.0.dev10`: the destructive
+  lane 3/3 with zero `🚨` lines and no `📋 Found N backend error(s)` summary at all,
+  and tests 1–3 3/3 the same. Before the declaration the lane logged the `422` on
+  every run, which is what blocked the deterministic pipeline's VALIDATE gate
+  (`backendErrors` is a grep for that exact string).
+- **Tests 1–3 are `@stable`-worthy on the evidence, not on the calendar.** Three
+  back-to-back `--workers=1 --retries=0` runs on `1.12.0.dev10`: 3/3 green. Runs 2
+  and 3 logged nothing at all; run 1 logged the `422` because the destructive lane
+  had just emptied the account, which is the lane-ordering signal described in the
+  #1008 section — not a reason to declare it here.
+- **The declaration is still earned, and stops being silent when it is not.**
+  Mutating the declared `pathname` to one that cannot match makes the run fail with
+  `1 declared known backend defect(s) did NOT occur` **and** puts the `422` back in
+  the log as a `🚨` line — both directions verified. So the day Langflow fixes the
+  frontend, this spec says so rather than carrying the exemption on.
 
 ---
 
@@ -293,7 +390,11 @@ seeded on the same instance:
   tests 2, 3 and 4.
 - `src/frontend/src/pages/MainPage/pages/emptyPage/` — the empty-project screen:
   the `"Start creating a project or flow"` copy and `new_project_btn_empty_page`
-  testid asserted by test 4; it is also where the `projects/undefined` request of
-  #1008 originates.
+  testid asserted by test 4.
 - `src/frontend/src/controllers/API/queries/folders/` — the folder query cache;
   a stale-cache regression here is exactly what tests 1 and 3 are built to catch.
+  `use-get-folder.ts` and `use-get-folders.ts` are also two of the three files in
+  the #1008 chain below, so a change to either is a reason to re-check whether the
+  declared `422` still fires.
+- `src/frontend/src/pages/MainPage/pages/homePage/index.tsx` — the third file in
+  that chain: it is what passes the project id into the paginated flows query.
