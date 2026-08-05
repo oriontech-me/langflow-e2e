@@ -1,6 +1,6 @@
 # Provider Management — modal, provider count, components, add/remove API key
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev17`)
 
 ---
 
@@ -163,7 +163,13 @@ sidebar entry to the canonical **Language Model** component:
    the route into provider configuration.
 4. *Trigger shows the selected model* — assert `model_model` text is a
    non-empty model name and is NOT a "Select a model" placeholder (the catalog
-   pre-selects a default, key-independent).
+   pre-selects a default). **Not key-independent**, as this step used to claim:
+   with no provider credential configured at all the node still mounts but its
+   Language Model field renders a **"Setup Provider"** CTA behind
+   `parameter-permission-gate` and `model_model` is absent, so all four tests
+   fail on an observable unrelated to what they assert (measured on
+   1.12.0.dev17, #1265). It is the credential that matters, not a funded key — a
+   drained `openai` alongside an active anthropic/google passes.
 
 > **Flake verdict & attributed sidebar barrier (issue #1265).** Test 1 flaked on
 > the 2026-07-15 and 2026-08-04 dailies with the same signature
@@ -195,6 +201,42 @@ sidebar entry to the canonical **Language Model** component:
 > `tests/helpers/other/page-entry-barrier.test.ts` against the real classifier.
 > The residual limitation is stated in that helper's header: the probe runs
 > after the budget is spent, so a wedge shorter than the wait reads healthy.
+
+> **Verdict on the no-node hard failure (issue #1304).** Test 4 hard-failed on the
+> 2026-08-05 daily (run 30997773754, all 3 attempts) waiting for
+> `[data-testid^="rf__node-"]`, i.e. `addLanguageModelNode` returned and the canvas
+> had no node. Root cause is **the shared sidebar add dropping its click**, not
+> this file and not the model selector: Langflow accepts the click on
+> `add-component-button-language-model`, never registers the add, and no flow write
+> follows. An instrumented scout on nightly `1.12.0.dev17` measured **4 of 20**
+> adds producing no node within 4 s, and in **all 4** an identical second
+> fill+click produced it — with the `+` button still visible, the search input
+> still holding the term, and zero `POST/PATCH /api/v1/flows` after the first click
+> in 3 of the 4. That is the swallowed-click class (#420/#966) one layer later, on
+> the surface #537 already recorded as re-rendering while its catalog streams in.
+> Pre-fix solo baseline: **2 of 11** runs at `--workers=1 --retries=0`, and one of
+> them failed on a *different* test of this file (test 3) — whichever test is
+> running when the drop happens is the one that reports it.
+> **Why it hard-failed that day rather than flaking:** the window WAS degraded,
+> which the triage could not see because the liveness recorder's probe-measured
+> windows (10:36:37→10:38:25, 10:42:39→10:44:11) by construction miss degradation
+> that does not fail the probe. Inside 100 s on the same shard the run also lost
+> `flow-functionality/stop-building.spec.ts:24` (on `div-generic-node`) and
+> `ui-ux/langflowShortcuts.spec.ts:47` ("the Chat Output component should be on the
+> canvas") — the **same mechanism under two more messages** — while 152–157 s
+> page-entry barrier failures straddled it. This file's own siblings passing on the
+> **same worker** 7 s and 17 s earlier rule out instance-wide breakage.
+> **The fix is in `tests/helpers/flows/add-component-from-sidebar.ts`, not here:**
+> it verifies the node count moved, re-issues the fill+click **once** when it did
+> not, and otherwise fails naming the swallowed click and the observed sidebar
+> state (unit-pinned in `add-component-from-sidebar.test.ts`, including that the
+> message is deliberately **not** infra-classifiable, per the #1262 rule). No
+> assertion here was weakened and no timeout raised — a longer wait provably cannot
+> fix it, since this test already waited 15 s and lost 3/3. Provider-credential
+> churn, the standing hypothesis, is **refuted**: the drop reproduces solo with no
+> neighbour, and the same class hit `edit-name-description-node.spec.ts:42` on that
+> daily with no provider-mutating spec running. #1265 stays a separate issue — its
+> observable is the sidebar never opening, upstream of any add.
 
 **`language-model-regression.spec.ts`**
 1. *OpenAI answers* (skip without `OPENAI_API_KEY`) — Basic Prompting +
