@@ -221,14 +221,19 @@ test.describe("Ollama Provider", () => {
     },
   );
 
-  test(
+  test.fixme(
     "the Ollama component lists the local model live and executes the flow",
     {
-      // @stable restored for #931 after 4 consecutive green `manual.yml` runs on
-      // the branch (2 passed, 23.8-29.2s each) — the CI environment, not a dev
-      // box: the 07-23/24 bundle gap is fixed upstream and the rebuilt
-      // run-completion wait holds under runner-speed inference.
-      tag: ["@stable", "@regression", "@model-provider", "@components", "@playground"],
+      // Quarantined at triage (#1296): recurrent flake 2x same-signature
+      // (2026-07-30, 2026-08-05), 6 occurrences in the 30-day window — no
+      // `div-chat-message` arrives within the 180s budget (the locator resolved
+      // to 0 elements 183 times). Restore (`test` + `@stable`) in #1302.
+      //
+      // This supersedes the #931 restoration rationale that stood here: @stable
+      // had been restored after 4 consecutive green `manual.yml` runs on the
+      // branch, on the grounds that the rebuilt run-completion wait held under
+      // runner-speed inference. It does not hold on the daily.
+      tag: ["@regression", "@model-provider", "@components", "@playground"],
     },
     async ({ page, request }) => {
       // Local CPU inference on a shared CI runner is far slower than on a dev
