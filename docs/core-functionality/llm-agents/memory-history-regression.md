@@ -1,6 +1,6 @@
 # Memory Chatbot — History and Memory Regression
 
-**Last validated:** Langflow 1.11.x (1.11.0)
+**Last validated:** Langflow 1.12.x (1.12.0.dev17)
 
 ---
 
@@ -60,9 +60,11 @@ Requires OpenAI usable — `OPENAI_API_KEY` set **and** the provider recorded `a
 
 **Test 3 — session isolation: new session has no context from previous session**
 
-Requires OpenAI usable — same `providerSkipGate("openai")` gate as Test 2 (#1029). Kept separate because it is destructive (creates a new session).
+Declares `tier: "any-completion"` and resolves its target through `resolveTestTargets()`, so a lane that sets `ANY_COMPLETION_PROVIDER` routes it to a keyless local model (#1187/#1251). It is therefore parametrized (one describe per resolved target) and gated on **that** target — `test.skip(!!skipReason)` plus `hasProviderEnvKeys(provider)` — never on a hosted provider's health. `providerSkipGate("openai")` would defeat the routing: on a routed run it asks whether a hosted key is alive, and a drained account then skips a test that needs no key at all, which is the silent coverage loss #976 recorded. Tests 1 and 2 stay hosted and keep their own gates. Kept separate from Test 2 because it is destructive (creates a new session).
 
-1. Load the template, configure the API key **and pin the Agent model via API** (same `openConfiguredPlayground` path as Test 2 — see Test 2 step 2)
+**Why this declaration qualifies as `any-completion`, and Test 2 does not.** The criterion #1187 settled on is **dependence**: no assertion may depend on the model *choosing or managing* to do something, timing included. Here every assertion is either structural (`div-chat-message` `toHaveCount(0)` after the session reset) or a **negative** about content (`not.toMatch(/Bob/i)`), guarded by a non-vacuous "answered at all" check (`length > 0`). Nothing requires the model to succeed at a task — which is exactly why Test 2 cannot follow: its `expect.soft(/Alice/i)` requires the model to recall and restate a name. The completion wait is also safe by the same test that rejected `settings-message-history`: `waitForChatResponse` gates on `button-stop` **hidden**, never on catching it visible, so a fast local model cannot close a transient window on it.
+
+1. Load the template and configure the resolved target via `providerSetupMap[provider](page, options.model)`. **The API model pin (`setAgentModelViaApi`) applies to the hosted OpenAI path only** — it exists because the Agent template defaults `model` to `gpt-5.5-pro` and the in-canvas widget does not persist a UI selection into the executed graph. Measured on 1.12.0.dev17, the Ollama path does not need it: after `setupOllama` the persisted node carries `model.value=[{name:"qwen2.5:0.5b", provider:"Ollama"}]`. The routed path asserts that persisted name instead of pinning it, so a selection that silently dropped to the workspace default fails loudly rather than running an unrequested model (#596/#491 class)
 2. Open the Playground, send `"My name is Bob..."`
 3. Wait for the response to complete (`waitForChatResponse` — new bubble mounted, then generating indicator cleared)
 4. Click `new-chat` (the "+" button in the sessions sidebar)
@@ -78,6 +80,7 @@ Requires OpenAI usable — same `providerSkipGate("openai")` gate as Test 2 (#10
 - Bot responses accumulate in the history (`div-chat-message` ≥ 2 after 2 exchanges)
 - History persists after closing and reopening the Playground
 - A new session starts with 0 messages, with no context inherited from previous sessions
+- Test 3 reaches that verdict on **any** completion model, hosted or keyless: on a routed lane it must run (not skip) with no provider key present, and the model it runs must be the one the target resolved
 
 ---
 
@@ -89,12 +92,16 @@ Requires OpenAI usable — same `providerSkipGate("openai")` gate as Test 2 (#10
 - `src/frontend/src/components/core/playgroundComponent/` — `input-chat-playground`, `div-chat-message`, `button-send`, `button-stop`, `playground-close-button`, `new-chat` — any rename breaks Tests 2 and 3. `button-stop`/`button-send` are the completion signal used by `waitForChatResponse` (present-while-generating / present-when-idle); if those testids change, the response wait must switch to another per-response completion marker
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeName/index.tsx` — `data-testid="title-{display_name}"` — a change to this testid pattern breaks Test 1
 - `src/frontend/src/modals/modelProviderModal/components/ProviderConfigurationForm.tsx` — "Save" button (exact text to save the API key); changing it breaks `setupLanguageModelOpenAI`
+- `tests/helpers/provider-setup/test-targets.ts` — the shared resolver Test 3 takes its target from; the `ANY_COMPLETION_PROVIDER` override lives there and decides whether that test runs hosted or keyless
+- `tests/helpers/provider-setup/setup-ollama.ts` — drives the keyless path. It reaches the provider panel through `model_model` / "Setup Provider" / `manage-model-providers`, the same unified `ModelInput` surface the hosted helpers use, which is why no separate keyless helper is needed for this template (measured on 1.12.0.dev17, #1251)
+- `src/lfx/src/lfx/base/models/model_input_constants.py` — `MODEL_PROVIDERS_LIST`; Ollama leaving it removes the keyless option from the dropdown and Test 3 can no longer be routed
 
 ---
 
 ## What this test does not cover *(optional)*
 
-- Memory Chatbot behavior with other providers (Anthropic, Google) — `setupLanguageModelOpenAI` configures OpenAI only
+- Memory Chatbot behavior with other providers for **Tests 1 and 2** — `setupLanguageModelOpenAI` configures OpenAI only. Test 3 is parametrized and does cover whatever targets the lane resolves
+- Whether the *retention* half (Test 2) holds on a small local model — it asserts recall, so it stays hosted by design, not by omission
 - Validation of AI response content beyond the name reference ("Alice")
 - Verification that, without the `Memory Base` component connected to the Agent, context is lost
 - History persistence after a Langflow server restart
@@ -104,7 +111,8 @@ Requires OpenAI usable — same `providerSkipGate("openai")` gate as Test 2 (#10
 ## Preconditions *(optional)*
 
 - Langflow running and accessible at `PLAYWRIGHT_BASE_URL`
-- `OPENAI_API_KEY` defined in `.env` **and** OpenAI recorded `active` by `collect-models`, for Tests 2 and 3 (#1029)
+- `OPENAI_API_KEY` defined in `.env` **and** OpenAI recorded `active` by `collect-models`, for Test 2 (#1029)
+- Test 3 needs whatever its resolved target needs: a hosted key on a normal run, or — with `ANY_COMPLETION_PROVIDER=ollama` — a reachable local instance (`OLLAMA_BASE_URL`, `OLLAMA_BASE_URL_FROM_LANGFLOW`, `OLLAMA_TEST_MODEL`) and a Langflow started with `LANGFLOW_SSRF_ALLOWED_HOSTS` covering it
 - Run with `--workers=1` to avoid flow conflicts
 
 ---
@@ -132,3 +140,5 @@ Requires OpenAI usable — same `providerSkipGate("openai")` gate as Test 2 (#10
 - **`setupLanguageModelOpenAI`**: local function in the spec that configures OpenAI via the "Setup Provider" modal. Uses `pressSequentially` (not `fill`) to ensure keyboard events on React controlled inputs. Waits for the "Replace" button to appear to confirm the save completed.
 - **`new-chat`**: the "+" button in the sessions sidebar (`chat-sidebar.tsx`). Functional equivalent of "New Session" in the `session-selector-trigger` dropdown (which may be hidden by animation in certain builds).
 - **Test 1 without API key**: pure structure validation — useful in CI without configured keys.
+- **Routed measurement (#1251), all on 1.12.0.dev17.** Test 3 routed to `ollama / qwen2.5:0.5b`: **6/6** with `retries=0`. Hosted, pinned `google / gemini-3.5-flash-lite`: **1/1** — which also exercises the non-OpenAI branch that asserts the persisted model instead of pinning it. A target the running build does not offer (`gemini-omni-flash-preview`) now **skips**; before this change the same case surfaced as a failure, and resolving google's whole catalog produced 23 of them. Whole file on the routed lane, in one run: structure **passes**, retention **skips** (hosted gate, OpenAI key drained), isolation **runs** — which is the coverage this routing buys, since before it the isolation test shared the retention test's hosted gate and skipped with it. Force-fail 2/2: a wrong persisted model fails with the #596/#491 message, and inverting the isolation assert fails on a real reply (*"I don't have access to your personal information or memories…"*), so the negative assertion is not vacuous.
+- **Durations are not a ceiling.** The routed runs measured 14.7 s, 15.3 s, 16.8 s, 23.3 s, 39.3 s, 93.9 s and 116.9 s — tracking the host's load average (63 at the peak) while Ollama answered a direct call in under 1.5 s the whole time. Two Langflow containers on a 3.8 GB Docker VM were `SIGKILL`ed (exit 137) mid-measurement. A wall-clock ceiling for this declaration has to be measured on the daily, not locally — the same conclusion #1187 reached for its own pilot.
