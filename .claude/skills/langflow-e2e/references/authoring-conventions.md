@@ -339,18 +339,24 @@ failure). Reference: `ollama-provider.spec.ts`, `groq-provider.spec.ts`,
 B** — the bootstrap flow's `POST /flows` competes with the blank-flow click
 and `page.url()` returns the stale bootstrap id (#681).
 
-**The teardown's unmount navigation WARNS and carries on — it neither throws
-nor swallows** (#1288). Both patterns leave the editor before deleting (an
-editor mounted over a deleted flow 404s its `GET /flows/{id}/events` poll and
-the fixture logs each one), and both obvious ways to write that are wrong:
-letting the rejection propagate aborts the hook **before** the delete and leaks
-the flow — strictly worse than the noise the navigation prevents — while
-`.catch(() => {})` discards the one line that would attribute the 404 burst to
-its cause. Log the first line of the error and continue to the deletes.
-`trackCreatedFlows.cleanup()` does this for you and also returns it as
-`unmountError`, alongside `authError`, so a spec on the shared helper needs no
-teardown code of its own. 26 spec-local copies still carry the silent form;
-migrate one as you touch it rather than sweeping them.
+**Use `unmountEditorForCleanup(page, url?)` for the teardown's unmount
+navigation — it neither throws nor swallows** (#1288). Both patterns leave the
+editor before deleting (an editor mounted over a deleted flow 404s its
+`GET /flows/{id}/events` poll and the fixture logs each one), and both obvious
+ways to write that navigation are wrong: letting the failure propagate aborts
+the hook **before** the delete and leaks the flow (measured: 3 leaked flows from
+one spec), while `.catch(() => {})` discards the one line that would attribute
+the 404 burst to its cause. The helper warns with the first line and returns it;
+`trackCreatedFlows.cleanup()` calls it for you and surfaces it as `unmountError`
+alongside `authError`, so a spec on the shared tracker writes no unmount code of
+its own (it still writes the `afterEach` that calls `cleanup`).
+
+**27** spec-local copies still carry the silent form — migrate one as you touch
+it rather than sweeping them. Two of those use `about:blank` rather than `/` and
+hand-roll their own delete loop, so they inherit nothing from the tracker and are
+easy to miss: `api/flows/api-component-regression.spec.ts` and
+`core-functionality/project-management/folder-deletion-integrity.spec.ts` (whose
+local function is *also* named `trackCreatedFlows` and is not this helper).
 
 Validation contract (both patterns): (1) a **behavioral force-fail** of the
 cleanup itself — no-op the delete, run green, count surviving orphans (>0),

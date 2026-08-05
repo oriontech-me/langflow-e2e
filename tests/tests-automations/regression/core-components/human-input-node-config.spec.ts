@@ -21,6 +21,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { unmountEditorForCleanup } from "../../../helpers/flows/unmount-editor-for-cleanup";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 
 // Sidebar search term + add button for the component under test, kept together
@@ -156,18 +157,11 @@ test.describe("Human Input node configuration (HITL branch handles)", () => {
       // its `GET /flows/{id}/events` poll, which the fixture logs as a backend
       // error.
       //
-      // Warned about and carried on from, never rethrown and never swallowed
-      // (#1288): rethrowing would abort this hook before the delete below and leak
-      // the flow — worse than the noise this navigation prevents — while silence
-      // discards the one line that attributes that 404 burst to its cause.
-      await page.goto("/").catch((error: unknown) => {
-        const message = (error as Error)?.message?.split("\n")[0] ?? String(error);
-        console.warn(
-          `⚠️  teardown: could not leave the flow editor (${message}) — the delete ` +
-            `below still runs, so a 404 on the editor's events poll is THAT and not ` +
-            `the flow (#1288).`,
-        );
-      });
+      // Warned about and carried on from, never rethrown and never swallowed — the
+      // helper owns that decision and its message (#1288). Rethrowing here would
+      // abort this hook before the delete below and leak the flow, which is worse
+      // than the noise the navigation prevents.
+      await unmountEditorForCleanup(page, "/");
       await deleteFlow(page.request, createdFlowId);
       createdFlowId = null;
     }

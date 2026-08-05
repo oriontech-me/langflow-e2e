@@ -29,6 +29,7 @@ import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
+import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
 
 // Pre-wired fixture: Chat Input (input_value = SENTINEL_PROMPT) -> Human Input
 // (default Approve/Reject) -> one Chat Output per branch, each with its own
@@ -237,17 +238,7 @@ test.afterEach(async ({ page }) => {
   // Leave the editor first so it stops polling `GET /flows/{id}/events` on a
   // flow about to be deleted, then pass an explicit Bearer — `page.request` is
   // unauthenticated under AUTO_LOGIN and would 401.
-  await page.goto("/").catch((error: unknown) => {
-    // Neither swallowed nor rethrown, on purpose. Rethrowing would abort this
-    // hook BEFORE the deletes below — the load-bearing half — and leak the flow;
-    // swallowing silently would hide why the editor kept 404-polling a deleted
-    // flow, which is the whole reason for leaving it first.
-    const message = (error as Error)?.message?.split("\n")[0] ?? String(error);
-    console.warn(
-      `⚠️  teardown: could not leave the flow editor (${message}) — the deletes ` +
-        `below still run, so expect 404 noise from the editor's events poll.`,
-    );
-  });
+  await unmountEditorForCleanup(page, "/");
   const authHeader = await getAuthToken(page.request);
   const opts = authHeader
     ? { headers: { Authorization: authHeader } }

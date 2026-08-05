@@ -258,14 +258,14 @@ test("nothing was created, so nothing is navigated away from", async () => {
 });
 
 test("a failed unmount still deletes every flow, and is reported rather than swallowed", async () => {
-  // Issue #1288. Both obvious behaviours are wrong here, which is why this is
-  // pinned: letting the rejection propagate would abort the teardown BEFORE the
-  // deletes — and since `captured` has already been taken out of the tracker by
-  // then, those flows are neither deleted nor tracked, i.e. a permanent leak, for
-  // a navigation whose only job was to reduce log noise. Swallowing it (the shape
-  // this replaces, and the shape 26 spec-local copies still carry) discards the
-  // one line that attributes the `🚨 Backend Error` 404 burst that follows to its
-  // real cause.
+  // Issue #1288. What THIS test owns is that a failed unmount does not cost the
+  // deletes: letting the failure propagate would abort the teardown before them,
+  // and since `captured` has already been taken out of the tracker by then, those
+  // flows would be neither deleted nor tracked — a permanent leak, for a navigation
+  // whose only job was to reduce log noise. The warning itself, and the shape of
+  // the message, belong to `unmount-editor-for-cleanup.test.ts`, which is where the
+  // `console.warn` is asserted (a review of #1289 deleted that warn and the whole
+  // lane stayed green — hence a test that pins it, once, next to its code).
   const { page, emit } = fakePage();
   const { request, deletes } = fakeRequest();
   const trackedPage = page as unknown as { goto: (url: string) => Promise<null> };

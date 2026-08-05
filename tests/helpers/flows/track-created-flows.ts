@@ -33,6 +33,7 @@ import { deleteFlow } from "./delete-flow";
 import { getAuthToken } from "../auth/get-auth-token";
 import { recordTokenAttribution, type TokenAttributionResult } from "./token-attribution";
 import { resolveTestAttribution } from "./resolve-test-attribution";
+import { unmountEditorForCleanup } from "./unmount-editor-for-cleanup";
 
 /**
  * The `Page` surface the tracker uses. Narrow on purpose: it is what lets the unit
@@ -101,6 +102,10 @@ export interface FlowCleanupResult {
    * editor's `GET /flows/{id}/events` poll hitting a flow that no longer exists —
    * unattributable noise unless the navigation failure that caused it is named.
    * First line only, so a multi-line Playwright error stays readable.
+   *
+   * Under `{ strict: true }` the whole result is discarded when the sweep throws,
+   * so this field never reaches that caller — the `console.warn` is what survives.
+   * Same as `authError` above; unreachable today, since no spec passes `strict`.
    */
   unmountError?: string;
   /** Set when `attribution` was requested — what the sidecar recorded or skipped. */
@@ -315,21 +320,13 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
       // the specs whose editor is still polling, and costs nothing in the rest.
       // Two of the 51 copies did this; #1103 added it to the folder specs.
       //
-      // A failed navigation is neither rethrown nor swallowed (#1288). Rethrowing
-      // would abort this method BEFORE the deletes — and `captured` has already
-      // been taken out of the tracker, so those flows would be neither deleted nor
-      // tracked: a permanent leak, traded for a navigation whose only job was to
-      // reduce log noise. Swallowing it silently is what this replaces, and it
-      // discards the one line that attributes the 404 burst above to its cause.
-      await page.goto("about:blank").catch((error: unknown) => {
-        result.unmountError =
-          (error as Error)?.message?.split("\n")[0] ?? String(error);
-        console.warn(
-          `⚠️  cleanup: could not leave the flow canvas (${result.unmountError}) — ` +
-            `the deletes below still run, so any 404 on the editor's events poll is ` +
-            `THAT and not the flow (#1288).`,
-        );
-      });
+      // A failed navigation is neither rethrown nor swallowed (#1288) — see
+      // `unmountEditorForCleanup`, which owns that decision, the message, and the
+      // `try`/`catch` that also covers a synchronous throw. Rethrowing here would
+      // abort this method BEFORE the deletes, and `captured` has already been taken
+      // out of the tracker, so those flows would be neither deleted nor tracked: a
+      // permanent leak traded for a navigation whose only job was to reduce noise.
+      result.unmountError = await unmountEditorForCleanup(page);
 
       const errors: unknown[] = [];
       for (const id of captured) {
