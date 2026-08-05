@@ -544,7 +544,7 @@
 - [x] DataFrame output renders as Markdown table → `core-functionality/playground/playground-output-data.spec.ts`
 
 #### 9.6 Human-in-the-Loop (1.11.0)
-- [ ] Human Input pauses the run durably, decision card renders in the Playground, Approve routes only the approved branch and the run completes; Reject routes only the reject branch → `core-functionality/playground/human-input-pause-resume.spec.ts`
+- [x] Human Input pauses the run durably, decision card renders in the Playground, Approve routes only the approved branch and the run completes; Reject routes only the reject branch → `core-functionality/playground/human-input-pause-resume.spec.ts`
 
 ---
 
