@@ -21,8 +21,11 @@ test.afterEach(async ({ page }) => {
   createdFlowId = undefined;
 });
 
-test("user must be able to stop a building from the canvas",
-  { tag: ["@stable", "@release", "@workspace", "@components"] },
+test.fixme("user must be able to stop a building from the canvas",
+  // Quarantined at triage (#1296): recurrent flake 2x (2026-07-14, 2026-08-05) —
+  // the `div-generic-node` click times out at 20s, so the node never becomes
+  // clickable. Restore (`test` + `@stable`) in #1301.
+  { tag: ["@release", "@workspace", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
