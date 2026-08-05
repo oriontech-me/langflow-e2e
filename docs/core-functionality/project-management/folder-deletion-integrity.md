@@ -180,11 +180,15 @@ The chain is three files, and each link is needed:
 
 1. `controllers/API/queries/folders/use-get-folders.ts` sets
    `myCollectionId = data?.find((f) => f.name === defaultFolderName)?.id ?? data?.[0]?.id`.
-   With no project left, `data` is `[]` and **both** sides are `undefined`.
+   With no project left `data` is `[]`, so the `.find()` misses and `data[0]` does
+   not exist — `myCollectionId` is stored as `undefined`.
 2. `pages/MainPage/pages/homePage/index.tsx` passes
-   `id: folderId ?? myCollectionId!` into `useGetFolderQuery`. On the `/all` route
-   there is no `folderId`, so the id is `undefined` — the `!` silences the type
-   error, not the value.
+   `id: folderId ?? myCollectionId!` into `useGetFolderQuery`. `folderId` comes
+   from `useParams()` and exists only on the nested `folder/:folderId` route
+   (`routes.tsx`), never on the bare `/all` path — so on `/all` the id really is
+   `undefined` at run time. `IGetFolder.id` is typed as a **required** `string`,
+   and `myCollectionId!` is a compile-time non-null assertion with no runtime
+   effect: it suppresses the type error rather than the value.
 3. `controllers/API/queries/folders/use-get-folder.ts` nests its existence guard
    inside `if (params.id)`:
 
@@ -201,9 +205,34 @@ The chain is three files, and each link is needed:
    the `undefined` case it should block**, and the template interpolates the string
    `"undefined"` into the path.
 
+Nothing stops the fetch downstream either: `use-get-folder.ts` passes no `enabled`
+to `query(...)` and the `homePage` call site passes no options at all, so
+react-query's default `enabled: true` applies.
+
 The backend's answer is correct: `422 uuid_parsing`, `"Input should be a valid
 UUID, invalid character: found \`u\` at 1"`. The defect is that the request is sent
 at all.
+
+**The query string is what proves the attribution**, and it is worth spelling out
+because it looks like a contradiction: the id is interpolated into the **path** yet
+is absent from the **query**. `addQueryParams` hands the whole `IGetFolder` object
+to `buildQueryStringUrl`, which iterates `Object.entries` and skips any value
+`=== undefined` — so `id` is dropped from the query string while
+`` `${getURL("PROJECTS")}/${params.id}` `` has already stringified it into the path.
+What is left is `page, size, is_component, is_flow, search`, in that order, which
+matches the observed URL byte for byte.
+
+**And it is the only path that can produce that shape.** `useGetFolderQuery` has
+exactly one call site in the frontend (`homePage/index.tsx`); of the seven places
+that reference `getURL("PROJECTS")`, only `use-get-folder.ts` builds a
+`GET …/{id}?…` request; and `is_flow` appears as a query param nowhere else. So the
+chain is exclusive, not merely plausible.
+
+**The precondition is reachable by ordinary use, not just by a test.**
+`delete_project` in `api/v1/projects.py` refuses only the `ASSISTANT_FOLDER_NAME`
+folder — the default Starter Project is deletable — so a user can delete every
+project they own through the UI and land in exactly this state. That is what makes
+this a user-facing defect rather than a test-only curiosity.
 
 **It is a property of the zero-project state, not of test 4.** Measured while
 resolving this: with the account *already* empty — the state a destructive run
@@ -397,4 +426,10 @@ seeded on the same instance:
   the #1008 chain below, so a change to either is a reason to re-check whether the
   declared `422` still fires.
 - `src/frontend/src/pages/MainPage/pages/homePage/index.tsx` — the third file in
-  that chain: it is what passes the project id into the paginated flows query.
+  that chain: it is what passes the project id into the paginated flows query, and
+  its only call site.
+- `src/frontend/src/controllers/utils/create-query-param-string.ts` — drops
+  `undefined` values, which is why the declared `422`'s query string carries no
+  `id`; a change here changes the declared pathname's URL shape.
+- `src/frontend/src/routes.tsx` — whether `folderId` is present on the route
+  decides whether the fallback to `myCollectionId` is reached at all.
