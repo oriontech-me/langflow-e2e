@@ -1118,6 +1118,52 @@ test("summarize writes the tokens block to TOKENS_SUMMARY_OUT", async () => {
   assert.equal(block.unattributed.traces, 1);
   assert.equal(block.unattributed.total_tokens, 500);
   assert.ok("attrib_calls" in block && "attrib_ms" in block);
+  // Every model in this fixture IS priced, so the field must be present and
+  // EMPTY -- present, because report-unpriced-models.mjs reads nothing else and
+  // would report every run as clean if the field went missing; empty rather than
+  // absent, because absent and empty mean different things to that reporter
+  // (nothing captured vs. nothing unpriced).
+  assert.deepEqual(block.unpriced_models, [],
+    "the block must carry unpriced_models, and an all-priced run's is empty");
+});
+
+// The case the field exists for, and the one that actually happened: a model
+// spent tokens and this repo's price file does not price it. Run 30920300880
+// reported `gpt-5-mini` from the Azure AI Foundry provider spec on 2026-08-04,
+// which left the whole run's dollars a floor on the QA Platform. It had been
+// reported all along -- into the step summary of a green run -- and was found by
+// someone happening to open a dashboard. Carrying it in the block is what lets
+// report-unpriced-models.mjs raise it while the price file can still be fixed
+// before the next run freezes another NULL price_key.
+test("the tokens block names the models it could not price", async () => {
+  const unpricedProbe = JSON.stringify({
+    trace_id: "t9",
+    flow_id: "f9",
+    start_time: "2026-07-31T13:45:00Z",
+    status: "ok",
+    total_tokens: 584,
+    models: [
+      { model: "gpt-5-mini", prompt_tokens: 51, completion_tokens: 533, total_tokens: 584, calls: 1 },
+    ],
+  });
+  const fs2 = fakeFs({
+    // One priced model and one unpriced, so the assertion cannot pass by the
+    // field simply listing every model it saw.
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n${unpricedProbe}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({
+    env: { ...baseEnv, TOKENS_SUMMARY_OUT: "tokens-block.json" },
+    ...fs2,
+    log: () => {},
+  });
+
+  const block = JSON.parse(fs2.written["tokens-block.json"]);
+  assert.deepEqual(block.unpriced_models, ["gpt-5-mini"],
+    "only the model with no price entry may appear");
+  // The tokens themselves are still counted -- an unpriced model loses its
+  // dollars, never its token counts.
+  assert.equal(block.total_tokens, 672, "88 + 584: unpriced does not mean uncounted");
 });
 
 test("summarize writes NO tokens block when the run captured nothing", async () => {

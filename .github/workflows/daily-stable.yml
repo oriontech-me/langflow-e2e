@@ -1184,6 +1184,84 @@ jobs:
             echo "Token rows delivered — $t_received row(s) ingested, none dropped."
           fi
 
+      # A model this run spent on that scripts/lib/model-prices.json does not
+      # price. Placed AFTER the POST, and continue-on-error, for the reason every
+      # diagnostic in this job carries: it must never be why a step that matters
+      # is skipped.
+      #
+      # NOT gated on `schedule`, and NOT gated on the suite passing — unlike
+      # `Create issue on failure`, which is both. Either gate would hide this in
+      # the exact cases it exists for: an unpriced model shows up on a GREEN run,
+      # and gpt-5-mini (2026-08-04) arrived on a MANUAL one.
+      #
+      # WHY THIS IS URGENT AND NOT A REPORT: the QA Platform freezes `price_key`
+      # at ingest, so a model missing from the price file at capture time leaves
+      # that run's rows unpriceable forever. Adding the price prices future runs
+      # only. Every run between the first sighting and the fix is lost, which is
+      # what makes same-day notice the whole point.
+      - name: Report unpriced models
+        id: unpriced
+        if: always()
+        continue-on-error: true
+        run: node scripts/report-unpriced-models.mjs
+        env:
+          TOKENS_SUMMARY_OUT: tokens-block.json
+          # The lane, so the issue body says where it was first seen. `schedule`
+          # and `workflow_dispatch` both reach this step and they are not the same
+          # sweep.
+          WORKFLOW: ${{ github.event_name == 'schedule' && 'daily-stable' || 'daily-stable-manual' }}
+
+      # One issue, kept current — not one per run. A fixed title is the identity:
+      # if an open issue with it exists, its BODY is rewritten to the current
+      # model set, so a persisting gap does not add a comment every day, and the
+      # issue never describes a stale set. A closed one is not reopened; a gap
+      # that returns after being closed is a new finding and gets a new issue.
+      #
+      # No label is applied on purpose: creating one needs the label to exist, and
+      # a failure there would lose the whole issue. Title search only.
+      - name: Raise or refresh the unpriced-models issue
+        if: always() && steps.unpriced.outputs.count != '0' && steps.unpriced.outputs.count != ''
+        continue-on-error: true
+        uses: actions/github-script@v9
+        env:
+          UNPRICED_MD: ${{ steps.unpriced.outputs.summary_md }}
+          UNPRICED_COUNT: ${{ steps.unpriced.outputs.count }}
+        with:
+          script: |
+            const TITLE = '[tokens] model(s) spending with no price entry';
+            const body = process.env.UNPRICED_MD || '';
+            if (!body.trim()) {
+              core.warning('The unpriced-models reporter emitted no body; not opening an issue rather than opening an empty one.');
+              return;
+            }
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            // Exact title match, and `!pull_request` because listForRepo returns
+            // PRs too — a PR that happened to carry this title would otherwise be
+            // updated instead of the issue.
+            const existing = open.find(i => i.title === TITLE && !i.pull_request);
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                body,
+              });
+              core.info(`Refreshed #${existing.number} with the current unpriced set.`);
+            } else {
+              const created = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: TITLE,
+                body,
+              });
+              core.info(`Opened #${created.data.number} for ${process.env.UNPRICED_COUNT} unpriced model(s).`);
+            }
+
       # Long-lived run history: append one JSON line per scheduled run to
       # reports/daily-history.jsonl and commit it back to main. See
       # reports/README.md for schema and queries. Runs even on failure so

@@ -538,6 +538,31 @@ export async function summarize({
       unattributed: agg.unattributed,
       attrib_ms: agg.attrib_ms,
       attrib_calls: agg.attrib_calls,
+      // The models this run spent on that THIS FILE could not price, which is the
+      // one failure that cannot be repaired after the fact. The QA Platform
+      // freezes `price_key` at ingest (the producer resolves it, the ingest stores
+      // it verbatim, every dollar figure joins on it), so a model missing from
+      // model-prices.json at capture time leaves that run's rows with a NULL key
+      // FOREVER -- adding the price later fixes only future runs. Contrast a model
+      // missing from the platform's e2e_model_prices MIRROR, which is joined at
+      // read time and therefore back-prices every run once synced.
+      //
+      // It was already computed and already reported -- into the step summary of a
+      // green workflow, which is the least-read surface there is. It went unnoticed
+      // twice in two days (claude-haiku-4-5 on 08-03, gpt-5-mini on 08-04, the
+      // latter from a MANUAL run) and was found both times by someone happening to
+      // open a dashboard. Carrying it here is what lets report-unpriced-models.mjs
+      // raise it while the price file can still be fixed before the next run.
+      //
+      // The block, not reports/token-history.jsonl, because the history line is
+      // SUPPRESSED on the manual and PR lanes (TOKENS_SUPPRESS_HISTORY above) --
+      // and the manual lane is exactly where gpt-5-mini appeared. The block is
+      // written on every lane that sets TOKENS_SUMMARY_OUT.
+      //
+      // Safe to add for the same reason `unattributed` and `attrib_*` are already
+      // here: the ingest RPC destructures the five fields named above and ignores
+      // everything else.
+      unpriced_models: agg.unpricedModels,
       rows: agg.bySpecModel,
     };
     try {
