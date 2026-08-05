@@ -429,9 +429,16 @@ export async function summarize({
   }
 
   let prices = {};
+  // Whether the table could be READ, which is a different statement from "the
+  // table has no row for this model" and the two share every downstream symptom:
+  // an unreadable table makes every model unpriced AND every provider unknown, so
+  // the notes under both tables would otherwise tell a reader to add rows that are
+  // already there (#1300 review).
+  let pricesReadable = true;
   try {
     prices = parsePrices(readFile(env.TOKENS_PRICES || "scripts/lib/model-prices.json"));
   } catch (error) {
+    pricesReadable = false;
     log(`token summary: price table unreadable (${error.message}) — reporting tokens only`);
   }
 
@@ -587,8 +594,14 @@ export async function summarize({
     }
   }
 
+  // "no price entry" is only true when the table was READABLE; when it was not,
+  // every model is unpriced for one shared reason and saying it per model points
+  // at the wrong fix (#1300 review).
   const floor = agg.unpricedModels.length
-    ? ` (a FLOOR — ${agg.unpricedModels.length} model(s) have no price entry: ${agg.unpricedModels.join(", ")})`
+    ? pricesReadable
+      ? ` (a FLOOR — ${agg.unpricedModels.length} model(s) have no price entry: ${agg.unpricedModels.join(", ")})`
+      : " (a FLOOR — the price table could not be read, so NOTHING in this run is priced; see the" +
+        " recorder's log for the parse error)"
     : "";
   // Every dollar figure below is a LOCAL ESTIMATE, and says so (#1255 item 3). USD is
   // computed twice — here, from scripts/lib/model-prices.json at run time, and on the
@@ -638,12 +651,16 @@ export async function summarize({
     "",
   );
   if (unknownProvider) {
+    const ids = unknownProvider.models.map((m) => `\`${m}\``).join(", ");
     lines.push(
-      `_\`unknown\` = ${unknownProvider.models.length} model(s) with no \`provider\` in ` +
-        "`scripts/lib/model-prices.json`: " +
-        `${unknownProvider.models.map((m) => `\`${m}\``).join(", ")}. ` +
-        "Adding the row there names the provider on the next run — the id is never " +
-        "used to guess it (#1300)._",
+      pricesReadable
+        ? `_\`unknown\` = ${unknownProvider.models.length} model(s) with no \`provider\` in ` +
+            `\`scripts/lib/model-prices.json\`: ${ids}. ` +
+            "Adding the row there names the provider on the next run — the id is never " +
+            "used to guess it (#1300)._"
+        : "_`unknown` = every model in this run: the price table could not be read (see the " +
+            `recorder's log), so no provider could be resolved for any of them — ${ids}. ` +
+            "The rows may well exist; fix the table, not this run's models (#1300)._",
       "",
     );
   }

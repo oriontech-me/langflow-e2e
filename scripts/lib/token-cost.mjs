@@ -83,14 +83,29 @@ export function parsePrices(raw) {
 }
 
 // The one place that decides whether a price entry declares a provider (#1300
-// gap 1). It is READ, never DERIVED: the id-prefix rule that would replace it
-// gets today's five models right and the next Azure-hosted deployment wrong —
-// `gpt-5-mini` is billed by an Azure AI Foundry account and priced as one
-// (#1281), so the model id and the account that pays are already two different
-// axes here. Deriving would also put a SECOND notion of identity on the same
-// data, since resolvePriceKey() below matches ids by substring in both
-// directions. Empty/blank counts as absent, matching sync-model-prices.mjs's own
-// rejection of a whitespace provider.
+// gap 1). It is READ, never DERIVED, and it is worth being precise about what
+// that does and does not buy, because the first draft of this comment overstated
+// it and the review of #1300 refuted the overstatement.
+//
+// What it buys: the provider comes off the SAME table row that priced the tokens,
+// so a run's dollars and its provider rollup can never disagree about where they
+// came from, and a model the table says nothing about stays honestly unknown
+// instead of being folded into whichever bucket a prefix rule guessed.
+//
+// What it does NOT buy: the table is keyed by model ID, so it cannot separate two
+// ACCOUNTS that serve the same name. `gpt-5-mini` is the live example — the single
+// row for it declares `azure` because it prices an Azure AI Foundry deployment
+// (#1281), and a genuine OpenAI `gpt-5-mini` call (the id is in the OpenAI catalog
+// under tests/helpers/provider-setup/data/models.json) is therefore booked to
+// azure. model-prices.json's own header already warns that a row "prices a NAME";
+// that warning covers this field too. So a prefix rule and this table are wrong on
+// different models, not wrong-vs-right — what makes reading the table the better
+// of the two is that it is auditable and correctable in one place, while a
+// derivation is silent and would also put a SECOND notion of identity on the same
+// data, since resolvePriceKey() below matches ids by substring in both directions.
+//
+// Empty/blank counts as absent, matching sync-model-prices.mjs's own rejection of
+// a whitespace provider.
 function declaredProvider(entry) {
   const provider = entry?.provider;
   return typeof provider === "string" && provider.trim() ? provider.trim() : null;
@@ -267,10 +282,21 @@ function resolveBands(model, prices) {
 // every band AGREES — bands that disagree describe a model that changed accounts
 // over time, and picking one of them by hand is exactly the silent derivation
 // this function exists to refuse.
+//
+// The fallback fires ONLY when no band is effective, and that is a real
+// distinction rather than a restatement (found in review of #1300). When a band
+// IS effective but declares no provider, the effective row's silence is the
+// answer: reaching past it to a sibling band would report an account the row
+// that priced these tokens does not name — the same "dollars and provider from
+// one row" property this function exists for, broken in the one case nobody
+// would look at. sync-model-prices.mjs rejects a band with no provider, so
+// model-prices.json cannot reach that state today; resolveProvider() is exported
+// and aggregate() takes an arbitrary price object, so the branch is still live.
 export function resolveProvider(model, prices, date) {
   const bands = resolveBands(model, prices);
   if (!bands) return null;
-  return declaredProvider(selectBand(bands, date)) ?? unanimousProvider(bands);
+  const effective = selectBand(bands, date);
+  return effective ? declaredProvider(effective) : unanimousProvider(bands);
 }
 
 function unanimousProvider(bands) {
@@ -559,9 +585,22 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     // pair). The `models` Set becomes a sorted array here rather than being carried
     // as one: a Set does not survive JSON.stringify, and this value goes straight
     // onto a history line.
+    //
+    // Ties break lexically, which the sibling rollups do not do. Their order on a
+    // tie falls out of which span the trace happened to list first, and that is
+    // tolerable for a table a human reads once; this value is APPENDED TO A
+    // HISTORY FILE and diffed across runs, where a row order that moves on its own
+    // is noise nobody can attribute. `null` (the unknown bucket) sorts last —
+    // named providers are the figures being read, and the bucket that names what
+    // could not be resolved belongs under them. resolvePriceKey() breaks its own
+    // ties lexically for the same "never leave it to input order" reason.
     byProvider: [...providers.values()]
       .map((bucket) => ({ ...bucket, models: [...bucket.models].sort() }))
-      .sort((a, b) => b.total_tokens - a.total_tokens),
+      .sort(
+        (a, b) =>
+          b.total_tokens - a.total_tokens ||
+          (a.provider === null ? 1 : b.provider === null ? -1 : a.provider.localeCompare(b.provider)),
+      ),
     bySpec: [...specs.values()].sort((a, b) => b.total_tokens - a.total_tokens),
     bySpecModel: [...specModels.values()].sort((a, b) => b.total_tokens - a.total_tokens),
     spanTokens,

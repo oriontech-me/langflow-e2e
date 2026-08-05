@@ -503,22 +503,38 @@ jobs:
           #      and a flow's trace 404s the moment the flow is deleted.
           #
           # Reason 2 was missing, and it made #1210's recorder on this lane
-          # structurally unable to see anything: 12 consecutive runs recorded
-          # `0 trace(s)` because tracing was off on every one of them. Run
-          # 31018914069 is the clean measurement — 20 `llm-agents` specs, a
-          # provider configured (`needs_models: true`, `Collect models` ran), 59
-          # tests passed, and an artifact carrying 139 attribution COST records
-          # and not one trace. The summarizer's own honest-zero message names
-          # this flag first among the candidate causes, and it was right.
+          # structurally unable to see anything: EVERY run that produced a token
+          # artifact after #1210 merged recorded `0 trace(s)` — all 35 of them,
+          # 30855127426 through 31021593309, each carrying a `token-attrib.jsonl`
+          # and no `token-probes.jsonl` — because tracing was off on every one.
+          # Run 31018914069 is the clean measurement: 19 `llm-agents` specs plus
+          # collect-models, a provider configured (`needs_models: true`,
+          # `Collect models` ran), 59 passed / 29 skipped, and an artifact
+          # carrying 139 attribution COST records and not one trace. The
+          # summarizer's own honest-zero message names this flag first among the
+          # candidate causes, and it was right.
           #
           # `needs_models` is the lane's own verdict for "this run will execute at
           # least one provider-dependent spec" (scripts/provider-dependent-specs.mjs,
-          # #1216), which is exactly the set of runs that HAVE spend to measure.
-          # Gating on it rather than switching tracing on unconditionally keeps the
-          # cheap path for the majority of PRs — an LLM-free diff is unaffected —
-          # while the daily and manual, which measure every run, keep tracing on
-          # unconditionally. The stale half of the previous comment claimed this
-          # mirrored daily-stable.yml, which has hardcoded `"false"` since #1197.
+          # #1216) — the closest thing the lane has to "this run has spend to
+          # measure", and not the same statement. Two known gaps, neither worth a
+          # second mechanism: `@playground` is deliberately not a provider tag
+          # there, and the provider keys are in the Playwright step's env on every
+          # run, so a spec that installs its own credential and pins a model would
+          # spend without setting the verdict. Gating on it rather than switching
+          # tracing on unconditionally keeps the cheap path for the import-graph
+          # majority of PRs, while the daily and manual, which measure every run,
+          # keep tracing on unconditionally (daily-stable.yml has been hardcoded
+          # `"false"` since #459, before the token monitor existed — the previous
+          # comment here misattributed that to #1197).
+          #
+          # One class does NOT keep the cheap path, and it is the one to know
+          # about: decideProviderCoverage() sets `needs_models=true` for a CANARY
+          # run (a CI-only diff, three LLM-free specs), so those now boot with
+          # tracing on and record another honest zero. That follows from reusing
+          # the lane's own verdict instead of inventing a second one, and the
+          # cost is a traced boot on a class of PR that is already paying for a
+          # full Langflow + `Collect models` sweep.
           LANGFLOW_DEACTIVATE_TRACING: ${{ (contains(needs.detect-specs.outputs.specs, 'observability-monitoring') || needs.detect-specs.outputs.needs_models == 'true') && 'false' || 'true' }}
           # Let Langflow reach the sibling go-httpbin service below (#1128). Its
           # SSRF layer blocks private addresses unless pre-authorized, and the

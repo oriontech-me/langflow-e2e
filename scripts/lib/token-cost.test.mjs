@@ -1199,6 +1199,42 @@ test("a date no band covers reports NO provider when the bands disagree about it
   assert.equal(resolveProvider("m", migrated, "2026-01-01"), null);
 });
 
+test("an effective band that declares no provider answers null — the fallback is for NO band, not a silent one", () => {
+  // Found in review of #1300: the fallback used to fire on any absent provider,
+  // so an effective band that says nothing borrowed a sibling band's account —
+  // reporting a provider the row that priced these tokens does not name, which
+  // is the one property resolveProvider() exists to hold.
+  const partial = {
+    m: [
+      { since: "2026-01-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 1 },
+      { since: "2026-09-01", inputPerMillion: 1, outputPerMillion: 1 },
+    ],
+  };
+  assert.equal(usdFor("m", 1e6, 0, partial, "2026-09-15"), 1, "the later band IS effective and prices the row");
+  assert.equal(resolveProvider("m", partial, "2026-09-15"), null, "so its silence is the answer, not azure");
+  assert.equal(resolveProvider("m", partial, "2026-05-01"), "azure", "the earlier band still answers for its own dates");
+});
+
+test("byProvider breaks a tie lexically, so a history line's row order cannot move on its own", () => {
+  // Two providers with identical totals: without the tie-break the order falls
+  // out of which span the trace listed first, and this value is appended to
+  // reports/token-history.jsonl and diffed across runs.
+  const prices = {
+    a1: { provider: "zeta", inputPerMillion: 1, outputPerMillion: 1 },
+    b1: { provider: "alpha", inputPerMillion: 1, outputPerMillion: 1 },
+    c1: { inputPerMillion: 1, outputPerMillion: 1 },
+  };
+  const span = (model) => ({ model, calls: 1, prompt_tokens: 50, completion_tokens: 50, total_tokens: 100 });
+  const order = (models) =>
+    aggregate({
+      probes: [{ trace_id: "t", total_tokens: 100 * models.length, models: models.map(span) }],
+      prices,
+    }).byProvider.map((p) => p.provider);
+
+  assert.deepEqual(order(["a1", "b1", "c1"]), ["alpha", "zeta", null]);
+  assert.deepEqual(order(["c1", "b1", "a1"]), ["alpha", "zeta", null], "input order does not reach the output");
+});
+
 test("byProvider rolls the models up by who billed them, keeping azure its own row", () => {
   const agg = aggregate({
     probes: [

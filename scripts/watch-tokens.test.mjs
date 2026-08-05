@@ -13,6 +13,7 @@ import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import realFs from "node:fs";
 import { collectOnce, parseAttribLines, parseProbeLines, poll, splitAttribRecords, summarize } from "./watch-tokens.mjs";
+import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
 
@@ -1244,44 +1245,98 @@ test("a second --summarize against the same TOKENS_SUMMARY_OUT still parses", as
 // every run, forever, and reports that zero honestly — which is what made the
 // defect survive: all four token steps green, an artifact present, a message
 // explaining that there were no traces, and no way to tell "nothing was spent"
-// from "nothing could be seen". It ran that way for 12 consecutive PR runs.
+// from "nothing could be seen". It ran that way on EVERY pr-validation run that
+// produced a token artifact between #1210 merging (2026-07-31 16:39 -03) and
+// #1300 — all 35 of them, 30855127426 through 31021593309, each carrying a
+// `token-attrib.jsonl` and no `token-probes.jsonl`.
 //
-// What this guard can and cannot do. It CANNOT tell whether a lane's condition is
-// the right one — the composed GitHub expression is not evaluable here, and #1226
-// established that a regex over workflow text passes the mutations it exists to
-// catch. What it CAN do is refuse the one state that is never defensible: a lane
-// that turns the recorder on while leaving tracing gated on something narrower
-// than its own "will this run touch a provider" verdict. The lane list is DERIVED
-// from who starts the poller, so a fourth lane inherits the check the day it is
-// written.
-const POLLER_LANES = [
-  ["daily-stable.yml", daily],
-  ["pr-validation.yml", prValidation],
-  ["manual.yml", manual],
-];
+// The guard EVALUATES the workflow's expression rather than matching its text.
+// The first version of it matched text, and the review of #1300 showed it passing
+// both mutations that reintroduce the bug — `needs_models == 'false'` and swapped
+// branch values — since both still contain the string `needs_models`. That is
+// #1226's rule playing out exactly as written, so the condition is now handed to
+// scripts/lib/gh-expression.mjs with a run described (`needs_models` true, no
+// impacted specs) and the ANSWER asserted.
+//
+// Two limits worth stating. This reads the workflow as text, so it cannot tell
+// which YAML job an occurrence belongs to — it therefore requires EVERY
+// occurrence in a poller lane to be defensible, which is stricter than the real
+// question and fails loudly rather than checking only the first one (the first-
+// occurrence bug the same review found). And it cannot judge whether
+// `needs_models` is the right verdict to gate on; that argument lives in
+// pr-validation.yml's own comment.
+const WORKFLOWS_DIR = path.join(REPO_ROOT, ".github/workflows");
+
+// The poller, not the summarizer: `--summarize` reads files a sibling job produced
+// and needs no tracing of its own. A commented-out invocation does not count —
+// `stripComments()` runs first, so a lane cannot keep its place on this list (or
+// lose it) by what its comments say.
+const STARTS_POLLER = /node scripts\/watch-tokens\.mjs(?!\s+--summarize)/;
+
+// Comment lines are removed before anything is matched. They are prose about the
+// setting, and the same review found that a comment merely SPELLING
+// `LANGFLOW_DEACTIVATE_TRACING: "false"` elsewhere in the file could both mask a
+// real value and fail a correct workflow. Only a `#` that begins a line is
+// stripped: a `#` inside an expression or a quoted string is not a comment, and
+// no value in these workflows carries a trailing one.
+const stripComments = (text) =>
+  text
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+
+// DERIVED, so a fourth lane inherits this check the day it is written — the
+// previous version claimed that while holding a hardcoded list of three.
+function pollerLanes() {
+  return realFs
+    .readdirSync(WORKFLOWS_DIR)
+    .filter((file) => file.endsWith(".yml"))
+    .map((file) => [file, stripComments(realFs.readFileSync(path.join(WORKFLOWS_DIR, file), "utf8"))])
+    .filter(([, text]) => STARTS_POLLER.test(text));
+}
+
+test("the lane list is derived, and still finds the lanes that run the recorder (#1300)", () => {
+  // Pins the derivation itself: a rename or a glob that quietly matches nothing
+  // would make every assertion below vacuous (#1012 — a check that ran over zero
+  // subjects is not a pass).
+  const names = pollerLanes().map(([name]) => name);
+  for (const expected of ["daily-stable.yml", "pr-validation.yml", "manual.yml"]) {
+    assert.ok(names.includes(expected), `${expected} starts the poller but was not derived: ${names.join(", ")}`);
+  }
+});
 
 test("every lane that starts the token recorder can actually see a trace (#1300)", () => {
-  for (const [name, read] of POLLER_LANES) {
-    const text = read();
-    // The poller, not the summarizer: `--summarize` reads files a sibling job
-    // produced and needs no tracing of its own.
-    const startsPoller = /node scripts\/watch-tokens\.mjs(?!\s+--summarize)/.test(text);
-    assert.ok(startsPoller, `${name} no longer starts the token recorder — update POLLER_LANES`);
+  for (const [name, text] of pollerLanes()) {
+    const settings = [...text.matchAll(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/g)].map((m) => m[1].trim());
+    assert.ok(settings.length, `${name} starts the recorder but never sets LANGFLOW_DEACTIVATE_TRACING`);
 
-    const setting = text.match(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/);
-    assert.ok(setting, `${name} starts the recorder but never sets LANGFLOW_DEACTIVATE_TRACING`);
-    const value = setting[1].trim();
-    const unconditionallyOn = /^["']?false["']?$/.test(value);
-    // `needs_models` is the lane's own verdict for "this run executes at least one
-    // provider-dependent spec" (#1216) — the set of runs that have spend to
-    // measure. A conditional tracing setting that does not consult it is the
-    // #1300 state: the recorder is on, and the only runs it could measure are the
-    // ones where it is blind.
-    assert.ok(
-      unconditionallyOn || value.includes("needs_models"),
-      `${name} gates tracing on a condition narrower than its provider verdict, so the ` +
-        `token recorder it starts can never see a trace on an LLM run: ${value}`,
-    );
+    for (const value of settings) {
+      // The run that HAS spend to measure. If tracing is off here, the recorder on
+      // this lane can only ever record the honest zero that hid #1300.
+      //
+      // An expression this cannot evaluate — a renamed `detect-specs` output, a
+      // YAML block scalar, an operator gh-expression.mjs does not model — fails
+      // here, deliberately. It looks like a false positive and is the fail-closed
+      // choice: the guard cannot know that a new output name carries the old
+      // meaning, and the alternative is skipping the lane, which is how a lane
+      // stops being checked without anyone deciding that (#1012). The thrown
+      // message names the exact reference or token to teach it.
+      let onAnLlmRun;
+      try {
+        onAnLlmRun = evaluateWorkflowValue(value, {
+          "needs.detect-specs.outputs.needs_models": "true",
+          "needs.detect-specs.outputs.specs": "",
+        });
+      } catch (err) {
+        assert.fail(`${name}: cannot evaluate its tracing condition, so it is unverified — ${err.message}`);
+      }
+      assert.equal(
+        onAnLlmRun,
+        "false",
+        `${name} leaves tracing DEACTIVATED on a run that executes a provider-dependent spec, ` +
+          `so the token recorder it starts cannot see a trace: ${value}`,
+      );
+    }
   }
 });
 
@@ -1291,9 +1346,27 @@ test("every lane that starts the token recorder can actually see a trace (#1300)
 // whether or not they resolve a model, and #1300 widened that gate, it did not
 // replace it.
 test("pr-validation still enables tracing for the observability specs themselves", () => {
-  const value = prValidation().match(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/)[1];
-  assert.match(value, /observability-monitoring/);
-  assert.match(value, /needs_models/);
+  const value = stripComments(prValidation()).match(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/)[1];
+  const context = {
+    "needs.detect-specs.outputs.needs_models": "false",
+    "needs.detect-specs.outputs.specs": "tests/tests-automations/regression/core-functionality/observability-monitoring/x.spec.ts",
+  };
+  assert.equal(evaluateWorkflowValue(value, context), "false");
+});
+
+// The cheap path #1300 traded for, pinned so it cannot be lost silently: an
+// LLM-free PR still boots without tracing. The canary class is the documented
+// exception — decideProviderCoverage() sets needs_models=true for a canary run
+// (scripts/provider-dependent-specs.mjs), so a CI-only PR traces and records
+// another zero. That is a consequence of reusing the lane's own verdict, argued
+// in pr-validation.yml's comment, not an oversight.
+test("pr-validation keeps tracing off on an LLM-free run", () => {
+  const value = stripComments(prValidation()).match(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/)[1];
+  const context = {
+    "needs.detect-specs.outputs.needs_models": "false",
+    "needs.detect-specs.outputs.specs": "tests/tests-automations/regression/ui-ux/x.spec.ts",
+  };
+  assert.equal(evaluateWorkflowValue(value, context), "true");
 });
 
 // --- Structural guard: is the daily workflow actually wired to this script? ---
@@ -1742,4 +1815,21 @@ test("an unresolvable provider renders as unknown and names the ids that need a 
   assert.match(md, /\| _unknown_ \| 1 \| 100 \| n\/a \|/);
   assert.match(md, /`brand-new-model`/, "an unknown bucket that names nothing is a dead end");
   assert.doesNotMatch(md, /\| `openai` \| 1 \| 120 \|/, "and it is never folded into a neighbour");
+});
+
+test("an UNREADABLE price table says so, instead of telling a reader to add rows that exist", async () => {
+  // The two states share every symptom — nothing priced, no provider resolved —
+  // and the advice differs completely (#1300 review). `prices.json` is absent
+  // here, so readFile throws exactly as a corrupt table would.
+  const fs2 = fakeFs({ "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n` });
+  assert.equal(await summarize({ env: baseEnv, ...fs2, log: () => {} }), 0);
+  const md = fs2.written["summary.md"];
+  assert.match(md, /price table could not be read/, "the provider note names the real cause");
+  assert.match(md, /NOTHING in this run is priced/, "and so does the FLOOR note");
+  assert.doesNotMatch(
+    md,
+    /Adding the row there/,
+    "the row may already be there — the table is what is broken",
+  );
+  assert.match(md, /`gpt-4o-mini`/, "the ids are still named");
 });
