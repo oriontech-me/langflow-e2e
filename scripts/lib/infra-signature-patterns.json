@@ -1,0 +1,32 @@
+[
+  {
+    "id": "preflight-unreachable",
+    "why": "the globalSetup health check could not reach Langflow at all",
+    "pattern": "\\[preflight\\][^\\n]*is not reachable",
+    "flags": "i"
+  },
+  {
+    "id": "api-request-timeout",
+    "why": "a direct REST call to the backend never answered",
+    "pattern": "\\bapiRequestContext\\.\\w+:\\s*Timeout\\b",
+    "flags": ""
+  },
+  {
+    "id": "connection-refused",
+    "why": "the backend refused the TCP connection",
+    "pattern": "\\bECONNREFUSED\\b|net::ERR_CONNECTION_REFUSED",
+    "flags": ""
+  },
+  {
+    "id": "connection-dropped",
+    "why": "the connection to the backend was dropped mid-request",
+    "pattern": "\\bECONNRESET\\b|socket hang up|net::ERR_CONNECTION_(RESET|CLOSED|ABORTED)|net::ERR_EMPTY_RESPONSE",
+    "flags": "i"
+  },
+  {
+    "id": "host-unresolvable",
+    "why": "the backend host could not be resolved",
+    "pattern": "\\bEAI_AGAIN\\b|\\bENOTFOUND\\b|net::ERR_NAME_NOT_RESOLVED",
+    "flags": ""
+  }
+]
