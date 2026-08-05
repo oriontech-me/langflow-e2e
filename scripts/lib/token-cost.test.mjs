@@ -1199,6 +1199,29 @@ test("a date no band covers reports NO provider when the bands disagree about it
   assert.equal(resolveProvider("m", migrated, "2026-01-01"), null);
 });
 
+test("a band that declares NO provider breaks unanimity — it is silent, not agreeing", () => {
+  // Copilot review of #1300: dropping the silent bands before the unanimity check
+  // let [azure, (none)] answer "azure" on a path whose rule is "only when every
+  // band agrees". Same principle as the effective-band case above, applied to a
+  // set instead of one row.
+  const mixed = {
+    m: [
+      { since: "2026-06-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 1 },
+      { since: "2026-07-01", inputPerMillion: 1, outputPerMillion: 1 },
+    ],
+  };
+  assert.equal(usdFor("m", 10, 10, mixed, "2026-01-01"), null, "no band covers this date");
+  assert.equal(resolveProvider("m", mixed, "2026-01-01"), null, "so the entry must not answer azure");
+  // Still unanimous when every band does declare, which is the case the fallback exists for.
+  const agreeing = {
+    m: [
+      { since: "2026-06-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 1 },
+      { since: "2026-07-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 1 },
+    ],
+  };
+  assert.equal(resolveProvider("m", agreeing, "2026-01-01"), "azure");
+});
+
 test("an effective band that declares no provider answers null — the fallback is for NO band, not a silent one", () => {
   // Found in review of #1300: the fallback used to fire on any absent provider,
   // so an effective band that says nothing borrowed a sibling band's account —

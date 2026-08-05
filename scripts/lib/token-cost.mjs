@@ -299,9 +299,14 @@ export function resolveProvider(model, prices, date) {
   return effective ? declaredProvider(effective) : unanimousProvider(bands);
 }
 
+// Unanimous means EVERY band says the same thing, and a band that says nothing is
+// not one of them. Dropping the silent ones first (`filter(Boolean)`) let bands
+// [azure, (none)] answer "azure", which contradicts this path's own rule and
+// contradicts the effective-band branch above, where silence IS the answer — the
+// same principle has to hold for a set as for one row (Copilot review of #1300).
 function unanimousProvider(bands) {
-  const declared = [...new Set(bands.map(declaredProvider).filter(Boolean))];
-  return declared.length === 1 ? declared[0] : null;
+  const declared = new Set(bands.map(declaredProvider));
+  return declared.size === 1 && !declared.has(null) ? [...declared][0] : null;
 }
 
 export function usdFor(model, promptTokens, completionTokens, prices, date) {
