@@ -427,14 +427,23 @@ export function formatCredentialSettleFailure(
     `  observed       ${observed}`,
     `  waited         ${(elapsedMs / 1000).toFixed(1)}s over ${reads} read(s)`,
     // Said once, here, because every reader of this message arrives knowing the old
-    // behaviour and would otherwise read the empty api_key as the finding. Printed
-    // only when an api_key was actually OBSERVED: on `read-failed` / `no-agent-node`
-    // nothing was, and a note about a field nobody saw is the same unobserved claim
-    // this module exists to avoid.
+    // behaviour and would otherwise read the api_key line as the finding.
+    //
+    // It states what this guard DOES, not what the field contains. An earlier draft
+    // said "api_key is EMPTY on every build since #14311", which is false on exactly
+    // the builds this module is documented as still supporting: `manual.yml` can
+    // dispatch a pre-#14311 Langflow, where the field IS written — and there the note
+    // would have contradicted the `observed` line printed directly above it.
+    //
+    // Printed only when a probe was actually read: on `read-failed` /
+    // `no-agent-node` no api_key was observed, and commenting on a field nobody saw
+    // is the same unobserved claim this module exists to avoid.
     ...(probe
       ? [
-          `  note           api_key is EMPTY on every build since upstream #14311 and is`,
-          `                 not asserted either way — the provider above is the axis (#1274).`,
+          `  note           api_key is NOT asserted in either direction — the provider`,
+          `                 above is the axis (#1274). Upstream #14311 stopped writing`,
+          `                 this field on the 1.12 line, so an empty value here is`,
+          `                 expected and is not the finding.`,
         ]
       : []),
     ...(lastReadError ? [`  last read err  ${lastReadError}`] : []),

@@ -526,26 +526,33 @@ test("#1274 no verdict claims a check that did not run, for any caller", () => {
   }
 });
 
-test("#1274 the message says the empty api_key is not the finding", () => {
-  // Every reader of this message arrives knowing the pre-#14311 behaviour, and the
-  // observed line still prints `api_key=""`. Without this note the empty field
-  // reads as the defect — which is how the 2026-08-05 daily's 14 failures were
-  // first triaged as a product regression.
+test("#1274 the note says api_key is not asserted — without claiming it is empty", () => {
+  // Every reader arrives knowing the pre-#14311 behaviour, and the observed line
+  // still prints an api_key. Without a note the field reads as the defect, which is
+  // how the 2026-08-05 daily's failures were first triaged as a product regression.
+  //
+  // Asserted on the INTENT, not on a phrase about the value: `manual.yml` can
+  // dispatch a pre-#14311 build where api_key IS written, and a note claiming it is
+  // empty on "every build" would contradict the observed line above it. Pinning the
+  // phrase is what let that false claim ship (caught in review of this PR).
   const message = failure();
-  assert.ok(message.includes("api_key is EMPTY"), message);
-  assert.ok(message.includes("#14311"), message);
+  assert.ok(message.includes("NOT asserted in either direction"), message);
   assert.ok(message.includes("#1274"), message);
+  assert.ok(
+    !/api_key is EMPTY on every build/.test(message),
+    "the note must not claim the field is empty on builds where it is written:\n" + message,
+  );
 });
 
 test("#1274 the api_key note is printed only when an api_key was observed", () => {
   // Review caught it printing unconditionally, including for read-failed, where no
   // api_key was seen — the same unobserved-claim defect this module exists to avoid.
   const observed = failure();
-  assert.ok(observed.includes("api_key is EMPTY"), observed);
+  assert.ok(observed.includes("api_key is NOT asserted"), observed);
   for (const verdict of ["read-failed", "no-agent-node"] as const) {
     const message = failure({ probe: null, verdict, reads: 0 });
     assert.ok(
-      !message.includes("api_key is EMPTY"),
+      !message.includes("api_key is NOT asserted"),
       `${verdict} observed no api_key, so it must not comment on one:\n${message}`,
     );
   }

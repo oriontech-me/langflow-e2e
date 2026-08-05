@@ -137,11 +137,13 @@ export class SimpleAgentTemplatePage extends BasePage {
    *
    * What #1072 changed, and what it deliberately did not:
    *
-   *  - **The check is no longer credential-only.** For `provider: "anthropic"` the
-   *    expected credential IS the selector's default auto-binding, so the old
-   *    check returned "settled" before the model selection had been applied at
-   *    all — `load()`'s contract did not hold for that provider. See
-   *    `classifyCredentialSettle`.
+   *  - **The check is not credential-based at all since #1274.** #1072 widened a
+   *    credential-only check to credential+model, because for `provider:
+   *    "anthropic"` the expected credential WAS the selector's default binding, so
+   *    the old check settled before the selection applied. #14311 then removed the
+   *    binding entirely, so the axis is now the PROVIDER of the persisted model.
+   *    See `classifyCredentialSettle` — including the one combination (anthropic +
+   *    no pinned model) that remains unguarded and is warned about below.
    *  - **The failure is now self-describing** rather than a bare `toBe` mismatch
    *    that reads as a provider-wiring bug (which is how it was triaged twice).
    *  - **The budget is unchanged.** The recorded flakes are load-induced and the

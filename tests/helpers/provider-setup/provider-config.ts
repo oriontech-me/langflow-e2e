@@ -38,10 +38,10 @@ export interface BaseUrlProviderConfig extends ProviderConfigBase {
 
 export type ProviderConfig = ApiKeyProviderConfig | BaseUrlProviderConfig;
 
-// ─── Fonte única de configuração por provider ─────────────────────────────────
-// Ao adicionar um novo provider, inclua uma entrada aqui.
-// Todos os demais arquivos (index.ts, collect-models.ts, specs) derivam seus
-// dados a partir deste mapa — nenhuma mudança adicional é necessária nesses arquivos.
+// ─── Single source of per-provider configuration ──────────────────────────────
+// When adding a new provider, add an entry here.
+// Every other file (index.ts, collect-models.ts, specs) derives its data from
+// this map — no further change is needed in those files.
 //
 // ORDER IS LOAD-BEARING: several specs fall back to `Object.keys(providerConfigMap)[0]`
 // when a target carries no provider, so `openai` must stay first. Keyless providers
