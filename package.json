@@ -24,7 +24,8 @@
     "impacted": "ts-node scripts/impacted-tests.ts",
     "validate:specs": "ts-node scripts/validate-spec-deps.ts",
     "check:checklist-coverage": "ts-node scripts/check-checklist-coverage.ts",
-    "check:nightly-delta": "ts-node scripts/check-nightly-delta.ts"
+    "check:nightly-delta": "ts-node scripts/check-nightly-delta.ts",
+    "catalog:baseline": "ts-node scripts/update-component-catalog-baseline.ts"
   },
   "dependencies": {
     "dotenv": "^16.4.5"

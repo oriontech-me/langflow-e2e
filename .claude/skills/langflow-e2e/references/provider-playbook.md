@@ -18,7 +18,12 @@ shapes** — and that the issue body cannot tell you which one applies. Run the
    product observation — never assume either side alone.
 3. **Component source in the container:**
    `docker exec langflow-e2e-runner sh -c 'cat …/lfx_bundles/<provider>/<provider>.py'`
-   (bundles moved out of `lfx.components.*` — a shim redirects until M4).
+   (bundles moved out of `lfx.components.*` — a shim redirects until M4, which has
+   **no published date**; see `docs/component-distribution-policy.md`. This path is
+   the post-migration one and does not expire — it is the `lfx.components.<vendor>`
+   spelling that the shim deletion removes. Note a vendor's code is only present if
+   the image installs its distribution: measured on `1.12.0.dev10`, 78 of the
+   `lfx/components/*` directories are shims and `lfx-bundles` is not installed.)
    Read three things: is `api_key` `real_time_refresh`? Is the `model_name`
    dropdown **live-fetched or a static hardcoded list**? What is the field's
    **default value** (a default like Mistral's `codestral-latest` means the
