@@ -123,6 +123,10 @@ is first-time coverage of a new feature, not a previously fixed bug.
 1. `page.goto("/")` to unmount the editor (an editor left mounted over a deleted flow
    404s its `GET /flows/{id}/events` poll, which the fixture logs as a backend error),
    then `deleteFlow(page.request, flowId)`.
+   A failed unmount is **warned about and carried on from**, never rethrown and never
+   swallowed (#1288): rethrowing would abort the hook before the delete below and leak the
+   flow — worse than the noise the navigation prevents — while swallowing silently discards
+   the one line that would attribute that 404 noise to its cause.
 
 ---
 

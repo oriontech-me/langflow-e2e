@@ -257,6 +257,44 @@ test("nothing was created, so nothing is navigated away from", async () => {
   assert.deepEqual(deletes, [], "and no auth call or DELETE");
 });
 
+test("a failed unmount still deletes every flow, and is reported rather than swallowed", async () => {
+  // Issue #1288. What THIS test owns is that a failed unmount does not cost the
+  // deletes: letting the failure propagate would abort the teardown before them,
+  // and since `captured` has already been taken out of the tracker by then, those
+  // flows would be neither deleted nor tracked — a permanent leak, for a navigation
+  // whose only job was to reduce log noise. The warning itself, and the shape of
+  // the message, belong to `unmount-editor-for-cleanup.test.ts`, which is where the
+  // `console.warn` is asserted (a review of #1289 deleted that warn and the whole
+  // lane stayed green — hence a test that pins it, once, next to its code).
+  const { page, emit } = fakePage();
+  const { request, deletes } = fakeRequest();
+  const trackedPage = page as unknown as { goto: (url: string) => Promise<null> };
+  trackedPage.goto = async () => {
+    throw new Error("net::ERR_ABORTED at http://localhost:7860/\nsecond line dropped");
+  };
+
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  emit(creationResponse("flow-2"));
+  const result = await flows.cleanup(request);
+
+  // The load-bearing half ran regardless.
+  assert.deepEqual(result.deleted, ["flow-1", "flow-2"]);
+  assert.deepEqual(result.failed, []);
+  assert.deepEqual(
+    deletes.map((d) => d.url),
+    ["/api/v1/flows/flow-1", "/api/v1/flows/flow-2"],
+  );
+
+  // And the failure is visible on the result, the way `authError` is — first line
+  // only, so a multi-line Playwright error stays one readable line.
+  assert.match(String(result.unmountError), /ERR_ABORTED/);
+  assert.ok(
+    !String(result.unmountError).includes("second line dropped"),
+    "only the first line of the error is carried",
+  );
+});
+
 // ─── Axis 4: a failed delete is reported, never swallowed ───────────────────
 
 test("a failed delete is reported and does not stop the other deletes", async () => {
