@@ -50,14 +50,35 @@ function truthy(value) {
 
 // The cast `==` applies to a mixed pair: null and '' become 0, a boolean becomes
 // 0/1, a non-numeric string becomes NaN (and NaN equals nothing).
+//
+// The string branch follows the runner's ExpressionUtility.ParseNumber, NOT JS
+// `Number()`, and the difference is not cosmetic: `Number()` accepts `0X1A`,
+// `0O17` and `0b101`, all of which the runner REJECTS (its hex/octal branches test
+// `str[1] == 'x'` / `'o'` lowercase, and it has no binary branch), and it reads
+// `0xFFFFFFFF` as 4294967295 where the runner parses hex through Int32 and gets
+// -1. Using `Number()` was a divergence this module INTRODUCED while claiming the
+// rules had been checked at the source; they had not been.
 function toNumber(value) {
   if (value === null) return 0;
   if (typeof value === "boolean") return value ? 1 : 0;
   if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    return trimmed === "" ? 0 : Number(trimmed);
+  if (typeof value !== "string") return NaN;
+  const str = value.trim();
+  if (str === "") return 0;
+  // Double.TryParse(AllowLeadingSign | AllowDecimalPoint | AllowExponent).
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(str)) return Number(str);
+  // Int32.TryParse(AllowHexSpecifier) — lowercase `0x` only, and Int32-ranged, so
+  // 0xFFFFFFFF is -1 and a 9-digit hex string does not parse at all.
+  if (str.length > 2 && str[0] === "0" && str[1] === "x" && /^[0-9a-fA-F]+$/.test(str.slice(2))) {
+    const digits = str.slice(2);
+    return digits.length > 8 ? NaN : parseInt(digits, 16) | 0;
   }
+  if (str.length > 2 && str[0] === "0" && str[1] === "o" && /^[0-7]+$/.test(str.slice(2))) {
+    const parsed = parseInt(str.slice(2), 8);
+    return parsed > 2147483647 ? NaN : parsed;
+  }
+  if (str === "Infinity") return Infinity;
+  if (str === "-Infinity") return -Infinity;
   return NaN;
 }
 
@@ -68,6 +89,18 @@ function toNumber(value) {
 // inside the grammar, in a module whose contract is that anything it cannot model
 // throws. Modelling the cast is what makes that contract true here.
 function looseEquals(a, b) {
+  // `undefined` is the one JS value Actions has no counterpart for, and it is the
+  // obvious way to mistype "unset output" (Actions models that as `''`/null). It
+  // must not answer: this is the module's remaining fail-closed branch, and the
+  // header promises one.
+  for (const operand of [a, b]) {
+    if (operand === undefined) {
+      throw new Error(
+        "gh-expression: `undefined` has no Actions counterpart — an unset output is `''` or null; " +
+          "supply one of those rather than leaving it out",
+      );
+    }
+  }
   if (typeof a === "string" && typeof b === "string") return a.toLowerCase() === b.toLowerCase();
   if (typeof a === typeof b && a !== null) return a === b;
   const [na, nb] = [toNumber(a), toNumber(b)];
@@ -126,7 +159,15 @@ function tokenize(source) {
 
 // All three are case-INSENSITIVE in Actions, as the docs state explicitly. Doing
 // them case-sensitively is another silent wrong value rather than a throw.
-const lower = (value) => String(value).toLowerCase();
+//
+// The argument coercion is the runner's ConvertToString, not JS `String()`, and
+// the two differ on exactly one value that reaches here: **null becomes the EMPTY
+// string**, not `"null"`. So `contains('abc', null)` is TRUE in Actions
+// (`"abc".IndexOf("")` is 0) and `contains(null, 'ull')` is FALSE — both the
+// opposite of what `String(null)` gives. This was left wrong by the commit that
+// fixed the case-sensitivity of the same three lines, while citing the file that
+// documents it.
+const lower = (value) => (value === null ? "" : String(value)).toLowerCase();
 const FUNCTIONS = {
   contains: (haystack, needle) => lower(haystack).includes(lower(needle)),
   startsWith: (value, prefix) => lower(value).startsWith(lower(prefix)),
@@ -235,7 +276,13 @@ export function evaluateExpression(source, context = {}) {
 // model, and the alternative — returning it half-evaluated — is the silent
 // almost-right answer the whole module exists to avoid.
 export function evaluateWorkflowValue(raw, context = {}) {
-  const value = stripTrailingComment(String(raw).trim());
+  let value = stripTrailingComment(String(raw).trim());
+  // `KEY: "${{ … }}"` is idiomatic YAML and means exactly what the unquoted form
+  // means. It used to reach the "mixes an interpolation with literal text" branch
+  // and fail the guard on a purely cosmetic refactor — a false positive on the
+  // most likely edit anyone would make to this line.
+  const quotedExpression = /^(['"])(\$\{\{.*\}\})\1$/s.exec(value);
+  if (quotedExpression) value = quotedExpression[2];
   const whole = /^\$\{\{(.*)\}\}$/s.exec(value);
   if (whole) {
     if (whole[1].includes("${{")) throw new Error(`gh-expression: nested interpolation in \`${value}\``);
@@ -244,21 +291,43 @@ export function evaluateWorkflowValue(raw, context = {}) {
   if (value.includes("${{")) {
     throw new Error(`gh-expression: \`${value}\` mixes an interpolation with literal text — not modelled`);
   }
-  const quoted = /^(['"])(.*)\1$/s.exec(value);
-  if (quoted) return quoted[2];
+  // Unescaped, because the value is what YAML would hand a consumer, not the
+  // source text: a single-quoted scalar turns `''` into `'`, a double-quoted one
+  // turns `\"` into `"`. Returning the raw inner text made `'it''s'` come back as
+  // `it''s`.
+  if (isClosedQuote(value)) {
+    const inner = value.slice(1, -1);
+    return value[0] === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(.)/g, "$1");
+  }
   // A plain scalar is returned as its string ONLY when it is actually a plain
-  // scalar. Returning ANY unrecognised text verbatim is how a caller got the wrong
-  // diagnosis: a YAML block scalar (`>-`), an alias (`*tracing`) or a merge key came
-  // back as its own source text, and the caller then reported that text as the
-  // workflow's VALUE — "leaves tracing DEACTIVATED: >-" — instead of "this is a
-  // shape I cannot read". Same fail-closed rule as an unsupported operator.
-  if (/^[*&]|^[>|]/.test(value)) {
+  // scalar. Returning unrecognised text verbatim is how a caller got the wrong
+  // diagnosis: it reported that text as the workflow's VALUE — "leaves tracing
+  // DEACTIVATED: >-" — instead of "this is a shape I cannot read".
+  //
+  // The first attempt at this rejected only a leading `*&>|`, while the commit
+  // message claimed "any unrecognised scalar" now throws. It did not: `- x`,
+  // `? x`, `!tag x`, `%x`, `[a]`, `{a: b}` and a mis-closed quote all still came
+  // back verbatim. The rule is now stated positively — a plain YAML scalar is
+  // what does NOT begin with a c-indicator — so the claim and the code agree.
+  if (/^[-?:,[\]{}#&*!|>'"%@`]/.test(value)) {
     throw new Error(
-      `gh-expression: \`${value}\` is a YAML alias/anchor/block scalar, not a value this can read — ` +
+      `gh-expression: \`${value}\` is not a plain YAML scalar (it begins with an indicator ` +
+        "character — alias, anchor, tag, flow collection, block scalar or an unclosed quote) — " +
         "resolve it before evaluating",
     );
   }
   return value;
+}
+
+// Whether a leading quote closes at the very end, honouring YAML's two escapes:
+// `''` inside single quotes and `\"` inside double quotes. The naive
+// `/^(['"]).*?\1$/` closes at the ESCAPE, so `'it''s'` and `"a \" b"` were treated
+// as unrecognised and returned verbatim, comment included.
+function isClosedQuote(value) {
+  const quote = value[0];
+  if (quote === "'") return /^'(?:[^']|'')*'$/s.test(value);
+  if (quote === '"') return /^"(?:[^"\\]|\\.)*"$/s.test(value);
+  return false;
 }
 
 // A `#` starts a YAML comment when it begins the line or follows whitespace, and
@@ -267,12 +336,15 @@ export function evaluateWorkflowValue(raw, context = {}) {
 // `"a # b"` survive. Without this, a correct value with a trailing comment failed
 // the guard that reads it, reporting the comment as part of the value.
 function stripTrailingComment(value) {
-  const closers = [/^\$\{\{.*?\}\}/s, /^(['"]).*?\1/s];
+  // Quote closers honour YAML's escapes (`''`, `\"`), so `'it''s' # c` no longer
+  // closes at the escape and fall through to "return the whole thing, comment
+  // included".
+  const closers = [/^\$\{\{.*?\}\}/s, /^'(?:[^']|'')*'/s, /^"(?:[^"\\]|\\.)*"/s];
   for (const closer of closers) {
     const head = closer.exec(value);
     if (head) {
       const tail = value.slice(head[0].length);
-      return /^\s+#/.test(tail) || tail === "" ? head[0] : value;
+      return /^\s+#/.test(tail) || tail.trim() === "" ? head[0] : value;
     }
   }
   const comment = /\s#/.exec(value);

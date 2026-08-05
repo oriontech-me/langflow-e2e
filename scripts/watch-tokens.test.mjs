@@ -1305,51 +1305,95 @@ test("the lane list is derived, and still finds the lanes that run the recorder 
   }
 });
 
-// The runs that HAVE spend to measure, described the way the lane actually sees
-// them. The first version of this guard described exactly one, with `specs: ""` —
-// a state that CANNOT occur, because the e2e job is gated on
-// `has_specs == 'true'`, so `specs` is always a non-empty list wherever the poller
-// runs. Pinning a function at an unreachable point constrains nothing there: a
-// mutation adding `&& !contains(specs, ' ')` — tracing off on any run with more
-// than one impacted spec, which is every real LLM run including the 19-spec
-// measurement this change is argued from — passed the guard green. The old guard
-// pinned a spelling; that one pinned three points of a function, two of which only
-// fixed the needs_models=false branch and the third of which was unreachable.
+// The runs that HAVE spend to measure. Three versions of this list have now been
+// refuted, and the third refutation is the one that decides the shape of this one.
 //
-// So: a realistic multi-spec list (taken from run 31018914069's own selection), a
-// single-spec run, and a list whose spec PATHS contain no provider hint, so the
-// verdict has to come from `needs_models` rather than from a substring that
-// happens to be there.
-const LLM_RUNS = [
-  {
-    label: "a multi-spec LLM run",
-    context: {
-      "needs.detect-specs.outputs.needs_models": "true",
-      "needs.detect-specs.outputs.specs":
-        "tests/tests-automations/regression/core-functionality/llm-agents/agent-tool-calling.spec.ts " +
-        "tests/tests-automations/regression/core-functionality/llm-agents/agent-system-prompt.spec.ts " +
-        "tests/collect-models.spec.ts",
+//   v1 pinned a SPELLING ("the value mentions needs_models") — passed an inverted
+//      comparison and swapped branch values.
+//   v2 pinned ONE point, `needs_models=true, specs=""` — a state that cannot occur,
+//      since the e2e job is gated on `has_specs`. A mutation adding
+//      `&& !contains(specs, ' ')` (tracing off on any run with more than one spec,
+//      i.e. every real LLM run) passed it green.
+//   v3 pinned THREE reachable points. `&& !contains(specs, 'model-provider')`
+//      passed that — and so did `'playground'`, `'mcp'`, `'templates'`. Every one
+//      turns tracing off on a class of run with real spend.
+//
+// The lesson is that any fixed set of points leaves the rest of a two-variable
+// input space unconstrained, and a narrowing mutation only has to miss the points.
+// So this asserts a PROPERTY instead: when `needs_models` is true, the value is
+// `'false'` REGARDLESS of what `specs` contains. The corpus is drawn from the
+// repo's own spec paths, so a mutation keyed on any real directory or file name is
+// caught by construction rather than by having guessed that name in advance.
+const SPEC_ROOT = path.join(REPO_ROOT, "tests/tests-automations/regression");
+
+// One real path per directory, which is what makes the corpus track the repo: a
+// new product area is covered the day its folder exists.
+function specCorpus() {
+  const paths = [];
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = realFs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const spec = entries.find((e) => e.isFile() && e.name.endsWith(".spec.ts"));
+    if (spec) paths.push(path.relative(REPO_ROOT, path.join(dir, spec.name)));
+    for (const entry of entries) if (entry.isDirectory()) walk(path.join(dir, entry.name));
+  };
+  walk(SPEC_ROOT);
+  return paths;
+}
+
+function multiSpecShapes(plain) {
+  assert.ok(plain.length >= 8, `only ${plain.length} non-observability spec paths — the multi-spec cases would be weak`);
+  return [
+    {
+      label: "a multi-spec LLM run (run 31018914069's own shape), no observability path",
+      context: {
+        "needs.detect-specs.outputs.needs_models": "true",
+        "needs.detect-specs.outputs.specs": `${plain.slice(0, 8).join(" ")} tests/collect-models.spec.ts`,
+      },
     },
-  },
-  {
-    label: "a single-spec LLM run",
-    context: {
-      "needs.detect-specs.outputs.needs_models": "true",
-      "needs.detect-specs.outputs.specs":
-        "tests/tests-automations/regression/core-components/agent-component-regression.spec.ts",
+    {
+      label: "an LLM run impacting every non-observability spec in the repo",
+      context: {
+        "needs.detect-specs.outputs.needs_models": "true",
+        "needs.detect-specs.outputs.specs": plain.join(" "),
+      },
     },
-  },
-  {
-    label: "an LLM run whose spec paths name no provider",
-    context: {
-      "needs.detect-specs.outputs.needs_models": "true",
-      "needs.detect-specs.outputs.specs":
-        "tests/tests-automations/regression/ui-ux/a.spec.ts tests/tests-automations/regression/smoke/b.spec.ts",
-    },
-  },
-];
+  ];
+}
+
+const LLM_RUNS = () => {
+  const corpus = specCorpus();
+  assert.ok(corpus.length > 10, `the spec corpus resolved to ${corpus.length} paths — the property would be vacuous`);
+  return [
+    // Every real spec path, alone. Kills a mutation keyed on any directory or file
+    // name that exists in this repo.
+    ...corpus.map((spec) => ({
+      label: `an LLM run impacting ${spec}`,
+      context: {
+        "needs.detect-specs.outputs.needs_models": "true",
+        "needs.detect-specs.outputs.specs": spec,
+      },
+    })),
+    // And the shapes a corpus of single paths cannot express. These EXCLUDE the
+    // observability paths, and that is load-bearing rather than tidy: the
+    // expression's first clause is `contains(specs, 'observability-monitoring')`,
+    // so a list containing one short-circuits to 'false' and the `needs_models`
+    // branch is never exercised. The first draft of this corpus built its
+    // multi-spec lists from the whole set, which includes
+    // core-functionality/observability-monitoring — and a `!contains(specs, ' ')`
+    // mutation passed green because every context with a space also had an
+    // observability path in it. A guard whose cases satisfy the OTHER clause is
+    // testing nothing on this one.
+    ...multiSpecShapes(corpus.filter((spec) => !spec.includes("observability-monitoring"))),
+  ];
+};
 
 test("every lane that starts the token recorder can actually see a trace (#1300)", () => {
+  const llmRuns = LLM_RUNS();
   for (const [name, text] of pollerLanes()) {
     const settings = [...text.matchAll(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/g)].map((m) => m[1].trim());
     assert.ok(settings.length, `${name} starts the recorder but never sets LANGFLOW_DEACTIVATE_TRACING`);
@@ -1365,7 +1409,7 @@ test("every lane that starts the token recorder can actually see a trace (#1300)
       // meaning, and the alternative is skipping the lane, which is how a lane
       // stops being checked without anyone deciding that (#1012). The thrown
       // message names the exact reference or token to teach it.
-      for (const llmRun of LLM_RUNS) {
+      for (const llmRun of llmRuns) {
         let onAnLlmRun;
         try {
           onAnLlmRun = evaluateWorkflowValue(value, llmRun.context);

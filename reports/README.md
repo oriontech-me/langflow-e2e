@@ -92,9 +92,12 @@ is excluded by the tool for the `attrib_*` change — which is why the per-call 
 
 **The rate divides span tokens by span calls.** `by_model[].total_tokens ÷ Σ by_model[].calls`, not
 `totals.total_tokens ÷ calls` — the numerator has to come from the same basis as the denominator,
-per this file's own "reconcile against `by_model`, never against `totals`". The two differ by 2 % on
-the 2026-08-05 line with an empty `mismatches[]`, so the mixed form is wrong by a margin the schema
-does not explain.
+per this file's own "reconcile against `by_model`, never against `totals`". The two differ by 2.05 % on
+the 2026-08-05 line. Note what does **not** explain that gap: `mismatches` is **absent from every
+history line** — the summarizer never writes it, and only the POSTed block carries
+`mismatch_traces` — so there is no per-line signal to reconcile against. (The `token-history.jsonl`
+row above describes `mismatches[]` as being on the line; that is a pre-existing documentation error,
+recorded here rather than silently relied on.)
 
 **Rule 3 — five consecutive lines, and a line that measured nothing is not one of them.** A line
 that recorded no LLM call carries no rate and is excluded from the mean rather than counted as a

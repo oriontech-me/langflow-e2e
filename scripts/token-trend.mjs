@@ -11,7 +11,7 @@
 //    three lines on file when this was written go 8,741 → 67,099 → 2,592 tokens, a
 //    26x spread, and the low one is not a cheap day: it is 2026-08-05, a run
 //    degraded by 24 failures and 27 skips that made 4 LLM calls. Per LLM CALL the
-//    same three lines are 728 / 1,290 / 648 — a 2x spread. The denominator is
+//    same three lines are 728 / 1,289 / 635 — a 2x spread. The denominator is
 //    already on every line (`by_model[].calls`), so this needs no new field and no
 //    change to the instrument, which matters because a change to the instrument is
 //    what restarts the window being waited for.
@@ -26,13 +26,19 @@
 //    Treating the whole line as poisoned would have discarded the figure that was
 //    fine, which is #1252's mistake in a different file.
 //
-// WHAT THIS CANNOT SEE, and therefore refuses to assert: this file records no
-// instrument version, so a pricing change inside the window is invisible here. The
-// two shape changes that ARE visible are used (`attrib_ms`/`attrib_calls`, added
-// #1217; `by_provider`, added #1300), and the dollar trend is withheld unless the
-// caller states the window is pricing-stable with --prices-stable. Fail-closed, per
-// the same rule the rest of the repo's verdict scripts follow: an unverified
-// comparison is not a comparison (#1012).
+// WHAT THIS CANNOT SEE, and therefore refuses to assert. The only instrument
+// changes visible in the data are the two SHAPE flags (`attrib_ms`/`attrib_calls`,
+// added #1217; `by_provider`, added #1300) and the `version` field. Everything else
+// is invisible: a repricing, a change to how totals are summed, the dedup rule,
+// TOKENS_DETAIL_CAP, the poll interval. So BOTH rates need a claim the reader makes
+// — `--measurement-stable` for tokens, `--prices-stable` for dollars — and neither
+// defaults to true. An earlier version required a claim for dollars only, which
+// left the token rate asserting a stability nothing had checked. Fail-closed, per
+// the rule the rest of the repo's verdict scripts follow: an unverified comparison
+// is not a comparison (#1012).
+//
+// `npm run tokens:trend` passes no flags, so the npm entry point always refuses;
+// pass them through with `npm run tokens:trend -- --measurement-stable`.
 
 import fs from "node:fs";
 
@@ -42,6 +48,11 @@ export const MIN_WINDOW = 5; // token-anomaly.mjs's minBaseline — the read and
 // neighbour, plus the figures the read is over. `calls` is summed from by_model
 // rather than read from a field, because there is no field: it is the only
 // denominator the schema already carries.
+// A figure the schema promises as a NUMBER. `Number()` alone is not enough:
+// `Number(null)` is 0 and passes `isFinite`, so a null slipped through as a
+// measured zero — the same trap this module fixes elsewhere, one level down.
+const figure = (value) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+
 export function describeLine(line) {
   // UNDECIDABLE, not zero, when the denominator cannot be read. `by_model` absent,
   // empty, or carrying a non-numeric `calls` used to collapse to `calls: 0`, which
@@ -49,23 +60,32 @@ export function describeLine(line) {
   // reported as a quiet day. That is the exact #1012/#1252 rule this file invokes
   // three times, broken in its own denominator.
   const models = Array.isArray(line.by_model) ? line.by_model : null;
-  const callCounts = models?.map((m) => Number(m?.calls));
-  const calls = callCounts && callCounts.every(Number.isFinite) ? callCounts.reduce((a, b) => a + b, 0) : null;
+  const callCounts = models?.map((m) => figure(m?.calls));
+  const calls = callCounts && callCounts.every((n) => n !== null) ? callCounts.reduce((a, b) => a + b, 0) : null;
 
   // SPAN-derived, to match the denominator. `totals.total_tokens` is
   // trace-authoritative and the two legitimately differ (reports/README.md:
   // "reconcile against by_model, never against totals"), so dividing one by the
-  // other mixes bases — measured at 2.0% on the 2026-08-05 line, with an empty
-  // `mismatches[]` that cannot explain it. The raw total is still reported, as
-  // itself, below.
-  const spanTokens = models?.reduce((sum, m) => sum + (Number(m?.total_tokens) || 0), 0) ?? null;
-  const tokens = Number(line.totals?.total_tokens) || 0;
+  // other mixes bases — measured at 2.05% on the 2026-08-05 line. Note what does
+  // NOT explain that gap: `mismatches` is ABSENT from every history line (the
+  // summarizer never writes it; only the POSTed block carries `mismatch_traces`),
+  // so there is no per-line signal to reconcile against at all. An earlier version
+  // of this comment cited "an empty mismatches[]" as evidence, which was invented
+  // — the field is not there to be empty. The raw total is reported, as itself,
+  // below.
+  const modelTokens = models?.map((m) => figure(m?.total_tokens));
+  const spanTokens = modelTokens && modelTokens.every((n) => n !== null) ? modelTokens.reduce((a, b) => a + b, 0) : null;
+  // Undecidable in the NUMERATOR too. The first pass at this rule fixed the
+  // denominator and left `Number(…) || 0` one line above, so a corrupt
+  // `total_tokens` still produced a MEASURED rate of 0 — and a measured zero is
+  // the one value #1252 says an unreadable entry must never become.
+  const tokens = figure(line.totals?.total_tokens);
   const usd = line.totals?.usd_estimated;
   return {
     date: line.date,
     run_id: line.run_id,
     workflow: line.workflow,
-    traces: Number(line.totals?.traces) || 0,
+    traces: figure(line.totals?.traces) ?? 0,
     specs: (line.by_spec ?? []).length,
     calls,
     tokens,
@@ -170,8 +190,15 @@ export function readTrend(lines, { pricesStable = false, measurementStable = fal
   } else if (dollarLines.length !== rated.length) {
     gaps.push(`${rated.length - dollarLines.length} line(s) have unpriced models — their dollars are a FLOOR, excluded`);
   }
-  const versions = new Set(described.map((l) => l.version));
-  if (versions.size > 1) gaps.push(`the file mixes schema versions (${[...versions].join(", ")}) — compare within one`);
+  // Scoped to the WINDOW, and a hard gate rather than advice. Computing it over
+  // the whole file raised the warning for a version change safely outside the
+  // window while leaving `readable: true` for one INSIDE it — advisory on the one
+  // instrument change this file can actually observe, while the unobservable
+  // `--measurement-stable` claim was the hard gate. That is the fail-closed logic
+  // backwards.
+  const versions = new Set(window.map((l) => l.version));
+  const mixedVersions = versions.size > 1;
+  if (mixedVersions) gaps.push(`the window mixes schema versions (${[...versions].join(", ")}) — compare within one`);
 
   return {
     lines: described,
@@ -185,7 +212,7 @@ export function readTrend(lines, { pricesStable = false, measurementStable = fal
     // suite ran", and a run with no LLM call is a legitimate — indeed the most
     // informative — data point for that question. Only the RATE excludes it.
     rawTokens: stats(window.map((l) => l.tokens)),
-    readable: rated.length >= MIN_WINDOW && measurementStable,
+    readable: rated.length >= MIN_WINDOW && measurementStable && !mixedVersions,
     gaps,
   };
 }
@@ -194,7 +221,7 @@ export function render(trend) {
   const out = ["# token-history trend (#1300 item 4)", ""];
   // The VERDICT comes first when there is no rate to quote. #1226's lesson was
   // "counts before caveats", and applying it literally here put a
-  // copy-pasteable `969 (range 648–1290)` above a line saying it is not a rate —
+  // copy-pasteable `962 (range 635–1289)` above a line saying it is not a rate —
   // the figure this tool exists to withhold, rendered as its headline. When the
   // read IS supported the counts lead, as that lesson intends.
   if (!trend.readable) {
@@ -204,20 +231,35 @@ export function render(trend) {
       "",
     );
   }
-  out.push("| date | run | specs | calls | tokens | tokens/call | usd/call | shape |");
-  out.push("|---|---|---:|---:|---:|---:|---:|---|");
+  // `span tokens` is a column rather than an internal: without it the row does not
+  // reconcile — 2,592 ÷ 4 is 648, while `tokens/call` reads 635, because the rate
+  // divides SPAN tokens (2,540) by span calls. A table a reader cannot check by
+  // arithmetic invites them to assume one of the two numbers is wrong.
+  out.push("| date | run | specs | calls | tokens (trace) | span tokens | tokens/call | usd/call | shape |");
+  out.push("|---|---|---:|---:|---:|---:|---:|---:|---|");
   const inWindow = new Set(trend.window.map((l) => l.run_id));
   for (const l of trend.lines) {
     const mark = inWindow.has(l.run_id) ? "" : " _(outside window)_";
     out.push(
-      `| ${l.date}${mark} | ${l.run_id} | ${l.specs} | ${l.calls ?? "?"} | ${l.tokens} | ` +
-        `${l.tokensPerCall === null ? "—" : Math.round(l.tokensPerCall)} | ` +
+      `| ${l.date}${mark} | ${l.run_id} | ${l.specs} | ${l.calls ?? "?"} | ${l.tokens ?? "?"} | ` +
+        `${l.spanTokens ?? "?"} | ${l.tokensPerCall === null ? "—" : Math.round(l.tokensPerCall)} | ` +
         `${l.usdPerCall === null ? "—" : `$${l.usdPerCall.toFixed(5)}`} | ${l.shape} |`,
     );
   }
   out.push("");
   const fmt = (s, digits, prefix = "") =>
     s ? `${prefix}${s.mean.toFixed(digits)} (range ${prefix}${s.min.toFixed(digits)}–${prefix}${s.max.toFixed(digits)}, n=${s.n})` : "—";
+  // The per-line usd/call stays even when the aggregate is withheld — it is this
+  // run's own arithmetic, not a trend — but it says so, because printing a dollar
+  // column under a "no dollar trend" verdict is the same relocation of the problem
+  // the aggregate fix was for.
+  if (!trend.usdPerCall) {
+    out.push(
+      "",
+      "_The `usd/call` column is each run's own figure. No dollar TREND is computed — see the " +
+        "verdict above; `--prices-stable` is what unlocks the aggregate._",
+    );
+  }
   const label = trend.readable ? "" : " _(provisional — see above)_";
   out.push(`**Tokens per LLM call:** ${fmt(trend.tokensPerCall, 0)}${label}`);
   out.push(`**USD per LLM call:** ${fmt(trend.usdPerCall, 5, "$")}${label}`);

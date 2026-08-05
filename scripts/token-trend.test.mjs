@@ -228,3 +228,50 @@ test("main honours --prices-stable and --measurement-stable", () => {
   assert.equal(main(["--prices-stable", "--measurement-stable"], { readFile: () => raw, log: (m) => out.push(m) }), 0);
   assert.match(out.join("\n"), /USD per LLM call:\*\* \$0\.00010/);
 });
+
+test("an unreadable NUMERATOR is undecidable too, not a measured rate of zero", () => {
+  // The first pass at this rule fixed the denominator and left `Number(…) || 0` on
+  // the line above, so a corrupt `total_tokens` produced a MEASURED zero — the one
+  // value #1252 says an unreadable entry must never become.
+  const bad = line({ date: "2026-08-14", tokens: 5000, calls: 4 });
+  bad.by_model = [{ model: "a", calls: 4, total_tokens: "n/a" }];
+  assert.equal(describeLine(bad).spanTokens, null);
+  assert.equal(describeLine(bad).tokensPerCall, null, "not 0");
+
+  const noTotal = line({ date: "2026-08-14", tokens: 1, calls: 4 });
+  noTotal.totals = { traces: 152, total_tokens: null, usd_estimated: 0.001 };
+  assert.equal(describeLine(noTotal).tokens, null, "a 152-trace run is not a 0-token run");
+});
+
+test("a version change INSIDE the window blocks the read; one outside it does not", () => {
+  // Scoped over the whole file, this warned about a change safely outside the
+  // window while leaving `readable: true` for one inside it — advisory on the only
+  // instrument change the data exposes, while the unobservable claim was the hard
+  // gate.
+  const inside = five({ });
+  inside[2] = { ...inside[2], version: 2 };
+  const t1 = readTrend(inside, { measurementStable: true });
+  assert.equal(t1.readable, false);
+  assert.match(t1.gaps.join(" "), /mixes schema versions/);
+
+  const outside = [{ ...line({ date: "2026-08-09", tokens: 900, calls: 9, provider: false }), version: 2 }, ...five()];
+  const t2 = readTrend(outside, { measurementStable: true });
+  assert.equal(t2.readable, true, "the v2 line is outside the trailing shape run");
+  assert.doesNotMatch(t2.gaps.join(" "), /mixes schema versions/);
+});
+
+test("the rendered row reconciles: span tokens are a column, not an internal", () => {
+  // Without it the row reads `4 calls | 2592 tokens | 635 tokens/call`, which does
+  // not divide, and a reader cannot tell which of the two numbers to distrust.
+  const l = line({ date: "2026-08-14", tokens: 2592, calls: 4 });
+  l.by_model = [{ model: "a", calls: 4, total_tokens: 2540 }];
+  const md = render(readTrend([l], { measurementStable: true }));
+  assert.match(md, /\| span tokens \|/);
+  assert.match(md, /\| 4 \| 2592 \| 2540 \| 635 \|/);
+});
+
+test("the per-line usd column is labelled when the dollar TREND is withheld", () => {
+  const md = render(readTrend(five(), { measurementStable: true }));
+  assert.match(md, /usd\/call` column is each run's own figure/);
+  assert.match(md, /No dollar TREND is computed/);
+});
