@@ -830,7 +830,7 @@
 | `core-functionality/model-provider/` | 34 | 31 | 2 | 1 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
-| `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
+| `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `core-functionality/a2a/` | 18 | 0 | 9 | 1 | 8 |
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
@@ -838,7 +838,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **382 (76%)** | **89 (18%)** | **14 (3%)** | **15 (3%)** |
+| **TOTAL** | **500** | **384 (77%)** | **87 (17%)** | **14 (3%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 444 `test()` calls carrying the `@stable` tag, distributed across 175 spec
+> 447 `test()` calls carrying the `@stable` tag, distributed across 176 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1215,6 +1215,9 @@
 - [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
 - [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
 - [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
+- [x] deleting a folder should update the folder list immediately → `folder-deletion-integrity.spec.ts`
+- [x] deleting one folder should not affect other folders → `folder-deletion-integrity.spec.ts`
+- [x] creating a new folder after deletion should work correctly → `folder-deletion-integrity.spec.ts`
 - [x] getting-started progress increments as onboarding steps complete → `user-progress-track.spec.ts`
 
 #### flow-functionality/
@@ -1360,6 +1363,6 @@
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
 | `flow-functionality/` | 1 | 0 |
-| `core-functionality/project-management/` | 8 | 0 |
+| `core-functionality/project-management/` | 6 | 0 |
 | `core-functionality/templates/` | 39 | 0 |
 | `ui-ux/` — Settings | 0 | 0 |
