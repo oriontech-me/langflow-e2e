@@ -53,7 +53,7 @@ pandas); the spec neither resolves a model nor consumes `models.json`.
 ### Why the assertion surface is the output inspector
 
 Each test reads the value the component actually returned, from the node's output inspector
-(`output-inspection-<output>-operations`), not from a downstream sink:
+(`output-inspection-<output display name>-operations`), not from a downstream sink:
 
 - `Message` output → the inspector renders a `textarea`; assert `toHaveValue(...)`.
 - `JSON` output → the inspector renders a JSON viewer; assert the dialog's text contains the
@@ -61,11 +61,17 @@ Each test reads the value the component actually returned, from the node's outpu
   is absent).
 - `Table` output → the inspector renders an ag-grid; assert the `role="gridcell"` contents.
 
-The inspector testid itself carries the output's display name
-(`output-inspection-${title.toLowerCase()}-${type.toLowerCase()}`, from
-`CustomNodes/GenericNode/components/NodeOutputfield/index.tsx`), so asserting on
-`output-inspection-json-operations` *is* an assertion that the node advertises a JSON output
-— the testid cannot exist unless `update_outputs` produced that output.
+The inspector testid itself carries the output's display name **first**, the component type
+second — `output-inspection-${title.toLowerCase()}-${classNameFromType(id).toLowerCase()}`,
+from `CustomNodes/GenericNode/components/NodeOutputfield/index.tsx`. So in
+`output-inspection-json-operations`, `json` is the **output's display name** (what
+`update_outputs` advertised) and `operations` is the **component type** (`name="Operations"`,
+identical on every node of this component). Reading it the other way round — component first
+— is the easy mistake here, precisely because both halves are lowercase nouns and the
+component is *called* Data Operations: it would suggest the testid is stable per node, when
+in fact its first half is exactly the thing under test. Asserting on
+`output-inspection-json-operations` *is* therefore an assertion that the node advertises a
+JSON output — the testid cannot exist unless `update_outputs` produced that output.
 
 ---
 
@@ -242,7 +248,9 @@ by an empty output, a passthrough, or a node that failed to build (the run gate 
   emits `button_open_list_selection_sortablelist_sortablelist_<field>` and the
   `list_item_<snake_case_name>` options.
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeOutputfield/index.tsx` — emits
-  `output-inspection-<output>-<type>`, the spec's per-operation output-type assertion.
+  `output-inspection-<output display name>-<component type>` — output first, component
+  second (e.g. `output-inspection-json-operations`). This is the spec's per-operation
+  output-type assertion.
 - `tests/helpers/flows/create-flow.ts`, `delete-flow.ts`,
   `add-component-from-sidebar.ts`, `unmount-editor-for-cleanup.ts`.
 - `tests/helpers/ui/zoom-out.ts`, `adjust-screen-view.ts`, `separate-overlapping-nodes.ts`,

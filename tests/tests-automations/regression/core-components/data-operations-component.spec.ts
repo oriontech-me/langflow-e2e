@@ -192,9 +192,11 @@ async function runNode(node: Locator): Promise<void> {
   });
 }
 
-// Open a node's output inspector and return the modal. The testid carries the
-// output's DISPLAY NAME (`output-inspection-<title>-<type>`), so requesting
-// `output-inspection-json-operations` is itself an assertion that the node
+// Open a node's output inspector and return the modal. The testid is
+// `output-inspection-<output display name>-<component type>` — output FIRST: in
+// `output-inspection-json-operations`, `json` is what `update_outputs`
+// advertised and `operations` is the component type, identical on every node of
+// this component. So requesting that testid is itself an assertion that the node
 // advertises a JSON output.
 async function openOutputInspector(
   page: Page,
@@ -209,8 +211,16 @@ async function openOutputInspector(
   return modal;
 }
 
+// Wait for the modal to be GONE, not just clicked away: `openOutputInspector`
+// resolves `[role="dialog"]` by `.last()`, so a dialog still animating out would
+// be a live candidate for the next open. `btn-close-modal` is the precise
+// signal — it belongs to this modal only, unlike `[role="dialog"]`, which the
+// assistant onboarding tooltip also carries.
 async function closeOutputInspector(page: Page): Promise<void> {
   await page.getByTestId("btn-close-modal").click();
+  await expect(page.getByTestId("btn-close-modal")).toHaveCount(0, {
+    timeout: 15000,
+  });
 }
 
 // The node-level Text field is an `<input type="text">` and strips newlines —
