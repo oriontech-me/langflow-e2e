@@ -2,7 +2,9 @@ import type { Page } from "@playwright/test";
 
 /**
  * The page-entry barrier every helper that lands on the home page waits on
- * (`mainpage_title`, then `new-project-btn`), with the failure ATTRIBUTED.
+ * (`mainpage_title`, then `new-project-btn`), with the failure ATTRIBUTED — and,
+ * since #1265, the same attribution for any other entry observable a spec has to
+ * wait on before it can start asserting (see `waitForAttributedSelector`).
  *
  * Why this exists (#1262). A bare `waitForSelector` on those two testids cannot
  * distinguish the only two things that make it time out:
@@ -43,6 +45,40 @@ import type { Page } from "@playwright/test";
  *
  * The original Playwright error is always appended, so the trace, screenshot and
  * call log stay readable against it.
+ *
+ * WHY IT IS NOT ONLY THE HOME PAGE (#1265)
+ *
+ * The same ambiguity exists one navigation later, and it cost the same mis-triage.
+ * `modelInputComponent.spec.ts` waited 30s for `sidebar-search-input` — the
+ * component sidebar's search field on a freshly-opened flow — with a bare
+ * `locator.waitFor`. On the 2026-08-04 daily (run 30901311395) that wait timed
+ * out inside two measured shard-2 outages (76s and 92s, with gunicorn logging
+ * `WORKER TIMEOUT (pid:37)` + SIGKILL at 10:46:30) and the failing attempt took
+ * 287s against ~6s for its own file-siblings once the backend recovered. The
+ * report showed only
+ *
+ *   TimeoutError: locator.waitFor: Timeout 30000ms exceeded.
+ *     - waiting for getByTestId('sidebar-search-input') to be visible
+ *
+ * so the flake was filed as test-local and an otherwise healthy `@stable` test
+ * was quarantined for a cycle. `locator.waitFor: Timeout` cannot be added to
+ * `scripts/lib/infra-signatures.ts` — a genuine UI regression produces it too —
+ * so that message is unclassifiable by construction. The attributed one is not,
+ * and NOT only because of `INFRA_PREFIX`: it embeds the probe's own transport
+ * error, so a wedge (accepted-and-never-answered ⇒ `apiRequestContext.get:
+ * Timeout`) already matches the existing `api-request-timeout` signature with no
+ * new entry added anywhere, while the healthy-probe message stays unclassified.
+ * Both halves of that are pinned in `page-entry-barrier.test.ts` against the real
+ * classifier. So the barrier is generic in the observable and carries a `surface`
+ * label naming which entry point failed.
+ *
+ * KNOWN LIMITATION, stated rather than papered over: the probe runs AFTER the
+ * wait's budget is spent, so it reports the backend's state then — not during.
+ * #1265's outages were 76s and 92s, comfortably longer than the 30s wait, but a
+ * shorter wedge that clears inside the budget reads `healthy` and the message
+ * then blames the UI. That asymmetry is deliberate and inherited from #1262:
+ * over-claiming an outage would let a real entry-point regression through
+ * unquarantined, which costs more than a wedge that has to be recognised by hand.
  */
 
 /**
@@ -74,12 +110,27 @@ export interface BackendProbe {
   detail?: string;
 }
 
+/**
+ * Default `surface` label — the home page this barrier was built for (#1262).
+ * Kept as the default so every existing caller, and every history entry already
+ * written against that wording, keeps reading the same.
+ */
+export const PAGE_ENTRY_SURFACE = "page-entry";
+
 export interface EntryBarrierContext {
   selector: string;
   timeoutMs: number;
   probe: BackendProbe;
   /** The original Playwright error text. */
   cause: string;
+  /**
+   * Which entry point this barrier guards, e.g. `page-entry` or
+   * `component-sidebar`. Named in the message so a reader knows WHICH surface
+   * failed without decoding the selector — #1265's flake was triaged as a model
+   * selector problem because the message named neither (default:
+   * `PAGE_ENTRY_SURFACE`).
+   */
+  surface?: string;
 }
 
 /**
@@ -88,7 +139,8 @@ export interface EntryBarrierContext {
  */
 export function entryBarrierMessage(ctx: EntryBarrierContext): string {
   const { selector, timeoutMs, probe, cause } = ctx;
-  const barrier = `page-entry barrier "${selector}" did not render within ${timeoutMs}ms`;
+  const surface = ctx.surface?.trim() || PAGE_ENTRY_SURFACE;
+  const barrier = `${surface} barrier "${selector}" did not render within ${timeoutMs}ms`;
   const url = probe.url;
 
   let head: string;
@@ -110,7 +162,7 @@ export function entryBarrierMessage(ctx: EntryBarrierContext): string {
       head =
         `${barrier} — the backend answered GET ${PROBE_PATH} with HTTP ` +
         `${probe.status} in ${probe.ms}ms (${url}), so the backend was reachable ` +
-        `and this IS a product/UI failure at the page entry point.`;
+        `and this IS a product/UI failure at the ${surface} entry point.`;
       break;
     default:
       head =
@@ -168,17 +220,21 @@ export async function probeBackend(
 }
 
 /**
- * `waitForSelector` for a page-entry observable, with the timeout attributed.
+ * `waitForSelector` for ANY entry observable, with the timeout attributed.
  *
- * Drop-in for `await page.waitForSelector(selector, { timeout })` on the home
- * page. Behaviour on success is identical (same selector, same budget); only the
- * failure path changes.
+ * Drop-in for `await page.waitForSelector(selector, { timeout })`. Behaviour on
+ * success is identical (same selector, same budget) — only the failure path
+ * changes, and it never loosens the budget: a barrier that masked a slow surface
+ * would defeat the point of measuring it (#1265).
+ *
+ * `surface` names the entry point in the message. Pass it whenever the barrier is
+ * not the home page, so the failure says which one broke.
  */
-export async function waitForPageEntry(
+export async function waitForAttributedSelector(
   page: Page,
   selector: string,
   timeoutMs: number,
-  options?: { baseURL?: string },
+  options?: { baseURL?: string; surface?: string },
 ): Promise<void> {
   try {
     await page.waitForSelector(selector, { timeout: timeoutMs });
@@ -189,8 +245,27 @@ export async function waitForPageEntry(
         selector,
         timeoutMs,
         probe,
+        surface: options?.surface,
         cause: String(error?.message ?? error),
       }),
     );
   }
+}
+
+/**
+ * The home-page specialisation (#1262) — `waitForAttributedSelector` with the
+ * `page-entry` surface. Kept as its own name because that is what every helper
+ * landing on the home page calls, and what the messages in
+ * `reports/daily-history.jsonl` were written against.
+ */
+export async function waitForPageEntry(
+  page: Page,
+  selector: string,
+  timeoutMs: number,
+  options?: { baseURL?: string },
+): Promise<void> {
+  await waitForAttributedSelector(page, selector, timeoutMs, {
+    baseURL: options?.baseURL,
+    surface: PAGE_ENTRY_SURFACE,
+  });
 }

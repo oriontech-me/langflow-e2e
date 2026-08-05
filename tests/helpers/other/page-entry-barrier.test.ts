@@ -23,9 +23,11 @@
 // (#1012's rule — an unevaluated probe is unknown, not healthy).
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { classifyInfraError } from "../../../scripts/lib/infra-signatures";
 import {
   entryBarrierMessage,
   INFRA_PREFIX,
+  PAGE_ENTRY_SURFACE,
   resolveProbeUrl,
 } from "./page-entry-barrier";
 
@@ -145,6 +147,145 @@ test("the message names the barrier's own budget so a raised timeout is visible"
   assert.match(msg, /15000ms/);
   assert.match(msg, /new-project-btn/);
   assert.match(msg, /http:\/\/langflow:7860/);
+});
+
+// --- the `surface` label (#1265) --------------------------------------------
+//
+// The barrier stopped being home-page-only when the SAME ambiguity cost the same
+// mis-triage one navigation later: `modelInputComponent.spec.ts` waited 30s for
+// the component sidebar's `sidebar-search-input` with a bare `locator.waitFor`,
+// timed out inside two measured shard-2 outages on the 2026-08-04 daily, and was
+// filed as a test-local flake about the model selector — the surface the message
+// named was neither the sidebar nor the backend.
+
+test("the surface defaults to page-entry, so #1262's callers read identically", () => {
+  const msg = entryBarrierMessage({
+    selector: SELECTOR,
+    timeoutMs: 30000,
+    probe: {
+      state: "healthy",
+      ms: 9,
+      status: 200,
+      url: "http://localhost:7860/api/v1/version",
+    },
+    cause: CAUSE,
+  });
+
+  assert.match(msg, new RegExp(`^${PAGE_ENTRY_SURFACE} barrier `));
+  // A blank label must not degrade into `" barrier"` — that is worse than the
+  // default, because it names nothing while looking deliberate.
+  const blank = entryBarrierMessage({
+    selector: SELECTOR,
+    timeoutMs: 30000,
+    surface: "   ",
+    probe: {
+      state: "healthy",
+      ms: 9,
+      status: 200,
+      url: "http://localhost:7860/api/v1/version",
+    },
+    cause: CAUSE,
+  });
+  assert.match(blank, new RegExp(`^${PAGE_ENTRY_SURFACE} barrier `));
+});
+
+test("a named surface appears in the barrier line AND in the product verdict", () => {
+  const msg = entryBarrierMessage({
+    selector: '[data-testid="sidebar-search-input"]',
+    timeoutMs: 30000,
+    surface: "component-sidebar",
+    probe: {
+      state: "healthy",
+      ms: 12,
+      status: 200,
+      url: "http://localhost:7860/api/v1/version",
+    },
+    cause:
+      "TimeoutError: locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n" +
+      "  - waiting for getByTestId('sidebar-search-input') to be visible",
+  });
+
+  assert.match(msg, /^component-sidebar barrier "\[data-testid="sidebar-search-input"\]"/);
+  // The verdict sentence is the one a reader acts on, so it must name the same
+  // surface — "a product/UI failure at the page entry point" is what sent #1265
+  // to the wrong cluster.
+  assert.match(msg, /failure at the component-sidebar entry point/);
+  assert.doesNotMatch(msg, new RegExp(`${PAGE_ENTRY_SURFACE} entry point`));
+});
+
+test("attribution is surface-independent: a wedge behind any barrier is infra", () => {
+  const msg = entryBarrierMessage({
+    selector: '[data-testid="sidebar-search-input"]',
+    timeoutMs: 30000,
+    surface: "component-sidebar",
+    probe: {
+      state: "unreachable",
+      ms: 5001,
+      url: "http://localhost:7860/api/v1/version",
+      detail: "apiRequestContext.get: Timeout 5000ms exceeded.",
+    },
+    cause: "TimeoutError: locator.waitFor: Timeout 30000ms exceeded.",
+  });
+
+  // This is the whole point of #1265: `locator.waitFor: Timeout` can never join
+  // `scripts/lib/infra-signatures.ts` (a real UI regression emits it too), so the
+  // prefix is the only route by which a sidebar wait killed by a wedge becomes
+  // classifiable — and it must not depend on which barrier reported it.
+  assert.ok(
+    msg.startsWith(INFRA_PREFIX),
+    `a wedge behind a non-page-entry barrier must still be infra, got: ${msg}`,
+  );
+  assert.match(msg, /component-sidebar barrier/);
+});
+
+test("under a wedge the attributed message is classified by the EXISTING infra list", () => {
+  // The payoff, asserted against the real classifier rather than described in a
+  // comment. `locator.waitFor: Timeout` is not (and must not be) an infra
+  // signature, so today's bare message is unclassifiable — the barrier embeds the
+  // probe's own transport error, and THAT is what `infra-signatures.ts` already
+  // matches. No entry has to be added there for a wedge-killed sidebar wait to
+  // stop reading like a broken spec.
+  const bare =
+    "TimeoutError: locator.waitFor: Timeout 30000ms exceeded.\n" +
+    "Call log:\n  - waiting for getByTestId('sidebar-search-input') to be visible";
+
+  assert.equal(
+    classifyInfraError(bare),
+    null,
+    "the bare Playwright message must stay unclassifiable — that is the problem",
+  );
+
+  const wedged = entryBarrierMessage({
+    selector: '[data-testid="sidebar-search-input"]',
+    timeoutMs: 30000,
+    surface: "component-sidebar",
+    probe: {
+      state: "unreachable",
+      ms: 5001,
+      url: "http://localhost:7860/api/v1/version",
+      // What a wedged backend actually produces: it accepts the connection and
+      // never answers, so the probe times out (#922/#927).
+      detail: "apiRequestContext.get: Timeout 5000ms exceeded.",
+    },
+    cause: bare,
+  });
+  assert.equal(classifyInfraError(wedged)?.id, "api-request-timeout");
+
+  // And the healthy case must NOT become classifiable, or a real entry-point
+  // regression would be exempted as an outage.
+  const healthy = entryBarrierMessage({
+    selector: '[data-testid="sidebar-search-input"]',
+    timeoutMs: 30000,
+    surface: "component-sidebar",
+    probe: {
+      state: "healthy",
+      ms: 21,
+      status: 200,
+      url: "http://localhost:7860/api/v1/version",
+    },
+    cause: bare,
+  });
+  assert.equal(classifyInfraError(healthy), null);
 });
 
 test("the probed URL comes from the page's own origin, not from the environment", () => {
