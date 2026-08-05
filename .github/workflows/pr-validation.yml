@@ -153,6 +153,66 @@ jobs:
       - name: Guard spec ↔ doc ↔ QA-CHECKLIST triad
         run: npm run check:checklist-coverage
 
+  doc-deps-guard:
+    name: Spec-doc dependency paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "20"
+
+      # The docs this PR touched. Severity turns on this list: a path in a doc the
+      # PR changed FAILS, a pre-existing one is reported (#980's coverage-first
+      # trade — one upstream rename must not redden every PR that edits an
+      # unrelated doc). An empty list is normal and means nothing can fail here.
+      - name: Collect the docs this PR changed
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -eo pipefail
+          git fetch origin "$BASE_REF" --quiet
+          git diff --name-only --diff-filter=d "origin/$BASE_REF...HEAD" -- docs README.md > all-changed.txt
+          # `grep` exits 1 on no match, which under `pipefail` would abort a PR that
+          # simply touches no doc — the empty list is a valid, common outcome.
+          grep -E '\.md$' all-changed.txt > changed-docs.txt || :
+          echo "changed docs: $(wc -l < changed-docs.txt)"
+          cat changed-docs.txt
+
+      # Trees only, no blobs, no working tree: 520 KB and ~1.6 s measured, against
+      # ~117 MB to materialise the files. `--mode=check-docs` resolves through
+      # `git ls-tree`, which is what makes that possible (issue #1298).
+      - name: Clone the upstream tree
+        run: |
+          set -eo pipefail
+          for attempt in 1 2 3; do
+            if git clone --filter=blob:none --depth 1 --no-checkout \
+                 https://github.com/langflow-ai/langflow.git langflow-upstream; then
+              exit 0
+            fi
+            echo "::warning::upstream clone attempt $attempt failed; retrying"
+            rm -rf langflow-upstream
+            sleep 5
+          done
+          echo "::error::could not clone langflow-ai/langflow, so no dependency-path verdict exists for this PR. Not treating that as 'every path resolves'."
+          exit 1
+
+      # Fails only on the changed docs; the repo-wide sweep is emitted as
+      # ::warning:: so drift that lands upstream between PRs stays visible
+      # (#1012 — an unevaluated path is unknown, not clean).
+      - name: Resolve every External-dependencies path against upstream
+        run: |
+          set -eo pipefail
+          node scripts/watch-upstream-areas.mjs \
+            --mode=check-docs \
+            --root langflow-upstream \
+            --ref origin/main \
+            --changed changed-docs.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
   detect-specs:
     name: Detect changed specs
     runs-on: ubuntu-latest

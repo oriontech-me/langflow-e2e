@@ -169,12 +169,12 @@ provider's vision-capable catalog rather than narrowing to one model. Use the
 
 ## External dependencies *(required)*
 
-- `src/backend/base/langflow/components/agents/` — Agent multimodal input
+- `src/lfx/src/lfx/components/models_and_agents/` — Agent multimodal input
   handling; a regression in how image messages are consumed breaks this spec.
 - `src/frontend/src/components/core/playgroundComponent/` — the
   `input-wrapper` file input, `input-chat-playground`, `button-send`, and the
   attachment `img` preview.
-- `src/backend/base/langflow/components/inputs/` (ChatInput) — must keep emitting
+- `src/lfx/src/lfx/components/input_output/` (ChatInput) — must keep emitting
   a Message carrying attached files on its `chat message` output.
 - Simple Agent starter template — must keep shipping `ChatInput → Agent →
   ChatOutput`; a rewire changes the input-handle path.

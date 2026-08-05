@@ -69,17 +69,22 @@
  *   node scripts/watch-upstream-areas.mjs --mode=check  --root langflow-upstream
  *   node scripts/watch-upstream-areas.mjs --mode=detect --root langflow-upstream --since "24 hours ago"
  *   node scripts/watch-upstream-areas.mjs --mode=areas          # print the table, no checkout needed
+ *   node scripts/watch-upstream-areas.mjs --mode=check-docs --root langflow-upstream --ref origin/main \
+ *       [--changed changed-docs.txt]   # spec-doc dependency paths (#1298)
  *
  * Exit codes: 0 = verdict produced; 1 = the checkout contradicts the table (a
- * monitored path is gone, or an unclassified subtree exists); 2 = the script
- * could not decide (bad flag, unreadable checkout, `git log` failed).
+ * monitored path is gone, an unclassified subtree exists, or a changed doc names
+ * a dependency path that does not resolve); 2 = the script could not decide (bad
+ * flag, unreadable checkout, `git log`/`git ls-tree` failed, unreadable
+ * `--changed` list).
  *
  * Dependency-free ESM; covered by `npm run test:scripts`.
  */
 
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 /** Commits listed per area in the issue body — same cap the bash version used. */
 export const MAX_COMMITS_PER_AREA = 5;
@@ -487,6 +492,180 @@ export function findLfxDrift({ classification = LFX_CLASSIFICATION, listChildren
   return { unclassified: unclassified.sort(), stale: stale.sort(), scanned };
 }
 
+/* ------------------------------------------------------------------------- *
+ * Spec-doc dependency paths (issue #1298)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The same defect as (2) above, one file over: `validate-spec-deps.ts` checks
+ * that a spec doc's mandatory `## External dependencies` section EXISTS and is
+ * populated, and never that the paths in it RESOLVE. Measured against four real
+ * refs (release-1.10.0, release-1.11.2, release-1.12.0, main), 42 distinct paths
+ * across 35 files resolved on NONE of them — 17 in the pre-`lfx` tree, gone since
+ * *feat: introduce lfx package* (#9133, 2025-09-02); ~20 under `src/frontend/`
+ * whose directory was reorganised; 7 missing the real `src/lfx/src/lfx/` prefix.
+ *
+ * The cost is not only a dead end for a reviewer. `scripts/impacted-tests.ts`
+ * maps a changed Langflow path to the specs whose docs name it, by PREFIX — so a
+ * path that resolves to nothing makes that spec unselectable by
+ * `adaptive-impacted.yml`. A wrong path there is silent in exactly the way a
+ * missing one is.
+ *
+ * WHY THIS LIVES HERE, AND WHY IT RESOLVES VIA `git ls-tree`
+ *
+ * The resolution machinery — an upstream checkout plus a fail-closed verdict over
+ * it — is what `--mode=check` already is (#1092), so the check extends this
+ * script rather than growing a second copy inside `validate-spec-deps.ts`.
+ *
+ * It reads the tree with `git ls-tree` instead of `fs.existsSync`, which is what
+ * lets it run on a lane that has no upstream working tree: a
+ * `--filter=blob:none --depth 1 --no-checkout` clone of langflow is 520 KB and
+ * 1.6 s (measured), while materialising the files is ~117 MB. `--mode=check`
+ * still needs the working tree for its `lfx` subtree scan, so the two modes read
+ * the checkout differently on purpose.
+ */
+export const DOC_DEPS_HEADER_RE = /^##\s+External dependencies(\s+\*\(required\)\*)?\s*$/;
+const DOC_DEPS_SECTION_END_RE = /^(##\s+|---\s*)$/;
+
+/**
+ * Docs whose dependency bullets are illustrative by design. The template's whole
+ * job is to show the SHAPE of the section, so `src/frontend/...` there is content,
+ * not a defect. Kept as an explicit allowlist rather than a heuristic, because
+ * "looks like a placeholder" is exactly the judgement that let 10 real ellipses
+ * pass unverified.
+ */
+export const DOC_DEPS_EXEMPT_FILES = ["docs/TEST-SPEC-TEMPLATE.md"];
+
+/**
+ * Every backticked `src/…` token inside the section — not just the leading one.
+ *
+ * A bullet routinely names a second file mid-sentence, and a multi-file
+ * dependency is written as continuation lines; checking only the first token per
+ * bullet (what `impacted-tests.ts` consumes) would leave those unverified, which
+ * is the silence this guard exists to remove.
+ *
+ * @param {string} markdown
+ * @returns {Array<{token: string, line: number}>}
+ */
+export function parseDocDeps(markdown) {
+  const out = [];
+  const lines = String(markdown).split("\n");
+  let inSection = false;
+
+  lines.forEach((line, index) => {
+    if (!inSection) {
+      if (DOC_DEPS_HEADER_RE.test(line)) inSection = true;
+      return;
+    }
+    if (DOC_DEPS_SECTION_END_RE.test(line)) {
+      inSection = false;
+      return;
+    }
+    for (const match of line.matchAll(/`([^`]+)`/g)) {
+      const token = match[1].trim();
+      if (token.startsWith("src/")) out.push({ token, line: index + 1 });
+    }
+  });
+
+  return out;
+}
+
+/**
+ * What kind of thing a dependency token is, and what should be resolved for it.
+ *
+ * - `literal` — a path. A trailing `:70-78` line range is informative and is
+ *   stripped before resolving; a trailing slash is cosmetic.
+ * - `glob` — contains `*`. Resolvable: it must match at least one tree entry.
+ * - `ellipsis` — contains `...` or `…`. NOT resolvable, by any means, so it is a
+ *   defect rather than a skip: an unevaluated path is unknown, not clean
+ *   (#1012's rule, the same one `runguard` and the lfx scan apply).
+ *
+ * @param {string} token
+ * @returns {{kind: "literal"|"glob"|"ellipsis", target: string}}
+ */
+export function classifyDepToken(token) {
+  const target = String(token).replace(/:\d+(?:-\d+)?$/, "").replace(/\/+$/, "");
+  if (/\.\.\.|…/.test(target)) return { kind: "ellipsis", target };
+  if (target.includes("*")) return { kind: "glob", target };
+  return { kind: "literal", target };
+}
+
+/**
+ * Anchored glob match over tree entries. `**` crosses directories, `*` does not,
+ * which is how the three surviving `pages/MainPage/**`-style entries are meant to
+ * read.
+ *
+ * @param {string} pattern
+ * @param {string[]} treeEntries
+ * @returns {string[]} matches (empty means the pattern resolves to nothing)
+ */
+export function matchGlob(pattern, treeEntries) {
+  const source = pattern
+    .split(/(\*\*|\*)/)
+    .map((part) => {
+      if (part === "**") return ".*";
+      if (part === "*") return "[^/]*";
+      return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    })
+    .join("");
+  const re = new RegExp(`^${source}$`);
+  return treeEntries.filter((entry) => re.test(entry));
+}
+
+/**
+ * The verdict, over already-read docs so it is testable without a checkout.
+ *
+ * Severity follows the coverage-first trade (#980): a path the PR itself touched
+ * FAILS, everything else is reported. One upstream rename must not redden every
+ * PR that edits an unrelated doc — but it must not be invisible either, so the
+ * pre-existing half is announced, never dropped (#1012).
+ *
+ * @param {{
+ *   docs: Array<{file: string, markdown: string}>,
+ *   treeEntries: string[],
+ *   changedFiles?: string[],
+ *   exemptFiles?: string[],
+ * }} options
+ * @returns {{checked: number, failures: Array, warnings: Array, exempt: string[]}}
+ */
+export function checkDocDeps({ docs, treeEntries, changedFiles = [], exemptFiles = DOC_DEPS_EXEMPT_FILES }) {
+  const treeSet = new Set(treeEntries);
+  const changed = new Set(changedFiles);
+  const exemptSet = new Set(exemptFiles);
+  const failures = [];
+  const warnings = [];
+  const exempt = [];
+  let checked = 0;
+
+  for (const doc of docs) {
+    if (exemptSet.has(doc.file)) {
+      exempt.push(doc.file);
+      continue;
+    }
+    for (const { token, line } of parseDocDeps(doc.markdown)) {
+      const { kind, target } = classifyDepToken(token);
+      checked += 1;
+
+      let reason = null;
+      if (kind === "ellipsis") {
+        reason =
+          "contains an ellipsis, so it can never be resolved against upstream — write the real path, or a glob";
+      } else if (kind === "glob") {
+        if (matchGlob(target, treeEntries).length === 0) reason = "glob matches nothing upstream";
+      } else if (!treeSet.has(target)) {
+        reason = "does not exist upstream";
+      }
+      if (!reason) continue;
+
+      const finding = { file: doc.file, line, token, kind, reason };
+      if (changed.has(doc.file)) failures.push(finding);
+      else warnings.push(finding);
+    }
+  }
+
+  return { checked, failures, warnings, exempt };
+}
+
 /**
  * Accepted `--since` windows.
  *
@@ -663,6 +842,96 @@ function runCheck(root) {
   process.stdout.write("All monitored paths exist and every lfx subtree is classified.\n");
 }
 
+/** Every `.md` under `docs/`, plus the top-level README — the files that can carry the section. */
+function collectDocFiles(repoRoot) {
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name.endsWith(".md")) out.push(full);
+    }
+  };
+  walk(path.join(repoRoot, "docs"));
+  const readme = path.join(repoRoot, "README.md");
+  if (fs.existsSync(readme)) out.push(readme);
+  return out.map((file) => ({ file: path.relative(repoRoot, file), markdown: fs.readFileSync(file, "utf8") }));
+}
+
+function runCheckDocs(root, ref, changedListPath) {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+  let treeEntries;
+  try {
+    treeEntries = git(root, ["ls-tree", "-r", "-t", "--name-only", ref]).split("\n").filter(Boolean);
+  } catch (error) {
+    process.stderr.write(
+      `::error::watch-upstream-areas: could not list the upstream tree at "${ref}" in --root "${root}" (${error.message}). Treating as undecidable, not as "every path resolves".\n`,
+    );
+    process.exit(2);
+  }
+  if (treeEntries.length === 0) {
+    process.stderr.write(
+      `::error::watch-upstream-areas: the upstream tree at "${ref}" is empty, so every path would "not exist". Undecidable.\n`,
+    );
+    process.exit(2);
+  }
+
+  // An unreadable changed-file list is undecidable too: defaulting to "nothing
+  // changed" would silently downgrade every finding to a warning, which is the
+  // same fail-open the guard exists to remove.
+  let changedFiles = [];
+  if (changedListPath) {
+    try {
+      changedFiles = fs
+        .readFileSync(changedListPath, "utf8")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+    } catch (error) {
+      process.stderr.write(
+        `::error::watch-upstream-areas: could not read --changed "${changedListPath}" (${error.message}). Refusing to report a diff-scoped verdict without the diff.\n`,
+      );
+      process.exit(2);
+    }
+  }
+
+  const docs = collectDocFiles(repoRoot);
+  const { checked, failures, warnings, exempt } = checkDocDeps({ docs, treeEntries, changedFiles });
+
+  process.stdout.write(
+    `Resolved ${checked} dependency path(s) from ${docs.length - exempt.length} doc(s) against ${ref} (${treeEntries.length} tree entries); ${exempt.length} doc(s) exempt.\n`,
+  );
+  if (!changedListPath) {
+    process.stdout.write(
+      "No --changed list given, so every finding is reported and none fails: the diff decides severity.\n",
+    );
+  }
+
+  for (const w of warnings) {
+    process.stderr.write(
+      `::warning::${w.file}:${w.line} — dependency path \`${w.token}\` ${w.reason}. Pre-existing (this PR did not touch the doc), so it is reported, not failed.\n`,
+    );
+  }
+  for (const f of failures) {
+    process.stderr.write(
+      `::error::${f.file}:${f.line} — dependency path \`${f.token}\` ${f.reason}. This PR changed the doc, so the path must resolve upstream (issue #1298).\n`,
+    );
+  }
+
+  if (failures.length > 0) {
+    process.stderr.write(
+      `::error::${failures.length} dependency path(s) in doc(s) this PR changed do not resolve upstream.\n`,
+    );
+    process.exit(1);
+  }
+  process.stdout.write(
+    warnings.length > 0
+      ? `No unresolved dependency path in the changed docs; ${warnings.length} pre-existing one(s) reported above.\n`
+      : "Every dependency path resolves upstream.\n",
+  );
+}
+
 function runDetect(root, since) {
   let changed;
   let window;
@@ -728,8 +997,8 @@ function renderAreaTable() {
 
 /** `--flag value` and `--flag=value` both work — the mixed forms bit a reviewer. */
 export function parseArgs(args) {
-  const opts = { mode: "check", root: ".", since: "24 hours ago" };
-  const KEYS = new Set(["mode", "root", "since"]);
+  const opts = { mode: "check", root: ".", since: "24 hours ago", ref: "HEAD", changed: "" };
+  const KEYS = new Set(["mode", "root", "since", "ref", "changed"]);
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     const match = /^--([a-z]+)(?:=(.*))?$/.exec(a);
@@ -749,13 +1018,13 @@ function main(argv) {
     process.stderr.write(`::error::watch-upstream-areas: ${error.message}\n`);
     process.exit(2);
   }
-  const { mode, root, since } = opts;
+  const { mode, root, since, ref, changed } = opts;
 
   if (mode === "areas") {
     process.stdout.write(`${renderAreaTable()}\n`);
     return;
   }
-  if (mode !== "check" && mode !== "detect") {
+  if (mode !== "check" && mode !== "detect" && mode !== "check-docs") {
     process.stderr.write(`::error::watch-upstream-areas: unknown mode "${mode}"\n`);
     process.exit(2);
   }
@@ -776,7 +1045,9 @@ function main(argv) {
   }
 
   try {
-    return mode === "check" ? runCheck(root) : runDetect(root, since);
+    if (mode === "check") return runCheck(root);
+    if (mode === "check-docs") return runCheckDocs(root, ref, changed);
+    return runDetect(root, since);
   } catch (error) {
     // Includes the fail-closed throw from findLfxDrift and a bad area name in
     // buildAreas — both mean the table no longer describes the checkout.

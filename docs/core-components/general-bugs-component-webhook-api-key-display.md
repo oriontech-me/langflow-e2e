@@ -70,7 +70,7 @@ component. Every flow the page creates is captured from its
 
 ## External dependencies
 
-- `src/backend/base/langflow/components/data/webhook.py` — Webhook component; the
+- `src/lfx/src/lfx/components/input_output/webhook.py` — Webhook component; the
   generated cURL and the `curl` advanced field.
 - `GET /api/v1/config` (`webhook_auth_enable`) and `GET /api/v1/auto_login` — both
   mocked via `page.route`, so no real auth config is required.

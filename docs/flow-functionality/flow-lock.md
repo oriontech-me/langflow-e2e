@@ -109,9 +109,11 @@ management; `@ui-ux` — settings-modal interaction + locked-state indicators.
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/…/flowSettings` (Flow Settings modal) — renders
-  `lock-flow-switch`, `input-flow-name`, `input-flow-description`,
-  `save-flow-settings`, and the dialog `icon-Lock` / `icon-Unlock`.
+- `src/frontend/src/components/core/editFlowSettingsComponent/` (Flow Settings
+  modal fields) — renders `lock-flow-switch`, `input-flow-name`,
+  `input-flow-description`, and the dialog `icon-Lock` / `icon-Unlock`.
+- `src/frontend/src/components/core/flowSettingsComponent/` — owns the
+  `save-flow-settings` action that commits the modal.
 - Canvas node chrome — renders the per-node `icon-lock` badge shown while the
   flow is locked (the 1.11 replacement for the old header lock icon).
 - "Basic Prompting" starter template — the disposable subject flow.

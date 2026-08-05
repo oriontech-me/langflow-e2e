@@ -60,7 +60,7 @@ appending to it.
 
 ## External dependencies
 
-- `src/frontend/src/components/core/genericNode/` — NoteNode / generic-node-desc rendering
+- `src/frontend/src/CustomNodes/NoteNode/` — NoteNode / generic-node-desc rendering
   and the double-click handler that toggles edit mode
 - `data-testid="canvas-add-note-button"` — toolbar button that places a sticky note
 - `data-testid="note_node"` — the sticky note node container on the React Flow canvas

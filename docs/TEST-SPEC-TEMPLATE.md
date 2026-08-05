@@ -37,7 +37,14 @@ Think: "if this test fails, what broke in the product?"
 
 ## External dependencies *(required)*
 <!-- Files from the Langflow repository that, if changed, could break this test.
-     This list is read by the monitoring workflow — fill it in carefully. -->
+     This list is read by the monitoring workflow — fill it in carefully.
+
+     Every path must RESOLVE against upstream: `pr-validation.yml` checks the docs
+     a PR touches with `watch-upstream-areas.mjs --mode=check-docs` and fails on a
+     path that does not exist (issue #1298). A `*`/`**` glob is fine and is
+     resolved; an ellipsis (`.../`, `…`) is not — it can never be confirmed, so
+     write the real path. The placeholders below are exempt because this file is
+     the template. -->
 
 - `src/frontend/...` — description of what this file does and why it impacts the test
 - `src/backend/...` — same

@@ -48,8 +48,8 @@ The pulse-pink visual contract is the user-facing signal that Langflow uses to d
 
 ## External dependencies
 
-- `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/sidebarHeaderComponent/index.tsx` — owns the `sidebar-custom-component-button` test ID. Renaming it breaks step 2.
-- `src/frontend/src/CustomNodes/GenericNode/components/NodeStatus/CodeButton/index.tsx` (or equivalent) — emits the `code-button-modal` test ID and applies the `animate-pulse-pink` class while code is unsaved. A change to either the test ID or the class name breaks the entire spec.
+- `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/sidebarFooterButtons.tsx` — owns the `sidebar-custom-component-button` test ID. Renaming it breaks step 2.
+- `src/frontend/src/pages/FlowPage/components/nodeToolbarComponent/index.tsx` (or equivalent) — emits the `code-button-modal` test ID and applies the `animate-pulse-pink` class while code is unsaved. A change to either the test ID or the class name breaks the entire spec.
 - `src/frontend/src/modals/codeAreaModal/index.tsx` — Ace editor lives here. The `.ace_content` selector and the underlying `<textarea>` mirror are stable since multiple specs depend on them.
 - `src/backend/base/langflow/custom/custom_component/component.py` — Check & Save calls validation here; if validation rejects the minimal Component class shipped in the spec body, step 6 fails.
 

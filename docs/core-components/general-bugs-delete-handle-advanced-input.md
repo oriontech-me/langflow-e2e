@@ -60,10 +60,10 @@ The handle-presence assertion (`case true-left` 1 → 0) is the primary, most di
 
 ## External dependencies
 
-- `src/backend/base/langflow/components/logic/conditional_router.py` — If-Else component. The `true_case_message` advanced field must exist as an addable inspector field for step 3 to find `inspector-add-true_case_message`.
-- `src/frontend/src/CustomNodes/GenericNode/components/parameterRenderComponent/index.tsx` — emits the `Receiving input` placeholder for connected handles and the field widget on the node body.
+- `src/lfx/src/lfx/components/flow_controls/conditional_router.py` — If-Else component. The `true_case_message` advanced field must exist as an addable inspector field for step 3 to find `inspector-add-true_case_message`.
+- `src/frontend/src/components/core/parameterRenderComponent/index.tsx` — emits the `Receiving input` placeholder for connected handles and the field widget on the node body.
 - `src/frontend/src/modals/codeAreaModal/index.tsx` — Check & Save flow. The post-save handle cleanup happens here (or in the store reducer it triggers).
-- `src/frontend/src/components/genericIconComponent/index.tsx` — emits the `icon-lock` test ID consumed by the spec.
+- `src/frontend/src/components/common/genericIconComponent/index.tsx` — emits the `icon-lock` test ID consumed by the spec.
 - `tests/helpers/ui/open-advanced-options.ts` — `openAdvancedOptions` (opens the inspector via `parameters-button`), `closeAdvancedOptions` (`inspection-panel-close`). Renaming these helpers breaks the spec. The `enableInspectPanel` / `disableInspectPanel` helpers are **no longer used** by this spec (the inspect-panel toggle feature was removed in dev46).
 
 ---

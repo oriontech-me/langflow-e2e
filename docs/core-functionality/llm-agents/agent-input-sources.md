@@ -131,7 +131,7 @@ A per-run token `SENTINEL_<Date.now()>` is generated so a match is unambiguous.
 
 ## External dependencies *(required)*
 
-- `src/backend/base/langflow/components/agents/` — Agent execution and the
+- `src/lfx/src/lfx/components/models_and_agents/` — Agent execution and the
   `input_value` input; a change to how the field vs. the connected handle is
   resolved breaks this spec.
 - `src/frontend/src/CustomNodes/GenericNode/` — renders the Agent's

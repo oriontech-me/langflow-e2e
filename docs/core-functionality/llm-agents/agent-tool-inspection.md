@@ -158,7 +158,7 @@ cleanup and the flow count grows.
   daily self-hosts go-httpbin and exports `ECHO_BASE_URL`; its `/json` serves
   the identical slideshow, keeping the output assert deterministic (same
   convention + SSRF-allowlist note as `agent-multi-tool-selection`).
-- `src/frontend/src/components/core/chatComponents/…` — renders the
+- `src/frontend/src/components/core/chatComponents/` — renders the
   `div-tools_tools_metadata` row and `tool_<name>` chips (the 1.12 tool-usage
   surface).
 - `GET /api/v1/monitor/messages` — persisted `content_blocks[].contents[]`

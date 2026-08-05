@@ -90,7 +90,7 @@ Tests 2–6 use the helper `setPromptTemplate(page, value)` which:
 ## External dependencies *(required)*
 
 - `src/frontend/src/modals/promptModal/` — `genericModalBtnSave` button, `edit-prompt-sanitized` preview, and the textarea that holds the editable template; changes here break tests 2–6
-- `src/frontend/src/CustomNodes/GenericNode/components/parameterRenderComponent/components/promptAreaComponent/` — `button_open_prompt_modal` trigger on the node inspector; breaks tests 2–6
+- `src/frontend/src/components/core/parameterRenderComponent/components/promptComponent/` — `button_open_prompt_modal` trigger on the node inspector; breaks tests 2–6
 - `src/lfx/src/lfx/interface/utils.py` — `extract_input_variables_from_prompt()`: derives the variable list from the template string using Python's `string.Formatter().parse()` (not a regex); breaks tests 2–5
 - `src/lfx/src/lfx/base/prompts/api_utils.py` — `validate_prompt()` and `_check_input_variables()`: validation layer around the extracted variables; breaks tests 2–5
 - `src/lfx/src/lfx/components/models_and_agents/prompt.py` — `PromptComponent` definition (`display_name="Prompt Template"`, template field) and `update_build_config()` that synchronizes template ↔ input fields; breaks tests 2–6 and the backend assertion in test 6

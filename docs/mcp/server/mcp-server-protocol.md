@@ -148,10 +148,14 @@ server area; `@regression` — guards a server-exposure/execution regression.
 
 ## External dependencies *(required)*
 
-- `src/backend/base/langflow/api/v1/mcp*` (MCP server routes:
-  `/api/v1/mcp/project/{id}`, `/composer-url`, `/streamable`, `/sse`) — the
-  generated endpoint and the protocol handlers.
-- `src/backend/base/langflow/services/mcp*` (or equivalent) — the MCP server
+- `src/backend/base/langflow/api/v1/mcp.py` — the MCP server routes
+  (`/api/v1/mcp/project/{id}`, `/composer-url`, `/streamable`, `/sse`) and the
+  protocol handlers.
+- `src/backend/base/langflow/api/v1/mcp_projects.py` — the per-project generated
+  endpoint this spec calls.
+- `src/backend/base/langflow/api/v1/mcp_utils.py` — the shared request/response
+  plumbing both routers use.
+- `src/lfx/src/lfx/services/mcp_composer/` (or equivalent) — the MCP server
   implementation that maps enabled flows to tools and executes `tools/call`.
 - ChatInput / ChatOutput components — the passthrough must keep echoing its input.
 - `tests/assets/flows/chat-io-ok-trace-fixture.json` — the passthrough fixture.

@@ -52,7 +52,7 @@ The two tests differ only in step 2 (which component is added).
 ## External dependencies *(required)*
 
 - `src/frontend/src/hooks/flows/use-add-flow.ts` — the UI flow-creation path with the unique-name suffix race (`addVersionToDuplicates`). Bypassed via the API helper, but if the API contract for `POST /api/v1/flows/` changes (status, payload shape), the helper fails loudly.
-- `src/frontend/src/components/core/.../canvas/...` — ReactFlow node rendering. If the node container's `.react-flow__node` class is renamed upstream, the count assertions break.
+- `src/frontend/src/pages/FlowPage/components/PageComponent/` — ReactFlow node rendering. If the node container's `.react-flow__node` class is renamed upstream, the count assertions break.
 - ReactFlow's keyboard handler for copy/paste — if Langflow stops propagating Ctrl+C / Ctrl+V to the canvas, paste produces zero new nodes and the test fails on the post-paste count assertion.
 
 ---

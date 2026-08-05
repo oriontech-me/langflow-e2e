@@ -56,8 +56,8 @@ These are distinct operations: Default sessions expose "Clear chat"; user-create
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/components/core/chatComponents/chatHeader/chat-header.tsx` — `isDefaultSession` logic controls which menu options are shown (`clear-chat-option` vs `delete-session-option`). Any change to this conditional or to the `data-testid` attributes will break these tests.
-- `src/frontend/src/components/core/chatComponents/chatHeader/` — `data-testid="chat-header-more-menu"` menu trigger; wrapped in `AnimatedConditional` (framer-motion), which is why `evaluate((el) => el.click())` is used instead of a coordinate-based click.
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/components/chat-header.tsx` — `isDefaultSession` logic controls which menu options are shown (`clear-chat-option` vs `delete-session-option`). Any change to this conditional or to the `data-testid` attributes will break these tests.
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-header/` — `data-testid="chat-header-more-menu"` menu trigger; wrapped in `AnimatedConditional` (framer-motion), which is why `evaluate((el) => el.click())` is used instead of a coordinate-based click.
 
 ---
 

@@ -71,7 +71,7 @@ The API test must assert **all** of:
 - `tests/helpers/flows/rename-flow.ts` — opens the rename modal, fills `input-flow-name`, clicks `save-flow-settings`, dismisses the "Changes saved successfully" toast, and waits for the `flow_name` DOM to commit via `waitForFunction`
 - `tests/helpers/auth/get-auth-token.ts` — issues a Bearer token from the configured superuser credentials
 - `tests/helpers/flows/track-created-flows.ts` — captures the UI test's created flow ids from the page's `POST /api/v1/flows` → 201 responses and deletes them id-scoped in `afterEach`. It does **not** see the API test's flow: that one is created through the `request` fixture, which emits no page-level response events (#1147), so the API test keeps its own `finally` `DELETE`
-- `src/frontend/src/components/headerComponent/` — renders the `flow_name` header that opens the rename modal
+- `src/frontend/src/components/core/appHeaderComponent/components/FlowMenu/` — renders the `flow_name` header that opens the rename modal
 - `src/backend/base/langflow/api/v1/flows.py` — owns `POST/PATCH/GET/DELETE /api/v1/flows`; the round-trip in the API test exercises this endpoint directly
 
 ---

@@ -264,8 +264,8 @@ exists to prevent. Two consequences, both load-bearing:
 ## External dependencies *(required)*
 
 - `src/frontend/src/pages/SettingsPage/pages/GlobalVariablesPage/index.tsx` — Settings navigation; if the `sidebar-nav-Model Providers` testid changes, the spec cannot reach the provider list
-- `src/frontend/src/components/core/modelProviderTag/` — provider list items (testids like `provider-item-OpenAI`) and model toggles (`llm-toggle-*`); any rename breaks model collection
-- `src/frontend/src/components/ui/button` — Save / Replace button labels; if these change the API key save step is silently skipped and `models.json` ends up empty
+- `src/frontend/src/modals/modelProviderModal/` — provider list items (testids like `provider-item-OpenAI`) and model toggles (`llm-toggle-*`); any rename breaks model collection
+- `src/frontend/src/components/ui/button.tsx` — Save / Replace button labels; if these change the API key save step is silently skipped and `models.json` ends up empty
 - `GET /api/v1/all` — the component registry the catalog layer reads. It returns
   `{ category: { ComponentType: template } }`; note the **`component_display_names`
   pseudo-category**, a lowercased echo of every type that the probe must skip so a

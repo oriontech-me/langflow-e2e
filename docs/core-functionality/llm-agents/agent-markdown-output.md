@@ -141,7 +141,7 @@ tags proves the constructs rendered; absence of the raw tokens proves they were
 - `src/frontend/src/components/core/chatComponents/` — Playground Markdown /
   code-block rendering (react-markdown + remarkGfm inside `.markdown.prose`); a
   change to the plugins or the container class breaks the assertions.
-- `src/backend/base/langflow/components/agents/` — the Agent must keep emitting
+- `src/lfx/src/lfx/components/models_and_agents/` — the Agent must keep emitting
   its reply as a Message rendered through the chat renderer.
 - Simple Agent starter template — must keep shipping `ChatInput → Agent →
   ChatOutput`.

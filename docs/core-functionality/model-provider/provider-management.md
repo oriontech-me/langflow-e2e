@@ -253,9 +253,9 @@ accepted / fake rejected), remove key — are each pinned by at least one test.
 - `src/frontend/src/pages/SettingsPage/` — Model Providers page
   (`provider-list`, `provider-item-*`, `provider-variable-input-*`,
   `model-provider-selection`).
-- `src/backend/base/langflow/api/v1/variables.py` — variables CRUD (the
+- `src/backend/base/langflow/api/v1/variable.py` — variables CRUD (the
   `default_fields` requirement; key storage behind providers).
-- `src/lfx/base/models/unified_models/credentials.py` — key validation on
+- `src/lfx/src/lfx/base/models/unified_models/credentials.py` — key validation on
   Save (real 1-token inference per provider).
 - `src/frontend/src/components/` model input — `model_model` dropdown and
   `<model>-option` entries.
