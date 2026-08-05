@@ -181,6 +181,7 @@
 - [x] Inspector-attached file is rendered in the Playground after running ChatInput → ChatOutput → `core-components/chat-input-files-field-regression.spec.ts`
 - [x] Dismiss button on the Files field clears the value → `core-components/chat-input-files-field-regression.spec.ts`
 - [x] Chat Input is a singleton — adding one removes both the Chat Input and Webhook `+` buttons from the sidebar (mutual exclusion) → `core-components/singleton-components.spec.ts`
+- [x] A value typed on a node (Chat Input as the host) is persisted by the debounced autosave and rehydrated after leaving and re-entering the flow — four consecutive edits, each gated on the server before the exit → `core-components/general-bugs-save-changes-on-node.spec.ts`
 - [x] Chat Input cannot be duplicated (`Cmd/Ctrl+D`) or copy/pasted (`Cmd/Ctrl+C`+`V`) — blocked with the "components were not pasted" toast → `core-components/singleton-components.spec.ts`
 - [-] File on the advanced `files` field can be removed and re-uploaded; after running, the image and the user message render in the Playground → `flow-functionality/general-bugs-shard-3836.spec.ts`
 
@@ -766,7 +767,7 @@
 - [x] Copy and paste ChatOutput component (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [x] Copy and paste Prompt Template (component with dynamic ports) (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [x] Canvas keyboard shortcuts — Duplicate/Delete/Copy/Paste/Cut/Undo/Redo each act on the selected node, with the selection re-gated before every keypress → `ui-ux/langflowShortcuts.spec.ts`
-- [x] Minimize component on canvas — the options menu collapses the node (every handle gains `no-show`, height shrinks) and persists `data.showNode = false`; the item swaps to Expand, which restores both → `ui-ux/minimize.spec.ts`
+- [x] Minimize component on canvas — the options menu collapses the node (every handle gains `no-show`, height shrinks) and persists `data.showNode = false`; the item swaps to Expand, which restores both; four further minimize/expand cycles keep both states correct and the persisted `showNode` in step (#1290) → `ui-ux/minimize.spec.ts`
 - [x] Move component within canvas — dragging a node by its title moves it on canvas and the new coordinates reach the backend (`GET /api/v1/flows/{id}` `position` matches the rendered transform) → `flow-functionality/canvas-move-node.spec.ts`
 - [x] Select multiple components via box selection — a Shift+drag marquee enclosing two separated nodes takes `.react-flow__node.selected` from 0 to 2, while a marquee drawn away from them selects nothing (negative control) → `flow-functionality/canvas-multiselect.spec.ts`
 - [x] Delete multiple selected components (marquee box selection) → `core-components/componentDelete.spec.ts`, `flow-functionality/canvas-multiselect.spec.ts`
