@@ -33,6 +33,7 @@ import { deleteFlow } from "./delete-flow";
 import { getAuthToken } from "../auth/get-auth-token";
 import { recordTokenAttribution, type TokenAttributionResult } from "./token-attribution";
 import { resolveTestAttribution } from "./resolve-test-attribution";
+import { unmountEditorForCleanup } from "./unmount-editor-for-cleanup";
 
 /**
  * The `Page` surface the tracker uses. Narrow on purpose: it is what lets the unit
@@ -92,6 +93,21 @@ export interface FlowCleanupResult {
    * not a problem with the flow — see the note at the call site.
    */
   authError?: string;
+  /**
+   * Set when leaving the canvas failed, so the deletes below ran with the editor
+   * still mounted (issue #1288).
+   *
+   * Same reason `authError` exists: the consequence arrives later and looks like
+   * something else. Here it is a burst of `🚨 Backend Error` 404s from the
+   * editor's `GET /flows/{id}/events` poll hitting a flow that no longer exists —
+   * unattributable noise unless the navigation failure that caused it is named.
+   * First line only, so a multi-line Playwright error stays readable.
+   *
+   * Under `{ strict: true }` the whole result is discarded when the sweep throws,
+   * so this field never reaches that caller — the `console.warn` is what survives.
+   * Same as `authError` above; unreachable today, since no spec passes `strict`.
+   */
+  unmountError?: string;
   /** Set when `attribution` was requested — what the sidecar recorded or skipped. */
   attribution?: TokenAttributionResult;
 }
@@ -303,7 +319,14 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
       // way, because the build's event stream is already closed by then. It bites
       // the specs whose editor is still polling, and costs nothing in the rest.
       // Two of the 51 copies did this; #1103 added it to the folder specs.
-      await page.goto("about:blank").catch(() => {});
+      //
+      // A failed navigation is neither rethrown nor swallowed (#1288) — see
+      // `unmountEditorForCleanup`, which owns that decision, the message, and the
+      // `try`/`catch` that also covers a synchronous throw. Rethrowing here would
+      // abort this method BEFORE the deletes, and `captured` has already been taken
+      // out of the tracker, so those flows would be neither deleted nor tracked: a
+      // permanent leak traded for a navigation whose only job was to reduce noise.
+      result.unmountError = await unmountEditorForCleanup(page);
 
       const errors: unknown[] = [];
       for (const id of captured) {

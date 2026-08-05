@@ -516,6 +516,13 @@ export async function summarize({
   // token columns to 0, which is indistinguishable from a run that genuinely
   // spent nothing -- the distinction that table exists to keep.
   //
+  // It carries NO dollar figure, and that is a decision rather than an omission
+  // (#1255 item 3): `agg.totals.usd_estimated` exists and is deliberately not sent,
+  // because the platform re-prices every row from its `price_key` and is the
+  // authoritative source for spend. The full seam is in merge-token-payload.mjs's
+  // header. What the rows DO carry is `price_key`, which is resolved here and
+  // nowhere else -- a NULL one is a fix to make in token-cost.mjs.
+  //
   // Through `writeOut`, NOT `writeFile`: `writeFile`'s real implementation is
   // `fs.appendFileSync` (required for GITHUB_STEP_SUMMARY's append-only
   // contract, see realIo above). This block is a single JSON document, and a
@@ -531,6 +538,31 @@ export async function summarize({
       unattributed: agg.unattributed,
       attrib_ms: agg.attrib_ms,
       attrib_calls: agg.attrib_calls,
+      // The models this run spent on that THIS FILE could not price, which is the
+      // one failure that cannot be repaired after the fact. The QA Platform
+      // freezes `price_key` at ingest (the producer resolves it, the ingest stores
+      // it verbatim, every dollar figure joins on it), so a model missing from
+      // model-prices.json at capture time leaves that run's rows with a NULL key
+      // FOREVER -- adding the price later fixes only future runs. Contrast a model
+      // missing from the platform's e2e_model_prices MIRROR, which is joined at
+      // read time and therefore back-prices every run once synced.
+      //
+      // It was already computed and already reported -- into the step summary of a
+      // green workflow, which is the least-read surface there is. It went unnoticed
+      // twice in two days (claude-haiku-4-5 on 08-03, gpt-5-mini on 08-04, the
+      // latter from a MANUAL run) and was found both times by someone happening to
+      // open a dashboard. Carrying it here is what lets report-unpriced-models.mjs
+      // raise it while the price file can still be fixed before the next run.
+      //
+      // The block, not reports/token-history.jsonl, because the history line is
+      // SUPPRESSED on the manual and PR lanes (TOKENS_SUPPRESS_HISTORY above) --
+      // and the manual lane is exactly where gpt-5-mini appeared. The block is
+      // written on every lane that sets TOKENS_SUMMARY_OUT.
+      //
+      // Safe to add for the same reason `unattributed` and `attrib_*` are already
+      // here: the ingest RPC destructures the five fields named above and ignores
+      // everything else.
+      unpriced_models: agg.unpricedModels,
       rows: agg.bySpecModel,
     };
     try {
@@ -543,10 +575,24 @@ export async function summarize({
   const floor = agg.unpricedModels.length
     ? ` (a FLOOR — ${agg.unpricedModels.length} model(s) have no price entry: ${agg.unpricedModels.join(", ")})`
     : "";
+  // Every dollar figure below is a LOCAL ESTIMATE, and says so (#1255 item 3). USD is
+  // computed twice — here, from scripts/lib/model-prices.json at run time, and on the
+  // QA Platform, which re-prices each row from its `price_key` against its own copy of
+  // that table banded by the run's date. The platform's is the authoritative one; this
+  // one exists for the step summary, the history line and the anomaly detector, all of
+  // which need a number before the POST. The two can legitimately differ (sync lag, the
+  // flat-rate `since` translation, the UTC-vs-BRT date) — the seam and the three causes
+  // are written down in scripts/merge-token-payload.mjs's header. Labelling it here is
+  // the point: an unlabelled second figure is how a reader concludes the dashboard is
+  // wrong.
   lines.push(
     "## Token consumption",
     "",
-    `**${agg.totals.total_tokens.toLocaleString("en-US")} tokens** across ${agg.totals.traces} trace(s) — ${usd(agg.totals.usd_estimated)}${floor}`,
+    `**${agg.totals.total_tokens.toLocaleString("en-US")} tokens** across ${agg.totals.traces} trace(s) — ${usd(agg.totals.usd_estimated)} (local estimate)${floor}`,
+    "",
+    "_Dollar figures on this page are this run's own estimate, priced from " +
+      "`scripts/lib/model-prices.json`. The QA Platform re-prices the same rows from " +
+      "their `price_key` and is the authoritative source for spend._",
     "",
   );
   if (suppressHistory) {
@@ -606,7 +652,10 @@ export async function summarize({
     );
   }
   writeSummary(writeFile, summaryPath, lines.join("\n"), log);
-  log(`token summary: ${agg.totals.total_tokens} tokens, ${usd(agg.totals.usd_estimated)}${floor}`);
+  log(
+    `token summary: ${agg.totals.total_tokens} tokens, ${usd(agg.totals.usd_estimated)} ` +
+      `(local estimate — the QA Platform re-prices from price_key and is authoritative)${floor}`,
+  );
   return 0;
 }
 

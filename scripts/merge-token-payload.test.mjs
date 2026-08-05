@@ -279,19 +279,25 @@ test("MERGE_CODES lists every code the module can actually return", async () => 
 // place where "a wrong number looks correct" and then verified it BY HAND
 // (#1253 review, finding 1) — hand-verification does not survive the next editor.
 
-test("the daily hands the same TOKENS_SUMMARY_OUT to the summarize step and the POST step", () => {
+test("every TOKENS_SUMMARY_OUT in the daily names the same file", () => {
   const text = daily();
   const matches = [...text.matchAll(/TOKENS_SUMMARY_OUT:\s*(\S+)/g)].map((m) => m[1]);
-  assert.equal(
-    matches.length,
-    2,
-    `expected exactly two TOKENS_SUMMARY_OUT declarations (summarize + POST), got ${matches.length}: ${matches.join(", ")}`,
+  // At least a writer and a reader. NOT an exact count: this assertion used to
+  // demand exactly two and broke the moment a third consumer was added
+  // (report-unpriced-models, which reads the same block), even though the
+  // wiring was correct. The invariant is AGREEMENT, not arity — pinning the
+  // number made a correct change look like a regression and would have pushed
+  // the next editor to relax the part that matters instead.
+  assert.ok(
+    matches.length >= 2,
+    `expected a writer and at least one reader of TOKENS_SUMMARY_OUT, got ${matches.length}`,
   );
   assert.equal(
-    matches[0],
-    matches[1],
-    "the summarizer would write one path while the merge looks for another — and the merge's own " +
-      '"no tokens block" branch would then report a run that DID capture as one that captured nothing',
+    new Set(matches).size,
+    1,
+    "the summarizer would write one path while a reader looks for another — and the merge's own " +
+      '"no tokens block" branch would then report a run that DID capture as one that captured nothing. ' +
+      `Saw: ${matches.join(", ")}`,
   );
 });
 

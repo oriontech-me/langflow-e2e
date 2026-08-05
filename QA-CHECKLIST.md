@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-04
+> **Last updated:** 2026-08-05
 
 ---
 
@@ -181,6 +181,7 @@
 - [x] Inspector-attached file is rendered in the Playground after running ChatInput → ChatOutput → `core-components/chat-input-files-field-regression.spec.ts`
 - [x] Dismiss button on the Files field clears the value → `core-components/chat-input-files-field-regression.spec.ts`
 - [x] Chat Input is a singleton — adding one removes both the Chat Input and Webhook `+` buttons from the sidebar (mutual exclusion) → `core-components/singleton-components.spec.ts`
+- [x] A value typed on a node (Chat Input as the host) is persisted by the debounced autosave and rehydrated after leaving and re-entering the flow — four consecutive edits, each gated on the server before the exit → `core-components/general-bugs-save-changes-on-node.spec.ts`
 - [x] Chat Input cannot be duplicated (`Cmd/Ctrl+D`) or copy/pasted (`Cmd/Ctrl+C`+`V`) — blocked with the "components were not pasted" toast → `core-components/singleton-components.spec.ts`
 - [-] File on the advanced `files` field can be removed and re-uploaded; after running, the image and the user message render in the Playground → `flow-functionality/general-bugs-shard-3836.spec.ts`
 
@@ -273,11 +274,11 @@
 - [ ] `max_iterations` + `default_route` cycle break (not implementable as a standalone If-Else feedback loop on 1.12.x — Langflow forms graph cycles only via loop-aware target handles (`from_loop_target_handle`, `target_handle.type is None`) that `LoopComponent` ports provide; a feedback edge into the router's regular `match_text` field-input persists in the flow JSON but does not make the graph iterate (`is_cyclic` stays false, router runs once). `conditional_router.py`'s cycle-break only fires when the router already sits inside a Loop-created cycle. Confirmed live on 1.12.0.dev3; product finding filed upstream; #891, follow-up of #822)
 
 #### 3.9 Human Input (HITL, 1.11.0)
-- [ ] Human Input node config: default Approve/Reject branch handles, custom User Action creates a new handle, configured handles persist after save + reload → `core-components/human-input-node-config.spec.ts`
+- [x] Human Input node config: default Approve/Reject branch handles, custom User Action creates a new handle, configured handles persist after save + reload → `core-components/human-input-node-config.spec.ts`
 
 #### 3.10 Data Operations (1.11.0)
-- [ ] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode → `core-components/data-operations-component.spec.ts`
-- [ ] Legacy operations components link/redirect to Data Operations (legacy flows keep working) → `core-components/data-operations-legacy-link.spec.ts`
+- [x] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode (Text→Message, Word Count→JSON override, JSON Select Keys, Table Filter) → `core-components/data-operations-component.spec.ts`
+- [x] Legacy operations components link/redirect to Data Operations (banner resolves the replacement, link filters the sidebar, old names still find the new component, legacy flows keep working) → `core-components/data-operations-legacy-link.spec.ts`
 
 ---
 
@@ -424,7 +425,7 @@
 - [x] Language Model component — configuration → `llm-agents/language-model-regression.spec.ts`
 - [x] Model Input component → `llm-agents/modelInputComponent.spec.ts`
 - [x] Add new provider via modal → `llm-agents/model-provider-api-key.spec.ts` (positive add validated via invalid-key rejection + Replace edit surface — a real re-add poisons a backend credential cache, see #505)
-- [~] Remove API key from existing provider — the API path (`DELETE /api/v1/variables/{id}`) stays validated; the **UI** path is quarantined (#1235): after ticking the row's checkbox the header trash action stays disabled, recurrent on the dailies of 2026-07-27 and 2026-08-03. Same Global Variables ag-grid surface as §4.3's edit entry — filed as one cause → `llm-agents/remove-provider-api-key.spec.ts`
+- [x] Remove API key from existing provider — both paths validated. The UI path was quarantined (#1235) as a Global Variables permission-gate flake and is not one: the deletion already succeeded, and the spec then re-clicked the now-disabled header button through a phantom confirmation step. Fixed by asserting the header action is enabled and scoping the confirmation to a real dialog → `llm-agents/remove-provider-api-key.spec.ts`
 - [x] Per-model enable/disable toggle changes immediately and persists across reopen → `llm-agents/model-provider-model-toggle.spec.ts`
 - [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
@@ -544,7 +545,8 @@
 - [x] DataFrame output renders as Markdown table → `core-functionality/playground/playground-output-data.spec.ts`
 
 #### 9.6 Human-in-the-Loop (1.11.0)
-- [ ] Human Input pauses the run durably, decision card renders in the Playground, Approve routes only the approved branch and the run completes; Reject routes only the reject branch → `core-functionality/playground/human-input-pause-resume.spec.ts`
+- [x] Human Input suspends the run server-side, decision card renders in the Playground, Approve routes only the approved branch and the run leaves the suspended state; Reject routes only the reject branch → `core-functionality/playground/human-input-pause-resume.spec.ts`
+- [ ] A suspended Human Input run is recoverable after a page reload (durable execution outliving the tab)
 
 ---
 
@@ -765,7 +767,7 @@
 - [x] Copy and paste ChatOutput component (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [x] Copy and paste Prompt Template (component with dynamic ports) (Ctrl+C / Ctrl+V) → `flow-functionality/canvas-copy-paste.spec.ts`
 - [x] Canvas keyboard shortcuts — Duplicate/Delete/Copy/Paste/Cut/Undo/Redo each act on the selected node, with the selection re-gated before every keypress → `ui-ux/langflowShortcuts.spec.ts`
-- [x] Minimize component on canvas — the options menu collapses the node (every handle gains `no-show`, height shrinks) and persists `data.showNode = false`; the item swaps to Expand, which restores both → `ui-ux/minimize.spec.ts`
+- [x] Minimize component on canvas — the options menu collapses the node (every handle gains `no-show`, height shrinks) and persists `data.showNode = false`; the item swaps to Expand, which restores both; four further minimize/expand cycles keep both states correct and the persisted `showNode` in step (#1290) → `ui-ux/minimize.spec.ts`
 - [x] Move component within canvas — dragging a node by its title moves it on canvas and the new coordinates reach the backend (`GET /api/v1/flows/{id}` `position` matches the rendered transform) → `flow-functionality/canvas-move-node.spec.ts`
 - [x] Select multiple components via box selection — a Shift+drag marquee enclosing two separated nodes takes `.react-flow__node.selected` from 0 to 2, while a marquee drawn away from them selects nothing (negative control) → `flow-functionality/canvas-multiselect.spec.ts`
 - [x] Delete multiple selected components (marquee box selection) → `core-components/componentDelete.spec.ts`, `flow-functionality/canvas-multiselect.spec.ts`
@@ -821,13 +823,13 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
-| `core-components/` — Core Components | 90 | 83 | 3 | 0 | 4 |
+| `core-components/` — Core Components | 91 | 87 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
-| `core-functionality/model-provider/` | 34 | 30 | 2 | 2 | 0 |
+| `core-functionality/model-provider/` | 34 | 31 | 2 | 1 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 51 | 46 | 3 | 1 | 1 |
+| `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `core-functionality/a2a/` | 18 | 0 | 9 | 1 | 8 |
@@ -836,7 +838,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **498** | **376 (76%)** | **89 (18%)** | **15 (3%)** | **18 (4%)** |
+| **TOTAL** | **500** | **382 (76%)** | **89 (18%)** | **14 (3%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -852,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 431 `test()` calls carrying the `@stable` tag, distributed across 172 spec
+> 443 `test()` calls carrying the `@stable` tag, distributed across 175 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -949,10 +951,21 @@
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
-- [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
+- [x] Data Operations Text mode returns the Case Conversion result as a Message → `data-operations-component.spec.ts`
+- [x] Data Operations Word Count switches the Text-mode output to JSON and counts the text → `data-operations-component.spec.ts`
+- [x] Data Operations JSON mode selects a single key from an upstream JSON output → `data-operations-component.spec.ts`
+- [x] Data Operations Table mode filters the rows of an upstream Table output → `data-operations-component.spec.ts`
+- [x] All three legacy operations components name Data Operations as their replacement → `data-operations-legacy-link.spec.ts`
+- [x] The legacy banner link filters the sidebar to Data Operations → `data-operations-legacy-link.spec.ts`
+- [x] Searching a legacy operations name surfaces Data Operations with legacy components hidden → `data-operations-legacy-link.spec.ts`
+- [x] A legacy operations component still builds and returns its result → `data-operations-legacy-link.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
+- [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
+- [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
+- [x] adding a custom User Action creates its branch handle without a reload → `human-input-node-config.spec.ts`
+- [x] the configured branch handles persist after save and reload → `human-input-node-config.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
 - [x] If-Else operator=contains routes a substring match through the True branch → `if-else-component-regression.spec.ts`
@@ -1082,6 +1095,7 @@
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
+- [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
@@ -1097,13 +1111,14 @@
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
 - [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
+- [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
 - [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
-- [x] the trigger shows the selected model name → `modelInputComponent.spec.ts`
 - [x] provider list renders with the known providers → `modelProviderModal.spec.ts`
 - [x] selecting a provider opens its API key configuration detail → `modelProviderModal.spec.ts`
 - [x] a configured provider shows its model selection panel → `modelProviderModal.spec.ts`
 - [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
+- [x] a provider credential variable can be removed through the Global Variables UI → `remove-provider-api-key.spec.ts`
 - [x] DELETE /api/v1/variables/{id} removes a provider API key variable → `remove-provider-api-key.spec.ts`
 
 #### core-functionality/model-provider/
@@ -1118,7 +1133,6 @@
 - [x] the configured deployment answers a real inference through the Language Model component → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
-- [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
 - [x] the provider is offered with two variables and a live-only, empty catalog → `openai-compatible-provider-setup.spec.ts`
 - [x] an unreachable base URL is rejected and nothing is persisted → `openai-compatible-provider-setup.spec.ts`
 - [x] a reachable endpoint with a bogus key is rejected as an authentication failure → `openai-compatible-provider-setup.spec.ts`
@@ -1149,6 +1163,8 @@
 - [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
+- [x] approving a Human Input pause routes only the approved branch → `human-input-pause-resume.spec.ts`
+- [x] rejecting a Human Input pause routes only the reject branch → `human-input-pause-resume.spec.ts`
 - [x] copy button copies Chat Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
 - [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
 - [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
@@ -1245,7 +1261,6 @@
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
-- [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
@@ -1285,7 +1300,6 @@
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
-- [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
 - [x] user can search and add components using keyboard shortcuts → `keyboardComponentSearch.spec.ts`
 - [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
 - [x] the main menu lists every item, reports the running version and links out → `main-menu-actions.spec.ts`
@@ -1325,7 +1339,7 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 4 | 0 |
-| `core-components/` — Core Components | 3 | 4 |
+| `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 5 | 2 |
 | `core-functionality/model-provider/` | 2 | 0 |

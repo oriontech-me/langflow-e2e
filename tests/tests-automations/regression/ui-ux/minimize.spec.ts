@@ -91,10 +91,26 @@ test.describe("Canvas — minimize and expand a component", () => {
         return nodes[0].data.showNode;
       };
 
-      /** Selects the node and opens its toolbar options menu. */
+      /**
+       * Selects the node and opens its toolbar options menu.
+       *
+       * The ⋮ trigger is DISPATCHED to, not clicked: a real coordinate click on it
+       * is hit-tested by the ReactFlow pane and DESELECTS the node, which unmounts
+       * the floating `NodeToolbar` and destroys the Radix menu as it opens —
+       * reproduced at `--workers=1` with no backend load in #867, and the reason
+       * `helpers/ui/expand-focused-node.ts` drives the same button this way. The
+       * node body click above stays a real click: the body lives in the pane and
+       * selects correctly.
+       *
+       * This mattered more once #1290 moved the repeated-toggle step in below: the
+       * menu now opens ten times per run instead of two.
+       */
       const openNodeMenu = async () => {
         await node.click();
-        await page.getByTestId("icon-MoreHorizontal").click();
+        const moreOptions = page.getByTestId("more-options-modal");
+        await moreOptions.dispatchEvent("pointerdown");
+        await moreOptions.dispatchEvent("pointerup");
+        await moreOptions.dispatchEvent("click");
       };
 
       let expandedHeight = 0;
@@ -154,6 +170,53 @@ test.describe("Canvas — minimize and expand a component", () => {
           .poll(readShowNode, {
             timeout: 20000,
             message: "expanding should persist data.showNode = true",
+          })
+          .toBe(true);
+      });
+
+      // Moved here from `ui-ux/general-bugs-minimize-state-error.spec.ts`, which
+      // #1290 deleted: that file duplicated everything above with weaker
+      // assertions (a `hide-node-content` count, no geometry, no server truth) and
+      // added exactly one thing this test lacked — REPETITION, which was the
+      // original bug: the state error showed up only after toggling several times,
+      // never on the first cycle. It is a step rather than a second test so it
+      // reuses the node, the menu helper and the persisted-state reader already
+      // established here, and so it runs in the daily at all (the deleted file was
+      // not `@stable`, i.e. no scheduled lane ever executed it).
+      await test.step("Toggling repeatedly keeps both states correct", async () => {
+        // Four MORE cycles: the steps above already performed one, so the node is
+        // toggled five times in total — the deleted file's loop count.
+        //
+        // Each half is a retried unit (`toPass`), the same shape
+        // `expandFocusedNode` uses, because the menu open is the fragile part: if
+        // the ⋮ ever loses the selection the menu never renders and the item click
+        // would otherwise time out on actionability with no attribution.
+        for (let cycle = 1; cycle <= 4; cycle++) {
+          await expect(async () => {
+            if ((await hiddenHandles.count()) > 0) return; // already minimized
+            await openNodeMenu();
+            await page.getByTestId("minimize-button-modal").click({ timeout: 5000 });
+            await expect(hiddenHandles.first()).toBeVisible({ timeout: 5000 });
+          }, `cycle ${cycle}: minimizing should hide the handles`).toPass({
+            timeout: 30000,
+          });
+
+          await expect(async () => {
+            if ((await hiddenHandles.count()) === 0) return; // already expanded
+            await openNodeMenu();
+            await page.getByTestId("expand-button-modal").click({ timeout: 5000 });
+            await expect(hiddenHandles).toHaveCount(0, { timeout: 5000 });
+          }, `cycle ${cycle}: expanding should restore the handles`).toPass({
+            timeout: 30000,
+          });
+        }
+
+        // The store and the backend still agree after the round trips — a stale
+        // `showNode` is the shape the original bug produced.
+        await expect
+          .poll(readShowNode, {
+            timeout: 20000,
+            message: "the node should end expanded, and say so on the server",
           })
           .toBe(true);
       });

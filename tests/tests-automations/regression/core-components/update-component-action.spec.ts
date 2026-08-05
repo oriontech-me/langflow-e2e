@@ -5,6 +5,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
 
 // A saved flow whose 5 components (Prompt, Chat Input, OpenAI, Chat Output, Chat
 // Memory) are pinned to a 1.4.0-era snapshot, old enough that all resolve to
@@ -21,6 +22,20 @@ const OUTDATED_FLOW = path.resolve(
 // #490/#681). Applying the update mutates state and creates the backup, so
 // cleaning both is load-bearing.
 const createdFlowIds: string[] = [];
+
+// Before the first document load — the only point at which the assistant onboarding
+// tooltip can be suppressed, because upstream reads its flag once at mount of the
+// canvas-controls bar and then arms a 10 s timer.
+//
+// This replaces the "Dismiss the one-time assistant onboarding tooltip if present"
+// step this spec ran after opening the imported flow. #1220 measured that step on
+// 1.12.0.dev15: it fired 543 ms after the bar mounted — 9.5 s before the tooltip can
+// exist — so the protection it documented had never been performed. Its
+// `isVisible({ timeout: 3000 })` did not buy a wait either: Playwright ignores that
+// option (`locator.isVisible()` returns immediately).
+test.beforeEach(async ({ page }) => {
+  await seedAssistantDiscovered(page);
+});
 
 test.afterEach(async ({ request }) => {
   if (createdFlowIds.length === 0) return;
@@ -91,14 +106,6 @@ test.describe("update component action", () => {
 
       await test.step("Import the outdated fixture and open it", async () => {
         await importOutdatedFlowAndOpen(page, request, bearer, hostName);
-      });
-
-      await test.step("Dismiss the one-time assistant onboarding tooltip if present", async () => {
-        // The tooltip overlays the canvas and can intercept the review click.
-        const dismiss = page.getByLabel("Dismiss assistant onboarding tooltip");
-        if (await dismiss.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await dismiss.click();
-        }
       });
 
       await test.step("Record the outdated count and open the first review dialog", async () => {

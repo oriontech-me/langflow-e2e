@@ -28,6 +28,52 @@
  * `target_provider` and the coverage fields before the platform reads them
  * (design §6.3).
  *
+ * WHO PRICES THE RUN: THE PLATFORM. THIS REPO'S FIGURE IS A LOCAL ESTIMATE
+ * (#1255 item 3)
+ *
+ * USD is computed on both sides of this seam and the block sends neither number:
+ * every row carries `price_key` and no `usd_estimated`, and the run total
+ * (`agg.totals.usd_estimated`, which exists) is not sent either. That was left
+ * undecided when #1253 shipped, so two price tables could drift with nobody told.
+ * The decision, recorded HERE because this is the seam:
+ *
+ *   THE PLATFORM IS AUTHORITATIVE FOR DOLLARS. It re-prices every row from
+ *   `price_key` against its own `e2e_model_prices`, banded by the run's `run_date`
+ *   (quality-platform 20260803130400_e2e_token_rpcs.sql:159). What the dashboard
+ *   and the cost trend show is that number. This repo's `usd_estimated` -- in the
+ *   step summary, in reports/token-history.jsonl, and in the anomaly detector --
+ *   is a LOCAL ESTIMATE of the same spend, and says so where it is printed.
+ *
+ * Why that way round, given the price DATA originates here. `scripts/lib/model-prices.json`
+ * is this repo's file and `scripts/sync-model-prices.mjs` projects it into the
+ * platform's table, so the rates have one source. What does not have one source is
+ * the ARITHMETIC, and the platform's is the one a human reads, is the one that can
+ * be recomputed after the fact (the repo's is fixed at run time, in a log), and is
+ * the only one that survives a price correction applied retroactively. Sending
+ * `usd_estimated` would not remove the second computation -- the platform would
+ * still hold a table and a run_date -- it would only make the disagreement harder
+ * to see, by putting two numbers where the reader expects one.
+ *
+ * What stays repo-authoritative, deliberately: `price_key` itself. The substring/tier
+ * resolution rules live in token-cost.mjs (#1211) and the platform joins on the key
+ * this side resolved, so a NULL `price_key` is a fix to make HERE. The platform tells
+ * the two apart already ('no price_key' vs 'no band covers run_date',
+ * 20260804150000_e2e_token_price_gaps_absent_model.sql:80).
+ *
+ * THE THREE WAYS THE TWO FIGURES CAN STILL DISAGREE, none of them a bug in either:
+ *   1. SYNC LAG. sync-model-prices.yml runs on a push to main touching the table,
+ *      so a model priced here today and used by today's daily is a price gap there
+ *      and a priced row here. Measured: `claude-haiku-4-5`, 2026-08-03/04.
+ *   2. THE "ALWAYS" BAND. A flat rate here prices a run of any date; the platform's
+ *      `since` is NOT NULL, so sync-model-prices.mjs stamps FLAT_SINCE (2026-08-01)
+ *      and a run before that date is unpriced there and priced here.
+ *   3. THE DATE. This repo bands on `RUN_DATE` (unset in CI, so the summarizer's own
+ *      UTC date), while the platform bands on the payload's BRT-stamped `run_date`.
+ *      They differ for a run between 21:00 and 24:00 BRT, and only matter across a
+ *      band boundary. Left as-is rather than wired together: with the platform
+ *      authoritative, the repo's figure is an estimate, and one more env var through
+ *      the workflow buys nothing the reader of that estimate needs.
+ *
  * WHY A MISSING BLOCK MEANS "DO NOT POST" AND NOT "POST ZEROS"
  *
  * `summarize()` deliberately writes no block for a run that captured nothing.

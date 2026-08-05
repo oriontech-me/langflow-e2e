@@ -39,9 +39,12 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-test(
+test.fixme(
   "user should be able to edit name and description of a node",
-  { tag: ["@stable", "@release", "@workspace", "@components"] },
+  // Quarantined at triage (#1296): recurrent flake 2x (2026-07-17, 2026-08-05) —
+  // the `div-generic-node` click times out at 20s, so the node never becomes
+  // clickable. Restore (`test` + `@stable`) in #1301.
+  { tag: ["@release", "@workspace", "@components"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);

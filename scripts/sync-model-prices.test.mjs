@@ -167,9 +167,28 @@ test("the real model-prices.json is syncable", () => {
   assert.equal(haiku.length, 1, "claude-haiku-4-5 must project — its absence is the gap that started this");
   assert.equal(haiku[0].provider, "anthropic");
 
+  // The second gap, 2026-08-04: gpt-5-mini reported by run 30920300880 from the
+  // Azure AI Foundry provider spec, absent here, whole run priced as a floor.
+  const mini = prices.filter(r => r.price_key === "gpt-5-mini");
+  assert.equal(mini.length, 1, "gpt-5-mini must project — it is the gap this row closes");
+  assert.equal(mini[0].provider, "azure");
+
   for (const r of prices) {
     assert.match(r.since, /^\d{4}-\d{2}-\d{2}$/, `${r.price_key}: since`);
-    assert.ok(["openai", "anthropic", "google"].includes(r.provider), `${r.price_key}: provider ${r.provider}`);
+    // An ALLOWLIST rather than a non-empty check, because the failure it exists
+    // to catch is a typo -- `openal` would sync happily and then split one
+    // provider into two rows in the platform's by-model breakdown.
+    //
+    // `azure` joined the vocabulary on 2026-08-04 and is NOT a rotation value:
+    // the rotation in select-daily-model-target.mjs is openai/anthropic/google,
+    // and the Azure AI Foundry spec runs on every lane, outside it. The field
+    // names who BILLED the tokens, which is what e2e_model_prices is grouped by,
+    // so a Foundry deployment must not be folded into the real openai lanes'
+    // provider row -- they are different accounts.
+    assert.ok(
+      ["openai", "anthropic", "google", "azure"].includes(r.provider),
+      `${r.price_key}: provider ${r.provider}`,
+    );
   }
 });
 

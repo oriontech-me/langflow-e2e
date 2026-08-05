@@ -90,6 +90,7 @@ Test #7 (case_sensitive OFF) does not use a dedicated helper to flip the switch 
 | 9 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | `2.5 < 10` → True branch builds |
 | 10 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | `5 <= 5` → True branch builds (strict `<` would route False) |
 | 11 | `node_duration_chat output` | `node_status_icon_chatoutputfalse_inactive` | `5 >= 5` → True branch builds (strict `>` would route False) |
+- **Assistant onboarding tooltip**: suppressed before the first document load via `seedAssistantDiscovered(page)` in `beforeEach` — the only point at which it can be suppressed, since upstream reads the flag at mount of the canvas-controls bar and then arms a 10 s timer. `expandFocusedNode` asserts the seed ran and fails loudly, naming the fix, if a test added later forgets it. This replaces a `dismissOnboardingIfPresent` probe that #1220 measured firing ~2 s after that mount, catching the tooltip in 0 of 39 executions on 1.12.0.dev15.
 
 ---
 

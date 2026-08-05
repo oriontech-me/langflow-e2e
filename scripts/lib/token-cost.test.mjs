@@ -3,7 +3,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { usdFor, aggregate, parsePrices, loadPrices, resolvePriceKey } from "./token-cost.mjs";
+import {
+  usdFor,
+  aggregate,
+  parsePrices,
+  loadPrices,
+  resolvePriceKey,
+  normalizeSpecPath,
+  UNATTRIBUTED_REASON,
+} from "./token-cost.mjs";
 
 const PRICES = {
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
@@ -177,10 +185,67 @@ test("the shipped price table covers the models measured against Langflow 1.12.0
     // consumer (13 calls / 14,690 tokens on run 30647253368) and had no
     // price entry — the headline printed a FLOOR with `n/a` on the biggest row.
     "gemini-3.5-flash",
+    // Added 2026-08-04: reported by run 30920300880 from the Azure AI Foundry
+    // provider spec, where 584 unpriced tokens made the whole run a floor.
+    "gpt-5-mini",
   ]) {
     const usd = usdFor(model, 1, 1, prices, REPRESENTATIVE_DATE);
     assert.ok(Number.isFinite(usd), `${model} must resolve to a numeric price on ${REPRESENTATIVE_DATE}`);
   }
+});
+
+// The Azure AI Foundry deployment. Its id in the trace is the PORTAL DEPLOYMENT
+// NAME an operator typed, not an identity the API vouches for -- so this row
+// prices a name, and these three tests pin the parts that can go wrong.
+//
+// Rate verified 2026-08-04 against OpenAI's published pricing ($0.25/$2.00 per
+// MTok) and cross-checked against Azure, which lists the same figures.
+test("the shipped table prices gpt-5-mini at exactly $0.25/$2.00 per MTok", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  // One MTok each way, so the USD figure IS the per-MTok pair rather than a
+  // rounding of it -- same construction as the haiku test below.
+  const usd = usdFor("gpt-5-mini", 1_000_000, 1_000_000, prices, "2026-08-04");
+  assert.equal(usd, 2.25, "1 MTok in + 1 MTok out must price at $0.25 + $2.00");
+});
+
+// The exact row that made run 30920300880 a floor. Worth pinning as itself
+// because it shows why a floor is not "roughly right": these 584 tokens are 7%
+// of that run's tokens and about 60% of its cost, since gpt-5-mini's output rate
+// is 3.3x gpt-4o-mini's.
+test("the row that made run 30920300880 a floor now prices exactly", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  const usd = usdFor("gpt-5-mini", 51, 533, prices, "2026-08-04");
+  // Same ASSOCIATION as usdFor's own expression -- `tokens * (rate / 1e6)`, not
+  // `tokens * rate / 1e6`. The two differ in the last bit of a double
+  // (…4999999999998 vs …5), and the first version of this assertion used the
+  // wrong one and failed. Writing the expected value as a decimal literal would
+  // have the same problem; matching the association is what makes it exact.
+  assert.equal(usd, 51 * (0.25 / 1e6) + 533 * (2.0 / 1e6));
+  assert.ok(usd > 0.001, "the run's previously-unpriced share is over a tenth of a cent");
+});
+
+// The tier rule, in the direction that costs money. `gpt-5` is a PREFIX of
+// `gpt-5-mini`, so without the suffix gate a bare `gpt-5` deployment -- or a
+// `gpt-5-nano` one -- would inherit Mini's rate. Both are different SKUs at
+// different prices, and an operator can name a Foundry deployment either thing.
+// Nano is the dangerous one: it is CHEAPER than Mini, so inheriting would
+// overstate, while a bare gpt-5 is dearer and would understate. Neither may
+// resolve.
+test("a sibling gpt-5 tier does not inherit gpt-5-mini's rate", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  for (const id of ["gpt-5", "gpt-5-nano", "gpt-5-pro"]) {
+    assert.equal(
+      resolvePriceKey(id, prices),
+      null,
+      `${id} is a different tier and must stay unpriced rather than take gpt-5-mini's rate`,
+    );
+  }
+  // The dated/alias forms of the SAME tier must still resolve, or the verified
+  // rate above never reaches a real run.
+  assert.equal(resolvePriceKey("gpt-5-mini-2026-08-01", prices), "gpt-5-mini");
+  // And the new key must not have disturbed the openai family already here.
+  assert.equal(resolvePriceKey("gpt-4o", prices), "gpt-4o");
+  assert.equal(resolvePriceKey("gpt-4o-mini", prices), "gpt-4o-mini");
 });
 
 // §7.2: `claude-haiku-4-5` is what `resolveClaudeModel("haiku")` selects in
@@ -220,10 +285,87 @@ test("a dated claude-haiku-4-5 snapshot resolves to the family band (§ Testing 
 // 10x understatement reported as exact.
 test("an unpriced Claude id stays unpriced — no blanket family fallback (§7.2.1)", () => {
   const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  // The vehicle was `claude-fable-5` until #1255 item 4 priced it (§7.2.1's own
+  // published table). The PROPERTY under test is unchanged and is not about that id:
+  // a Claude id with no entry must resolve to null rather than inherit a sibling's
+  // rate. `claude-sonnet-9` is a plausible future id that no key here is a prefix of.
   assert.equal(
-    usdFor("claude-fable-5", 1_000_000, 1_000_000, prices, "2026-08-03"),
+    usdFor("claude-sonnet-9", 1_000_000, 1_000_000, prices, "2026-08-03"),
     null,
-    "claude-fable-5 has no entry and must resolve to null, not to a sibling's rate",
+    "an unpriced Claude id must resolve to null, not to a sibling's rate",
+  );
+  // And the id that used to stand in for it is now priced at its published rate,
+  // not at a sibling's: $10/$50, which is neither haiku's nor opus-5's.
+  assert.equal(usdFor("claude-fable-5", 1_000_000, 1_000_000, prices, "2026-08-03"), 60);
+});
+
+// #1255 item 4: the nine Anthropic ids §7.2.1 named are priced, at its rates.
+//
+// rankCandidates falls through to raw catalog order when neither /haiku/ nor /sonnet/
+// validates (collect-models.ts:157-161), so every id below is reachable and an
+// unpriced one turns its whole run's cost into a floor. The rates are §7.2.1's own
+// published table (sourced 2026-08-03), pinned here so a later edit to
+// model-prices.json cannot quietly move one of them onto a sibling's rate — which is
+// what the substring resolver would do if a key were deleted.
+//
+// The list is written out rather than derived from the collected catalog:
+// tests/helpers/provider-setup/data/models.json is GITIGNORED (generated by
+// collect-models), so a test that reads it passes on a dev box that ran the sweep and
+// ENOENTs in the unit lane — measured, on this PR's first CI run. The catalog sweep
+// below covers that angle where the file exists, and says so where it does not.
+//
+// Google is deliberately NOT priced the same way: 28 of its 36 catalog ids are
+// image / video / TTS / robotics / gemma models with no per-MTok text rate to record,
+// and inventing one is worse than the honest null this module exists to produce
+// (§2.1). Its three text ids the rotation can actually select are all priced.
+const ANTHROPIC_PUBLISHED = {
+  "claude-fable-5": [10, 50],
+  "claude-opus-4-8": [5, 25],
+  "claude-opus-4-7": [5, 25],
+  "claude-opus-4-6": [5, 25],
+  "claude-opus-4-5": [5, 25],
+  "claude-opus-4-1": [15, 75],
+  "claude-opus-4-20250514": [15, 75],
+  "claude-sonnet-4-5": [3, 15],
+  "claude-sonnet-4-20250514": [3, 15],
+};
+
+test("the nine Anthropic ids of §7.2.1 are priced at their published rates (#1255 item 4)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  for (const [model, [input, output]] of Object.entries(ANTHROPIC_PUBLISHED)) {
+    assert.equal(resolvePriceKey(model, prices), model, `${model} must be priced by its own key`);
+    // One MTok in and one MTok out, so the assertion reads as the published pair.
+    assert.equal(
+      usdFor(model, 1_000_000, 1_000_000, prices, "2026-08-04"),
+      input + output,
+      `${model} must price at $${input}/$${output} per MTok`,
+    );
+  }
+});
+
+test("no Anthropic id in the collected catalog is unpriced — skipped when the catalog is absent", (t) => {
+  // The catalog is a collect-models artifact and is gitignored, so this cannot be a
+  // gate. It is still worth running where it CAN run: on a dev box after a sweep it is
+  // the only thing that sees an Anthropic id the published list above does not know
+  // about. Skipped loudly rather than passing silently when the file is not there
+  // (#1012 — an unevaluated check is unknown, never clean).
+  const catalogPath = new URL("../../tests/helpers/provider-setup/data/models.json", import.meta.url);
+  let catalog;
+  try {
+    catalog = JSON.parse(readFileSync(catalogPath, "utf8"));
+  } catch {
+    t.skip("no models.json — run `npx playwright test tests/collect-models.spec.ts` to produce it");
+    return;
+  }
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  const unpriced = catalog
+    .filter((entry) => entry.provider === "anthropic")
+    .map((entry) => entry.model)
+    .filter((model) => resolvePriceKey(model, prices) === null);
+  assert.deepEqual(
+    unpriced,
+    [],
+    `unpriced Anthropic ids are reachable through rankCandidates' raw-order fall-through: ${unpriced.join(", ")}`,
   );
 });
 
@@ -834,4 +976,108 @@ test("a fully identified attribution is still credited exactly as before", () =>
   const mini = agg.bySpecModel.find((r) => r.model === "gpt-4o-mini");
   assert.equal(mini.spec_path, "a.spec.ts");
   assert.equal(mini.title_path, "does a thing");
+});
+
+// ─── #1255 item 4: the producer's row identity is the DB's ───────────────────
+//
+// The DB keys on md5(e2e_normalize_spec_path(spec_path) || '::' || title_path). A
+// producer key finer than that is the dangerous direction: two producer rows on one
+// DB identity do not duplicate — the live ingest upserts, keeps the LAST, and counts
+// the loser in `rows_dropped`, so one of the two numbers is discarded in silence.
+
+test("normalizeSpecPath mirrors e2e_normalize_spec_path, including its pass-throughs", () => {
+  assert.equal(normalizeSpecPath("tests-automations/a.spec.ts"), "tests/tests-automations/a.spec.ts");
+  assert.equal(normalizeSpecPath("tests/tests-automations/a.spec.ts"), "tests/tests-automations/a.spec.ts");
+  // NULL and '' are returned untouched by the SQL function; a `tests/` prefix on
+  // either would invent a path out of an absence.
+  assert.equal(normalizeSpecPath(null), null);
+  assert.equal(normalizeSpecPath(""), "");
+  assert.equal(normalizeSpecPath(undefined), undefined);
+});
+
+test("two spellings of one spec path merge into the single row the DB will file them under (#1255 item 4)", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1"), twoModelProbe("t2")],
+    attributions: [
+      { trace_id: "t1", file: "a.spec.ts", test: "does a thing" },
+      { trace_id: "t2", file: "tests/a.spec.ts", test: "does a thing" },
+    ],
+    prices: P,
+  });
+  const mini = agg.bySpecModel.filter((r) => r.model === "gpt-4o-mini");
+  assert.equal(
+    mini.length,
+    1,
+    "both normalize to tests/a.spec.ts, so the ingest would keep one and count the " +
+      `other in rows_dropped: ${JSON.stringify(mini)}`,
+  );
+  // Summed here, which is the arithmetic the DB cannot do once one row has been dropped.
+  assert.equal(mini[0].total_tokens, 400);
+  assert.equal(mini[0].calls, 4);
+  // The stored value stays the RAW spelling the merged row was opened with.
+  assert.equal(mini[0].spec_path, "a.spec.ts");
+});
+
+test("a different spec path still keys a different row — the merge is normalization, not collapse", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1"), twoModelProbe("t2")],
+    attributions: [
+      { trace_id: "t1", file: "a.spec.ts", test: "does a thing" },
+      { trace_id: "t2", file: "b.spec.ts", test: "does a thing" },
+    ],
+    prices: P,
+  });
+  const paths = agg.bySpecModel
+    .filter((r) => r.model === "gpt-4o-mini")
+    .map((r) => r.spec_path)
+    .sort();
+  assert.deepEqual(paths, ["a.spec.ts", "b.spec.ts"]);
+});
+
+// ─── #1255 item 4: the unattributed bucket and its rows measure one population ──
+
+test("a half-identified trace lands in the unattributed bucket, not in a null::null bySpec row", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1")],
+    attributions: [{ trace_id: "t1", file: "a.spec.ts" }], // file, no test
+    prices: P,
+  });
+  assert.equal(agg.unattributed.traces, 1, "its ROW is already unattributed; its trace must be too");
+  assert.equal(agg.unattributed.total_tokens, 300);
+  assert.deepEqual(
+    agg.bySpec,
+    [],
+    `a spec row keyed "null::null" is a spec nobody can open: ${JSON.stringify(agg.bySpec)}`,
+  );
+});
+
+test("unattributed.span_tokens is what the null-identity rows sum to, and total_tokens stays trace-authoritative", () => {
+  // The trace reports 500; its spans add up to 300. §2.1 makes the trace's own total
+  // authoritative for the run, and a row can only ever be built from spans.
+  const agg = aggregate({
+    probes: [twoModelProbe("t1", { total_tokens: 500 })],
+    attributions: [],
+    prices: P,
+  });
+  assert.equal(agg.unattributed.total_tokens, 500, "trace-authoritative");
+  assert.equal(agg.unattributed.span_tokens, 300, "span sum");
+  const rowSum = agg.bySpecModel
+    .filter((r) => r.spec_path === null)
+    .reduce((n, r) => n + r.total_tokens, 0);
+  assert.equal(rowSum, agg.unattributed.span_tokens, "the rows must reconcile against span_tokens");
+  assert.equal(agg.mismatches.length, 1, "and the gap is the mismatch the block already reports");
+});
+
+test("unattributed.span_tokens equals total_tokens when no trace in the bucket mismatches", () => {
+  const agg = aggregate({ probes: [twoModelProbe("t1")], attributions: [], prices: P });
+  assert.equal(agg.unattributed.total_tokens, 300);
+  assert.equal(agg.unattributed.span_tokens, 300);
+  assert.equal(agg.mismatches.length, 0);
+});
+
+test("the unattributed reason names the UI-delete path the hook cannot see (#1255 item 4)", () => {
+  // The 1.6% residue measured on run 30867978556. A cause absent from this string
+  // reads as a cause that does not exist.
+  assert.match(UNATTRIBUTED_REASON, /through the UI/);
+  assert.match(aggregate({ probes: [probe()], prices: PRICES }).unattributed.reason, /through the UI/);
 });

@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { dismissWelcomeOverlayAndWaitForModal } from "./open-new-flow-templates-modal";
+import { waitForPageEntry } from "../other/page-entry-barrier";
 
 export const addFlowToTestOnEmptyLangflow = async (page: Page) => {
   await page.getByTestId("new_project_btn_empty_page").click();
@@ -15,7 +16,5 @@ export const addFlowToTestOnEmptyLangflow = async (page: Page) => {
   // Wait for home page to finish loading before awaitBootstrapTest continues.
   // Without this, the subsequent new-project-btn click can fire before navigation
   // completes, leaving tests in an inconsistent state.
-  await page.waitForSelector('[data-testid="mainpage_title"]', {
-    timeout: 15000,
-  });
+  await waitForPageEntry(page, '[data-testid="mainpage_title"]', 15000);
 };

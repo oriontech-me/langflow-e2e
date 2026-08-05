@@ -34,9 +34,17 @@ the post-apply effects.
   1.4.0-era snapshot — all resolve to outdated updates on the current nightly)
   via the REST API (`createFlow`, with the fixture's own `id`/`endpoint_name`
   stripped so the backend mints a fresh id) and opening it at `/flow/<id>`.
-- A **one-time assistant onboarding tooltip** can overlay the canvas and
-  intercept clicks; the spec dismisses it defensively
-  (`getByLabel("Dismiss assistant onboarding tooltip")`) before interacting.
+- A **one-time assistant onboarding tooltip** can overlay the canvas-controls
+  region and intercept clicks. The spec **suppresses it before the first document
+  load** — `seedAssistantDiscovered(page)` in `beforeEach`, which writes the
+  `langflow-assistant-discovered` localStorage flag upstream reads. It does **not**
+  dismiss it afterwards, and the previous version of this document was wrong to
+  claim it did: the `getByLabel("Dismiss assistant onboarding tooltip")` step it
+  described fired **543 ms after the canvas-controls bar mounted**, against a
+  tooltip that upstream cannot show before **mount + 10 000 ms** — so the
+  protection had never once been performed (measured on 1.12.0.dev15, issue
+  #1220). Dismissal after the load is not an alternative either: upstream reads the
+  flag once at mount, so nothing written later disarms the timer.
 - The **outdated count is emergent** (frozen fixture vs the running nightly), so
   the spec never pins a literal count: it parses the banner number `N` before the
   apply and asserts it becomes `N - 1` after (count-agnostic — see the caveat).
@@ -113,8 +121,10 @@ the first component's update moved the banner from "5 components need updates" t
   `tests/helpers/auth/get-auth-token.ts` — auth.
 - Review/apply UI: `review-button` (per-node breaking update), the review dialog's
   `backup-flow-checkbox` (default checked) and its **Update Component** button
-  (no testid — matched by role/name), `getByLabel("Dismiss assistant onboarding
-  tooltip")` for the one-time overlay.
+  (no testid — matched by role/name).
+- `tests/helpers/ui/assistant-onboarding.ts` — the pre-load seed that keeps the
+  one-time onboarding tooltip from ever arming, and the `langflow-assistant-discovered`
+  localStorage key it writes (read by upstream's `assistant-discovery-storage.ts`).
 - No model-provider credentials required — no flow is executed.
 
 ---

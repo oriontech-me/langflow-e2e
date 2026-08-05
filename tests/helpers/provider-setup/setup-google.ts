@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { hideInspectorPanel } from "../ui/hide-inspector-panel";
+import { providerAlreadyConfigured } from "./provider-config-state";
 
 export async function setupGoogle(
   page: Page,
@@ -43,18 +44,50 @@ export async function setupGoogle(
   const apiKeyInput = page.getByPlaceholder("AIza...");
   await apiKeyInput.waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
 
-  const alreadyConfigured = await page
-    .getByRole("button", { name: "Disconnect", exact: true })
-    .isVisible({ timeout: 1000 })
-    .catch(() => false);
+  // Whether the provider is ALREADY configured decides whether the key field is
+  // written, and getting it wrong is expensive: filling over a configured
+  // provider stores a key Langflow cannot use, and the next build fails with
+  //
+  //   Error calling model 'gemini-flash-latest' (INVALID_ARGUMENT): 400 …
+  //   'API key not valid. Please pass a valid API key.' … API_KEY_INVALID
+  //
+  // which surfaces as the build observable never appearing — the recurrent
+  // signature of this file on the 2026-07-09/07-14/07-15 dailies and of the
+  // first attempt on 2026-08-04 (#1262). Reproduced locally: 1 failure in 7
+  // runs, and the 6 clean ones all observed the provider already configured
+  // with the key rendered masked.
+  //
+  // The old check was a 1s `isVisible` on the Disconnect button — decided while
+  // the panel's own backend fetch was still in flight, so a slow fetch read as
+  // "not configured". Both signals are now polled to a deadline, and a masked
+  // (non-empty) key field counts as configured on its own: Langflow renders a
+  // stored credential as `AIza••••…`, so a non-empty value means a credential
+  // exists whether or not Disconnect has painted yet.
+  const disconnectBtn = page.getByRole("button", {
+    name: "Disconnect",
+    exact: true,
+  });
+  const configuredSignal = async () =>
+    providerAlreadyConfigured({
+      disconnectVisible: await disconnectBtn.isVisible().catch(() => false),
+      keyFieldValue: await apiKeyInput.inputValue().catch(() => ""),
+    });
+  // 5s, not longer: the panel's fetch resolves in well under a second, and an
+  // unconfigured provider (a fresh CI container before its first setup) pays
+  // this whole window on every call.
+  const configuredDeadline = Date.now() + 5000;
+  let alreadyConfigured = await configuredSignal();
+  while (!alreadyConfigured && Date.now() < configuredDeadline) {
+    await page.waitForTimeout(500);
+    alreadyConfigured = await configuredSignal();
+  }
 
   if (!alreadyConfigured && (await apiKeyInput.count()) > 0) {
     await apiKeyInput.fill(process.env.GOOGLE_API_KEY ?? "");
     await page.getByRole("button", { name: /Save|Replace|Retry/i }).click();
     // Google provider validation can take ~35s — wait for the configured state
     // (Disconnect button) so the model toggles have rendered before Step 5.
-    await page
-      .getByRole("button", { name: "Disconnect", exact: true })
+    await disconnectBtn
       .waitFor({ state: "visible", timeout: 60000 })
       .catch(() => {});
   }

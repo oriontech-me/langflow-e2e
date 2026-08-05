@@ -3,11 +3,22 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { setupBlankFlow } from "../../../../helpers/flows/setup-blank-flow";
 import { expandFocusedNode } from "../../../../helpers/ui/expand-focused-node";
+import { seedAssistantDiscovered } from "../../../../helpers/ui/assistant-onboarding";
 
 test.describe("Output Modal — Copy Button", () => {
   test.describe.configure({ mode: "serial" });
 
   let createdFlowId: string | null = null;
+
+  // Before the first document load — the only point at which the assistant
+  // onboarding tooltip can be suppressed, because upstream reads its flag once at
+  // mount of the canvas-controls bar and then arms a 10 s timer.
+  // `expandFocusedNode` asserts this ran; the probe it used to make instead fired
+  // ~2 s after that mount and never saw the tooltip in 39 measured executions
+  // (#1220).
+  test.beforeEach(async ({ page }) => {
+    await seedAssistantDiscovered(page);
+  });
 
   test.afterEach(async ({ page, request }) => {
     if (!createdFlowId) return;
