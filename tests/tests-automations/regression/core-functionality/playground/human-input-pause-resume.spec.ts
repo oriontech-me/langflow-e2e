@@ -65,10 +65,14 @@ const bubble = (page: Page, sender: string) =>
 // (scoped) — never a global wipe, which kills flows other workers are driving.
 const createdFlowIds: string[] = [];
 
-// Each test creates a named flow through the API and those creations race on the
-// backend's unique-name suffixing under parallelism (same reason as the sibling
-// fixture specs).
-test.describe.configure({ mode: "serial" });
+// PARALLEL-SAFE, deliberately not serial. Each test owns its flow (a unique
+// `${Date.now()}-${random}` name, so the backend's unique-name suffixing has
+// nothing to race) and its own page, and a suspended run is flow-scoped, so the
+// two cannot observe each other. The sibling fixture specs run serial for the
+// name race; inheriting that here would cost real signal — under `mode: "serial"`
+// a flake in the first test SKIPS the second, so one bad day in the daily would
+// lose the Reject verdict entirely. Measured green at `--workers=2`.
+
 
 /**
  * Create the fixture flow via the API, open it on the canvas and open the
@@ -79,7 +83,7 @@ test.describe.configure({ mode: "serial" });
  * asynchronously and races any text typed directly into it
  * (`authoring-conventions.md`).
  */
-async function openHitlPlayground(page: Page): Promise<void> {
+async function openHitlPlayground(page: Page): Promise<string> {
   const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf-8"));
   const authHeader = await getAuthToken(page.request);
   const headers: Record<string, string> = authHeader
@@ -103,12 +107,30 @@ async function openHitlPlayground(page: Page): Promise<void> {
   await expect(page.getByTestId("title-Human Input")).toBeVisible({
     timeout: 30000,
   });
-  // Both branch sinks must be on the canvas: a Human Input with no downstream
-  // consumer SKIPS the pause entirely (`_has_downstream_consumer()` →
-  // "Skipped: no connected outputs"), so a fixture that lost an edge would make
-  // the whole spec assert nothing.
-  await expect(page.getByTestId("title-Approved Output")).toBeVisible();
-  await expect(page.getByTestId("title-Rejected Output")).toBeVisible();
+  // Both branch sinks are on the canvas.
+  //
+  // Explicit budgets, like every other readiness check here: the config sets no
+  // `expect.timeout`, so a bare assertion gets Playwright's 5 s default, and a
+  // canvas that hydrates node-by-node under a saturated CI backend would fail
+  // these while the flow is merely slow.
+  await expect(page.getByTestId("title-Approved Output")).toBeVisible({
+    timeout: 30000,
+  });
+  await expect(page.getByTestId("title-Rejected Output")).toBeVisible({
+    timeout: 30000,
+  });
+
+  // The EDGES are the precondition, and they need their own assertion: React
+  // Flow renders nodes independently of edges, so a fixture that lost a branch
+  // edge still shows both titles above (measured — both visible with both branch
+  // edges stripped). Without this, that defect surfaces 30 s later as "the
+  // decision card never appeared", blaming the card UI for a wiring problem —
+  // because a Human Input with no downstream consumer SKIPS the pause entirely
+  // (`_has_downstream_consumer()` → "Skipped: no connected outputs").
+  await expect(page.locator(".react-flow__edge")).toHaveCount(3, {
+    timeout: 30000,
+  });
+
   await adjustScreenView(page);
 
   await page.getByTestId("playground-btn-flow-io").click();
@@ -116,10 +138,32 @@ async function openHitlPlayground(page: Page): Promise<void> {
     SENTINEL_PROMPT,
     { timeout: 30000 },
   );
+
+  return flowId;
+}
+
+/**
+ * How many HITL requests the backend currently holds suspended for this flow.
+ *
+ * The server-side counterpart to the card: `GET /api/v2/workflows/pending` lists
+ * the suspended jobs of ONE flow (it 422s without `flow_id`, so it can never see
+ * another spec's run). It is what separates "the card is on screen" from "the run
+ * is parked", and, after the answer, "a bubble rendered" from "the run is no
+ * longer suspended".
+ */
+async function pendingHitlCount(page: Page, flowId: string): Promise<number> {
+  const authHeader = await getAuthToken(page.request);
+  const res = await page.request.get(
+    `/api/v2/workflows/pending?flow_id=${flowId}`,
+    authHeader ? { headers: { Authorization: authHeader } } : undefined,
+  );
+  if (!res.ok()) throw new Error(`GET /workflows/pending → ${res.status()}`);
+  const body = await res.json();
+  return Array.isArray(body) ? body.length : -1;
 }
 
 /** Send the pre-filled prompt and wait for the run to park on the decision card. */
-async function sendAndExpectPause(page: Page): Promise<void> {
+async function sendAndExpectPause(page: Page, flowId: string): Promise<void> {
   await page.getByTestId("button-send").click();
 
   const card = page.getByTestId("human-input-card");
@@ -127,12 +171,24 @@ async function sendAndExpectPause(page: Page): Promise<void> {
   await expect(card).toContainText(SENTINEL_PROMPT);
 
   // One enabled button per configured choice.
-  await expect(page.getByTestId(BRANCHES.approve.decision)).toBeEnabled();
-  await expect(page.getByTestId(BRANCHES.reject.decision)).toBeEnabled();
+  await expect(page.getByTestId(BRANCHES.approve.decision)).toBeEnabled({
+    timeout: 15000,
+  });
+  await expect(page.getByTestId(BRANCHES.reject.decision)).toBeEnabled({
+    timeout: 15000,
+  });
 
-  // This is what makes it a PAUSE and not a slow completion: neither branch has
-  // emitted. (The empty `chat-message-AI-` bubble present here is the Human
-  // Input's own `Message(text="")` on the suspend path — deliberately ignored.)
+  // The run is parked SERVER-SIDE, not just visually: the backend holds exactly
+  // one suspended request for this flow.
+  await expect
+    .poll(() => pendingHitlCount(page, flowId), { timeout: 30000 })
+    .toBe(1);
+
+  // And it is a pause rather than a slow completion: neither branch has emitted.
+  // (The empty `chat-message-AI-` bubble present here is NOT the component's
+  // return value — it is a host message the frontend synthesizes in
+  // `injectHumanInputCard()` purely to carry the card's content block. Ignored on
+  // purpose; every assertion here is scoped to the sender-named bubbles.)
   await expect(bubble(page, BRANCHES.approve.sender)).toHaveCount(0);
   await expect(bubble(page, BRANCHES.reject.sender)).toHaveCount(0);
 }
@@ -145,6 +201,7 @@ async function sendAndExpectPause(page: Page): Promise<void> {
  */
 async function answerAndExpectExclusiveRouting(
   page: Page,
+  flowId: string,
   chosen: keyof typeof BRANCHES,
 ): Promise<void> {
   const other = chosen === "approve" ? "reject" : "approve";
@@ -156,7 +213,20 @@ async function answerAndExpectExclusiveRouting(
   });
   await expect(bubble(page, BRANCHES[other].sender)).toHaveCount(0);
 
-  // The card records the answer: it keeps only the chosen action, disabled.
+  // The run left the suspended state — the answer reached the backend and the
+  // job resumed. Without this, a resume that silently never completed would pass
+  // every assertion above: the routed bubble arrives through the message-query
+  // invalidation, independent of the run's own event stream.
+  await expect
+    .poll(() => pendingHitlCount(page, flowId), { timeout: 30000 })
+    .toBe(0);
+
+  // The card's own affordance follows the answer: only the chosen action remains,
+  // disabled. Deliberately weak claims — `HumanInputCard` sets this from local
+  // state synchronously (measured 45 ms after the click, before the request is
+  // even sent) and keeps it locked on an error too, so this pins the UI, never
+  // that the backend accepted anything. The `pending` poll above is what does
+  // that.
   await expect(page.getByTestId(BRANCHES[other].decision)).toHaveCount(0);
   await expect(page.getByTestId(BRANCHES[chosen].decision)).toBeDisabled();
 }
@@ -167,7 +237,17 @@ test.afterEach(async ({ page }) => {
   // Leave the editor first so it stops polling `GET /flows/{id}/events` on a
   // flow about to be deleted, then pass an explicit Bearer — `page.request` is
   // unauthenticated under AUTO_LOGIN and would 401.
-  await page.goto("/").catch(() => {});
+  await page.goto("/").catch((error: unknown) => {
+    // Neither swallowed nor rethrown, on purpose. Rethrowing would abort this
+    // hook BEFORE the deletes below — the load-bearing half — and leak the flow;
+    // swallowing silently would hide why the editor kept 404-polling a deleted
+    // flow, which is the whole reason for leaving it first.
+    const message = (error as Error)?.message?.split("\n")[0] ?? String(error);
+    console.warn(
+      `⚠️  teardown: could not leave the flow editor (${message}) — the deletes ` +
+        `below still run, so expect 404 noise from the editor's events poll.`,
+    );
+  });
   const authHeader = await getAuthToken(page.request);
   const opts = authHeader
     ? { headers: { Authorization: authHeader } }
@@ -181,16 +261,18 @@ test.describe("Human Input pause/resume in the Playground", () => {
   test("approving a Human Input pause routes only the approved branch",
     { tag: ["@stable", "@release", "@playground"] },
     async ({ page }) => {
+      let flowId = "";
+
       await test.step("Open the pre-wired HITL flow in the Playground", async () => {
-        await openHitlPlayground(page);
+        flowId = await openHitlPlayground(page);
       });
 
       await test.step("Sending the prompt suspends the run on the decision card", async () => {
-        await sendAndExpectPause(page);
+        await sendAndExpectPause(page, flowId);
       });
 
       await test.step("Approving resumes the run through the approved branch only", async () => {
-        await answerAndExpectExclusiveRouting(page, "approve");
+        await answerAndExpectExclusiveRouting(page, flowId, "approve");
       });
     },
   );
@@ -198,16 +280,18 @@ test.describe("Human Input pause/resume in the Playground", () => {
   test("rejecting a Human Input pause routes only the reject branch",
     { tag: ["@stable", "@release", "@playground"] },
     async ({ page }) => {
+      let flowId = "";
+
       await test.step("Open the pre-wired HITL flow in the Playground", async () => {
-        await openHitlPlayground(page);
+        flowId = await openHitlPlayground(page);
       });
 
       await test.step("Sending the prompt suspends the run on the decision card", async () => {
-        await sendAndExpectPause(page);
+        await sendAndExpectPause(page, flowId);
       });
 
       await test.step("Rejecting resumes the run through the reject branch only", async () => {
-        await answerAndExpectExclusiveRouting(page, "reject");
+        await answerAndExpectExclusiveRouting(page, flowId, "reject");
       });
     },
   );

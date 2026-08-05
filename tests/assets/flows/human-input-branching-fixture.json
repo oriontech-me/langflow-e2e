@@ -514,12 +514,6 @@
                   "value": 3
                 }
               },
-              "_frontend_node_flow_id": {
-                "value": "6e428105-7720-4474-8933-1bcabc035d7b"
-              },
-              "_frontend_node_folder_id": {
-                "value": "70af1547-0bd1-4799-be28-41f738b6e6dc"
-              },
               "is_refresh": false
             },
             "tool_mode": false,
