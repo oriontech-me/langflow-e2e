@@ -44,23 +44,35 @@ const UNRESOLVED_BANNER = "No direct replacement.";
 // The three legacy components of §3.10, with the sidebar handles scouted live.
 // Their testids keep the ORIGINAL class names (`TextOperations`, …), never
 // `Operations` — so they can never collide with the unified component's.
+// `label` is the human name (step titles, failure messages); every other field is
+// a selector. Keeping them apart matters here because the display name and its
+// testid differ only by a prefix, and interpolating the testid into a step title
+// is what makes a Playwright report read `title-JSON Operations carries …`.
 const LEGACY_COMPONENTS = [
   {
+    label: "JSON Operations",
     search: "json operations",
     addButton: "add-component-button-json-operations",
-    title: "title-JSON Operations",
+    titleTestId: "title-JSON Operations",
   },
   {
+    label: "Table Operations",
     search: "table operations",
     addButton: "add-component-button-table-operations",
-    title: "title-Table Operations",
+    titleTestId: "title-Table Operations",
   },
   {
+    label: "Text Operations",
     search: "text operations",
     addButton: "add-component-button-text-operations",
-    title: "title-Text Operations",
+    titleTestId: "title-Text Operations",
   },
 ] as const;
+
+// Named rather than indexed at the call sites: which legacy component a test
+// drives is part of what the test means, and `LEGACY_COMPONENTS[2]` hides it.
+const JSON_OPERATIONS = LEGACY_COMPONENTS[0];
+const TEXT_OPERATIONS = LEGACY_COMPONENTS[2];
 
 // Ids of the flows each test creates via the REST API — deleted id-scoped in
 // afterEach (#490/#681/#515), never a global/name/diff-scoped wipe (#553).
@@ -137,7 +149,7 @@ async function addNode(
 
 // Locate a node by its own title testid — the three nodes are added stacked and
 // are never told apart by position.
-function nodeByTitle(page: Page, titleTestId: string): Locator {
+function nodeByTitleTestId(page: Page, titleTestId: string): Locator {
   return page
     .locator(".react-flow__node")
     .filter({ has: page.getByTestId(titleTestId) });
@@ -164,9 +176,12 @@ test(
     });
 
     for (const component of LEGACY_COMPONENTS) {
-      await test.step(`${component.title} carries the Legacy banner pointing at Data Operations`, async () => {
-        const node = nodeByTitle(page, component.title);
-        await expect(node).toHaveCount(1, { timeout: 15000 });
+      await test.step(`${component.label} carries the Legacy banner pointing at Data Operations`, async () => {
+        const node = nodeByTitleTestId(page, component.titleTestId);
+        await expect(
+          node,
+          `${component.label} should be on the canvas exactly once`,
+        ).toHaveCount(1, { timeout: 15000 });
         // The banner itself — its Dismiss control is the only testid it exposes.
         await expect(node.getByTestId("dismiss-warning-bar")).toBeAttached({
           timeout: 15000,
@@ -193,15 +208,11 @@ test(
 
     await test.step("Open a flow with one legacy JSON Operations node", async () => {
       await openFlowWithLegacy(page, request, bearer, { enableLegacy: true });
-      await addNode(
-        page,
-        LEGACY_COMPONENTS[0].search,
-        LEGACY_COMPONENTS[0].addButton,
-      );
+      await addNode(page, JSON_OPERATIONS.search, JSON_OPERATIONS.addButton);
     });
 
     await test.step("Click the Data Operations link inside the banner", async () => {
-      const node = nodeByTitle(page, LEGACY_COMPONENTS[0].title);
+      const node = nodeByTitleTestId(page, JSON_OPERATIONS.titleTestId);
       // The link carries no testid; match it by accessible name, scoped to the
       // node so it can never resolve to the sidebar entry of the same name.
       await node
@@ -220,9 +231,7 @@ test(
       ).toBeVisible({ timeout: 15000 });
       // The negative half: the filter narrowed to the REPLACEMENT. Without it
       // the assertion would also pass on a sidebar that simply showed both.
-      await expect(
-        page.getByTestId(LEGACY_COMPONENTS[0].addButton),
-      ).toHaveCount(0);
+      await expect(page.getByTestId(JSON_OPERATIONS.addButton)).toHaveCount(0);
     });
   },
 );
@@ -262,11 +271,7 @@ test(
 
     await test.step("Open a flow with one legacy Text Operations node", async () => {
       await openFlowWithLegacy(page, request, bearer, { enableLegacy: true });
-      await addNode(
-        page,
-        LEGACY_COMPONENTS[2].search,
-        LEGACY_COMPONENTS[2].addButton,
-      );
+      await addNode(page, TEXT_OPERATIONS.search, TEXT_OPERATIONS.addButton);
     });
 
     const node = page.locator(".react-flow__node").first();
