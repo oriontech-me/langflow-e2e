@@ -277,7 +277,7 @@
 - [x] Human Input node config: default Approve/Reject branch handles, custom User Action creates a new handle, configured handles persist after save + reload → `core-components/human-input-node-config.spec.ts`
 
 #### 3.10 Data Operations (1.11.0)
-- [ ] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode → `core-components/data-operations-component.spec.ts`
+- [x] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode (Text→Message, Word Count→JSON override, JSON Select Keys, Table Filter) → `core-components/data-operations-component.spec.ts`
 - [ ] Legacy operations components link/redirect to Data Operations (legacy flows keep working) → `core-components/data-operations-legacy-link.spec.ts`
 
 ---
