@@ -39,8 +39,8 @@ The test uses a Custom Component with a 60-second `sleep()` to guarantee the flo
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/components/core/playgroundComponent/chat-view/send-message/button-send-wrapper.tsx` — renders `button-stop` during active builds; calls `stopBuilding()` on click
-- `src/frontend/src/components/core/playgroundComponent/chat-view/send-message/no-input.tsx` — alternate render path for `button-stop` when the flow has no input component
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-input/components/button-send-wrapper.tsx` — renders `button-stop` during active builds; calls `stopBuilding()` on click
+- `src/frontend/src/components/core/playgroundComponent/chat-view/chat-input/components/no-input.tsx` — alternate render path for `button-stop` when the flow has no input component
 
 ---
 

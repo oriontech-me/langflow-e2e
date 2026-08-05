@@ -17,6 +17,7 @@ import { spawnSync } from "node:child_process";
 import {
   AREAS,
   BODY_DELIMITER,
+  DOC_DEPS_EXEMPT_FILES,
   assertValidSince,
   parseArgs,
   LANGFLOW_AREAS,
@@ -25,9 +26,13 @@ import {
   MAX_COMMITS_PER_AREA,
   PARTIAL,
   buildAreas,
+  checkDocDeps,
+  classifyDepToken,
   detectChangedAreas,
   findLfxDrift,
   findMissingPaths,
+  matchGlob,
+  parseDocDeps,
   renderIssueBody,
 } from "./watch-upstream-areas.mjs";
 
@@ -316,6 +321,17 @@ test("parseArgs accepts both --flag value and --flag=value", () => {
     mode: "detect",
     root: "up",
     since: "2026-07-15",
+    ref: "HEAD",
+    changed: "",
+  });
+  // check-docs adds two flags; `--changed` defaults to empty, which is what makes
+  // the diff-scoped severity opt-in rather than silently absent (#1298).
+  assert.deepEqual(parseArgs(["--mode=check-docs", "--ref", "origin/main", "--changed=list.txt"]), {
+    mode: "check-docs",
+    root: ".",
+    since: "24 hours ago",
+    ref: "origin/main",
+    changed: "list.txt",
   });
   assert.throws(() => parseArgs(["--nope"]), /unknown argument --nope/);
   assert.throws(() => parseArgs(["--root"]), /--root needs a value/);
@@ -403,4 +419,177 @@ test("a symlinked lfx subtree is classified, not skipped", () => {
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ---------- spec-doc dependency paths (issue #1298) ----------
+//
+// The unit lane has no upstream clone, so these pin the DECISION rules over an
+// injected tree. What they cannot prove — that the repo's 423 real paths resolve
+// against upstream — is proven by running `--mode=check-docs` against a clone;
+// see the run recorded in the PR. The last two tests below are over the real
+// docs and need no clone.
+
+const DOC = (markdown, file = "docs/area/thing.md") => ({ file, markdown });
+const SECTION = (...bullets) => ["## External dependencies", "", ...bullets, "", "---"].join("\n");
+
+test("parseDocDeps takes every src/ token in the section, not just the leading one", () => {
+  const deps = parseDocDeps(
+    [
+      "# Title",
+      "",
+      "- `src/before/section.py` — outside the section, must be ignored",
+      "",
+      "## External dependencies *(required)*",
+      "",
+      "- `src/one.py` — leading token, plus `src/two.py` named mid-sentence",
+      "  `src/three.py` — a continuation line",
+      "- `tests/helpers/local.ts` — ours, not upstream",
+      "",
+      "---",
+      "",
+      "- `src/after/section.py` — after the section ends",
+    ].join("\n"),
+  );
+
+  assert.deepEqual(
+    deps.map((d) => d.token),
+    ["src/one.py", "src/two.py", "src/three.py"],
+  );
+  assert.equal(deps[0].line, 7);
+});
+
+test("classifyDepToken strips a line range and a trailing slash, and names the three kinds", () => {
+  assert.deepEqual(classifyDepToken("src/lfx/src/lfx/components/input_output/chat.py:70-78"), {
+    kind: "literal",
+    target: "src/lfx/src/lfx/components/input_output/chat.py",
+  });
+  assert.deepEqual(classifyDepToken("src/frontend/src/pages/MainPage/"), {
+    kind: "literal",
+    target: "src/frontend/src/pages/MainPage",
+  });
+  assert.equal(classifyDepToken("src/frontend/src/pages/MainPage/**").kind, "glob");
+  assert.equal(classifyDepToken("src/backend/base/langflow/api/.../variables").kind, "ellipsis");
+  // The unicode ellipsis is the same defect as three dots and was used in 3 docs.
+  assert.equal(classifyDepToken("src/frontend/src/…/flowSettings").kind, "ellipsis");
+});
+
+test("matchGlob lets ** cross directories and keeps * inside one segment", () => {
+  const tree = ["src/a/b", "src/a/b/c.tsx", "src/a/d.tsx", "src/other.tsx"];
+  assert.deepEqual(matchGlob("src/a/**", tree), ["src/a/b", "src/a/b/c.tsx", "src/a/d.tsx"]);
+  // If `*` crossed `/`, a dead path like `src/a/*` would match a nested file and
+  // pass — the silence this guard removes.
+  assert.deepEqual(matchGlob("src/a/*", tree), ["src/a/b", "src/a/d.tsx"]);
+  assert.deepEqual(matchGlob("src/gone/**", tree), []);
+});
+
+test("checkDocDeps fails a path in a doc the PR changed and warns on a pre-existing one", () => {
+  const docs = [
+    DOC(SECTION("- `src/gone.py` — moved upstream"), "docs/area/touched.md"),
+    DOC(SECTION("- `src/gone.py` — moved upstream"), "docs/area/untouched.md"),
+  ];
+  const verdict = checkDocDeps({
+    docs,
+    treeEntries: ["src/here.py"],
+    changedFiles: ["docs/area/touched.md"],
+  });
+
+  assert.equal(verdict.checked, 2);
+  assert.deepEqual(
+    verdict.failures.map((f) => f.file),
+    ["docs/area/touched.md"],
+  );
+  assert.deepEqual(
+    verdict.warnings.map((w) => w.file),
+    ["docs/area/untouched.md"],
+  );
+});
+
+test("checkDocDeps treats an ellipsis as a defect, not as a path it cannot judge", () => {
+  const verdict = checkDocDeps({
+    docs: [DOC(SECTION("- `src/frontend/src/.../playground` — the chat input"), "docs/area/touched.md")],
+    // Even with the real directory present, the token itself is unresolvable.
+    treeEntries: ["src/frontend/src/components/core/playgroundComponent"],
+    changedFiles: ["docs/area/touched.md"],
+  });
+
+  assert.equal(verdict.failures.length, 1);
+  assert.equal(verdict.failures[0].kind, "ellipsis");
+});
+
+test("checkDocDeps accepts a resolving glob and a path carrying a line range", () => {
+  const verdict = checkDocDeps({
+    docs: [
+      DOC(
+        SECTION(
+          "- `src/frontend/src/pages/LoginPage/**` — the login page",
+          "- `src/lfx/chat.py:70-78` — the FileInput block",
+        ),
+        "docs/area/touched.md",
+      ),
+    ],
+    treeEntries: ["src/frontend/src/pages/LoginPage", "src/frontend/src/pages/LoginPage/index.tsx", "src/lfx/chat.py"],
+    changedFiles: ["docs/area/touched.md"],
+  });
+
+  assert.deepEqual(verdict.failures, []);
+  assert.deepEqual(verdict.warnings, []);
+  assert.equal(verdict.checked, 2);
+});
+
+test("checkDocDeps skips an exempt doc entirely and reports that it did", () => {
+  const verdict = checkDocDeps({
+    docs: [DOC(SECTION("- `src/backend/...` — placeholder by design"), "docs/TEST-SPEC-TEMPLATE.md")],
+    treeEntries: ["src/backend"],
+    changedFiles: ["docs/TEST-SPEC-TEMPLATE.md"],
+  });
+
+  assert.equal(verdict.checked, 0);
+  assert.deepEqual(verdict.exempt, ["docs/TEST-SPEC-TEMPLATE.md"]);
+  assert.deepEqual(verdict.failures, []);
+});
+
+test("no real doc outside the allowlist carries an unresolvable ellipsis dependency", () => {
+  // Pins the #1298 sweep: 10 entries were written as `src/frontend/src/.../x`,
+  // which no ref can confirm or refute. This costs no clone, so it runs in the
+  // PR unit lane and catches the style coming back.
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name.endsWith(".md")) {
+        const rel = path.relative(REPO_ROOT, full);
+        if (DOC_DEPS_EXEMPT_FILES.includes(rel)) continue;
+        for (const dep of parseDocDeps(fs.readFileSync(full, "utf8"))) {
+          if (classifyDepToken(dep.token).kind === "ellipsis") offenders.push(`${rel}:${dep.line} ${dep.token}`);
+        }
+      }
+    }
+  };
+  walk(path.join(REPO_ROOT, "docs"));
+
+  assert.deepEqual(offenders, []);
+});
+
+test("every exempt doc exists, so the allowlist cannot rot into a blanket skip", () => {
+  for (const rel of DOC_DEPS_EXEMPT_FILES) {
+    assert.ok(fs.existsSync(path.join(REPO_ROOT, rel)), `${rel} is exempt but does not exist`);
+  }
+});
+
+test("pr-validation.yml runs the doc-deps guard with a diff list and a real upstream ref", () => {
+  // Presence wiring, not behaviour: the behaviour is pinned by checkDocDeps above.
+  // #1226's lesson is that a regex over YAML cannot prove a verdict is right —
+  // but the guard reaching the lane at all is exactly what a regex can prove, and
+  // a mode nobody invokes is how #1092's watcher ended up with no run history.
+  const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"), "utf8");
+  assert.match(yml, /watch-upstream-areas\.mjs \\\n\s+--mode=check-docs/);
+  // Without --changed the verdict cannot fail anything, so the flag IS the gate.
+  assert.match(yml, /--changed changed-docs\.txt/);
+  assert.match(yml, /--ref origin\/main/);
+  // A blobless, no-checkout clone is what makes the ls-tree resolver affordable
+  // here; a plain clone would pull ~117 MB per PR.
+  assert.match(yml, /git clone --filter=blob:none --depth 1 --no-checkout/);
+  // The clone must not fail open: no tree means no verdict, which is not a pass.
+  assert.match(yml, /::error::could not clone langflow-ai\/langflow/);
 });

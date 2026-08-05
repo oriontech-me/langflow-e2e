@@ -48,7 +48,7 @@ Both tests run without user input and without an API key or LLM — the Mock Dat
 
 ## External dependencies *(required)*
 
-- `src/backend/base/langflow/components/data/` — Mock Data component; changes to serialization logic (`_serialize_data` or `df.to_markdown`) would alter the rendered output format
+- `src/lfx/src/lfx/components/data_source/` — Mock Data component; changes to serialization logic (`_serialize_data` or `df.to_markdown`) would alter the rendered output format
 - `src/frontend/src/components/core/chatComponents/` — Markdown and code block rendering in the Playground chat; changes to react-markdown plugins or code block CSS classes would break the assertions
 
 ---

@@ -63,12 +63,12 @@ For the Custom Component branch the test asserts that `tool_name` is present but
 
 ## External dependencies
 
-- `src/backend/base/langflow/components/data/url.py` — URL component must expose a tool-mode-compatible interface; renaming `URL` or its outputs breaks the `data_sourceURL` sidebar test ID and the `urlcomponent` handle prefix.
+- `src/lfx/src/lfx/components/data_source/url.py` — URL component must expose a tool-mode-compatible interface; renaming `URL` or its outputs breaks the `data_sourceURL` sidebar test ID and the `urlcomponent` handle prefix.
 - `src/backend/base/langflow/custom/custom_component/component.py` — Tool Mode plumbing; if `tool_mode` flag handling changes, the toggle stops emitting the `toolset` view.
-- `src/frontend/src/CustomNodes/GenericNode/components/NodeToolbarComponent/index.tsx` — `tool-mode-button` test ID lives here. Any rename breaks the UI-toggle assertions.
+- `src/frontend/src/pages/FlowPage/components/nodeToolbarComponent/index.tsx` — `tool-mode-button` test ID lives here. Any rename breaks the UI-toggle assertions.
 - `src/frontend/src/pages/FlowPage/components/PageComponent/index.tsx` — registers the `Ctrl/Meta+Shift+M` shortcut. If the binding changes, the keyboard branch fails.
-- `src/frontend/src/components/core/parameterRenderComponent/components/sidebarComponent/sideBarItem/index.tsx` — `data_source*` and `models_and_agents*` sidebar test IDs.
-- `src/backend/base/langflow/components/agents/agent.py` — Agent component's `tools` input; renaming the port breaks the `handle-agent-shownode-tools-left` selector.
+- `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/sidebarDraggableComponent.tsx` — `data_source*` and `models_and_agents*` sidebar test IDs.
+- `src/lfx/src/lfx/components/models_and_agents/agent.py` — Agent component's `tools` input; renaming the port breaks the `handle-agent-shownode-tools-left` selector.
 
 ---
 

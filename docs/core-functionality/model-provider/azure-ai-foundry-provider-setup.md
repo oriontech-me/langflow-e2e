@@ -435,14 +435,14 @@ OpenRouter so the asserts cannot pass on a page-wide string.
   `provider-item-*`, `provider-variable-input-*`, `model-provider-selection`,
   `custom-deployment-hint`, `model-search-input`,
   `add-custom-*deployment-button`.
-- `src/lfx/base/models/model_metadata.py` — the `Azure AI Foundry` provider entry
+- `src/lfx/src/lfx/base/models/model_metadata.py` — the `Azure AI Foundry` provider entry
   (its two variables, the endpoint description carrying the deployment-name
   rule).
-- `src/lfx/base/models/azure_ai_foundry_constants.py` — seed catalog.
-- `src/lfx/base/models/model_utils.py` —
+- `src/lfx/src/lfx/base/models/azure_ai_foundry_constants.py` — seed catalog.
+- `src/lfx/src/lfx/base/models/model_utils.py` —
   `request_azure_ai_foundry_model_entries` (credential validation) and the
   free-text enable merge.
-- `src/lfx/base/models/unified_models/credentials.py` /
+- `src/lfx/src/lfx/base/models/unified_models/credentials.py` /
   `instantiation.py` — the Foundry validation branch and endpoint injection.
 - `src/backend/base/langflow/api/v1/models.py` —
   `validate-provider`, `enabled_models` (typed identities), and their variable

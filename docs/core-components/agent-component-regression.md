@@ -80,8 +80,8 @@ If any of these tests fails, the Agent component is broken at the canvas level: 
 
 ## External dependencies *(required)*
 
-- `src/lfx/src/lfx/components/agents/agent.py` — `AgentComponent` definition; the `system_prompt` input and the per-provider model-list metadata are the schema this spec asserts against
-- `src/frontend/src/CustomNodes/GenericNode/components/parameterRenderComponent/` — renders `value-dropdown-model_model` and the `manage-model-providers` button inside it; testid renames break Tests 3 and 4
+- `src/lfx/src/lfx/components/models_and_agents/agent.py` — `AgentComponent` definition; the `system_prompt` input and the per-provider model-list metadata are the schema this spec asserts against
+- `src/frontend/src/components/core/parameterRenderComponent/` — renders `value-dropdown-model_model` and the `manage-model-providers` button inside it; testid renames break Tests 3 and 4
 - `src/frontend/src/CustomNodes/GenericNode/` — renders the handles; the `handle-agent-shownode-{port}-{side}` pattern must remain stable
 - Provider icon assets in `src/frontend/src/icons/` — the `icon-OpenAI` and `icon-Anthropic` testids on the Agent node carry the assertion in Test 4 and break if the icon mapping changes
 

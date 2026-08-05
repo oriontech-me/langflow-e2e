@@ -54,7 +54,7 @@ The dev46 nightly replaced the old "Controls" edit modal with a node inspector s
 ## External dependencies
 
 - **OpenAI** — `test.skip` when `OPENAI_API_KEY` is absent. Runs the Basic Prompting flow through an OpenAI model (`initialGPTsetup`).
-- `src/backend/base/langflow/components/input_output/chat.py` — Chat Input component; the advanced `files` field must exist as an addable inspector field for step 2 to find `inspector-add-files`.
+- `src/lfx/src/lfx/components/input_output/chat.py` — Chat Input component; the advanced `files` field must exist as an addable inspector field for step 2 to find `inspector-add-files`.
 - `tests/assets/media/chain.png` — the uploaded test image.
 - `tests/helpers/ui/open-advanced-options.ts` — `openAdvancedOptions` / `closeAdvancedOptions` (the inspector panel).
 - `tests/helpers/other/initialGPTsetup.ts` — provider/model setup on the template.

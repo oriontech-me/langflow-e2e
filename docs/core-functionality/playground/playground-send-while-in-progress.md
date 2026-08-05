@@ -115,7 +115,7 @@ proves the block is tied to the in-progress state, not a permanent lock.
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/.../playground` — the chat input disabled state and the
+- `src/frontend/src/components/core/playgroundComponent/` — the chat input disabled state and the
   `button-send`/`button-stop` swap during a run.
 - `POST /api/v2/workflows` — the run endpoint held to create the in-progress
   window (matched by path; an upstream move requires updating the route regex).

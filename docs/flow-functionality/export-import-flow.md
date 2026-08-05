@@ -73,7 +73,8 @@ If these break, users cannot share flows, back them up, or restore previously ex
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/components/core/flowEditorComponents/` — flow editor header, export modal
+- `src/frontend/src/components/core/flowToolbarComponent/` — flow editor header actions that open the export dialog
+- `src/frontend/src/modals/exportModal/` — the export modal itself
 - `src/backend/base/langflow/api/v1/flows.py` — flow export/import endpoints
 - `tests/helpers/ui/simulate-drag-and-drop.ts` — `simulateDragAndDrop` helper
 - `tests/helpers/flows/leave-flow-editor.ts` — the editor exit: drains in-flight flow saves, clicks `icon-ChevronLeft`, and distinguishes the #1153 blocker deadlock from a swallowed click. It depends on upstream `src/frontend/src/pages/FlowPage/index.tsx` (`useBlocker` / `handleSave`), `src/frontend/src/modals/saveChangesModal/index.tsx`, and the `flow.unsavedChangesTitle` string in `src/frontend/src/locales/en.json` — if that title is reworded the dialog stops being recognised and every deadlock silently reclassifies as a swallowed click

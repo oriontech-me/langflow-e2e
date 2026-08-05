@@ -38,7 +38,7 @@ This test complements `llm-agents/memory-history-regression.spec.ts`, which cove
 ## External dependencies *(required)*
 - `src/frontend/src/components/core/playgroundComponent/` — main Playground component; changes to `data-testid="playground-close-button"`, `data-testid="input-chat-playground"`, `data-testid="button-send"`, `data-testid="button-stop"`, or `data-testid="chat-message-User-{text}"` break this test
 - `src/frontend/src/components/core/flowToolbarComponent/` — `playground-btn-flow-io` button that opens the Playground
-- `src/backend/langflow/api/v1/chat.py` — message persistence endpoint; regressions here break the assertion after reopen
+- `src/backend/base/langflow/api/v1/chat.py` — message persistence endpoint; regressions here break the assertion after reopen
 
 ---
 

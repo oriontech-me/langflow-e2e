@@ -56,7 +56,7 @@ The test is parameterized: runs for each provider that has an env var configured
 - `src/frontend/src/modals/modelProviderModal/hooks/useProviderConfiguration.ts` — validation logic, calls the endpoint and manages the `validationState`
 - `src/frontend/src/alerts/error/index.tsx` — visual component of the toast `.error-build-message`
 - `src/backend/base/langflow/api/v1/models.py` — endpoint `POST /api/v1/models/validate-provider`
-- `src/backend/base/langflow/services/credentials.py` — function `validate_model_provider_key`, which tests the key against the provider and returns `"Invalid API key for {provider}"`
+- `src/lfx/src/lfx/base/models/unified_models/credentials.py` — function `validate_model_provider_key`, which tests the key against the provider and returns `"Invalid API key for {provider}"`
 
 ---
 

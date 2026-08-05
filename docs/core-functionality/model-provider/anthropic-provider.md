@@ -167,7 +167,7 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   `provider-item-Anthropic`, `provider-variable-input-ANTHROPIC_API_KEY`,
   the Save/Replace button; a rename breaks Test 1.
 - Provider-config storage — the global `ANTHROPIC_API_KEY` provider variable.
-- `src/backend/base/langflow/components/agents/` — Agent execution with the
+- `src/lfx/src/lfx/components/models_and_agents/` — Agent execution with the
   selected Claude model (Tests 2–3).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O.
 - Anthropic API — Test 1 validates the key live; Tests 2–3 make real calls.

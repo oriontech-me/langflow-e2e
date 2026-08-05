@@ -173,9 +173,9 @@ Shared setup per test:
 
 ## External dependencies *(required)*
 
-- `src/lfx/components/models_and_agents/agent.py` — `max_tokens` IntInput and
+- `src/lfx/src/lfx/components/models_and_agents/agent.py` — `max_tokens` IntInput and
   `_get_max_tokens_value()` (empty/`0` ⇒ `None` ⇒ unlimited).
-- `src/lfx/base/models/unified_models/instantiation.py` — provider-specific
+- `src/lfx/src/lfx/base/models/unified_models/instantiation.py` — provider-specific
   mapping via `max_tokens_field_name` (Google ⇒ `max_output_tokens`).
 - `src/frontend/src/CustomNodes/GenericNode/` — the Agent node inspector
   (`int_int_max_tokens`) and its int-field input handling.

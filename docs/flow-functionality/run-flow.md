@@ -140,7 +140,8 @@ an inscrutable one at the Run Flow dropdown.
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/components/core/nodeToolbarComponents/` — Run Flow component UI and flow name dropdown
+- `src/lfx/src/lfx/components/flow_controls/run_flow.py` — the Run Flow component itself; its `flow_name` input is what the dropdown populates
+- `src/frontend/src/components/core/dropdownComponent/` — the flow name dropdown UI (`dropdown-option-*` options and the refresh button)
 - `src/backend/base/langflow/api/v1/flows.py` — flow listing API used by the dropdown refresh
 - `src/backend/base/langflow/processing/` — flow execution chain that runs the pipeline
 - `tests/helpers/flows/leave-flow-editor.ts` — the editor exit: drains in-flight flow saves, clicks `icon-ChevronLeft`, and distinguishes the #1153 blocker deadlock from a swallowed click. It depends on upstream `src/frontend/src/pages/FlowPage/index.tsx` (`useBlocker` / `handleSave`), `src/frontend/src/modals/saveChangesModal/index.tsx`, and the `flow.unsavedChangesTitle` string in `src/frontend/src/locales/en.json` — if that title is reworded the dialog stops being recognised and every deadlock silently reclassifies as a swallowed click

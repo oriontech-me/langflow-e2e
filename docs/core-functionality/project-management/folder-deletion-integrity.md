@@ -285,7 +285,7 @@ seeded on the same instance:
 - `src/backend/base/langflow/api/v1/projects.py` — `DELETE /api/v1/projects/{id}`
   and the project list endpoint; the `500`-under-contention defect (LE-2020)
   observed on delete also reaches this spec's cleanup path.
-- `src/frontend/src/pages/MainPage/components/myCollectionComponent/` — renders
+- `src/frontend/src/components/core/folderSidebarComponent/` — renders
   the `project-sidebar` and its `sidebar-nav-*` entries; the loop in test 4 and
   every visibility assertion depend on those testids.
 - `src/frontend/src/pages/MainPage/components/dropdown/` — the

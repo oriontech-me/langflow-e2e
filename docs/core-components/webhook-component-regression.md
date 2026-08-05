@@ -265,7 +265,7 @@ and the reason we walked away are all in this section.
 
 ## External dependencies *(required)*
 
-- `src/backend/base/langflow/components/inputs/webhook.py` — `WebhookComponent.build_data()`: JSON parsing, fallback wrapping, and empty-data short-circuit; changes here break tests 4, 8, and 9
+- `src/lfx/src/lfx/components/input_output/webhook.py` — `WebhookComponent.build_data()`: JSON parsing, fallback wrapping, and empty-data short-circuit; changes here break tests 4, 8, and 9
 - `src/backend/base/langflow/api/v1/endpoints.py` — `POST /api/v1/webhook/{flow_id_or_name}` and `GET /api/v1/monitor/messages` endpoints; status codes and response shape affect tests 1, 7, and 10
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeOutputParameter/` — renders `output-inspection-{name}-{component}` buttons; the `output-inspection-json-webhook` testid depends on the output `display_name` being `"JSON"` (updated in langflow-ai/langflow#11554); breaks tests 4, 8, and 9
 - `src/frontend/src/components/core/parameterRenderComponent/components/webhookFieldComponent/` — renders the cURL field (an advanced field on dev49, exposed via the inspector and read from its `text-area-modal`); changes to the rendering break test 3

@@ -242,9 +242,9 @@ by an empty output, a passthrough, or a node that failed to build (the run gate 
   reveal), `update_outputs` (per-operation output routing), `as_message` / `as_data` /
   `as_dataframe`, `_word_count`, `select_keys`, `_text_to_dataframe`,
   `filter_rows_by_value`.
-- `src/frontend/.../parameterRenderComponent/components/tabComponent/index.tsx` — emits
+- `src/frontend/src/components/core/parameterRenderComponent/components/tabComponent/index.tsx` — emits
   `tab_{index}_{testIdCase(tab)}` for the Input Type selector.
-- `src/frontend/.../parameterRenderComponent/components/sortableListComponent/index.tsx` —
+- `src/frontend/src/components/core/parameterRenderComponent/components/sortableListComponent/index.tsx` —
   emits `button_open_list_selection_sortablelist_sortablelist_<field>` and the
   `list_item_<snake_case_name>` options.
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeOutputfield/index.tsx` — emits
