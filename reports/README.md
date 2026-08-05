@@ -59,24 +59,44 @@ comment so a reader of a number finds its limits in the same place:
 
 ### Reading `token-history.jsonl` as a trend (#1300)
 
-The series is young and its instrument has been changing under it, so a rate quoted from it is
-easy to get wrong. Two rules:
+Run `npm run tokens:trend` — it applies the rules below and refuses the read when the series does
+not support it. Read this section before quoting any number from it.
 
-- **No dollar figure from this file is a rate until five consecutive lines share one instrument.**
-  #1183 quoted three weekdays and each line came from a different version of the summarizer
-  (#1248 on 08-03; #1259/#1281/#1287 on 08-04; #1283 on 08-05 — visible in the schema itself,
-  since the 08-03 line carries no `attrib_ms`/`attrib_calls`), and one of the three was a run
-  degraded by 24 failures and 27 skips that made only 4 LLM calls. Before quoting a mean or a
-  trend, state the window and check that no PR touched `scripts/watch-tokens.mjs`,
-  `scripts/lib/token-cost.mjs` or `scripts/lib/model-prices.json` inside it. A line whose run was
-  itself degraded (cross-reference `daily-history.jsonl` for that date's failure/skip counts) is
-  not a cheap day, it is a partial one.
-- **An additive field does not restart that window; a change to what is MEASURED does.** #1300's
-  `by_provider` is derived from spans this file already recorded and moves no existing figure, so
-  it does not invalidate a line for comparison. A change to pricing, to how totals are summed, or
-  to which traces are captured does.
+**Rule 1 — the rate is per LLM CALL. The raw total is not a spend rate.** A run's total tracks how
+much of the suite ran that day, not what a call costs. The first three lines on file go
+8,741 → 67,099 → 2,592 tokens, a **26×** spread, and the low one is not a cheap day: it is
+2026-08-05, a run degraded by 24 failures and 27 skips that made 4 LLM calls. Per call the same
+three lines are 728 / 1,290 / 648 — a **2×** spread. The denominator is already on every line
+(`by_model[].calls`), so this costs no new field and no change to the instrument. Quote the raw
+total only as context for how much of the suite the figure covers, and cross-reference
+`daily-history.jsonl` for that date's failure/skip counts before calling any day cheap.
 
-One consequence of the young series is easy to mistake for a working detector:
+**Rule 2 — tokens and dollars do not have the same exposure, so one window rule for both is wrong
+in one direction.** A token count is **measured** and survives a pricing edit untouched. A dollar
+figure is **computed** at run time from `scripts/lib/model-prices.json`, so a row added or repriced
+inside the window makes two lines answer different questions. Concretely: the three lines above are
+comparable in tokens and **not** comparable in dollars, because what changed between them was the
+`attrib_*` fields and pricing. Discarding the whole line would have thrown away the figure that was
+fine — the same mistake #1252 had to undo in `spec-durations.json`. So: a token rate needs five
+consecutive lines of one **shape**; a dollar rate additionally needs a window with no pricing edit,
+which this file cannot verify, which is why `--prices-stable` is an explicit claim the reader makes
+after checking that no PR touched the price table in the window.
+
+**Rule 3 — five consecutive lines, and a line that measured nothing is not one of them.** A line
+that recorded no LLM call carries no rate and is excluded from the mean rather than counted as a
+zero (a zero drags a derived figure exactly the way an unmeasured file's 0 s dragged the duration
+table). A line whose models are partly unpriced has FLOOR dollars and is excluded from the dollar
+mean only, keeping its token rate. The window is the **trailing** run of one shape: an older stable
+stretch is history, and the question is whether today's series can be read.
+
+Two things that restart the window and one that does not. A change to **what is measured** (how
+totals are summed, which traces are captured) or to **pricing** restarts it. An **additive field**
+does not: #1300's `by_provider` is derived from spans this file already recorded and moves no
+existing figure. Note that `tokens:trend` can only see shape changes the schema exposes
+(`attrib_*`, `by_provider`) — a pricing edit is invisible to it, which is exactly what Rule 2's
+explicit claim covers.
+
+Finally, one consequence of the young series is easy to mistake for a working detector:
 `scripts/lib/token-anomaly.mjs` returns **no anomaly at all** while fewer than `minBaseline` (5)
 lines are available, and windows to the last 20. With three lines on file, every run so far has
 recorded `anomalies: []` **by construction** — that is not evidence the baseline is behaving. The
