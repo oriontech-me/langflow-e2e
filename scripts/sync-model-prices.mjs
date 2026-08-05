@@ -83,8 +83,10 @@ const POST_TIMEOUT_MS = 30_000;
  * Flatten the price file into the payload rows the sync function validates.
  *
  * Takes the RAW parsed JSON, not `parsePrices()`'s output: that function drops
- * `provider` and the per-entry `_comment`, both of which the platform stores.
- * Reading the raw object here is what keeps this projection lossless.
+ * the per-entry `_comment`, which the platform stores. (It kept `provider` as of
+ * #1300 — the summarizer needs it for `by_provider` — so that field is no longer
+ * a reason to read raw, but `_comment` still is.) Reading the raw object here is
+ * what keeps this projection lossless.
  *
  * Throws on anything the platform would reject, naming the offending model. The
  * platform's rejection is all-or-nothing (one RPC call, DELETE + INSERT), so a

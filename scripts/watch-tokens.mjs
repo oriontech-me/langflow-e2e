@@ -429,9 +429,16 @@ export async function summarize({
   }
 
   let prices = {};
+  // Whether the table could be READ, which is a different statement from "the
+  // table has no row for this model" and the two share every downstream symptom:
+  // an unreadable table makes every model unpriced AND every provider unknown, so
+  // the notes under both tables would otherwise tell a reader to add rows that are
+  // already there (#1300 review).
+  let pricesReadable = true;
   try {
     prices = parsePrices(readFile(env.TOKENS_PRICES || "scripts/lib/model-prices.json"));
   } catch (error) {
+    pricesReadable = false;
     log(`token summary: price table unreadable (${error.message}) — reporting tokens only`);
   }
 
@@ -454,6 +461,21 @@ export async function summarize({
     langflow_image: env.LANGFLOW_IMAGE || null,
     totals: agg.totals,
     by_model: agg.byModel,
+    // #1300 gap 1: the per-provider figure #1183 owed and delivered as a hand
+    // rollup of model ids in an issue comment, because this schema recorded models
+    // only. Derived from the SAME span data and the SAME price-key resolution as
+    // `by_model` (token-cost.mjs's resolveProvider), reading the `provider` each
+    // price entry already declares — never inferred from the model id, which is a
+    // different axis from the account that pays (#1281's Azure deployment).
+    //
+    // Deliberately NOT added to the POSTed block below: the QA Platform's
+    // e2e_model_prices carries provider as a column on each (price_key, since) row
+    // and joins it at read time, so sending a second rollup would put two
+    // authorities on one number — the same reason the block carries no dollars
+    // (#1255 item 3). It is also NOT an anomaly scope: detectAnomalies() keys on
+    // run + spec, and widening that surface is a separate decision from recording
+    // the axis.
+    by_provider: agg.byProvider,
     by_spec: agg.bySpec,
     unattributed: agg.unattributed,
     unpriced_models: agg.unpricedModels,
@@ -572,8 +594,14 @@ export async function summarize({
     }
   }
 
+  // "no price entry" is only true when the table was READABLE; when it was not,
+  // every model is unpriced for one shared reason and saying it per model points
+  // at the wrong fix (#1300 review).
   const floor = agg.unpricedModels.length
-    ? ` (a FLOOR — ${agg.unpricedModels.length} model(s) have no price entry: ${agg.unpricedModels.join(", ")})`
+    ? pricesReadable
+      ? ` (a FLOOR — ${agg.unpricedModels.length} model(s) have no price entry: ${agg.unpricedModels.join(", ")})`
+      : " (a FLOOR — the price table could not be read, so NOTHING in this run is priced; see the" +
+        " recorder's log for the parse error)"
     : "";
   // Every dollar figure below is a LOCAL ESTIMATE, and says so (#1255 item 3). USD is
   // computed twice — here, from scripts/lib/model-prices.json at run time, and on the
@@ -590,9 +618,19 @@ export async function summarize({
     "",
     `**${agg.totals.total_tokens.toLocaleString("en-US")} tokens** across ${agg.totals.traces} trace(s) — ${usd(agg.totals.usd_estimated)} (local estimate)${floor}`,
     "",
-    "_Dollar figures on this page are this run's own estimate, priced from " +
-      "`scripts/lib/model-prices.json`. The QA Platform re-prices the same rows from " +
-      "their `price_key` and is the authoritative source for spend._",
+    // The third of the three notes that assume the price table was readable. The
+    // other two were fixed for #1300 and this one was missed: it promises the page
+    // is "priced from model-prices.json" on a run where that file could not be
+    // opened, so a reader chasing a zero looks at the table's contents instead of
+    // at the parse error in the log.
+    pricesReadable
+      ? "_Dollar figures on this page are this run's own estimate, priced from " +
+        "`scripts/lib/model-prices.json`. The QA Platform re-prices the same rows from " +
+        "their `price_key` and is the authoritative source for spend._"
+      : "_No dollar figure on this page is priced: `scripts/lib/model-prices.json` could not be " +
+        "read on this run (the recorder's log has the parse error). Token counts are unaffected — " +
+        "they are measured, not computed. The QA Platform re-prices from `price_key` and remains " +
+        "the authoritative source for spend._",
     "",
   );
   if (suppressHistory) {
@@ -603,6 +641,36 @@ export async function summarize({
       "_History append suppressed for this lane (`TOKENS_SUPPRESS_HISTORY`) — " +
         "this run's numbers are a per-run measurement only, not part of " +
         "`reports/token-history.jsonl`'s daily trend/anomaly series (#1183)._",
+      "",
+    );
+  }
+  // The provider rollup comes BEFORE the model table (#1300 gap 1): it is the
+  // coarser figure and the one a cost question is actually asked in ("what did
+  // anthropic cost us today"), and it is the figure #1183 had to hand-roll from
+  // the model ids below it. A bucket with no declared provider renders as
+  // `unknown` with its ids named — never folded into a neighbour, which is the
+  // whole reason the axis is read from the price table instead of a prefix rule.
+  const unknownProvider = agg.byProvider.find((p) => p.provider === null);
+  lines.push(
+    "| Provider | Calls | Tokens | Estimated |",
+    "|---|---:|---:|---:|",
+    ...agg.byProvider.map(
+      (p) =>
+        `| ${p.provider ? `\`${p.provider}\`` : "_unknown_"} | ${p.calls} | ${p.total_tokens} | ${usdDetail(p.usd_estimated)} |`,
+    ),
+    "",
+  );
+  if (unknownProvider) {
+    const ids = unknownProvider.models.map((m) => `\`${m}\``).join(", ");
+    lines.push(
+      pricesReadable
+        ? `_\`unknown\` = ${unknownProvider.models.length} model(s) with no \`provider\` in ` +
+            `\`scripts/lib/model-prices.json\`: ${ids}. ` +
+            "Adding the row there names the provider on the next run — the id is never " +
+            "used to guess it (#1300)._"
+        : "_`unknown` = every model in this run: the price table could not be read (see the " +
+            `recorder's log), so no provider could be resolved for any of them — ${ids}. ` +
+            "The rows may well exist; fix the table, not this run's models (#1300)._",
       "",
     );
   }

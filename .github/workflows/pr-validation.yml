@@ -493,11 +493,75 @@ jobs:
           # surface scoped in #1195).
           LANGFLOW_A2A_ENABLED: "true"
           # Tracing is OFF by default (cuts startup time / backend noise for the
-          # majority of specs). Turn it ON only when observability/traces specs
-          # are impacted — they need the SUT to emit traces + spans, and without
-          # it their setup times out. Mirrors daily-stable.yml, which keeps
-          # tracing ON for exactly these specs.
-          LANGFLOW_DEACTIVATE_TRACING: ${{ contains(needs.detect-specs.outputs.specs, 'observability-monitoring') && 'false' || 'true' }}
+          # majority of specs). It is turned ON for two independent reasons, and
+          # the second one is why this is no longer a single condition (#1300):
+          #
+          #   1. The observability/traces specs need the SUT to emit traces +
+          #      spans, and without it their setup times out.
+          #   2. Langflow's traces are the ONLY place this lane's token spend can
+          #      be read (the recorder below polls /api/v1/monitor/traces, #1197),
+          #      and a flow's trace 404s the moment the flow is deleted.
+          #
+          # Reason 2 was missing, and it made #1210's recorder on this lane
+          # structurally unable to see anything: EVERY run that produced a token
+          # artifact after #1210 merged recorded `0 trace(s)` — all 35 of them,
+          # 30855127426 through 31021593309, each carrying a `token-attrib.jsonl`
+          # and no `token-probes.jsonl` — because tracing was off on every one.
+          # Run 31018914069 is the clean measurement: 19 `llm-agents` specs plus
+          # collect-models, a provider configured (`needs_models: true`,
+          # `Collect models` ran), 59 passed / 29 skipped, and an artifact
+          # carrying 139 attribution COST records and not one trace. The
+          # summarizer's own honest-zero message names this flag first among the
+          # candidate causes, and it was right.
+          #
+          # `needs_models` is the lane's own verdict for "this run will execute at
+          # least one provider-dependent spec" (scripts/provider-dependent-specs.mjs,
+          # #1216) — the closest thing the lane has to "this run has spend to
+          # measure", and not the same statement. Two known gaps, neither worth a
+          # second mechanism: `@playground` is deliberately not a provider tag
+          # there, and the provider keys are in the Playwright step's env on every
+          # run, so a spec that installs its own credential and pins a model would
+          # spend without setting the verdict. Gating on it rather than switching
+          # tracing on unconditionally keeps the cheap path for the import-graph
+          # majority of PRs, while the daily and manual, which measure every run,
+          # keep tracing on unconditionally (daily-stable.yml has been hardcoded
+          # `"false"` since #459, before the token monitor existed — the previous
+          # comment here misattributed that to #1197).
+          #
+          # What enabling it COSTS. The "cuts startup time / backend noise"
+          # rationale above is what is being traded away, so be exact about what
+          # is and is not known.
+          #
+          # NOT measured: the startup time, and the backend noise. Nothing in
+          # #1300 measures either, and this comment does not claim to.
+          #
+          # Measured: daily-stable.yml has run with tracing on unconditionally
+          # since #459 (2026-06-30), and the setting has never been touched since
+          # (`git log -S`/`-G`, one commit), across 65 runs of the full `@stable`
+          # sweep — 26 scheduled, 39 dispatched, 2 of them cancelled. So an LLM
+          # run on this lane now boots in a configuration with ~5 weeks and 26
+          # scheduled runs behind it, not a novel one. That is an argument from
+          # precedent. It is weaker than a measurement, and it is what exists.
+          #
+          # One attribution NOT to make, because an earlier version of this
+          # comment made it and this file refutes it 60 lines above: the wedge is
+          # not wholly a `Collect models` problem. CLAUDE.md does attribute
+          # #922/#927 to that sweep, but the LANGFLOW_WORKER_TIMEOUT note above
+          # records run 30410211167 burning TWO 300 s outages — the
+          # post-collect-models wedge, AND "a second block starting within seconds
+          # of a failing Google call", i.e. during the spec run itself. That
+          # second class is exactly the class of run this change newly traces. It
+          # is bounded by the 120 s worker timeout, not eliminated, and tracing
+          # has not been shown to affect it either way.
+          #
+          # One class does NOT keep the cheap path, and it is the one to know
+          # about: decideProviderCoverage() sets `needs_models=true` for a CANARY
+          # run (a CI-only diff, three LLM-free specs), so those now boot with
+          # tracing on and record another honest zero. That follows from reusing
+          # the lane's own verdict instead of inventing a second one, and the
+          # cost is a traced boot on a class of PR that is already paying for a
+          # full Langflow + `Collect models` sweep.
+          LANGFLOW_DEACTIVATE_TRACING: ${{ (contains(needs.detect-specs.outputs.specs, 'observability-monitoring') || needs.detect-specs.outputs.needs_models == 'true') && 'false' || 'true' }}
           # Let Langflow reach the sibling go-httpbin service below (#1128). Its
           # SSRF layer blocks private addresses unless pre-authorized, and the
           # API Request component's validators.url() rejects a single-label host

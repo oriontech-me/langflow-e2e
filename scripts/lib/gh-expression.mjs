@@ -1,0 +1,352 @@
+// Evaluate a GitHub Actions `${{ … }}` expression against a supplied context.
+//
+// WHY THIS EXISTS. #1226 established the rule this repo now works by: a regex over
+// workflow text pins a SPELLING, not a behaviour, and such a guard reliably passes
+// the mutation it was written to catch. #1300's first attempt at a tracing guard
+// proved it again — it asserted that the workflow's LANGFLOW_DEACTIVATE_TRACING
+// value "includes needs_models", and every one of these genuinely broken edits
+// passed it:
+//
+//   needs_models == 'false'          → tracing OFF on exactly the LLM runs
+//   … && 'true' || 'false'           → the same inversion, branches swapped
+//
+// Both mention `needs_models`. Only evaluating the expression can tell them apart,
+// so that is what this does: the caller states what the run looks like
+// (`needs_models` is 'true', the impacted set is empty) and asks what the workflow
+// would actually set.
+//
+// SCOPE, deliberately small. This understands the operators these workflows use —
+// `!`, `==`, `!=`, `&&`, `||`, parentheses, string/number/boolean literals,
+// `contains()`, `startsWith()`, `endsWith()` — and nothing else. Anything outside
+// that grammar, and any context path the caller did not supply, THROWS rather than
+// evaluating to a default. A guard that silently treats an unknown reference as
+// empty is how the class of bug above comes back: the expression would still
+// evaluate, to a number nobody chose. Same fail-closed rule the rest of the repo's
+// verdict scripts follow (#1035).
+//
+// Not a general Actions engine: no `github.*`/`env.*` semantics, no object
+// filters, no `format()`/`join()`/`fromJSON()`, no `hashFiles()`. Add an operator
+// here when a workflow needs one, with a test.
+
+const LITERALS = { true: true, false: false, null: null };
+
+// SEMANTICS ARE TAKEN FROM THE RUNNER, NOT FROM INTUITION. The three rules below
+// were each written wrong first and corrected against
+// actions/runner `src/Sdk/DTExpressions2/Expressions2/EvaluationResult.cs`
+// (`IsFalsy`, `AbstractEqual`, `CoerceTypes`) plus the published expressions docs.
+// An evaluator that a guard trusts has to match the engine, not approximate it.
+
+// Truthiness. For a STRING, only the empty string is falsy — `'0'` and `'false'`
+// are both TRUE. The first version of this function returned false for `'0'`, on
+// the reasoning that Actions "coerces to a number where it can"; that describes
+// the `==` coercion table, not IsFalsy, and applying it here made `'0'` falsy and
+// `'0.0'` truthy, which is not a rule at all.
+function truthy(value) {
+  if (typeof value === "string") return value !== "";
+  if (typeof value === "number") return value !== 0 && !Number.isNaN(value);
+  if (value === null) return false;
+  return Boolean(value);
+}
+
+// The cast `==` applies to a mixed pair: null and '' become 0, a boolean becomes
+// 0/1, a non-numeric string becomes NaN (and NaN equals nothing).
+//
+// The string branch follows the runner's ExpressionUtility.ParseNumber, NOT JS
+// `Number()`, and the difference is not cosmetic: `Number()` accepts `0X1A`,
+// `0O17` and `0b101`, all of which the runner REJECTS (its hex/octal branches test
+// `str[1] == 'x'` / `'o'` lowercase, and it has no binary branch), and it reads
+// `0xFFFFFFFF` as 4294967295 where the runner parses hex through Int32 and gets
+// -1. Using `Number()` was a divergence this module INTRODUCED while claiming the
+// rules had been checked at the source; they had not been.
+function toNumber(value) {
+  if (value === null) return 0;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "number") return value;
+  if (typeof value !== "string") return NaN;
+  const str = value.trim();
+  if (str === "") return 0;
+  // Double.TryParse(AllowLeadingSign | AllowDecimalPoint | AllowExponent).
+  if (/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(str)) return Number(str);
+  // Int32.TryParse(AllowHexSpecifier) — lowercase `0x` only, and Int32-ranged, so
+  // 0xFFFFFFFF is -1 and a 9-digit hex string does not parse at all.
+  if (str.length > 2 && str[0] === "0" && str[1] === "x" && /^[0-9a-fA-F]+$/.test(str.slice(2))) {
+    const digits = str.slice(2);
+    return digits.length > 8 ? NaN : parseInt(digits, 16) | 0;
+  }
+  if (str.length > 2 && str[0] === "0" && str[1] === "o" && /^[0-7]+$/.test(str.slice(2))) {
+    const parsed = parseInt(str.slice(2), 8);
+    return parsed > 2147483647 ? NaN : parsed;
+  }
+  if (str === "Infinity") return Infinity;
+  if (str === "-Infinity") return -Infinity;
+  return NaN;
+}
+
+// `==` is case-INSENSITIVE between two strings (AbstractEqual uses
+// OrdinalIgnoreCase) and casts through toNumber() otherwise. This used to refuse a
+// mixed pair, which sounded fail-closed and was not: it still answered `false` for
+// `null == ''` and `null == 0`, where Actions answers TRUE — a silent wrong value
+// inside the grammar, in a module whose contract is that anything it cannot model
+// throws. Modelling the cast is what makes that contract true here.
+function looseEquals(a, b) {
+  // `undefined` is the one JS value Actions has no counterpart for, and it is the
+  // obvious way to mistype "unset output" (Actions models that as `''`/null). It
+  // must not answer: this is the module's remaining fail-closed branch, and the
+  // header promises one.
+  for (const operand of [a, b]) {
+    if (operand === undefined) {
+      throw new Error(
+        "gh-expression: `undefined` has no Actions counterpart — an unset output is `''` or null; " +
+          "supply one of those rather than leaving it out",
+      );
+    }
+  }
+  if (typeof a === "string" && typeof b === "string") return a.toLowerCase() === b.toLowerCase();
+  if (typeof a === typeof b && a !== null) return a === b;
+  const [na, nb] = [toNumber(a), toNumber(b)];
+  return Number.isNaN(na) || Number.isNaN(nb) ? false : na === nb;
+}
+
+function tokenize(source) {
+  const tokens = [];
+  let i = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    if (/\s/.test(ch)) {
+      i += 1;
+      continue;
+    }
+    if (ch === "'") {
+      // Actions escapes a quote by doubling it.
+      let value = "";
+      i += 1;
+      for (;;) {
+        if (i >= source.length) throw new Error(`gh-expression: unterminated string in \`${source}\``);
+        if (source[i] === "'") {
+          if (source[i + 1] === "'") {
+            value += "'";
+            i += 2;
+            continue;
+          }
+          i += 1;
+          break;
+        }
+        value += source[i];
+        i += 1;
+      }
+      tokens.push({ type: "string", value });
+      continue;
+    }
+    const two = source.slice(i, i + 2);
+    if (two === "&&" || two === "||" || two === "==" || two === "!=") {
+      tokens.push({ type: "op", value: two });
+      i += 2;
+      continue;
+    }
+    if (ch === "(" || ch === ")" || ch === "," || ch === "!") {
+      tokens.push({ type: ch === "!" ? "op" : ch, value: ch });
+      i += 1;
+      continue;
+    }
+    const word = /^[A-Za-z0-9_.\-*]+/.exec(source.slice(i));
+    if (!word) throw new Error(`gh-expression: unexpected character \`${ch}\` in \`${source}\``);
+    tokens.push({ type: "word", value: word[0] });
+    i += word[0].length;
+    continue;
+  }
+  return tokens;
+}
+
+// All three are case-INSENSITIVE in Actions, as the docs state explicitly. Doing
+// them case-sensitively is another silent wrong value rather than a throw.
+//
+// The argument coercion is the runner's ConvertToString, not JS `String()`, and
+// the two differ on exactly one value that reaches here: **null becomes the EMPTY
+// string**, not `"null"`. So `contains('abc', null)` is TRUE in Actions
+// (`"abc".IndexOf("")` is 0) and `contains(null, 'ull')` is FALSE — both the
+// opposite of what `String(null)` gives. This was left wrong by the commit that
+// fixed the case-sensitivity of the same three lines, while citing the file that
+// documents it.
+const lower = (value) => (value === null ? "" : String(value)).toLowerCase();
+const FUNCTIONS = {
+  contains: (haystack, needle) => lower(haystack).includes(lower(needle)),
+  startsWith: (value, prefix) => lower(value).startsWith(lower(prefix)),
+  endsWith: (value, suffix) => lower(value).endsWith(lower(suffix)),
+};
+
+function parse(tokens, source, context) {
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const next = () => tokens[pos++];
+
+  function primary() {
+    const token = next();
+    if (!token) throw new Error(`gh-expression: unexpected end of \`${source}\``);
+    if (token.type === "string") return token.value;
+    if (token.type === "(") {
+      const value = or();
+      const close = next();
+      if (!close || close.type !== ")") throw new Error(`gh-expression: unbalanced parentheses in \`${source}\``);
+      return value;
+    }
+    if (token.type === "op" && token.value === "!") return !truthy(primary());
+    if (token.type === "word") {
+      if (peek()?.type === "(") {
+        const fn = FUNCTIONS[token.value];
+        if (!fn) throw new Error(`gh-expression: unsupported function \`${token.value}()\` in \`${source}\``);
+        next();
+        const args = [];
+        if (peek()?.type !== ")") {
+          for (;;) {
+            args.push(or());
+            if (peek()?.type === ",") {
+              next();
+              continue;
+            }
+            break;
+          }
+        }
+        const close = next();
+        if (!close || close.type !== ")") throw new Error(`gh-expression: unbalanced call in \`${source}\``);
+        if (args.length !== fn.length) {
+          throw new Error(`gh-expression: \`${token.value}()\` takes ${fn.length} argument(s) in \`${source}\``);
+        }
+        return fn(...args);
+      }
+      if (token.value in LITERALS) return LITERALS[token.value];
+      if (/^-?\d+(\.\d+)?$/.test(token.value)) return Number(token.value);
+      if (!(token.value in context)) {
+        throw new Error(
+          `gh-expression: no value supplied for \`${token.value}\` — ` +
+            "supply it in the context rather than letting it default",
+        );
+      }
+      return context[token.value];
+    }
+    throw new Error(`gh-expression: unexpected token \`${token.value}\` in \`${source}\``);
+  }
+
+  function comparison() {
+    let left = primary();
+    while (peek()?.type === "op" && (peek().value === "==" || peek().value === "!=")) {
+      const op = next().value;
+      const right = primary();
+      left = op === "==" ? looseEquals(left, right) : !looseEquals(left, right);
+    }
+    return left;
+  }
+
+  // `&&` and `||` yield an OPERAND, not a boolean — that is what makes
+  // `cond && 'false' || 'true'` the Actions idiom for a ternary, and modelling it
+  // as a boolean would make every such expression evaluate to `true`.
+  function and() {
+    let left = comparison();
+    while (peek()?.type === "op" && peek().value === "&&") {
+      next();
+      const right = comparison();
+      left = truthy(left) ? right : left;
+    }
+    return left;
+  }
+
+  function or() {
+    let left = and();
+    while (peek()?.type === "op" && peek().value === "||") {
+      next();
+      const right = and();
+      left = truthy(left) ? left : right;
+    }
+    return left;
+  }
+
+  const value = or();
+  if (pos !== tokens.length) throw new Error(`gh-expression: trailing input in \`${source}\``);
+  return value;
+}
+
+// Evaluate the body of a `${{ … }}` (without the delimiters).
+export function evaluateExpression(source, context = {}) {
+  return parse(tokenize(source), source, context);
+}
+
+// Evaluate a workflow VALUE as written in the YAML — either a whole-value
+// `${{ … }}`, or a plain scalar (optionally quoted), which is returned as the
+// string it is. A value that merely CONTAINS an interpolation among other text is
+// refused: reading it would need YAML-level string concatenation this does not
+// model, and the alternative — returning it half-evaluated — is the silent
+// almost-right answer the whole module exists to avoid.
+export function evaluateWorkflowValue(raw, context = {}) {
+  let value = stripTrailingComment(String(raw).trim());
+  // `KEY: "${{ … }}"` is idiomatic YAML and means exactly what the unquoted form
+  // means. It used to reach the "mixes an interpolation with literal text" branch
+  // and fail the guard on a purely cosmetic refactor — a false positive on the
+  // most likely edit anyone would make to this line.
+  const quotedExpression = /^(['"])(\$\{\{.*\}\})\1$/s.exec(value);
+  if (quotedExpression) value = quotedExpression[2];
+  const whole = /^\$\{\{(.*)\}\}$/s.exec(value);
+  if (whole) {
+    if (whole[1].includes("${{")) throw new Error(`gh-expression: nested interpolation in \`${value}\``);
+    return evaluateExpression(whole[1], context);
+  }
+  if (value.includes("${{")) {
+    throw new Error(`gh-expression: \`${value}\` mixes an interpolation with literal text — not modelled`);
+  }
+  // Unescaped, because the value is what YAML would hand a consumer, not the
+  // source text: a single-quoted scalar turns `''` into `'`, a double-quoted one
+  // turns `\"` into `"`. Returning the raw inner text made `'it''s'` come back as
+  // `it''s`.
+  if (isClosedQuote(value)) {
+    const inner = value.slice(1, -1);
+    return value[0] === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(.)/g, "$1");
+  }
+  // A plain scalar is returned as its string ONLY when it is actually a plain
+  // scalar. Returning unrecognised text verbatim is how a caller got the wrong
+  // diagnosis: it reported that text as the workflow's VALUE — "leaves tracing
+  // DEACTIVATED: >-" — instead of "this is a shape I cannot read".
+  //
+  // The first attempt at this rejected only a leading `*&>|`, while the commit
+  // message claimed "any unrecognised scalar" now throws. It did not: `- x`,
+  // `? x`, `!tag x`, `%x`, `[a]`, `{a: b}` and a mis-closed quote all still came
+  // back verbatim. The rule is now stated positively — a plain YAML scalar is
+  // what does NOT begin with a c-indicator — so the claim and the code agree.
+  if (/^[-?:,[\]{}#&*!|>'"%@`]/.test(value)) {
+    throw new Error(
+      `gh-expression: \`${value}\` is not a plain YAML scalar (it begins with an indicator ` +
+        "character — alias, anchor, tag, flow collection, block scalar or an unclosed quote) — " +
+        "resolve it before evaluating",
+    );
+  }
+  return value;
+}
+
+// Whether a leading quote closes at the very end, honouring YAML's two escapes:
+// `''` inside single quotes and `\"` inside double quotes. The naive
+// `/^(['"]).*?\1$/` closes at the ESCAPE, so `'it''s'` and `"a \" b"` were treated
+// as unrecognised and returned verbatim, comment included.
+function isClosedQuote(value) {
+  const quote = value[0];
+  if (quote === "'") return /^'(?:[^']|'')*'$/s.test(value);
+  if (quote === '"') return /^"(?:[^"\\]|\\.)*"$/s.test(value);
+  return false;
+}
+
+// A `#` starts a YAML comment when it begins the line or follows whitespace, and
+// not when it sits inside a quoted string or an expression. Only the tail after a
+// closed `${{ … }}` or a closed quote is scanned, so `contains(x, '#tag')` and
+// `"a # b"` survive. Without this, a correct value with a trailing comment failed
+// the guard that reads it, reporting the comment as part of the value.
+function stripTrailingComment(value) {
+  // Quote closers honour YAML's escapes (`''`, `\"`), so `'it''s' # c` no longer
+  // closes at the escape and fall through to "return the whole thing, comment
+  // included".
+  const closers = [/^\$\{\{.*?\}\}/s, /^'(?:[^']|'')*'/s, /^"(?:[^"\\]|\\.)*"/s];
+  for (const closer of closers) {
+    const head = closer.exec(value);
+    if (head) {
+      const tail = value.slice(head[0].length);
+      return /^\s+#/.test(tail) || tail.trim() === "" ? head[0] : value;
+    }
+  }
+  const comment = /\s#/.exec(value);
+  return comment ? value.slice(0, comment.index).trim() : value;
+}

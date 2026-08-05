@@ -46,6 +46,15 @@ export const UNATTRIBUTED_REASON =
 //     the caller's date. Each band is validated the same way a flat rate is
 //     (drop a non-numeric rate); a model whose bands are ALL invalid is
 //     dropped entirely, same policy as an invalid flat rate.
+//
+// `provider` is carried through when the entry (or band) declares one, and only
+// then (#1300 gap 1). This function used to DROP it — the field existed solely
+// for scripts/sync-model-prices.mjs, which reads the raw JSON — so the run's own
+// summarizer had no provider axis at all and #1183 owed its per-provider figure
+// as a hand rollup of model ids in an issue comment. A model with no `provider`
+// key keeps exactly the shape it had before, so a caller's fixture that omits
+// the field is unaffected, and an absent provider stays honestly absent instead
+// of becoming a default. See declaredProvider() for why it is never inferred.
 export function parsePrices(raw) {
   const parsed = JSON.parse(raw);
   const prices = {};
@@ -53,11 +62,14 @@ export function parsePrices(raw) {
     if (model.startsWith("_")) continue; // "_comment"
     if (Array.isArray(entry)) {
       const bands = entry
-        .map((band) => ({
-          since: typeof band?.since === "string" ? band.since : null,
-          inputPerMillion: Number(band?.inputPerMillion),
-          outputPerMillion: Number(band?.outputPerMillion),
-        }))
+        .map((band) => withProvider(
+          {
+            since: typeof band?.since === "string" ? band.since : null,
+            inputPerMillion: Number(band?.inputPerMillion),
+            outputPerMillion: Number(band?.outputPerMillion),
+          },
+          band,
+        ))
         .filter((band) => Number.isFinite(band.inputPerMillion) && Number.isFinite(band.outputPerMillion));
       if (bands.length) prices[model] = bands;
       continue;
@@ -65,9 +77,48 @@ export function parsePrices(raw) {
     const input = Number(entry?.inputPerMillion);
     const output = Number(entry?.outputPerMillion);
     if (!Number.isFinite(input) || !Number.isFinite(output)) continue;
-    prices[model] = { inputPerMillion: input, outputPerMillion: output };
+    prices[model] = withProvider({ inputPerMillion: input, outputPerMillion: output }, entry);
   }
   return prices;
+}
+
+// The one place that decides whether a price entry declares a provider (#1300
+// gap 1). It is READ, never DERIVED, and it is worth being precise about what
+// that does and does not buy, because the first draft of this comment overstated
+// it and the review of #1300 refuted the overstatement.
+//
+// What it buys: the provider comes off the SAME table row that priced the tokens,
+// so a run's dollars and its provider rollup can never disagree about where they
+// came from, and a model the table says nothing about stays honestly unknown
+// instead of being folded into whichever bucket a prefix rule guessed.
+//
+// What it does NOT buy: the table is keyed by model ID, so it cannot separate two
+// ACCOUNTS that serve the same name. `gpt-5-mini` is the live example — the single
+// row for it declares `azure` because it prices an Azure AI Foundry deployment
+// (#1281), and a genuine OpenAI `gpt-5-mini` call (the id is in the OpenAI catalog
+// under tests/helpers/provider-setup/data/models.json) is therefore booked to
+// azure. model-prices.json's own header already warns that a row "prices a NAME";
+// that warning covers this field too. So a prefix rule and this table are wrong on
+// different models, not wrong-vs-right — what makes reading the table the better
+// of the two is that it is auditable and correctable in one place, while a
+// derivation is silent and would also put a SECOND notion of identity on the same
+// data, since resolvePriceKey() below matches ids by substring in both directions.
+//
+// Empty/blank counts as absent, matching sync-model-prices.mjs's own rejection of
+// a whitespace provider.
+function declaredProvider(entry) {
+  const provider = entry?.provider;
+  return typeof provider === "string" && provider.trim() ? provider.trim() : null;
+}
+
+// Adds `provider` to a parsed band/flat rate ONLY when one is declared, so an
+// entry without the field is byte-identical to what parsePrices() returned
+// before #1300 (`{provider: undefined}` is a different object under
+// deepStrictEqual, and a caller asserting on the parsed shape would break for a
+// field nobody set).
+function withProvider(parsed, source) {
+  const provider = declaredProvider(source);
+  return provider ? { ...parsed, provider } : parsed;
 }
 
 export function loadPrices(filePath) {
@@ -217,6 +268,47 @@ function resolveBands(model, prices) {
   return key ? toBands(prices[key]) : null;
 }
 
+// Who BILLED a model's tokens, resolved through the SAME two steps that price
+// them — resolvePriceKey() then selectBand() — so a run's provider rollup and its
+// dollars can never disagree about which table row they came from (#1300 gap 1).
+// Returns null when the answer is not declared anywhere the price table can be
+// read; the caller reports that as its own bucket and never as a provider.
+//
+// The date-band fallback is the one branch worth arguing. When no band covers
+// `date` (the run predates every recorded rate — #1211's "never guess a price"
+// case) the model is legitimately UNPRICED, but who bills it is still stated by
+// the entry: a rate the table cannot answer for is not the same question as an
+// account it names. So fall back to the entry's own declaration, and only when
+// every band AGREES — bands that disagree describe a model that changed accounts
+// over time, and picking one of them by hand is exactly the silent derivation
+// this function exists to refuse.
+//
+// The fallback fires ONLY when no band is effective, and that is a real
+// distinction rather than a restatement (found in review of #1300). When a band
+// IS effective but declares no provider, the effective row's silence is the
+// answer: reaching past it to a sibling band would report an account the row
+// that priced these tokens does not name — the same "dollars and provider from
+// one row" property this function exists for, broken in the one case nobody
+// would look at. sync-model-prices.mjs rejects a band with no provider, so
+// model-prices.json cannot reach that state today; resolveProvider() is exported
+// and aggregate() takes an arbitrary price object, so the branch is still live.
+export function resolveProvider(model, prices, date) {
+  const bands = resolveBands(model, prices);
+  if (!bands) return null;
+  const effective = selectBand(bands, date);
+  return effective ? declaredProvider(effective) : unanimousProvider(bands);
+}
+
+// Unanimous means EVERY band says the same thing, and a band that says nothing is
+// not one of them. Dropping the silent ones first (`filter(Boolean)`) let bands
+// [azure, (none)] answer "azure", which contradicts this path's own rule and
+// contradicts the effective-band branch above, where silence IS the answer — the
+// same principle has to hold for a set as for one row (Copilot review of #1300).
+function unanimousProvider(bands) {
+  const declared = new Set(bands.map(declaredProvider));
+  return declared.size === 1 && !declared.has(null) ? [...declared][0] : null;
+}
+
 export function usdFor(model, promptTokens, completionTokens, prices, date) {
   const bands = resolveBands(model, prices);
   if (!bands) return null;
@@ -265,6 +357,11 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
   }
 
   const models = new Map();
+  // The provider rollup (#1300 gap 1). Keyed on the resolved provider itself, with
+  // `null` — a real Map key — for "no provider is declared for this model". A
+  // sentinel string would collide with a provider legitimately named that; the
+  // null key is what keeps the unknown bucket distinguishable from a named one.
+  const providers = new Map();
   const specs = new Map();
   // §5.3: the cross-tab the platform's fact table needs. Keyed to match the DB's
   // own row identity -- (run_id, COALESCE(test_key,''), model), see
@@ -380,6 +477,40 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
       if (acc.usd_estimated !== null && usd !== null) acc.usd_estimated += usd;
       models.set(m.model, acc);
 
+      // Same accumulation as byModel, one level coarser (#1300 gap 1), with one
+      // DELIBERATE difference: a bucket that absorbed even one unpriceable span
+      // reports `null` dollars, not the partial sum of its priced ones. byModel
+      // cannot face the choice — a model id is either priced or not for the whole
+      // run, since the date is fixed — and `totals` is a documented FLOOR, labelled
+      // as one in the summary. A provider bucket is the only figure here that can
+      // MIX, and it is a table row: an unlabelled partial sum in a row is read as
+      // that provider's spend, which is the wrong-number-over-honest-null trade
+      // this module refuses everywhere else. `models` names the ids that landed
+      // here, so the null is actionable rather than a dead end, and so a reader of
+      // any provider row can check what it is made of.
+      // Reachable today only through #1211's band-uncovered date; the rule is
+      // written down because the next dated entry is what makes it live.
+      const providerKey = resolveProvider(m.model, prices, date);
+      const bucket =
+        providers.get(providerKey) ??
+        {
+          provider: providerKey,
+          models: new Set(),
+          calls: 0,
+          prompt_tokens: 0,
+          completion_tokens: 0,
+          total_tokens: 0,
+          usd_estimated: usd === null ? null : 0,
+        };
+      bucket.models.add(m.model);
+      bucket.calls += Number(m.calls) || 1;
+      bucket.prompt_tokens += prompt;
+      bucket.completion_tokens += completion;
+      bucket.total_tokens += total;
+      if (usd === null) bucket.usd_estimated = null;
+      else if (bucket.usd_estimated !== null) bucket.usd_estimated += usd;
+      providers.set(providerKey, bucket);
+
       const rowKey = `${specModelKey}${m.model}`;
       const row =
         specModels.get(rowKey) ??
@@ -453,6 +584,33 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
   return {
     totals,
     byModel: [...models.values()].sort((a, b) => b.total_tokens - a.total_tokens),
+    // SPAN-derived, exactly like byModel — so it sums to `spanTokens`, never to
+    // `totals.total_tokens`, and the gap between the two is whatever `mismatches[]`
+    // reports (reports/README.md's token-history.jsonl row is the authority on that
+    // pair). The `models` Set becomes a sorted array here rather than being carried
+    // as one: a Set does not survive JSON.stringify, and this value goes straight
+    // onto a history line.
+    //
+    // Ties break lexically, which the sibling rollups do not do — their order on a
+    // tie falls out of which span the trace listed first. To be clear about what
+    // that is and is not: `by_model` and `by_spec` land on the SAME history line,
+    // so "this one is diffed and they are not" would be false. The honest reason
+    // is narrower — a provider tie is the LIKELY one (a handful of buckets, often
+    // one model each) where a model tie is not, and this rollup is new, so fixing
+    // it here costs nothing while changing the siblings would rewrite an order
+    // consumers may have come to expect. resolvePriceKey() breaks its own ties
+    // lexically for the same "never leave it to input order" reason.
+    //
+    // `null` (the unknown bucket) sorts last AMONG EQUALS, not last overall: the
+    // primary comparator still wins, so an unknown bucket with the most tokens
+    // sorts first, as it should.
+    byProvider: [...providers.values()]
+      .map((bucket) => ({ ...bucket, models: [...bucket.models].sort() }))
+      .sort(
+        (a, b) =>
+          b.total_tokens - a.total_tokens ||
+          (a.provider === null ? 1 : b.provider === null ? -1 : a.provider.localeCompare(b.provider)),
+      ),
     bySpec: [...specs.values()].sort((a, b) => b.total_tokens - a.total_tokens),
     bySpecModel: [...specModels.values()].sort((a, b) => b.total_tokens - a.total_tokens),
     spanTokens,

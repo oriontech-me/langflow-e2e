@@ -9,6 +9,7 @@ import {
   parsePrices,
   loadPrices,
   resolvePriceKey,
+  resolveProvider,
   normalizeSpecPath,
   UNATTRIBUTED_REASON,
 } from "./token-cost.mjs";
@@ -1080,4 +1081,304 @@ test("the unattributed reason names the UI-delete path the hook cannot see (#125
   // reads as a cause that does not exist.
   assert.match(UNATTRIBUTED_REASON, /through the UI/);
   assert.match(aggregate({ probes: [probe()], prices: PRICES }).unattributed.reason, /through the UI/);
+});
+
+// --- by_provider: the axis #1183 owed and this schema did not record (#1300 gap 1) ---
+//
+// The whole point of these tests is that the provider is READ, never derived. The
+// rejected alternative — an id-prefix rule — gets every model in the shipped table
+// right and gets `gpt-5-mini` wrong, because that row prices an Azure AI Foundry
+// deployment (#1281): a prefix rule would fold its spend into the openai lanes'
+// row, and those are different accounts.
+
+// Two openai models, one anthropic, and the Azure deployment whose id looks openai.
+// Rates are the shipped ones so a reader can check a figure by hand.
+const MULTI = {
+  "gpt-4o-mini": { provider: "openai", inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  "gpt-4o": { provider: "openai", inputPerMillion: 2.5, outputPerMillion: 10 },
+  "claude-haiku-4-5": { provider: "anthropic", inputPerMillion: 1, outputPerMillion: 5 },
+  "gpt-5-mini": { provider: "azure", inputPerMillion: 0.25, outputPerMillion: 2 },
+};
+
+const spanOf = (model, prompt, completion) => ({
+  model,
+  prompt_tokens: prompt,
+  completion_tokens: completion,
+  total_tokens: prompt + completion,
+  calls: 1,
+});
+
+const multiProbe = (models, over = {}) => ({
+  trace_id: "t1",
+  flow_id: "f1",
+  status: "ok",
+  total_tokens: models.reduce((n, m) => n + m.total_tokens, 0),
+  models,
+  ...over,
+});
+
+test("parsePrices keeps a declared provider on a flat entry and on every band", () => {
+  const prices = parsePrices(
+    JSON.stringify({
+      flat: { provider: "openai", inputPerMillion: 1, outputPerMillion: 2 },
+      banded: [
+        { since: "2026-01-01", provider: "anthropic", inputPerMillion: 2, outputPerMillion: 10 },
+        { since: "2026-09-01", provider: "anthropic", inputPerMillion: 3, outputPerMillion: 15 },
+      ],
+    }),
+  );
+  assert.equal(prices.flat.provider, "openai");
+  assert.deepEqual(
+    prices.banded.map((b) => b.provider),
+    ["anthropic", "anthropic"],
+  );
+});
+
+// The shape guard for every caller that predates #1300: an entry with no
+// `provider` must parse to exactly the object it parsed to before, not to one
+// carrying `provider: undefined` (a different object under deepStrictEqual).
+test("parsePrices omits the provider key entirely when none is declared", () => {
+  const prices = parsePrices(JSON.stringify({ x: { inputPerMillion: 1, outputPerMillion: 2 } }));
+  assert.deepEqual(prices, { x: { inputPerMillion: 1, outputPerMillion: 2 } });
+  assert.ok(!("provider" in prices.x));
+});
+
+test("parsePrices treats a blank provider as absent, matching sync-model-prices' rejection", () => {
+  const prices = parsePrices(JSON.stringify({ x: { provider: "   ", inputPerMillion: 1, outputPerMillion: 2 } }));
+  assert.ok(!("provider" in prices.x));
+  assert.equal(resolveProvider("x", prices, "2026-08-05"), null);
+});
+
+test("resolveProvider reads the declared provider, through the same key resolution as the price", () => {
+  assert.equal(resolveProvider("gpt-4o-mini", MULTI, "2026-08-05"), "openai");
+  // Resolved by substring, exactly like usdFor: a dated snapshot inherits its
+  // family's row, so it must inherit that row's provider too.
+  assert.equal(resolveProvider("claude-haiku-4-5-20260101", MULTI, "2026-08-05"), "anthropic");
+});
+
+test("resolveProvider keeps the Azure deployment out of openai's bucket (#1281)", () => {
+  // The one case that makes an id-prefix rule wrong rather than merely fragile.
+  assert.equal(resolveProvider("gpt-5-mini", MULTI, "2026-08-05"), "azure");
+  assert.equal(resolveProvider("gpt-4o", MULTI, "2026-08-05"), "openai");
+});
+
+test("resolveProvider returns null for a model the price table does not resolve — never a guess", () => {
+  assert.equal(resolveProvider("some-new-model", MULTI, "2026-08-05"), null);
+  assert.equal(resolveProvider("", MULTI, "2026-08-05"), null);
+  assert.equal(resolveProvider("gpt-4o-mini", {}, "2026-08-05"), null);
+});
+
+test("resolveProvider picks the band effective on the date when bands disagree (a model that changed accounts)", () => {
+  const migrated = {
+    m: [
+      { since: "2026-01-01", provider: "openai", inputPerMillion: 1, outputPerMillion: 2 },
+      { since: "2026-06-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 2 },
+    ],
+  };
+  assert.equal(resolveProvider("m", migrated, "2026-05-31"), "openai");
+  assert.equal(resolveProvider("m", migrated, "2026-06-01"), "azure");
+});
+
+test("a date no band covers still reports the provider when every band agrees — unpriced is not unattributed", () => {
+  // #1211 refuses to GUESS a rate for a date it has no band for. Who bills the
+  // model is a different question, and this table answers it unambiguously.
+  const banded = {
+    m: [{ since: "2026-06-01", provider: "anthropic", inputPerMillion: 1, outputPerMillion: 2 }],
+  };
+  assert.equal(usdFor("m", 10, 10, banded, "2026-01-01"), null, "the rate is genuinely unknown");
+  assert.equal(resolveProvider("m", banded, "2026-01-01"), "anthropic", "the account is not");
+});
+
+test("a date no band covers reports NO provider when the bands disagree about it", () => {
+  const migrated = {
+    m: [
+      { since: "2026-06-01", provider: "openai", inputPerMillion: 1, outputPerMillion: 2 },
+      { since: "2026-07-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 2 },
+    ],
+  };
+  assert.equal(resolveProvider("m", migrated, "2026-01-01"), null);
+});
+
+test("a band that declares NO provider breaks unanimity — it is silent, not agreeing", () => {
+  // Copilot review of #1300: dropping the silent bands before the unanimity check
+  // let [azure, (none)] answer "azure" on a path whose rule is "only when every
+  // band agrees". Same principle as the effective-band case above, applied to a
+  // set instead of one row.
+  const mixed = {
+    m: [
+      { since: "2026-06-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 1 },
+      { since: "2026-07-01", inputPerMillion: 1, outputPerMillion: 1 },
+    ],
+  };
+  assert.equal(usdFor("m", 10, 10, mixed, "2026-01-01"), null, "no band covers this date");
+  assert.equal(resolveProvider("m", mixed, "2026-01-01"), null, "so the entry must not answer azure");
+  // Still unanimous when every band does declare, which is the case the fallback exists for.
+  const agreeing = {
+    m: [
+      { since: "2026-06-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 1 },
+      { since: "2026-07-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 1 },
+    ],
+  };
+  assert.equal(resolveProvider("m", agreeing, "2026-01-01"), "azure");
+});
+
+test("an effective band that declares no provider answers null — the fallback is for NO band, not a silent one", () => {
+  // Found in review of #1300: the fallback used to fire on any absent provider,
+  // so an effective band that says nothing borrowed a sibling band's account —
+  // reporting a provider the row that priced these tokens does not name, which
+  // is the one property resolveProvider() exists to hold.
+  const partial = {
+    m: [
+      { since: "2026-01-01", provider: "azure", inputPerMillion: 1, outputPerMillion: 1 },
+      { since: "2026-09-01", inputPerMillion: 1, outputPerMillion: 1 },
+    ],
+  };
+  assert.equal(usdFor("m", 1e6, 0, partial, "2026-09-15"), 1, "the later band IS effective and prices the row");
+  assert.equal(resolveProvider("m", partial, "2026-09-15"), null, "so its silence is the answer, not azure");
+  assert.equal(resolveProvider("m", partial, "2026-05-01"), "azure", "the earlier band still answers for its own dates");
+});
+
+test("byProvider breaks a tie lexically, so a history line's row order cannot move on its own", () => {
+  // Two providers with identical totals: without the tie-break the order falls
+  // out of which span the trace listed first, and this value is appended to
+  // reports/token-history.jsonl and diffed across runs.
+  const prices = {
+    a1: { provider: "zeta", inputPerMillion: 1, outputPerMillion: 1 },
+    b1: { provider: "alpha", inputPerMillion: 1, outputPerMillion: 1 },
+    c1: { inputPerMillion: 1, outputPerMillion: 1 },
+  };
+  const span = (model) => ({ model, calls: 1, prompt_tokens: 50, completion_tokens: 50, total_tokens: 100 });
+  const order = (models) =>
+    aggregate({
+      probes: [{ trace_id: "t", total_tokens: 100 * models.length, models: models.map(span) }],
+      prices,
+    }).byProvider.map((p) => p.provider);
+
+  assert.deepEqual(order(["a1", "b1", "c1"]), ["alpha", "zeta", null]);
+  assert.deepEqual(order(["c1", "b1", "a1"]), ["alpha", "zeta", null], "input order does not reach the output");
+});
+
+test("byProvider rolls the models up by who billed them, keeping azure its own row", () => {
+  const agg = aggregate({
+    probes: [
+      multiProbe([spanOf("gpt-4o-mini", 100, 100), spanOf("gpt-4o", 100, 100)]),
+      multiProbe([spanOf("claude-haiku-4-5", 100, 100)], { trace_id: "t2" }),
+      multiProbe([spanOf("gpt-5-mini", 100, 100)], { trace_id: "t3" }),
+    ],
+    prices: MULTI,
+    date: "2026-08-05",
+  });
+  const byProvider = Object.fromEntries(agg.byProvider.map((p) => [p.provider, p]));
+  assert.deepEqual(Object.keys(byProvider).sort(), ["anthropic", "azure", "openai"]);
+  assert.equal(byProvider.openai.calls, 2, "both openai models land in one row");
+  assert.equal(byProvider.openai.total_tokens, 400);
+  assert.deepEqual(byProvider.openai.models, ["gpt-4o", "gpt-4o-mini"], "sorted, and named");
+  assert.equal(byProvider.azure.total_tokens, 200, "the Foundry deployment is NOT openai spend");
+  // 100/1e6*0.15 + 100/1e6*0.6 + 100/1e6*2.5 + 100/1e6*10
+  assert.equal(byProvider.openai.usd_estimated.toFixed(6), (0.000015 + 0.00006 + 0.00025 + 0.001).toFixed(6));
+});
+
+test("byProvider sums to the same tokens as byModel — both are span-derived", () => {
+  const agg = aggregate({
+    probes: [
+      multiProbe([spanOf("gpt-4o-mini", 40, 48), spanOf("claude-haiku-4-5", 10, 20)]),
+      multiProbe([spanOf("gpt-4o-mini", 5, 5)], { trace_id: "t2" }),
+    ],
+    prices: MULTI,
+    date: "2026-08-05",
+  });
+  const sum = (rows) => rows.reduce((n, r) => n + r.total_tokens, 0);
+  assert.equal(sum(agg.byProvider), sum(agg.byModel));
+  assert.equal(sum(agg.byProvider), agg.spanTokens, "so it reconciles against span_tokens, not totals");
+  const usdSum = (rows) => rows.reduce((n, r) => n + r.usd_estimated, 0);
+  assert.equal(usdSum(agg.byProvider).toFixed(10), usdSum(agg.byModel).toFixed(10));
+});
+
+test("a model with no provider lands in a null bucket that NAMES its ids, never folded into a neighbour", () => {
+  const agg = aggregate({
+    probes: [multiProbe([spanOf("gpt-4o-mini", 10, 10), spanOf("brand-new-model", 30, 30)])],
+    prices: MULTI,
+    date: "2026-08-05",
+  });
+  const unknown = agg.byProvider.find((p) => p.provider === null);
+  assert.ok(unknown, "an unresolvable provider is its own bucket");
+  assert.deepEqual(unknown.models, ["brand-new-model"]);
+  assert.equal(unknown.total_tokens, 60);
+  assert.equal(unknown.usd_estimated, null, "unpriced stays null dollars, never 0");
+  assert.equal(agg.byProvider.find((p) => p.provider === "openai").total_tokens, 20);
+});
+
+test("a provider bucket mixing a priced and a band-uncovered model reports null, not a partial sum", () => {
+  // The only path that can mix inside ONE bucket: both models are anthropic, one
+  // has no band for this date. A partial sum in a table row reads as that
+  // provider's spend; null plus the named ids is the honest answer.
+  const mixed = {
+    "claude-haiku-4-5": { provider: "anthropic", inputPerMillion: 1, outputPerMillion: 5 },
+    "claude-future": [{ since: "2026-09-01", provider: "anthropic", inputPerMillion: 1, outputPerMillion: 5 }],
+  };
+  const agg = aggregate({
+    probes: [multiProbe([spanOf("claude-haiku-4-5", 10, 10), spanOf("claude-future", 10, 10)])],
+    prices: mixed,
+    date: "2026-08-05",
+  });
+  assert.equal(agg.byProvider.length, 1);
+  assert.equal(agg.byProvider[0].provider, "anthropic");
+  assert.equal(agg.byProvider[0].usd_estimated, null);
+  assert.deepEqual(agg.byProvider[0].models, ["claude-future", "claude-haiku-4-5"]);
+  assert.deepEqual(agg.unpricedModels, ["claude-future"], "and the cause is named as usual");
+});
+
+test("byProvider is sorted by tokens and is empty when nothing was captured", () => {
+  const agg = aggregate({
+    probes: [multiProbe([spanOf("gpt-4o-mini", 1, 1), spanOf("claude-haiku-4-5", 50, 50)])],
+    prices: MULTI,
+    date: "2026-08-05",
+  });
+  assert.deepEqual(
+    agg.byProvider.map((p) => p.provider),
+    ["anthropic", "openai"],
+  );
+  assert.deepEqual(aggregate({ probes: [], prices: MULTI }).byProvider, []);
+});
+
+test("byProvider carries a plain array, not a Set — it goes straight onto a history line", () => {
+  const agg = aggregate({ probes: [probe()], prices: PRICES, date: "2026-08-05" });
+  const roundTripped = JSON.parse(JSON.stringify(agg.byProvider));
+  assert.deepEqual(roundTripped, agg.byProvider, "a Set would stringify to {} and lose the ids");
+});
+
+// The guard that keeps `unknown` from being the normal answer. sync-model-prices.mjs
+// already refuses to build a payload from an entry with no provider, but that only
+// runs on the sync lane; this asserts the same requirement over the SHIPPED table,
+// which is what every run's provider rollup reads.
+test("every entry and every band of the shipped price table declares a provider", () => {
+  const raw = JSON.parse(readFileSync(new URL("./model-prices.json", import.meta.url), "utf8"));
+  for (const [model, entry] of Object.entries(raw)) {
+    if (model.startsWith("_")) continue;
+    for (const band of Array.isArray(entry) ? entry : [entry]) {
+      assert.ok(
+        typeof band?.provider === "string" && band.provider.trim(),
+        `${model}: every entry (and band) needs a provider, or its spend rolls up as "unknown"`,
+      );
+    }
+  }
+});
+
+test("no model the suite actually measured rolls up as an unknown provider", () => {
+  // The same id list #1197's finding I6 pinned for prices, asked of the provider
+  // axis: a model that resolves a price but no provider is a half-filled row.
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  for (const model of [
+    "gpt-4o-mini",
+    "gpt-4o",
+    "gpt-5-mini",
+    "claude-haiku-4-5",
+    "claude-sonnet-5",
+    "gemini-flash-latest",
+    "gemini-3.5-flash",
+  ]) {
+    assert.ok(resolveProvider(model, prices, "2026-08-05"), `${model} must roll up to a named provider`);
+  }
+  // And the axes stay distinct: the Foundry deployment is not openai spend.
+  assert.equal(resolveProvider("gpt-5-mini", prices, "2026-08-05"), "azure");
 });
