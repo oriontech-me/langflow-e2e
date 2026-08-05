@@ -103,9 +103,17 @@ test.describe("ModelInputComponent", () => {
     },
   );
 
-  test(
+  test.fixme(
     "the trigger shows the selected model name",
-    { tag: ["@stable", "@release", "@components", "@workspace", "@model-provider"] },
+    // Quarantined at triage of #1296: hard failure on 2026-08-05 — the canvas
+    // renders no node at all (`[data-testid^="rf__node-"]` never resolves), on
+    // all 3 attempts, with zero overlap against any measured backend-outage
+    // window on its shard. The mass-failure guard tripped that day, so the
+    // workflow auto-removed nothing; on a normal daily this tag would have been
+    // removed automatically, which is what this restores.
+    // Restore (`test` + `@stable`) in #1304 — note that a first occurrence needs
+    // evidence about why it failed that day, not just a green run.
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await addLanguageModelNode(page);
 
