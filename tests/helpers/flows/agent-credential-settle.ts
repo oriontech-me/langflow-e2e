@@ -23,15 +23,75 @@
 //
 // It is pure over the flow payload, which is what lets the `node --test` lane cover
 // the classification instead of re-deriving it from a daily's artifacts.
+//
+// #1274 — WHY THIS NO LONGER READS `api_key`, AND WHY IT IS STILL CALLED
+// `agent-credential-settle`
+//
+// Upstream #14311 ("stop automatic provider field binding", `646bdd6b`, on the 1.12
+// line since 2026-08-04) deleted the block that wrote the variable name into
+// `api_key`. Measured on `1.12.0.dev16`: after selecting a Google model the persisted
+// node reads `api_key: ""`, `load_from_db: false`, on every read from mount onward —
+// so the transition this module used to wait for cannot happen, and 13 `@stable`
+// specs failed the guard on the 2026-08-05 daily waiting 20s for it.
+//
+// The credential is no longer stored, but it is still DETERMINED — by the provider of
+// the selected model. With `api_key` empty, `get_api_key_for_provider`
+// (`lfx/base/models/unified_models/credentials.py`) resolves
+// `get_provider_secret_variable_key(provider)` from the user's global variables. So
+// this module now checks `model.value[0].provider`, which is not a weaker proxy for
+// the credential — it is the input the runtime derives it from.
+//
+// The race #751 exists for is UNCHANGED and still real, which is why the guard is
+// re-pointed rather than deleted. Same measurement, read 0: a freshly mounted node
+// carries `{ name: "claude-opus-5", provider: "Anthropic" }` — the selector's default
+// — and only later flips to the requested `{ name: "gemini-2.5-flash", provider:
+// "Google Generative AI" }`. A caller that opens the Playground in between runs the
+// DEFAULT provider's model, which is the original #744 signature (and, with the
+// Anthropic key drained, an immediate hard failure).
+//
+// `api_key` is not asserted in either direction. Requiring it empty would swap one
+// dated premise for another and break the `manual.yml` lanes that can still dispatch
+// a pre-#14311 build; the field is simply no longer evidence about anything.
+//
+// The FILENAME and the `#751`/`#1072` references stay: both numbers appear in issue
+// bodies, triage comments and error text already in circulation, and renaming the
+// module would cost that traceability to buy an accurate noun.
 
 /** The provider binding of the Agent node, as persisted in a flow payload. */
 export interface AgentCredentialProbe {
   /**
    * `template.api_key.value` — the NAME of the Langflow global variable holding
-   * the key (e.g. `"OPENAI_API_KEY"`), never the secret itself. Empty string on a
-   * freshly instantiated template, before any provider is configured.
+   * the key (e.g. `"OPENAI_API_KEY"`), never the secret itself.
+   *
+   * **Reported, never classified on (#1274).** Since #14311 this is `""` on every
+   * read, so it cannot separate any two states; it stays on the probe because the
+   * failure diagnostic prints it, and a reader who knows the old behaviour needs to
+   * see that it really is empty rather than wonder whether it was checked.
    */
   credential: string;
+  /**
+   * The `provider` of every model selected on the unified `ModelInput` selector —
+   * Langflow's own spelling, e.g. `"Google Generative AI"`, `"Anthropic"`,
+   * `"Ollama"` (see `langflowProviderName`).
+   *
+   * This is the axis the guard settles on. With `api_key` empty the runtime derives
+   * the credential from exactly this field, so it is what proves the flow will run
+   * against the provider the caller asked for.
+   */
+  selectedProviders: string[];
+  /**
+   * The selected entries as PAIRS, which is what the classifier decides on.
+   *
+   * `selectedProviders` and `selectedModels` are flat projections for the
+   * diagnostic, and comparing them independently accepts a combination no entry
+   * contains: with `[{name:"gemini-2.5-flash",provider:"OpenAI"},
+   * {name:"gpt-4o",provider:"Google Generative AI"}]`, "google + gemini" matched
+   * across two different entries and classified as `settled`. Contrived on a
+   * single-select widget, but the pairing is strictly stronger at no cost, and the
+   * test comment asserting the two "come off the SAME entry" was describing a
+   * property the code did not have.
+   */
+  selected: Array<{ name: string; provider: string }>;
   /**
    * The `name` of every model selected on the unified `ModelInput` selector.
    *
@@ -47,22 +107,36 @@ export interface AgentCredentialProbe {
 }
 
 export type CredentialSettleVerdict =
-  /** Credential AND (when known) model are both applied — nothing to wait for. */
+  /** Provider AND (when pinned) model are both applied — nothing to wait for. */
   | "settled"
   /**
-   * The credential is right but the requested model is not applied yet. The
-   * dropdown's default binding IS the expected credential — i.e. the caller asked
-   * for anthropic — so the credential axis alone proves nothing here.
+   * The provider matches and a pinned model was expected, but NO model name is
+   * observable — a degenerate payload (an entry carrying `provider` and no `name`).
+   * Kept separate from `model-not-applied` because there is no other model to name
+   * in the diagnostic, so "a DIFFERENT model is persisted" would be a claim about
+   * something nobody saw.
    */
   | "model-pending"
   /**
-   * The requested model is applied but the credential still is not: the selection
-   * registered and only the rebind has yet to be persisted. Waiting helps.
+   * A DIFFERENT provider is persisted than the one asked for (#1274). This is the
+   * state the old `credential-pending` used to describe, moved onto the axis that
+   * still exists: the selection has not landed, so the run would resolve the WRONG
+   * provider's key. Waiting can help — the mount-time default sits here until the
+   * autosave carries the pick.
    */
-  | "credential-pending"
+  | "provider-pending"
   /**
-   * A DIFFERENT, non-empty model is persisted: the provider-setup step selected
-   * something other than what the caller asked for. Waiting cannot fix it.
+   * A model IS persisted but no entry carries a `provider`, so the axis is
+   * unobservable — NOT a wrong provider. Separate verdict because
+   * `provider-pending`'s guidance says "the observed provider separates them", and
+   * on this state the diagnostic prints `providers=[]`: telling a reader to compare
+   * something the run never observed is the mis-triage this module exists to stop.
+   */
+  | "provider-unobservable"
+  /**
+   * A DIFFERENT, non-empty model is persisted under the RIGHT provider: the
+   * provider-setup step selected something other than what the caller asked for.
+   * Waiting cannot fix it.
    */
   | "model-not-applied"
   /** No model is persisted at all — nothing has carried the selection. */
@@ -100,17 +174,25 @@ function credentialOf(node: FlowNodeLike): string {
  * field carried one before the unified selector, and a stale flow payload must
  * degrade to "no model" rather than throw inside a poll.
  */
-function selectedModelsOf(node: FlowNodeLike): string[] {
+function selectedEntriesOf(
+  node: FlowNodeLike,
+): Array<{ name: string; provider: string }> {
   const value = node.data?.node?.template?.model?.value;
   const entries = Array.isArray(value) ? value : [value];
   return entries
     .map((entry) => {
-      if (typeof entry === "string") return entry;
-      const name = (entry as { name?: unknown } | null)?.name;
-      return typeof name === "string" ? name : "";
+      // A bare string is a model NAME and says nothing about the provider — the
+      // pre-unified-selector shape, kept tolerated so a stale payload degrades to
+      // "no provider observed" rather than to a wrong one.
+      if (typeof entry === "string") return { name: entry, provider: "" };
+      const record = entry as Record<string, unknown> | null;
+      const str = (key: string) =>
+        typeof record?.[key] === "string" ? (record[key] as string) : "";
+      return { name: str("name"), provider: str("provider") };
     })
-    .filter((name) => name.length > 0);
+    .filter((entry) => entry.name.length > 0 || entry.provider.length > 0);
 }
+
 
 /**
  * Reads the Agent node's binding out of a `GET /api/v1/flows/{id}` payload, or
@@ -134,32 +216,43 @@ export function readAgentCredentialProbe(
     (node) => node?.data?.type === "Agent",
   );
   if (!agent) return null;
+  const selected = selectedEntriesOf(agent);
   return {
     credential: credentialOf(agent),
-    selectedModels: selectedModelsOf(agent),
+    selected,
+    selectedProviders: selected.map((e) => e.provider).filter((p) => p.length > 0),
+    selectedModels: selected.map((e) => e.name).filter((n) => n.length > 0),
   };
 }
 
 /**
  * Which state the probe is in.
  *
- * The credential is NOT sufficient on its own. `ANTHROPIC_API_KEY` is both the
- * dropdown's default auto-binding and the expected credential of the `anthropic`
- * provider, so a credential-only check returns "settled" for every anthropic
- * caller the instant the default binding persists — before the requested model is
- * applied at all. That is why `load()`'s contract ("every caller starts settled")
- * did not hold for anthropic, and why the issue's anthropic row
- * (`agent-max-iterations.spec.ts:255`) could never have been this guard's
- * expected/received mismatch: for anthropic the mismatch is unreachable.
- *
- * `expectedModel` is optional — a caller may let the provider-setup helper pick the
- * first available model, leaving no name to compare. Most agent specs are
- * parametrized from `models.json` and do pass one, but three load without a model
+ * **The provider is the primary axis (#1274), and every caller supplies one.** That
+ * matters for the three specs that load WITHOUT pinning a model
  * (`model-provider-model-toggle`, `general-bugs-agent-images-playground`,
- * `agent-model-connection-isolation`), and so does any spec whose `models.json`
- * came back empty. For those the model axis is simply unavailable — see
- * `CREDENTIAL_PENDING_NO_MODEL_GUIDANCE`, which is what keeps the reported
- * guidance from claiming a check that did not happen.
+ * `agent-model-connection-isolation`), plus any spec whose `models.json` came back
+ * empty: on the credential axis those would now settle on the first read and prove
+ * nothing, because `api_key` is `""` from mount onward. On the provider axis they
+ * still block on a real transition, since a freshly mounted node carries the
+ * selector's DEFAULT provider (`"Anthropic"`, measured on `1.12.0.dev16`).
+ *
+ * **ONE COMBINATION IS STILL UNGUARDED, and it is not new.** When the expected
+ * provider IS the mount-time default (`anthropic`) and the caller pins no model,
+ * the mount state already satisfies both available checks, so the first read
+ * settles and nothing was proved. The pre-#1274 code had the identical hole by the
+ * identical route (`probe.credential === expectedCredential` with no
+ * `expectedModel`, where the default binding WAS `ANTHROPIC_API_KEY`), so this is
+ * inherited, not introduced — an earlier draft of this comment claimed the axis
+ * closed it, which review disproved. Closing it needs an observable this module
+ * cannot see: whether the persisted value is the default or a deliberate pick.
+ * `SimpleAgentTemplatePage` therefore WARNS when it settles on the first read with
+ * no pinned model, so the vacuum is visible in the run log instead of silent
+ * (#1012). It matters on `daily-stable.yml`'s anthropic rotation day (#1185), for
+ * `model-provider-model-toggle` and `agent-model-connection-isolation`.
+ *
+ * `expectedModel` stays optional and stays a real check when supplied: same provider
+ * with the wrong model still means the setup step clicked the wrong option.
  *
  * Gating on the model is only sound because a pinned model is never silently
  * substituted on this path: `setup-openai`, `setup-anthropic` and `setup-google`
@@ -170,29 +263,49 @@ export function readAgentCredentialProbe(
  * and never through `SimpleAgentTemplatePage`. Wiring that option through
  * `providerSetupMap` would make this comparison fail on a legitimately substituted
  * model, so it must arrive with a way to tell the guard what was actually picked.
+ *
+ * `expectedProvider` is Langflow's own spelling of the provider name, which callers
+ * get from `langflowProviderName()` — never this repo's `Provider` key, which does
+ * not appear in the payload.
  */
 export function classifyCredentialSettle(
   probe: AgentCredentialProbe | null,
-  expectedCredential: string,
+  expectedProvider: string,
   expectedModel?: string,
 ): CredentialSettleVerdict {
   if (!probe) return "no-agent-node";
 
-  const modelApplied =
-    !expectedModel || probe.selectedModels.includes(expectedModel);
+  // Nothing carried the selection at all. Checked FIRST: an empty selection has an
+  // empty provider list too, so testing the provider before this would report "a
+  // different provider is persisted" about a node carrying none.
+  if (probe.selected.length === 0) return "nothing-persisted";
 
-  if (probe.credential === expectedCredential) {
-    return modelApplied ? "settled" : "model-pending";
-  }
-  if (probe.selectedModels.length === 0) return "nothing-persisted";
-  if (!modelApplied) return "model-not-applied";
-  return "credential-pending";
+  // The provider is present on some entry but on none we can compare — a payload
+  // shape this module tolerates (a bare-string model name) rather than a wrong
+  // provider. Distinct verdict because `provider-pending`'s guidance tells the
+  // reader to compare the OBSERVED provider, and there is none to compare.
+  if (probe.selectedProviders.length === 0) return "provider-unobservable";
+
+  // Paired, not two independent `includes()`: "the right provider" and "the right
+  // model" must hold on the SAME entry, or a multi-entry payload can satisfy the
+  // pair across two entries that each carry only half of it.
+  const match = probe.selected.filter((entry) => entry.provider === expectedProvider);
+  if (match.length === 0) return "provider-pending";
+  if (!expectedModel) return "settled";
+  if (match.some((entry) => entry.name === expectedModel)) return "settled";
+  // The provider is right, so the credential the run resolves is right; only the
+  // pick within it is wrong. `model-not-applied` is the sharper verdict when a
+  // concrete other model is visible under that provider.
+  return match.some((entry) => entry.name.length > 0)
+    ? "model-not-applied"
+    : "model-pending";
 }
 
 export interface CredentialSettleFailure {
   flowId: string;
   provider: string;
-  expectedCredential: string;
+  /** Langflow's own spelling of the provider — see `langflowProviderName`. */
+  expectedProvider: string;
   expectedModel?: string;
   /** The last probe read, or `null` when the flow had no Agent node / was never read. */
   probe: AgentCredentialProbe | null;
@@ -214,38 +327,45 @@ const VERDICT_GUIDANCE: Record<
   string
 > = {
   "model-pending":
-    "The credential matches but the requested model is not applied, so nothing " +
-    "here says the model selection worked. Read the credential before concluding: " +
-    "when it is the selector's DEFAULT binding (ANTHROPIC_API_KEY) the match is " +
-    "free and proves nothing — this verdict exists because a credential-only check " +
-    "declared such a load settled. When it is any other provider's, the rebind did " +
-    "land and only the selection has not. Either way, look at the provider setup " +
-    "step for this provider, not at the credential.",
-  "credential-pending":
-    "The requested model IS applied, so the selection registered and only the " +
-    "credential rebind is missing from the persisted flow. The rebind is computed " +
-    "by `POST /api/v1/custom_component/update` and persisted by the editor's " +
-    "debounced autosave `PATCH /api/v1/flows/{id}`; a saturated backend delays " +
-    "both (#1077). Note this line prints only AFTER the budget expired, so " +
-    "retrying did NOT help within it — and a persisted credential belonging to a " +
-    "THIRD provider is a real misbinding, not slowness. Compare the observed " +
-    "credential against the provider before concluding load.",
+    "The provider matches, so the credential the run resolves is already the right " +
+    "one, but no model NAME is observable in the persisted selection while a " +
+    "provider is. That is a degenerate payload, not a normal pending state — read " +
+    "the `observed` line: if `models=[]` while a provider is present, the entry " +
+    "carries a provider and no name, which no current build produces on the happy " +
+    "path. Suspect a partially written autosave or a shape change in " +
+    "`template.model.value`.",
+  "provider-pending":
+    "A DIFFERENT provider than the one requested is persisted on the Agent, so the " +
+    "run would resolve the WRONG provider's key. Since #14311 the credential is not " +
+    "stored at all — it is derived at run time from exactly this field (#1274) — so " +
+    "this is the state that used to read as `credential-pending`. TWO causes fit and " +
+    "the observed provider separates them: when it is the selector's mount-time " +
+    "DEFAULT (`Anthropic`), the model pick has not been carried by the editor's " +
+    "debounced autosave `PATCH /api/v1/flows/{id}` yet and waiting is the right " +
+    "response (a saturated backend delays it — #1077). When it is some THIRD " +
+    "provider, the setup step selected the wrong option and waiting cannot fix it. " +
+    "Note this line prints only AFTER the budget expired, so retrying did NOT help " +
+    "within it.",
   "model-not-applied":
-    "A DIFFERENT model is persisted than the one requested. TWO states look like " +
-    "this and the observed model tells them apart: the provider-setup step selected " +
-    "the wrong option (waiting cannot fix it — look at the setup helper: dropdown " +
-    "intercepted, option missing, panel still animating), OR nothing was saved " +
-    "after the click at all, leaving the node's mount-time prefill in place — on a " +
-    "google/openai load that prefill IS `ANTHROPIC_API_KEY` plus the default " +
-    "Claude model, so this verdict is also what a wedged save path (#1077) looks " +
-    "like. If the observed pair is exactly that default, suspect the save, not the " +
-    "click.",
+    "The provider is right but a DIFFERENT model is persisted under it, so the run " +
+    "would use the correct credential with the wrong model. Waiting cannot fix it: " +
+    "look at the provider-setup helper for this provider (dropdown intercepted, " +
+    "option missing, panel still animating). Before #1274 this verdict also covered " +
+    "the wedged-save case, where the node kept its mount-time default; that state is " +
+    "now `provider-pending`, because the default belongs to a different provider.",
+  "provider-unobservable":
+    "A model is persisted but NO entry carries a `provider`, so the axis this guard " +
+    "decides on is unobservable — this is NOT a wrong provider, and the `observed` " +
+    "line will show `providers=[]`. Either the payload is the pre-unified-selector " +
+    "shape (a bare model-name string, which no current build writes) or a partial " +
+    "write landed. Look at the shape of `template.model.value` in the persisted " +
+    "flow before anything else; the provider comparison never ran.",
   "nothing-persisted":
-    "No model is persisted at all, so nothing carried the selection. Two causes " +
-    "fit and this guard cannot separate them: the model click never registered " +
-    "(provider setup), or the rebind never completed. Check the run for " +
-    "`POST /api/v1/custom_component/update` — that is the request that computes " +
-    "the binding; the flows PATCH only persists its result.",
+    "No model and no provider are persisted at all, so nothing carried the " +
+    "selection. Two causes fit and this guard cannot separate them: the model click " +
+    "never registered (provider setup), or the save never completed. Check the run " +
+    "for `POST /api/v1/custom_component/update` — that is the request that refreshes " +
+    "the field; the flows PATCH only persists its result.",
   "no-agent-node":
     "The persisted flow was read and has no Agent node: the Simple Agent template " +
     "did not instantiate as expected, or the id belongs to a different flow.",
@@ -256,29 +376,15 @@ const VERDICT_GUIDANCE: Record<
 };
 
 /**
- * `credential-pending` with no pinned model.
+ * The guidance for this failure.
  *
- * The verdict is the same — the credential is not there — but its usual guidance
- * ("the requested model IS applied, so the selection registered") asserts something
- * that was never checked: with no `expectedModel` the model axis is unavailable, so
- * ANY wrong-credential read with a non-empty model list lands on that verdict.
- * Three specs load without pinning a model (`model-provider-model-toggle`,
- * `general-bugs-agent-images-playground`, `agent-model-connection-isolation`), plus
- * any spec whose `models.json` came back empty.
+ * There is no longer a per-caller special case here. The old one existed because
+ * `credential-pending`'s text asserted "the requested model IS applied" even for the
+ * three callers that pin no model, where the model axis was unavailable. The primary
+ * axis is now the provider, which EVERY caller supplies (#1274), so one string per
+ * verdict is true for every caller.
  */
-const CREDENTIAL_PENDING_NO_MODEL_GUIDANCE =
-  "The credential is missing from the persisted flow, and the caller pinned no " +
-  "model — so nothing here says whether the model selection registered. Read the " +
-  "`observed` models against what the provider-setup helper would have picked " +
-  "before concluding. The rebind is computed by " +
-  "`POST /api/v1/custom_component/update` and persisted by the editor's debounced " +
-  "autosave; a saturated backend delays both (#1077).";
-
-/** The guidance for this failure, including the cases the verdict alone cannot carry. */
 function guidanceFor(failure: CredentialSettleFailure): string {
-  if (failure.verdict === "credential-pending" && !failure.expectedModel) {
-    return CREDENTIAL_PENDING_NO_MODEL_GUIDANCE;
-  }
   return VERDICT_GUIDANCE[
     failure.verdict as Exclude<CredentialSettleVerdict, "settled">
   ];
@@ -296,7 +402,7 @@ export function formatCredentialSettleFailure(
   const {
     flowId,
     provider,
-    expectedCredential,
+    expectedProvider,
     expectedModel,
     probe,
     verdict,
@@ -306,7 +412,8 @@ export function formatCredentialSettleFailure(
   } = failure;
 
   const observed = probe
-    ? `api_key="${probe.credential}" models=[${probe.selectedModels.join(", ")}]`
+    ? `providers=[${probe.selectedProviders.join(", ")}] ` +
+      `models=[${probe.selectedModels.join(", ")}] api_key="${probe.credential}"`
     : verdict === "read-failed"
       ? "no successful read of the persisted flow"
       : "the flow was read and carries no Agent node";
@@ -315,10 +422,30 @@ export function formatCredentialSettleFailure(
     `Agent credential never settled on the persisted flow (#751 guard, #1072).`,
     ``,
     `  flow           ${flowId}`,
-    `  provider       ${provider} (expected credential "${expectedCredential}")`,
+    `  provider       ${provider} (expected "${expectedProvider}" on the persisted model)`,
     `  model wanted   ${expectedModel ?? "(caller let the setup helper choose)"}`,
     `  observed       ${observed}`,
     `  waited         ${(elapsedMs / 1000).toFixed(1)}s over ${reads} read(s)`,
+    // Said once, here, because every reader of this message arrives knowing the old
+    // behaviour and would otherwise read the api_key line as the finding.
+    //
+    // It states what this guard DOES, not what the field contains. An earlier draft
+    // said "api_key is EMPTY on every build since #14311", which is false on exactly
+    // the builds this module is documented as still supporting: `manual.yml` can
+    // dispatch a pre-#14311 Langflow, where the field IS written — and there the note
+    // would have contradicted the `observed` line printed directly above it.
+    //
+    // Printed only when a probe was actually read: on `read-failed` /
+    // `no-agent-node` no api_key was observed, and commenting on a field nobody saw
+    // is the same unobserved claim this module exists to avoid.
+    ...(probe
+      ? [
+          `  note           api_key is NOT asserted in either direction — the provider`,
+          `                 above is the axis (#1274). Upstream #14311 stopped writing`,
+          `                 this field on the 1.12 line, so an empty value here is`,
+          `                 expected and is not the finding.`,
+        ]
+      : []),
     ...(lastReadError ? [`  last read err  ${lastReadError}`] : []),
     ``,
     `  verdict        ${verdict}`,

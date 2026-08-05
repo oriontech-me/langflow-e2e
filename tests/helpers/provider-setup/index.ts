@@ -16,9 +16,10 @@ export {
   providerConfigMap,
   keyedProviders,
   keyedProviderNames,
+  langflowProviderName,
 } from "./provider-config";
 
-// Derivado de provider-config.ts — edite lá para alterar as chaves de ambiente
+// Derived from provider-config.ts — edit it there to change the env keys
 export const providerEnvKeyMap: Record<string, string[]> = Object.fromEntries(
   (Object.keys(providerConfigMap) as (keyof typeof providerConfigMap)[]).map((p) => [
     p,
