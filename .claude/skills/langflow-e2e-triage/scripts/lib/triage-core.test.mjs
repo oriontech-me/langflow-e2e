@@ -695,3 +695,59 @@ test('#1310 build-triage-dataset.mjs actually injects the classifier', () => {
   assert.match(src, /buildDataset\([^;]*classifyInfra:\s*classifyInfraError/,
     'the builder must pass classifyInfra into buildDataset');
 });
+
+// Copilot's review of PR #1312 caught the JSDoc claiming that omitting
+// `classifyInfra` degrades a row to `unclassified` "never to attributable".
+// It does not: `actionable` is `recurrent && !infra_signature`, and an
+// unclassified entry carries `infra_signature: null`, so the flake stays
+// actionable. There is no safe default (assume-collateral drops real flakes,
+// assume-attributable is the bug), so the gap is made visible instead.
+
+test('#1310 an unclassified entry does NOT protect the flake — and says so', () => {
+  const rows = infraRows({
+    test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+    error_signature: TRANSPORT_SIG,
+  });
+  const ds = buildDataset(rows, [], { runId: 'r2' }); // no classifyInfra injected
+
+  assert.equal(ds.flakes[0].infra_classified_from, 'unclassified');
+  assert.equal(
+    ds.flakes[0].actionable,
+    true,
+    'the honest outcome: with no verdict available the flake is still proposed',
+  );
+  assert.ok(
+    ds.infra_classification_gap,
+    'so the dataset must announce that no exemption could be computed (#1012)',
+  );
+  assert.equal(ds.infra_classification_gap.entries, 1);
+  assert.match(ds.infra_classification_gap.why, /NOT a cleared one/);
+});
+
+test('#1310 no gap is reported when every entry reached a verdict', () => {
+  const recorded = buildDataset(
+    infraRows({
+      test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+      error_signature: TRANSPORT_SIG, infra_signature: 'api-request-timeout',
+    }),
+    [], { runId: 'r2' },
+  );
+  assert.equal(recorded.infra_classification_gap, null, 'a recorded verdict is a verdict');
+
+  const viaFallback = buildDataset(
+    infraRows({ test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3, error_signature: TRANSPORT_SIG }),
+    [], { runId: 'r2', classifyInfra: classifyInfraError },
+  );
+  assert.equal(viaFallback.infra_classification_gap, null, 'the fallback is weaker, but it IS a verdict');
+});
+
+test('#1310 the gap counts hard failures too, not only flakes', () => {
+  const rows = [{
+    version: 1, date: '2026-08-05', run_id: 'r2', run_url: 'u', langflow_image: 'i',
+    duration_ms: 1, totals: { passed: 1, failed: 1, flaky: 1, skipped: 0 },
+    failures: [{ test: 'hf', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3, error_signature: TRANSPORT_SIG }],
+    flaky: [{ test: 'fl', file: 'b.spec.ts', line: 2, tags: ['@stable'], attempts: 2, error_signature: TRANSPORT_SIG }],
+  }];
+  const ds = buildDataset(rows, [], { runId: 'r2' });
+  assert.equal(ds.infra_classification_gap.entries, 2);
+});

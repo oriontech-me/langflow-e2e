@@ -519,8 +519,21 @@ export function assertDedicatedIssueBody(body, opts = {}) {
  *    `error_signature` was classified instead. Strictly weaker: that is line 1
  *    only, so a transport error wrapped by an assertion is invisible to it (the
  *    `#751` credential guard being the usual wrapper).
- *  - `unclassified` — the row predates the field AND no classifier was injected.
- *    NOT the same as "attributable": unknown is unknown (#1012).
+ *  - `unclassified` — the row predates the field AND no classifier was injected,
+ *    so no exemption could be computed at all.
+ *
+ * **`unclassified` does NOT protect the flake, and saying otherwise was the
+ * defect Copilot caught on this PR.** The label records the gap; it does not
+ * close it. `actionable` is `recurrent && !infra_signature`, and an unclassified
+ * entry carries `infra_signature: null` — so a recurrent transport-level flake in
+ * that state stays actionable and would be filed and quarantined exactly as
+ * before #1310. There is no safe default available here: assuming collateral
+ * would silently drop real flakes, and assuming attributable is the bug. So the
+ * gap is made VISIBLE instead — `buildDataset` returns
+ * `infra_classification_gap` naming how many entries are in this state, and the
+ * production path is pinned by a structural test asserting
+ * `build-triage-dataset.mjs` injects the classifier. Those two are what actually
+ * prevent the regression; this label only names it.
  *
  * The recorded `null` is respected as an answer. Re-running the weaker fallback
  * over a row that was already classified at run time could only produce a worse
@@ -541,8 +554,11 @@ function classifyEntryInfra(entry, classifyInfra) {
  * @param opts.classifyInfra Optional `classifyInfraError` from
  *   `scripts/lib/infra-signatures.mjs`. Injected rather than imported so this
  *   module stays pure and I/O-free (the accessor reads its JSON at load).
- *   `build-triage-dataset.mjs` always passes it; omitting it degrades rows that
- *   predate `infra_signature` to `unclassified`, never to "attributable".
+ *   `build-triage-dataset.mjs` always passes it, pinned by a structural test.
+ *   Omitting it does NOT fail safe: rows that predate `infra_signature` come back
+ *   `unclassified`, which leaves a recurrent transport-level flake `actionable`
+ *   just as before #1310. The returned `infra_classification_gap` is how that
+ *   state announces itself — see `classifyEntryInfra`.
  */
 export function buildDataset(rows, issues, opts = {}) {
   const { windowDays = 30, maxAutoRemove = 5, runId = null, classifyInfra = null } = opts;
@@ -604,6 +620,23 @@ export function buildDataset(rows, issues, opts = {}) {
   // Descriptive provider-wide signal: same provider failing across ≥2 spec files.
   const provider_wide_clusters = computeProviderClusters([...hard_failures, ...flakes]);
 
+  // How many entries reached no infra verdict at all. Non-null presence IS the
+  // signal (the same convention `run_errors` uses in the history schema): it
+  // means the exemption could not be applied, so any recurrent transport-level
+  // flake in this run is still sitting in `flakes[]` as actionable and a triage
+  // reading this dataset must say so rather than present the list as filtered.
+  // Reachable only by a caller that omits `classifyInfra` over pre-#1310 rows —
+  // production cannot, which a structural test pins.
+  const unclassified = [...hard_failures, ...flakes].filter(
+    (e) => e.infra_classified_from === 'unclassified',
+  );
+  const infra_classification_gap = unclassified.length
+    ? {
+        entries: unclassified.length,
+        why: 'no classifyInfra was injected and these rows predate the infra_signature field, so no wedge-collateral exemption could be computed — an unclassified entry is NOT a cleared one (#1012/#1310)',
+      }
+    : null;
+
   const newest = findNewestUmbrella(issues);
   const stale_history =
     newest && newest.date > run.date
@@ -621,6 +654,7 @@ export function buildDataset(rows, issues, opts = {}) {
     umbrella_issue: matchUmbrella(issues, run.run_id),
     guard_tripped: detectGuard(run, maxAutoRemove),
     stale_history,
+    infra_classification_gap,
     totals: run.totals,
     hard_failures,
     flakes,

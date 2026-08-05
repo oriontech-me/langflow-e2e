@@ -226,7 +226,12 @@ the end of triage (Phase 7). Full rule + wording: `references/issue-templates.md
 Only flakes with `actionable: true` (same `error_signature` recurring within
 the window — the dataset already computed this) become dedicated issues.
 **`actionable` is now two conditions, not one (#1310):** recurrent **and** not
-wedge collateral. A flake whose error is transport-level comes back
+wedge collateral. If the dataset carries a non-null **`infra_classification_gap`**,
+that second condition could not be evaluated for the entries it counts — say so in
+the panorama and treat those flakes as unverified rather than filtered, because
+their `actionable: true` reflects an absent verdict, not a clean one (#1012). It
+should never appear on a normal run; if it does, the dataset was built without the
+classifier and the run needs re-building before any flake is filed. A flake whose error is transport-level comes back
 `actionable: false` carrying an `infra_excluded` block — note it against the
 run's backend outage (the umbrella's liveness section) and neither file nor
 quarantine it, exactly as for a collateral hard failure. Read the block rather
