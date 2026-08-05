@@ -454,6 +454,21 @@ export async function summarize({
     langflow_image: env.LANGFLOW_IMAGE || null,
     totals: agg.totals,
     by_model: agg.byModel,
+    // #1300 gap 1: the per-provider figure #1183 owed and delivered as a hand
+    // rollup of model ids in an issue comment, because this schema recorded models
+    // only. Derived from the SAME span data and the SAME price-key resolution as
+    // `by_model` (token-cost.mjs's resolveProvider), reading the `provider` each
+    // price entry already declares — never inferred from the model id, which is a
+    // different axis from the account that pays (#1281's Azure deployment).
+    //
+    // Deliberately NOT added to the POSTed block below: the QA Platform's
+    // e2e_model_prices carries provider as a column on each (price_key, since) row
+    // and joins it at read time, so sending a second rollup would put two
+    // authorities on one number — the same reason the block carries no dollars
+    // (#1255 item 3). It is also NOT an anomaly scope: detectAnomalies() keys on
+    // run + spec, and widening that surface is a separate decision from recording
+    // the axis.
+    by_provider: agg.byProvider,
     by_spec: agg.bySpec,
     unattributed: agg.unattributed,
     unpriced_models: agg.unpricedModels,
@@ -603,6 +618,32 @@ export async function summarize({
       "_History append suppressed for this lane (`TOKENS_SUPPRESS_HISTORY`) — " +
         "this run's numbers are a per-run measurement only, not part of " +
         "`reports/token-history.jsonl`'s daily trend/anomaly series (#1183)._",
+      "",
+    );
+  }
+  // The provider rollup comes BEFORE the model table (#1300 gap 1): it is the
+  // coarser figure and the one a cost question is actually asked in ("what did
+  // anthropic cost us today"), and it is the figure #1183 had to hand-roll from
+  // the model ids below it. A bucket with no declared provider renders as
+  // `unknown` with its ids named — never folded into a neighbour, which is the
+  // whole reason the axis is read from the price table instead of a prefix rule.
+  const unknownProvider = agg.byProvider.find((p) => p.provider === null);
+  lines.push(
+    "| Provider | Calls | Tokens | Estimated |",
+    "|---|---:|---:|---:|",
+    ...agg.byProvider.map(
+      (p) =>
+        `| ${p.provider ? `\`${p.provider}\`` : "_unknown_"} | ${p.calls} | ${p.total_tokens} | ${usdDetail(p.usd_estimated)} |`,
+    ),
+    "",
+  );
+  if (unknownProvider) {
+    lines.push(
+      `_\`unknown\` = ${unknownProvider.models.length} model(s) with no \`provider\` in ` +
+        "`scripts/lib/model-prices.json`: " +
+        `${unknownProvider.models.map((m) => `\`${m}\``).join(", ")}. ` +
+        "Adding the row there names the provider on the next run — the id is never " +
+        "used to guess it (#1300)._",
       "",
     );
   }

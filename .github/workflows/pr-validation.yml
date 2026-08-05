@@ -493,11 +493,33 @@ jobs:
           # surface scoped in #1195).
           LANGFLOW_A2A_ENABLED: "true"
           # Tracing is OFF by default (cuts startup time / backend noise for the
-          # majority of specs). Turn it ON only when observability/traces specs
-          # are impacted — they need the SUT to emit traces + spans, and without
-          # it their setup times out. Mirrors daily-stable.yml, which keeps
-          # tracing ON for exactly these specs.
-          LANGFLOW_DEACTIVATE_TRACING: ${{ contains(needs.detect-specs.outputs.specs, 'observability-monitoring') && 'false' || 'true' }}
+          # majority of specs). It is turned ON for two independent reasons, and
+          # the second one is why this is no longer a single condition (#1300):
+          #
+          #   1. The observability/traces specs need the SUT to emit traces +
+          #      spans, and without it their setup times out.
+          #   2. Langflow's traces are the ONLY place this lane's token spend can
+          #      be read (the recorder below polls /api/v1/monitor/traces, #1197),
+          #      and a flow's trace 404s the moment the flow is deleted.
+          #
+          # Reason 2 was missing, and it made #1210's recorder on this lane
+          # structurally unable to see anything: 12 consecutive runs recorded
+          # `0 trace(s)` because tracing was off on every one of them. Run
+          # 31018914069 is the clean measurement — 20 `llm-agents` specs, a
+          # provider configured (`needs_models: true`, `Collect models` ran), 59
+          # tests passed, and an artifact carrying 139 attribution COST records
+          # and not one trace. The summarizer's own honest-zero message names
+          # this flag first among the candidate causes, and it was right.
+          #
+          # `needs_models` is the lane's own verdict for "this run will execute at
+          # least one provider-dependent spec" (scripts/provider-dependent-specs.mjs,
+          # #1216), which is exactly the set of runs that HAVE spend to measure.
+          # Gating on it rather than switching tracing on unconditionally keeps the
+          # cheap path for the majority of PRs — an LLM-free diff is unaffected —
+          # while the daily and manual, which measure every run, keep tracing on
+          # unconditionally. The stale half of the previous comment claimed this
+          # mirrored daily-stable.yml, which has hardcoded `"false"` since #1197.
+          LANGFLOW_DEACTIVATE_TRACING: ${{ (contains(needs.detect-specs.outputs.specs, 'observability-monitoring') || needs.detect-specs.outputs.needs_models == 'true') && 'false' || 'true' }}
           # Let Langflow reach the sibling go-httpbin service below (#1128). Its
           # SSRF layer blocks private addresses unless pre-authorized, and the
           # API Request component's validators.url() rejects a single-label host

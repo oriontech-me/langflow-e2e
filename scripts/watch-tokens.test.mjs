@@ -1237,6 +1237,65 @@ test("a second --summarize against the same TOKENS_SUMMARY_OUT still parses", as
   assert.equal(block.total_tokens, 88);
 });
 
+// --- Structural guard: can the lane that runs the recorder SEE a trace? (#1300) ---
+//
+// This poller reads Langflow's own traces and nothing else. A lane that starts it
+// against an instance with `LANGFLOW_DEACTIVATE_TRACING=true` measures zero on
+// every run, forever, and reports that zero honestly — which is what made the
+// defect survive: all four token steps green, an artifact present, a message
+// explaining that there were no traces, and no way to tell "nothing was spent"
+// from "nothing could be seen". It ran that way for 12 consecutive PR runs.
+//
+// What this guard can and cannot do. It CANNOT tell whether a lane's condition is
+// the right one — the composed GitHub expression is not evaluable here, and #1226
+// established that a regex over workflow text passes the mutations it exists to
+// catch. What it CAN do is refuse the one state that is never defensible: a lane
+// that turns the recorder on while leaving tracing gated on something narrower
+// than its own "will this run touch a provider" verdict. The lane list is DERIVED
+// from who starts the poller, so a fourth lane inherits the check the day it is
+// written.
+const POLLER_LANES = [
+  ["daily-stable.yml", daily],
+  ["pr-validation.yml", prValidation],
+  ["manual.yml", manual],
+];
+
+test("every lane that starts the token recorder can actually see a trace (#1300)", () => {
+  for (const [name, read] of POLLER_LANES) {
+    const text = read();
+    // The poller, not the summarizer: `--summarize` reads files a sibling job
+    // produced and needs no tracing of its own.
+    const startsPoller = /node scripts\/watch-tokens\.mjs(?!\s+--summarize)/.test(text);
+    assert.ok(startsPoller, `${name} no longer starts the token recorder — update POLLER_LANES`);
+
+    const setting = text.match(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/);
+    assert.ok(setting, `${name} starts the recorder but never sets LANGFLOW_DEACTIVATE_TRACING`);
+    const value = setting[1].trim();
+    const unconditionallyOn = /^["']?false["']?$/.test(value);
+    // `needs_models` is the lane's own verdict for "this run executes at least one
+    // provider-dependent spec" (#1216) — the set of runs that have spend to
+    // measure. A conditional tracing setting that does not consult it is the
+    // #1300 state: the recorder is on, and the only runs it could measure are the
+    // ones where it is blind.
+    assert.ok(
+      unconditionallyOn || value.includes("needs_models"),
+      `${name} gates tracing on a condition narrower than its provider verdict, so the ` +
+        `token recorder it starts can never see a trace on an LLM run: ${value}`,
+    );
+  }
+});
+
+// The other half of pr-validation's condition, asserted separately so a future
+// edit cannot buy the token recorder's visibility by dropping the reason the
+// condition existed first: the observability specs need traces to be emitted
+// whether or not they resolve a model, and #1300 widened that gate, it did not
+// replace it.
+test("pr-validation still enables tracing for the observability specs themselves", () => {
+  const value = prValidation().match(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/)[1];
+  assert.match(value, /observability-monitoring/);
+  assert.match(value, /needs_models/);
+});
+
 // --- Structural guard: is the daily workflow actually wired to this script? ---
 
 // The wedge cannot be reproduced on demand and neither can a real token spend, so
@@ -1588,4 +1647,99 @@ test("the block's unattributed bucket carries span_tokens beside its trace-autho
     .reduce((n, r) => n + r.total_tokens, 0);
   assert.equal(rowSum, block.unattributed.span_tokens);
   assert.equal(block.mismatch_traces, 1, "and the gap is already named");
+});
+
+// --- by_provider on the history line and in the step summary (#1300 gap 1) ---
+
+// Two providers plus the Azure deployment, so the rollup has something to roll up
+// and the one case a prefix rule gets wrong is present in every assertion below.
+const MULTI_PRICES = JSON.stringify({
+  "gpt-4o-mini": { provider: "openai", inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  "claude-haiku-4-5": { provider: "anthropic", inputPerMillion: 1, outputPerMillion: 5 },
+  "gpt-5-mini": { provider: "azure", inputPerMillion: 0.25, outputPerMillion: 2 },
+});
+const MULTI_PROBE = JSON.stringify({
+  trace_id: "t7",
+  flow_id: "f7",
+  start_time: "2026-08-05T13:35:38Z",
+  status: "ok",
+  total_tokens: 600,
+  models: [
+    { model: "gpt-4o-mini", prompt_tokens: 100, completion_tokens: 100, total_tokens: 200, calls: 1 },
+    { model: "claude-haiku-4-5", prompt_tokens: 100, completion_tokens: 100, total_tokens: 200, calls: 1 },
+    { model: "gpt-5-mini", prompt_tokens: 100, completion_tokens: 100, total_tokens: 200, calls: 1 },
+  ],
+});
+
+test("the history line carries by_provider, so a per-provider figure needs no hand rollup (#1300)", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${MULTI_PROBE}\n`,
+    "prices.json": MULTI_PRICES,
+  });
+  await summarize({ env: { ...baseEnv, RUN_DATE: "2026-08-05" }, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  const providers = Object.fromEntries(line.by_provider.map((p) => [p.provider, p.total_tokens]));
+  assert.deepEqual(providers, { openai: 200, anthropic: 200, azure: 200 });
+  // #1183 answered this question by grouping model ids in an issue comment. The
+  // point of the field is that the answer is on the line.
+  assert.ok(
+    line.by_provider.every((p) => Array.isArray(p.models)),
+    "each bucket names the ids it is made of",
+  );
+});
+
+test("the tokens block sends NO provider rollup — the platform joins provider from price_key", async () => {
+  // Same reason the block carries no dollars (#1255 item 3): e2e_model_prices has
+  // provider as a column on each (price_key, since) row, so a second rollup here
+  // would be a second authority on one number.
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${MULTI_PROBE}\n`,
+    "prices.json": MULTI_PRICES,
+  });
+  const env = { ...baseEnv, RUN_DATE: "2026-08-05", TOKENS_SUMMARY_OUT: "tokens-block.json" };
+  await summarize({ env, ...fs2, log: () => {} });
+  const block = JSON.parse(fs2.written["tokens-block.json"]);
+  assert.ok(!("by_provider" in block));
+  assert.ok(
+    block.rows.every((r) => r.price_key),
+    "the join key is what the block sends instead",
+  );
+});
+
+test("the step summary renders the provider rollup ABOVE the model table", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${MULTI_PROBE}\n`,
+    "prices.json": MULTI_PRICES,
+  });
+  await summarize({ env: { ...baseEnv, RUN_DATE: "2026-08-05" }, ...fs2, log: () => {} });
+  const md = fs2.written["summary.md"];
+  assert.match(md, /\| Provider \| Calls \| Tokens \| Estimated \|/);
+  assert.match(md, /\| `azure` \| 1 \| 200 \|/, "the Foundry deployment gets its own row");
+  assert.ok(
+    md.indexOf("| Provider |") < md.indexOf("| Model |"),
+    "coarse before fine: the provider question is the one being asked",
+  );
+});
+
+test("an unresolvable provider renders as unknown and names the ids that need a price row", async () => {
+  const probeWithNewModel = JSON.stringify({
+    trace_id: "t8",
+    flow_id: "f8",
+    start_time: "2026-08-05T13:35:38Z",
+    status: "ok",
+    total_tokens: 120,
+    models: [
+      { model: "gpt-4o-mini", prompt_tokens: 10, completion_tokens: 10, total_tokens: 20, calls: 1 },
+      { model: "brand-new-model", prompt_tokens: 50, completion_tokens: 50, total_tokens: 100, calls: 1 },
+    ],
+  });
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${probeWithNewModel}\n`,
+    "prices.json": MULTI_PRICES,
+  });
+  await summarize({ env: { ...baseEnv, RUN_DATE: "2026-08-05" }, ...fs2, log: () => {} });
+  const md = fs2.written["summary.md"];
+  assert.match(md, /\| _unknown_ \| 1 \| 100 \| n\/a \|/);
+  assert.match(md, /`brand-new-model`/, "an unknown bucket that names nothing is a dead end");
+  assert.doesNotMatch(md, /\| `openai` \| 1 \| 120 \|/, "and it is never folded into a neighbour");
 });
