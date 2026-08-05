@@ -5,6 +5,13 @@
 import { readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { parseHistory, buildDataset } from './lib/triage-core.mjs';
+// The infra-signature classifier is INJECTED into buildDataset rather than
+// imported by it: triage-core.mjs is pure and I/O-free, and the accessor reads
+// its pattern JSON at load. Passing it is not optional in practice — without it,
+// history rows that predate `infra_signature` (#1310) come back `unclassified`,
+// and a wedge-collateral flake would be proposed for a quarantine again. Pinned
+// by a structural test in triage-core.test.mjs.
+import { classifyInfraError } from '../../../../scripts/lib/infra-signatures.mjs';
 
 function arg(name, fallback) {
   const i = process.argv.indexOf(name);
@@ -103,7 +110,7 @@ if (paramMap.size > 0) {
   }
 }
 
-const dataset = buildDataset(rows, fetchIssues(), { windowDays, runId });
+const dataset = buildDataset(rows, fetchIssues(), { windowDays, runId, classifyInfra: classifyInfraError });
 if (!dataset) {
   process.stderr.write(
     runId

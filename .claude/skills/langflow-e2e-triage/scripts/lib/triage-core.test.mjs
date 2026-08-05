@@ -533,3 +533,221 @@ test('a quote inside a test title cannot break out of the quoted cell', () => {
   assert.ok(body.includes(`("the 'new' flow opens")`));
   assert.deepEqual(assertDedicatedIssueBody(body), []);
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1310 — the infra-signature exemption reaches flakes
+//
+// #1031 exempted wedge collateral from `@stable` auto-removal, but that path only
+// ever sees HARD failures. A flake whose error is transport-level still satisfied
+// "same signature twice in 30 days", so the protocol required a dedicated issue
+// AND a quarantine PR — i.e. a spec quarantined because the backend stopped
+// answering. Real instance: agent-context-id-isolation.spec.ts:512 on run
+// 30997773754 (20s timeout on GET /api/v1/auto_login; its retry spent 108 of 119
+// seconds inside measured backend downtime).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const TRANSPORT_SIG = 'TimeoutError: apiRequestContext.get: Timeout 20000ms exceeded.';
+const SPEC_SIG = 'TimeoutError: locator.click: Timeout 20000ms exceeded.';
+
+/** Two dailies so every flake below meets the same-signature recurrence bar. */
+const infraRows = (entry) => [
+  {
+    version: 1, date: '2026-07-29', run_id: 'r1', run_url: 'u', langflow_image: 'i',
+    duration_ms: 1, totals: { passed: 1, failed: 0, flaky: 1, skipped: 0 },
+    failures: [], flaky: [entry],
+  },
+  {
+    version: 1, date: '2026-08-05', run_id: 'r2', run_url: 'u', langflow_image: 'i',
+    duration_ms: 1, totals: { passed: 1, failed: 0, flaky: 1, skipped: 0 },
+    failures: [], flaky: [entry],
+  },
+];
+const onlyFlake = (rows, opts = {}) => buildDataset(rows, [], { runId: 'r2', ...opts }).flakes[0];
+
+// The pattern list is the real one, reached the way build-triage-dataset.mjs
+// reaches it — a hand-rolled stub here would prove nothing about production.
+const { classifyInfraError } = await import('../../../../../scripts/lib/infra-signatures.mjs');
+
+test('#1310 a recurrent flake carrying a recorded infra signature is NOT actionable', () => {
+  const f = onlyFlake(
+    infraRows({
+      test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+      error_signature: TRANSPORT_SIG, infra_signature: 'api-request-timeout',
+    }),
+  );
+  assert.equal(f.recurrence.same_signature, true, 'it must still be recognised as recurrent');
+  assert.equal(f.actionable, false, 'but not actionable — the failure is not the spec\'s own');
+  assert.equal(f.infra_signature, 'api-request-timeout');
+  assert.equal(f.infra_classified_from, 'run-record');
+});
+
+test('#1310 the exclusion is visible, not silent — the flake stays in the list with a reason', () => {
+  const ds = buildDataset(
+    infraRows({
+      test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+      error_signature: TRANSPORT_SIG, infra_signature: 'api-request-timeout',
+    }),
+    [], { runId: 'r2' },
+  );
+  assert.equal(ds.flakes.length, 1, 'a demoted flake must never be dropped from the dataset (#1012)');
+  assert.equal(ds.flakes[0].infra_excluded.signature, 'api-request-timeout');
+  assert.equal(ds.flakes[0].infra_excluded.classified_from, 'run-record');
+  assert.match(ds.flakes[0].infra_excluded.why, /not attributable/);
+});
+
+test('#1310 a recurrent flake whose error IS the spec\'s own stays actionable', () => {
+  const f = onlyFlake(
+    infraRows({
+      test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+      error_signature: SPEC_SIG, infra_signature: null,
+    }),
+  );
+  assert.equal(f.actionable, true);
+  assert.equal(f.infra_signature, null);
+  assert.equal(f.infra_classified_from, 'run-record');
+  assert.equal(f.infra_excluded, undefined, 'no exclusion block when nothing was excluded');
+});
+
+test('#1310 a recorded null is respected — the weaker fallback must not second-guess it', () => {
+  // The row says "classified at run time, from the full error: attributable".
+  // Re-classifying its one-line signature could only produce a worse answer, so
+  // presence of the field, not its truthiness, is what decides.
+  const f = onlyFlake(
+    infraRows({
+      test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+      error_signature: TRANSPORT_SIG, infra_signature: null,
+    }),
+    { classifyInfra: classifyInfraError },
+  );
+  assert.equal(f.infra_classified_from, 'run-record', 'must not fall back over a row that carries the field');
+  assert.equal(f.infra_signature, null);
+  assert.equal(f.actionable, true);
+});
+
+test('#1310 a row predating the field falls back to classifying the stored signature', () => {
+  const f = onlyFlake(
+    infraRows({ test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3, error_signature: TRANSPORT_SIG }),
+    { classifyInfra: classifyInfraError },
+  );
+  assert.equal(f.infra_classified_from, 'error-signature-fallback');
+  assert.equal(f.infra_signature, 'api-request-timeout');
+  assert.equal(f.actionable, false);
+});
+
+test('#1310 the fallback is weaker, and the guard-wrapped shape shows exactly how', () => {
+  // The stored signature is line 1 only. On run 30997773754 the #751 credential
+  // guard wrapped a transport error this way, and no triage-side fallback can
+  // see past that line — which is why the classification is written at run time.
+  const wrapped = 'Error: Agent credential never settled on the persisted flow (#751 guard, #1072).';
+  const viaFallback = onlyFlake(
+    infraRows({ test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3, error_signature: wrapped }),
+    { classifyInfra: classifyInfraError },
+  );
+  assert.equal(viaFallback.infra_signature, null, 'the fallback cannot reach a cause line it never received');
+  assert.equal(viaFallback.actionable, true, 'so it is still proposed — the documented limitation');
+
+  const viaRecord = onlyFlake(
+    infraRows({
+      test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+      error_signature: wrapped, infra_signature: 'api-request-timeout',
+    }),
+    { classifyInfra: classifyInfraError },
+  );
+  assert.equal(viaRecord.actionable, false, 'the run-time record does reach it');
+});
+
+test('#1310 with no classifier, an old row is unclassified — not silently attributable', () => {
+  const f = onlyFlake(
+    infraRows({ test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3, error_signature: TRANSPORT_SIG }),
+  );
+  assert.equal(f.infra_classified_from, 'unclassified', 'unknown must be labelled unknown (#1012)');
+});
+
+test('#1310 hard failures carry the classification too, without changing their handling', () => {
+  const rows = [{
+    version: 1, date: '2026-08-05', run_id: 'r2', run_url: 'u', langflow_image: 'i',
+    duration_ms: 1, totals: { passed: 1, failed: 1, flaky: 0, skipped: 0 },
+    failures: [{
+      test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+      error_signature: TRANSPORT_SIG, infra_signature: 'api-request-timeout',
+    }],
+    flaky: [],
+  }];
+  const hf = buildDataset(rows, [], { runId: 'r2' }).hard_failures[0];
+  assert.equal(hf.infra_signature, 'api-request-timeout');
+  assert.equal(hf.infra_classified_from, 'run-record');
+  // Hard-failure handling is #1031's, unchanged here: no actionable flag is
+  // invented for them and nothing is demoted.
+  assert.equal(hf.actionable, undefined);
+  assert.equal(hf.infra_excluded, undefined);
+});
+
+test('#1310 build-triage-dataset.mjs actually injects the classifier', () => {
+  // Structural, and deliberately so: every behavioural test above can pass while
+  // production omits `classifyInfra`, in which case every pre-#1310 row comes
+  // back `unclassified` and a wedge-collateral flake is proposed for quarantine
+  // again — the exact regression this issue exists to close.
+  const src = readFileSync(fileURLToPath(new URL('../build-triage-dataset.mjs', import.meta.url)), 'utf8');
+  assert.match(src, /import\s*\{\s*classifyInfraError\s*\}\s*from\s*['"][^'"]*infra-signatures\.mjs['"]/,
+    'the builder must import the real classifier, not re-implement one');
+  // Bounded by the statement, not by `)`: the real call passes `fetchIssues()`
+  // as an argument, so a `[^)]*` window closes before reaching the options object.
+  assert.match(src, /buildDataset\([^;]*classifyInfra:\s*classifyInfraError/,
+    'the builder must pass classifyInfra into buildDataset');
+});
+
+// Copilot's review of PR #1312 caught the JSDoc claiming that omitting
+// `classifyInfra` degrades a row to `unclassified` "never to attributable".
+// It does not: `actionable` is `recurrent && !infra_signature`, and an
+// unclassified entry carries `infra_signature: null`, so the flake stays
+// actionable. There is no safe default (assume-collateral drops real flakes,
+// assume-attributable is the bug), so the gap is made visible instead.
+
+test('#1310 an unclassified entry does NOT protect the flake — and says so', () => {
+  const rows = infraRows({
+    test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+    error_signature: TRANSPORT_SIG,
+  });
+  const ds = buildDataset(rows, [], { runId: 'r2' }); // no classifyInfra injected
+
+  assert.equal(ds.flakes[0].infra_classified_from, 'unclassified');
+  assert.equal(
+    ds.flakes[0].actionable,
+    true,
+    'the honest outcome: with no verdict available the flake is still proposed',
+  );
+  assert.ok(
+    ds.infra_classification_gap,
+    'so the dataset must announce that no exemption could be computed (#1012)',
+  );
+  assert.equal(ds.infra_classification_gap.entries, 1);
+  assert.match(ds.infra_classification_gap.why, /NOT a cleared one/);
+});
+
+test('#1310 no gap is reported when every entry reached a verdict', () => {
+  const recorded = buildDataset(
+    infraRows({
+      test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3,
+      error_signature: TRANSPORT_SIG, infra_signature: 'api-request-timeout',
+    }),
+    [], { runId: 'r2' },
+  );
+  assert.equal(recorded.infra_classification_gap, null, 'a recorded verdict is a verdict');
+
+  const viaFallback = buildDataset(
+    infraRows({ test: 't', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3, error_signature: TRANSPORT_SIG }),
+    [], { runId: 'r2', classifyInfra: classifyInfraError },
+  );
+  assert.equal(viaFallback.infra_classification_gap, null, 'the fallback is weaker, but it IS a verdict');
+});
+
+test('#1310 the gap counts hard failures too, not only flakes', () => {
+  const rows = [{
+    version: 1, date: '2026-08-05', run_id: 'r2', run_url: 'u', langflow_image: 'i',
+    duration_ms: 1, totals: { passed: 1, failed: 1, flaky: 1, skipped: 0 },
+    failures: [{ test: 'hf', file: 'a.spec.ts', line: 1, tags: ['@stable'], attempts: 3, error_signature: TRANSPORT_SIG }],
+    flaky: [{ test: 'fl', file: 'b.spec.ts', line: 2, tags: ['@stable'], attempts: 2, error_signature: TRANSPORT_SIG }],
+  }];
+  const ds = buildDataset(rows, [], { runId: 'r2' });
+  assert.equal(ds.infra_classification_gap.entries, 2);
+});

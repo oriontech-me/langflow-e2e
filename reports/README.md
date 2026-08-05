@@ -73,6 +73,7 @@ The series is **not continuous**. Document any missing weeks here rather than ba
       "tags": ["@stable", "@regression"],    // tags at the moment of the run
       "attempts": 3,                         // total result entries (initial + retries)
       "error_signature": "...",              // first line of the last failed-result error
+      "infra_signature": null,               // infra-signature id, or null — see below (#1310)
       "param": "google / gemini-2.5-flash"   // OPTIONAL: parameterization label from
                                              // the describe title, when the spec is
                                              // model-parameterized (#899). Omitted otherwise.
@@ -85,7 +86,8 @@ The series is **not continuous**. Document any missing weeks here rather than ba
       "line": 78,
       "tags": [...],
       "attempts": 2,                         // result entries; >1 means at least one retry happened
-      "error_signature": "..."               // first line of the FIRST failed attempt (before the passing retry)
+      "error_signature": "...",              // first line of the FIRST failed attempt (before the passing retry)
+      "infra_signature": null                // infra-signature id, or null — see below (#1310)
     }
   ],
   "run_errors": [                            // OPTIONAL: top-level report errors — see below.
@@ -98,6 +100,11 @@ The series is **not continuous**. Document any missing weeks here rather than ba
 
 - `tags` reflects the **state at the moment of the run**, not the current state in the repo. A test that was `@stable` at run time and has since had `@stable` removed will still show `@stable` in its historical entries.
 - `error_signature` is the first non-empty line of a failed result's error message, truncated to 240 chars. Stack frames and locator details are stripped — enough to cluster recurring failures, not enough to debug from history alone. For `failures[]` it is taken from the **last** failed result (the one that made the test fail for good); for `flaky[]` it is taken from the **first** failed attempt (the one that triggered the retry that later passed). Falls back to `"unknown"` when no message is available.
+- `infra_signature` (additive to schema v1, #1310) is the id of the infra-signature the entry's error matched — `api-request-timeout`, `preflight-unreachable`, `connection-refused`, `connection-dropped`, `host-unresolvable` (`scripts/lib/infra-signature-patterns.json`) — or `null`. It answers one question: *was this the harness failing to reach the backend, rather than the spec failing?* A non-null value means the failure is **not attributable to the spec that reported it** — wedge collateral (#1030/#1031). `null` means "could be the spec's own", never "definitely is": the pattern list is deliberately narrow and excludes every signature a real regression also produces (`locator.click: Timeout`, `page.waitForSelector: Timeout`, `expect(...).toBeVisible()`).
+  - **It is classified here, at write time, not by whoever reads this file.** The classifier matches anywhere in the error message, while `error_signature` is line 1 only — and a wedge routinely surfaces as an assertion whose *cause* line carries the transport error (the `#751` credential guard being the usual wrapper in this suite). Both shapes occurred in run `30997773754`: `agent-context-id-isolation.spec.ts:512` had the transport error on line 1, `agent-context-id-continuity.spec.ts:405` had it three lines down. Only the second needs the full text, and only this script still has it.
+  - Taken from the **same** result the entry's `error_signature` came from: the last failed attempt for `failures[]` (matching the exemption's "last error" wording and `scripts/remove-stable-from-failures.ts`), the first failed attempt for `flaky[]`.
+  - **Rows written before #1310 omit the field entirely, and absent is not `null`.** The triage dataset falls back to classifying the stored `error_signature` for those and labels the result `error-signature-fallback`, because that answer is weaker; a row that carries the field is trusted as-is rather than re-derived downwards.
+  - Consumers: `@stable` auto-removal already decided this independently from the full report (#1031) and does not read this field; the triage dataset uses it to keep a wedge-collateral **flake** from being filed and quarantined as if the spec were at fault.
 - `failures` are tests where Playwright's final `test.status === "unexpected"`. `flaky` are tests where final status is `"flaky"` (failed and then passed on retry). Both carry `error_signature`, so the 30-day same-signature flake-recurrence criterion in `CONTRIBUTING.md` applies mechanically to either array.
 - **A run where `totals` are ALL ZERO means no test executed at all** — an infra abort, *not* a clean day. The shards died before the first test (a failed `globalSetup`, a merge that produced nothing), so the line carries no per-test evidence and nothing in it should be read as a per-test signal. Distinguish it from "nothing failed", which always has `passed > 0`. `duration_ms` is a useful corroborating hint: an aborted run is far shorter than a real one (7.6 min vs the usual 14–22 on the daily). First occurrence: `run_id` `30351107916` (2026-07-28) — see #1007 for the incident and #1012 for the guard that now fails such a run loudly.
 - `run_errors` (optional, additive to schema v1) carries the **top-level** report errors — `globalSetup` / worker-level failures that stopped tests from running, as opposed to a test failing. Same normalisation as `error_signature` (first non-empty line, capped at 240 chars). One entry per shard that aborted, so a 4-shard daily aborting everywhere yields 4 near-identical signatures. **Omitted entirely when there are none**, which is the normal case — so its presence is itself the signal that something happened outside the tests. Absent from history written before #1012.
