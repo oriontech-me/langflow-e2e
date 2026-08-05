@@ -43,12 +43,20 @@ test.afterEach(async ({ request }) => {
   await tracker?.cleanup(request);
 });
 
-/** The `input_value` the server currently holds for the flow's single node. */
+/**
+ * The `input_value` the server currently holds for the flow's single node.
+ *
+ * Takes the bearer rather than resolving one, because this runs inside
+ * `expect.poll`: `getAuthToken` carries a `[2000, 8000, 20000]` retry budget, so a
+ * backend hiccup on ONE poll iteration could block for up to 30 s — longer than
+ * the poll's own 20 s timeout — and the failure would then read as "the autosave
+ * never persisted" when the real cause was auth.
+ */
 async function readPersistedInputValue(
   request: APIRequestContext,
+  bearer: string,
   flowId: string,
 ): Promise<unknown> {
-  const bearer = await getAuthToken(request);
   const response = await request.get(`/api/v1/flows/${flowId}`, {
     headers: bearer ? { Authorization: bearer } : undefined,
   });
@@ -83,6 +91,7 @@ async function readPersistedInputValue(
 async function verifyTextareaValue(
   page: Page,
   request: APIRequestContext,
+  bearer: string,
   value: string,
   flowId: string,
 ) {
@@ -93,7 +102,7 @@ async function verifyTextareaValue(
 
   // The autosave — not the exit — must be what commits it.
   await expect
-    .poll(() => readPersistedInputValue(request, flowId), {
+    .poll(() => readPersistedInputValue(request, bearer, flowId), {
       timeout: 20000,
       intervals: [500, 1000, 2000],
       message: "the debounced autosave should persist the typed value",
@@ -190,11 +199,14 @@ test("any changes on the node must be saved on user interaction",
     ).toHaveLength(1);
     const [flowId] = newIds;
 
+    // Resolved ONCE, outside the poll below — see `readPersistedInputValue`.
+    const bearer = await getAuthToken(request);
+
     // Take focus off the node before the first edit.
     await page.getByTestId("app-header").first().click();
 
     for (const value of randomValues) {
-      await verifyTextareaValue(page, request, value, flowId);
+      await verifyTextareaValue(page, request, bearer, value, flowId);
     }
   },
 );
