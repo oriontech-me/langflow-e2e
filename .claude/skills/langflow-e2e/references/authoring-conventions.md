@@ -339,6 +339,19 @@ failure). Reference: `ollama-provider.spec.ts`, `groq-provider.spec.ts`,
 B** — the bootstrap flow's `POST /flows` competes with the blank-flow click
 and `page.url()` returns the stale bootstrap id (#681).
 
+**The teardown's unmount navigation WARNS and carries on — it neither throws
+nor swallows** (#1288). Both patterns leave the editor before deleting (an
+editor mounted over a deleted flow 404s its `GET /flows/{id}/events` poll and
+the fixture logs each one), and both obvious ways to write that are wrong:
+letting the rejection propagate aborts the hook **before** the delete and leaks
+the flow — strictly worse than the noise the navigation prevents — while
+`.catch(() => {})` discards the one line that would attribute the 404 burst to
+its cause. Log the first line of the error and continue to the deletes.
+`trackCreatedFlows.cleanup()` does this for you and also returns it as
+`unmountError`, alongside `authError`, so a spec on the shared helper needs no
+teardown code of its own. 26 spec-local copies still carry the silent form;
+migrate one as you touch it rather than sweeping them.
+
 Validation contract (both patterns): (1) a **behavioral force-fail** of the
 cleanup itself — no-op the delete, run green, count surviving orphans (>0),
 revert, count again (0); (2) checking the instance's user-flow count after

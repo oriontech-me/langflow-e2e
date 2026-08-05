@@ -257,6 +257,44 @@ test("nothing was created, so nothing is navigated away from", async () => {
   assert.deepEqual(deletes, [], "and no auth call or DELETE");
 });
 
+test("a failed unmount still deletes every flow, and is reported rather than swallowed", async () => {
+  // Issue #1288. Both obvious behaviours are wrong here, which is why this is
+  // pinned: letting the rejection propagate would abort the teardown BEFORE the
+  // deletes — and since `captured` has already been taken out of the tracker by
+  // then, those flows are neither deleted nor tracked, i.e. a permanent leak, for
+  // a navigation whose only job was to reduce log noise. Swallowing it (the shape
+  // this replaces, and the shape 26 spec-local copies still carry) discards the
+  // one line that attributes the `🚨 Backend Error` 404 burst that follows to its
+  // real cause.
+  const { page, emit } = fakePage();
+  const { request, deletes } = fakeRequest();
+  const trackedPage = page as unknown as { goto: (url: string) => Promise<null> };
+  trackedPage.goto = async () => {
+    throw new Error("net::ERR_ABORTED at http://localhost:7860/\nsecond line dropped");
+  };
+
+  const flows = trackCreatedFlows(page);
+  emit(creationResponse("flow-1"));
+  emit(creationResponse("flow-2"));
+  const result = await flows.cleanup(request);
+
+  // The load-bearing half ran regardless.
+  assert.deepEqual(result.deleted, ["flow-1", "flow-2"]);
+  assert.deepEqual(result.failed, []);
+  assert.deepEqual(
+    deletes.map((d) => d.url),
+    ["/api/v1/flows/flow-1", "/api/v1/flows/flow-2"],
+  );
+
+  // And the failure is visible on the result, the way `authError` is — first line
+  // only, so a multi-line Playwright error stays one readable line.
+  assert.match(String(result.unmountError), /ERR_ABORTED/);
+  assert.ok(
+    !String(result.unmountError).includes("second line dropped"),
+    "only the first line of the error is carried",
+  );
+});
+
 // ─── Axis 4: a failed delete is reported, never swallowed ───────────────────
 
 test("a failed delete is reported and does not stop the other deletes", async () => {

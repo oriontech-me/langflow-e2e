@@ -92,6 +92,17 @@ export interface FlowCleanupResult {
    * not a problem with the flow — see the note at the call site.
    */
   authError?: string;
+  /**
+   * Set when leaving the canvas failed, so the deletes below ran with the editor
+   * still mounted (issue #1288).
+   *
+   * Same reason `authError` exists: the consequence arrives later and looks like
+   * something else. Here it is a burst of `🚨 Backend Error` 404s from the
+   * editor's `GET /flows/{id}/events` poll hitting a flow that no longer exists —
+   * unattributable noise unless the navigation failure that caused it is named.
+   * First line only, so a multi-line Playwright error stays readable.
+   */
+  unmountError?: string;
   /** Set when `attribution` was requested — what the sidecar recorded or skipped. */
   attribution?: TokenAttributionResult;
 }
@@ -303,7 +314,22 @@ export function trackCreatedFlows(page: TrackedPage): FlowTracker {
       // way, because the build's event stream is already closed by then. It bites
       // the specs whose editor is still polling, and costs nothing in the rest.
       // Two of the 51 copies did this; #1103 added it to the folder specs.
-      await page.goto("about:blank").catch(() => {});
+      //
+      // A failed navigation is neither rethrown nor swallowed (#1288). Rethrowing
+      // would abort this method BEFORE the deletes — and `captured` has already
+      // been taken out of the tracker, so those flows would be neither deleted nor
+      // tracked: a permanent leak, traded for a navigation whose only job was to
+      // reduce log noise. Swallowing it silently is what this replaces, and it
+      // discards the one line that attributes the 404 burst above to its cause.
+      await page.goto("about:blank").catch((error: unknown) => {
+        result.unmountError =
+          (error as Error)?.message?.split("\n")[0] ?? String(error);
+        console.warn(
+          `⚠️  cleanup: could not leave the flow canvas (${result.unmountError}) — ` +
+            `the deletes below still run, so any 404 on the editor's events poll is ` +
+            `THAT and not the flow (#1288).`,
+        );
+      });
 
       const errors: unknown[] = [];
       for (const id of captured) {
