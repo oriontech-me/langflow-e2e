@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 446 `test()` calls carrying the `@stable` tag, distributed across 177 spec
+> 443 `test()` calls carrying the `@stable` tag, distributed across 175 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -959,7 +959,6 @@
 - [x] The legacy banner link filters the sidebar to Data Operations → `data-operations-legacy-link.spec.ts`
 - [x] Searching a legacy operations name surfaces Data Operations with legacy components hidden → `data-operations-legacy-link.spec.ts`
 - [x] A legacy operations component still builds and returns its result → `data-operations-legacy-link.spec.ts`
-- [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
@@ -1262,7 +1261,6 @@
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
-- [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
@@ -1302,7 +1300,6 @@
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
-- [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
 - [x] user can search and add components using keyboard shortcuts → `keyboardComponentSearch.spec.ts`
 - [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
 - [x] the main menu lists every item, reports the running version and links out → `main-menu-actions.spec.ts`
