@@ -16,6 +16,7 @@ export {
   providerConfigMap,
   keyedProviders,
   keyedProviderNames,
+  langflowProviderName,
 } from "./provider-config";
 
 // Derivado de provider-config.ts — edite lá para alterar as chaves de ambiente

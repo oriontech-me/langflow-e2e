@@ -124,3 +124,38 @@ export const keyedProviders: Array<[KeyedProvider, ApiKeyProviderConfig]> = (
 export const keyedProviderNames: KeyedProvider[] = keyedProviders.map(
   ([provider]) => provider,
 );
+
+/**
+ * The provider name as Langflow itself spells it — what a persisted Agent node
+ * carries in `template.model.value[0].provider`.
+ *
+ * It is NOT this repo's `Provider` key: measured on `1.12.0.dev16`, selecting
+ * `gemini-2.5-flash` persists `provider: "Google Generative AI"`, and a freshly
+ * mounted node carries `provider: "Anthropic"`. That string is what
+ * `get_api_key_for_provider` resolves the runtime key from (`lfx/base/models/
+ * unified_models/credentials.py`), so it is the axis the `#751` guard has to check
+ * now that #14311 stopped writing `api_key` at all (#1274).
+ *
+ * DERIVED from `providerTestId` rather than listed again: the panel's testid is
+ * `provider-item-<the same display name>` — `provider-item-Google Generative AI`,
+ * `provider-item-Anthropic`, `provider-item-Ollama`. Both come from Langflow's
+ * provider metadata, so one table cannot drift from the other. A second hardcoded
+ * map is exactly what #1043 and #1184 had to remove after it drifted; if upstream
+ * ever decouples the two, this derivation fails loudly for every provider at once
+ * rather than for one, which is the cheaper failure to notice.
+ */
+const PROVIDER_ITEM_TESTID_PREFIX = "provider-item-";
+
+export function langflowProviderName(provider: Provider): string {
+  const { providerTestId } = providerConfigMap[provider];
+  if (!providerTestId.startsWith(PROVIDER_ITEM_TESTID_PREFIX)) {
+    throw new Error(
+      `langflowProviderName: providerTestId for "${provider}" is ` +
+        `"${providerTestId}", which does not start with ` +
+        `"${PROVIDER_ITEM_TESTID_PREFIX}" — the display name can no longer be ` +
+        `derived from it. Either restore the convention or give ProviderConfig an ` +
+        `explicit display-name field (do NOT add a second lookup table: #1043/#1184).`,
+    );
+  }
+  return providerTestId.slice(PROVIDER_ITEM_TESTID_PREFIX.length);
+}

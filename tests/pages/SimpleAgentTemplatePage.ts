@@ -10,6 +10,7 @@ import {
   type AgentCredentialProbe,
 } from "../helpers/flows/agent-credential-settle";
 import {
+  langflowProviderName,
   providerConfigMap,
   providerSetupMap,
   hasProviderEnvKeys,
@@ -94,37 +95,34 @@ export class SimpleAgentTemplatePage extends BasePage {
     await adjustScreenView(this.page);
     await providerSetupMap[provider](this.page, model);
 
-    // #751: on the 1.11+ unified model selector the Agent node prefills its
-    // `api_key` with the DEFAULT credential (ANTHROPIC_API_KEY) when it MOUNTS —
-    // not when the dropdown opens; picking the target provider's model rebinds it
-    // to that provider's credential ASYNCHRONOUSLY. A caller that opens the Playground
-    // and sends a message before the rebind settles builds the selected model
-    // with the wrong provider's key — surfacing as
-    // "Flow build failed: Incorrect API key provided" and a `div-chat-message`
-    // that never renders (the daily-#744 signature). Block until the PERSISTED
-    // flow shows BOTH that credential and the requested model, so every caller
-    // starts settled — the credential alone does not prove it (#1072, see the
-    // classifier's note on the anthropic default).
-    // A KEYLESS provider expects an EMPTY `api_key`, and that is a real assertion
-    // rather than a vacuous one (#1187). The Agent node prefills `api_key` with the
-    // default credential (`ANTHROPIC_API_KEY`) when it MOUNTS — so on an instance
-    // where Anthropic is also configured, the node starts out carrying a credential
-    // and selecting an Ollama model must CLEAR it. Measured on 1.12.0.dev10 after
-    // selecting `Ollama-llama3.1:latest`: `api_key.value === ""` with
-    // `model.value[0] = { name: "llama3.1:latest", provider: "Ollama" }`. So `""` is
-    // the settled state to wait for.
-    // But what carries the proof for a keyless provider is the MODEL axis, and the
-    // caller has to supply it. `credentialOf()` returns `""` for an absent field
-    // too, and on the lane this exists for — every hosted key dead, so nothing
-    // prefills `api_key` at mount — `""` is ALSO the state before anything was
-    // selected. With `model` passed the guard still blocks on a real transition,
-    // and the routed path always pins one (`OLLAMA_TEST_MODEL` is mandatory in
-    // `resolveTestTargets`); called for a keyless provider WITHOUT a model it
-    // would settle on the first read and prove nothing.
-    const config = providerConfigMap[provider];
+    // #751: the Agent node mounts on the model selector's DEFAULT model — measured
+    // on 1.12.0.dev16 as `{ name: "claude-opus-5", provider: "Anthropic" }` — and
+    // only flips to the requested model once the editor's debounced autosave
+    // `PATCH /api/v1/flows/{id}` carries the pick. A caller that opens the Playground
+    // and sends a message in between runs the DEFAULT provider's model with that
+    // provider's key, surfacing as "Flow build failed: Incorrect API key provided"
+    // and a `div-chat-message` that never renders (the daily-#744 signature). Block
+    // until the PERSISTED flow shows the requested provider, so every caller starts
+    // settled.
+    //
+    // The axis is the PROVIDER of the persisted model, not `api_key` (#1274). Upstream
+    // #14311 stopped writing that field — it reads `""` from mount onward on every
+    // 1.12 build — so waiting on it could only ever time out, which is what failed 14
+    // @stable specs on the 2026-08-05 daily. The provider is not a weaker substitute:
+    // with `api_key` empty the runtime resolves the key FROM it
+    // (`get_api_key_for_provider`), so it is the input that decides which credential
+    // the run uses.
+    //
+    // This also fixes what the credential axis could not express for a KEYLESS
+    // provider (#1187): `""` was both the settled state and the pre-selection state,
+    // so the guard leaned on the caller passing a model. `provider: "Ollama"` is a
+    // positive assertion, which is why no `credential === "base-url"` special case
+    // survives here — and why the three callers that pin no model
+    // (`model-provider-model-toggle`, `general-bugs-agent-images-playground`,
+    // `agent-model-connection-isolation`) still block on a real transition.
     await this.waitForAgentCredentialSettled(
       flowId,
-      config.credential === "base-url" ? "" : config.envKeys[0],
+      langflowProviderName(provider),
       { provider, model },
     );
 
@@ -132,8 +130,8 @@ export class SimpleAgentTemplatePage extends BasePage {
   }
 
   /**
-   * Block until the persisted flow shows the Agent bound to `expectedCredential`
-   * AND carrying the requested model. #751, reworked in #1072.
+   * Block until the persisted flow shows the Agent carrying `expectedProvider`
+   * AND the requested model. #751, reworked in #1072, re-pointed in #1274.
    *
    * What #1072 changed, and what it deliberately did not:
    *
@@ -161,7 +159,7 @@ export class SimpleAgentTemplatePage extends BasePage {
    */
   private async waitForAgentCredentialSettled(
     flowId: string,
-    expectedCredential: string,
+    expectedProvider: string,
     expected: { provider: Provider; model?: string },
   ): Promise<void> {
     const startedAt = Date.now();
@@ -218,7 +216,7 @@ export class SimpleAgentTemplatePage extends BasePage {
           probe = readAgentCredentialProbe(body);
           lastReadError = undefined;
           if (
-            classifyCredentialSettle(probe, expectedCredential, expected.model) ===
+            classifyCredentialSettle(probe, expectedProvider, expected.model) ===
             "settled"
           ) {
             const elapsedMs = Date.now() - startedAt;
@@ -257,14 +255,14 @@ export class SimpleAgentTemplatePage extends BasePage {
       formatCredentialSettleFailure({
         flowId,
         provider: expected.provider,
-        expectedCredential,
+        expectedProvider,
         expectedModel: expected.model,
         probe,
         // A binding nobody managed to read is UNKNOWN, not absent: collapsing the
         // two would make the guard assert "this flow has no Agent node" about a
         // flow it never fetched — the shape of every read on daily 30444299314.
         verdict: everRead
-          ? classifyCredentialSettle(probe, expectedCredential, expected.model)
+          ? classifyCredentialSettle(probe, expectedProvider, expected.model)
           : "read-failed",
         elapsedMs: Date.now() - startedAt,
         reads,

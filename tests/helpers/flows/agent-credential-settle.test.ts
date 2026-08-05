@@ -17,12 +17,18 @@
 //     distinction became unreachable — while the tests passed, because the fixture
 //     used a string too. Every fixture below therefore uses the real shape, and
 //     `MODEL_VALUE_SHAPE` documents where it is verified in the product.
-//  2. **The verdict distinctions.** Several states produce the same "wrong
-//     credential" observation and they send a reader to opposite places: a lagging
-//     autosave, a model click that never registered, a credential that matches only
-//     because it is the selector's default, and a read that never succeeded. A
+//  2. **The verdict distinctions.** Several states produce the same "not the
+//     provider I asked for" observation and they send a reader to opposite places: a
+//     lagging autosave, a model click that never registered, a provider that matches
+//     only because it is the selector's default, and a read that never succeeded. A
 //     classifier that collapses any of those silently re-creates the mis-triage,
 //     and no Playwright spec would fail for it.
+//  3. **The axis itself (#1274).** The guard settles on the PROVIDER of the
+//     persisted model, not on `api_key` — upstream #14311 stopped writing that
+//     field, so a classifier that consults it can only ever refuse to settle, which
+//     is how 14 `@stable` specs failed on the 2026-08-05 daily. Tests below pin both
+//     directions: an empty api_key must not block settling, and a stale one must not
+//     either.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -82,12 +88,15 @@ test("the fixture itself uses the real array-of-objects shape", () => {
   assert.equal(value[0]?.name, "gpt-4o-mini");
 });
 
-test("reads the credential and the SELECTED model names off the real shape", () => {
+test("reads the provider, the SELECTED model names and the credential off the real shape", () => {
   const probe = readAgentCredentialProbe(
     flowWithAgent("OPENAI_API_KEY", MODEL_VALUE_SHAPE("gpt-4o-mini")),
   );
   assert.deepEqual(probe, {
     credential: "OPENAI_API_KEY",
+    // The axis #1274 moved the guard onto — it comes off the SAME entry as the
+    // model name, so a payload that carries one carries the other.
+    selectedProviders: ["OpenAI"],
     selectedModels: ["gpt-4o-mini"],
   });
 });
@@ -149,92 +158,145 @@ test("a non-string api_key reads as empty, not as the raw object", () => {
 
 // ─── classifyCredentialSettle — the distinctions that matter ─────────────────
 
-const probeOf = (credential: string, models: string[]): AgentCredentialProbe => ({
+const probeOf = (
+  providers: string[],
+  models: string[],
+  credential = "",
+): AgentCredentialProbe => ({
   credential,
+  selectedProviders: providers,
   selectedModels: models,
 });
 
-test("credential and model both applied is settled", () => {
+// Langflow's own spelling, measured on 1.12.0.dev16 — NOT this repo's Provider key.
+const GOOGLE = "Google Generative AI";
+const ANTHROPIC = "Anthropic";
+const OPENAI = "OpenAI";
+
+test("provider and model both applied is settled", () => {
+  assert.equal(
+    classifyCredentialSettle(probeOf([GOOGLE], ["gemini-2.5-flash"]), GOOGLE, "gemini-2.5-flash"),
+    "settled",
+  );
+});
+
+test("#1274 an empty api_key does NOT prevent settling — it is not an axis", () => {
+  // The regression this issue is: since #14311 `api_key` reads "" on every build,
+  // so any classification that consulted it could only ever refuse to settle.
+  // 14 @stable specs failed the guard on the 2026-08-05 daily for exactly this.
   assert.equal(
     classifyCredentialSettle(
-      probeOf("GOOGLE_API_KEY", ["gemini-2.5-flash"]),
-      "GOOGLE_API_KEY",
+      probeOf([GOOGLE], ["gemini-2.5-flash"], ""),
+      GOOGLE,
       "gemini-2.5-flash",
     ),
     "settled",
   );
 });
 
-test("the anthropic default binding alone is model-pending, NOT settled", () => {
-  // The vacuity #1072 found: for `provider: "anthropic"` the expected credential
-  // IS the selector's default auto-binding, so a credential-only check declared
-  // the load settled before the model selection had been applied at all.
+test("#1274 a stale api_key does not prevent settling either", () => {
+  // The mirror case: on a pre-#14311 build the field can still carry a value, and
+  // for a google load that value may be the mount-time ANTHROPIC default. The
+  // guard must not read that as unsettled once the provider is right, or it would
+  // swap one dated premise for another.
   assert.equal(
     classifyCredentialSettle(
-      probeOf("ANTHROPIC_API_KEY", []),
-      "ANTHROPIC_API_KEY",
-      "claude-sonnet-5",
+      probeOf([GOOGLE], ["gemini-2.5-flash"], "ANTHROPIC_API_KEY"),
+      GOOGLE,
+      "gemini-2.5-flash",
     ),
-    "model-pending",
+    "settled",
   );
 });
 
-test("model applied but credential still on the default is credential-pending", () => {
-  // The 2026-07-27 daily flake, exactly: a google target observing the default
-  // ANTHROPIC binding while the requested Gemini model IS already selected.
+test("the mount-time default provider is provider-pending, NOT settled", () => {
+  // Measured read 0 on 1.12.0.dev16: a freshly mounted node carries
+  // { name: "claude-opus-5", provider: "Anthropic" }. A google caller that settled
+  // here would run Anthropic's model with Anthropic's key — the #744 signature.
   assert.equal(
-    classifyCredentialSettle(
-      probeOf("ANTHROPIC_API_KEY", ["gemini-2.5-flash"]),
-      "GOOGLE_API_KEY",
-      "gemini-2.5-flash",
-    ),
-    "credential-pending",
+    classifyCredentialSettle(probeOf([ANTHROPIC], ["claude-opus-5"]), GOOGLE, "gemini-2.5-flash"),
+    "provider-pending",
   );
 });
 
-test("a different persisted model is model-not-applied", () => {
+test("#1274 an ANTHROPIC caller is not settled by the default binding either", () => {
+  // The vacuity #1072 found, carried onto the new axis: for anthropic the default
+  // provider IS the expected one, so the provider axis alone would settle before
+  // the pick lands. The model axis is what still separates them — which is why
+  // gating on the model when one is pinned is retained rather than dropped.
   assert.equal(
-    classifyCredentialSettle(
-      probeOf("ANTHROPIC_API_KEY", ["claude-sonnet-5"]),
-      "GOOGLE_API_KEY",
-      "gemini-2.5-flash",
-    ),
+    classifyCredentialSettle(probeOf([ANTHROPIC], ["claude-opus-5"]), ANTHROPIC, "claude-sonnet-5"),
+    "model-not-applied",
+  );
+  assert.equal(
+    classifyCredentialSettle(probeOf([ANTHROPIC], ["claude-sonnet-5"]), ANTHROPIC, "claude-sonnet-5"),
+    "settled",
+  );
+});
+
+test("a different model under the RIGHT provider is model-not-applied", () => {
+  assert.equal(
+    classifyCredentialSettle(probeOf([GOOGLE], ["gemini-3.5-pro"]), GOOGLE, "gemini-2.5-flash"),
     "model-not-applied",
   );
 });
 
-test("no persisted model at all is nothing-persisted", () => {
+test("no persisted model or provider at all is nothing-persisted", () => {
   assert.equal(
-    classifyCredentialSettle(
-      probeOf("ANTHROPIC_API_KEY", []),
-      "OPENAI_API_KEY",
-      "gpt-4o-mini",
-    ),
+    classifyCredentialSettle(probeOf([], []), OPENAI, "gpt-4o-mini"),
     "nothing-persisted",
   );
 });
 
-test("without an expected model only the credential axis is available", () => {
-  // A caller that lets the setup helper pick the first model has no name to
-  // compare, so the model axis must not manufacture a verdict.
+test("nothing-persisted is decided BEFORE the provider axis", () => {
+  // Order matters: an empty model list also has an empty provider list, so testing
+  // the provider first would report "a different provider is persisted" about a
+  // node carrying none — a claim about something nobody observed.
+  assert.equal(classifyCredentialSettle(probeOf([], []), GOOGLE), "nothing-persisted");
+});
+
+test("#1274 a caller that pins NO model still blocks on a real transition", () => {
+  // This is what the credential axis could no longer do. `api_key` is "" both
+  // before and after the pick, so these three specs
+  // (model-provider-model-toggle, general-bugs-agent-images-playground,
+  // agent-model-connection-isolation) would have settled on the first read and
+  // proved nothing. The provider is always known, so they still gate.
   assert.equal(
-    classifyCredentialSettle(probeOf("OPENAI_API_KEY", []), "OPENAI_API_KEY"),
-    "settled",
+    classifyCredentialSettle(probeOf([ANTHROPIC], ["claude-opus-5"]), OPENAI),
+    "provider-pending",
+    "the mount-time default must not settle an openai caller",
   );
   assert.equal(
-    classifyCredentialSettle(
-      probeOf("ANTHROPIC_API_KEY", ["claude-sonnet-5"]),
-      "OPENAI_API_KEY",
-    ),
-    "credential-pending",
+    classifyCredentialSettle(probeOf([OPENAI], ["gpt-4o-mini"]), OPENAI),
+    "settled",
   );
 });
 
-test("a missing Agent node is its own verdict, not a pending credential", () => {
+test("#1274 a keyless provider is a positive assertion, not an empty-string match", () => {
+  // #1187 had to lean on the caller passing a model, because for Ollama the settled
+  // credential ("") equalled the pre-selection state. `provider: "Ollama"` is
+  // observable in its own right.
   assert.equal(
-    classifyCredentialSettle(null, "OPENAI_API_KEY", "gpt-4o-mini"),
-    "no-agent-node",
+    classifyCredentialSettle(probeOf([ANTHROPIC], ["claude-opus-5"]), "Ollama"),
+    "provider-pending",
   );
+  assert.equal(
+    classifyCredentialSettle(probeOf(["Ollama"], ["llama3.1:latest"]), "Ollama"),
+    "settled",
+  );
+});
+
+test("a provider with no observable model name is model-pending, not model-not-applied", () => {
+  // Degenerate payload: an entry carrying `provider` and no `name`. There is no
+  // other model to name, so the sharper verdict would assert something unobserved.
+  assert.equal(
+    classifyCredentialSettle(probeOf([GOOGLE], []), GOOGLE, "gemini-2.5-flash"),
+    "model-pending",
+  );
+});
+
+test("a missing Agent node is its own verdict, not a pending provider", () => {
+  assert.equal(classifyCredentialSettle(null, OPENAI, "gpt-4o-mini"), "no-agent-node");
 });
 
 // ─── formatCredentialSettleFailure ───────────────────────────────────────────
@@ -245,10 +307,10 @@ const failure = (
   formatCredentialSettleFailure({
     flowId: "abc-123",
     provider: "google",
-    expectedCredential: "GOOGLE_API_KEY",
+    expectedProvider: "Google Generative AI",
     expectedModel: "gemini-2.5-flash",
-    probe: probeOf("ANTHROPIC_API_KEY", ["gemini-2.5-flash"]),
-    verdict: "credential-pending",
+    probe: probeOf(["Anthropic"], ["claude-opus-5"]),
+    verdict: "provider-pending",
     elapsedMs: 20_400,
     reads: 14,
     ...over,
@@ -268,14 +330,17 @@ test("the message carries every fact needed to triage without the artifacts", ()
   // `gemini-2.5-flash` appears on two lines, so a plain `includes` could not fail
   // if the "model wanted" line were dropped.
   assert.equal(field(message, "flow"), "abc-123");
-  assert.equal(field(message, "provider"), 'google (expected credential "GOOGLE_API_KEY")');
+  assert.equal(
+    field(message, "provider"),
+    'google (expected "Google Generative AI" on the persisted model)',
+  );
   assert.equal(field(message, "model wanted"), "gemini-2.5-flash");
   assert.equal(
     field(message, "observed"),
-    'api_key="ANTHROPIC_API_KEY" models=[gemini-2.5-flash]',
+    'providers=[Anthropic] models=[claude-opus-5] api_key=""',
   );
   assert.equal(field(message, "waited"), "20.4s over 14 read(s)");
-  assert.equal(field(message, "verdict"), "credential-pending");
+  assert.equal(field(message, "verdict"), "provider-pending");
   // The two issues a reader needs: why the guard exists, where the load relief is.
   assert.ok(message.includes("#751"), message);
   assert.ok(message.includes("#1077"), message);
@@ -288,9 +353,9 @@ test("a caller that chose no model says so on the model line", () => {
   );
 });
 
-test("credential-pending does not wave the failure off as load", () => {
+test("provider-pending does not wave the failure off as load", () => {
   // It prints only AFTER the budget expired, i.e. retrying did not help within it,
-  // and a credential belonging to a THIRD provider is a real misbinding.
+  // and a persisted THIRD provider is a real misbinding rather than slowness.
   const message = failure();
   assert.ok(
     message.includes("retrying did NOT help"),
@@ -305,29 +370,32 @@ test("nothing-persisted points at the request that actually rebinds", () => {
   // request and a wrong conclusion.
   const message = failure({
     verdict: "nothing-persisted",
-    probe: probeOf("ANTHROPIC_API_KEY", []),
+    probe: probeOf([], []),
   });
   assert.ok(message.includes("custom_component/update"), message);
 });
 
-test("model-pending covers BOTH the default-binding and the real-rebind case", () => {
-  // The verdict is reachable two ways and they mean different things: anthropic,
-  // where the credential match is free because it is the selector's default; and
-  // any other provider, where the rebind DID land and only the selection has not.
-  // Guidance that asserts only the first is false half the time it prints.
+test("#1274 provider-pending names BOTH of its causes and how to tell them apart", () => {
+  // Reachable two ways that mean different things: the mount-time DEFAULT provider,
+  // where the pick simply has not been autosaved and waiting is right; and some
+  // THIRD provider, where the setup step clicked wrong and waiting cannot help.
+  // Guidance asserting only one is misleading half the time it prints.
+  const message = failure();
+  assert.ok(message.includes("DEFAULT"), message);
+  assert.ok(message.includes("THIRD"), message);
+  assert.ok(message.includes("#1077"), "the waiting-is-right cause needs the load pointer");
+});
+
+test("#1274 model-pending describes the degenerate payload, not a normal pending state", () => {
   const message = failure({
     verdict: "model-pending",
-    provider: "anthropic",
-    expectedCredential: "ANTHROPIC_API_KEY",
-    expectedModel: "claude-sonnet-5",
-    probe: probeOf("ANTHROPIC_API_KEY", []),
+    probe: probeOf(["Google Generative AI"], []),
   });
-  assert.ok(message.includes("DEFAULT binding"), message);
+  assert.ok(message.includes("degenerate"), message);
   assert.ok(
-    message.includes("any other provider"),
-    "must not assert the default-binding cause for a provider where it is wrong",
+    !message.includes("DIFFERENT model is persisted"),
+    "there is no other model to name here:\n" + message,
   );
-  assert.ok(message.includes("provider setup"), message);
 });
 
 test("a guard that never read the flow reports UNKNOWN, not an absent Agent node", () => {
@@ -362,21 +430,39 @@ test("model-not-applied covers the wedged save path, not only a wrong click", ()
   // reader to the setup helper only would misdirect every wedged load (#1077).
   const message = failure({
     verdict: "model-not-applied",
-    probe: probeOf("ANTHROPIC_API_KEY", ["claude-opus-5"]),
+    expectedProvider: "Google Generative AI",
+    probe: probeOf(["Google Generative AI"], ["gemini-3.5-pro"]),
   });
   assert.ok(message.includes("setup helper"), message);
-  assert.ok(message.includes("prefill"), message);
-  assert.ok(message.includes("#1077"), message);
+  // The wedged-save case MOVED to provider-pending in #1274: a node that kept its
+  // mount-time default carries a different PROVIDER, not merely a different model.
+  // Guidance that still sent this verdict's reader hunting a wedged save would
+  // point at the wrong mechanism.
+  assert.ok(message.includes("provider-pending"), message);
 });
 
-test("credential-pending with NO pinned model does not claim the selection registered", () => {
-  // Reachable from the three specs that call load({ provider }) with no model, and
-  // from any spec whose models.json came back empty. The usual guidance asserts
-  // "the requested model IS applied" — nothing checked that here.
-  const message = failure({ expectedModel: undefined });
-  assert.ok(
-    !message.includes("The requested model IS applied"),
-    "must not assert a check that could not run:\n" + message,
-  );
-  assert.ok(message.includes("pinned no model"), message);
+test("#1274 no verdict claims a check that did not run, for any caller", () => {
+  // The old code needed a per-caller special case: `credential-pending`'s guidance
+  // asserted "the requested model IS applied", which was false for the three
+  // callers that pin no model. The primary axis is now the provider, which every
+  // caller supplies, so one string per verdict is true for all of them — and no
+  // guidance may assert the model axis was consulted.
+  for (const expectedModel of [undefined, "gemini-2.5-flash"]) {
+    const message = failure({ expectedModel });
+    assert.ok(
+      !message.includes("The requested model IS applied"),
+      `must not assert a check that could not run (expectedModel=${expectedModel}):\n${message}`,
+    );
+  }
+});
+
+test("#1274 the message says the empty api_key is not the finding", () => {
+  // Every reader of this message arrives knowing the pre-#14311 behaviour, and the
+  // observed line still prints `api_key=""`. Without this note the empty field
+  // reads as the defect — which is how the 2026-08-05 daily's 14 failures were
+  // first triaged as a product regression.
+  const message = failure();
+  assert.ok(message.includes("api_key is EMPTY"), message);
+  assert.ok(message.includes("#14311"), message);
+  assert.ok(message.includes("#1274"), message);
 });
