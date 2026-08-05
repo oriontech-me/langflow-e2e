@@ -823,7 +823,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
-| `core-components/` — Core Components | 90 | 84 | 3 | 0 | 3 |
+| `core-components/` — Core Components | 91 | 85 | 3 | 0 | 3 |
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
@@ -838,7 +838,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **499** | **378 (76%)** | **89 (18%)** | **15 (3%)** | **17 (3%)** |
+| **TOTAL** | **500** | **379 (76%)** | **89 (18%)** | **15 (3%)** | **17 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 437 `test()` calls carrying the `@stable` tag, distributed across 174 spec
+> 438 `test()` calls carrying the `@stable` tag, distributed across 175 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -955,6 +955,7 @@
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
+- [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
 - [x] adding a custom User Action creates its branch handle without a reload → `human-input-node-config.spec.ts`
 - [x] the configured branch handles persist after save and reload → `human-input-node-config.spec.ts`
