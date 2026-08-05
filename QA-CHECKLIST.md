@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-04
+> **Last updated:** 2026-08-05
 
 ---
 
@@ -821,7 +821,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
-| `core-components/` — Core Components | 90 | 83 | 3 | 0 | 4 |
+| `core-components/` — Core Components | 90 | 84 | 3 | 0 | 3 |
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
@@ -836,7 +836,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **498** | **376 (76%)** | **89 (18%)** | **15 (3%)** | **18 (4%)** |
+| **TOTAL** | **498** | **377 (76%)** | **89 (18%)** | **15 (3%)** | **17 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -852,7 +852,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 432 `test()` calls carrying the `@stable` tag, distributed across 172 spec
+> 435 `test()` calls carrying the `@stable` tag, distributed across 173 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -953,6 +953,9 @@
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
+- [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
+- [x] adding a custom User Action creates its branch handle without a reload → `human-input-node-config.spec.ts`
+- [x] the configured branch handles persist after save and reload → `human-input-node-config.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
 - [x] If-Else operator=contains routes a substring match through the True branch → `if-else-component-regression.spec.ts`
@@ -1326,7 +1329,7 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 4 | 0 |
-| `core-components/` — Core Components | 3 | 4 |
+| `core-components/` — Core Components | 3 | 3 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 5 | 2 |
 | `core-functionality/model-provider/` | 2 | 0 |
