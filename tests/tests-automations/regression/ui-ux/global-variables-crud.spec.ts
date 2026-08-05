@@ -141,9 +141,13 @@ test(
   },
 );
 
-test(
+test.fixme(
   "Credential variable value is hidden from the variable list",
-  { tag: ["@stable", "@release", "@workspace", "@regression"] },
+  // Quarantined at triage (#1296): recurrent flake 3x (2026-07-15, 2026-07-17,
+  // 2026-08-05) — the variable the test just created never appears in the grid,
+  // so the sanity assertion fails before the secret-leak assertion is reached.
+  // Restore (`test` + `@stable`) in #1303.
+  { tag: ["@release", "@workspace", "@regression"] },
   async ({ page }) => {
     await openGlobalVariablesSettings(page);
 
