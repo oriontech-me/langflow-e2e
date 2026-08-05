@@ -139,6 +139,14 @@ configured providers show a **"N models"** suffix in their list item and a
    `default_fields: []` — the old spec 422'd and "passed"), then delete it
    through the Settings → Global Variables UI and assert the row is gone. No
    silent early-returns: every intermediate element is a hard assertion.
+   **There is no confirmation dialog for this action** — ticking the row and
+   hitting the header trash deletes immediately (`GET` by id → `404`, row out of
+   the DOM). Confirming that is why the spec asserts `delete-row-button` is
+   *enabled* before clicking it (the only client-side observable that the
+   release-1.12 RBAC gate has opened) and scopes its optional-confirmation branch
+   to a real `[role="dialog"]`: matched page-wide, `/delete|confirm|yes/i`
+   resolves to the header button itself, disabled once the row is gone, and
+   clicking it burned the full 20 s timeout in ~75 % of runs (#1235).
 2. *API removal* — POST (with `default_fields`), DELETE → 200/204, GET-by-id
    → 404/422, list no longer contains it (hard-fail on non-2xx create).
 

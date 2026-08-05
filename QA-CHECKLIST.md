@@ -424,7 +424,7 @@
 - [x] Language Model component — configuration → `llm-agents/language-model-regression.spec.ts`
 - [x] Model Input component → `llm-agents/modelInputComponent.spec.ts`
 - [x] Add new provider via modal → `llm-agents/model-provider-api-key.spec.ts` (positive add validated via invalid-key rejection + Replace edit surface — a real re-add poisons a backend credential cache, see #505)
-- [~] Remove API key from existing provider — the API path (`DELETE /api/v1/variables/{id}`) stays validated; the **UI** path is quarantined (#1235): after ticking the row's checkbox the header trash action stays disabled, recurrent on the dailies of 2026-07-27 and 2026-08-03. Same Global Variables ag-grid surface as §4.3's edit entry — filed as one cause → `llm-agents/remove-provider-api-key.spec.ts`
+- [x] Remove API key from existing provider — both paths validated. The UI path was quarantined (#1235) as a Global Variables permission-gate flake and is not one: the deletion already succeeded, and the spec then re-clicked the now-disabled header button through a phantom confirmation step. Fixed by asserting the header action is enabled and scoping the confirmation to a real dialog → `llm-agents/remove-provider-api-key.spec.ts`
 - [x] Per-model enable/disable toggle changes immediately and persists across reopen → `llm-agents/model-provider-model-toggle.spec.ts`
 - [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
