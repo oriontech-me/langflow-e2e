@@ -273,7 +273,7 @@
 - [ ] `max_iterations` + `default_route` cycle break (not implementable as a standalone If-Else feedback loop on 1.12.x — Langflow forms graph cycles only via loop-aware target handles (`from_loop_target_handle`, `target_handle.type is None`) that `LoopComponent` ports provide; a feedback edge into the router's regular `match_text` field-input persists in the flow JSON but does not make the graph iterate (`is_cyclic` stays false, router runs once). `conditional_router.py`'s cycle-break only fires when the router already sits inside a Loop-created cycle. Confirmed live on 1.12.0.dev3; product finding filed upstream; #891, follow-up of #822)
 
 #### 3.9 Human Input (HITL, 1.11.0)
-- [ ] Human Input node config: default Approve/Reject branch handles, custom User Action creates a new handle, configured handles persist after save + reload → `core-components/human-input-node-config.spec.ts`
+- [x] Human Input node config: default Approve/Reject branch handles, custom User Action creates a new handle, configured handles persist after save + reload → `core-components/human-input-node-config.spec.ts`
 
 #### 3.10 Data Operations (1.11.0)
 - [ ] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode → `core-components/data-operations-component.spec.ts`
