@@ -3,8 +3,8 @@
 - **Upstream ticket:** [LE-2123](https://datastax.jira.com/browse/LE-2123)
 - **Introduced by:** [langflow#14215](https://github.com/langflow-ai/langflow/pull/14215) — "Complete release 1.12 RBAC authorization foundations", commit `2e677bf843` (2026-07-22, on `release-1.12.0`; **not** on langflow `main`)
 - **Detected by:** daily-stable 2026-07-27 (`30261409427`) and 2026-08-03 (`30809091241`) → triage #1231 → issue #1235
-- **Affected specs:** `ui-ux/global-variable-edit.spec.ts:76`, `core-functionality/llm-agents/remove-provider-api-key.spec.ts:17` (both quarantined by PR #1236)
-- **Validated on:** Langflow 1.12.0 (nightly Docker image), 2026-08-04
+- **Affected spec:** `ui-ux/global-variable-edit.spec.ts:76` (quarantined by PR #1236). `core-functionality/llm-agents/remove-provider-api-key.spec.ts:17` was quarantined alongside it and is **not** evidence for this bug — see *Not this bug* below.
+- **Validated on:** Langflow 1.12.0 (nightly Docker image), 2026-08-04; re-measured on Langflow 1.12.0 (release build), 2026-08-05
 
 ## Behaviour
 
@@ -41,8 +41,9 @@ retry loop), producing exactly the two recorded signatures:
 - `locator.click: Timeout 20000ms exceeded … element is not enabled` on
   `delete-row-button` — nothing ever got selected.
 
-One mechanism, two affordances. Same-run shard split (1 and 4) is consistent: the
-shared dimension is the surface, not the container.
+The second signature is **not** attributed to this bug; the gate can produce it, but
+something cheaper does so far more often. See *Not this bug* below. The same-run shard
+split (1 and 4) is therefore no longer load-bearing for the grouping.
 
 ## Evidence
 
@@ -65,6 +66,39 @@ shared dimension is the surface, not the container.
 4. **Version scoping.** langflow `main` does not carry the gate (the
    `PermissionsProvider` wrap of this page exists only on `release-1.12.0`); the
    behaviour is absent on builds without #14215.
+
+## Not this bug — `remove-provider-api-key.spec.ts:17` (measured 2026-08-05)
+
+Both specs were quarantined together because they share a surface and failed on the
+same two dailies. The delete half does not belong to this ticket, and the distinction
+matters: it would otherwise be re-validated against an upstream fix that cannot make
+it pass.
+
+Measured on a healthy 1.12.0 release build, gate open (`POST /api/v1/authz/me/permissions`
+answered `200` before the row ever painted, in every run):
+
+- the checkbox path works reliably — `checked=true`, `aria-selected=true`,
+  `delete-row-button` enabled within ~2–11 ms of the click, 10/10 runs;
+- clicking `icon-Trash2` **deletes immediately** — `GET /api/v1/variables/{id}` → `404`,
+  row gone from the DOM, and `[role="dialog"]` count `0` in 8/8 runs. This product has
+  no confirmation dialog for this action;
+- the spec then runs an optional-confirmation step whose locator,
+  `getByRole("button", { name: /delete|confirm|yes/i }).last()`, has exactly one match:
+  the header `delete-row-button` itself (`aria-label="Delete selected items"`), by then
+  **disabled**, because the row it was deleting is gone. The guard is `isVisible()` —
+  always true for that button — so the branch is entered and clicks a disabled button
+  for the full 20 s.
+
+That reproduces the recorded signature exactly, with no gate involvement, at **12
+failures in 16 runs (~75 %)**. It presents as a flake because it is a race with the
+grid's re-render: a click landing before React disables the button is a harmless no-op
+and the test passes.
+
+Consequence: the delete spec is a **test defect**, tracked in #1235, and its quarantine
+is lifted by fixing the spec — not by this upstream fix. Note the gate genuinely gates
+this affordance too (Evidence 1 below shows selection dead during the 503 window), so
+the hardening in the re-validation note still applies to it; what does not hold is
+reading its daily failures as evidence of the gate.
 
 ## Re-validation note (for lifting the #1235 quarantine)
 
