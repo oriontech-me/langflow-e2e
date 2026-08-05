@@ -557,9 +557,9 @@
 - [x] Rename folder → `core-functionality/project-management/folder-crud.spec.ts`
 - [x] Delete empty folder → `core-functionality/project-management/folder-crud.spec.ts`
 - [x] Delete folder with flows inside → `core-functionality/project-management/folder-crud.spec.ts`
-- [-] Integrity after deletion — the deleted folder leaves the sidebar immediately, the page stays functional, and a sibling folder is untouched and still clickable → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
-- [-] Create folder after deleting all folders — creating a folder right after a deletion works (no stale-cache collision) → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
-- [-] Deleting every folder lands on the empty-project screen (sidebar empty message + `new_project_btn_empty_page`) → `core-functionality/project-management/folder-deletion-integrity.spec.ts` (`@destructive` — account-wide wiper, runs only in the low-concurrency lane via `PW_DESTRUCTIVE=1`, see #1010)
+- [x] Integrity after deletion — the deleted folder leaves the sidebar immediately, the page stays functional, and a sibling folder is untouched and still clickable → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
+- [x] Create folder after deleting all folders — creating a folder right after a deletion works (no stale-cache collision) → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
+- [-] Deleting every folder lands on the empty-project screen (sidebar empty message + `new_project_btn_empty_page`) → `core-functionality/project-management/folder-deletion-integrity.spec.ts` (`@destructive` — account-wide wiper, runs only in the low-concurrency lane via `PW_DESTRUCTIVE=1`, see #1010; stays `[-]` permanently, since `[x]` requires `@stable` and `@destructive` must never carry it — the pair would mean "runs nowhere")
 - [-] Upload flow by drag-and-drop to folder — dropping a collection file imports one flow per entry; dropping a single flow file imports exactly one → `flow-functionality/dragAndDrop.spec.ts`
 - [-] Move flow to another folder
 

@@ -8,7 +8,10 @@
 // below was observed against Langflow Nightly 1.12.0.dev9 while resolving #1084.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { classifyHttpError } from "./http-error-policy";
+import {
+  classifyHttpError,
+  type KnownHttpDefect,
+} from "./http-error-policy";
 
 const BASE = "http://localhost:7860";
 
@@ -146,4 +149,146 @@ test("every ignore verdict carries a reason", () => {
       `an ignore without a reason cannot be reviewed: ${facts.url}`,
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// Per-test declared known defects (#1008)
+// ---------------------------------------------------------------------------
+//
+// The narrow alternative to `page.allowHttpErrors()`. Every case below guards a
+// way this could quietly become the blunt hatch it exists to avoid: a declaration
+// that widens past the one response it names is the same class of mistake as an
+// `IGNORED` entry added because something was noisy.
+
+/** The real declaration made by `folder-deletion-integrity.spec.ts`, test 4. */
+const PROJECTS_UNDEFINED: KnownHttpDefect = {
+  pathname: "/api/v1/projects/undefined",
+  status: 422,
+  reason: "#1008 — frontend queries the flows page with an undefined project id",
+};
+
+test("a declared defect is not reported, and carries the declaration back", () => {
+  const verdict = classifyHttpError(
+    {
+      // The real URL, query string and all: the match is on the pathname, so the
+      // page/size/is_component params the frontend appends must not defeat it.
+      url: `${BASE}/api/v1/projects/undefined?page=1&size=12&is_component=false&is_flow=true&search=`,
+      status: 422,
+    },
+    [PROJECTS_UNDEFINED],
+  );
+  assert.equal(verdict.monitored, false);
+  assert.equal(
+    verdict.monitored === false && "knownDefect" in verdict
+      ? verdict.knownDefect
+      : undefined,
+    PROJECTS_UNDEFINED,
+    "the fixture needs the declaration itself back, to count the hit against it",
+  );
+});
+
+test("a declaration narrows to its exact status and pathname", () => {
+  // The whole value of declaring over `allowHttpErrors()`: everything else this
+  // test could hit is still reported. A 500 on the SAME path especially — that
+  // would be a new defect wearing the old one's URL.
+  const stillReported: Array<[string, number, string]> = [
+    ["/api/v1/projects/undefined", 500, "same path, different status"],
+    ["/api/v1/projects/undefined", 404, "same path, different status"],
+    [
+      "/api/v1/projects/70af1547-0bd1-4799-be28-41f738b6e6dc",
+      500,
+      "the DELETE 500 of #965/LE-2020, which test 4's own delete loop can produce",
+    ],
+    ["/api/v1/flows/", 422, "same status, different path"],
+    ["/api/v2/projects/undefined", 422, "a different API version"],
+    ["/api/v1/projects/undefined/", 422, "a trailing slash is a different path"],
+  ];
+  for (const [pathname, status, why] of stillReported) {
+    assert.equal(
+      classifyHttpError({ url: `${BASE}${pathname}`, status }, [
+        PROJECTS_UNDEFINED,
+      ]).monitored,
+      true,
+      `${status} ${pathname} must still be reported — ${why}`,
+    );
+  }
+});
+
+test("declarations are consulted last: they cannot widen monitoring", () => {
+  // Ordering matters. A declaration is only ever allowed to quieten something
+  // this policy would otherwise report — never to pull a non-API URL, a 2xx or a
+  // globally-exempt endpoint INTO the error list.
+  const cases: Array<[string, number]> = [
+    // Not an `/api/` call at all. Note the path really must not contain the
+    // segment: the policy tests `pathname.includes("/api/")`, so a bundled asset
+    // served from `/assets/api/…` would count as one — pre-existing #1084
+    // behaviour, and the reason this case uses a plain asset path.
+    ["/assets/index-CSJ7TV2F.js", 422],
+    ["/api/v1/login", 401], // globally exempt
+    ["/api/v1/store/tags", 500], // globally exempt
+  ];
+  for (const [pathname, status] of cases) {
+    const verdict = classifyHttpError({ url: `${BASE}${pathname}`, status }, [
+      { pathname, status, reason: "an attempt to un-ignore this response" },
+    ]);
+    assert.equal(verdict.monitored, false, `${status} ${pathname}`);
+    assert.ok(
+      verdict.monitored === false && !("knownDefect" in verdict),
+      `${status} ${pathname} must be ignored for its OWN reason, not matched as a declared defect`,
+    );
+  }
+
+  // A 2xx never reaches the declaration check either.
+  const ok = classifyHttpError({ url: `${BASE}/api/v1/projects/x`, status: 200 }, [
+    { pathname: "/api/v1/projects/x", status: 200, reason: "not an error" },
+  ]);
+  assert.ok(ok.monitored === false && !("knownDefect" in ok));
+});
+
+test("no declarations behaves exactly as before", () => {
+  // The overwhelming majority of tests declare nothing, and the parameter is
+  // optional — both spellings must classify identically.
+  for (const facts of [
+    { url: `${BASE}/api/v1/projects/undefined`, status: 422 },
+    { url: `${BASE}/api/v1/flows/`, status: 500 },
+    { url: `${BASE}/api/v1/login`, status: 401 },
+  ]) {
+    assert.deepEqual(
+      classifyHttpError(facts),
+      classifyHttpError(facts, []),
+      `${facts.status} ${facts.url}`,
+    );
+  }
+  assert.equal(
+    classifyHttpError({ url: `${BASE}/api/v1/projects/undefined`, status: 422 })
+      .monitored,
+    true,
+    "without a declaration the 422 stays a reported backend error",
+  );
+});
+
+test("the first matching declaration wins and every ignore still has a reason", () => {
+  const first: KnownHttpDefect = {
+    pathname: "/api/v1/projects/undefined",
+    status: 422,
+    reason: "first",
+  };
+  const second: KnownHttpDefect = { ...first, reason: "second" };
+  const verdict = classifyHttpError(
+    { url: `${BASE}/api/v1/projects/undefined`, status: 422 },
+    [first, second],
+  );
+  assert.ok(verdict.monitored === false && "knownDefect" in verdict);
+  assert.equal(
+    verdict.monitored === false && "knownDefect" in verdict
+      ? verdict.knownDefect.reason
+      : "",
+    "first",
+  );
+  // The reason string is what a reviewer reads in the debug breakdown; a
+  // declared match must not be the one verdict that arrives without one.
+  assert.match(
+    verdict.monitored === false ? verdict.ignoreReason : "",
+    /first/,
+  );
 });

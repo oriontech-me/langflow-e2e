@@ -1,5 +1,9 @@
 import type { Page } from "@playwright/test";
-import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  expect,
+  test,
+  type PageWithErrorHooks,
+} from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
@@ -161,7 +165,7 @@ async function openTemplateAndReturnToFolders(page: Page) {
 
 test(
   "deleting a folder should update the folder list immediately",
-  { tag: ["@release", "@api"] },
+  { tag: ["@stable", "@release", "@api"] },
   async ({ page, request }) => {
     // Registered even though this test opens no template: on an instance with no
     // flows left (the `@destructive` sibling empties it in its own lane)
@@ -222,7 +226,7 @@ test(
 
 test(
   "deleting one folder should not affect other folders",
-  { tag: ["@release", "@api"] },
+  { tag: ["@stable", "@release", "@api"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
@@ -302,7 +306,7 @@ test(
 
 test(
   "creating a new folder after deletion should work correctly",
-  { tag: ["@release", "@api"] },
+  { tag: ["@stable", "@release", "@api"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
@@ -380,6 +384,33 @@ test(
   { tag: ["@release", "@api", "@destructive"] },
   async ({ page, request }) => {
     trackCreatedFlows(page);
+
+    // The zero-project state this test exists to reach makes the frontend fire
+    // the paginated flows query with a literal `undefined` project id, and the
+    // backend correctly rejects it with a `422 uuid_parsing`. Upstream frontend
+    // defect, confirmed on the release-1.12.0 line the nightly is built from
+    // (#1008) — the chain is:
+    //
+    //   `useGetFolders` sets `myCollectionId = data.find(default)?.id ?? data[0]?.id`,
+    //   which is `undefined` once no project is left; `HomePage` then passes
+    //   `id: folderId ?? myCollectionId!` — the `!` silences the type error, not
+    //   the value — and `use-get-folder.ts` nests its existence guard inside
+    //   `if (params.id)`, so it is skipped for exactly the `undefined` case it
+    //   should block, and `` `${PROJECTS}/${params.id}` `` interpolates the string.
+    //
+    // Declared rather than silenced with `allowHttpErrors()`: this test deletes N
+    // projects through the UI, and `DELETE /api/v1/projects/{id}` answering 500
+    // while the toast reads "deleted successfully" is a separate filed defect
+    // (#965/LE-2020) that this loop is unusually well placed to catch. The
+    // declaration is verified — if the 422 stops firing, the fixture fails this
+    // test and tells us to close #1008.
+    (page as PageWithErrorHooks).expectKnownHttpError({
+      pathname: "/api/v1/projects/undefined",
+      status: 422,
+      reason:
+        "#1008 — after the last project is deleted the frontend queries GET /api/v1/projects/undefined; upstream frontend defect, the backend's 422 is correct",
+    });
+
     // Guarantee there is at least one folder holding a flow, so the
     // "delete everything" path is exercised against real content.
     const authToken = await getAuthToken(request);

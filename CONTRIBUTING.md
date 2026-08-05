@@ -295,6 +295,15 @@ the deliberate error stays out of the log instead of teaching readers to ignore 
 endpoint to the exemption list makes it invisible to all 235 specs, so it needs a reason that
 survives review; run with `PW_HTTP_ERROR_DEBUG=1` to see what is currently being ignored.
 
+If instead your spec merely **passes through** a state where a known, filed product defect
+fires, declare that one response with `page.expectKnownHttpError({ pathname, status, reason })`
+(#1008). It differs from `allowHttpErrors()` in the two ways that matter: only the exact
+status-plus-pathname it names is quietened, so every other 4xx/5xx in the test — including a
+different status on the *same* path — is still reported; and the declaration is **verified**,
+so a defect that stops firing **fails the test** and names the call to delete. That is what
+keeps the exemption from outliving its justification. The `reason` must carry the issue
+reference — it is printed on every run and it is what the next reader judges the exemption by.
+
 **6. Update the checklist**
 
 Only mark `[x]` after confirming all 5 steps above. If coverage is partial, use `[~]`.
