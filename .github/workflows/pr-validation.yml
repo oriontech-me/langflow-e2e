@@ -528,6 +528,19 @@ jobs:
           # `"false"` since #459, before the token monitor existed — the previous
           # comment here misattributed that to #1197).
           #
+          # What enabling it COSTS, since the "cuts startup time / backend noise"
+          # rationale above is what is being traded away and an unmeasured trade
+          # reads as hand-waving. It is not unmeasured: daily-stable.yml has run
+          # with tracing on unconditionally since #459 — the setting has never
+          # been touched since, across 65 runs of the full `@stable` sweep — so an
+          # LLM run on this lane now boots in the configuration the daily has used
+          # every weekday for months, not in a novel one. The wedge history that
+          # makes this lane nervous (#922/#927, and the LANGFLOW_WORKER_TIMEOUT
+          # below) is attributed to the `Collect models` sweep, which the daily
+          # also runs, also with tracing on. So the trade is: the LLM-free
+          # majority keeps the cheap boot, and the runs that pay for tracing are
+          # the ones already paying for a full provider sweep.
+          #
           # One class does NOT keep the cheap path, and it is the one to know
           # about: decideProviderCoverage() sets `needs_models=true` for a CANARY
           # run (a CI-only diff, three LLM-free specs), so those now boot with
