@@ -53,17 +53,21 @@ runs:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
         GOOGLE_API_KEY: ${{ inputs.google_api_key }}
       run: |
-        # Build the arg list as an array (no eval) so quoting is safe. Playwright
-        # only honors one --grep, so to run "tag AND name" we combine them into a
-        # single lookahead regex; a single filter is passed verbatim.
+        # Build the arg list as an array (no eval) so quoting is safe. Playwright only
+        # honors one --grep, so "tag AND name" has to be composed into a single
+        # lookahead chain — which this step used to do inline, interpolating each
+        # fragment unparenthesised. A `test_grep` containing an alternation then split
+        # the lookahead instead of being ANDed as a unit, and the lane ran a silently
+        # narrower selection than the dispatch asked for (#1275: 48 of 81 tests, with
+        # nothing in the log or the summary saying so). The composition lives in
+        # `scripts/build-grep-filter.mjs` so `npm run test:scripts` covers it by
+        # SELECTION rather than by a regex over this file's text (#1226).
+        #
+        # Empty output means no filter at all — never an empty --grep, which matches
+        # every test and would turn a narrowed dispatch into a full-suite run.
+        FILTER="$(node scripts/build-grep-filter.mjs --tag="$TEST_TAG" --grep="$TEST_GREP")"
         ARGS=(--pass-with-no-tests --reporter=html,github)
-        if [ -n "$TEST_TAG" ] && [ -n "$TEST_GREP" ]; then
-          ARGS+=(--grep "(?=.*${TEST_TAG})(?=.*${TEST_GREP})")
-        elif [ -n "$TEST_TAG" ]; then
-          ARGS+=(--grep "$TEST_TAG")
-        elif [ -n "$TEST_GREP" ]; then
-          ARGS+=(--grep "$TEST_GREP")
-        fi
+        if [ -n "$FILTER" ]; then ARGS+=(--grep "$FILTER"); fi
         echo "Running: npx playwright test ${ARGS[*]}"
         npx playwright test "${ARGS[@]}"
 
@@ -84,11 +88,12 @@ runs:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic_api_key }}
         GOOGLE_API_KEY: ${{ inputs.google_api_key }}
       run: |
-        # Same one-grep constraint as above: AND the filters into a single
-        # lookahead regex, always including @destructive.
-        FILTER="(?=.*@destructive)"
-        if [ -n "$TEST_TAG" ]; then FILTER="${FILTER}(?=.*${TEST_TAG})"; fi
-        if [ -n "$TEST_GREP" ]; then FILTER="${FILTER}(?=.*${TEST_GREP})"; fi
+        # Same one-grep constraint as above, and the same composition — @destructive is
+        # required, then narrowed by whatever the dispatch asked for. This lane had the
+        # identical unparenthesised-interpolation bug (#1275); it never appears without
+        # a required fragment, so it always goes through the composing path.
+        FILTER="$(node scripts/build-grep-filter.mjs --require=@destructive \
+          --tag="$TEST_TAG" --grep="$TEST_GREP")"
         # --reporter=github only: keeps this lane from overwriting the HTML report
         # the step above produced and the artifact below uploads.
         echo "Running destructive lane: --grep $FILTER"
