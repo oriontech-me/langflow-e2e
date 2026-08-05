@@ -282,7 +282,7 @@ spec doc:
 Fixing those 20 is **not** part of #1040 — it is a docs sweep across 18 files with
 no bearing on the drift detector — but the count belongs here, because the first
 version of this section said "one defect" and that reads as a clean bill of health.
-Tracked as a follow-up.
+Tracked as #1298, together with the guard that would catch all 21 at once.
 
 That is the #1092 failure mode in a second place: a path that does not exist is
 **silent**, because `git log --since -- <bad-path>` and a grep for it both return
@@ -316,8 +316,8 @@ It is absent from:
 - upstream **milestones** — `langflow-ai/langflow` has none.
 
 So the deadline cannot be turned into a date from the repository. Getting one
-requires **asking the Langflow team**; that ask is the remaining open item on #1040
-and is not something this suite can resolve on its own. Until then, treat M4 as "not
+requires **asking the Langflow team** — tracked as #1297, and not something this
+suite can resolve on its own. Until then, treat M4 as "not
 before the next minor" and rely on the drift detector rather than the calendar.
 
 ---
