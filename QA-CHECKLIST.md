@@ -823,7 +823,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
 | `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
-| `core-components/` — Core Components | 91 | 86 | 3 | 0 | 2 |
+| `core-components/` — Core Components | 91 | 87 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
@@ -838,7 +838,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **380 (76%)** | **89 (18%)** | **15 (3%)** | **16 (3%)** |
+| **TOTAL** | **500** | **381 (76%)** | **89 (18%)** | **15 (3%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 442 `test()` calls carrying the `@stable` tag, distributed across 176 spec
+> 446 `test()` calls carrying the `@stable` tag, distributed across 177 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -955,6 +955,10 @@
 - [x] Data Operations Word Count switches the Text-mode output to JSON and counts the text → `data-operations-component.spec.ts`
 - [x] Data Operations JSON mode selects a single key from an upstream JSON output → `data-operations-component.spec.ts`
 - [x] Data Operations Table mode filters the rows of an upstream Table output → `data-operations-component.spec.ts`
+- [x] All three legacy operations components name Data Operations as their replacement → `data-operations-legacy-link.spec.ts`
+- [x] The legacy banner link filters the sidebar to Data Operations → `data-operations-legacy-link.spec.ts`
+- [x] Searching a legacy operations name surfaces Data Operations with legacy components hidden → `data-operations-legacy-link.spec.ts`
+- [x] A legacy operations component still builds and returns its result → `data-operations-legacy-link.spec.ts`
 - [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
@@ -1338,7 +1342,7 @@
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 4 | 0 |
-| `core-components/` — Core Components | 3 | 2 |
+| `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 5 | 2 |
 | `core-functionality/model-provider/` | 2 | 0 |
