@@ -151,13 +151,16 @@ async function createVariable(page: Page, v: NewVariable): Promise<void> {
 
 // Resolve a `waitForVariablesList` waiter, turning a timeout into a verdict of
 // its own. Lives outside the test bodies so the branch is not a conditional in
-// a test (`playwright/no-conditional-in-test`).
+// a test (`playwright/no-conditional-in-test`). The underlying error is kept
+// on the message: "the list never arrived" is the verdict, but a closed page or
+// a navigation reaches this the same way a plain timeout does, and only the
+// original says which.
 async function assertListRefetched(
   listed: Promise<Error | null>,
   message: string,
 ): Promise<void> {
-  const timedOut = await listed;
-  if (timedOut) throw new Error(message);
+  const failure = await listed;
+  if (failure) throw new Error(`${message} — ${failure.message}`);
 }
 
 // The data table row for a given variable name.
@@ -176,6 +179,10 @@ function variableInTable(page: Page, name: string) {
  * cell locator. ag-grid only keeps the visible rows plus a buffer in the DOM,
  * and a new variable is appended last, so the row has to be scrolled to before
  * it can be asserted — see the dev16 note above (#1303).
+ *
+ * The poll settles on VISIBILITY, not on presence in the DOM, so the caller's
+ * own `toBeVisible` resolves immediately instead of opening a second 15 s
+ * window on a row that is attached but not shown.
  */
 async function revealVariableRow(page: Page, name: string) {
   const cell = variableInTable(page, name);
@@ -190,14 +197,14 @@ async function revealVariableRow(page: Page, name: string) {
           .catch(() => {
             /* the grid is not rendered yet — reported by the poll below */
           });
-        return cell.count();
+        return cell.isVisible();
       },
       {
         timeout: 15000,
         message: `"${name}" never rendered in the variables table (the list request carried it, so the grid did not render it)`,
       },
     )
-    .toBeGreaterThan(0);
+    .toBe(true);
   return cell;
 }
 
