@@ -828,7 +828,7 @@
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
 | `core-functionality/model-provider/` | 34 | 30 | 2 | 2 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
-| `core-functionality/playground/` | 51 | 46 | 3 | 1 | 1 |
+| `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `core-functionality/a2a/` | 18 | 0 | 9 | 1 | 8 |
@@ -837,7 +837,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **498** | **377 (76%)** | **89 (18%)** | **15 (3%)** | **17 (3%)** |
+| **TOTAL** | **499** | **378 (76%)** | **89 (18%)** | **15 (3%)** | **17 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -853,7 +853,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 435 `test()` calls carrying the `@stable` tag, distributed across 173 spec
+> 437 `test()` calls carrying the `@stable` tag, distributed across 174 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1154,6 +1154,8 @@
 - [x] should be able to see and interact with Traces → `traces.spec.ts`
 
 #### core-functionality/playground/
+- [x] approving a Human Input pause routes only the approved branch → `human-input-pause-resume.spec.ts`
+- [x] rejecting a Human Input pause routes only the reject branch → `human-input-pause-resume.spec.ts`
 - [x] copy button copies Chat Input output and toggles Check icon → `output-modal-copy-button.spec.ts`
 - [x] playground must show one compact preview per attached image when two images are attached → `playground-attachments-management.spec.ts`
 - [x] playground must keep the remaining preview when one of two attachments is removed → `playground-attachments-management.spec.ts`
