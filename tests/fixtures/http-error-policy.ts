@@ -58,6 +58,17 @@ export interface HttpResponseFacts {
  * The declaration is also a **claim about the product**, so the fixture verifies
  * it: a declared defect that does not fire fails the test rather than printing a
  * line nobody reads. See `fixtures.ts` for that half.
+ *
+ * ## Scoped to the fixture's own `page`
+ *
+ * The verification is driven by `page.on("response")` on the single `Page` the
+ * fixture wraps, and Playwright fires those events per `Page`. So a defect that
+ * only ever fires on a **second** page — one opened with `context.newPage()`, or a
+ * popup — is never counted, and the declaration is then reported as stale on every
+ * run: an unfixable failure rather than a flake. Declare the defect in a test that
+ * reaches the state on the fixture's own page. (Responses on a second page are not
+ * monitored for errors either, which is pre-existing fixture behaviour and not
+ * something a declaration changes.)
  */
 export interface KnownHttpDefect {
   /** Exact `pathname` of the response, query string excluded. */

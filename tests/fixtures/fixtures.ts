@@ -30,6 +30,24 @@ import {
 const V1_BODY_READ_TIMEOUT_MS = 2_000;
 
 /**
+ * How long to keep waiting for a declared known defect that has not fired yet,
+ * before calling the declaration stale (#1008).
+ *
+ * The stale check runs in fixture teardown, and `page.on("response")` is an
+ * event: a response the page issued in the last moments of the test body can
+ * still be in flight when the synchronous tail of the teardown runs, leaving the
+ * hit count at 0 for a defect that did occur. The failure that produces is
+ * particularly bad — it says "the defect is gone, delete the declaration" about a
+ * defect that is still there.
+ *
+ * Waiting is nearly free because the cost is only ever paid on a run that is
+ * *about to fail anyway*: a declaration that already fired never enters the loop.
+ * Same trade as the backend health gate's 420 s deadline — over-waiting only
+ * spends time on a lane already headed for a red.
+ */
+const STALE_DECLARATION_GRACE_MS = 1_000;
+
+/**
  * The escape hatches this fixture bolts onto `page`.
  *
  * Specs reach them through `(page as any)` today; this type exists so the two
@@ -467,9 +485,23 @@ export const test = base.extend({
     // comparing against it would suppress this throw for exactly the body that
     // ran cleanly, which is the case it exists to catch — and it is how
     // `http-error-gate.spec.ts` pins this branch at all.
-    const staleDefects = declaredDefects.filter(
-      (defect) => (declaredDefectHits.get(defect) ?? 0) === 0,
-    );
+    const findStale = () =>
+      declaredDefects.filter(
+        (defect) => (declaredDefectHits.get(defect) ?? 0) === 0,
+      );
+    let staleDefects = findStale();
+    // Give a response that is still in flight the chance to arrive before its
+    // declaration is called stale — see `STALE_DECLARATION_GRACE_MS`. The `await`
+    // is what makes this work at all: it yields to the event loop, so a queued
+    // `response` event gets to run its listener. Entered only when something has
+    // NOT fired, so a healthy run never pays for it.
+    if (staleDefects.length > 0) {
+      const deadline = Date.now() + STALE_DECLARATION_GRACE_MS;
+      while (staleDefects.length > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        staleDefects = findStale();
+      }
+    }
     if (staleDefects.length > 0 && testInfo.status === "passed") {
       const details = staleDefects
         .map((d) => `\n  - ${d.status} ${d.pathname}\n    ${d.reason}`)

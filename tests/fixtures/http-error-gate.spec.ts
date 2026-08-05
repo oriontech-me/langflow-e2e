@@ -13,7 +13,10 @@
 //      exists instead of `page.allowHttpErrors()`, which would silence both;
 //   3. a declared defect that does NOT fire **fails the test**. That is the
 //      self-retirement mechanism: the day Langflow fixes the bug, the suite says
-//      so instead of carrying a justified-once exemption forever.
+//      so instead of carrying a justified-once exemption forever;
+//   4. and a declared defect whose response is still IN FLIGHT when the test body
+//      returns is not mistaken for one that never fired — the stale check runs in
+//      teardown, `page.on("response")` is an event, and the two can race.
 //
 // (3) is the one that matters most and the one a print-only warning would have
 // left unpinned. Its sibling `flow-error-gate.spec.ts` records the same
@@ -27,16 +30,16 @@
 // flow. The fixture only cares that the pathname contains `/api/` and the status
 // is 4xx/5xx.
 //
-// MEASURED COVERAGE, and one accepted gap. Ten mutations of the production code
-// were applied one at a time and run against `npm run test:units` plus this file:
-// nine are killed — matching on pathname alone, on status alone, by substring
+// MEASURED COVERAGE, and one accepted gap. Eleven mutations of the production
+// code were applied one at a time and run against `npm run test:units` plus this
+// file: ten are killed — matching on pathname alone, on status alone, by substring
 // instead of equality, checking the declaration before `IGNORED`, keying the
 // stale check on `expectedStatus`, removing the stale throw, printing the gate
-// string in the `📌` line, never incrementing the hit counter, and announcing on
-// every occurrence instead of the first. The tenth SURVIVES and is accepted:
-// dropping the `else` so a declared defect is *also* tallied in
-// `ignoredByPolicy`. That only double-counts it inside the
-// `PW_HTTP_ERROR_DEBUG=1` breakdown — no verdict, no count and no gate string
+// string in the `📌` line, never incrementing the hit counter, announcing on every
+// occurrence instead of the first, and removing the stale-declaration grace
+// period. The eleventh SURVIVES and is accepted: dropping the `else` so a declared
+// defect is *also* tallied in `ignoredByPolicy`. That only double-counts it inside
+// the `PW_HTTP_ERROR_DEBUG=1` breakdown — no verdict, no count and no gate string
 // changes — so there is no behaviour to pin. Recorded rather than left unknown
 // (#1012's rule); if that breakdown ever becomes load-bearing, this is the gap.
 //
@@ -65,6 +68,15 @@ const DECLARED: KnownHttpDefect = {
 /** A different project id, standing in for the #965/LE-2020 `DELETE` → 500. */
 const OTHER_PATH = "/api/v1/projects/70af1547-0bd1-4799-be28-41f738b6e6dc";
 
+/**
+ * How long `?mode=slow` withholds its response.
+ *
+ * Long enough that the test body has certainly returned — so the `response` event
+ * is delivered while the fixture is tearing down — and comfortably inside the
+ * fixture's 1 s stale-declaration grace period.
+ */
+const SLOW_RESPONSE_MS = 300;
+
 let server: http.Server;
 let origin: string;
 
@@ -79,8 +91,15 @@ test.beforeAll(async () => {
         : path === OTHER_PATH
           ? 500
           : 422;
-      res.writeHead(status, { "content-type": "application/json" });
-      res.end(JSON.stringify({ detail: `probe ${status}` }));
+      const send = () => {
+        res.writeHead(status, { "content-type": "application/json" });
+        res.end(JSON.stringify({ detail: `probe ${status}` }));
+      };
+      // `mode=slow` answers only after the test body has certainly returned, so
+      // the `response` event lands during fixture teardown — the race the
+      // stale-declaration grace period exists for.
+      if (query.includes("mode=slow")) setTimeout(send, SLOW_RESPONSE_MS);
+      else send();
       return;
     }
     res.writeHead(200, { "content-type": "text/html" });
@@ -198,6 +217,30 @@ test.describe("fixture declared-known-defect hatch", () => {
       // `📌` line, two `🚨` lines.
       expect(log.match(/🚨 Backend Error/g) ?? []).toHaveLength(2);
       expect(log.match(/📌 Known backend defect/g) ?? []).toHaveLength(1);
+    },
+  );
+
+  test(
+    "a declared defect still in flight when the test ends is not called stale",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // The race a review of #1008 surfaced. The stale check runs in fixture
+      // teardown, and `page.on("response")` is an event — so a response the page
+      // issued in the last moments of the body can still be in flight when the
+      // teardown's synchronous tail runs, leaving the hit count at 0 for a defect
+      // that DID occur. Without the grace period this test fails, and it fails
+      // with the worst possible message: "the defect is gone, delete the
+      // declaration", about a defect that is still there.
+      const hooked = page as PageWithErrorHooks;
+      hooked.expectKnownHttpError(DECLARED);
+
+      await page.goto(`${origin}/`);
+      // Fire-and-forget INSIDE the page, and do not await the result: the body
+      // returns while the server is still withholding the response.
+      await page.evaluate(() => {
+        void fetch("/api/v1/projects/undefined?mode=slow");
+      });
+      // No wait of any kind here — that is the whole point.
     },
   );
 

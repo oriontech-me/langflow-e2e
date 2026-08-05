@@ -361,13 +361,25 @@ seeded on the same instance:
   one at a time (force-fail), including test 4 inside the lane.
 - **No leaks:** the folders/flows each test creates are gone at the end, and the
   project count returns to its baseline.
-- **No `🚨 Backend Error` line, in either lane (#1008).** The `422` on
-  `/api/v1/projects/undefined` that test 4 provokes is now *declared*, so it prints
-  as `📌 Known backend defect` instead. Measured on `1.12.0.dev10`: the destructive
-  lane 3/3 with zero `🚨` lines and no `📋 Found N backend error(s)` summary at all,
-  and tests 1–3 3/3 the same. Before the declaration the lane logged the `422` on
-  every run, which is what blocked the deterministic pipeline's VALIDATE gate
-  (`backendErrors` is a grep for that exact string).
+- **The `422` never reads as a backend error again (#1008).** It is now *declared*,
+  so it prints as `📌 Known backend defect`. Measured on `1.12.0.dev10` across
+  **6/6** destructive-lane runs: the `📌` line every time, the `422` as a `🚨` line
+  never. Before the declaration the lane logged it as `🚨` on every run, which is
+  what blocked the deterministic pipeline's VALIDATE gate (`backendErrors` is a grep
+  for that exact string).
+- **One unrelated residue is NOT resolved by #1008, and the run is not
+  unconditionally `🚨`-free.** In **2 of those 6** runs the lane also logged
+  `🚨 Backend Error: 404 … GET /api/v1/flows/{id}` — `{"detail":"Flow not found"}`.
+  It correlates with the **entry state**, not with the declaration: both
+  occurrences were the first destructive run after a non-destructive one, i.e. with
+  flows already on the account, and it is absent on a repeat run where the account
+  was already empty. The `404` is page traffic and lands *before* the empty-project
+  screen, so it is the delete loop cascade-deleting a flow the page still holds —
+  the same teardown-order class as #1023, surfacing inside the test rather than in
+  teardown. Out of scope for #1008, which is about the `422`; tracked separately.
+  Consequence for reviewers: a `🚨` line here is still possible and still means
+  something, which is the reason the `422` was declared narrowly instead of the
+  whole test being silenced.
 - **Tests 1–3 are `@stable`-worthy on the evidence, not on the calendar.** Three
   back-to-back `--workers=1 --retries=0` runs on `1.12.0.dev10`: 3/3 green. Runs 2
   and 3 logged nothing at all; run 1 logged the `422` because the destructive lane
