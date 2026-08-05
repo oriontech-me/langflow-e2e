@@ -50,15 +50,34 @@ const OUT_PATH = path.join(
   "../tests/assets/catalog/component-catalog-baseline.json",
 );
 
-function numericArg(name: string, fallback: number): number {
-  const raw = process.argv.find((a) => a.startsWith(`${name}=`))?.split("=")[1];
+export function parseNumericArg(
+  argv: string[],
+  name: string,
+  fallback: number,
+): number {
+  const raw = argv.find((a) => a.startsWith(`${name}=`))?.split("=")[1];
   if (raw === undefined) return fallback;
+  // `Number("")` and `Number(" ")` are 0, which is finite and non-negative — so
+  // an empty value (`--min-categories=`) used to disable the plausibility floor
+  // silently, reaching the same state as `--force` without the explicit opt-in
+  // that makes `--force` legitimate. Disabling a guard must be asked for.
+  if (raw.trim() === "") {
+    throw new Error(`${name} was given no value — pass a number, e.g. ${name}=20`);
+  }
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed < 0) {
-    console.error(`✖ ${name} must be a non-negative number, got: ${raw}`);
-    process.exit(2);
+    throw new Error(`${name} must be a non-negative number, got: ${raw}`);
   }
   return parsed;
+}
+
+function numericArg(name: string, fallback: number): number {
+  try {
+    return parseNumericArg(process.argv, name, fallback);
+  } catch (e) {
+    console.error(`✖ ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(2);
+  }
 }
 
 async function main(): Promise<void> {
@@ -118,7 +137,10 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => {
-  console.error(`✖ could not write the catalog baseline: ${String(e)}`);
-  process.exit(1);
-});
+// Only run when invoked as a script — keeps the module importable from tests.
+if (require.main === module) {
+  main().catch((e) => {
+    console.error(`✖ could not write the catalog baseline: ${String(e)}`);
+    process.exit(1);
+  });
+}

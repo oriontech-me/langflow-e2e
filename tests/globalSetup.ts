@@ -14,9 +14,7 @@ import {
 } from "./helpers/provider-setup/provider-health";
 import { preconfigureRoutedProvider } from "./helpers/provider-setup/preconfigure-routed-provider";
 import {
-  diffCatalogSnapshots,
-  formatCatalogDrift,
-  snapshotCatalog,
+  catalogVerdict,
   type CatalogSnapshot,
 } from "./helpers/other/component-catalog-drift";
 
@@ -262,31 +260,32 @@ async function preconfigureRouting(ctx: APIRequestContext): Promise<void> {
  * stopped shipping a distribution we do not test (#1039's Groq/Mistral). Aborting
  * a whole run over a reporting feature would trade real coverage for tidiness —
  * #980's trade. What it must never do is read as clean when it produced no
- * verdict, so all three give-up paths say so explicitly (#1012's rule).
+ * verdict, so every give-up path says so explicitly (#1012's rule).
+ *
+ * This function is therefore only I/O: read the file, make the request, print. The
+ * comparison lives in `catalogVerdict`, which cannot throw and always returns a
+ * verdict — a property a unit test pins, rather than a comment here claiming it.
+ * The inline version of this was one unguarded `for` away from aborting the whole
+ * run on a hand-edited baseline.
  *
  * Costs one `GET /api/v1/all`: measured 70–85 ms and 524 KB compressed on
  * `1.12.0.dev10`, once per suite run.
  */
 async function reportCatalogDrift(ctx: APIRequestContext): Promise<void> {
-  let baseline: CatalogSnapshot;
+  let baseline: unknown;
   try {
-    baseline = JSON.parse(
-      fs.readFileSync(CATALOG_BASELINE_PATH, "utf8"),
-    ) as CatalogSnapshot;
-    if (!baseline?.categories || typeof baseline.categories !== "object") {
-      throw new Error("no `categories` object in the baseline");
-    }
+    baseline = JSON.parse(fs.readFileSync(CATALOG_BASELINE_PATH, "utf8"));
   } catch (e) {
     console.warn(
-      `[preflight] WARNING: no usable component-catalog baseline at ${CATALOG_BASELINE_PATH} (${String(e)}). ` +
+      `[preflight] WARNING: could not read the component-catalog baseline at ${CATALOG_BASELINE_PATH} (${String(e)}). ` +
         `Catalog drift is UNKNOWN for this run, not absent — a vanished component family ` +
         `will surface as a 30s selector timeout instead of being named here (#1040). ` +
-        `Create or repair it with: npm run catalog:baseline`,
+        `Regenerate it with: npm run catalog:baseline`,
     );
     return;
   }
 
-  let current: CatalogSnapshot;
+  let registry: unknown;
   try {
     // Authenticate EXPLICITLY. `/api/v1/all` answers 403 unauthenticated, and
     // relying on the login `checkProviderCredentials` happens to have performed on
@@ -302,7 +301,7 @@ async function reportCatalogDrift(ctx: APIRequestContext): Promise<void> {
       timeout: 30000,
     });
     if (!res.ok()) throw new Error(`HTTP ${res.status()}`);
-    current = snapshotCatalog(await res.json());
+    registry = await res.json();
   } catch (e) {
     console.warn(
       `[preflight] WARNING: could not read the component catalog (${String(e)}). ` +
@@ -311,17 +310,27 @@ async function reportCatalogDrift(ctx: APIRequestContext): Promise<void> {
     return;
   }
 
-  const drift = diffCatalogSnapshots(baseline, current);
-  const baselineVersion = baseline.version ? ` (baseline: ${baseline.version})` : "";
-  if (!drift.hasDrift) {
+  const verdict = catalogVerdict(baseline, registry);
+  const version = (baseline as CatalogSnapshot | null)?.version;
+  const baselineVersion = version ? ` (baseline: ${version})` : "";
+  if (verdict.kind === "unknown") {
+    console.warn(
+      `[preflight] WARNING: could not compare the component catalog against the baseline — ${verdict.reason}. ` +
+        `Catalog drift is UNKNOWN for this run, not absent (#1040). ` +
+        `Regenerate the baseline with: npm run catalog:baseline (it is \`category -> [type names]\`, ` +
+        `not the raw \`GET /api/v1/all\` body — do not hand-edit it)`,
+    );
+    return;
+  }
+  if (verdict.kind === "clean") {
     console.log(
-      `[preflight] component catalog matches the baseline${baselineVersion} — ${Object.keys(current.categories).length} categories.`,
+      `[preflight] component catalog matches the baseline${baselineVersion} — ${verdict.categoryCount} categories.`,
     );
     return;
   }
   console.warn(
     `[preflight] WARNING: the component catalog DRIFTED from the baseline${baselineVersion} (#1040):\n` +
-      formatCatalogDrift(drift).join("\n") +
+      verdict.lines.join("\n") +
       `\n  Since 1.12 this is a packaging decision per image, not a Langflow feature change. ` +
       `If the drift is expected, accept it with: npm run catalog:baseline`,
   );
