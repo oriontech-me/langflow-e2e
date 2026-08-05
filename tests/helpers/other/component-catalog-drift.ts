@@ -11,10 +11,17 @@
  * presence in the sidebar no longer follows from "Langflow supports it" — it
  * follows from which `lfx_*` distribution the image ships.
  *
- * Measured on `1.12.0.dev10`, and this is the rule the detector rests on: a
- * category appears in `GET /api/v1/all` **iff** it is core or its vendor
- * distribution is installed. All 20 installed vendor distributions map to a
- * present category, and no shim without an installed distribution has one.
+ * The rule the detector rests on, in the direction that actually holds: **no
+ * category appears for a family the image does not ship.** Measured on
+ * `1.12.0.dev10` against `origin/release-1.12.0` — every shim directory with a
+ * category has its distribution installed (10 of 10), and the other 69 shims have
+ * none.
+ *
+ * The converse is false and stating it that way would mislead: 11 of the 27 core
+ * directories produce no category at all, and three installed distributions have
+ * no category of their own (`lfx_datastax` supplies two, `lfx_vllm` and
+ * `lfx_openai_compatible` ship no components). A directory count does not predict
+ * a catalog, which is the same lesson as `knowledge_bases` below.
  *
  * The cost of that being invisible is not a missed test — it is a **misattributed**
  * one. A vanished family surfaces as a generic `waitForSelector` timeout 30 s deep
