@@ -31,7 +31,7 @@
 // line since 2026-08-04) deleted the block that wrote the variable name into
 // `api_key`. Measured on `1.12.0.dev16`: after selecting a Google model the persisted
 // node reads `api_key: ""`, `load_from_db: false`, on every read from mount onward —
-// so the transition this module used to wait for cannot happen, and 14 `@stable`
+// so the transition this module used to wait for cannot happen, and 13 `@stable`
 // specs failed the guard on the 2026-08-05 daily waiting 20s for it.
 //
 // The credential is no longer stored, but it is still DETERMINED — by the provider of
@@ -80,6 +80,19 @@ export interface AgentCredentialProbe {
    */
   selectedProviders: string[];
   /**
+   * The selected entries as PAIRS, which is what the classifier decides on.
+   *
+   * `selectedProviders` and `selectedModels` are flat projections for the
+   * diagnostic, and comparing them independently accepts a combination no entry
+   * contains: with `[{name:"gemini-2.5-flash",provider:"OpenAI"},
+   * {name:"gpt-4o",provider:"Google Generative AI"}]`, "google + gemini" matched
+   * across two different entries and classified as `settled`. Contrived on a
+   * single-select widget, but the pairing is strictly stronger at no cost, and the
+   * test comment asserting the two "come off the SAME entry" was describing a
+   * property the code did not have.
+   */
+  selected: Array<{ name: string; provider: string }>;
+  /**
    * The `name` of every model selected on the unified `ModelInput` selector.
    *
    * `template.model.value` is an **array of model objects** (`{ name, provider,
@@ -112,6 +125,14 @@ export type CredentialSettleVerdict =
    * autosave carries the pick.
    */
   | "provider-pending"
+  /**
+   * A model IS persisted but no entry carries a `provider`, so the axis is
+   * unobservable — NOT a wrong provider. Separate verdict because
+   * `provider-pending`'s guidance says "the observed provider separates them", and
+   * on this state the diagnostic prints `providers=[]`: telling a reader to compare
+   * something the run never observed is the mis-triage this module exists to stop.
+   */
+  | "provider-unobservable"
   /**
    * A DIFFERENT, non-empty model is persisted under the RIGHT provider: the
    * provider-setup step selected something other than what the caller asked for.
@@ -153,34 +174,25 @@ function credentialOf(node: FlowNodeLike): string {
  * field carried one before the unified selector, and a stale flow payload must
  * degrade to "no model" rather than throw inside a poll.
  */
-function selectedModelsOf(node: FlowNodeLike): string[] {
-  return modelFieldStrings(node, "name");
-}
-
-/**
- * The `provider` of each selected model, out of the same `template.model.value`.
- *
- * A bare-string entry (the pre-unified-selector shape) yields no provider — the
- * field carried only a model name then — so such a payload degrades to "no provider
- * observed" rather than to a wrong one.
- */
-function selectedProvidersOf(node: FlowNodeLike): string[] {
-  return modelFieldStrings(node, "provider");
-}
-
-/** One string field out of every entry in `template.model.value`. */
-function modelFieldStrings(node: FlowNodeLike, key: "name" | "provider"): string[] {
+function selectedEntriesOf(
+  node: FlowNodeLike,
+): Array<{ name: string; provider: string }> {
   const value = node.data?.node?.template?.model?.value;
   const entries = Array.isArray(value) ? value : [value];
   return entries
     .map((entry) => {
-      // A bare string is a model NAME; it says nothing about the provider.
-      if (typeof entry === "string") return key === "name" ? entry : "";
-      const field = (entry as Record<string, unknown> | null)?.[key];
-      return typeof field === "string" ? field : "";
+      // A bare string is a model NAME and says nothing about the provider — the
+      // pre-unified-selector shape, kept tolerated so a stale payload degrades to
+      // "no provider observed" rather than to a wrong one.
+      if (typeof entry === "string") return { name: entry, provider: "" };
+      const record = entry as Record<string, unknown> | null;
+      const str = (key: string) =>
+        typeof record?.[key] === "string" ? (record[key] as string) : "";
+      return { name: str("name"), provider: str("provider") };
     })
-    .filter((field) => field.length > 0);
+    .filter((entry) => entry.name.length > 0 || entry.provider.length > 0);
 }
+
 
 /**
  * Reads the Agent node's binding out of a `GET /api/v1/flows/{id}` payload, or
@@ -204,26 +216,40 @@ export function readAgentCredentialProbe(
     (node) => node?.data?.type === "Agent",
   );
   if (!agent) return null;
+  const selected = selectedEntriesOf(agent);
   return {
     credential: credentialOf(agent),
-    selectedProviders: selectedProvidersOf(agent),
-    selectedModels: selectedModelsOf(agent),
+    selected,
+    selectedProviders: selected.map((e) => e.provider).filter((p) => p.length > 0),
+    selectedModels: selected.map((e) => e.name).filter((n) => n.length > 0),
   };
 }
 
 /**
  * Which state the probe is in.
  *
- * **The provider is the primary axis (#1274), and it is always available.** Every
- * caller of `load()` names a provider, so — unlike the credential this used to read,
- * and unlike `expectedModel` — there is no caller for which this check degrades to
- * nothing. That matters for the three specs that load WITHOUT pinning a model
+ * **The provider is the primary axis (#1274), and every caller supplies one.** That
+ * matters for the three specs that load WITHOUT pinning a model
  * (`model-provider-model-toggle`, `general-bugs-agent-images-playground`,
  * `agent-model-connection-isolation`), plus any spec whose `models.json` came back
  * empty: on the credential axis those would now settle on the first read and prove
  * nothing, because `api_key` is `""` from mount onward. On the provider axis they
  * still block on a real transition, since a freshly mounted node carries the
  * selector's DEFAULT provider (`"Anthropic"`, measured on `1.12.0.dev16`).
+ *
+ * **ONE COMBINATION IS STILL UNGUARDED, and it is not new.** When the expected
+ * provider IS the mount-time default (`anthropic`) and the caller pins no model,
+ * the mount state already satisfies both available checks, so the first read
+ * settles and nothing was proved. The pre-#1274 code had the identical hole by the
+ * identical route (`probe.credential === expectedCredential` with no
+ * `expectedModel`, where the default binding WAS `ANTHROPIC_API_KEY`), so this is
+ * inherited, not introduced — an earlier draft of this comment claimed the axis
+ * closed it, which review disproved. Closing it needs an observable this module
+ * cannot see: whether the persisted value is the default or a deliberate pick.
+ * `SimpleAgentTemplatePage` therefore WARNS when it settles on the first read with
+ * no pinned model, so the vacuum is visible in the run log instead of silent
+ * (#1012). It matters on `daily-stable.yml`'s anthropic rotation day (#1185), for
+ * `model-provider-model-toggle` and `agent-model-connection-isolation`.
  *
  * `expectedModel` stays optional and stays a real check when supplied: same provider
  * with the wrong model still means the setup step clicked the wrong option.
@@ -249,22 +275,30 @@ export function classifyCredentialSettle(
 ): CredentialSettleVerdict {
   if (!probe) return "no-agent-node";
 
-  // Nothing persisted at all is its own verdict, and it is checked FIRST: an empty
-  // model list also has an empty provider list, so testing the provider before this
-  // would report "a different provider is persisted" about a node carrying none.
-  if (probe.selectedModels.length === 0 && probe.selectedProviders.length === 0) {
-    return "nothing-persisted";
-  }
+  // Nothing carried the selection at all. Checked FIRST: an empty selection has an
+  // empty provider list too, so testing the provider before this would report "a
+  // different provider is persisted" about a node carrying none.
+  if (probe.selected.length === 0) return "nothing-persisted";
 
-  if (!probe.selectedProviders.includes(expectedProvider)) return "provider-pending";
+  // The provider is present on some entry but on none we can compare — a payload
+  // shape this module tolerates (a bare-string model name) rather than a wrong
+  // provider. Distinct verdict because `provider-pending`'s guidance tells the
+  // reader to compare the OBSERVED provider, and there is none to compare.
+  if (probe.selectedProviders.length === 0) return "provider-unobservable";
 
-  const modelApplied =
-    !expectedModel || probe.selectedModels.includes(expectedModel);
-  if (modelApplied) return "settled";
+  // Paired, not two independent `includes()`: "the right provider" and "the right
+  // model" must hold on the SAME entry, or a multi-entry payload can satisfy the
+  // pair across two entries that each carry only half of it.
+  const match = probe.selected.filter((entry) => entry.provider === expectedProvider);
+  if (match.length === 0) return "provider-pending";
+  if (!expectedModel) return "settled";
+  if (match.some((entry) => entry.name === expectedModel)) return "settled";
   // The provider is right, so the credential the run resolves is right; only the
-  // pick within that provider is wrong. `model-not-applied` is the sharper of the
-  // two when we can see a concrete other model.
-  return probe.selectedModels.length > 0 ? "model-not-applied" : "model-pending";
+  // pick within it is wrong. `model-not-applied` is the sharper verdict when a
+  // concrete other model is visible under that provider.
+  return match.some((entry) => entry.name.length > 0)
+    ? "model-not-applied"
+    : "model-pending";
 }
 
 export interface CredentialSettleFailure {
@@ -319,6 +353,13 @@ const VERDICT_GUIDANCE: Record<
     "option missing, panel still animating). Before #1274 this verdict also covered " +
     "the wedged-save case, where the node kept its mount-time default; that state is " +
     "now `provider-pending`, because the default belongs to a different provider.",
+  "provider-unobservable":
+    "A model is persisted but NO entry carries a `provider`, so the axis this guard " +
+    "decides on is unobservable — this is NOT a wrong provider, and the `observed` " +
+    "line will show `providers=[]`. Either the payload is the pre-unified-selector " +
+    "shape (a bare model-name string, which no current build writes) or a partial " +
+    "write landed. Look at the shape of `template.model.value` in the persisted " +
+    "flow before anything else; the provider comparison never ran.",
   "nothing-persisted":
     "No model and no provider are persisted at all, so nothing carried the " +
     "selection. Two causes fit and this guard cannot separate them: the model click " +
@@ -386,9 +427,16 @@ export function formatCredentialSettleFailure(
     `  observed       ${observed}`,
     `  waited         ${(elapsedMs / 1000).toFixed(1)}s over ${reads} read(s)`,
     // Said once, here, because every reader of this message arrives knowing the old
-    // behaviour and would otherwise read the empty api_key as the finding.
-    `  note           api_key is EMPTY on every build since upstream #14311 and is`,
-    `                 not asserted either way — the provider above is the axis (#1274).`,
+    // behaviour and would otherwise read the empty api_key as the finding. Printed
+    // only when an api_key was actually OBSERVED: on `read-failed` / `no-agent-node`
+    // nothing was, and a note about a field nobody saw is the same unobserved claim
+    // this module exists to avoid.
+    ...(probe
+      ? [
+          `  note           api_key is EMPTY on every build since upstream #14311 and is`,
+          `                 not asserted either way — the provider above is the axis (#1274).`,
+        ]
+      : []),
     ...(lastReadError ? [`  last read err  ${lastReadError}`] : []),
     ``,
     `  verdict        ${verdict}`,

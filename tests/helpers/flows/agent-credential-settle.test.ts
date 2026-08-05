@@ -26,7 +26,7 @@
 //  3. **The axis itself (#1274).** The guard settles on the PROVIDER of the
 //     persisted model, not on `api_key` — upstream #14311 stopped writing that
 //     field, so a classifier that consults it can only ever refuse to settle, which
-//     is how 14 `@stable` specs failed on the 2026-08-05 daily. Tests below pin both
+//     is how 13 `@stable` specs failed on the 2026-08-05 daily. Tests below pin both
 //     directions: an empty api_key must not block settling, and a stale one must not
 //     either.
 import { test } from "node:test";
@@ -94,11 +94,56 @@ test("reads the provider, the SELECTED model names and the credential off the re
   );
   assert.deepEqual(probe, {
     credential: "OPENAI_API_KEY",
-    // The axis #1274 moved the guard onto — it comes off the SAME entry as the
-    // model name, so a payload that carries one carries the other.
+    // `selected` is what the classifier decides on: the provider and the model name
+    // PAIRED, off the same entry. The two flat arrays below are projections kept for
+    // the diagnostic — comparing them independently is what let a cross-entry
+    // combination classify as settled.
+    selected: [{ name: "gpt-4o-mini", provider: "OpenAI" }],
     selectedProviders: ["OpenAI"],
     selectedModels: ["gpt-4o-mini"],
   });
+});
+
+test("#1274 provider and model must match on the SAME entry", () => {
+  // Proved by review: with two entries each carrying half of the wanted pair, two
+  // independent `includes()` checks classified this as `settled` for
+  // (google, gemini-2.5-flash) — a combination neither entry contains.
+  const crossed = probeOfPairs([
+    ["OpenAI", "gemini-2.5-flash"],
+    ["Google Generative AI", "gpt-4o"],
+  ]);
+  assert.equal(
+    classifyCredentialSettle(crossed, "Google Generative AI", "gemini-2.5-flash"),
+    "model-not-applied",
+    "the google entry carries gpt-4o, not the wanted model",
+  );
+  assert.equal(
+    classifyCredentialSettle(
+      probeOfPairs([["Google Generative AI", "gemini-2.5-flash"]]),
+      "Google Generative AI",
+      "gemini-2.5-flash",
+    ),
+    "settled",
+  );
+});
+
+test("#1274 a model with no provider is unobservable, NOT a wrong provider", () => {
+  // Proved by review: this landed on `provider-pending`, whose guidance tells the
+  // reader to compare "the observed provider" while the diagnostic prints
+  // `providers=[]` — a claim about something never observed.
+  const noProvider = probeOfPairs([["", "gpt-4o-mini"]]);
+  assert.deepEqual(noProvider.selectedProviders, []);
+  assert.equal(classifyCredentialSettle(noProvider, "OpenAI"), "provider-unobservable");
+  const message = formatCredentialSettleFailure({
+    flowId: "f", provider: "openai", expectedProvider: "OpenAI",
+    probe: noProvider, verdict: "provider-unobservable", elapsedMs: 20_000, reads: 9,
+  });
+  assert.ok(message.includes("providers=[]"), message);
+  assert.ok(message.includes("unobservable"), message);
+  assert.ok(
+    !message.includes("A DIFFERENT provider"),
+    "must not claim a wrong provider when none was observed:\n" + message,
+  );
 });
 
 test("an unselected model field reads as no models, not as one empty name", () => {
@@ -158,15 +203,40 @@ test("a non-string api_key reads as empty, not as the raw object", () => {
 
 // ─── classifyCredentialSettle — the distinctions that matter ─────────────────
 
+/**
+ * A probe from PAIRED entries — the shape the classifier decides on.
+ *
+ * Takes `[provider, model]` tuples rather than two parallel arrays on purpose: the
+ * parallel-array helper this replaced could build a probe whose provider and model
+ * came from different entries, which is exactly the combination the classifier used
+ * to accept (and the review proved). A fixture that cannot express the bug is how
+ * the bug survives its own test.
+ */
+const probeOfPairs = (
+  pairs: Array<[provider: string, model: string]>,
+  credential = "",
+): AgentCredentialProbe => {
+  const selected = pairs.map(([provider, name]) => ({ name, provider }));
+  return {
+    credential,
+    selected,
+    selectedProviders: selected.map((e) => e.provider).filter((p) => p.length > 0),
+    selectedModels: selected.map((e) => e.name).filter((n) => n.length > 0),
+  };
+};
+
+/** One provider/model pair — the overwhelmingly common single-select case. */
 const probeOf = (
   providers: string[],
   models: string[],
   credential = "",
-): AgentCredentialProbe => ({
-  credential,
-  selectedProviders: providers,
-  selectedModels: models,
-});
+): AgentCredentialProbe => {
+  const width = Math.max(providers.length, models.length);
+  return probeOfPairs(
+    Array.from({ length: width }, (_, i) => [providers[i] ?? "", models[i] ?? ""]),
+    credential,
+  );
+};
 
 // Langflow's own spelling, measured on 1.12.0.dev16 — NOT this repo's Provider key.
 const GOOGLE = "Google Generative AI";
@@ -183,7 +253,7 @@ test("provider and model both applied is settled", () => {
 test("#1274 an empty api_key does NOT prevent settling — it is not an axis", () => {
   // The regression this issue is: since #14311 `api_key` reads "" on every build,
   // so any classification that consulted it could only ever refuse to settle.
-  // 14 @stable specs failed the guard on the 2026-08-05 daily for exactly this.
+  // 13 @stable specs failed the guard on the 2026-08-05 daily for exactly this.
   assert.equal(
     classifyCredentialSettle(
       probeOf([GOOGLE], ["gemini-2.5-flash"], ""),
@@ -465,4 +535,18 @@ test("#1274 the message says the empty api_key is not the finding", () => {
   assert.ok(message.includes("api_key is EMPTY"), message);
   assert.ok(message.includes("#14311"), message);
   assert.ok(message.includes("#1274"), message);
+});
+
+test("#1274 the api_key note is printed only when an api_key was observed", () => {
+  // Review caught it printing unconditionally, including for read-failed, where no
+  // api_key was seen — the same unobserved-claim defect this module exists to avoid.
+  const observed = failure();
+  assert.ok(observed.includes("api_key is EMPTY"), observed);
+  for (const verdict of ["read-failed", "no-agent-node"] as const) {
+    const message = failure({ probe: null, verdict, reads: 0 });
+    assert.ok(
+      !message.includes("api_key is EMPTY"),
+      `${verdict} observed no api_key, so it must not comment on one:\n${message}`,
+    );
+  }
 });
