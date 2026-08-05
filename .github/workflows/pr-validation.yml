@@ -528,18 +528,31 @@ jobs:
           # `"false"` since #459, before the token monitor existed — the previous
           # comment here misattributed that to #1197).
           #
-          # What enabling it COSTS, since the "cuts startup time / backend noise"
-          # rationale above is what is being traded away and an unmeasured trade
-          # reads as hand-waving. It is not unmeasured: daily-stable.yml has run
-          # with tracing on unconditionally since #459 — the setting has never
-          # been touched since, across 65 runs of the full `@stable` sweep — so an
-          # LLM run on this lane now boots in the configuration the daily has used
-          # every weekday for months, not in a novel one. The wedge history that
-          # makes this lane nervous (#922/#927, and the LANGFLOW_WORKER_TIMEOUT
-          # below) is attributed to the `Collect models` sweep, which the daily
-          # also runs, also with tracing on. So the trade is: the LLM-free
-          # majority keeps the cheap boot, and the runs that pay for tracing are
-          # the ones already paying for a full provider sweep.
+          # What enabling it COSTS. The "cuts startup time / backend noise"
+          # rationale above is what is being traded away, so be exact about what
+          # is and is not known.
+          #
+          # NOT measured: the startup time, and the backend noise. Nothing in
+          # #1300 measures either, and this comment does not claim to.
+          #
+          # Measured: daily-stable.yml has run with tracing on unconditionally
+          # since #459 (2026-06-30), and the setting has never been touched since
+          # (`git log -S`/`-G`, one commit), across 65 runs of the full `@stable`
+          # sweep — 26 scheduled, 39 dispatched, 2 of them cancelled. So an LLM
+          # run on this lane now boots in a configuration with ~5 weeks and 26
+          # scheduled runs behind it, not a novel one. That is an argument from
+          # precedent. It is weaker than a measurement, and it is what exists.
+          #
+          # One attribution NOT to make, because an earlier version of this
+          # comment made it and this file refutes it 60 lines above: the wedge is
+          # not wholly a `Collect models` problem. CLAUDE.md does attribute
+          # #922/#927 to that sweep, but the LANGFLOW_WORKER_TIMEOUT note above
+          # records run 30410211167 burning TWO 300 s outages — the
+          # post-collect-models wedge, AND "a second block starting within seconds
+          # of a failing Google call", i.e. during the spec run itself. That
+          # second class is exactly the class of run this change newly traces. It
+          # is bounded by the 120 s worker timeout, not eliminated, and tracing
+          # has not been shown to affect it either way.
           #
           # One class does NOT keep the cheap path, and it is the one to know
           # about: decideProviderCoverage() sets `needs_models=true` for a CANARY

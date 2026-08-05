@@ -66,21 +66,35 @@ not support it. Read this section before quoting any number from it.
 much of the suite ran that day, not what a call costs. The first three lines on file go
 8,741 → 67,099 → 2,592 tokens, a **26×** spread, and the low one is not a cheap day: it is
 2026-08-05, a run degraded by 24 failures and 27 skips that made 4 LLM calls. Per call the same
-three lines are 728 / 1,290 / 648 — a **2×** spread. The denominator is already on every line
+three lines are 728 / 1,289 / 635 — a **2×** spread. The denominator is already on every line
 (`by_model[].calls`), so this costs no new field and no change to the instrument. Quote the raw
 total only as context for how much of the suite the figure covers, and cross-reference
 `daily-history.jsonl` for that date's failure/skip counts before calling any day cheap.
 
 **Rule 2 — tokens and dollars do not have the same exposure, so one window rule for both is wrong
-in one direction.** A token count is **measured** and survives a pricing edit untouched. A dollar
-figure is **computed** at run time from `scripts/lib/model-prices.json`, so a row added or repriced
-inside the window makes two lines answer different questions. Concretely: the three lines above are
-comparable in tokens and **not** comparable in dollars, because what changed between them was the
-`attrib_*` fields and pricing. Discarding the whole line would have thrown away the figure that was
-fine — the same mistake #1252 had to undo in `spec-durations.json`. So: a token rate needs five
-consecutive lines of one **shape**; a dollar rate additionally needs a window with no pricing edit,
-which this file cannot verify, which is why `--prices-stable` is an explicit claim the reader makes
-after checking that no PR touched the price table in the window.
+in one direction.** A token count is **measured**; a dollar figure is **computed** at run time from
+`scripts/lib/model-prices.json`, so a row added or repriced inside the window makes two lines answer
+different questions while their token counts stay comparable. Discarding the whole line for a
+pricing edit would throw away the figure that was fine — the mistake #1252 had to undo in
+`spec-durations.json`.
+
+That asymmetry is about *pricing*. It does **not** make a token rate free: the shape check
+`tokens:trend` performs is two flags over field presence (`attrib_*`, `by_provider`), so a change to
+**how tokens are summed or captured** — the dedup rule, `TOKENS_DETAIL_CAP`, the poll interval — is
+equally invisible to it. So both halves need a claim the file cannot make for you:
+`--measurement-stable` after checking no PR touched `scripts/watch-tokens.mjs` or
+`scripts/lib/token-cost.mjs` in the window, and `--prices-stable` after checking the same for the
+price table. Neither defaults to true.
+
+On the three lines currently on file: **two** are comparable (`attrib+no-provider`), and 2026-08-03
+is excluded by the tool for the `attrib_*` change — which is why the per-call figures quoted in Rule
+1 are illustrative of the *method*, not a window read.
+
+**The rate divides span tokens by span calls.** `by_model[].total_tokens ÷ Σ by_model[].calls`, not
+`totals.total_tokens ÷ calls` — the numerator has to come from the same basis as the denominator,
+per this file's own "reconcile against `by_model`, never against `totals`". The two differ by 2 % on
+the 2026-08-05 line with an empty `mismatches[]`, so the mixed form is wrong by a margin the schema
+does not explain.
 
 **Rule 3 — five consecutive lines, and a line that measured nothing is not one of them.** A line
 that recorded no LLM call carries no rate and is excluded from the mean rather than counted as a

@@ -48,6 +48,38 @@ test("an unsupported function or operator throws rather than evaluating around i
   assert.throws(() => evaluateExpression("1 > 0"), /unexpected character/);
 });
 
+// --- Semantics taken from actions/runner, not from intuition ---------------
+//
+// Each case below was answered WRONG by the first version of this module and is
+// pinned against the engine: EvaluationResult.IsFalsy, AbstractEqual and
+// CoerceTypes, plus the published expressions docs. They are grouped so a future
+// edit that "simplifies" the coercion has to argue with the runner.
+
+test("only the EMPTY string is falsy — '0' and 'false' are both true", () => {
+  assert.equal(evaluateExpression("x && 'yes' || 'no'", { x: "0" }), "yes", "'0' is a non-empty string");
+  assert.equal(evaluateExpression("x && 'yes' || 'no'", { x: "false" }), "yes");
+  assert.equal(evaluateExpression("x && 'yes' || 'no'", { x: "" }), "no");
+  assert.equal(evaluateExpression("x && 'yes' || 'no'", { x: 0 }), "no", "the NUMBER zero is falsy");
+  assert.equal(evaluateExpression("x && 'yes' || 'no'", { x: null }), "no");
+});
+
+test("`==` casts a mixed pair through a number, so null equals '' and 0", () => {
+  // The previous version REFUSED a mixed pair, which sounded fail-closed and was
+  // not: it answered `false` where Actions answers true.
+  assert.equal(evaluateExpression("x == ''", { x: null }), true);
+  assert.equal(evaluateExpression("x == 0", { x: null }), true);
+  assert.equal(evaluateExpression("x == y", { x: null, y: false }), true);
+  assert.equal(evaluateExpression("x == 1", { x: "1" }), true);
+  assert.equal(evaluateExpression("x == 1", { x: "abc" }), false, "NaN equals nothing");
+});
+
+test("`==` between two strings is case-insensitive, as are contains/startsWith/endsWith", () => {
+  assert.equal(evaluateExpression("'True' == 'true'"), true);
+  assert.equal(evaluateExpression("contains('ABC', 'abc')"), true);
+  assert.equal(evaluateExpression("startsWith('ABC', 'a')"), true);
+  assert.equal(evaluateExpression("endsWith('ABC', 'BC')"), true);
+});
+
 test("comparison, negation and grouping", () => {
   assert.equal(evaluateExpression("'a' == 'a'"), true);
   assert.equal(evaluateExpression("'a' != 'b'"), true);
@@ -58,21 +90,32 @@ test("comparison, negation and grouping", () => {
   assert.equal(evaluateExpression("endsWith('abc', 'bc')"), true);
 });
 
-test("GitHub truthiness, not JavaScript's", () => {
-  assert.equal(evaluateExpression("x && 'yes' || 'no'", { x: "" }), "no");
-  assert.equal(evaluateExpression("x && 'yes' || 'no'", { x: "0" }), "no");
-  assert.equal(evaluateExpression("x && 'yes' || 'no'", { x: "false" }), "yes", "a non-empty string is true");
-});
-
-test("a mixed comparison is refused rather than cast", () => {
-  assert.throws(() => evaluateExpression("x == 1", { x: "1" }), /refusing to compare/);
-});
-
 test("a plain scalar comes back as its string, quoted or not", () => {
   assert.equal(evaluateWorkflowValue("false"), "false");
   assert.equal(evaluateWorkflowValue('"false"'), "false");
   assert.equal(evaluateWorkflowValue("'true'"), "true");
   assert.equal(evaluateWorkflowValue("  true  "), "true");
+});
+
+test("a trailing YAML comment is not part of the value", () => {
+  // A correct value with a comment used to FAIL the guard that reads it, and the
+  // failure quoted the comment as the workflow's value.
+  assert.equal(evaluateWorkflowValue('"false" # tracing ON since #459 (#1300)'), "false");
+  assert.equal(evaluateWorkflowValue("false  # why"), "false");
+  assert.equal(evaluateWorkflowValue(`${TRACING} # see the comment above`, run({ needsModels: "true" })), "false");
+  // …but a `#` inside a string or an expression is not a comment.
+  assert.equal(evaluateWorkflowValue('"a # b"'), "a # b");
+  assert.equal(evaluateWorkflowValue("${{ contains('a#b', '#b') && 'false' || 'true' }}"), "false");
+});
+
+test("a YAML shape this cannot read THROWS instead of coming back as its own source text", () => {
+  // The one place the fail-closed contract leaked: an unrecognised scalar was
+  // returned verbatim, so the caller reported it as the value and diagnosed the
+  // wrong problem.
+  assert.throws(() => evaluateWorkflowValue(">-"), /block scalar/);
+  assert.throws(() => evaluateWorkflowValue("|"), /block scalar/);
+  assert.throws(() => evaluateWorkflowValue("*tracing"), /alias/);
+  assert.throws(() => evaluateWorkflowValue("&anchor false"), /anchor/);
 });
 
 test("a value that mixes literal text with an interpolation is refused, not half-read", () => {

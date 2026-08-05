@@ -591,14 +591,19 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     // as one: a Set does not survive JSON.stringify, and this value goes straight
     // onto a history line.
     //
-    // Ties break lexically, which the sibling rollups do not do. Their order on a
-    // tie falls out of which span the trace happened to list first, and that is
-    // tolerable for a table a human reads once; this value is APPENDED TO A
-    // HISTORY FILE and diffed across runs, where a row order that moves on its own
-    // is noise nobody can attribute. `null` (the unknown bucket) sorts last —
-    // named providers are the figures being read, and the bucket that names what
-    // could not be resolved belongs under them. resolvePriceKey() breaks its own
-    // ties lexically for the same "never leave it to input order" reason.
+    // Ties break lexically, which the sibling rollups do not do — their order on a
+    // tie falls out of which span the trace listed first. To be clear about what
+    // that is and is not: `by_model` and `by_spec` land on the SAME history line,
+    // so "this one is diffed and they are not" would be false. The honest reason
+    // is narrower — a provider tie is the LIKELY one (a handful of buckets, often
+    // one model each) where a model tie is not, and this rollup is new, so fixing
+    // it here costs nothing while changing the siblings would rewrite an order
+    // consumers may have come to expect. resolvePriceKey() breaks its own ties
+    // lexically for the same "never leave it to input order" reason.
+    //
+    // `null` (the unknown bucket) sorts last AMONG EQUALS, not last overall: the
+    // primary comparator still wins, so an unknown bucket with the most tokens
+    // sorts first, as it should.
     byProvider: [...providers.values()]
       .map((bucket) => ({ ...bucket, models: [...bucket.models].sort() }))
       .sort(

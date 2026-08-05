@@ -618,9 +618,19 @@ export async function summarize({
     "",
     `**${agg.totals.total_tokens.toLocaleString("en-US")} tokens** across ${agg.totals.traces} trace(s) — ${usd(agg.totals.usd_estimated)} (local estimate)${floor}`,
     "",
-    "_Dollar figures on this page are this run's own estimate, priced from " +
-      "`scripts/lib/model-prices.json`. The QA Platform re-prices the same rows from " +
-      "their `price_key` and is the authoritative source for spend._",
+    // The third of the three notes that assume the price table was readable. The
+    // other two were fixed for #1300 and this one was missed: it promises the page
+    // is "priced from model-prices.json" on a run where that file could not be
+    // opened, so a reader chasing a zero looks at the table's contents instead of
+    // at the parse error in the log.
+    pricesReadable
+      ? "_Dollar figures on this page are this run's own estimate, priced from " +
+        "`scripts/lib/model-prices.json`. The QA Platform re-prices the same rows from " +
+        "their `price_key` and is the authoritative source for spend._"
+      : "_No dollar figure on this page is priced: `scripts/lib/model-prices.json` could not be " +
+        "read on this run (the recorder's log has the parse error). Token counts are unaffected — " +
+        "they are measured, not computed. The QA Platform re-prices from `price_key` and remains " +
+        "the authoritative source for spend._",
     "",
   );
   if (suppressHistory) {

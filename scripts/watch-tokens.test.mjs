@@ -1305,6 +1305,50 @@ test("the lane list is derived, and still finds the lanes that run the recorder 
   }
 });
 
+// The runs that HAVE spend to measure, described the way the lane actually sees
+// them. The first version of this guard described exactly one, with `specs: ""` —
+// a state that CANNOT occur, because the e2e job is gated on
+// `has_specs == 'true'`, so `specs` is always a non-empty list wherever the poller
+// runs. Pinning a function at an unreachable point constrains nothing there: a
+// mutation adding `&& !contains(specs, ' ')` — tracing off on any run with more
+// than one impacted spec, which is every real LLM run including the 19-spec
+// measurement this change is argued from — passed the guard green. The old guard
+// pinned a spelling; that one pinned three points of a function, two of which only
+// fixed the needs_models=false branch and the third of which was unreachable.
+//
+// So: a realistic multi-spec list (taken from run 31018914069's own selection), a
+// single-spec run, and a list whose spec PATHS contain no provider hint, so the
+// verdict has to come from `needs_models` rather than from a substring that
+// happens to be there.
+const LLM_RUNS = [
+  {
+    label: "a multi-spec LLM run",
+    context: {
+      "needs.detect-specs.outputs.needs_models": "true",
+      "needs.detect-specs.outputs.specs":
+        "tests/tests-automations/regression/core-functionality/llm-agents/agent-tool-calling.spec.ts " +
+        "tests/tests-automations/regression/core-functionality/llm-agents/agent-system-prompt.spec.ts " +
+        "tests/collect-models.spec.ts",
+    },
+  },
+  {
+    label: "a single-spec LLM run",
+    context: {
+      "needs.detect-specs.outputs.needs_models": "true",
+      "needs.detect-specs.outputs.specs":
+        "tests/tests-automations/regression/core-components/agent-component-regression.spec.ts",
+    },
+  },
+  {
+    label: "an LLM run whose spec paths name no provider",
+    context: {
+      "needs.detect-specs.outputs.needs_models": "true",
+      "needs.detect-specs.outputs.specs":
+        "tests/tests-automations/regression/ui-ux/a.spec.ts tests/tests-automations/regression/smoke/b.spec.ts",
+    },
+  },
+];
+
 test("every lane that starts the token recorder can actually see a trace (#1300)", () => {
   for (const [name, text] of pollerLanes()) {
     const settings = [...text.matchAll(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/g)].map((m) => m[1].trim());
@@ -1321,21 +1365,20 @@ test("every lane that starts the token recorder can actually see a trace (#1300)
       // meaning, and the alternative is skipping the lane, which is how a lane
       // stops being checked without anyone deciding that (#1012). The thrown
       // message names the exact reference or token to teach it.
-      let onAnLlmRun;
-      try {
-        onAnLlmRun = evaluateWorkflowValue(value, {
-          "needs.detect-specs.outputs.needs_models": "true",
-          "needs.detect-specs.outputs.specs": "",
-        });
-      } catch (err) {
-        assert.fail(`${name}: cannot evaluate its tracing condition, so it is unverified — ${err.message}`);
+      for (const llmRun of LLM_RUNS) {
+        let onAnLlmRun;
+        try {
+          onAnLlmRun = evaluateWorkflowValue(value, llmRun.context);
+        } catch (err) {
+          assert.fail(`${name}: cannot evaluate its tracing condition, so it is unverified — ${err.message}`);
+        }
+        assert.equal(
+          onAnLlmRun,
+          "false",
+          `${name} leaves tracing DEACTIVATED on ${llmRun.label}, a run that executes a ` +
+            `provider-dependent spec, so the token recorder it starts cannot see a trace: ${value}`,
+        );
       }
-      assert.equal(
-        onAnLlmRun,
-        "false",
-        `${name} leaves tracing DEACTIVATED on a run that executes a provider-dependent spec, ` +
-          `so the token recorder it starts cannot see a trace: ${value}`,
-      );
     }
   }
 });

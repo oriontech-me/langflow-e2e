@@ -43,7 +43,22 @@ export const MIN_WINDOW = 5; // token-anomaly.mjs's minBaseline — the read and
 // rather than read from a field, because there is no field: it is the only
 // denominator the schema already carries.
 export function describeLine(line) {
-  const calls = (line.by_model ?? []).reduce((sum, m) => sum + (Number(m.calls) || 0), 0);
+  // UNDECIDABLE, not zero, when the denominator cannot be read. `by_model` absent,
+  // empty, or carrying a non-numeric `calls` used to collapse to `calls: 0`, which
+  // this module then announced as "recorded no LLM call" — a line with 152 traces
+  // reported as a quiet day. That is the exact #1012/#1252 rule this file invokes
+  // three times, broken in its own denominator.
+  const models = Array.isArray(line.by_model) ? line.by_model : null;
+  const callCounts = models?.map((m) => Number(m?.calls));
+  const calls = callCounts && callCounts.every(Number.isFinite) ? callCounts.reduce((a, b) => a + b, 0) : null;
+
+  // SPAN-derived, to match the denominator. `totals.total_tokens` is
+  // trace-authoritative and the two legitimately differ (reports/README.md:
+  // "reconcile against by_model, never against totals"), so dividing one by the
+  // other mixes bases — measured at 2.0% on the 2026-08-05 line, with an empty
+  // `mismatches[]` that cannot explain it. The raw total is still reported, as
+  // itself, below.
+  const spanTokens = models?.reduce((sum, m) => sum + (Number(m?.total_tokens) || 0), 0) ?? null;
   const tokens = Number(line.totals?.total_tokens) || 0;
   const usd = line.totals?.usd_estimated;
   return {
@@ -54,16 +69,18 @@ export function describeLine(line) {
     specs: (line.by_spec ?? []).length,
     calls,
     tokens,
+    spanTokens,
     usd: typeof usd === "number" ? usd : null,
     // Unpriced models make the line's dollars a FLOOR, so they are excluded from a
     // dollar mean for the same reason a skipped file is excluded from a duration
     // table: it is not a low number, it is a partial one.
     priced: (line.unpriced_models ?? []).length === 0,
-    tokensPerCall: calls > 0 ? tokens / calls : null,
+    tokensPerCall: calls > 0 && spanTokens !== null ? spanTokens / calls : null,
     usdPerCall: calls > 0 && typeof usd === "number" ? usd / calls : null,
     // The instrument shape this file can actually observe. Two lines whose shapes
     // differ came from different summarizers; two whose shapes agree MIGHT still
     // differ in pricing, which is why the dollar read needs an explicit claim.
+    version: line.version ?? null,
     shape: [
       line.attrib_calls === undefined ? "no-attrib" : "attrib",
       line.by_provider === undefined ? "no-provider" : "provider",
@@ -97,10 +114,21 @@ function stats(values) {
 // A line that recorded no LLM call has no rate to contribute and is excluded from
 // the mean rather than counted as a zero — a zero here would drag the rate down
 // exactly the way an unmeasured file's 0 s dragged the duration table (#1252).
-export function readTrend(lines, { pricesStable = false } = {}) {
+// The longest run of lines, ending at the newest, that share a shape AND carry a
+// rate. "Five CONSECUTIVE lines, and a line that measured nothing is not one of
+// them" is what reports/README.md promises; counting five rated lines ANYWHERE
+// inside a longer shape run is a different, weaker statement, and the two coincide
+// only at exactly five lines — which is the only case the tests used to cover.
+function trailingRated(window) {
+  let start = window.length;
+  while (start > 0 && window[start - 1].tokensPerCall !== null) start -= 1;
+  return window.slice(start);
+}
+
+export function readTrend(lines, { pricesStable = false, measurementStable = false } = {}) {
   const described = lines.map(describeLine);
   const window = trailingWindow(described);
-  const rated = window.filter((l) => l.tokensPerCall !== null);
+  const rated = trailingRated(window);
   const dollarLines = rated.filter((l) => l.priced);
 
   const gaps = [];
@@ -113,7 +141,25 @@ export function readTrend(lines, { pricesStable = false } = {}) {
     );
   }
   if (window.length !== rated.length) {
-    gaps.push(`${window.length - rated.length} line(s) in the window recorded no LLM call and carry no rate`);
+    const unrated = window.length - rated.length;
+    gaps.push(
+      `${unrated} line(s) in the window carry no rate (no LLM call recorded, or an unreadable ` +
+        "by_model), which breaks the consecutive run — the streak is counted from the newest " +
+        "line backwards and stops at the first of them",
+    );
+  }
+  // The asymmetric half, and the reason it is stated rather than assumed: the shape
+  // string is two flags over field PRESENCE, so a change to what is measured — how
+  // totals are summed, the dedup rule, TOKENS_DETAIL_CAP, the poll interval, even a
+  // `version` bump — leaves the shape identical and the window looking clean. This
+  // file cannot see any of it. Neither claim defaults to true.
+  if (!measurementStable) {
+    gaps.push(
+      "the TOKEN rate is unverified for measurement drift: the shape check only sees whether " +
+        "`attrib_*` and `by_provider` are present, so a change to how tokens are summed or " +
+        "captured is invisible here. Re-run with --measurement-stable after confirming no PR " +
+        "touched scripts/watch-tokens.mjs or scripts/lib/token-cost.mjs in the window.",
+    );
   }
   if (!pricesStable) {
     gaps.push(
@@ -124,29 +170,47 @@ export function readTrend(lines, { pricesStable = false } = {}) {
   } else if (dollarLines.length !== rated.length) {
     gaps.push(`${rated.length - dollarLines.length} line(s) have unpriced models — their dollars are a FLOOR, excluded`);
   }
+  const versions = new Set(described.map((l) => l.version));
+  if (versions.size > 1) gaps.push(`the file mixes schema versions (${[...versions].join(", ")}) — compare within one`);
 
   return {
     lines: described,
     window,
+    rated,
     // The headline figure. Per CALL, never the raw total: the raw total measures
     // how much of the suite ran that day.
     tokensPerCall: stats(rated.map((l) => l.tokensPerCall)),
     usdPerCall: pricesStable ? stats(dollarLines.map((l) => l.usdPerCall)) : null,
-    rawTokens: stats(rated.map((l) => l.tokens)),
-    readable: window.length >= MIN_WINDOW && rated.length >= MIN_WINDOW,
+    // Over the WINDOW, not over `rated`: this figure is explicitly "how much of the
+    // suite ran", and a run with no LLM call is a legitimate — indeed the most
+    // informative — data point for that question. Only the RATE excludes it.
+    rawTokens: stats(window.map((l) => l.tokens)),
+    readable: rated.length >= MIN_WINDOW && measurementStable,
     gaps,
   };
 }
 
 export function render(trend) {
   const out = ["# token-history trend (#1300 item 4)", ""];
+  // The VERDICT comes first when there is no rate to quote. #1226's lesson was
+  // "counts before caveats", and applying it literally here put a
+  // copy-pasteable `969 (range 648–1290)` above a line saying it is not a rate —
+  // the figure this tool exists to withhold, rendered as its headline. When the
+  // read IS supported the counts lead, as that lesson intends.
+  if (!trend.readable) {
+    out.push(
+      "> ⚠️ **NOT a rate.** The figures below are provisional and must not be quoted as a trend.",
+      ...trend.gaps.map((gap) => `> - ${gap}`),
+      "",
+    );
+  }
   out.push("| date | run | specs | calls | tokens | tokens/call | usd/call | shape |");
   out.push("|---|---|---:|---:|---:|---:|---:|---|");
   const inWindow = new Set(trend.window.map((l) => l.run_id));
   for (const l of trend.lines) {
     const mark = inWindow.has(l.run_id) ? "" : " _(outside window)_";
     out.push(
-      `| ${l.date}${mark} | ${l.run_id} | ${l.specs} | ${l.calls} | ${l.tokens} | ` +
+      `| ${l.date}${mark} | ${l.run_id} | ${l.specs} | ${l.calls ?? "?"} | ${l.tokens} | ` +
         `${l.tokensPerCall === null ? "—" : Math.round(l.tokensPerCall)} | ` +
         `${l.usdPerCall === null ? "—" : `$${l.usdPerCall.toFixed(5)}`} | ${l.shape} |`,
     );
@@ -154,22 +218,22 @@ export function render(trend) {
   out.push("");
   const fmt = (s, digits, prefix = "") =>
     s ? `${prefix}${s.mean.toFixed(digits)} (range ${prefix}${s.min.toFixed(digits)}–${prefix}${s.max.toFixed(digits)}, n=${s.n})` : "—";
-  out.push(`**Tokens per LLM call:** ${fmt(trend.tokensPerCall, 0)}`);
-  out.push(`**USD per LLM call:** ${fmt(trend.usdPerCall, 5, "$")}`);
+  const label = trend.readable ? "" : " _(provisional — see above)_";
+  out.push(`**Tokens per LLM call:** ${fmt(trend.tokensPerCall, 0)}${label}`);
+  out.push(`**USD per LLM call:** ${fmt(trend.usdPerCall, 5, "$")}${label}`);
   out.push(`**Raw tokens per run:** ${fmt(trend.rawTokens, 0)} — how much of the suite ran, not a spend rate`);
   out.push("");
-  out.push(
-    trend.readable
-      ? "✅ The window is long enough to quote a token rate from."
-      : "⚠️ NOT yet a rate. Quoting a mean from this window would overstate what the series supports.",
-  );
-  for (const gap of trend.gaps) out.push(`- ${gap}`);
+  if (trend.readable) {
+    out.push("✅ The window supports quoting a token rate.");
+    for (const gap of trend.gaps) out.push(`- ${gap}`);
+  }
   return out.join("\n");
 }
 
 export function main(argv = process.argv.slice(2), { readFile = fs.readFileSync, log = console.log } = {}) {
   const file = argv.find((a) => !a.startsWith("--")) ?? "reports/token-history.jsonl";
   const pricesStable = argv.includes("--prices-stable");
+  const measurementStable = argv.includes("--measurement-stable");
   let raw;
   try {
     raw = readFile(file, "utf8");
@@ -177,15 +241,26 @@ export function main(argv = process.argv.slice(2), { readFile = fs.readFileSync,
     log(`token-trend: cannot read ${file} (${error.message})`);
     return 1;
   }
-  const lines = raw
-    .split("\n")
-    .filter((l) => l.trim())
-    .map((l) => JSON.parse(l));
+  const lines = [];
+  // A malformed line is REFUSED, naming it. Parsing without a catch differed from
+  // the two sibling failures for no reason: those return 1 with a message, this
+  // threw an uncaught SyntaxError. And skipping it would be worse than either —
+  // silently shortening the window is how a read gets quoted over data that was
+  // never there.
+  for (const [index, text] of raw.split("\n").entries()) {
+    if (!text.trim()) continue;
+    try {
+      lines.push(JSON.parse(text));
+    } catch (error) {
+      log(`token-trend: ${file}:${index + 1} is not valid JSON (${error.message}) — refusing to read a partial series`);
+      return 1;
+    }
+  }
   if (!lines.length) {
     log(`token-trend: ${file} has no lines — nothing to read`);
     return 1;
   }
-  log(render(readTrend(lines, { pricesStable })));
+  log(render(readTrend(lines, { pricesStable, measurementStable })));
   return 0;
 }
 

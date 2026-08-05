@@ -30,25 +30,48 @@
 
 const LITERALS = { true: true, false: false, null: null };
 
-// GitHub's truthiness, which is not JavaScript's: it coerces to a number where it
-// can, so '' and 0 are false and any non-empty string that is not a number is
-// true. Only the cases this grammar can produce are modelled.
+// SEMANTICS ARE TAKEN FROM THE RUNNER, NOT FROM INTUITION. The three rules below
+// were each written wrong first and corrected against
+// actions/runner `src/Sdk/DTExpressions2/Expressions2/EvaluationResult.cs`
+// (`IsFalsy`, `AbstractEqual`, `CoerceTypes`) plus the published expressions docs.
+// An evaluator that a guard trusts has to match the engine, not approximate it.
+
+// Truthiness. For a STRING, only the empty string is falsy — `'0'` and `'false'`
+// are both TRUE. The first version of this function returned false for `'0'`, on
+// the reasoning that Actions "coerces to a number where it can"; that describes
+// the `==` coercion table, not IsFalsy, and applying it here made `'0'` falsy and
+// `'0.0'` truthy, which is not a rule at all.
 function truthy(value) {
-  if (typeof value === "string") return value !== "" && value !== "0";
+  if (typeof value === "string") return value !== "";
+  if (typeof value === "number") return value !== 0 && !Number.isNaN(value);
+  if (value === null) return false;
   return Boolean(value);
 }
 
-// `==` in Actions is loose across types (it casts to number when the operands
-// differ), but every comparison in these workflows is string-to-string literal, so
-// this stays strict on same-typed operands and refuses a mixed one instead of
-// guessing which cast the author meant.
+// The cast `==` applies to a mixed pair: null and '' become 0, a boolean becomes
+// 0/1, a non-numeric string becomes NaN (and NaN equals nothing).
+function toNumber(value) {
+  if (value === null) return 0;
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "number") return value;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed === "" ? 0 : Number(trimmed);
+  }
+  return NaN;
+}
+
+// `==` is case-INSENSITIVE between two strings (AbstractEqual uses
+// OrdinalIgnoreCase) and casts through toNumber() otherwise. This used to refuse a
+// mixed pair, which sounded fail-closed and was not: it still answered `false` for
+// `null == ''` and `null == 0`, where Actions answers TRUE — a silent wrong value
+// inside the grammar, in a module whose contract is that anything it cannot model
+// throws. Modelling the cast is what makes that contract true here.
 function looseEquals(a, b) {
-  if (typeof a === typeof b) return a === b;
-  if (a === null || b === null) return a === b;
-  throw new Error(
-    `gh-expression: refusing to compare ${typeof a} with ${typeof b} — ` +
-      "Actions would cast these, and this evaluator does not model the cast",
-  );
+  if (typeof a === "string" && typeof b === "string") return a.toLowerCase() === b.toLowerCase();
+  if (typeof a === typeof b && a !== null) return a === b;
+  const [na, nb] = [toNumber(a), toNumber(b)];
+  return Number.isNaN(na) || Number.isNaN(nb) ? false : na === nb;
 }
 
 function tokenize(source) {
@@ -101,10 +124,13 @@ function tokenize(source) {
   return tokens;
 }
 
+// All three are case-INSENSITIVE in Actions, as the docs state explicitly. Doing
+// them case-sensitively is another silent wrong value rather than a throw.
+const lower = (value) => String(value).toLowerCase();
 const FUNCTIONS = {
-  contains: (haystack, needle) => String(haystack).includes(String(needle)),
-  startsWith: (value, prefix) => String(value).startsWith(String(prefix)),
-  endsWith: (value, suffix) => String(value).endsWith(String(suffix)),
+  contains: (haystack, needle) => lower(haystack).includes(lower(needle)),
+  startsWith: (value, prefix) => lower(value).startsWith(lower(prefix)),
+  endsWith: (value, suffix) => lower(value).endsWith(lower(suffix)),
 };
 
 function parse(tokens, source, context) {
@@ -209,7 +235,7 @@ export function evaluateExpression(source, context = {}) {
 // model, and the alternative — returning it half-evaluated — is the silent
 // almost-right answer the whole module exists to avoid.
 export function evaluateWorkflowValue(raw, context = {}) {
-  const value = String(raw).trim();
+  const value = stripTrailingComment(String(raw).trim());
   const whole = /^\$\{\{(.*)\}\}$/s.exec(value);
   if (whole) {
     if (whole[1].includes("${{")) throw new Error(`gh-expression: nested interpolation in \`${value}\``);
@@ -219,5 +245,36 @@ export function evaluateWorkflowValue(raw, context = {}) {
     throw new Error(`gh-expression: \`${value}\` mixes an interpolation with literal text — not modelled`);
   }
   const quoted = /^(['"])(.*)\1$/s.exec(value);
-  return quoted ? quoted[2] : value;
+  if (quoted) return quoted[2];
+  // A plain scalar is returned as its string ONLY when it is actually a plain
+  // scalar. Returning ANY unrecognised text verbatim is how a caller got the wrong
+  // diagnosis: a YAML block scalar (`>-`), an alias (`*tracing`) or a merge key came
+  // back as its own source text, and the caller then reported that text as the
+  // workflow's VALUE — "leaves tracing DEACTIVATED: >-" — instead of "this is a
+  // shape I cannot read". Same fail-closed rule as an unsupported operator.
+  if (/^[*&]|^[>|]/.test(value)) {
+    throw new Error(
+      `gh-expression: \`${value}\` is a YAML alias/anchor/block scalar, not a value this can read — ` +
+        "resolve it before evaluating",
+    );
+  }
+  return value;
+}
+
+// A `#` starts a YAML comment when it begins the line or follows whitespace, and
+// not when it sits inside a quoted string or an expression. Only the tail after a
+// closed `${{ … }}` or a closed quote is scanned, so `contains(x, '#tag')` and
+// `"a # b"` survive. Without this, a correct value with a trailing comment failed
+// the guard that reads it, reporting the comment as part of the value.
+function stripTrailingComment(value) {
+  const closers = [/^\$\{\{.*?\}\}/s, /^(['"]).*?\1/s];
+  for (const closer of closers) {
+    const head = closer.exec(value);
+    if (head) {
+      const tail = value.slice(head[0].length);
+      return /^\s+#/.test(tail) || tail === "" ? head[0] : value;
+    }
+  }
+  const comment = /\s#/.exec(value);
+  return comment ? value.slice(0, comment.index).trim() : value;
 }
