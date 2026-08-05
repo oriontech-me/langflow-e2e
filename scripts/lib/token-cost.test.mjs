@@ -3,7 +3,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { usdFor, aggregate, parsePrices, loadPrices, resolvePriceKey } from "./token-cost.mjs";
+import {
+  usdFor,
+  aggregate,
+  parsePrices,
+  loadPrices,
+  resolvePriceKey,
+  normalizeSpecPath,
+  UNATTRIBUTED_REASON,
+} from "./token-cost.mjs";
 
 const PRICES = {
   "gpt-4o-mini": { inputPerMillion: 0.15, outputPerMillion: 0.6 },
@@ -277,10 +285,46 @@ test("a dated claude-haiku-4-5 snapshot resolves to the family band (§ Testing 
 // 10x understatement reported as exact.
 test("an unpriced Claude id stays unpriced — no blanket family fallback (§7.2.1)", () => {
   const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  // The vehicle was `claude-fable-5` until #1255 item 4 priced it (§7.2.1's own
+  // published table). The PROPERTY under test is unchanged and is not about that id:
+  // a Claude id with no entry must resolve to null rather than inherit a sibling's
+  // rate. `claude-sonnet-9` is a plausible future id that no key here is a prefix of.
   assert.equal(
-    usdFor("claude-fable-5", 1_000_000, 1_000_000, prices, "2026-08-03"),
+    usdFor("claude-sonnet-9", 1_000_000, 1_000_000, prices, "2026-08-03"),
     null,
-    "claude-fable-5 has no entry and must resolve to null, not to a sibling's rate",
+    "an unpriced Claude id must resolve to null, not to a sibling's rate",
+  );
+  // And the id that used to stand in for it is now priced at its published rate,
+  // not at a sibling's: $10/$50, which is neither haiku's nor opus-5's.
+  assert.equal(usdFor("claude-fable-5", 1_000_000, 1_000_000, prices, "2026-08-03"), 60);
+});
+
+// #1255 item 4: every Anthropic id the collected catalog exposes is priced.
+//
+// The guard is fail-closed by design and it fires on the PR that refreshes
+// tests/helpers/provider-setup/data/models.json — which is where a new Anthropic id
+// enters this repo, and the only moment someone can price it against a published
+// rate. rankCandidates falls through to raw catalog order when neither /haiku/ nor
+// /sonnet/ validates (collect-models.ts:157-161), so any id in that list is reachable
+// and an unpriced one turns its whole run's cost into a floor.
+//
+// Google is deliberately NOT covered the same way: 28 of its 36 catalog ids are
+// image / video / TTS / robotics / gemma models with no per-MTok text rate to record,
+// and inventing one is worse than the honest null this module exists to produce
+// (§2.1). Its three text ids that the rotation can actually select are all priced.
+test("every Anthropic model in the collected catalog resolves to a price (#1255 item 4)", () => {
+  const prices = loadPrices(new URL("./model-prices.json", import.meta.url));
+  const catalog = JSON.parse(
+    readFileSync(new URL("../../tests/helpers/provider-setup/data/models.json", import.meta.url), "utf8"),
+  );
+  const unpriced = catalog
+    .filter((entry) => entry.provider === "anthropic")
+    .map((entry) => entry.model)
+    .filter((model) => resolvePriceKey(model, prices) === null);
+  assert.deepEqual(
+    unpriced,
+    [],
+    `unpriced Anthropic ids are reachable through rankCandidates' raw-order fall-through: ${unpriced.join(", ")}`,
   );
 });
 
@@ -891,4 +935,108 @@ test("a fully identified attribution is still credited exactly as before", () =>
   const mini = agg.bySpecModel.find((r) => r.model === "gpt-4o-mini");
   assert.equal(mini.spec_path, "a.spec.ts");
   assert.equal(mini.title_path, "does a thing");
+});
+
+// ─── #1255 item 4: the producer's row identity is the DB's ───────────────────
+//
+// The DB keys on md5(e2e_normalize_spec_path(spec_path) || '::' || title_path). A
+// producer key finer than that is the dangerous direction: two producer rows on one
+// DB identity do not duplicate — the live ingest upserts, keeps the LAST, and counts
+// the loser in `rows_dropped`, so one of the two numbers is discarded in silence.
+
+test("normalizeSpecPath mirrors e2e_normalize_spec_path, including its pass-throughs", () => {
+  assert.equal(normalizeSpecPath("tests-automations/a.spec.ts"), "tests/tests-automations/a.spec.ts");
+  assert.equal(normalizeSpecPath("tests/tests-automations/a.spec.ts"), "tests/tests-automations/a.spec.ts");
+  // NULL and '' are returned untouched by the SQL function; a `tests/` prefix on
+  // either would invent a path out of an absence.
+  assert.equal(normalizeSpecPath(null), null);
+  assert.equal(normalizeSpecPath(""), "");
+  assert.equal(normalizeSpecPath(undefined), undefined);
+});
+
+test("two spellings of one spec path merge into the single row the DB will file them under (#1255 item 4)", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1"), twoModelProbe("t2")],
+    attributions: [
+      { trace_id: "t1", file: "a.spec.ts", test: "does a thing" },
+      { trace_id: "t2", file: "tests/a.spec.ts", test: "does a thing" },
+    ],
+    prices: P,
+  });
+  const mini = agg.bySpecModel.filter((r) => r.model === "gpt-4o-mini");
+  assert.equal(
+    mini.length,
+    1,
+    "both normalize to tests/a.spec.ts, so the ingest would keep one and count the " +
+      `other in rows_dropped: ${JSON.stringify(mini)}`,
+  );
+  // Summed here, which is the arithmetic the DB cannot do once one row has been dropped.
+  assert.equal(mini[0].total_tokens, 400);
+  assert.equal(mini[0].calls, 4);
+  // The stored value stays the RAW spelling the merged row was opened with.
+  assert.equal(mini[0].spec_path, "a.spec.ts");
+});
+
+test("a different spec path still keys a different row — the merge is normalization, not collapse", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1"), twoModelProbe("t2")],
+    attributions: [
+      { trace_id: "t1", file: "a.spec.ts", test: "does a thing" },
+      { trace_id: "t2", file: "b.spec.ts", test: "does a thing" },
+    ],
+    prices: P,
+  });
+  const paths = agg.bySpecModel
+    .filter((r) => r.model === "gpt-4o-mini")
+    .map((r) => r.spec_path)
+    .sort();
+  assert.deepEqual(paths, ["a.spec.ts", "b.spec.ts"]);
+});
+
+// ─── #1255 item 4: the unattributed bucket and its rows measure one population ──
+
+test("a half-identified trace lands in the unattributed bucket, not in a null::null bySpec row", () => {
+  const agg = aggregate({
+    probes: [twoModelProbe("t1")],
+    attributions: [{ trace_id: "t1", file: "a.spec.ts" }], // file, no test
+    prices: P,
+  });
+  assert.equal(agg.unattributed.traces, 1, "its ROW is already unattributed; its trace must be too");
+  assert.equal(agg.unattributed.total_tokens, 300);
+  assert.deepEqual(
+    agg.bySpec,
+    [],
+    `a spec row keyed "null::null" is a spec nobody can open: ${JSON.stringify(agg.bySpec)}`,
+  );
+});
+
+test("unattributed.span_tokens is what the null-identity rows sum to, and total_tokens stays trace-authoritative", () => {
+  // The trace reports 500; its spans add up to 300. §2.1 makes the trace's own total
+  // authoritative for the run, and a row can only ever be built from spans.
+  const agg = aggregate({
+    probes: [twoModelProbe("t1", { total_tokens: 500 })],
+    attributions: [],
+    prices: P,
+  });
+  assert.equal(agg.unattributed.total_tokens, 500, "trace-authoritative");
+  assert.equal(agg.unattributed.span_tokens, 300, "span sum");
+  const rowSum = agg.bySpecModel
+    .filter((r) => r.spec_path === null)
+    .reduce((n, r) => n + r.total_tokens, 0);
+  assert.equal(rowSum, agg.unattributed.span_tokens, "the rows must reconcile against span_tokens");
+  assert.equal(agg.mismatches.length, 1, "and the gap is the mismatch the block already reports");
+});
+
+test("unattributed.span_tokens equals total_tokens when no trace in the bucket mismatches", () => {
+  const agg = aggregate({ probes: [twoModelProbe("t1")], attributions: [], prices: P });
+  assert.equal(agg.unattributed.total_tokens, 300);
+  assert.equal(agg.unattributed.span_tokens, 300);
+  assert.equal(agg.mismatches.length, 0);
+});
+
+test("the unattributed reason names the UI-delete path the hook cannot see (#1255 item 4)", () => {
+  // The 1.6% residue measured on run 30867978556. A cause absent from this string
+  // reads as a cause that does not exist.
+  assert.match(UNATTRIBUTED_REASON, /through the UI/);
+  assert.match(aggregate({ probes: [probe()], prices: PRICES }).unattributed.reason, /through the UI/);
 });

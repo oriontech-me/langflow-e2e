@@ -119,6 +119,30 @@ function visit(node) {
 for (const s of report.suites || []) visit(s);
 
 const num = (v) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; };
+
+// Which attempt of the workflow run this payload describes (#1255 item 4).
+//
+// WHY IT MATTERS AND WHY IT IS NOT COSMETIC. `github.run_id` is STABLE across
+// re-runs — only `run_attempt` increments — so without this field every attempt of a
+// run looks like the same attempt to the platform. Two consequences, both silent:
+// `e2e_ingest_run` only replaces a run's rows when a HIGHER attempt arrives
+// (20260801120500_e2e_ingest_run.sql:238), and `e2e_ingest_run_tokens` deletes the
+// previous attempt's token rows only when the run's stored attempt has moved
+// (its `superseded` return). Today a re-run's token rows land on top of the first
+// attempt's — an UPSERT, per row, so a row the re-run did not produce (a test that
+// no longer ran) survives from the previous attempt and is read as part of this one.
+// The RPC has taken `p_run_attempt` and returned `superseded` since the token schema
+// shipped; both were unused because nothing sent the field.
+//
+// A value that is absent or not a positive integer sends NOTHING rather than a
+// stand-in: the edge function validates `run_attempt >= 1` and 400s otherwise (the
+// POST step is `continue-on-error`, so a 400 here would be a silent loss of the whole
+// run), while an omitted field means "attempt 1" to both the edge function and the
+// RPC — the same behaviour as before this field existed. Outside CI (a local
+// `node scripts/build-run-payload.mjs`) GITHUB_RUN_ATTEMPT is unset, which is exactly
+// that case.
+const runAttempt = num(process.env.GITHUB_RUN_ATTEMPT);
+const validAttempt = runAttempt !== null && runAttempt >= 1 ? runAttempt : null;
 const coverage = (process.env.STABLE_COUNT || process.env.TOTAL_COUNT)
   ? { stable_count: num(process.env.STABLE_COUNT), total_count: num(process.env.TOTAL_COUNT) } : undefined;
 
@@ -152,6 +176,7 @@ const payload = {
   time: runTime,                                        // HH:MM BRT — real run time, disambiguates same-day runs
   workflow: process.env.WORKFLOW || "weekly-stable",
   run_id: process.env.GITHUB_RUN_ID || "local",
+  ...(validAttempt !== null ? { run_attempt: validAttempt } : {}),
   run_url: process.env.RUN_URL || null,
   langflow_image: process.env.LANGFLOW_IMAGE || null,   // the nightly build (or RC/stable on a manual run)
   langflow_version: process.env.LANGFLOW_VERSION || null, // resolved version from GET /api/v1/version (e.g. 1.11.0.dev25)

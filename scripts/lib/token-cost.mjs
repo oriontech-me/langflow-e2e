@@ -18,8 +18,17 @@ import fs from "node:fs";
 // trace here: the spec's own `cleanup()` call did not pass `attribution` (most
 // specs, by design — the sidecar is opt-in per #1197), or the flow was deleted
 // between two poller ticks before the sidecar could read its trace (#1197 §S4).
+//
+// A THIRD cause was added for #1255 item 4: the residue measured on run 30867978556
+// (1.6% of the run's tokens, 11 flows) was flows deleted through the UI rather than
+// through an API helper. The attribution hook lives on the helpers, so a UI delete is
+// structurally invisible to it -- closing that needs a hook on the UI delete path, a
+// separate design. It is named here because this string is what a reader of the bucket
+// sees, and a cause absent from it reads as a cause that does not exist: a triager
+// checking both listed causes and finding neither would go looking for a bug in the
+// sidecar instead of recognising the one path it cannot see.
 export const UNATTRIBUTED_REASON =
-  "the spec's cleanup() did not pass attribution (most specs don't, by design), or its flow was deleted between two poller ticks";
+  "the spec's cleanup() did not pass attribution (most specs don't, by design), its flow was deleted between two poller ticks, or its flow was deleted through the UI, which the attribution hook cannot see";
 
 // Pure validation step, split out from loadPrices() so a caller with its own I/O
 // (the summarizer's injected readFile, in particular) can reuse the exact same
@@ -63,6 +72,38 @@ export function parsePrices(raw) {
 
 export function loadPrices(filePath) {
   return parsePrices(fs.readFileSync(filePath, "utf8"));
+}
+
+// Mirror of quality-platform's `public.e2e_normalize_spec_path`
+// (20260726120000_e2e_issue_spec_refs.sql:25) -- prepend `tests/` unless the path
+// already carries it, pass NULL/empty through untouched. Character for character
+// the same rule, deliberately: the DB's row identity is
+// md5(e2e_normalize_spec_path(spec_path) || '::' || title_path), so anything this
+// function does NOT do is a way for two producer rows to arrive as one DB row.
+//
+// WHY THE PRODUCER HAS TO KNOW THIS (#1255 item 4, same class as item 2)
+//
+// The producer used to key its rows on the RAW (spec_path, title_path, model). The DB
+// keys on the NORMALIZED pair. A raw key is strictly FINER than a normalized one, and
+// finer is the dangerous direction: `a.spec.ts` and `tests/a.spec.ts` are two producer
+// rows and one DB row, and the live ingest upserts, keeps the LAST and counts the loser
+// in `rows_dropped` -- so one of the two numbers is silently discarded. Merging them
+// here sums them instead, which is the arithmetic the DB cannot do after the fact.
+//
+// Not reachable through today's sidecar: `resolveTestAttribution` returns
+// `path.relative(project.testDir, file)`, which never carries a `tests/` prefix
+// (testDir IS `./tests`). That is an invariant enforced two modules away, in a
+// TypeScript helper this pure ESM module cannot see -- the same shape of inherited
+// invariant item 2 removed. This makes it local.
+//
+// The row still CARRIES the raw spelling it was handed, not the normalized one: the
+// normalization exists to decide identity, and rewriting the stored value would change
+// what the platform records for every row today for no requirement. When two spellings
+// do collapse, the merged row keeps whichever opened it -- cosmetic by construction,
+// since both normalize to the one identity the DB will file them under.
+export function normalizeSpecPath(specPath) {
+  if (!specPath) return specPath;
+  return specPath.startsWith("tests/") ? specPath : `tests/${specPath}`;
 }
 
 // Normalizes a raw price-table VALUE (flat rate or dated-bands array) into an
@@ -250,9 +291,23 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     total_tokens: 0,
     usd_estimated: 0,
   };
+  // `total_tokens` and `span_tokens` measure the SAME traces from the two sources
+  // §2.1 keeps apart, and the pair exists so a consumer never has to guess which one
+  // it is holding (#1255 item 4). `total_tokens` is trace-authoritative -- the sum of
+  // each trace's own reported total. `span_tokens` is the sum of those traces' model
+  // spans, which is exactly what the null-identity `rows[]` of the emitted block add
+  // up to, because a row can only ever be built from spans (a trace total has no
+  // per-model split to file under a model).
+  //
+  // So the two disagree precisely when a trace in this bucket is one of `mismatches[]`,
+  // and a consumer diffing `unattributed.total_tokens` against the sum of the
+  // unattributed rows finds that gap. Before this field the gap was real, internally
+  // consistent, and unexplainable from the block alone -- the top level already carried
+  // both figures (`total_tokens` + `span_tokens`), and the bucket carried one.
   const unattributed = {
     traces: 0,
     total_tokens: 0,
+    span_tokens: 0,
     usd_estimated: 0,
     reason: UNATTRIBUTED_REASON,
   };
@@ -283,8 +338,15 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     // is an invariant enforced two modules away, in a TypeScript helper this pure ESM
     // module cannot see. Enforcing it here makes the row identity depend only on what
     // this function was handed.
+    //
+    // NORMALIZED before it is keyed (#1255 item 4): the DB's identity runs
+    // `e2e_normalize_spec_path` over `spec_path` first, so keying on the raw value
+    // splits rows the DB will merge -- see normalizeSpecPath() above for what that
+    // costs, and why the stored `spec_path` below deliberately stays raw.
     const identified = Boolean(specPath && titlePath);
-    const specModelKey = identified ? `${specPath}\u0000${titlePath}\u0000` : "\u0000\u0000";
+    const specModelKey = identified
+      ? `${normalizeSpecPath(specPath)}\u0000${titlePath}\u0000`
+      : "\u0000\u0000";
 
     let spanTotal = 0;
     let traceUsd = 0;
@@ -363,16 +425,25 @@ export function aggregate({ probes = [], attributions = [], costs = [], prices =
     totals.total_tokens += runTotal;
     totals.usd_estimated += traceUsd;
 
-    if (!attribution) {
+    // Split on `identified`, not on whether an `attribution` record exists (#1255
+    // item 4, extending item 2's fix to the other two outputs). A record carrying a
+    // trace_id but no file/test already sends its ROW to the null-identity bucket;
+    // sending its trace anywhere else makes one function report the same trace as
+    // both attributed and unattributed. Under the old split it opened a `bySpec` row
+    // keyed `"null::null"` — a spec nobody can open, next to a bucket that did not
+    // count the tokens the row beneath it did. Unreachable today for the same reason
+    // item 2 was, and local now for the same reason.
+    if (!identified) {
       unattributed.traces += 1;
       unattributed.total_tokens += runTotal;
+      unattributed.span_tokens += spanTotal;
       unattributed.usd_estimated += traceUsd;
       continue;
     }
-    const key = `${attribution.file}::${attribution.test}`;
+    const key = `${specPath}::${titlePath}`;
     const spec =
       specs.get(key) ??
-      { test: attribution.test, file: attribution.file, traces: 0, total_tokens: 0, usd_estimated: 0 };
+      { test: titlePath, file: specPath, traces: 0, total_tokens: 0, usd_estimated: 0 };
     spec.traces += 1;
     spec.total_tokens += runTotal;
     spec.usd_estimated += traceUsd;

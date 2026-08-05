@@ -1462,3 +1462,84 @@ test("the attrib_ms / attrib_calls semantics are defined in exactly ONE place (#
     );
   }
 });
+
+// --- #1255 item 3: the platform is authoritative for dollars -----------------
+//
+// USD is computed on both sides of the POST. The decision recorded at the seam
+// (merge-token-payload.mjs's header) is that the platform's number is the one that
+// counts, and that this repo's own figure is a local estimate. These pin both halves
+// of that as behaviour rather than as prose: what the block sends, and what the
+// human-facing surfaces say about the number they print.
+
+test("the tokens block sends NO dollar figure — the platform re-prices from price_key", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "all-tokens/token-attrib-1.jsonl": `${ATTRIB_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TOKENS_SUMMARY_OUT: "tokens-block.json" };
+  await summarize({ env, ...fs2, log: () => {} });
+  const block = JSON.parse(fs2.written["tokens-block.json"]);
+  assert.equal(block.usd_estimated, undefined, "the run total must not be sent");
+  for (const row of block.rows) {
+    assert.equal(row.usd_estimated, undefined, `row carries a dollar figure: ${JSON.stringify(row)}`);
+    // What it DOES carry, because the platform joins on it and cannot re-derive it.
+    assert.ok("price_key" in row, "every row must carry the key the platform prices against");
+  }
+  assert.equal(block.rows[0].price_key, "gpt-4o-mini");
+});
+
+test("the step summary labels its dollar figure a local estimate and names the authority", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  await summarize({ env: baseEnv, ...fs2, log: () => {} });
+  const md = fs2.written["summary.md"];
+  assert.match(md, /local estimate/, "an unlabelled second figure reads as the dashboard being wrong");
+  assert.match(md, /QA Platform re-prices/);
+});
+
+test("the summarizer's own log line carries the same label as the step summary", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n`,
+    "prices.json": PRICES,
+  });
+  const logs = [];
+  await summarize({ env: baseEnv, ...fs2, log: (msg) => logs.push(msg) });
+  const summaryLog = logs.find((l) => l.startsWith("token summary: 88 tokens"));
+  assert.ok(summaryLog, `no summary log line: ${JSON.stringify(logs)}`);
+  assert.match(summaryLog, /local estimate/);
+});
+
+// --- #1255 item 4: the block's unattributed bucket explains its own gap ------
+
+test("the block's unattributed bucket carries span_tokens beside its trace-authoritative total", async () => {
+  // The trace reports 500 tokens; its one span reports 88. The rows can only ever be
+  // built from spans, so without span_tokens a consumer diffing the two finds an
+  // unexplained 412.
+  const mismatched = JSON.stringify({
+    trace_id: "t9",
+    flow_id: "f9",
+    start_time: "2026-07-31T13:35:38Z",
+    status: "ok",
+    total_tokens: 500,
+    models: [
+      { model: "gpt-4o-mini", prompt_tokens: 40, completion_tokens: 48, total_tokens: 88, calls: 1 },
+    ],
+  });
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${mismatched}\n`,
+    "prices.json": PRICES,
+  });
+  const env = { ...baseEnv, TOKENS_SUMMARY_OUT: "tokens-block.json" };
+  await summarize({ env, ...fs2, log: () => {} });
+  const block = JSON.parse(fs2.written["tokens-block.json"]);
+  assert.equal(block.unattributed.total_tokens, 500);
+  assert.equal(block.unattributed.span_tokens, 88);
+  const rowSum = block.rows
+    .filter((r) => r.spec_path === null)
+    .reduce((n, r) => n + r.total_tokens, 0);
+  assert.equal(rowSum, block.unattributed.span_tokens);
+  assert.equal(block.mismatch_traces, 1, "and the gap is already named");
+});
