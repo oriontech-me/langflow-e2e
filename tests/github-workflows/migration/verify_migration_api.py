@@ -3,6 +3,7 @@
 import sys
 import time
 
+import provider_credentials as credentials
 from helpers import (
     get_auth_token,
     get_flow,
@@ -79,7 +80,13 @@ def main():
     # 5. Execute flow on nightly via API
     print("── Executing flow on nightly via API...")
     success, detail = run_flow_safe(token, flow_id)
-    status = "pass" if success else "fail"
+    # Same attribution as the source phase (#1295): the account can drain between the
+    # two, and "the provider stopped paying" is not a migration verdict. The
+    # migration-specific checks above (flow preserved, variables preserved) still ran
+    # and still fail on their own terms if they are broken.
+    status = (
+        "pass" if success else credentials.step_status(detail, "nightly_api/execute_flow_api")
+    )
     print(f"   {status.upper()}: {detail[:120]}")
     phase["steps"]["execute_flow_api"] = {"status": status, "detail": detail}
     if not success:

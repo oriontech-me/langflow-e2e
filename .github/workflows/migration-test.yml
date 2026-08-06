@@ -52,6 +52,27 @@ jobs:
         with:
           python-version: "3.12"
 
+      # Presence is not usability, and this step used to check only the former (#1295).
+      # Run #124 passed a non-empty-secret check, spent 1 min 40 s installing the
+      # Playwright browser and another minute installing Langflow, and then died on a
+      # drained OpenAI account — reported as a *migration* failure, on the
+      # `migration-test` tracker, in a run that never executed the witness flow at all.
+      #
+      # One token answers it here, before the job installs anything. Fail-open by
+      # design: only a billing / key-rot verdict aborts (exit 1); a network blip or an
+      # unrecognised response warns and lets the run reach its own conclusion — the
+      # authoritative verdict on a migration is the migration. It also drops the
+      # marker the report and the issue-routing steps below read.
+      #
+      # First step after `Setup Python` on purpose: every step it precedes is one a
+      # drained key would have wasted. Stdlib only, so it needs no `pip install`.
+      - name: Verify OPENAI_API_KEY is usable (not just present)
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python tests/github-workflows/migration/provider_credentials.py \
+            --probe --phase "pre-flight/pip"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
@@ -77,21 +98,6 @@ jobs:
 
       - name: Create virtual environment
         run: uv venv .venv
-
-      - name: Verify OPENAI_API_KEY secret is configured
-        env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          # Fail fast: this workflow's flow-execution and migration-verification
-          # steps require a real OpenAI key. Without it `${{ secrets.X }}` resolves
-          # to an empty string, Langflow silently skips the credential auto-import,
-          # and the run only fails 5+ minutes later with a misleading
-          # "Missing credentials" error.
-          if [[ -z "$OPENAI_API_KEY" ]]; then
-            echo "::error::OPENAI_API_KEY repository secret is not configured. Set it in Settings → Secrets and variables → Actions before running this workflow."
-            exit 1
-          fi
-          echo "OPENAI_API_KEY secret is configured."
 
       - name: Generate ephemeral secret key for this run
         run: |
@@ -298,6 +304,7 @@ jobs:
             /tmp/migration-test-state.json
             /tmp/latest-digest.txt
             /tmp/nightly-digest.txt
+            /tmp/credential-verdict.json
 
       # Scoped to the default branch (#1145). This step used to fire on ANY green
       # run, so a `workflow_dispatch` on a branch closed the issue that tracks a bug
@@ -312,13 +319,25 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const { data: existing } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              labels: 'migration-test',
-              state: 'open',
-            });
-            if (existing.length > 0) {
+            // A green run proves two separate things, so it closes two separate
+            // trackers (#1295) — each with wording about what it actually proved. The
+            // old version said "Migration test passed" on whatever open
+            // `migration-test` issue it found, which is how a billing outage filed
+            // there would have been closed as a fixed migration bug.
+            const CLOSING = {
+              'migration-test': 'Migration test passed. Closing this issue.',
+              'provider-credentials':
+                'This run reached the model provider and executed the witness flow, so the ' +
+                'credential that blocked it is usable again. Closing.',
+            };
+            for (const [label, message] of Object.entries(CLOSING)) {
+              const { data: existing } = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: label,
+                state: 'open',
+              });
+              if (existing.length === 0) continue;
               const issue = existing[0];
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -327,7 +346,7 @@ jobs:
                 body: [
                   `## ✅ Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
                   '',
-                  'Migration test passed. Closing this issue.',
+                  message,
                   '',
                   `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
                 ].join('\n'),
@@ -357,18 +376,68 @@ jobs:
               console.log('Report not available:', e.message);
             }
 
+            // #1295: a run the provider's billing state stopped carries NO migration
+            // signal — the witness flow never executed, so nothing about alembic or the
+            // Fernet round-trip was measured. Filing that on the `migration-test`
+            // tracker is what run #124 did, and the next green run would have closed it
+            // with "Migration test passed", leaving a Langflow bug in the history that
+            // never existed. The marker is written by
+            // tests/github-workflows/migration/provider_credentials.py; its ABSENCE is
+            // the normal case and keeps this step exactly as it was.
+            let credential = null;
+            try {
+              credential = JSON.parse(fs.readFileSync('/tmp/credential-verdict.json', 'utf8'));
+            } catch (e) {
+              console.log('No credential verdict for this run:', e.message);
+            }
+            const blocked = credential && ['billing', 'key-rot'].includes(credential.verdict);
+            const label = blocked ? credential.label : 'migration-test';
+            const title = blocked
+              ? credential.title
+              : 'Langflow Migration Test Failed (latest → nightly)';
+
+            if (blocked) {
+              // Self-provisioning so a drained account does not also need a manual
+              // label; idempotent, and a failure here must not lose the report.
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label,
+                  color: 'd93f0b',
+                  description: 'Provider credential/billing state blocked a scheduled run (no product signal)',
+                });
+              } catch (e) {
+                console.log(`Label ${label} already exists or could not be created:`, e.message);
+              }
+            }
+
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-test',
+              labels: label,
               state: 'open',
             });
+
+            const preamble = blocked
+              ? [
+                  `> **This is not a migration verdict.** The witness flow could not reach the`,
+                  `> model provider (\`${credential.verdict}\`, at \`${credential.phase}\`), so`,
+                  `> **nothing about the migration was measured** in this run.`,
+                  '',
+                  `**Reason:** ${credential.reason}`,
+                  '',
+                  `**What to do:** ${credential.action}`,
+                  '',
+                ]
+              : [];
 
             const body = [
               `## Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
               '',
               `**Ref:** \`${context.ref}\` · **Event:** \`${context.eventName}\``,
               '',
+              ...preamble,
               report,
               '',
               `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
@@ -387,9 +456,9 @@ jobs:
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: `Langflow Migration Test Failed (latest → nightly)`,
+                title,
                 body,
-                labels: ['migration-test', 'automated'],
+                labels: [label, 'automated'],
               });
             }
 
@@ -413,15 +482,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Verify OPENAI_API_KEY secret is configured
+      # Same pre-flight as the API job above (#1295) — see the long comment there. This
+      # job is the cheaper half to protect and the more expensive one to waste: run #124
+      # pulled 941 MB of images before reaching the same drained-account 429. No
+      # `setup-python` here on purpose: the module is stdlib-only, so the runner's
+      # `python3` is enough.
+      - name: Verify OPENAI_API_KEY is usable (not just present)
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          if [[ -z "$OPENAI_API_KEY" ]]; then
-            echo "::error::OPENAI_API_KEY repository secret is required."
-            exit 1
-          fi
-          echo "OPENAI_API_KEY is configured."
+          python3 tests/github-workflows/migration/provider_credentials.py \
+            --probe --phase "pre-flight/compose"
 
       - name: Generate ephemeral SECRET_KEY
         run: |
@@ -609,6 +680,14 @@ jobs:
           if [[ "$HTTP" != "200" ]]; then
             echo "::error::Source flow execution returned HTTP $HTTP"
             head -c 2000 /tmp/run-source.json
+            # Attribute it before dying (#1295): the account can drain between the
+            # pre-flight and here, and a provider 429 quoted inside a Langflow 500 is
+            # not a migration verdict. `|| true` because attribution must never
+            # replace the real error with a crash of its own — and this classifier
+            # deliberately does not change the exit code below.
+            python3 tests/github-workflows/migration/provider_credentials.py \
+              --classify-file /tmp/run-source.json --status "$HTTP" \
+              --phase "compose/source-execute" || true
             exit 1
           fi
           echo "Source flow execution OK"
@@ -679,6 +758,12 @@ jobs:
           if [[ "$HTTP" != "200" ]]; then
             echo "::error::Target flow execution returned HTTP $HTTP (Fernet/migration regression)"
             head -c 2000 /tmp/run-target.json
+            # The one place where the distinction matters most: this step's whole
+            # purpose is to catch a Fernet/migration regression, and a drained account
+            # here would have filed exactly that against Langflow (#1295).
+            python3 tests/github-workflows/migration/provider_credentials.py \
+              --classify-file /tmp/run-target.json --status "$HTTP" \
+              --phase "compose/target-execute" || true
             exit 1
           fi
           if grep -iE 'api[ _-]?key.{0,30}(required|missing|not[ _]?found)|fernet|cannot[ _]decrypt' /tmp/run-target.json; then
@@ -755,6 +840,7 @@ jobs:
             /tmp/witness-id.txt
             /tmp/run-source.json
             /tmp/run-target.json
+            /tmp/credential-verdict.json
           retention-days: 30
 
       # Same default-branch scope as the API job above (#1145).
@@ -763,13 +849,21 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            const { data: existing } = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              labels: 'migration-test',
-              state: 'open',
-            });
-            if (existing.length > 0) {
+            // Two trackers, same reasoning as the API job above (#1295).
+            const CLOSING = {
+              'migration-test': 'docker-compose migration test passed. Closing.',
+              'provider-credentials':
+                'This run reached the model provider and executed the witness flow, so the ' +
+                'credential that blocked it is usable again. Closing.',
+            };
+            for (const [label, message] of Object.entries(CLOSING)) {
+              const { data: existing } = await github.rest.issues.listForRepo({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                labels: label,
+                state: 'open',
+              });
+              if (existing.length === 0) continue;
               const issue = existing[0];
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -778,7 +872,7 @@ jobs:
                 body: [
                   `## ✅ Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
                   '',
-                  'docker-compose migration test passed. Closing.',
+                  message,
                   '',
                   `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
                 ].join('\n'),
@@ -796,19 +890,65 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
+            // Same routing as the API job (#1295) — see the long comment there. Run
+            // #124's `migration-test` issue was OPENED by this job (the compose body is
+            // the issue body) while the API job commented its report onto it, so both
+            // halves have to route on the verdict or the misattribution survives in one.
+            const fs = require('fs');
+            let credential = null;
+            try {
+              credential = JSON.parse(fs.readFileSync('/tmp/credential-verdict.json', 'utf8'));
+            } catch (e) {
+              console.log('No credential verdict for this run:', e.message);
+            }
+            const blocked = credential && ['billing', 'key-rot'].includes(credential.verdict);
+            const label = blocked ? credential.label : 'migration-test';
+            const title = blocked
+              ? credential.title
+              : 'Langflow Migration Test Failed (latest → nightly)';
+
+            if (blocked) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: label,
+                  color: 'd93f0b',
+                  description: 'Provider credential/billing state blocked a scheduled run (no product signal)',
+                });
+              } catch (e) {
+                console.log(`Label ${label} already exists or could not be created:`, e.message);
+              }
+            }
+
             const { data: existing } = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              labels: 'migration-test',
+              labels: label,
               state: 'open',
             });
+
+            const what = blocked
+              ? [
+                  `> **This is not a migration verdict.** The witness flow could not reach the`,
+                  `> model provider (\`${credential.verdict}\`, at \`${credential.phase}\`), so`,
+                  `> **nothing about the docker-compose migration was measured** in this run.`,
+                  '',
+                  `**Reason:** ${credential.reason}`,
+                  '',
+                  `**What to do:** ${credential.action}`,
+                ]
+              : [
+                  `docker-compose migration test failed. Source: \`langflowai/langflow:latest\` → Target: \`langflowai/langflow-nightly:latest\`.`,
+                  `Compose file: pinned to upstream main of \`langflow-ai/langflow/docker_example/docker-compose.yml\`.`,
+                ];
+
             const body = [
               `## Run #${context.runNumber} — ${new Date().toISOString().split('T')[0]}`,
               '',
               `**Ref:** \`${context.ref}\` · **Event:** \`${context.eventName}\``,
               '',
-              `docker-compose migration test failed. Source: \`langflowai/langflow:latest\` → Target: \`langflowai/langflow-nightly:latest\`.`,
-              `Compose file: pinned to upstream main of \`langflow-ai/langflow/docker_example/docker-compose.yml\`.`,
+              ...what,
               '',
               `[Workflow Run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
               '',
@@ -826,8 +966,8 @@ jobs:
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: 'Langflow Migration Test Failed (latest → nightly)',
+                title,
                 body,
-                labels: ['migration-test', 'automated'],
+                labels: [label, 'automated'],
               });
             }

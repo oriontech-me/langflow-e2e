@@ -4,6 +4,7 @@ import os
 import sys
 import time
 
+import provider_credentials as credentials
 from helpers import (
     create_flow,
     create_variable,
@@ -106,7 +107,12 @@ def main():
     # 5. Execute the flow
     print("── Executing flow on latest...")
     success, detail = run_flow_safe(token, flow_id)
-    status = "pass" if success else "fail"
+    # A drained account reaches here as a Langflow 500 quoting the provider's own 429,
+    # and reporting that as a migration failure is #1295. The pre-flight probe catches
+    # the common case before this job installs anything; this covers the account
+    # draining mid-run, and records `blocked` — a state the report renders apart from
+    # FAILED, and the workflow routes to the credentials tracker, not `migration-test`.
+    status = "pass" if success else credentials.step_status(detail, "latest/execute_flow")
     print(f"   {status.upper()}: {detail[:120]}")
     phase["steps"]["execute_flow"] = {"status": status, "detail": detail}
 
@@ -119,7 +125,14 @@ def main():
     save_state(state)
 
     if not success:
-        print("\nERROR: Flow execution failed on latest. Cannot establish migration baseline.")
+        if status == "blocked":
+            print(
+                "\nBLOCKED: the provider credential, not Langflow, stopped the witness "
+                "flow on latest. No migration baseline, and nothing to attribute to the "
+                "migration."
+            )
+        else:
+            print("\nERROR: Flow execution failed on latest. Cannot establish migration baseline.")
         sys.exit(1)
 
 

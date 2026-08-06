@@ -8,6 +8,8 @@ run #115 is the first test below.
 Run with: pytest tests/github-workflows/migration/test_generate_report.py
 """
 
+import json
+
 from . import generate_report as gr
 import pytest
 
@@ -260,6 +262,117 @@ def test_the_rendered_report_still_lists_every_step():
 
     for step in ("auth", "execute_flow", "flow_exists", "execute_flow_api_post_update"):
         assert step in body
+
+
+# ── blocked on provider credentials (#1295) ──────────────────────────────────
+
+# Run #124's shape: the witness never executed on the source, because the OpenAI
+# account had no credits. Everything before it passed; nothing about the migration
+# was measured.
+RUN_124_STATE = {
+    "flow_id": "ee302ee6-8f20-4811-8937-3bfcd94d1115",
+    "flow_name": "Migration Test Agent",
+    "phases": {
+        "latest": {
+            "duration_s": 19.1,
+            "steps": {
+                "auth": {"status": "pass"},
+                "create_flow": {"status": "pass"},
+                "execute_flow": {
+                    "status": "blocked",
+                    "detail": "HTTP 500: … 429 … insufficient_quota … no credits remaining",
+                },
+            },
+        }
+    },
+}
+
+
+def test_a_credential_block_is_not_reported_as_a_migration_failure():
+    verdict = gr.assess(RUN_124_STATE, {"latest": "failure"}, job="failure")
+
+    assert verdict["result"] == gr.RESULT_BLOCKED
+    assert verdict["failures"] == []
+    assert len(verdict["blocked"]) == 1
+    # The #1120 reconciliation must accept `blocked` as the phase's own account of
+    # itself — otherwise the fix for #1295 reintroduces "crashed before writing its
+    # result" on every drained day.
+    assert verdict["integrity"] == []
+
+
+def test_a_credential_block_is_never_a_pass():
+    # There is no migration signal in a blocked run, so it must not read as green.
+    verdict = gr.assess(RUN_124_STATE, {"latest": "failure"}, job="failure")
+    assert verdict["result"] not in (gr.RESULT_PASSED, gr.RESULT_PASSED_WARN)
+
+
+def test_a_real_migration_failure_outranks_a_credential_block():
+    state = {
+        "phases": {
+            "latest": {"steps": {"execute_flow": {"status": "blocked", "detail": "no credits"}}},
+            "nightly_api": {"steps": {"flow_exists": {"status": "fail", "detail": "404"}}},
+        }
+    }
+    verdict = gr.assess(state, {"latest": "failure", "nightly_api": "failure"}, job="failure")
+
+    assert verdict["result"] == gr.RESULT_FAILED
+    assert len(verdict["failures"]) == 1 and len(verdict["blocked"]) == 1
+
+
+PREFLIGHT_MARKER = {
+    "verdict": "billing",
+    "reason": "provider billing/quota exhausted: no credits remaining …",
+    "phase": "pre-flight/pip",
+    "title": "Migration test blocked: OpenAI account has no credits (no migration signal)",
+    "action": "Top up the OpenAI account …",
+    "label": "provider-credentials",
+}
+
+
+def test_a_preflight_abort_is_attributed_instead_of_verified_nothing():
+    # The pre-flight stops the job before any phase runs, so the state file is empty.
+    # Without the marker this rendered as "the state file records no phases at all, so
+    # this report verified nothing" — true, and useless: it does not say why.
+    verdict = gr.assess({"phases": {}}, {}, job="failure", credential=PREFLIGHT_MARKER)
+
+    assert verdict["result"] == gr.RESULT_BLOCKED
+    assert verdict["integrity"] == [], "the credential verdict already owns the cause"
+    assert any("no credits remaining" in line for line in verdict["blocked"])
+    assert any("Top up" in line for line in verdict["blocked"])
+
+
+def test_an_empty_state_with_no_credential_marker_is_still_an_integrity_failure():
+    # The #1120 guarantee must survive the #1295 fix untouched.
+    verdict = gr.assess({"phases": {}}, {}, job="failure", credential=None)
+
+    assert verdict["result"] == gr.RESULT_FAILED
+    assert "verified nothing" in verdict["integrity"][0]
+
+
+def test_a_missing_or_malformed_marker_reads_as_no_verdict(tmp_path):
+    assert gr.load_credential_verdict(str(tmp_path / "absent.json")) is None
+
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json")
+    assert gr.load_credential_verdict(str(broken)) is None
+
+    empty = tmp_path / "empty.json"
+    empty.write_text("{}")
+    assert gr.load_credential_verdict(str(empty)) is None, "no verdict field ⇒ no verdict"
+
+    good = tmp_path / "good.json"
+    good.write_text(json.dumps(PREFLIGHT_MARKER))
+    assert gr.load_credential_verdict(str(good))["verdict"] == "billing"
+
+
+def test_the_rendered_report_says_the_block_is_not_a_migration_verdict():
+    body = gr.generate_report(RUN_124_STATE, {"latest": "failure"}, job="failure")
+
+    assert "## Result: " + gr.RESULT_BLOCKED in body
+    assert "not a migration verdict" in body
+    assert "nothing about the migration was measured" in body.lower()
+    # The blocked step is still rendered in its phase table, with its own icon.
+    assert "| BLOCK | execute_flow |" in body
 
 
 if __name__ == "__main__":
