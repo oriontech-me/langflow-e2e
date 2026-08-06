@@ -6,6 +6,10 @@ Python tests that verify whether the Langflow database migrates correctly from `
 
 The workflow starts two Docker containers sequentially against the same PostgreSQL database, simulating a real production upgrade.
 
+### Phase 0 — Credential pre-flight
+
+0. Spends **one token** on `OPENAI_API_KEY` before installing anything (`provider_credentials.py --probe`). Presence is not usability: run #124 passed a non-empty-secret check and then died on a drained OpenAI account *after* installing Playwright and Langflow, and filed the result as a migration failure (#1295). A `billing` / `key-rot` verdict aborts the job here; anything the probe cannot classify (network blip, unexpected response) only warns — the authoritative verdict on a migration is the migration.
+
 ### Phase 1 — Langflow Latest
 
 1. Starts `langflowai/langflow:latest` with an empty PostgreSQL database.
@@ -39,9 +43,18 @@ Two scripts verify that the migration did not break anything:
 
 ### Phase 4 — Report
 
-`generate_report.py` consolidates the collected state into `/tmp/migration-report.md` with status per phase and step (`PASS` / `FAIL` / `WARN` / `SKIP`).
+`generate_report.py` consolidates the collected state into `/tmp/migration-report.md` with status per phase and step (`PASS` / `FAIL` / `WARN` / `SKIP` / `BLOCK`).
 
-On failure, the workflow opens or updates an issue in the repository with the `migration-test` label, including the full report and a link to the run.
+On failure, the workflow opens or updates an issue in the repository, including the full report and a link to the run. **Which tracker it writes to depends on the verdict (#1295):**
+
+| Verdict | Tracker | Meaning |
+|---|---|---|
+| `FAILED` | `migration-test` | Something about the migration is broken — a claim about Langflow. |
+| `BLOCKED (provider credentials)` | `provider-credentials` | The witness flow never reached the model provider, so **nothing about the migration was measured**. Not a claim about Langflow; fix the account or the key. |
+
+The split exists because both are red and only one is about the product. A billing outage filed under `migration-test` gets closed by the next green run with *"Migration test passed"*, leaving a migration bug in the history that never existed. A green run closes **both** trackers, each with wording about what it actually proved.
+
+Attribution happens in three places, all through `provider_credentials.py`: the pre-flight probe (Phase 0), the two API flow executions (`setup_latest.py`, `verify_migration_api.py`), and the compose job's two `curl` executions (`--classify-file`). A blocking verdict leaves `/tmp/credential-verdict.json`, which the report and the issue-routing steps read; its **absence** is the normal case and leaves every other verdict untouched.
 
 ## Generated artifacts
 
@@ -54,6 +67,7 @@ On failure, the workflow opens or updates an issue in the repository with the `m
 | `/tmp/migration-test-state.json` | Raw state collected between phases |
 | `/tmp/latest-digest.txt` | Digest of the latest image used |
 | `/tmp/nightly-digest.txt` | Digest of the nightly image used |
+| `/tmp/credential-verdict.json` | Credential verdict — present **only** when one was reached (#1295) |
 
 ## How to run manually
 

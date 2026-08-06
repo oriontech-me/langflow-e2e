@@ -39,6 +39,23 @@ So the workflow also hands over `JOB_STATUS` (`job.status`). A red job whose rep
 found nothing wrong is itself an integrity problem: the failure is real and lives
 outside every phase this report can see. Reconciling the job status covers the
 steps that exist today *and* any added later, which per-step `id`s would not.
+
+## Why `blocked` is not `fail` (#1295)
+
+A step whose only problem is that the provider stopped paying measured **nothing**
+about the migration. Run #124 reported `Result: FAILED` under the title *"Langflow
+Migration Test Failed (latest → nightly)"* when the witness flow had never executed
+on the source — a drained OpenAI account, quoted inside a Langflow 500. So a step
+that `provider_credentials.classify()` attributes to billing or key rot records
+`blocked`, and the verdict becomes `BLOCKED` — red, never green (there is no
+migration signal to be had, so this must not read as a pass), but not a claim about
+Langflow. A real migration failure alongside it still wins the verdict: `blocked`
+only decides the wording when it is the *only* thing wrong.
+
+`blocked` also counts as an accounted failure in the #1120 reconciliation above.
+Without that, a phase the runner saw fail whose only bad step was `blocked` would be
+reported as "crashed before writing its result" — the exact false verdict that
+mechanism exists to prevent, arriving through the fix for another one.
 """
 
 import json
@@ -50,13 +67,25 @@ from typing import Optional
 
 STATE_FILE = os.environ.get("STATE_FILE", "/tmp/migration-test-state.json")
 REPORT_FILE = os.environ.get("REPORT_FILE", "/tmp/migration-report.md")
+# Written by `provider_credentials.py` when the pre-flight probe (or a mid-run
+# classification) attributes the failure to the provider's billing state or the key
+# itself. Read here because the pre-flight aborts BEFORE any phase runs, so the state
+# file is empty and the report would otherwise say "verified nothing" without saying
+# why (#1295).
+CREDENTIAL_VERDICT_FILE = os.environ.get("CREDENTIAL_VERDICT_FILE", "/tmp/credential-verdict.json")
 
 STATUS_ICON = {
     "pass": "PASS",
     "fail": "FAIL",
     "warn": "WARN",
     "skip": "SKIP",
+    "blocked": "BLOCK",
 }
+
+# Statuses that mean the step did not do what it was there to do. `blocked` is one of
+# them for the #1120 reconciliation (a phase owning a blocked step is accounted for),
+# while carrying a different verdict — see the module docstring.
+NOT_OK_STATUSES = ("fail", "blocked")
 
 # Per-phase step outcomes handed in by the workflow, as
 # `PHASE_OUTCOME_<phase>=success|failure|skipped|cancelled` — GitHub's
@@ -73,6 +102,7 @@ JOB_STATUS_NOT_OK = {"failure", "cancelled"}
 RESULT_FAILED = "FAILED"
 RESULT_PASSED = "PASSED"
 RESULT_PASSED_WARN = "PASSED (with warnings)"
+RESULT_BLOCKED = "BLOCKED (provider credentials — no migration signal)"
 
 
 def load_state() -> dict:
@@ -81,6 +111,23 @@ def load_state() -> dict:
             return json.load(f)
     except FileNotFoundError:
         return {"phases": {}}
+
+
+def load_credential_verdict(path: Optional[str] = None) -> Optional[dict]:
+    """The credential verdict for this run, or `None` when there is none.
+
+    Absence is the normal case and must leave every other verdict untouched — a
+    malformed or unreadable marker is treated the same way, because a crash here
+    would replace the report with its own failure.
+    """
+    try:
+        with open(CREDENTIAL_VERDICT_FILE if path is None else path) as f:
+            payload = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not payload.get("verdict"):
+        return None
+    return payload
 
 
 def load_digest(path: str) -> str:
@@ -111,10 +158,15 @@ def job_status(environ=None) -> Optional[str]:
     return value or None
 
 
-def assess(state: dict, declared: dict, job: Optional[str] = None) -> dict:
+def assess(
+    state: dict,
+    declared: dict,
+    job: Optional[str] = None,
+    credential: Optional[dict] = None,
+) -> dict:
     """Decide the overall result, and surface anything that makes the report untrustworthy.
 
-    Returns `{"result", "failures", "warnings", "integrity"}`. `integrity` holds
+    Returns `{"result", "failures", "warnings", "integrity", "blocked"}`. `integrity` holds
     mismatches between what the runner observed and what the phase recorded — the
     #1120 class. Those count as failures: a report that cannot account for a phase
     must not claim that phase passed.
@@ -122,12 +174,17 @@ def assess(state: dict, declared: dict, job: Optional[str] = None) -> dict:
     `job` is the runner's verdict on the whole job (`job.status`). It catches the
     #1141 case: a failure in a step no phase covers, which otherwise left the report
     saying `PASSED` on a red run.
+
+    `credential` is the marker `provider_credentials.py` leaves behind (#1295). It is
+    the only attribution available when the **pre-flight** aborts, since no phase has
+    run at that point and the state file is empty.
     """
     phases = state.get("phases", {}) or {}
 
     failures = []
     warnings = []
     integrity = []
+    blocked = []
 
     for phase_name, phase_data in phases.items():
         for step_name, step_data in (phase_data.get("steps", {}) or {}).items():
@@ -135,13 +192,15 @@ def assess(state: dict, declared: dict, job: Optional[str] = None) -> dict:
             detail = str((step_data or {}).get("detail", "no detail"))[:200]
             if status == "fail":
                 failures.append(f"- **{phase_name}/{step_name}**: {detail}")
+            elif status == "blocked":
+                blocked.append(f"- **{phase_name}/{step_name}**: {detail}")
             elif status == "warn":
                 warnings.append(f"- **{phase_name}/{step_name}**: {detail}")
 
     for phase_name, outcome in sorted(declared.items()):
         recorded_steps = (phases.get(phase_name) or {}).get("steps", {}) or {}
         recorded_fail = any(
-            (s or {}).get("status") == "fail" for s in recorded_steps.values()
+            (s or {}).get("status") in NOT_OK_STATUSES for s in recorded_steps.values()
         )
 
         if outcome == "failure" and not recorded_fail:
@@ -158,9 +217,22 @@ def assess(state: dict, declared: dict, job: Optional[str] = None) -> dict:
                 f"absent from the state file, so nothing about it was verified."
             )
 
+    # The pre-flight abort: the credential verdict is the whole story, and there are
+    # no phases to attach it to.
+    if credential:
+        where = credential.get("phase") or "pre-flight"
+        blocked.append(
+            f"- **{where}**: {credential.get('reason') or credential.get('verdict')}"
+        )
+        action = credential.get("action")
+        if action:
+            blocked.append(f"- **What to do**: {action}")
+
     # A state file with no phases at all is the strongest form of the same problem:
-    # it used to render as a clean PASS.
-    if not phases:
+    # it used to render as a clean PASS. Skipped when the credential verdict already
+    # attributes the run — same rule as the #1141 branch below, which stays quiet once
+    # something else owns the cause.
+    if not phases and not credential:
         integrity.append(
             "- **(all phases)**: the state file records no phases at all, so this report "
             "verified nothing. Treated as a failure rather than an empty pass."
@@ -169,7 +241,7 @@ def assess(state: dict, declared: dict, job: Optional[str] = None) -> dict:
     # #1141: the job is red but nothing above accounts for it — the failing step is
     # one this report does not cover. Only reported when there is no attribution yet;
     # a phase that already owns the failure says it better than this can.
-    if job in JOB_STATUS_NOT_OK and not failures and not integrity:
+    if job in JOB_STATUS_NOT_OK and not failures and not integrity and not blocked:
         integrity.append(
             f"- **(outside every phase)**: the runner reports this job `{job}`, but no "
             f"verification phase recorded or was declared a failure — so the cause is a "
@@ -178,8 +250,12 @@ def assess(state: dict, declared: dict, job: Optional[str] = None) -> dict:
             f"report cannot attribute it."
         )
 
+    # A real failure outranks a blocked step: if anything about the migration itself
+    # went wrong, that is the verdict, and the credential state is a footnote.
     if failures or integrity:
         result = RESULT_FAILED
+    elif blocked:
+        result = RESULT_BLOCKED
     elif warnings:
         result = RESULT_PASSED_WARN
     else:
@@ -190,6 +266,7 @@ def assess(state: dict, declared: dict, job: Optional[str] = None) -> dict:
         "failures": failures,
         "warnings": warnings,
         "integrity": integrity,
+        "blocked": blocked,
     }
 
 
@@ -207,17 +284,22 @@ def format_step(name: str, step: dict) -> str:
 
 
 def generate_report(
-    state: dict, declared: Optional[dict] = None, job: Optional[str] = None
+    state: dict,
+    declared: Optional[dict] = None,
+    job: Optional[str] = None,
+    credential: Optional[dict] = None,
 ) -> str:
     if declared is None:
         declared = declared_outcomes()
     if job is None:
         job = job_status()
+    if credential is None:
+        credential = load_credential_verdict()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     latest_digest = load_digest("/tmp/latest-digest.txt")
     nightly_digest = load_digest("/tmp/nightly-digest.txt")
 
-    verdict = assess(state, declared, job)
+    verdict = assess(state, declared, job, credential)
 
     lines = [
         "# Langflow Migration Test Report",
@@ -243,6 +325,20 @@ def generate_report(
         lines.append("## Unaccounted failures")
         lines.append("")
         lines.extend(verdict["integrity"])
+        lines.append("")
+
+    # Also right under the verdict, and for the same reason: a reader who stops after
+    # the first screen must not walk away thinking Langflow's migration broke (#1295).
+    if verdict["blocked"]:
+        lines.append("## Blocked on provider credentials — not a migration verdict")
+        lines.append("")
+        lines.append(
+            "The witness flow could not reach the model provider, so **nothing about "
+            "the migration was measured** by the step(s) below. Fix the account or the "
+            "key, then re-run; no change in this repo can make this pass."
+        )
+        lines.append("")
+        lines.extend(verdict["blocked"])
         lines.append("")
 
     for phase_name, phase_data in state.get("phases", {}).items():
