@@ -139,7 +139,26 @@ _ACTIONS = {
 # The label the report is routed to when the verdict is blocking. Kept off
 # `migration-test` so a later green run cannot close it with "Migration test
 # passed", which would read as a migration bug that never existed.
-ISSUE_LABEL = "provider-credentials"
+#
+# **Per job, not shared** — the collision PR #793 found on run #101: the two jobs of
+# this workflow run in parallel and used one label, so the job that went green closed
+# the issue the other had just filed (its `migration-test` failure survived as
+# "resolved"). A single `provider-credentials` label would have been a fresh instance
+# of that same bug: the compose job reaching the provider says nothing about what the
+# API job saw a minute earlier, and vice versa. The cost is that a drained account
+# files two issues — one per job — which is noise, but noise that self-clears on the
+# next good run, where the alternative silently closes a live blocker.
+ISSUE_LABEL_BASE = "provider-credentials"
+
+# The two jobs of `migration-test.yml`, spelled as they appear in `--job`. A closed
+# set so a typo in the workflow cannot quietly open a third tracker nobody watches.
+JOBS = ("api", "compose")
+
+
+def issue_label(job: str) -> str:
+    if job not in JOBS:
+        raise ValueError(f"unknown job {job!r} — expected one of {JOBS}")
+    return f"{ISSUE_LABEL_BASE}-{job}"
 
 
 def classify(status: Optional[int], body: str) -> Tuple[str, str]:
@@ -239,18 +258,23 @@ def _send(request: urllib.request.Request, timeout: int) -> Tuple[int, str]:
         return err.code, err.read().decode("utf-8", "replace")
 
 
-def marker_payload(verdict: str, reason: str, phase: str) -> dict:
+def marker_payload(verdict: str, reason: str, phase: str, job: str) -> dict:
     return {
         "verdict": verdict,
         "reason": reason,
         "phase": phase,
+        "job": job,
         "title": _TITLES.get(verdict, ""),
         "action": _ACTIONS.get(verdict, ""),
-        "label": ISSUE_LABEL,
+        # The workflow's issue step reads this rather than composing it, so the
+        # per-job split lives in one place.
+        "label": issue_label(job),
     }
 
 
-def write_marker(verdict: str, reason: str, phase: str, path: str = MARKER_FILE) -> Optional[str]:
+def write_marker(
+    verdict: str, reason: str, phase: str, job: str, path: str = MARKER_FILE
+) -> Optional[str]:
     """Record a blocking verdict for the workflow's issue-routing step.
 
     Only `BLOCKING` verdicts are written: the file's **presence** is the signal, and
@@ -260,11 +284,13 @@ def write_marker(verdict: str, reason: str, phase: str, path: str = MARKER_FILE)
     if verdict not in BLOCKING:
         return None
     with open(path, "w") as handle:
-        json.dump(marker_payload(verdict, reason, phase), handle, indent=2)
+        json.dump(marker_payload(verdict, reason, phase, job), handle, indent=2)
     return path
 
 
-def step_status(detail: str, phase: str, marker: Optional[str] = None) -> str:
+def step_status(
+    detail: str, phase: str, job: str = "api", marker: Optional[str] = None
+) -> str:
     """The status a failed flow execution should record: `"blocked"` or `"fail"`.
 
     The mid-run half of #1295, shared by `setup_latest.py` and
@@ -273,12 +299,15 @@ def step_status(detail: str, phase: str, marker: Optional[str] = None) -> str:
     string, where the provider's own error is quoted inside Langflow's — hence no
     status to pass. A blocking verdict is announced and recorded on the way out; any
     other failure keeps its original `"fail"` and this function stays silent.
+
+    `job` defaults to `"api"` because both callers are steps of that job — the compose
+    job has no Python and classifies through the CLI.
     """
     verdict, reason = classify(None, detail)
     if verdict not in BLOCKING:
         return "fail"
     print(announce(verdict, reason, phase))
-    write_marker(verdict, reason, phase, MARKER_FILE if marker is None else marker)
+    write_marker(verdict, reason, phase, job, MARKER_FILE if marker is None else marker)
     return "blocked"
 
 
@@ -310,6 +339,10 @@ def main(argv=None) -> int:
     parser.add_argument("--status", type=int, default=None, help="HTTP status for --classify-file")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--phase", default="pre-flight", help="where the verdict was reached")
+    # Required, with no default: which job filed this decides which issue a green run
+    # is allowed to close, and a default would hand both jobs the same tracker — the
+    # #793 collision (see ISSUE_LABEL_BASE).
+    parser.add_argument("--job", required=True, choices=JOBS, help="which job reached the verdict")
     parser.add_argument("--marker", default=MARKER_FILE)
     args = parser.parse_args(argv)
 
@@ -329,7 +362,7 @@ def main(argv=None) -> int:
         verdict, reason = classify(args.status, body)
 
     print(announce(verdict, reason, args.phase))
-    written = write_marker(verdict, reason, args.phase, args.marker)
+    written = write_marker(verdict, reason, args.phase, args.job, args.marker)
     if written:
         print(f"Recorded credential verdict in {written}")
 
