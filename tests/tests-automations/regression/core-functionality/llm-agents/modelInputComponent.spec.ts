@@ -67,6 +67,9 @@ async function addLanguageModelNode(page: any) {
     "language model",
     "add-component-button-language-model",
   );
+  // `addComponentFromSidebar` now returns only once a node landed (#1304), so
+  // this is the file's own observable — the node is VISIBLE, not merely in the
+  // DOM — and no longer the place a swallowed add gets reported.
   const node = page.locator('[data-testid^="rf__node-"]').first();
   await expect(node).toBeVisible({ timeout: 15000 });
   return node;
@@ -134,28 +137,36 @@ test.describe("ModelInputComponent", () => {
     },
   );
 
-  test.fixme(
+  test(
     "the trigger shows the selected model name",
-    // Quarantined at triage of #1296 (PR #1308) — NOT lifted here: #1265 owns the
-    // sidebar flake above, #1304 owns this one. Hard failure on 2026-08-05: the
-    // canvas renders no node at all (`[data-testid^="rf__node-"]` never resolves),
-    // on all 3 attempts, with zero overlap against any measured backend-outage
-    // window on its shard.
+    // Quarantine lifted in #1304 after the mechanism was found, and it is not in
+    // this test — nor in this file. The 2026-08-05 hard failure (run 30997773754,
+    // all 3 attempts) was the SHARED sidebar add dropping its click: Langflow
+    // accepts the click on `add-component-button-language-model`, never registers
+    // the add, and no node reaches the canvas. Measured 4/20 by an instrumented
+    // scout on 1.12.0.dev17, with an identical second click repairing all 4 —
+    // which is why `addComponentFromSidebar` now verifies the node landed and
+    // re-issues once, and why nothing here needed a longer timeout (this test
+    // already waited 15 s and lost 3/3).
     //
-    // #1265's investigation found a MECHANISM for it, which is why the two stay
-    // separate rather than merging as #1304 offered: this test is green 44/44 solo
-    // on 1.12.0.dev17, and fails only when a spec that mutates ACCOUNT-WIDE
-    // provider credentials runs beside it. Reproduced in the daily's own shape
-    // (`PW_SHARD_FILE_LEVEL=1 --workers=2 --retries=0`) against
-    // `model-provider/openai-compatible-provider-setup.spec.ts`, whose `afterEach`
-    // purges the OpenAI-Compatible credential pair unconditionally: 3 of 12 of
-    // this file's test executions failed with exactly this signature (rounds 1 and
-    // 3; in round 2 it passed but took 19.3 s against 3.5–8.1 s solo), and the
-    // neighbour failed 3/3 with its own credential dropped to `""` (LE-2124). The
-    // control — same shape, same worker count, `core-components/tool-mode.spec.ts`
-    // as the neighbour instead — is the discriminator, and its result belongs in
-    // #1304 with the rest of the evidence.
-    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
+    // Provider-credential churn was the standing hypothesis and is REFUTED: the
+    // drop reproduces solo with no neighbour at all (2 of 11 runs pre-fix), and
+    // the same class hit `core-components/edit-name-description-node.spec.ts:42`
+    // on that daily with no provider-mutating spec running. What the daily added
+    // was a degraded window — `stop-building.spec.ts:24` and
+    // `langflowShortcuts.spec.ts:47` failed on the same shard within 100 s with
+    // the same mechanism under different messages — which raised the per-add drop
+    // probability enough to cost all three attempts. #1265 stays separate: its
+    // observable is the sidebar never opening, upstream of any add.
+    {
+      tag: [
+        "@stable",
+        "@release",
+        "@components",
+        "@workspace",
+        "@model-provider",
+      ],
+    },
     async ({ page }) => {
       await addLanguageModelNode(page);
 
