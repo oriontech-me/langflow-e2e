@@ -3,6 +3,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-server-modal";
+import { addComponentFromSidebarWithoutSearch } from "../../../../helpers/flows/add-component-from-sidebar";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
@@ -437,7 +438,10 @@ test(
         timeout: 30000,
       },
     );
-    await page.getByTestId("add-component-button-lf-starter_project").click();
+    await addComponentFromSidebarWithoutSearch(
+      page,
+      "add-component-button-lf-starter_project",
+    );
 
     await adjustScreenView(page, { numberOfZoomOut: 3 });
 
@@ -600,7 +604,10 @@ test(
         timeout: 30000,
       },
     );
-    await page.getByTestId("add-component-button-lf-starter_project").click();
+    await addComponentFromSidebarWithoutSearch(
+      page,
+      "add-component-button-lf-starter_project",
+    );
 
     await adjustScreenView(page, { numberOfZoomOut: 3 });
 
@@ -840,7 +847,10 @@ test(
         timeout: 30000,
       },
     );
-    await page.getByTestId("add-component-button-lf-starter_project").click();
+    await addComponentFromSidebarWithoutSearch(
+      page,
+      "add-component-button-lf-starter_project",
+    );
 
     await adjustScreenView(page, { numberOfZoomOut: 3 });
 
