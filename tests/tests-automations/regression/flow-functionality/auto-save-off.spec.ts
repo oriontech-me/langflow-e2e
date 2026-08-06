@@ -39,30 +39,87 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-// The /flows a11y refactor (Langflow #13891) makes `flow-name-div`
-// `pointer-events-none`; open the flow via the card's overlay button.
-async function reopenNewFlow(page: Page): Promise<void> {
-  // Explicit timeout above the 20s default actionTimeout: this heavy spec (two
-  // bootstraps + repeated exit/re-open cycles) blew the default card-open click
-  // under CI saturation on load-degraded dailies (#790). The extra headroom
-  // absorbs transient load without masking a real regression.
-  await page
-    .getByTestId("list-card")
-    .filter({
-      has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
-    })
-    .getByTestId("list-card-open-button")
-    .first()
-    .click({ timeout: 45000 });
+/**
+ * The id of the flow currently open in the editor, cross-checked against the
+ * flows THIS page created.
+ *
+ * The cross-check is the point: an id in the URL that this page never created
+ * means the spec is driving somebody else's flow — the state #1336 spent two
+ * dailies failing on, and one better named here than six steps later as a
+ * 45 s timeout.
+ */
+async function editorFlowId(page: Page): Promise<string> {
+  const id = new URL(page.url()).pathname.match(/\/flow\/([0-9a-f-]{36})/)?.[1];
+  // The POST body is parsed asynchronously, so the entry can land a tick after
+  // the navigation; poll briefly rather than racing it.
+  await expect
+    .poll(() => createdFlowIds.includes(id ?? ""), { timeout: 10000 })
+    .toBe(true);
+  return id!;
 }
 
-// Quarantined: recurrent flake on the daily (2026-07-22, 2026-08-06, same
-// signature) — reopening the just-created flow through its
-// `list-card-open-button` times out at 45 s. Tracked in #1336; lifting the
-// quarantine (remove `test.fixme` + restore `@stable`) is a deliverable there.
-test.fixme(
+/**
+ * Leaving the canvas is itself part of the contract under test, so assert it
+ * instead of inferring it from whatever the next step happens to find. When the
+ * save behind "Save And Exit" fails, the editor simply stays put — under the
+ * old spec that surfaced 45 s later as a card-click timeout on the flows list
+ * (#1336), which named neither the step nor the cause. Verified by forcing the
+ * save PATCH to 500: the failure now lands on this call.
+ */
+async function expectLeftEditor(page: Page): Promise<void> {
+  await page.waitForURL((url) => !url.pathname.startsWith("/flow/"), {
+    timeout: 30000,
+  });
+}
+
+/**
+ * Re-open THIS test's flow by id and wait until its graph has been applied to
+ * the canvas.
+ *
+ * Why by id and not through the flows-list card (#1336). The spec used to click
+ * the first `list-card` whose name contained "New Flow". Langflow names every
+ * blank flow "New Flow"/"New Flow (N)", so under `fullyParallel` the list holds
+ * one per worker — and the flows list is **paginated at 12, ordered by
+ * `updated_at DESC`**. Both halves bite:
+ *
+ *  - the card that filter resolved was routinely ANOTHER worker's flow (proved
+ *    on nightly 1.12.0.dev18: the page created ids `8e767306` and `ee8e0ab9`
+ *    and the re-open landed on `164b3c19`, which it never created). When that
+ *    worker's own id-scoped cleanup deleted it mid-test, the save PATCH came
+ *    back 404, the editor never navigated back to the list, and the next
+ *    re-open waited out its 45 s — the exact 2026-07-22 / 2026-08-06 daily
+ *    signature, reproduced 3/8 at `--workers=4`;
+ *  - this test's own card is frequently NOT on page 1 at all (measured: 12 of
+ *    12 slots taken by fresher flows), so no card-based selector — not even the
+ *    id-scoped `flow-name-<uuid>` testid the card carries — can find it.
+ *
+ * Opening by URL removes both. The trade-off is deliberate: what this spec
+ * validates is server-side persistence across an exit/re-open, and a full
+ * reload proves that more strictly than an SPA route change. The
+ * "open a flow from its list card" path stays covered by the specs whose
+ * subject it is (`bulk-actions`, `mcp-server`).
+ */
+async function reopenFlow(page: Page, flowId: string): Promise<void> {
+  // The graph is applied to the canvas only after this GET resolves; waiting on
+  // it is what keeps the `div-generic-node` counts below from reading an empty
+  // canvas that simply had not rendered yet.
+  const flowLoaded = page.waitForResponse(
+    (resp) =>
+      new URL(resp.url()).pathname === `/api/v1/flows/${flowId}` &&
+      resp.request().method() === "GET" &&
+      resp.status() === 200,
+    { timeout: 45000 },
+  );
+  await page.goto(`/flow/${flowId}`);
+  await flowLoaded;
+  await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
+    timeout: 45000,
+  });
+}
+
+test(
   "user should be able to manually save a flow when the auto_save is off",
-  { tag: ["@release", "@api", "@database", "@components"] },
+  { tag: ["@stable", "@release", "@api", "@database", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 
@@ -88,7 +145,24 @@ test.fixme(
       timeout: 5000,
     });
 
+    // `awaitBootstrapTest` reaches the templates modal through the "New Flow"
+    // entry point, which already parked the page on a freshly created
+    // PLACEHOLDER flow — and Langflow deletes that placeholder as soon as the
+    // modal navigates elsewhere. So the id has to be read after the blank-flow
+    // navigation, never from the URL standing before it (#490/#681).
+    const placeholderUrl = page.url();
     await page.getByTestId("blank-flow").click();
+    await page.waitForURL(
+      (url) =>
+        /\/flow\/[0-9a-f-]{36}/.test(url.pathname) &&
+        url.toString() !== placeholderUrl,
+      { timeout: 30000 },
+    );
+
+    // Resolve the flow under test once, before any edit: every re-open below is
+    // pinned to this id, so the spec can never drive a parallel worker's
+    // identically-named "New Flow" (#1336).
+    const flowUnderTest = await editorFlowId(page);
 
     await page.getByTestId("sidebar-search-input").click();
     await page.getByTestId("sidebar-search-input").fill("chat input");
@@ -131,8 +205,9 @@ test.fixme(
       page.getByText("Unsaved changes will be permanently lost."),
     ).toBeVisible({ timeout: 10000 });
     await page.getByText("Exit Anyway", { exact: true }).click();
+    await expectLeftEditor(page);
 
-    await reopenNewFlow(page);
+    await reopenFlow(page, flowUnderTest);
 
     await page.waitForSelector('[data-testid="sidebar-search-input"]', {
       timeout: 5000,
@@ -167,8 +242,9 @@ test.fixme(
     const saveAndExit = page.getByText("Save And Exit", { exact: true }).last();
     await expect(saveAndExit).toBeVisible({ timeout: 10000 });
     await saveAndExit.click();
+    await expectLeftEditor(page);
 
-    await reopenNewFlow(page);
+    await reopenFlow(page, flowUnderTest);
 
     await page.waitForSelector("text=loading", {
       state: "hidden",
@@ -219,8 +295,9 @@ test.fixme(
     ) {
       await saveAndExit2.click();
     }
+    await expectLeftEditor(page);
 
-    await reopenNewFlow(page);
+    await reopenFlow(page, flowUnderTest);
 
     await page.waitForSelector('[data-testid="sidebar-search-input"]', {
       timeout: 5000,

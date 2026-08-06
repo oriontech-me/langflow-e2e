@@ -1,6 +1,6 @@
 # Manual Save With Auto-Save Disabled — §12.2 View and Edit Flow
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -43,25 +43,34 @@ across a full exit/re-open. `@components` — drives a canvas component.
 Setup: mock `/api/v1/config` to `auto_saving: false`, bootstrap the app
 (`awaitBootstrapTest`), open a blank flow. Every flow this page creates is
 captured from its `POST /api/v1/flows → 201` response and deleted id-scoped in
-`afterEach`.
+`afterEach`. The **id of the flow under test** is read from the URL right after
+the blank-flow navigation (never before it — the bootstrap parks the page on a
+placeholder flow Langflow then deletes) and cross-checked against the ids this
+page created; every re-open below is pinned to that id.
+
+Every exit asserts the editor was actually left (the URL leaves `/flow/…`)
+before anything else runs.
 
 1. Add a **Chat Input** component to the canvas (sidebar search → hover entry →
    `add-component-button-chat-input`)
 2. Assert the on-canvas **`save-flow-button`** is enabled (auto-save off ⇒ manual
    save is available)
 3. Leave via the back button (`icon-ChevronLeft`); the unsaved-changes dialog
-   ("Unsaved changes will be permanently lost.") appears — click **Exit Anyway**
-4. Re-open the flow (via the flow card's open button); assert the canvas has
-   **0** nodes (`div-generic-node` count = 0) — the edit was discarded
+   ("Unsaved changes will be permanently lost.") appears — click **Exit Anyway**;
+   assert the editor was left
+4. Re-open the flow **by id** (`/flow/<id>`, waiting for its
+   `GET /api/v1/flows/<id>` to resolve and the canvas to mount); assert the
+   canvas has **0** nodes (`div-generic-node` count = 0) — the edit was discarded
 5. Add the Chat Input component again (hover the sidebar entry →
    `add-component-button-chat-input`)
-6. Leave via the back button; click **Save And Exit**
+6. Leave via the back button; click **Save And Exit**; assert the editor was left
 7. Re-open the flow; assert **`title-Chat Input`** is visible — the edit persisted
 8. Add a **Chat Output** component (hover the sidebar entry →
    `add-component-button-chat-output`), click **`save-flow-button`** (the
    on-canvas manual save), leave via the back button. The exit-guard dialog is
    timing-dependent here — if the manual save settled, the exit is clean;
-   otherwise **Save And Exit** appears and is clicked. Either path persists.
+   otherwise **Save And Exit** appears and is clicked. Either path persists, and
+   either way the editor must be left
 9. Re-open the flow; assert both `title-Chat Input` and `title-Chat Output` are
    visible and `div-generic-node` count = **2**
 
@@ -98,9 +107,8 @@ fails if either save did not persist (see Notes on the hardening).
   search. Adds use the draggable wrapper hover → add button (the sidebar row is
   briefly `pointer-events-none`; dragging it is unreliable).
 - `data-testid="title-Chat Input"` / `div-generic-node` — node presence on canvas.
-- `data-testid="list-card"` / `flow-name-div` / `list-card-open-button` —
-  re-open a flow from the list (the `/flows` a11y refactor made `flow-name-div`
-  `pointer-events-none`; open via the card overlay button — Langflow #13891).
+- `GET /api/v1/flows/{id}` and the `/flow/{id}` route — the re-open path (see the
+  #1336 note below for why this is not the flows-list card).
 - No API key — the Chat Input / Chat Output components are added to the graph,
   never executed.
 
@@ -116,6 +124,33 @@ fails if either save did not persist (see Notes on the hardening).
 
 ## Notes *(optional)*
 
+- **#1336 (the re-open opened the WRONG flow).** Recurrent flake on the
+  2026-07-22 and 2026-08-06 dailies: `locator.click: Timeout 45000ms exceeded`
+  re-opening the just-created flow's card. Not a product regression, and not a
+  tight wait either — the spec was **driving another worker's flow**. It clicked
+  the first `list-card` whose name contained "New Flow", and Langflow names every
+  blank flow "New Flow"/"New Flow (N)", so under `fullyParallel` the list holds
+  one per worker. Proved on nightly 1.12.0.dev18 by logging the page's own
+  network: the page created ids `8e767306` and `ee8e0ab9`, and the re-open landed
+  on `164b3c19` — an id it never created. When that flow's real owner ran its
+  id-scoped cleanup, the save `PATCH /api/v1/flows/{id}` came back **404**, so the
+  editor never navigated back to the list and the next re-open burned its 45 s on
+  a card that had no reason to exist. That is also the CI artifact's state: the
+  failure screenshot is the *canvas*, not the list, with the flow saved and the
+  same two 404s in the advisory log. Reproduced **3/8 at `--workers=4`**;
+  **8/8 green** after the fix under the identical burst.
+  Two further findings shaped the fix. The card cannot be selected by id either:
+  the list is **paginated at 12 and ordered by `updated_at DESC`**, and under load
+  this test's own card is routinely off page 1 (measured: 12 of 12 slots taken by
+  fresher flows) — so the old spec's "success" depended on *some* other worker's
+  "New Flow" being on top, which also made the discard assertion (`count === 0`)
+  vacuous whenever it opened a stranger's fresh blank flow. And the id must be
+  read **after** the blank-flow navigation: `awaitBootstrapTest` reaches the
+  templates modal through "New Flow", which parks the page on a placeholder flow
+  that Langflow deletes as soon as the modal navigates elsewhere (#490/#681
+  again, from the other side). The re-open is therefore by URL, and each exit now
+  asserts the editor was left — verified by forcing the save PATCH to 500, which
+  now fails at the exit step instead of 45 s later on an unrelated locator.
 - **#790 (load-collateral, critical clicks hardened).** On load-degraded /
   guard-tripped dailies (2026-07-15/16) the spec failed with
   `locator.click: Timeout 20000ms exceeded` on a manual-save click target. Not a
