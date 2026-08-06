@@ -822,7 +822,7 @@
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
-| `core-components/` — Component Config | 27 | 23 | 4 | 0 | 0 |
+| `core-components/` — Component Config | 27 | 24 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 91 | 87 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
@@ -838,7 +838,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **384 (77%)** | **87 (17%)** | **14 (3%)** | **15 (3%)** |
+| **TOTAL** | **500** | **385 (77%)** | **86 (17%)** | **14 (3%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 446 `test()` calls carrying the `@stable` tag, distributed across 176 spec
+> 448 `test()` calls carrying the `@stable` tag, distributed across 177 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -959,6 +959,8 @@
 - [x] The legacy banner link filters the sidebar to Data Operations → `data-operations-legacy-link.spec.ts`
 - [x] Searching a legacy operations name surfaces Data Operations with legacy components hidden → `data-operations-legacy-link.spec.ts`
 - [x] A legacy operations component still builds and returns its result → `data-operations-legacy-link.spec.ts`
+- [x] two API Request nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
+- [x] two Agent nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
@@ -1341,7 +1343,7 @@
 | Module | Validate (`[-]`) | Create (`[ ]`) |
 |--------|-----------------|---------------|
 | `api/flows/` — REST API | 0 | 0 |
-| `core-components/` — Component Config | 4 | 0 |
+| `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
 | `core-functionality/llm-agents/` | 5 | 2 |
