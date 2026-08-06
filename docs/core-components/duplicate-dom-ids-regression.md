@@ -1,6 +1,6 @@
 # Node Parameter DOM Ids — Uniqueness Across Sibling Nodes
 
-**Last validated:** Langflow 1.11.x — validated against a build carrying langflow#14312 (see *Preconditions*; the fix has **not** reached the 1.12 line yet, where both cases fail by design)
+**Last validated:** Langflow 1.12.x — `langflowai/langflow-nightly:latest` reporting `1.12.0.dev18`, which carries langflow#14312 (the fix reached `main` and `release-1.12.0`; see *Tags*)
 
 ---
 
@@ -23,17 +23,19 @@ If this test fails, either two nodes are colliding on a DOM id again (a renderer
 
 ## Tags *(required)*
 
-Case A: `@regression` `@components` · Case B: `@regression` `@components` `@agents`
+Case A: `@stable` `@regression` `@components` · Case B: `@stable` `@regression` `@components` `@agents`
 
-**`@stable` is deliberately absent, and this is the reason.** The upstream fix landed on the **`release-1.11.2`** branch (PR merged 2026-07-29). `langflowai/langflow-nightly:latest` — the image `daily-stable.yml` runs against — is built from the highest `release-*` branch, currently `release-1.12.0`, where the helper `get-node-scoped-dom-id.ts` is **verifiably absent** (it 404s on both `main` and `release-1.12.0`). Both cases therefore hard-fail on today's nightly *by design*. Tagging them `@stable` would open a `daily-failure` issue every weekday and trigger the `auto-remove-stable` path, which would strip the tag and commit to `main` — burning triage cycles to rediscover something already known.
-
-`@stable` should be added once the fix reaches `main` / the 1.12 line and a run against the nightly confirms both cases green. Verify with:
+**`@stable` was deliberately withheld until the upstream fix reached the 1.12 line; it has, and the tag was added by #1109.** When this spec was merged (#1102 / PR #1106) the upstream fix existed only on the **`release-1.11.2`** branch, while `langflowai/langflow-nightly:latest` — the image `daily-stable.yml` runs — is built from the highest `release-*` branch. Both cases therefore hard-failed on the nightly *by design*, and tagging them `@stable` then would have opened a `daily-failure` issue every weekday and tripped `auto-remove-stable` into stripping the tag and committing to `main`. The helper now resolves on `main` **and** on `release-1.12.0` at the same sha (`a8a903e`), and both cases run green on `1.12.0.dev18`:
 
 ```bash
-gh api repos/langflow-ai/langflow/contents/src/frontend/src/components/core/parameterRenderComponent/helpers/get-node-scoped-dom-id.ts?ref=main --jq .sha
+gh api repos/langflow-ai/langflow/contents/src/frontend/src/components/core/parameterRenderComponent/helpers/get-node-scoped-dom-id.ts?ref=release-1.12.0 --jq .sha
 ```
 
-`@release` is also deliberately absent: this is a DOM-contract / accessibility regression guard, not a happy-path flow required before a deploy.
+Note the ref that matters is the **release line the nightly is cut from**, not `main` — a fix present only on `main` is not in the image the daily runs.
+
+`@release` remains deliberately absent: this is a DOM-contract / accessibility regression guard, not a happy-path flow required before a deploy.
+
+`@agents` on Case B names the **subject**, not a dependency — but the tooling reads it as one, and the mismatch has consequences worth knowing. `scripts/provider-dependent-specs.mjs` treats `@agents` as a provider declaration **file-scoped**, so it marks both cases. Two effects on `pr-validation.yml`: a PR that changes this spec **forces** the `Collect models` sweep (a hard gate — so a tag-only PR here is coupled to provider-key health, #772/#1029/#1169), while a PR that only changes a helper this spec imports gets it **excluded and announced** instead of run. Neither is wrong for the mechanism; both rest on a premise this file does not meet, since it places and inspects the Agent without ever executing it.
 
 ---
 
@@ -45,14 +47,14 @@ gh api repos/langflow-ai/langflow/contents/src/frontend/src/components/core/para
 2. `addComponentFromSidebar(page, "API Request", "add-component-button-api-request")`.
 3. Gate on `title-API Request` being visible before adding the second node — the sidebar click is fire-and-forget, and asserting the count immediately can observe 1 while the second node is still mounting.
 4. Add the second API Request the same way; assert `.react-flow__node` count is `2`.
-5. Read the `id` of every element matching `popover-anchor-input-url_input` and assert: exactly 2 elements, both with a non-empty id, and the two ids distinct.
+5. Wait for `popover-anchor-input-url_input` to reach 2 elements, then read the `id` of every one and assert: exactly 2 elements, both with a non-empty id, and the two ids distinct. The wait is load-bearing: `evaluateAll` resolves the selector once with no auto-wait, and the preceding `.react-flow__node` count proves the **nodes** mounted, not their parameter fields — a field arriving one commit later would read as `got 0`/`got 1`. Hard failure, never a vacuous pass, but on the daily a hard failure strips `@stable` automatically (#1109).
 6. Sweep `input[id], textarea[id], select[id]` **inside the canvas** and assert no id appears more than once.
 
 **Case B — two Agent nodes** (`TextAreaComponent` id path)
 
 1. `setupBlankFlow(page)`.
 2. Open the `disclosure-models & agents` sidebar section; drag `models_and_agentsAgent` onto `//*[@id="react-flow-id"]` at two distinct positions (the proven pattern from `agent-component-regression.spec.ts` — no `add-component-button-agent` testid exists).
-3. Assert `.react-flow__node` count is `2`.
+3. Assert the running `.react-flow__node` count **after each drop** (`1`, then `2`), naming the drag in the failure message. Same reasoning as Case A's step 3: the sidebar interaction is fire-and-forget, and #1304 measured 4/20 swallowed ones on this nightly line. Asserting only the final `2` would report a swallowed first drag 15 s later without saying which of the two was lost.
 4. Same id assertions as step 5 above, for `textarea_str_system_prompt`.
 5. Same canvas-scoped duplicate sweep.
 
@@ -80,15 +82,20 @@ Measured behaviour on both sides of the upstream fix, two nodes on canvas:
 | build | Case A duplicates | Case B duplicates |
 |---|---|---|
 | nightly `1.12.0.dev9` (pre-fix) | `popover-anchor-input-url_input x2` | `popover-anchor-input-input_value x2`, `textarea_str_system_prompt x2` |
-| build carrying langflow#14312 | none — ids read `…-APIRequest-<suffix>` | none — ids read `…-Agent-<suffix>` |
+| local build off `release-1.11.2` carrying langflow#14312 — the original validation, #1106 | none — ids read `popover-anchor-input-url_input-APIRequest-<suffix>` | none — ids read `textarea_str_system_prompt-Agent-<suffix>` |
+| nightly `1.12.0.dev18` (post-merge-back, the promotion baseline, #1109) | none — same shape | none — same shape, and `popover-anchor-input-input_value-Agent-<suffix>` scoped likewise |
 
-In both builds the field **testid** resolved to 2 elements — the contract half staying green across the fix.
+`<suffix>` is a **per-node nonce**, regenerated on every mount — four consecutive runs produced four different pairs. Only the *shape* is a contract; a literal suffix never is.
+
+In every build the field **testid** resolved to 2 elements — the contract half staying green across the fix.
 
 ### Scope of the sweep, and what that costs
 
 **Canvas-scoped, not document-scoped.** The parameters side panel renders the same field with the **same DOM id** as the node body: `popover/index.tsx` applies `getNodeScopedDomId(id, nodeId)` unconditionally, and only `data-testid` gets the `-edit` suffix in edit mode. A document-wide sweep would therefore report a duplicate whenever that panel is open for a selected node — a false failure with no LE-2037 regression behind it. Scoping to `#react-flow-id` also excludes app-chrome and portal noise. The sweep throws if the canvas root is missing, so a selector change surfaces as an error instead of an empty list that would pass vacuously.
 
-**Form controls only** (`input` / `textarea` / `select`) — what the DevTools warning covers, what breaks autofill, and what upstream's own regression test sweeps. Icon SVGs legitimately repeat their internal ids (gradients, masks, filters) whenever the same icon renders twice and must not fail this test for the wrong reason. **The cost is real:** of the 15 `id=` sites langflow#14312 edited, those whose id lands on a `span`, a `div`, a contenteditable `div` or a Radix `button[role="switch"]` — `promptComponent`, `mustachePromptComponent`, `accordionPromptComponent`, `emptyParameterComponent`, `toggleShadComponent` — are **not** reached by this sweep. The per-field assertions cover the two paths this spec claims regardless of element type; the broader sweep is a bonus net over form controls only. (`select[id]` is defensive: Langflow renders Radix Select, not a native `<select>`.)
+**Form controls only** (`input` / `textarea` / `select`) — what the DevTools warning covers, what breaks autofill, and what upstream's own regression test sweeps. Icon SVGs legitimately repeat their internal ids (gradients, masks, filters) whenever the same icon renders twice and must not fail this test for the wrong reason. **The cost is real:** of the 15 `id=` sites langflow#14312 edited, those whose id lands on a `span`, a `div`, a contenteditable `div` or a Radix `button[role="switch"]` — `promptComponent`, `mustachePromptComponent`, `accordionPromptComponent`, `emptyParameterComponent`, `toggleShadComponent` — are **not** reached by this sweep. The per-field assertions cover the two paths this spec claims regardless of element type; the broader sweep is a bonus net over form controls only.
+
+**And that bonus is real for Case B only.** Measured on `1.12.0.dev18`: a two-node API Request canvas carries exactly **2** form controls with an id — the same two the field assertion already covers, so Case A's sweep restates its own second step. The two-Agent canvas carries **4**, and the extra pair (`popover-anchor-input-input_value`) is a genuine pre-fix duplicate the field assertion would miss. Keeping the sweep in Case A is still worth its ~0 s: it is the step that would catch a *newly added* form control regressing, which is exactly the change this spec is meant to be a tripwire for. (`select[id]` is defensive: Langflow renders Radix Select, not a native `<select>`.)
 
 ---
 
@@ -123,15 +130,13 @@ In both builds the field **testid** resolved to 2 elements — the contract half
 
 ## Preconditions *(optional)*
 
-- Langflow running at `PLAYWRIGHT_BASE_URL` on a build that includes langflow#14312 — currently the **`release-1.11.2`** line. On any build without it (including today's `langflowai/langflow-nightly:latest`, built from `release-1.12.0`) both cases fail **by design**; that is the negative control, not a defect in the test.
-- The positive validation for this spec ran against a local instance reporting version `1.11.1` / package `Langflow` that demonstrably carries the fix (its ids read `popover-anchor-input-url_input-APIRequest-<suffix>`), consistent with a build off the `release-1.11.2` line. Note that the **published** `langflowai/langflow:1.11.1` image does not contain the helper, so it is not a reproduction target.
-- No model provider credentials required — the nodes are placed and inspected, never executed, so the Agent case makes no LLM call.
+- Langflow running at `PLAYWRIGHT_BASE_URL` on a build that includes langflow#14312 — the `release-1.11.2` line and, since the merge-back, `main` / `release-1.12.0` and therefore `langflowai/langflow-nightly:latest`. On an older build without the helper both cases fail **by design**; that is the negative control, not a defect in the test. The **published** `langflowai/langflow:1.11.1` image does not contain the helper, so it is not a reproduction target.
+- No model provider credentials required. Measured in both environment states: green locally with the preflight explicitly warning that no provider key was configured as a Langflow global variable, and green on the PR lane *after* `Collect models` had configured them. See *Tags* for why Case B still carries `@agents`.
 
 ---
 
 ## When to review this test *(optional)*
 
-- **The fix reaches `main` / the 1.12 line** — that is the trigger to add `@stable` (see *Tags*).
 - A new parameter renderer is added under `parameterRenderComponent/components/` **whose id lands on an `input`, `textarea` or `select`** — it must call `getNodeScopedDomId` or this test goes red. Renderers using a `span`, `div` or Radix switch are outside the sweep's reach.
 - The suite's selector strategy changes, or someone proposes scoping `data-testid`. This spec is the tripwire for that.
 - The Agent or API Request node stops exposing the asserted field, in which case the field assertion fails first and names it.

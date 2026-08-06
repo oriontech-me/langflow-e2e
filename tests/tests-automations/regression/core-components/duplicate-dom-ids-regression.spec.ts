@@ -140,6 +140,16 @@ async function expectFieldIdsUniquePerNode(
   page: Page,
   fieldTestId: string,
 ): Promise<void> {
+  // `evaluateAll` resolves the selector once — no auto-wait, no retry. The only
+  // prior gate is `.react-flow__node` reaching 2, which says the NODES mounted,
+  // not that their parameter fields did; a field arriving one commit later reads
+  // as `got 0`/`got 1`. A hard, well-named failure rather than a vacuous pass —
+  // but on the daily a hard failure strips `@stable` automatically and commits to
+  // `main`, so the race is worth closing rather than triaging later.
+  await expect(page.getByTestId(fieldTestId)).toHaveCount(2, {
+    timeout: 15000,
+  });
+
   const ids = await page
     .getByTestId(fieldTestId)
     .evaluateAll((elements) => elements.map((element) => element.id));
@@ -161,7 +171,7 @@ async function expectFieldIdsUniquePerNode(
 
 test.describe("Node parameter DOM ids — uniqueness across sibling nodes", () => {
   test("two API Request nodes expose the same field without duplicating its DOM id",
-    { tag: ["@regression", "@components"] },
+    { tag: ["@stable", "@regression", "@components"] },
     async ({ page }) => {
       await test.step("Open a blank flow and add two API Request nodes", async () => {
         createdFlowIds.push(await setupBlankFlow(page));
@@ -206,7 +216,7 @@ test.describe("Node parameter DOM ids — uniqueness across sibling nodes", () =
   );
 
   test("two Agent nodes expose the same field without duplicating its DOM id",
-    { tag: ["@regression", "@components", "@agents"] },
+    { tag: ["@stable", "@regression", "@components", "@agents"] },
     async ({ page }) => {
       await test.step("Open a blank flow and drag two Agent nodes onto the canvas", async () => {
         createdFlowIds.push(await setupBlankFlow(page));
@@ -224,19 +234,28 @@ test.describe("Node parameter DOM ids — uniqueness across sibling nodes", () =
         // the DOM assertions — React Flow does not cull off-screen nodes
         // (`onlyRenderVisibleElements` is not used), so the fields are in the DOM
         // either way — but it keeps a failure trace readable.
-        for (const targetPosition of [
+        //
+        // The count is asserted BETWEEN the two drags, mirroring the Case A add
+        // above. Without it a swallowed first drag surfaced only as a final
+        // count of 1, 15 s later, with no way to tell which of the two was lost.
+        // #1304 measured 4/20 swallowed sidebar interactions on this nightly
+        // line, so it is a live path, not a hypothetical — and on the daily a
+        // hard failure strips `@stable` automatically (#1109).
+        const dropPositions = [
           { x: 250, y: 200 },
           { x: 650, y: 200 },
-        ]) {
+        ];
+        for (const [index, targetPosition] of dropPositions.entries()) {
           await page
             .getByTestId("models_and_agentsAgent")
             .dragTo(page.locator(`//*[@id="${CANVAS_ROOT_ID}"]`), {
               targetPosition,
             });
+          await expect(
+            page.locator(".react-flow__node"),
+            `Agent drag ${index + 1}/${dropPositions.length} did not land on the canvas`,
+          ).toHaveCount(index + 1, { timeout: 15000 });
         }
-        await expect(page.locator(".react-flow__node")).toHaveCount(2, {
-          timeout: 15000,
-        });
       });
 
       await test.step("Both Agent Instructions fields carry distinct DOM ids under one testid", async () => {
