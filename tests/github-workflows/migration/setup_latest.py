@@ -112,7 +112,7 @@ def main():
     # the common case before this job installs anything; this covers the account
     # draining mid-run, and records `blocked` — a state the report renders apart from
     # FAILED, and the workflow routes to the credentials tracker, not `migration-test`.
-    status = "pass" if success else credentials.step_status(detail, "latest/execute_flow")
+    status = "pass" if success else credentials.step_status(detail, "latest/execute_flow", job="api")
     print(f"   {status.upper()}: {detail[:120]}")
     phase["steps"]["execute_flow"] = {"status": status, "detail": detail}
 

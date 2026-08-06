@@ -258,19 +258,48 @@ def test_a_transport_failure_is_inconclusive_never_blocking():
 
 def test_marker_is_written_only_for_blocking_verdicts(tmp_path):
     path = tmp_path / "verdict.json"
-    assert pc.write_marker(pc.LIVE, "fine", "pre-flight", str(path)) is None
-    assert pc.write_marker(pc.INCONCLUSIVE, "unclear", "pre-flight", str(path)) is None
+    assert pc.write_marker(pc.LIVE, "fine", "pre-flight", "api", str(path)) is None
+    assert pc.write_marker(pc.INCONCLUSIVE, "unclear", "pre-flight", "api", str(path)) is None
     assert not path.exists(), "absence of the marker is what keeps the default routing"
 
-    assert pc.write_marker(pc.BILLING, "drained", "pre-flight", str(path)) == str(path)
+    assert pc.write_marker(pc.BILLING, "drained", "pre-flight", "api", str(path)) == str(path)
     payload = json.loads(path.read_text())
     assert payload["verdict"] == pc.BILLING
-    assert payload["label"] == pc.ISSUE_LABEL
+    assert payload["label"] == "provider-credentials-api"
     assert payload["label"] != "migration-test", (
         "routing a billing state to the migration tracker is #1295 — a later green "
         "run would close it with 'Migration test passed'"
     )
+    assert payload["job"] == "api"
     assert payload["title"] and payload["action"]
+
+
+def test_the_two_jobs_get_two_different_trackers(tmp_path):
+    """The #793 collision, which a single shared label would have reintroduced.
+
+    Both jobs run in parallel; the one that goes green must not be able to close the
+    issue the other just filed, because reaching the provider from the compose job
+    says nothing about what the API job saw a minute earlier.
+    """
+    labels = {job: pc.issue_label(job) for job in pc.JOBS}
+
+    assert labels["api"] != labels["compose"]
+    assert set(labels.values()) == {"provider-credentials-api", "provider-credentials-compose"}
+    assert "migration-test" not in labels.values()
+
+    for job, label in labels.items():
+        path = tmp_path / f"{job}.json"
+        pc.write_marker(pc.BILLING, "drained", f"pre-flight/{job}", job, str(path))
+        assert json.loads(path.read_text())["label"] == label
+
+
+def test_an_unknown_job_is_refused_rather_than_given_a_tracker():
+    # A typo in the workflow must not open a third tracker nobody watches.
+    import pytest
+
+    for job in ("", "API", "pip", "compose-2", None):
+        with pytest.raises(ValueError):
+            pc.issue_label(job)
 
 
 def test_a_blocking_announcement_states_there_was_no_migration_signal():
@@ -316,6 +345,39 @@ def test_both_api_scripts_route_their_execution_failure_through_step_status():
         )
 
 
+def test_neither_job_can_touch_the_other_jobs_credential_tracker():
+    """Structural, and it pins an ABSENCE — which is the realistic regression here.
+
+    The two jobs of `migration-test.yml` are near-copies of each other, so the way a
+    per-job label degrades back into a shared one is a copy-paste between them (that
+    is how the collision PR #793 found reached both halves in the first place). Text,
+    not YAML parsing: the PR-validation lane installs `pytest` and nothing else, so
+    `pyyaml` is not available here.
+
+    It cannot tell whether the routing is *correct* — the tests above do that.
+    """
+    import pathlib
+
+    workflow = (
+        pathlib.Path(__file__).resolve().parents[3] / ".github/workflows/migration-test.yml"
+    ).read_text()
+
+    marker = "\n  migration-test-compose:"
+    assert marker in workflow, "the compose job header moved — this guard cannot split the file"
+    api_half, compose_half = workflow.split(marker, 1)
+
+    for half, own, other in (
+        (api_half, "api", "compose"),
+        (compose_half, "compose", "api"),
+    ):
+        assert f"provider-credentials-{other}" not in half, (
+            f"the {own} job references the {other} job's credential tracker — a green run "
+            f"would close an issue about a failure it never observed (#793)"
+        )
+        assert f"--job {own}" in half, f"the {own} job does not tell the classifier which job it is"
+        assert f"--job {other}" not in half
+
+
 def test_any_other_failure_still_records_fail_and_says_nothing(tmp_path, capsys):
     marker = tmp_path / "verdict.json"
 
@@ -340,7 +402,7 @@ def test_probe_mode_exits_nonzero_on_billing(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(pc, "_send", _transport(429, RUN_124_BODY))
     marker = tmp_path / "verdict.json"
 
-    code = pc.main(["--probe", "--marker", str(marker)])
+    code = pc.main(["--probe", "--job", "api", "--marker", str(marker)])
 
     assert code == 1, "a blocking pre-flight must stop the job before it installs anything"
     assert "::error::" in capsys.readouterr().out
@@ -351,7 +413,7 @@ def test_probe_mode_exits_zero_when_inconclusive(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setattr(pc, "_send", _transport(503, "bad gateway"))
 
-    code = pc.main(["--probe", "--marker", str(tmp_path / "verdict.json")])
+    code = pc.main(["--probe", "--job", "api", "--marker", str(tmp_path / "verdict.json")])
 
     assert code == 0, "fail-open: the run itself is the authoritative verdict"
     assert "::warning::" in capsys.readouterr().out
@@ -370,6 +432,8 @@ def test_classify_file_mode_attributes_without_changing_the_exit_code(tmp_path, 
             "500",
             "--phase",
             "compose-source",
+            "--job",
+            "compose",
             "--marker",
             str(marker),
         ]
@@ -383,7 +447,7 @@ def test_classify_file_mode_attributes_without_changing_the_exit_code(tmp_path, 
 
 
 def test_an_unreadable_body_file_never_masks_the_real_failure(tmp_path, capsys):
-    code = pc.main(["--classify-file", str(tmp_path / "absent.json")])
+    code = pc.main(["--classify-file", str(tmp_path / "absent.json"), "--job", "compose"])
     assert code == 0
     out = capsys.readouterr().out
     assert "::warning::" in out and "no credential verdict" in out
@@ -393,6 +457,11 @@ def test_probe_and_classify_file_are_mutually_exclusive(tmp_path):
     import pytest
 
     with pytest.raises(SystemExit):
-        pc.main(["--probe", "--classify-file", str(tmp_path / "x.json")])
+        pc.main(["--probe", "--job", "api", "--classify-file", str(tmp_path / "x.json")])
     with pytest.raises(SystemExit):
-        pc.main([])
+        pc.main(["--job", "api"])
+    # `--job` itself is required: a default would hand both jobs one tracker (#793).
+    with pytest.raises(SystemExit):
+        pc.main(["--probe"])
+    with pytest.raises(SystemExit):
+        pc.main(["--probe", "--job", "pip"])

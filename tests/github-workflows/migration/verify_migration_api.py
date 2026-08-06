@@ -85,7 +85,9 @@ def main():
     # migration-specific checks above (flow preserved, variables preserved) still ran
     # and still fail on their own terms if they are broken.
     status = (
-        "pass" if success else credentials.step_status(detail, "nightly_api/execute_flow_api")
+        "pass"
+        if success
+        else credentials.step_status(detail, "nightly_api/execute_flow_api", job="api")
     )
     print(f"   {status.upper()}: {detail[:120]}")
     phase["steps"]["execute_flow_api"] = {"status": status, "detail": detail}

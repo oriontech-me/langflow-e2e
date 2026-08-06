@@ -50,7 +50,9 @@ On failure, the workflow opens or updates an issue in the repository, including 
 | Verdict | Tracker | Meaning |
 |---|---|---|
 | `FAILED` | `migration-test` | Something about the migration is broken — a claim about Langflow. |
-| `BLOCKED (provider credentials)` | `provider-credentials` | The witness flow never reached the model provider, so **nothing about the migration was measured**. Not a claim about Langflow; fix the account or the key. |
+| `BLOCKED (provider credentials)` | `provider-credentials-api` / `provider-credentials-compose` | The witness flow never reached the model provider, so **nothing about the migration was measured**. Not a claim about Langflow; fix the account or the key. |
+
+The credential tracker is **per job**, and each job closes only its own. The two jobs run in parallel, so a shared label lets the one that goes green close the issue the other just filed — the collision PR #793 found on run #101, where the API job's pass closed the compose job's live failure. The cost is that a drained account files two issues; they self-clear on the next good run, whereas the alternative silently closes a live blocker.
 
 The split exists because both are red and only one is about the product. A billing outage filed under `migration-test` gets closed by the next green run with *"Migration test passed"*, leaving a migration bug in the history that never existed. A green run closes **both** trackers, each with wording about what it actually proved.
 

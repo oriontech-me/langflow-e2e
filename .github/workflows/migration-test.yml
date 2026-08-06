@@ -71,7 +71,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python tests/github-workflows/migration/provider_credentials.py \
-            --probe --phase "pre-flight/pip"
+            --probe --phase "pre-flight/pip" --job api
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -324,9 +324,14 @@ jobs:
             // old version said "Migration test passed" on whatever open
             // `migration-test` issue it found, which is how a billing outage filed
             // there would have been closed as a fixed migration bug.
+            //
+            // The credential label is THIS job's own (`-api`), never the compose job's:
+            // the two run in parallel, and closing the other one's issue is the
+            // collision PR #793 found on run #101. The `migration-test` half keeps its
+            // existing (shared) behaviour — that is #793's scope, not this PR's.
             const CLOSING = {
               'migration-test': 'Migration test passed. Closing this issue.',
-              'provider-credentials':
+              'provider-credentials-api':
                 'This run reached the model provider and executed the witness flow, so the ' +
                 'credential that blocked it is usable again. Closing.',
             };
@@ -405,7 +410,7 @@ jobs:
                   repo: context.repo.repo,
                   name: label,
                   color: 'd93f0b',
-                  description: 'Provider credential/billing state blocked a scheduled run (no product signal)',
+                  description: `Provider credential/billing state blocked the migration test's ${credential.job} job (no product signal)`,
                 });
               } catch (e) {
                 console.log(`Label ${label} already exists or could not be created:`, e.message);
@@ -492,7 +497,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           python3 tests/github-workflows/migration/provider_credentials.py \
-            --probe --phase "pre-flight/compose"
+            --probe --phase "pre-flight/compose" --job compose
 
       - name: Generate ephemeral SECRET_KEY
         run: |
@@ -687,7 +692,7 @@ jobs:
             # deliberately does not change the exit code below.
             python3 tests/github-workflows/migration/provider_credentials.py \
               --classify-file /tmp/run-source.json --status "$HTTP" \
-              --phase "compose/source-execute" || true
+              --phase "compose/source-execute" --job compose || true
             exit 1
           fi
           echo "Source flow execution OK"
@@ -763,7 +768,7 @@ jobs:
             # here would have filed exactly that against Langflow (#1295).
             python3 tests/github-workflows/migration/provider_credentials.py \
               --classify-file /tmp/run-target.json --status "$HTTP" \
-              --phase "compose/target-execute" || true
+              --phase "compose/target-execute" --job compose || true
             exit 1
           fi
           if grep -iE 'api[ _-]?key.{0,30}(required|missing|not[ _]?found)|fernet|cannot[ _]decrypt' /tmp/run-target.json; then
@@ -849,10 +854,11 @@ jobs:
         uses: actions/github-script@v9
         with:
           script: |
-            // Two trackers, same reasoning as the API job above (#1295).
+            // Two trackers, same reasoning as the API job above (#1295) — and the
+            // credential label is this job's own (`-compose`), for the #793 reason.
             const CLOSING = {
               'migration-test': 'docker-compose migration test passed. Closing.',
-              'provider-credentials':
+              'provider-credentials-compose':
                 'This run reached the model provider and executed the witness flow, so the ' +
                 'credential that blocked it is usable again. Closing.',
             };
@@ -914,7 +920,7 @@ jobs:
                   repo: context.repo.repo,
                   name: label,
                   color: 'd93f0b',
-                  description: 'Provider credential/billing state blocked a scheduled run (no product signal)',
+                  description: `Provider credential/billing state blocked the migration test's ${credential.job} job (no product signal)`,
                 });
               } catch (e) {
                 console.log(`Label ${label} already exists or could not be created:`, e.message);
