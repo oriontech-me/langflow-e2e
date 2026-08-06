@@ -1,6 +1,6 @@
 # Google Provider — configure key, select Gemini
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -196,3 +196,29 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   **POST 201**, PATCH-only waiter → timeout. Backend healthy (no hang/5xx): a
   **test defect**, not a product bug. Fix: match `POST` **or** `PATCH`. Same fix
   in `openai-provider.spec.ts`.
+- **#1261 — `@stable` auto-removed 2026-08-04, restored here; nothing about Google
+  was ever observed.** The issue was filed as "the Agent never settles a Gemini
+  model/credential on the persisted flow", grouping Test 2 with
+  `mcp-client-agent-gemini-tool-regression.spec.ts` on that shared state. The run
+  artifact refutes the premise: **every** failing attempt on both specs, across the
+  2026-08-03 and 2026-08-04 dailies, carries the settle guard's own `read-failed`
+  verdict — `0 read(s)`, `last read err apiRequestContext.get: Timeout 20000ms
+  exceeded` on `GET /api/v1/flows/{id}`. The guard states the consequence itself:
+  *"No read of the persisted flow succeeded, so the binding is UNKNOWN — nothing
+  here says anything about the credential."* So the Gemini binding was never
+  measured, let alone found broken; the finding is the unanswered read (the mid-run
+  wedge, #1030/#1048, relief tracked in #1077), and it is provider-independent —
+  Google clustered only because its specs pin a model and therefore sit on the
+  guard longest.
+  Two further causes, neither Google-shaped, complete the picture and explain why
+  the auto-removal was not exempted as wedge collateral: the deciding attempt
+  (attempt 2, the one `lastFailureError` classifies) failed in
+  `openNewFlowTemplatesModal` on the welcome-panel predicate — **#966 / LE-2019**,
+  a UI signature deliberately excluded from `infra-signature-patterns.json` — and
+  the 2026-08-05 recurrence was the line-wide stale-premise break of the guard
+  itself (**#1274**, fixed in PR #1315 by settling on the model's `provider`).
+  Re-measured on `1.12.0.dev17` with the fixed guard: this file **5/5 rounds green
+  (10/10 tests)**, sentinel echoed 5/5; the MCP sibling 4/5, its single failure
+  being MCP server registration (`GET /api/v2/mcp/servers` 20 s, **#1266**), a step
+  that never reaches the credential guard. No product regression, no wait-strategy
+  change needed.
