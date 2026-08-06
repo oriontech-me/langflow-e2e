@@ -140,6 +140,16 @@ async function expectFieldIdsUniquePerNode(
   page: Page,
   fieldTestId: string,
 ): Promise<void> {
+  // `evaluateAll` resolves the selector once — no auto-wait, no retry. The only
+  // prior gate is `.react-flow__node` reaching 2, which says the NODES mounted,
+  // not that their parameter fields did; a field arriving one commit later reads
+  // as `got 0`/`got 1`. A hard, well-named failure rather than a vacuous pass —
+  // but on the daily a hard failure strips `@stable` automatically and commits to
+  // `main`, so the race is worth closing rather than triaging later.
+  await expect(page.getByTestId(fieldTestId)).toHaveCount(2, {
+    timeout: 15000,
+  });
+
   const ids = await page
     .getByTestId(fieldTestId)
     .evaluateAll((elements) => elements.map((element) => element.id));
