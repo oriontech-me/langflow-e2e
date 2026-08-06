@@ -56,9 +56,13 @@ async function reopenNewFlow(page: Page): Promise<void> {
     .click({ timeout: 45000 });
 }
 
-test(
+// Quarantined: recurrent flake on the daily (2026-07-22, 2026-08-06, same
+// signature) — reopening the just-created flow through its
+// `list-card-open-button` times out at 45 s. Tracked in #1336; lifting the
+// quarantine (remove `test.fixme` + restore `@stable`) is a deliverable there.
+test.fixme(
   "user should be able to manually save a flow when the auto_save is off",
-  { tag: ["@stable", "@release", "@api", "@database", "@components"] },
+  { tag: ["@release", "@api", "@database", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 
