@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 448 `test()` calls carrying the `@stable` tag, distributed across 176 spec
+> 445 `test()` calls carrying the `@stable` tag, distributed across 176 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1138,9 +1138,7 @@
 - [x] an unreachable base URL is rejected and nothing is persisted → `openai-compatible-provider-setup.spec.ts`
 - [x] a reachable endpoint with a bogus key is rejected as an authentication failure → `openai-compatible-provider-setup.spec.ts`
 - [x] the configured provider discovers exactly the models its endpoint serves → `openai-compatible-provider-setup.spec.ts`
-- [x] a discovered model runs a flow through the OpenAI Compatible provider → `openai-compatible-provider-setup.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
-- [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
 - [x] a misconfigured flow surfaces an appropriate build-error message → `flow-error-message.spec.ts`
@@ -1286,7 +1284,6 @@
 - [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] mcp server tools should be refreshed when editing a server → `mcp-server.spec.ts`
-- [x] Streamable HTTP MCP server with server-everything should load tools correctly → `mcp-server.spec.ts`
 - [x] stdio command with an embedded argument is refused, and command plus args is accepted → `mcp-server.spec.ts`
 
 #### ui-ux/

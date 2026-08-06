@@ -1127,7 +1127,7 @@ test(
 
 test(
   "Streamable HTTP MCP server with server-everything should load tools correctly",
-  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
     await awaitBootstrapTest(page);
