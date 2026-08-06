@@ -3,9 +3,13 @@ import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-server-modal";
 
-test(
+// Quarantined: recurrent flake on the daily (2026-08-05, 2026-08-06, same
+// signature) — `mcp-server-dropdown` is not clickable within the 3 s budget in
+// `helpers/mcp/open-add-mcp-server-modal.ts`. Tracked in #1335; lifting the
+// quarantine (remove `test.fixme` + restore `@stable`) is a deliverable there.
+test.fixme(
   "user should be able to manage MCP server tools and configuration",
-  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
