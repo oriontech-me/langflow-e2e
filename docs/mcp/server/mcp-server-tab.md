@@ -68,9 +68,10 @@ longer be added and have its tools discovered — a core MCP-server UI regressio
    assert its `args` SSE URL matches.
 7. Assert the **setup guide** link points at the documented MCP-server anchor.
 8. Bootstrap again; add an **MCP-starter-project** component to a new flow
-   (`add-component-button-lf-starter_project`); open the **Add MCP Server** modal
-   (`openAddMcpServerModal`); paste the Linux config with a unique server name
-   substituted; click `add-mcp-server-button`.
+   (`add-component-button-lf-starter_project`, via
+   `addComponentFromSidebarWithoutSearch` — the add is repaired, see Notes);
+   open the **Add MCP Server** modal (`openAddMcpServerModal`); paste the Linux
+   config with a unique server name substituted; click `add-mcp-server-button`.
 9. Assert the `dropdown_str_tool` selector becomes enabled and, when opened,
    exposes at least one tool option (`[data-testid*="-option"]`).
 
@@ -117,6 +118,8 @@ longer be added and have its tools discovered — a core MCP-server UI regressio
   (`icon-copy`, API-key generation).
 - Add-MCP-server modal (`add-mcp-server-simple-button` / `mcp-server-dropdown` →
   `add-mcp-server-button`, `json-input`) via `helpers/mcp/open-add-mcp-server-modal.ts`.
+- `helpers/flows/add-component-from-sidebar.ts`
+  (`addComponentFromSidebarWithoutSearch`) — the repairing sidebar add.
 - The `lf-starter_project` MCP starter (`add-component-button-lf-starter_project`).
 - API Request component (`data_sourceAPI Request`) — the tool exposed on the flow.
 - `helpers/other/await-bootstrap-test.ts`, `helpers/ui/adjust-screen-view.ts`.
@@ -139,6 +142,34 @@ longer be added and have its tools discovered — a core MCP-server UI regressio
   limitation); step verification relies on `--retries=0` bursts + force-fail.
 - The API-key generation is branch-guarded because the button only appears when
   no key exists yet; both branches assert a valid end state.
-- No flows are left behind by design — the flows created live in the default
-  project and the test does not persist named artifacts requiring id-scoped
-  cleanup; folder CRUD is exercised by the sibling starter-projects spec.
+- **Cleanup is id-scoped, never a wipe** (#553), and it was added in #1335 —
+  the claim it replaces ("no flows are left behind by design") was false. The
+  test creates TWO flows per run and registered a fresh `test_server_<random>`
+  every time, deleting neither: measured on the local nightly while working
+  #1335, 14 orphan `test_server_*` registrations had accumulated (alongside 58
+  orphan "New Flow" flows, which this spec shares with every other blank-flow
+  spec). The servers are not merely litter — their count decides which branch
+  the widget under test renders (an empty list shows
+  `add-mcp-server-simple-button`, a populated one `mcp-server-dropdown`), so
+  leaving them behind quietly stopped the spec from ever taking the empty-list
+  path again. Flow ids come from `POST /api/v1/flows` 201 bodies, not from the
+  canvas URL, which still holds the stale bootstrap id (#681). Folder CRUD is
+  exercised by the sibling starter-projects spec.
+- **The step-8 add is repaired, and that is what #1335 was** (recurrent flake on
+  the 2026-08-05 and 2026-08-06 dailies). The failure named
+  `mcp-server-dropdown` — `locator.click: Timeout 3000ms exceeded` — and the
+  issue read it as a widget too slow for a 3 s budget. It was not: the failing
+  attempt's `error-context.md` shows an empty `application "Flow canvas"` with
+  "Minimize all" disabled, i.e. Langflow had swallowed the sidebar click and
+  there was no MCP component at all. Both of the modal's entry points hang off
+  that node, so **no wait budget could have fixed it** — measured on nightly
+  1.12.0.dev17: **4 of 8** first clicks on the MCP tab produced no node within
+  12 s, all 4 repaired by an identical second click (the #1304 class, whose
+  Components-tab rate was 4/20), while a landed add rendered in 91–108 ms and
+  its entry point became visible 6–15 ms later, enabled, in 8 of 8.
+- Consequently `openAddMcpServerModal` no longer decides its branch from a snap
+  read: `isVisible({ timeout: 1000 })` looks like a wait but Playwright ignores
+  that option, so the helper committed to the dropdown branch before the widget
+  had painted — and in the no-servers case that locator never appears at all. It
+  now waits for **either** entry point and, when neither arrives, fails naming
+  the canvas node count so an empty canvas is never reported as a slow dropdown.

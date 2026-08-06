@@ -1,15 +1,98 @@
 import { expect, test } from "../../../../fixtures/fixtures";
+import { addComponentFromSidebarWithoutSearch } from "../../../../helpers/flows/add-component-from-sidebar";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-server-modal";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
-// Quarantined: recurrent flake on the daily (2026-08-05, 2026-08-06, same
-// signature) — `mcp-server-dropdown` is not clickable within the 3 s budget in
-// `helpers/mcp/open-add-mcp-server-modal.ts`. Tracked in #1335; lifting the
-// quarantine (remove `test.fixme` + restore `@stable`) is a deliverable there.
-test.fixme(
+// Flow ids observed on `POST /api/v1/flows` 201, plus the MCP server this run
+// registered. Pattern A from authoring-conventions and the same tracker as the
+// sibling `mcp-server.spec.ts`: `awaitBootstrapTest` runs before every
+// blank-flow click, so the canvas URL id is the stale bootstrap one (#681) and
+// only the response ids are trustworthy.
+//
+// This test creates TWO flows per run and used to delete neither, while
+// registering a fresh `test_server_<random>` every time. The server name is
+// unique to this spec, so its accumulation is measurable and was measured: 14
+// orphan `test_server_*` registrations on the local nightly while working #1335
+// (alongside 58 orphan "New Flow" flows, which this spec shares with every other
+// blank-flow spec). The servers are not just litter — the count decides which
+// branch the widget under test renders (an empty list shows
+// `add-mcp-server-simple-button`, a populated one `mcp-server-dropdown`), so
+// leaving them behind quietly stops the spec from ever taking the empty-list
+// path again.
+const createdFlowIds: string[] = [];
+const registeredServers: string[] = [];
+
+test.beforeEach(async ({ page }) => {
+  createdFlowIds.length = 0;
+  registeredServers.length = 0;
+  page.on("response", (resp) => {
+    if (
+      resp.url().includes("/api/v1/flows") &&
+      resp.request().method() === "POST" &&
+      resp.status() === 201
+    ) {
+      resp
+        .json()
+        .then((body: { id?: string }) => {
+          if (body?.id) createdFlowIds.push(body.id);
+        })
+        .catch(() => {}); // non-JSON / batch payloads
+    }
+  });
+});
+
+// Id-scoped cleanup — never a wipe (#553). Servers are listed first so a name
+// this run never managed to register does not produce a 404 delete.
+test.afterEach(async ({ request }) => {
+  const names = registeredServers.splice(0);
+  const ids = createdFlowIds.splice(0);
+  if (names.length === 0 && ids.length === 0) return;
+
+  const bearer = await getAuthToken(request);
+  const options = bearer ? { headers: { Authorization: bearer } } : undefined;
+
+  if (names.length > 0) {
+    const resp = await request.get("/api/v2/mcp/servers", options);
+    const existing: string[] = resp.ok()
+      ? ((await resp.json()) as Array<{ name: string }>).map((s) => s.name)
+      : names;
+    for (const name of names) {
+      if (existing.includes(name)) {
+        const del = await request.delete(
+          `/api/v2/mcp/servers/${name}`,
+          options,
+        );
+        // Warn rather than throw: the flow cleanup below still has to run, and a
+        // silent failure here is what let the registrations accumulate.
+        if (!del.ok()) {
+          console.warn(
+            `⚠️  MCP server cleanup failed: ${name} — ${del.status()} ${await del.text()}`,
+          );
+        }
+      }
+    }
+  }
+
+  // Not swallowed: `deleteFlow` throws, so a cleanup regression is visible
+  // instead of silent. A transient id 404s, which it treats as done.
+  for (const id of ids) {
+    await deleteFlow(request, id, options);
+  }
+});
+
+// Quarantine lifted (#1335). The recurrent daily flake (2026-08-05, 2026-08-06)
+// reported itself as `mcp-server-dropdown` not clickable within the shared
+// helper's 3 s budget, but the budget was never the cause: the sidebar add was
+// being swallowed, so there was no MCP component on the canvas and neither of
+// the widget's two entry points could ever render. Both halves are fixed above —
+// the add goes through the repairing helper, and the helper now waits for either
+// entry point and names the node count when neither arrives.
+test(
   "user should be able to manage MCP server tools and configuration",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -245,7 +328,15 @@ test.fixme(
         timeout: 30000,
       },
     );
-    await page.getByTestId("add-component-button-lf-starter_project").click();
+    // Repairing add, not a bare click (#1335): Langflow swallows this click on
+    // the MCP tab 4 times out of 8 on nightly 1.12.0.dev17, and every entry point
+    // of the step below hangs off the node it should have created — which is how
+    // this test failed the 2026-08-05 and 2026-08-06 dailies against an empty
+    // canvas, with the error naming `mcp-server-dropdown`.
+    await addComponentFromSidebarWithoutSearch(
+      page,
+      "add-component-button-lf-starter_project",
+    );
 
     await adjustScreenView(page, { numberOfZoomOut: 3 });
 
@@ -258,6 +349,9 @@ test.fixme(
 
     const randomSuffix = Math.floor(Math.random() * 90000) + 10000;
     const testName = `test_server_${randomSuffix}`;
+    // Tracked BEFORE the registration request, so a run that dies mid-add still
+    // cleans up a server the backend did create.
+    registeredServers.push(testName);
 
     await page
       .getByTestId("json-input")

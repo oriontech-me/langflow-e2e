@@ -234,7 +234,9 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
 - MCPTools node (`dropdown_str_tool`, `mcp-server-dropdown`, `list_item_<name>`).
 - `GET`/`DELETE /api/v2/mcp/servers[/{name}]`, `helpers/auth/get-auth-token.ts`,
   `helpers/other/await-bootstrap-test.ts`, `helpers/ui/adjust-screen-view.ts`,
-  `helpers/ui/zoom-out.ts`, `helpers/flows/delete-flow.ts`.
+  `helpers/ui/zoom-out.ts`, `helpers/flows/delete-flow.ts`,
+  `helpers/flows/add-component-from-sidebar.ts`
+  (`addComponentFromSidebarWithoutSearch`).
 
 ---
 
@@ -323,3 +325,14 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
   force-fail.
 - A commented-out seventh block (SSE against a public Cloudflare MCP endpoint)
   remains at the bottom of the file, untouched by #1091.
+- **The three MCP-starter adds are repaired, not bare clicks** (#1335). Langflow
+  swallows that sidebar click on the MCP tab roughly half the time on nightly
+  1.12.0.dev17 (measured 4/8, all 4 repaired by an identical second click), and
+  every entry point of the add-server modal hangs off the node it should have
+  created. Measured locally on dev17 before and after: this file failed 3 of its
+  6 runnable tests with the bare clicks — including the `@stable` tests 3
+  ("STDIO … fields should persist") and 5 ("tools should be refreshed …") — and 1
+  of 6 with `addComponentFromSidebarWithoutSearch`. The remaining failure is test
+  6 ("Streamable HTTP … server-everything"), which registers through the sidebar
+  page rather than the modal, fails identically with and without this change, and
+  is not `@stable`.
