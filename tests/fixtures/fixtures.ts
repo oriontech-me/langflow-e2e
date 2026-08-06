@@ -86,6 +86,10 @@ export type PageWithErrorHooks = Page & {
    * Call it **before** the test reaches the state that fires the defect —
    * declarations are not retroactive, so a late call gets the worst of both: the
    * response already reported as an error, and the declaration counted as stale.
+   *
+   * Declaring the same `(pathname, status)` twice is harmless: every matching
+   * declaration is credited, so a shared helper and an inline call cannot leave
+   * one of them looking stale.
    */
   expectKnownHttpError: (defect: KnownHttpDefect) => void;
 };
@@ -230,9 +234,32 @@ export const test = base.extend({
           // The occurrence count goes in the teardown summary instead: a defect
           // that fires 40× is a different observation from one that fires once,
           // and 40 identical lines is the noise #1084 was raised about.
-          const seen = declaredDefectHits.get(verdict.knownDefect) ?? 0;
-          declaredDefectHits.set(verdict.knownDefect, seen + 1);
-          if (seen === 0) {
+          //
+          // Credited to EVERY declaration this response matches, not only the
+          // one `classifyHttpError` returned. That function resolves with
+          // `find()`, so two declarations of the same (pathname, status) — a
+          // helper that declares plus an inline call, the same defect declared
+          // in `beforeEach` and again in the body — are distinct objects and
+          // only the first would ever be credited. The second would then be
+          // reported stale and FAIL a test whose defect did fire, with a message
+          // saying the opposite of what happened. Matching on the declaration's
+          // own `pathname` rather than re-parsing the URL: the policy already
+          // proved they are equal, and re-parsing is a second place to disagree.
+          const matched = declaredDefects.filter(
+            (candidate) =>
+              candidate.status === status &&
+              candidate.pathname === verdict.knownDefect.pathname,
+          );
+          const firstOccurrence = matched.every(
+            (candidate) => (declaredDefectHits.get(candidate) ?? 0) === 0,
+          );
+          for (const candidate of matched) {
+            declaredDefectHits.set(
+              candidate,
+              (declaredDefectHits.get(candidate) ?? 0) + 1,
+            );
+          }
+          if (firstOccurrence) {
             console.log(
               `📌 Known backend defect (declared by this test): ${status} ${response.statusText()} - ${url}`,
             );
@@ -421,13 +448,32 @@ export const test = base.extend({
     // Account for every declared known defect (#1008). A declaration is a claim
     // about the product — "this filed bug still fires here" — so it is checked
     // like one, in both directions.
+    //
+    // Grouped by the pair that decides a match, because duplicate declarations
+    // of one defect all carry the SAME count — they are credited together — and
+    // printing a line each would read as two defects firing once, not one firing
+    // once. Distinct reasons are all printed: they are what a reader judges the
+    // exemption by, and two declarations may justify themselves differently.
+    const summaryByDefect = new Map<
+      string,
+      { defect: KnownHttpDefect; hits: number; reasons: string[] }
+    >();
     for (const defect of declaredDefects) {
       const hits = declaredDefectHits.get(defect) ?? 0;
-      if (hits > 0) {
-        console.log(
-          `\n📌 ${hits}× declared known backend defect: ${defect.status} ${defect.pathname} — NOT counted as a backend error.\n   ${defect.reason}`,
-        );
+      if (hits === 0) continue;
+      const key = `${defect.status} ${defect.pathname}`;
+      const group = summaryByDefect.get(key);
+      if (!group) {
+        summaryByDefect.set(key, { defect, hits, reasons: [defect.reason] });
+      } else if (!group.reasons.includes(defect.reason)) {
+        group.reasons.push(defect.reason);
       }
+    }
+    for (const { defect, hits, reasons } of summaryByDefect.values()) {
+      console.log(
+        `\n📌 ${hits}× declared known backend defect: ${defect.status} ${defect.pathname} — NOT counted as a backend error.\n` +
+          reasons.map((reason) => `   ${reason}`).join("\n"),
+      );
     }
 
     // Check for errors and fail test if not allowed
