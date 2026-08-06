@@ -256,6 +256,13 @@ test.describe("fixture declared-known-defect hatch", () => {
       // occur" about a defect that fired. The passing of this test IS the
       // assertion: reverting the fixture to credit a single declaration turns it
       // red in teardown.
+      //
+      // The teardown SUMMARY is deduplicated by (status, pathname) for the same
+      // reason, and that half is NOT pinned here: the summary is printed after
+      // the test that would have to assert it, the same structural limit
+      // `flow-error-gate.spec.ts` records for its own mid-test interrupt.
+      // Measured by hand instead — one `📌 1×` line with the grouping, two
+      // without it, which would read as two defects firing once each.
       const hooked = page as PageWithErrorHooks;
       const viaHelper: KnownHttpDefect = { ...DECLARED };
       const viaBody: KnownHttpDefect = { ...DECLARED };

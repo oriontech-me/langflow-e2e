@@ -448,13 +448,32 @@ export const test = base.extend({
     // Account for every declared known defect (#1008). A declaration is a claim
     // about the product — "this filed bug still fires here" — so it is checked
     // like one, in both directions.
+    //
+    // Grouped by the pair that decides a match, because duplicate declarations
+    // of one defect all carry the SAME count — they are credited together — and
+    // printing a line each would read as two defects firing once, not one firing
+    // once. Distinct reasons are all printed: they are what a reader judges the
+    // exemption by, and two declarations may justify themselves differently.
+    const summaryByDefect = new Map<
+      string,
+      { defect: KnownHttpDefect; hits: number; reasons: string[] }
+    >();
     for (const defect of declaredDefects) {
       const hits = declaredDefectHits.get(defect) ?? 0;
-      if (hits > 0) {
-        console.log(
-          `\n📌 ${hits}× declared known backend defect: ${defect.status} ${defect.pathname} — NOT counted as a backend error.\n   ${defect.reason}`,
-        );
+      if (hits === 0) continue;
+      const key = `${defect.status} ${defect.pathname}`;
+      const group = summaryByDefect.get(key);
+      if (!group) {
+        summaryByDefect.set(key, { defect, hits, reasons: [defect.reason] });
+      } else if (!group.reasons.includes(defect.reason)) {
+        group.reasons.push(defect.reason);
       }
+    }
+    for (const { defect, hits, reasons } of summaryByDefect.values()) {
+      console.log(
+        `\n📌 ${hits}× declared known backend defect: ${defect.status} ${defect.pathname} — NOT counted as a backend error.\n` +
+          reasons.map((reason) => `   ${reason}`).join("\n"),
+      );
     }
 
     // Check for errors and fail test if not allowed
