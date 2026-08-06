@@ -6,6 +6,7 @@ import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-serv
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 
 /**
  * Add-MCP-Server modal: stdio / HTTP registration, field persistence and tool
@@ -790,7 +791,48 @@ test(
     await page.waitForSelector('[data-testid="blank-flow"]', {
       timeout: 30000,
     });
+    // The flow under test has to be addressed by id from here on (#1340), and
+    // the id has to satisfy BOTH sources — neither alone is enough here:
+    //
+    //  - `page.url()` alone is the documented trap. `awaitBootstrapTest` reaches
+    //    the templates modal through "New Flow", so before the blank-flow
+    //    navigation the URL still carries the bootstrap PLACEHOLDER — the flow
+    //    Langflow deletes the moment the modal navigates elsewhere, and the one
+    //    authoring-conventions Pattern A warns about (#681/#505).
+    //  - the tracked `POST /flows` 201 ids alone do not say which flow the editor
+    //    ended up on: this page creates the placeholder AND the blank flow, so
+    //    picking one means trusting arrival order of two async body reads, and
+    //    the wrong pick is precisely the id that gets deleted.
+    //
+    // So: poll until the editor's URL carries an id this page is known to have
+    // created and that is not the placeholder. A transient or client-only id
+    // cannot satisfy the membership test, and a blank-flow click that never
+    // navigates fails HERE, naming the cause, instead of surfacing later as an
+    // unattributed timeout. Measured on nightly 1.12.0.dev18: the click issues
+    // its own `POST /flows` 201 and the URL changes every time (5/5) — the
+    // placeholder is never reused — so this is about attribution, not a defect.
+    const placeholderId = new URL(page.url()).pathname.match(
+      /\/flow\/([0-9a-f-]{36})/,
+    )?.[1];
     await page.getByTestId("blank-flow").click();
+    const editorFlowId = () =>
+      new URL(page.url()).pathname.match(/\/flow\/([0-9a-f-]{36})/)?.[1];
+    await expect
+      .poll(
+        () => {
+          const id = editorFlowId();
+          return !!id && id !== placeholderId && createdFlowIds.includes(id);
+        },
+        {
+          timeout: 30000,
+          message:
+            "the blank-flow click never landed the editor on a newly created " +
+            "flow: the URL still holds the bootstrap placeholder, or its id is " +
+            "not among this page's POST /api/v1/flows 201 responses",
+        },
+      )
+      .toBe(true);
+    const flowUnderTest = editorFlowId()!;
     await page.getByTestId("sidebar-nav-mcp").click();
     await page.waitForSelector(
       '[data-testid="add-component-button-lf-starter_project"]',
@@ -955,17 +997,16 @@ test(
 
     await awaitBootstrapTest(page, { skipModal: true });
 
-    // The /flows a11y refactor (Langflow #13891) makes `flow-name-div`
-    // `pointer-events-none`; open the flow via the card's overlay button.
-    const flowOpenButton = page
-      .getByTestId("list-card")
-      .filter({
-        has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
-      })
-      .getByTestId("list-card-open-button")
-      .first();
-    await flowOpenButton.waitFor({ state: "visible", timeout: 10000 });
-    await flowOpenButton.click();
+    // By id, never a name-filtered `list-card` + `.first()` (#1340). Langflow
+    // names every blank flow "New Flow"/"New Flow (N)", so under `fullyParallel`
+    // that filter resolves whichever card the shared project's list puts first.
+    // Measured on nightly 1.12.0.dev18: seeding ONE competing "New Flow …" in
+    // this project before the list fetch is enough — the click opened the
+    // competitor, and the test then died on the `text="MCP Tools"` wait below,
+    // blaming the node for a flow it was never in. `openFlowById` also seeds the
+    // assistant-onboarding flag and gates on the flow being writable, which the
+    // card click never did (#1214/#1005).
+    await openFlowById(page, flowUnderTest);
 
     // Wait for the MCP Tools component to be visible on canvas
     await page.waitForSelector('text="MCP Tools"', {
@@ -1076,16 +1117,8 @@ test(
 
     await awaitBootstrapTest(page, { skipModal: true });
 
-    // See note above: open the flow via the card's overlay button.
-    const flowOpenButton2 = page
-      .getByTestId("list-card")
-      .filter({
-        has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
-      })
-      .getByTestId("list-card-open-button")
-      .first();
-    await flowOpenButton2.waitFor({ state: "visible", timeout: 10000 });
-    await flowOpenButton2.click();
+    // See note above: by id, not by name.
+    await openFlowById(page, flowUnderTest);
 
     // Wait for the MCP Tools component to be visible on canvas
     await page.waitForSelector('text="MCP Tools"', {

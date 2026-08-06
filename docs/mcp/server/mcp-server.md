@@ -121,10 +121,15 @@ round-tripped; then deletes it.
 4. Settings → MCP Servers → Edit: assert `command` is `npx` and `args[0]` is the
    sequential-thinking package, then **edit `args[0]`** to
    `@modelcontextprotocol/server-everything` (server **B**) and save.
-5. Return to the flow, re-select the server on the node, and assert the tool
-   list now exposes `echo-0-option` — the refresh, not the cached A list.
-6. Delete the server; assert it is gone; re-register it as **A** again and assert
-   the node's tool list is back to `sequentialthinking-0-option`.
+5. Return to the flow **by id** (`openFlowById`), re-select the server on the
+   node, and assert the tool list now exposes `echo-0-option` — the refresh, not
+   the cached A list.
+6. Delete the server; assert it is gone; re-register it as **A** again, return to
+   the flow by id, and assert the node's tool list is back to
+   `sequentialthinking-0-option`.
+
+Both re-opens address the flow by **id**, never by the card whose name contains
+"New Flow" (#1340) — see the note below.
 
 ### 6 — `Streamable HTTP MCP server with server-everything should load tools correctly`
 
@@ -247,6 +252,35 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
 ---
 
 ## Notes *(optional)*
+
+- **#1340 — test 5 re-opened a flow by NAME, and it opened the wrong one.** Both
+  re-opens clicked the first `list-card` whose name contained "New Flow".
+  Langflow names every blank flow "New Flow"/"New Flow (N)", so under
+  `fullyParallel` the shared project holds one per worker and `.first()` resolves
+  whichever the list puts first. Measured on nightly `1.12.0.dev18`: in isolation
+  the test's own flow ranks first and the click is correct (which is why this
+  never appeared in the daily history — no recorded failure on this test), but
+  seeding **one** competing `New Flow …` in the same project before the list
+  fetch is enough to flip it — the rendered order became
+  `["New Flow probeB-…", "New Flow (1)", "Basic Prompting"]`, the click opened
+  the competitor, and the test then died on the `text="MCP Tools"` wait at 30 s,
+  blaming the node for a flow it was never in. The same locator, in
+  `auto-save-off.spec.ts`, cost two dailies before it was diagnosed (#1336). Both
+  re-opens now use `openFlowById` (#1214), the repo's by-id entry, which also
+  seeds the assistant-onboarding flag and gates on the flow being writable —
+  neither of which the card click did (#1005). The flow id is read AFTER the
+  blank-flow navigation, never before it: the bootstrap parks the page on a
+  placeholder flow Langflow deletes as soon as the modal navigates elsewhere
+  (#490/#681).
+- **Pre-existing flake, NOT introduced by #1340: `openAddMcpServerModal`.** This
+  test fails roughly 1 run in 3 locally at
+  `helpers/mcp/open-add-mcp-server-modal.ts:10` (`mcp-server-dropdown`,
+  `locator.click: Timeout 3000ms exceeded`) — the #1335 signature, in a second
+  file. Confirmed by a control run of the unmodified spec: same 2/3, same step.
+  Raising that budget to 30 s locally did not help under `--workers=2+`, where
+  the dropdown simply never becomes clickable; a 4-worker burst of this spec
+  fails 3/4 there, always before the re-open. That budget belongs to #1335 and is
+  deliberately untouched here — it is a shared MCP helper with other callers.
 
 - **Why `npx` and not `uvx` for the servers that must really start.** Before
   #1091 tests 1/2/5 registered `uvx mcp-server-fetch` / `mcp-server-time`.
