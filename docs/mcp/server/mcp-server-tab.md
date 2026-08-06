@@ -50,7 +50,8 @@ longer be added and have its tools discovered — a core MCP-server UI regressio
 ## Step by step *(required)*
 
 1. Bootstrap; create a blank flow and drag an **API Request** component onto the
-   canvas (gives the flow a tool to expose), then exit the flow.
+   canvas (`data_sourceAPI Request`, via `dragComponentFromSidebar` — the drag is
+   repaired, see Notes), giving the flow a tool to expose; then exit the flow.
 2. Open the **MCP Server tab** (`mcp-btn`); assert `mcp-server-title` and the
    "Flows/Tools" header are visible.
 3. Open **Edit Tools** (`button_open_actions`) → the "MCP Server Tools" modal.
@@ -118,8 +119,9 @@ longer be added and have its tools discovered — a core MCP-server UI regressio
   (`icon-copy`, API-key generation).
 - Add-MCP-server modal (`add-mcp-server-simple-button` / `mcp-server-dropdown` →
   `add-mcp-server-button`, `json-input`) via `helpers/mcp/open-add-mcp-server-modal.ts`.
-- `helpers/flows/add-component-from-sidebar.ts`
-  (`addComponentFromSidebarWithoutSearch`) — the repairing sidebar add.
+- `helpers/flows/add-component-from-sidebar.ts` — both repairing adds this spec
+  needs: `dragComponentFromSidebar` (step 1, drag) and
+  `addComponentFromSidebarWithoutSearch` (step 8, click on a tab with no search).
 - The `lf-starter_project` MCP starter (`add-component-button-lf-starter_project`).
 - API Request component (`data_sourceAPI Request`) — the tool exposed on the flow.
 - `helpers/other/await-bootstrap-test.ts`, `helpers/ui/adjust-screen-view.ts`.
@@ -173,3 +175,17 @@ longer be added and have its tools discovered — a core MCP-server UI regressio
   had painted — and in the no-servers case that locator never appears at all. It
   now waits for **either** entry point and, when neither arrives, fails naming
   the canvas node count so an empty canvas is never reported as a slow dropdown.
+- **The step-1 API Request add is repaired too, and it is a SECOND surface.**
+  Fixing the MCP-tab click left the spec at 4 of 5, and the one failure was not
+  the #1335 signature at all: the *drag* at the top of the test was swallowed,
+  and surfaced 30 s later as `waitForSelector: generic-node-title-arrangement`
+  timing out — naming the node that was never created rather than the gesture
+  that failed to create it, which is the same mis-attribution #1335 was filed
+  under, one surface over. Measured on nightly 1.12.0.dev18: **1 of 5** drags
+  swallowed while the repaired MCP-tab click was 5 of 5 clean. It now goes
+  through `dragComponentFromSidebar`, which re-issues the drag once. The gesture
+  is re-issued rather than swapped for a click: dragging out of the sidebar is an
+  interaction Langflow ships, and a spec that quietly stops exercising it stops
+  covering it. The comment this replaced ("use dragTo which is more reliable than
+  click on add-component-button") predates the #1304 repair — neither gesture is
+  reliable bare, and both are reliable repaired.

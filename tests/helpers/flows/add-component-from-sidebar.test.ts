@@ -116,6 +116,50 @@ test("the swallowed-click message reports the observed sidebar state", () => {
   assert.match(msg, /node count: 0 before, 0 after/);
 });
 
+test("a swallowed DRAG is reported as a drag, on its own measured evidence", () => {
+  // #1335, second half. Same product defect, different gesture — and the reader
+  // has to be sent to the right line. Naming the click would point at a "+"
+  // button the spec never touches.
+  const msg = swallowedAddMessage({
+    ...DETAIL,
+    gesture: "drag",
+    addButtonTestId: "data_sourceAPI Request",
+    searchTerm: "api request",
+  });
+
+  assert.match(msg, /drag add was swallowed/);
+  assert.match(msg, /dragTo\(\) from getByTestId\("data_sourceAPI Request"\)/);
+  assert.match(msg, /onto the canvas/);
+  // The click path's 4/20 was measured on the click surface; quoting it for a
+  // drag would attribute a number to a surface it was never taken on.
+  assert.match(msg, /1\/5 on nightly 1\.12\.0\.dev18/);
+  assert.doesNotMatch(msg, /4\/20/);
+  assert.doesNotMatch(msg, /The click\(s\) were accepted/);
+  // A drag has no "+" button to report on.
+  assert.doesNotMatch(msg, /"\+" button still visible/);
+  assert.match(msg, /sidebar entry still visible/);
+});
+
+test("the gesture defaults to click, so the pre-#1335 message is unchanged", () => {
+  // The 34 existing call sites never pass a gesture. If the default drifted, all
+  // of them would start reporting a drag they never performed.
+  const withoutGesture = swallowedAddMessage(DETAIL);
+  const explicitClick = swallowedAddMessage({ ...DETAIL, gesture: "click" });
+
+  assert.equal(withoutGesture, explicitClick);
+  assert.match(withoutGesture, /click add was swallowed/);
+  assert.match(withoutGesture, /4\/20/);
+});
+
+test("a swallowed drag stays unclassifiable as infra, like the click one", () => {
+  // #1262's rule reaches the new gesture too: a real add regression must stay
+  // eligible for @stable auto-removal.
+  assert.equal(
+    classifyInfraError(swallowedAddMessage({ ...DETAIL, gesture: "drag" })),
+    null,
+  );
+});
+
 test("a tab with no search box reports no term and no input, not an empty one", () => {
   // #1335: the MCP tab (`sidebar-nav-mcp`) adds entries straight from its list,
   // so there is no term to name and no input to read back. `search input: ""` is

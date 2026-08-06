@@ -1,5 +1,8 @@
 import { expect, test } from "../../../../fixtures/fixtures";
-import { addComponentFromSidebarWithoutSearch } from "../../../../helpers/flows/add-component-from-sidebar";
+import {
+  addComponentFromSidebarWithoutSearch,
+  dragComponentFromSidebar,
+} from "../../../../helpers/flows/add-component-from-sidebar";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-server-modal";
@@ -105,10 +108,18 @@ test(
       timeout: 30000,
     });
 
-    // Use dragTo which is more reliable than click on add-component-button
-    await page
-      .getByTestId("data_sourceAPI Request")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'));
+    // Repairing drag, not a bare one (#1335). Langflow swallows this drop too —
+    // measured 1 in 5 on nightly 1.12.0.dev18 — and the drop surfaced 30 s later
+    // as the `generic-node-title-arrangement` wait below timing out, naming the
+    // node that was never created instead of the gesture that failed to create
+    // it. The helper returns only once a node that was not there before is, so
+    // that wait is now a redundant-but-cheap post-condition rather than the
+    // place the failure lands.
+    await dragComponentFromSidebar(
+      page,
+      "api request",
+      "data_sourceAPI Request",
+    );
 
     await page.waitForSelector(
       '[data-testid="generic-node-title-arrangement"]',
