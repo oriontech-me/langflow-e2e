@@ -87,27 +87,42 @@ export function classifyAddOutcome(
 }
 
 type AddFailureDetail = {
-  searchTerm: string;
+  /** `null` when the sidebar tab has no search box — see #1335. */
+  searchTerm: string | null;
   addButtonTestId: string;
   beforeCount: number;
   afterCount: number;
   attempts: number;
   perAttemptMs: number;
   buttonStillVisible: boolean;
-  searchValue: string;
+  /** `null` when there was no search box to read. */
+  searchValue: string | null;
 };
 
 export function swallowedAddMessage(d: AddFailureDetail): string {
+  // The MCP tab (#1335) lists its entries without a search box, so there is no
+  // term to name and no input to report. Kept as two explicit clauses rather
+  // than an empty string: `sidebar search input: ""` is a real observation (the
+  // input was reset) and must not read the same as "there is no input".
+  const trigger =
+    d.searchTerm === null
+      ? `getByTestId("${d.addButtonTestId}") on a sidebar tab with no search box`
+      : `getByTestId("${d.addButtonTestId}") after filling the sidebar search ` +
+        `with "${d.searchTerm}"`;
+  const searchState =
+    d.searchValue === null
+      ? `sidebar search input: <none on this tab>`
+      : `sidebar search input: "${d.searchValue}"`;
+
   return (
     `the sidebar add was swallowed: no new node reached the canvas after ` +
     `${d.attempts} attempt(s) of ${d.perAttemptMs}ms each on ` +
-    `getByTestId("${d.addButtonTestId}") after filling the sidebar search with ` +
-    `"${d.searchTerm}". The click(s) were accepted by the DOM and the app never ` +
+    `${trigger}. The click(s) were accepted by the DOM and the app never ` +
     `registered the add (issue #1304 — measured 4/20 on nightly 1.12.0.dev17, ` +
     `the swallowed-click class of #420/#966 on the sidebar surface of #537). ` +
     `Observed: node count: ${d.beforeCount} before, ${d.afterCount} after; ` +
     `"+" button still visible: ${d.buttonStillVisible ? "yes" : "no"}; ` +
-    `sidebar search input: "${d.searchValue}". This is NOT a slow surface — a ` +
+    `${searchState}. This is NOT a slow surface — a ` +
     `longer wait cannot fix it — so treat a reproducible failure here as a real ` +
     `defect in adding components, not as a flake to re-run.`
   );
@@ -125,10 +140,12 @@ const nodeIds = async (page: Page): Promise<string[]> =>
 
 const issueAdd = async (
   page: Page,
-  searchTerm: string,
+  searchTerm: string | null,
   addButtonTestId: string,
 ) => {
-  await page.getByTestId("sidebar-search-input").fill(searchTerm);
+  if (searchTerm !== null) {
+    await page.getByTestId("sidebar-search-input").fill(searchTerm);
+  }
   await page.getByTestId(addButtonTestId).click();
 };
 
@@ -151,6 +168,36 @@ const waitForNewNode = async (
 export const addComponentFromSidebar = async (
   page: Page,
   searchTerm: string,
+  addButtonTestId: string,
+) => addWithRepair(page, searchTerm, addButtonTestId);
+
+/**
+ * Same swallowed-click repair, for a sidebar tab that has no search box — today
+ * the **MCP** tab (`sidebar-nav-mcp`), whose entries are added straight from the
+ * list by testid.
+ *
+ * Added for #1335, whose whole failure was this class on that tab: the
+ * `@stable` `mcp-server-tab` spec clicked `add-component-button-lf-starter_project`
+ * bare and then failed downstream on `mcp-server-dropdown`, a widget that hangs
+ * off the node the click never created. **Measured on nightly 1.12.0.dev17 with
+ * an instrumented probe: 4 of 8 first clicks produced no node within 12 s, and
+ * all 4 were repaired by an identical second click** — the same shape as #1304's
+ * 4/20 on the Components tab, and worse here. A landed add rendered its node in
+ * 91–108 ms, so the 12 s budget is only ever paid by a genuine drop.
+ *
+ * Split from `addComponentFromSidebar` rather than made an optional third
+ * argument: 23 call sites pass the search term positionally, and the two tabs
+ * differ in the post-failure evidence there is to report (there is no input to
+ * read back here), not merely in whether one line runs.
+ */
+export const addComponentFromSidebarWithoutSearch = async (
+  page: Page,
+  addButtonTestId: string,
+) => addWithRepair(page, null, addButtonTestId);
+
+const addWithRepair = async (
+  page: Page,
+  searchTerm: string | null,
   addButtonTestId: string,
 ) => {
   const before = await nodeIds(page);
@@ -182,10 +229,13 @@ export const addComponentFromSidebar = async (
         .getByTestId(addButtonTestId)
         .isVisible()
         .catch(() => false),
-      searchValue: await page
-        .getByTestId("sidebar-search-input")
-        .inputValue()
-        .catch(() => "<gone>"),
+      searchValue:
+        searchTerm === null
+          ? null
+          : await page
+              .getByTestId("sidebar-search-input")
+              .inputValue()
+              .catch(() => "<gone>"),
     }),
   );
 };

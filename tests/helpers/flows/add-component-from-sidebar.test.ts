@@ -116,6 +116,39 @@ test("the swallowed-click message reports the observed sidebar state", () => {
   assert.match(msg, /node count: 0 before, 0 after/);
 });
 
+test("a tab with no search box reports no term and no input, not an empty one", () => {
+  // #1335: the MCP tab (`sidebar-nav-mcp`) adds entries straight from its list,
+  // so there is no term to name and no input to read back. `search input: ""` is
+  // a real observation on the Components tab (the input was reset) and must not
+  // read the same as "this tab has no input" — otherwise the reader is told the
+  // search was cleared by a surface that never had one.
+  const msg = swallowedAddMessage({
+    ...DETAIL,
+    searchTerm: null,
+    searchValue: null,
+    addButtonTestId: "add-component-button-lf-starter_project",
+  });
+
+  assert.match(msg, /no search box/i);
+  assert.match(msg, /search input: <none on this tab>/);
+  assert.doesNotMatch(msg, /after filling the sidebar search/);
+  assert.doesNotMatch(msg, /search input: ""/);
+  // Still names the click and the budget — the two facts the message exists for.
+  assert.match(msg, /add-component-button-lf-starter_project/);
+  assert.match(msg, /2 attempt/);
+});
+
+test("the no-search message stays unclassifiable as infra, like the search one", () => {
+  // Same rule as below: a swallowed add on the MCP tab is a real add regression
+  // and must stay eligible for @stable auto-removal (#1262).
+  assert.equal(
+    classifyInfraError(
+      swallowedAddMessage({ ...DETAIL, searchTerm: null, searchValue: null }),
+    ),
+    null,
+  );
+});
+
 test("the swallowed-click message is NOT classifiable as an infra failure", () => {
   // Same rule as the page-entry barrier (#1262): claiming infra here would exempt
   // the failure from @stable auto-removal and hide a genuine add regression.
