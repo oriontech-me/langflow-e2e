@@ -54,7 +54,7 @@ Note the ref that matters is the **release line the nightly is cut from**, not `
 
 1. `setupBlankFlow(page)`.
 2. Open the `disclosure-models & agents` sidebar section; drag `models_and_agentsAgent` onto `//*[@id="react-flow-id"]` at two distinct positions (the proven pattern from `agent-component-regression.spec.ts` — no `add-component-button-agent` testid exists).
-3. Assert `.react-flow__node` count is `2`.
+3. Assert the running `.react-flow__node` count **after each drop** (`1`, then `2`), naming the drag in the failure message. Same reasoning as Case A's step 3: the sidebar interaction is fire-and-forget, and #1304 measured 4/20 swallowed ones on this nightly line. Asserting only the final `2` would report a swallowed first drag 15 s later without saying which of the two was lost.
 4. Same id assertions as step 5 above, for `textarea_str_system_prompt`.
 5. Same canvas-scoped duplicate sweep.
 
