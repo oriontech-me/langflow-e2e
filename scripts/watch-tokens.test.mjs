@@ -13,6 +13,7 @@ import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import realFs from "node:fs";
 import { collectOnce, parseAttribLines, parseProbeLines, poll, splitAttribRecords, summarize } from "./watch-tokens.mjs";
+import { evaluateWorkflowValue } from "./lib/gh-expression.mjs";
 
 const SCRIPT = fileURLToPath(new URL("./watch-tokens.mjs", import.meta.url));
 
@@ -1237,6 +1238,224 @@ test("a second --summarize against the same TOKENS_SUMMARY_OUT still parses", as
   assert.equal(block.total_tokens, 88);
 });
 
+// --- Structural guard: can the lane that runs the recorder SEE a trace? (#1300) ---
+//
+// This poller reads Langflow's own traces and nothing else. A lane that starts it
+// against an instance with `LANGFLOW_DEACTIVATE_TRACING=true` measures zero on
+// every run, forever, and reports that zero honestly — which is what made the
+// defect survive: all four token steps green, an artifact present, a message
+// explaining that there were no traces, and no way to tell "nothing was spent"
+// from "nothing could be seen". It ran that way on EVERY pr-validation run that
+// produced a token artifact between #1210 merging (2026-07-31 16:39 -03) and
+// #1300 — all 35 of them, 30855127426 through 31021593309, each carrying a
+// `token-attrib.jsonl` and no `token-probes.jsonl`.
+//
+// The guard EVALUATES the workflow's expression rather than matching its text.
+// The first version of it matched text, and the review of #1300 showed it passing
+// both mutations that reintroduce the bug — `needs_models == 'false'` and swapped
+// branch values — since both still contain the string `needs_models`. That is
+// #1226's rule playing out exactly as written, so the condition is now handed to
+// scripts/lib/gh-expression.mjs with a run described (`needs_models` true, no
+// impacted specs) and the ANSWER asserted.
+//
+// Two limits worth stating. This reads the workflow as text, so it cannot tell
+// which YAML job an occurrence belongs to — it therefore requires EVERY
+// occurrence in a poller lane to be defensible, which is stricter than the real
+// question and fails loudly rather than checking only the first one (the first-
+// occurrence bug the same review found). And it cannot judge whether
+// `needs_models` is the right verdict to gate on; that argument lives in
+// pr-validation.yml's own comment.
+const WORKFLOWS_DIR = path.join(REPO_ROOT, ".github/workflows");
+
+// The poller, not the summarizer: `--summarize` reads files a sibling job produced
+// and needs no tracing of its own. A commented-out invocation does not count —
+// `stripComments()` runs first, so a lane cannot keep its place on this list (or
+// lose it) by what its comments say.
+const STARTS_POLLER = /node scripts\/watch-tokens\.mjs(?!\s+--summarize)/;
+
+// Comment lines are removed before anything is matched. They are prose about the
+// setting, and the same review found that a comment merely SPELLING
+// `LANGFLOW_DEACTIVATE_TRACING: "false"` elsewhere in the file could both mask a
+// real value and fail a correct workflow. Only a `#` that begins a line is
+// stripped: a `#` inside an expression or a quoted string is not a comment, and
+// no value in these workflows carries a trailing one.
+const stripComments = (text) =>
+  text
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+
+// DERIVED, so a fourth lane inherits this check the day it is written — the
+// previous version claimed that while holding a hardcoded list of three.
+function pollerLanes() {
+  return realFs
+    .readdirSync(WORKFLOWS_DIR)
+    .filter((file) => file.endsWith(".yml"))
+    .map((file) => [file, stripComments(realFs.readFileSync(path.join(WORKFLOWS_DIR, file), "utf8"))])
+    .filter(([, text]) => STARTS_POLLER.test(text));
+}
+
+test("the lane list is derived, and still finds the lanes that run the recorder (#1300)", () => {
+  // Pins the derivation itself: a rename or a glob that quietly matches nothing
+  // would make every assertion below vacuous (#1012 — a check that ran over zero
+  // subjects is not a pass).
+  const names = pollerLanes().map(([name]) => name);
+  for (const expected of ["daily-stable.yml", "pr-validation.yml", "manual.yml"]) {
+    assert.ok(names.includes(expected), `${expected} starts the poller but was not derived: ${names.join(", ")}`);
+  }
+});
+
+// The runs that HAVE spend to measure. Three versions of this list have now been
+// refuted, and the third refutation is the one that decides the shape of this one.
+//
+//   v1 pinned a SPELLING ("the value mentions needs_models") — passed an inverted
+//      comparison and swapped branch values.
+//   v2 pinned ONE point, `needs_models=true, specs=""` — a state that cannot occur,
+//      since the e2e job is gated on `has_specs`. A mutation adding
+//      `&& !contains(specs, ' ')` (tracing off on any run with more than one spec,
+//      i.e. every real LLM run) passed it green.
+//   v3 pinned THREE reachable points. `&& !contains(specs, 'model-provider')`
+//      passed that — and so did `'playground'`, `'mcp'`, `'templates'`. Every one
+//      turns tracing off on a class of run with real spend.
+//
+// The lesson is that any fixed set of points leaves the rest of a two-variable
+// input space unconstrained, and a narrowing mutation only has to miss the points.
+// So this asserts a PROPERTY instead: when `needs_models` is true, the value is
+// `'false'` REGARDLESS of what `specs` contains. The corpus is drawn from the
+// repo's own spec paths, so a mutation keyed on any real directory or file name is
+// caught by construction rather than by having guessed that name in advance.
+const SPEC_ROOT = path.join(REPO_ROOT, "tests/tests-automations/regression");
+
+// One real path per directory, which is what makes the corpus track the repo: a
+// new product area is covered the day its folder exists.
+function specCorpus() {
+  const paths = [];
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = realFs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    const spec = entries.find((e) => e.isFile() && e.name.endsWith(".spec.ts"));
+    if (spec) paths.push(path.relative(REPO_ROOT, path.join(dir, spec.name)));
+    for (const entry of entries) if (entry.isDirectory()) walk(path.join(dir, entry.name));
+  };
+  walk(SPEC_ROOT);
+  return paths;
+}
+
+function multiSpecShapes(plain) {
+  assert.ok(plain.length >= 8, `only ${plain.length} non-observability spec paths — the multi-spec cases would be weak`);
+  return [
+    {
+      label: "a multi-spec LLM run (run 31018914069's own shape), no observability path",
+      context: {
+        "needs.detect-specs.outputs.needs_models": "true",
+        "needs.detect-specs.outputs.specs": `${plain.slice(0, 8).join(" ")} tests/collect-models.spec.ts`,
+      },
+    },
+    {
+      label: "an LLM run impacting every non-observability spec in the repo",
+      context: {
+        "needs.detect-specs.outputs.needs_models": "true",
+        "needs.detect-specs.outputs.specs": plain.join(" "),
+      },
+    },
+  ];
+}
+
+const LLM_RUNS = () => {
+  const corpus = specCorpus();
+  assert.ok(corpus.length > 10, `the spec corpus resolved to ${corpus.length} paths — the property would be vacuous`);
+  return [
+    // Every real spec path, alone. Kills a mutation keyed on any directory or file
+    // name that exists in this repo.
+    ...corpus.map((spec) => ({
+      label: `an LLM run impacting ${spec}`,
+      context: {
+        "needs.detect-specs.outputs.needs_models": "true",
+        "needs.detect-specs.outputs.specs": spec,
+      },
+    })),
+    // And the shapes a corpus of single paths cannot express. These EXCLUDE the
+    // observability paths, and that is load-bearing rather than tidy: the
+    // expression's first clause is `contains(specs, 'observability-monitoring')`,
+    // so a list containing one short-circuits to 'false' and the `needs_models`
+    // branch is never exercised. The first draft of this corpus built its
+    // multi-spec lists from the whole set, which includes
+    // core-functionality/observability-monitoring — and a `!contains(specs, ' ')`
+    // mutation passed green because every context with a space also had an
+    // observability path in it. A guard whose cases satisfy the OTHER clause is
+    // testing nothing on this one.
+    ...multiSpecShapes(corpus.filter((spec) => !spec.includes("observability-monitoring"))),
+  ];
+};
+
+test("every lane that starts the token recorder can actually see a trace (#1300)", () => {
+  const llmRuns = LLM_RUNS();
+  for (const [name, text] of pollerLanes()) {
+    const settings = [...text.matchAll(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/g)].map((m) => m[1].trim());
+    assert.ok(settings.length, `${name} starts the recorder but never sets LANGFLOW_DEACTIVATE_TRACING`);
+
+    for (const value of settings) {
+      // The run that HAS spend to measure. If tracing is off here, the recorder on
+      // this lane can only ever record the honest zero that hid #1300.
+      //
+      // An expression this cannot evaluate — a renamed `detect-specs` output, a
+      // YAML block scalar, an operator gh-expression.mjs does not model — fails
+      // here, deliberately. It looks like a false positive and is the fail-closed
+      // choice: the guard cannot know that a new output name carries the old
+      // meaning, and the alternative is skipping the lane, which is how a lane
+      // stops being checked without anyone deciding that (#1012). The thrown
+      // message names the exact reference or token to teach it.
+      for (const llmRun of llmRuns) {
+        let onAnLlmRun;
+        try {
+          onAnLlmRun = evaluateWorkflowValue(value, llmRun.context);
+        } catch (err) {
+          assert.fail(`${name}: cannot evaluate its tracing condition, so it is unverified — ${err.message}`);
+        }
+        assert.equal(
+          onAnLlmRun,
+          "false",
+          `${name} leaves tracing DEACTIVATED on ${llmRun.label}, a run that executes a ` +
+            `provider-dependent spec, so the token recorder it starts cannot see a trace: ${value}`,
+        );
+      }
+    }
+  }
+});
+
+// The other half of pr-validation's condition, asserted separately so a future
+// edit cannot buy the token recorder's visibility by dropping the reason the
+// condition existed first: the observability specs need traces to be emitted
+// whether or not they resolve a model, and #1300 widened that gate, it did not
+// replace it.
+test("pr-validation still enables tracing for the observability specs themselves", () => {
+  const value = stripComments(prValidation()).match(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/)[1];
+  const context = {
+    "needs.detect-specs.outputs.needs_models": "false",
+    "needs.detect-specs.outputs.specs": "tests/tests-automations/regression/core-functionality/observability-monitoring/x.spec.ts",
+  };
+  assert.equal(evaluateWorkflowValue(value, context), "false");
+});
+
+// The cheap path #1300 traded for, pinned so it cannot be lost silently: an
+// LLM-free PR still boots without tracing. The canary class is the documented
+// exception — decideProviderCoverage() sets needs_models=true for a canary run
+// (scripts/provider-dependent-specs.mjs), so a CI-only PR traces and records
+// another zero. That is a consequence of reusing the lane's own verdict, argued
+// in pr-validation.yml's comment, not an oversight.
+test("pr-validation keeps tracing off on an LLM-free run", () => {
+  const value = stripComments(prValidation()).match(/LANGFLOW_DEACTIVATE_TRACING:\s*(.+)/)[1];
+  const context = {
+    "needs.detect-specs.outputs.needs_models": "false",
+    "needs.detect-specs.outputs.specs": "tests/tests-automations/regression/ui-ux/x.spec.ts",
+  };
+  assert.equal(evaluateWorkflowValue(value, context), "true");
+});
+
 // --- Structural guard: is the daily workflow actually wired to this script? ---
 
 // The wedge cannot be reproduced on demand and neither can a real token spend, so
@@ -1588,4 +1807,116 @@ test("the block's unattributed bucket carries span_tokens beside its trace-autho
     .reduce((n, r) => n + r.total_tokens, 0);
   assert.equal(rowSum, block.unattributed.span_tokens);
   assert.equal(block.mismatch_traces, 1, "and the gap is already named");
+});
+
+// --- by_provider on the history line and in the step summary (#1300 gap 1) ---
+
+// Two providers plus the Azure deployment, so the rollup has something to roll up
+// and the one case a prefix rule gets wrong is present in every assertion below.
+const MULTI_PRICES = JSON.stringify({
+  "gpt-4o-mini": { provider: "openai", inputPerMillion: 0.15, outputPerMillion: 0.6 },
+  "claude-haiku-4-5": { provider: "anthropic", inputPerMillion: 1, outputPerMillion: 5 },
+  "gpt-5-mini": { provider: "azure", inputPerMillion: 0.25, outputPerMillion: 2 },
+});
+const MULTI_PROBE = JSON.stringify({
+  trace_id: "t7",
+  flow_id: "f7",
+  start_time: "2026-08-05T13:35:38Z",
+  status: "ok",
+  total_tokens: 600,
+  models: [
+    { model: "gpt-4o-mini", prompt_tokens: 100, completion_tokens: 100, total_tokens: 200, calls: 1 },
+    { model: "claude-haiku-4-5", prompt_tokens: 100, completion_tokens: 100, total_tokens: 200, calls: 1 },
+    { model: "gpt-5-mini", prompt_tokens: 100, completion_tokens: 100, total_tokens: 200, calls: 1 },
+  ],
+});
+
+test("the history line carries by_provider, so a per-provider figure needs no hand rollup (#1300)", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${MULTI_PROBE}\n`,
+    "prices.json": MULTI_PRICES,
+  });
+  await summarize({ env: { ...baseEnv, RUN_DATE: "2026-08-05" }, ...fs2, log: () => {} });
+  const line = JSON.parse(fs2.appended["reports/token-history.jsonl"].trim());
+  const providers = Object.fromEntries(line.by_provider.map((p) => [p.provider, p.total_tokens]));
+  assert.deepEqual(providers, { openai: 200, anthropic: 200, azure: 200 });
+  // #1183 answered this question by grouping model ids in an issue comment. The
+  // point of the field is that the answer is on the line.
+  assert.ok(
+    line.by_provider.every((p) => Array.isArray(p.models)),
+    "each bucket names the ids it is made of",
+  );
+});
+
+test("the tokens block sends NO provider rollup — the platform joins provider from price_key", async () => {
+  // Same reason the block carries no dollars (#1255 item 3): e2e_model_prices has
+  // provider as a column on each (price_key, since) row, so a second rollup here
+  // would be a second authority on one number.
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${MULTI_PROBE}\n`,
+    "prices.json": MULTI_PRICES,
+  });
+  const env = { ...baseEnv, RUN_DATE: "2026-08-05", TOKENS_SUMMARY_OUT: "tokens-block.json" };
+  await summarize({ env, ...fs2, log: () => {} });
+  const block = JSON.parse(fs2.written["tokens-block.json"]);
+  assert.ok(!("by_provider" in block));
+  assert.ok(
+    block.rows.every((r) => r.price_key),
+    "the join key is what the block sends instead",
+  );
+});
+
+test("the step summary renders the provider rollup ABOVE the model table", async () => {
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${MULTI_PROBE}\n`,
+    "prices.json": MULTI_PRICES,
+  });
+  await summarize({ env: { ...baseEnv, RUN_DATE: "2026-08-05" }, ...fs2, log: () => {} });
+  const md = fs2.written["summary.md"];
+  assert.match(md, /\| Provider \| Calls \| Tokens \| Estimated \|/);
+  assert.match(md, /\| `azure` \| 1 \| 200 \|/, "the Foundry deployment gets its own row");
+  assert.ok(
+    md.indexOf("| Provider |") < md.indexOf("| Model |"),
+    "coarse before fine: the provider question is the one being asked",
+  );
+});
+
+test("an unresolvable provider renders as unknown and names the ids that need a price row", async () => {
+  const probeWithNewModel = JSON.stringify({
+    trace_id: "t8",
+    flow_id: "f8",
+    start_time: "2026-08-05T13:35:38Z",
+    status: "ok",
+    total_tokens: 120,
+    models: [
+      { model: "gpt-4o-mini", prompt_tokens: 10, completion_tokens: 10, total_tokens: 20, calls: 1 },
+      { model: "brand-new-model", prompt_tokens: 50, completion_tokens: 50, total_tokens: 100, calls: 1 },
+    ],
+  });
+  const fs2 = fakeFs({
+    "all-tokens/token-probes-1.jsonl": `${probeWithNewModel}\n`,
+    "prices.json": MULTI_PRICES,
+  });
+  await summarize({ env: { ...baseEnv, RUN_DATE: "2026-08-05" }, ...fs2, log: () => {} });
+  const md = fs2.written["summary.md"];
+  assert.match(md, /\| _unknown_ \| 1 \| 100 \| n\/a \|/);
+  assert.match(md, /`brand-new-model`/, "an unknown bucket that names nothing is a dead end");
+  assert.doesNotMatch(md, /\| `openai` \| 1 \| 120 \|/, "and it is never folded into a neighbour");
+});
+
+test("an UNREADABLE price table says so, instead of telling a reader to add rows that exist", async () => {
+  // The two states share every symptom — nothing priced, no provider resolved —
+  // and the advice differs completely (#1300 review). `prices.json` is absent
+  // here, so readFile throws exactly as a corrupt table would.
+  const fs2 = fakeFs({ "all-tokens/token-probes-1.jsonl": `${PROBE_LINE}\n` });
+  assert.equal(await summarize({ env: baseEnv, ...fs2, log: () => {} }), 0);
+  const md = fs2.written["summary.md"];
+  assert.match(md, /price table could not be read/, "the provider note names the real cause");
+  assert.match(md, /NOTHING in this run is priced/, "and so does the FLOOR note");
+  assert.doesNotMatch(
+    md,
+    /Adding the row there/,
+    "the row may already be there — the table is what is broken",
+  );
+  assert.match(md, /`gpt-4o-mini`/, "the ids are still named");
 });

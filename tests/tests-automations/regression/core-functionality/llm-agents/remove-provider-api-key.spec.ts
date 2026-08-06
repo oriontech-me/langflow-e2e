@@ -14,14 +14,15 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 // `default_fields`, which the old payload lacked. Every step is a hard
 // assertion now.
 
-// Quarantined for #1235 — recurrent flake (dailies 2026-07-27, 2026-08-03): after
-// ticking the row's checkbox the header trash action stays disabled, so the click
-// retries for the full 20 s as `element is not enabled`. Same Global Variables
-// ag-grid surface as global-variable-edit.spec.ts:76. Lifting the quarantine and
-// restoring @stable is a deliverable of #1235.
-test.fixme(
+// Quarantine lifted (#1235). The recurrent flake (dailies 2026-07-27, 2026-08-03)
+// was not the Global Variables permission gate it was filed under: the deletion
+// already succeeded, and the spec then clicked the header button again through a
+// phantom confirmation step. See the fix at the deletion step below.
+test(
   "a provider credential variable can be removed through the Global Variables UI",
-  { tag: ["@release", "@workspace", "@regression", "@model-provider"] },
+  {
+    tag: ["@stable", "@release", "@workspace", "@regression", "@model-provider"],
+  },
   async ({ page, request }) => {
     const bearer = await getAuthToken(request);
     const uniqueName = `provider-key-${Date.now()}`;
@@ -59,14 +60,23 @@ test.fixme(
           .locator('[role="row"]', { hasText: uniqueName })
           .first();
         await rowContainer.locator('input[type="checkbox"], [role="checkbox"]').first().click();
-        await page.getByTestId("icon-Trash2").first().click();
 
-        const confirmButton = page
-          .getByRole("button", { name: /delete|confirm|yes/i })
-          .last();
-        if (await confirmButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await confirmButton.click();
-        }
+        // Selection enabling the header action is the only client-side observable
+        // that the row is actually interactive (#1235): the RBAC permission gate on
+        // release-1.12 keeps rows unselectable while it loads, and asserting it here
+        // fails with the real cause instead of a downstream 20 s click timeout.
+        const deleteButton = page.getByTestId("delete-row-button").first();
+        await expect(deleteButton).toBeEnabled({ timeout: 20000 });
+        await deleteButton.click();
+
+        // No confirmation step: the action deletes straight away (measured 8/8 —
+        // `[role="dialog"]` count 0, GET by id already 404). The spec used to run
+        // an optional confirm whose page-wide /delete|confirm|yes/i locator matched
+        // the header button itself, disabled once the row was gone, burning the
+        // full 20 s timeout in ~75 % of runs — the flake filed as #1235.
+        await expect(
+          page.locator('[role="dialog"], [role="alertdialog"]'),
+        ).toHaveCount(0);
 
         await expect(page.getByText(uniqueName, { exact: true })).toBeHidden({
           timeout: 10000,

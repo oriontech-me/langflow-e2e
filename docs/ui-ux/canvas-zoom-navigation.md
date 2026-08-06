@@ -137,7 +137,7 @@ containment, so a viewport-size change does not redden the spec.
 
 ## External dependencies
 
-- `src/frontend/src/CustomNodes/../CanvasControls` — `main_canvas_controls`,
+- `src/frontend/src/components/core/canvasControlsComponent/` — `main_canvas_controls`,
   `canvas_controls_dropdown`, `zoom_in`, `zoom_out`, `reset_zoom`, `fit_view`
   testids and the collapsed-by-default dropdown.
 - React Flow (`@xyflow/react`) viewport: the `.react-flow__viewport` transform,

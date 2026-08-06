@@ -131,7 +131,7 @@ current flaky cluster (#773).
 
 ## External dependencies *(required)*
 
-- `src/frontend/src/.../mcpServerTab` (or equivalent) — the MCP sidebar,
+- `src/frontend/src/pages/MainPage/pages/homePage/components/McpServerTab.tsx` (or equivalent) — the MCP sidebar,
   `sidebar-add-mcp-server-button`, `http-tab`, `http-name-input`,
   `http-url-input`, `add-mcp-server-button`.
 - `POST/GET/DELETE /api/v2/mcp/servers` — MCP server registration + persistence.

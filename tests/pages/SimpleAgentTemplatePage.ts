@@ -10,7 +10,7 @@ import {
   type AgentCredentialProbe,
 } from "../helpers/flows/agent-credential-settle";
 import {
-  providerConfigMap,
+  langflowProviderName,
   providerSetupMap,
   hasProviderEnvKeys,
   missingProviderEnvKeys,
@@ -44,12 +44,15 @@ export interface LoadSimpleAgentOptions {
  *    nothing in flight at attach time — so it expires first. Measured locally: it
  *    resolved at ~0.7 s on a settle that completed at 1.5 s, having tracked no
  *    request at all. Under load it degenerates into a 700 ms sleep.
- *  - **Waiting on the rebind POST itself** (armable in `load()` before the setup
+ *  - **Waiting on the refresh POST itself** (armable in `load()` before the setup
  *    call, so no change to the setup helpers). The disqualifier is that the same
- *    POST has ALREADY fired once when the Agent node mounted — the `api_key`
- *    prefill — so a single `waitForResponse` resolves on the prefill, not on the
- *    rebind, and telling them apart means inspecting bodies for a value this guard
- *    can read directly from the flow.
+ *    POST has ALREADY fired once when the Agent node mounted, so a single
+ *    `waitForResponse` resolves on that one rather than on the selection, and
+ *    telling them apart means inspecting bodies for a value this guard reads
+ *    directly from the flow. (Pre-#1274 this rationale named the `api_key` prefill
+ *    as what the first POST carried; #14311 removed that prefill, but the first
+ *    POST still fires at mount — the mount-time DEFAULT model is what it applies —
+ *    so the disqualifier stands on the same mechanism.)
  */
 const CREDENTIAL_SETTLE_TIMEOUT_MS = 20_000;
 
@@ -94,37 +97,34 @@ export class SimpleAgentTemplatePage extends BasePage {
     await adjustScreenView(this.page);
     await providerSetupMap[provider](this.page, model);
 
-    // #751: on the 1.11+ unified model selector the Agent node prefills its
-    // `api_key` with the DEFAULT credential (ANTHROPIC_API_KEY) when it MOUNTS —
-    // not when the dropdown opens; picking the target provider's model rebinds it
-    // to that provider's credential ASYNCHRONOUSLY. A caller that opens the Playground
-    // and sends a message before the rebind settles builds the selected model
-    // with the wrong provider's key — surfacing as
-    // "Flow build failed: Incorrect API key provided" and a `div-chat-message`
-    // that never renders (the daily-#744 signature). Block until the PERSISTED
-    // flow shows BOTH that credential and the requested model, so every caller
-    // starts settled — the credential alone does not prove it (#1072, see the
-    // classifier's note on the anthropic default).
-    // A KEYLESS provider expects an EMPTY `api_key`, and that is a real assertion
-    // rather than a vacuous one (#1187). The Agent node prefills `api_key` with the
-    // default credential (`ANTHROPIC_API_KEY`) when it MOUNTS — so on an instance
-    // where Anthropic is also configured, the node starts out carrying a credential
-    // and selecting an Ollama model must CLEAR it. Measured on 1.12.0.dev10 after
-    // selecting `Ollama-llama3.1:latest`: `api_key.value === ""` with
-    // `model.value[0] = { name: "llama3.1:latest", provider: "Ollama" }`. So `""` is
-    // the settled state to wait for.
-    // But what carries the proof for a keyless provider is the MODEL axis, and the
-    // caller has to supply it. `credentialOf()` returns `""` for an absent field
-    // too, and on the lane this exists for — every hosted key dead, so nothing
-    // prefills `api_key` at mount — `""` is ALSO the state before anything was
-    // selected. With `model` passed the guard still blocks on a real transition,
-    // and the routed path always pins one (`OLLAMA_TEST_MODEL` is mandatory in
-    // `resolveTestTargets`); called for a keyless provider WITHOUT a model it
-    // would settle on the first read and prove nothing.
-    const config = providerConfigMap[provider];
+    // #751: the Agent node mounts on the model selector's DEFAULT model — measured
+    // on 1.12.0.dev16 as `{ name: "claude-opus-5", provider: "Anthropic" }` — and
+    // only flips to the requested model once the editor's debounced autosave
+    // `PATCH /api/v1/flows/{id}` carries the pick. A caller that opens the Playground
+    // and sends a message in between runs the DEFAULT provider's model with that
+    // provider's key, surfacing as "Flow build failed: Incorrect API key provided"
+    // and a `div-chat-message` that never renders (the daily-#744 signature). Block
+    // until the PERSISTED flow shows the requested provider, so every caller starts
+    // settled.
+    //
+    // The axis is the PROVIDER of the persisted model, not `api_key` (#1274). Upstream
+    // #14311 stopped writing that field — it reads `""` from mount onward on every
+    // 1.12 build — so waiting on it could only ever time out, which is what failed 13
+    // @stable specs on the 2026-08-05 daily. The provider is not a weaker substitute:
+    // with `api_key` empty the runtime resolves the key FROM it
+    // (`get_api_key_for_provider`), so it is the input that decides which credential
+    // the run uses.
+    //
+    // This also fixes what the credential axis could not express for a KEYLESS
+    // provider (#1187): `""` was both the settled state and the pre-selection state,
+    // so the guard leaned on the caller passing a model. `provider: "Ollama"` is a
+    // positive assertion, which is why no `credential === "base-url"` special case
+    // survives here — and why the three callers that pin no model
+    // (`model-provider-model-toggle`, `general-bugs-agent-images-playground`,
+    // `agent-model-connection-isolation`) still block on a real transition.
     await this.waitForAgentCredentialSettled(
       flowId,
-      config.credential === "base-url" ? "" : config.envKeys[0],
+      langflowProviderName(provider),
       { provider, model },
     );
 
@@ -132,16 +132,18 @@ export class SimpleAgentTemplatePage extends BasePage {
   }
 
   /**
-   * Block until the persisted flow shows the Agent bound to `expectedCredential`
-   * AND carrying the requested model. #751, reworked in #1072.
+   * Block until the persisted flow shows the Agent carrying `expectedProvider`
+   * AND the requested model. #751, reworked in #1072, re-pointed in #1274.
    *
    * What #1072 changed, and what it deliberately did not:
    *
-   *  - **The check is no longer credential-only.** For `provider: "anthropic"` the
-   *    expected credential IS the selector's default auto-binding, so the old
-   *    check returned "settled" before the model selection had been applied at
-   *    all — `load()`'s contract did not hold for that provider. See
-   *    `classifyCredentialSettle`.
+   *  - **The check is not credential-based at all since #1274.** #1072 widened a
+   *    credential-only check to credential+model, because for `provider:
+   *    "anthropic"` the expected credential WAS the selector's default binding, so
+   *    the old check settled before the selection applied. #14311 then removed the
+   *    binding entirely, so the axis is now the PROVIDER of the persisted model.
+   *    See `classifyCredentialSettle` — including the one combination (anthropic +
+   *    no pinned model) that remains unguarded and is warned about below.
    *  - **The failure is now self-describing** rather than a bare `toBe` mismatch
    *    that reads as a provider-wiring bug (which is how it was triaged twice).
    *  - **The budget is unchanged.** The recorded flakes are load-induced and the
@@ -149,19 +151,22 @@ export class SimpleAgentTemplatePage extends BasePage {
    *    wait mechanisms measured and rejected here.
    *
    * Why the PERSISTED flow and not a UI signal, which directive (c) of #1072 asks
-   * about: the model widget (`model_model`) does settle earlier — it renders from
-   * the in-memory store, and `modelInputComponent.spec.ts` already reads it — but
-   * it only covers the axis that is not the risk. The risk #751 exists for is the
-   * credential, and that has no non-modal surface: on the running nightly the
-   * Agent's `api_key` is `show: true, advanced: true` (check it with `GET
-   * /api/v1/all` → `.models_and_agents.Agent.template.api_key`), so reading it off the canvas
-   * means opening the node's advanced-settings modal — an extra interaction on the
-   * very canvas whose state is being measured. One persisted read covers both axes
-   * and is the only observable that PROVES the rebind instead of proxying it.
+   * about: because the RUN builds the persisted flow, and the widget and the
+   * database disagreed on every failing run this guard was added for. The widget
+   * (`model_model`) settles earlier — it renders from the in-memory store, and
+   * `modelInputComponent.spec.ts` reads it — so gating on it would return before
+   * the autosave landed, which is the race itself.
+   *
+   * Pre-#1274 this paragraph argued it differently: that the risk was the
+   * credential, which had no non-modal surface (`api_key` is `show: true,
+   * advanced: true`). That reasoning is void — #14311 removed the field, and the
+   * widget does show the provider-qualified pick. The conclusion is unchanged, but
+   * it now rests on persistence, not on field visibility; a reader sent hunting
+   * `api_key` on the canvas would be chasing nothing.
    */
   private async waitForAgentCredentialSettled(
     flowId: string,
-    expectedCredential: string,
+    expectedProvider: string,
     expected: { provider: Provider; model?: string },
   ): Promise<void> {
     const startedAt = Date.now();
@@ -218,10 +223,25 @@ export class SimpleAgentTemplatePage extends BasePage {
           probe = readAgentCredentialProbe(body);
           lastReadError = undefined;
           if (
-            classifyCredentialSettle(probe, expectedCredential, expected.model) ===
+            classifyCredentialSettle(probe, expectedProvider, expected.model) ===
             "settled"
           ) {
             const elapsedMs = Date.now() - startedAt;
+            // Settling on the FIRST read with no pinned model means both available
+            // checks were already true at mount, so nothing was proved — the
+            // inherited hole documented in `classifyCredentialSettle`. Reachable
+            // when the expected provider is the selector's default (anthropic). Said
+            // out loud rather than left silent: a green run is not evidence the
+            // guard did anything here (#1012).
+            if (reads === 1 && !expected.model) {
+              console.warn(
+                `⚠️  agent credential guard: settled on the FIRST read of flow ` +
+                  `${flowId} with no pinned model, so no transition was observed — ` +
+                  `for ${expected.provider} the mount-time default may already ` +
+                  `satisfy it. This load is UNGUARDED; pin a model to make it a ` +
+                  `real check (#1274).`,
+              );
+            }
             if (elapsedMs > CREDENTIAL_SETTLE_SLOW_MS) {
               console.warn(
                 `⚠️  agent credential settled slowly: ${(elapsedMs / 1000).toFixed(1)}s ` +
@@ -257,14 +277,14 @@ export class SimpleAgentTemplatePage extends BasePage {
       formatCredentialSettleFailure({
         flowId,
         provider: expected.provider,
-        expectedCredential,
+        expectedProvider,
         expectedModel: expected.model,
         probe,
         // A binding nobody managed to read is UNKNOWN, not absent: collapsing the
         // two would make the guard assert "this flow has no Agent node" about a
         // flow it never fetched — the shape of every read on daily 30444299314.
         verdict: everRead
-          ? classifyCredentialSettle(probe, expectedCredential, expected.model)
+          ? classifyCredentialSettle(probe, expectedProvider, expected.model)
           : "read-failed",
         elapsedMs: Date.now() - startedAt,
         reads,

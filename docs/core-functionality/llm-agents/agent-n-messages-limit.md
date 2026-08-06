@@ -159,7 +159,7 @@ Shared setup per test (all data is per-run unique):
 
 ## External dependencies *(required)*
 
-- `src/lfx/components/models_and_agents/memory.py` — the Message History
+- `src/lfx/src/lfx/components/models_and_agents/memory.py` — the Message History
   (`Memory`) component: `retrieve_messages` applies `limit=n_messages` and the
   flow-scoped retrieval this spec depends on; the Agent's memory resolves
   through the same helper.

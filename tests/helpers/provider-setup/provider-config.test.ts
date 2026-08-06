@@ -22,6 +22,7 @@ import * as path from "path";
 import {
   keyedProviderNames,
   keyedProviders,
+  langflowProviderName,
   providerConfigMap,
   type Provider,
 } from "./provider-config";
@@ -93,4 +94,55 @@ test("the key-subject consumers iterate keyedProviders, never the full map", () 
       `${path.basename(file)} iterates providerConfigMap directly — use keyedProviders (#1187)`,
     );
   }
+});
+
+// ─── langflowProviderName (#1274) ────────────────────────────────────────────
+//
+// This one line decides the string the #751 guard compares against on every
+// `SimpleAgentTemplatePage.load()`, i.e. on 29 spec files. Review found it had ZERO
+// coverage: replacing the body with `return providerTestId` — which yields
+// `"provider-item-OpenAI"`, a string the product never persists — passed all 436
+// unit tests, while making the guard wait its full 20 s and hard-fail for every
+// dependent spec. The values below are not conventions; they were verified three
+// ways on 1.12.0.dev16: `GET /api/v1/models/providers`, the upstream constants in
+// `lfx/components/agentics/constants.py`, and the frontend's
+// `data-testid={`provider-item-${provider.provider}`}` template.
+test("langflowProviderName returns the name Langflow itself persists", () => {
+  assert.equal(langflowProviderName("openai"), "OpenAI");
+  assert.equal(langflowProviderName("anthropic"), "Anthropic");
+  assert.equal(langflowProviderName("google"), "Google Generative AI");
+  assert.equal(langflowProviderName("ollama"), "Ollama");
+});
+
+test("langflowProviderName never returns the testid prefix", () => {
+  // The mutation that survived: the raw testid is a plausible-looking string that
+  // is wrong everywhere it matters.
+  for (const provider of Object.keys(providerConfigMap) as Provider[]) {
+    const name = langflowProviderName(provider);
+    assert.doesNotMatch(
+      name,
+      /^provider-item-/,
+      `${provider}: the display name must have the testid prefix stripped`,
+    );
+    assert.ok(name.length > 0, `${provider}: empty display name`);
+    assert.equal(
+      providerConfigMap[provider].providerTestId,
+      `provider-item-${name}`,
+      `${provider}: the testid must remain derivable from the display name`,
+    );
+  }
+});
+
+test("langflowProviderName fails loudly if the testid convention breaks", () => {
+  // The throw exists so that an upstream rename fails for every provider at once,
+  // with a message naming the fix — rather than silently yielding a wrong string
+  // that reads as a 20 s guard timeout in 29 specs.
+  const original = providerConfigMap.openai.providerTestId;
+  try {
+    (providerConfigMap.openai as { providerTestId: string }).providerTestId = "OpenAI";
+    assert.throws(() => langflowProviderName("openai"), /does not start with/);
+  } finally {
+    (providerConfigMap.openai as { providerTestId: string }).providerTestId = original;
+  }
+  assert.equal(langflowProviderName("openai"), "OpenAI", "the guard must not leak state");
 });

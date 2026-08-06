@@ -20,6 +20,10 @@ else
 fi
 
 echo "Starting Langflow on port ${PORT}..."
+# LANGFLOW_DEACTIVATE_TRACING=true below is the same deliberate decision the Docker
+# start script carries: local spend is out of scope for reports/token-history.jsonl,
+# because a trace nobody can attribute to a key is not a measurement (#1300, #1183).
+# Reasoning in reports/README.md — update it if this flag ever changes.
 LANGFLOW_AUTO_LOGIN=true \
 LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
 LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \

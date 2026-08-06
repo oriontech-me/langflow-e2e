@@ -103,7 +103,7 @@ Kept separate from the suite because it interrupts the execution state.
 - `src/frontend/src/components/core/playgroundComponent/` — main Playground component; changes to `input-chat-playground`, `button-send`, `div-chat-message`, or `playground-close-button` break this spec
 - `src/frontend/src/components/core/flowToolbarComponent/` — `playground-btn-flow-io` button that opens the Playground from the editor
 - `src/frontend/src/CustomNodes/GenericNode/components/NodeStatus/index.tsx` — renders `node_duration_agent` on the canvas after execution
-- `src/backend/base/langflow/components/agents/` — Agent execution logic; changes to streaming or duration field generation affect multiple tests
+- `src/lfx/src/lfx/components/models_and_agents/` — Agent execution logic; changes to streaming or duration field generation affect multiple tests
 
 ---
 

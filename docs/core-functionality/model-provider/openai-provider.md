@@ -152,9 +152,9 @@ the test ran clean at `--retries=0`.
 - `src/frontend/src/pages/SettingsPage/` (Model Providers page) — renders
   `provider-item-OpenAI`, `provider-variable-input-OPENAI_API_KEY`, and the
   Save/Replace button; a rename breaks Test 1.
-- `src/backend/base/langflow/api/.../variables` + provider-config storage — the
+- `src/backend/base/langflow/api/v1/variable.py` + provider-config storage — the
   global `OPENAI_API_KEY` provider variable the key is saved into.
-- `src/backend/base/langflow/components/agents/` — Agent execution with the
+- `src/lfx/src/lfx/components/models_and_agents/` — Agent execution with the
   selected GPT model (Test 2).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O used
   by Test 2.

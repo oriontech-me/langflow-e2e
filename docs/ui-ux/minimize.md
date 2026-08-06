@@ -91,7 +91,7 @@ reuses the node, the menu helper and the persisted-state reader already set up.
 
 ## External dependencies
 
-- `src/frontend/src/CustomNodes/GenericNode/components/NodeToolbarComponent` —
+- `src/frontend/src/pages/FlowPage/components/nodeToolbarComponent` —
   `icon-MoreHorizontal`, `minimize-button-modal`, `expand-button-modal`.
 - `GET /api/v1/all` — `minimized` defaults per component (Chat Output `true`,
   Prompt Template `false`).

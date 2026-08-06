@@ -143,7 +143,7 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   `provider-item-Google Generative AI`, `provider-variable-input-GOOGLE_API_KEY`,
   the Save/Replace button; a rename breaks Test 1.
 - Provider-config storage — the global `GOOGLE_API_KEY` provider variable.
-- `src/backend/base/langflow/components/agents/` — Agent execution with the
+- `src/lfx/src/lfx/components/models_and_agents/` — Agent execution with the
   selected Gemini model (Test 2).
 - `src/frontend/src/components/core/playgroundComponent/` — Playground I/O.
 - Google Generative AI API — Test 1 validates the key live; Test 2 makes a real

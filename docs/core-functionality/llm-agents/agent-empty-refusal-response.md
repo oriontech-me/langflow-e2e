@@ -156,7 +156,7 @@ The spec generates **2 tests per active model** via `resolveTestTargets()` (defa
 
 ## External dependencies *(required)*
 
-- `src/backend/base/langflow/components/agents/` — Agent execution and its
+- `src/lfx/src/lfx/components/models_and_agents/` — Agent execution and its
   handling of empty / refusal model output; a regression here (e.g. a `NoneType`
   on empty content) breaks this spec.
 - `src/frontend/src/CustomNodes/GenericNode/` — renders the Agent's

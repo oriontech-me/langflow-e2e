@@ -139,6 +139,14 @@ configured providers show a **"N models"** suffix in their list item and a
    `default_fields: []` — the old spec 422'd and "passed"), then delete it
    through the Settings → Global Variables UI and assert the row is gone. No
    silent early-returns: every intermediate element is a hard assertion.
+   **There is no confirmation dialog for this action** — ticking the row and
+   hitting the header trash deletes immediately (`GET` by id → `404`, row out of
+   the DOM). Confirming that is why the spec asserts `delete-row-button` is
+   *enabled* before clicking it (the only client-side observable that the
+   release-1.12 RBAC gate has opened) and scopes its optional-confirmation branch
+   to a real `[role="dialog"]`: matched page-wide, `/delete|confirm|yes/i`
+   resolves to the header button itself, disabled once the row is gone, and
+   clicking it burned the full 20 s timeout in ~75 % of runs (#1235).
 2. *API removal* — POST (with `default_fields`), DELETE → 200/204, GET-by-id
    → 404/422, list no longer contains it (hard-fail on non-2xx create).
 
@@ -147,12 +155,46 @@ sidebar entry to the canonical **Language Model** component:
 1. *Model selector renders* — blank flow → add
    `add-component-button-language-model` → assert node + `model_model`
    visible.
-2. *Dropdown opens with model options* — click `model_model` → assert ≥ 1
-   `*-option` entries render.
-3. *Dropdown lists models from multiple providers* — assert options from more
-   than one provider are present (the unified catalog behavior).
+2. *Dropdown opens with model options* — click `model_model` → assert the first
+   `*-option` is visible **and** that more than one renders (the unified
+   catalog behavior; a floor, never an exact count).
+3. *Dropdown exposes "Manage Model Providers"* — click `model_model` → assert
+   `manage-model-providers` is visible, i.e. the catalog dropdown still offers
+   the route into provider configuration.
 4. *Trigger shows the selected model* — assert `model_model` text is a
-   non-empty model name (catalog default, e.g. `gemini-3.5-flash`).
+   non-empty model name and is NOT a "Select a model" placeholder (the catalog
+   pre-selects a default, key-independent).
+
+> **Flake verdict & attributed sidebar barrier (issue #1265).** Test 1 flaked on
+> the 2026-07-15 and 2026-08-04 dailies with the same signature
+> (`TimeoutError: locator.waitFor: Timeout 30000ms exceeded.`) and was
+> quarantined at triage. Root cause on both days is the **run environment, not
+> this spec and not the model selector** — the wait that timed out is the
+> component sidebar's `sidebar-search-input`, reached by all four tests through
+> the shared `addLanguageModelNode` entry point, before any model selector is
+> touched. Evidence: on 2026-08-04 (run 30901311395, shard 2) the failing
+> attempt ran 10:45:07→10:49:55 across two measured backend outages (76 s and
+> 92 s of a 26.8 % down-share), gunicorn logged `WORKER TIMEOUT (pid:37)` +
+> SIGKILL at 10:46:30, and the attempt took **287 s** against **5.8–10.4 s** for
+> its own file-siblings once the backend recovered; the whole shard reported the
+> same shape (`apiRequestContext.post/get: Timeout` on localhost). On 2026-07-15
+> the attempt took 45 s and the retry 7 s on an unsharded run with 15 hard
+> failures / 29 flakes across every area. So `@stable` was restored **with no
+> timeout raised and no assertion weakened** — the 30 s budget is unchanged, and
+> the local burst on 1.12.0.dev17 measures the cold sidebar open well inside it.
+> What did change is **attribution**: the wait now goes through
+> `waitForAttributedSelector(…, { surface: "component-sidebar" })`
+> (`tests/helpers/other/page-entry-barrier.ts`, the #1262 mechanism), so a
+> timeout probes `/api/v1/version` and says whether Langflow was reachable —
+> carrying `[backend-unreachable]` when it was not. `locator.waitFor: Timeout`
+> can never be added to `scripts/lib/infra-signatures.ts` (a real UI regression
+> emits it too), which is why the bare message is unclassifiable by
+> construction; the attributed one embeds the probe's own transport error, so a
+> wedge already matches the existing `api-request-timeout` signature while a
+> healthy probe stays unclassified — both pinned in
+> `tests/helpers/other/page-entry-barrier.test.ts` against the real classifier.
+> The residual limitation is stated in that helper's header: the probe runs
+> after the budget is spent, so a wedge shorter than the wait reads healthy.
 
 **`language-model-regression.spec.ts`**
 1. *OpenAI answers* (skip without `OPENAI_API_KEY`) — Basic Prompting +
@@ -211,9 +253,9 @@ accepted / fake rejected), remove key — are each pinned by at least one test.
 - `src/frontend/src/pages/SettingsPage/` — Model Providers page
   (`provider-list`, `provider-item-*`, `provider-variable-input-*`,
   `model-provider-selection`).
-- `src/backend/base/langflow/api/v1/variables.py` — variables CRUD (the
+- `src/backend/base/langflow/api/v1/variable.py` — variables CRUD (the
   `default_fields` requirement; key storage behind providers).
-- `src/lfx/base/models/unified_models/credentials.py` — key validation on
+- `src/lfx/src/lfx/base/models/unified_models/credentials.py` — key validation on
   Save (real 1-token inference per provider).
 - `src/frontend/src/components/` model input — `model_model` dropdown and
   `<model>-option` entries.

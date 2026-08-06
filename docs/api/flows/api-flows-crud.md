@@ -107,4 +107,4 @@ The spec runs **9 independent tests** against `/api/v1/flows/` via Playwright's 
 
 - `src/backend/base/langflow/api/v1/flows.py` — router that exposes `POST/GET/PATCH/DELETE /api/v1/flows/`; any signature, status code, or response shape change here directly affects the spec.
 - `src/backend/base/langflow/services/database/models/flow/model.py` — flow schema (name, description, data, is_component); renaming or removing a field breaks the POST payload and the PATCH/GET assertions.
-- `src/backend/base/langflow/api/utils.py` — shared API helpers used by the flows router (validation, current-user resolution); changes here can shift 422 vs 400 boundaries.
+- `src/backend/base/langflow/api/utils/` — shared API helpers used by the flows router (validation, current-user resolution); changes here can shift 422 vs 400 boundaries.

@@ -235,7 +235,7 @@ CLI usage:
 
 ```bash
 # Map changed paths to spec files (default output: file paths)
-npm run impacted -- src/backend/base/langflow/components/inputs/webhook.py
+npm run impacted -- src/lfx/src/lfx/components/input_output/webhook.py
 
 # Read paths from stdin (e.g. piped from `git diff --name-only`)
 git diff --name-only main..HEAD | npm run impacted -- --stdin

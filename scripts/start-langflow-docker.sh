@@ -60,6 +60,14 @@ esac
 # Remove any previous container
 docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
 
+# LANGFLOW_DEACTIVATE_TRACING=true below is a DECISION, not an oversight: a local
+# instance writes no traces, so the token recorder (scripts/watch-tokens.mjs) cannot
+# see developer spend at all. Local spend is out of scope for
+# reports/token-history.jsonl — flipping this would produce traces nobody can
+# attribute, because the CI secret and a developer's .env share one account balance
+# and the key separation that would tell them apart is unimplemented (#1300, #1183).
+# The consequence: that file is CI spend and is never total account spend. The
+# reasoning is in reports/README.md; do not change this flag without updating it.
 docker run -d \
   --name "${CONTAINER_NAME}" \
   -p "${PORT}:7860" \

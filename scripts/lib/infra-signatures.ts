@@ -42,7 +42,37 @@
  *
  * This module is pure and dependency-free so both the auto-removal script and
  * its unit tests can import it without touching disk.
+ *
+ * WHERE THE PATTERNS LIVE, AND WHY NOT HERE (#1310)
+ *
+ * The list itself is `./infra-signature-patterns.json`; this module only compiles
+ * and documents it. The reason is a language boundary, not a style preference: the
+ * exemption is now consulted by the *triage* path too, and both places that need
+ * it there (`append-weekly-history.mjs`, the triage dataset builder) are ESM
+ * `.mjs`, while this module is compiled to CommonJS. On Node 20 a CJS module
+ * cannot `require()` an ESM one and this file cannot import a `.mjs`, so no
+ * single *code* module can serve both. JSON can: CommonJS requires it
+ * (`resolveJsonModule`) and ESM reads it (`infra-signatures.mjs`).
+ *
+ * Duplicating the patterns into a second module was rejected: this repo has
+ * twice had to remove exactly that after it drifted (#1043 `providerSkipReasons`,
+ * #1184 `resolveTestTargets`, by then five variants). A pattern that exists in
+ * one place cannot disagree with itself.
+ *
+ * Adding a pattern therefore means editing the JSON — and still means adding a
+ * case to `scripts/remove-stable-from-failures.test.ts`, per the bar above.
+ *
+ * The data file is deliberately NOT named `infra-signatures.json`. CommonJS
+ * resolves an extensionless `require("./lib/infra-signatures")` — which is how
+ * `remove-stable-from-failures.ts` imports this module — by trying `.js`, then
+ * `.json`, then `.node`; ts-node's hook adds `.ts` after those. A `.json` sibling
+ * sharing the basename therefore WINS, and the importer silently gets the raw
+ * array instead of this module: `classifyInfraError is not a function`, at
+ * runtime, in the script that edits spec files on `main`. `tsc --noEmit` cannot
+ * catch it because TypeScript resolves `.ts` first, so the two disagree. Found
+ * the only way it can be — by running the auto-removal test.
  */
+import RAW_INFRA_SIGNATURES from "./infra-signature-patterns.json";
 
 export interface InfraSignature {
   /** Stable id, rendered in the issue body and asserted by the unit tests. */
@@ -54,36 +84,14 @@ export interface InfraSignature {
 
 /**
  * Ordered most-specific first — `classifyInfraError` returns the first match,
- * and the id it returns is what triage reads.
+ * and the id it returns is what triage reads. Order is the JSON's array order;
+ * it is load-bearing, so the file is a list rather than an object.
  */
-export const INFRA_SIGNATURES: InfraSignature[] = [
-  {
-    id: "preflight-unreachable",
-    why: "the globalSetup health check could not reach Langflow at all",
-    pattern: /\[preflight\][^\n]*is not reachable/i,
-  },
-  {
-    id: "api-request-timeout",
-    why: "a direct REST call to the backend never answered",
-    pattern: /\bapiRequestContext\.\w+:\s*Timeout\b/,
-  },
-  {
-    id: "connection-refused",
-    why: "the backend refused the TCP connection",
-    pattern: /\bECONNREFUSED\b|net::ERR_CONNECTION_REFUSED/,
-  },
-  {
-    id: "connection-dropped",
-    why: "the connection to the backend was dropped mid-request",
-    pattern:
-      /\bECONNRESET\b|socket hang up|net::ERR_CONNECTION_(RESET|CLOSED|ABORTED)|net::ERR_EMPTY_RESPONSE/i,
-  },
-  {
-    id: "host-unresolvable",
-    why: "the backend host could not be resolved",
-    pattern: /\bEAI_AGAIN\b|\bENOTFOUND\b|net::ERR_NAME_NOT_RESOLVED/,
-  },
-];
+export const INFRA_SIGNATURES: InfraSignature[] = RAW_INFRA_SIGNATURES.map((s) => ({
+  id: s.id,
+  why: s.why,
+  pattern: new RegExp(s.pattern, s.flags),
+}));
 
 /**
  * Playwright colourises error messages; the patterns above match plain text.

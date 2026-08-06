@@ -141,7 +141,7 @@ flaky). The fetch is SSRF-blocked backend-side, but that is irrelevant — the
 
 ## External dependencies *(required)*
 
-- `src/backend/base/langflow/components/agents/` — the Agent executor and its
+- `src/lfx/src/lfx/components/models_and_agents/` — the Agent executor and its
   `max_iterations` enforcement; the fix this spec guards lives here.
 - `src/frontend/src/CustomNodes/GenericNode/` — the Agent node inspector
   (`int_int_max_iterations`).

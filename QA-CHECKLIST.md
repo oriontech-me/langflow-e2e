@@ -425,7 +425,7 @@
 - [x] Language Model component — configuration → `llm-agents/language-model-regression.spec.ts`
 - [x] Model Input component → `llm-agents/modelInputComponent.spec.ts`
 - [x] Add new provider via modal → `llm-agents/model-provider-api-key.spec.ts` (positive add validated via invalid-key rejection + Replace edit surface — a real re-add poisons a backend credential cache, see #505)
-- [~] Remove API key from existing provider — the API path (`DELETE /api/v1/variables/{id}`) stays validated; the **UI** path is quarantined (#1235): after ticking the row's checkbox the header trash action stays disabled, recurrent on the dailies of 2026-07-27 and 2026-08-03. Same Global Variables ag-grid surface as §4.3's edit entry — filed as one cause → `llm-agents/remove-provider-api-key.spec.ts`
+- [x] Remove API key from existing provider — both paths validated. The UI path was quarantined (#1235) as a Global Variables permission-gate flake and is not one: the deletion already succeeded, and the spec then re-clicked the now-disabled header button through a phantom confirmation step. Fixed by asserting the header action is enabled and scoping the confirmation to a real dialog → `llm-agents/remove-provider-api-key.spec.ts`
 - [x] Per-model enable/disable toggle changes immediately and persists across reopen → `llm-agents/model-provider-model-toggle.spec.ts`
 - [x] Disabling a model in Settings removes it from a component model dropdown; re-enabling restores it → `llm-agents/model-provider-model-toggle.spec.ts`
 
@@ -557,9 +557,9 @@
 - [x] Rename folder → `core-functionality/project-management/folder-crud.spec.ts`
 - [x] Delete empty folder → `core-functionality/project-management/folder-crud.spec.ts`
 - [x] Delete folder with flows inside → `core-functionality/project-management/folder-crud.spec.ts`
-- [-] Integrity after deletion — the deleted folder leaves the sidebar immediately, the page stays functional, and a sibling folder is untouched and still clickable → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
-- [-] Create folder after deleting all folders — creating a folder right after a deletion works (no stale-cache collision) → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
-- [-] Deleting every folder lands on the empty-project screen (sidebar empty message + `new_project_btn_empty_page`) → `core-functionality/project-management/folder-deletion-integrity.spec.ts` (`@destructive` — account-wide wiper, runs only in the low-concurrency lane via `PW_DESTRUCTIVE=1`, see #1010)
+- [x] Integrity after deletion — the deleted folder leaves the sidebar immediately, the page stays functional, and a sibling folder is untouched and still clickable → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
+- [x] Create folder after deleting all folders — creating a folder right after a deletion works (no stale-cache collision) → `core-functionality/project-management/folder-deletion-integrity.spec.ts`
+- [-] Deleting every folder lands on the empty-project screen (sidebar empty message + `new_project_btn_empty_page`) → `core-functionality/project-management/folder-deletion-integrity.spec.ts` (`@destructive` — account-wide wiper, runs only in the low-concurrency lane via `PW_DESTRUCTIVE=1`, see #1010; stays `[-]` permanently, since `[x]` requires `@stable` and `@destructive` must never carry it — the pair would mean "runs nowhere")
 - [-] Upload flow by drag-and-drop to folder — dropping a collection file imports one flow per entry; dropping a single flow file imports exactly one → `flow-functionality/dragAndDrop.spec.ts`
 - [-] Move flow to another folder
 
@@ -827,7 +827,7 @@
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 32 | 5 | 1 | 2 |
-| `core-functionality/model-provider/` | 34 | 30 | 2 | 2 | 0 |
+| `core-functionality/model-provider/` | 34 | 31 | 2 | 1 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 4 | 8 | 0 | 0 |
@@ -838,7 +838,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **381 (76%)** | **89 (18%)** | **15 (3%)** | **15 (3%)** |
+| **TOTAL** | **500** | **382 (76%)** | **89 (18%)** | **14 (3%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 446 `test()` calls carrying the `@stable` tag, distributed across 177 spec
+> 444 `test()` calls carrying the `@stable` tag, distributed across 175 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -959,7 +959,6 @@
 - [x] The legacy banner link filters the sidebar to Data Operations → `data-operations-legacy-link.spec.ts`
 - [x] Searching a legacy operations name surfaces Data Operations with legacy components hidden → `data-operations-legacy-link.spec.ts`
 - [x] A legacy operations component still builds and returns its result → `data-operations-legacy-link.spec.ts`
-- [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
 - [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
@@ -1112,13 +1111,14 @@
 - [x] selecting another provider switches the visible detail panel → `model-provider-modal-actions.spec.ts`
 - [x] model toggle changes immediately and persists across reopen → `model-provider-model-toggle.spec.ts`
 - [x] disabling a model removes it from a component model dropdown → `model-provider-model-toggle.spec.ts`
+- [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
 - [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
-- [x] the trigger shows the selected model name → `modelInputComponent.spec.ts`
 - [x] provider list renders with the known providers → `modelProviderModal.spec.ts`
 - [x] selecting a provider opens its API key configuration detail → `modelProviderModal.spec.ts`
 - [x] a configured provider shows its model selection panel → `modelProviderModal.spec.ts`
 - [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
+- [x] a provider credential variable can be removed through the Global Variables UI → `remove-provider-api-key.spec.ts`
 - [x] DELETE /api/v1/variables/{id} removes a provider API key variable → `remove-provider-api-key.spec.ts`
 
 #### core-functionality/model-provider/
@@ -1133,7 +1133,6 @@
 - [x] the configured deployment answers a real inference through the Language Model component → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
-- [x] the Ollama component lists the local model live and executes the flow → `ollama-provider.spec.ts`
 - [x] the provider is offered with two variables and a live-only, empty catalog → `openai-compatible-provider-setup.spec.ts`
 - [x] an unreachable base URL is rejected and nothing is persisted → `openai-compatible-provider-setup.spec.ts`
 - [x] a reachable endpoint with a bogus key is rejected as an authentication failure → `openai-compatible-provider-setup.spec.ts`
@@ -1262,7 +1261,6 @@
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
-- [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
