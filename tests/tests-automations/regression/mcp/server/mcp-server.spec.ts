@@ -6,6 +6,7 @@ import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-serv
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 
 /**
  * Add-MCP-Server modal: stdio / HTTP registration, field persistence and tool
@@ -790,7 +791,22 @@ test(
     await page.waitForSelector('[data-testid="blank-flow"]', {
       timeout: 30000,
     });
+    // The flow under test has to be addressed by id from here on (#1340). The
+    // id is read AFTER this navigation, never before it: `awaitBootstrapTest`
+    // reaches the templates modal through "New Flow", which parks the page on a
+    // placeholder flow Langflow deletes as soon as the modal navigates
+    // elsewhere (#490/#681).
+    const placeholderUrl = page.url();
     await page.getByTestId("blank-flow").click();
+    await page.waitForURL(
+      (url) =>
+        /\/flow\/[0-9a-f-]{36}/.test(url.pathname) &&
+        url.toString() !== placeholderUrl,
+      { timeout: 30000 },
+    );
+    const flowUnderTest = new URL(page.url()).pathname.match(
+      /\/flow\/([0-9a-f-]{36})/,
+    )![1];
     await page.getByTestId("sidebar-nav-mcp").click();
     await page.waitForSelector(
       '[data-testid="add-component-button-lf-starter_project"]',
@@ -955,17 +971,16 @@ test(
 
     await awaitBootstrapTest(page, { skipModal: true });
 
-    // The /flows a11y refactor (Langflow #13891) makes `flow-name-div`
-    // `pointer-events-none`; open the flow via the card's overlay button.
-    const flowOpenButton = page
-      .getByTestId("list-card")
-      .filter({
-        has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
-      })
-      .getByTestId("list-card-open-button")
-      .first();
-    await flowOpenButton.waitFor({ state: "visible", timeout: 10000 });
-    await flowOpenButton.click();
+    // By id, never a name-filtered `list-card` + `.first()` (#1340). Langflow
+    // names every blank flow "New Flow"/"New Flow (N)", so under `fullyParallel`
+    // that filter resolves whichever card the shared project's list puts first.
+    // Measured on nightly 1.12.0.dev18: seeding ONE competing "New Flow …" in
+    // this project before the list fetch is enough — the click opened the
+    // competitor, and the test then died on the `text="MCP Tools"` wait below,
+    // blaming the node for a flow it was never in. `openFlowById` also seeds the
+    // assistant-onboarding flag and gates on the flow being writable, which the
+    // card click never did (#1214/#1005).
+    await openFlowById(page, flowUnderTest);
 
     // Wait for the MCP Tools component to be visible on canvas
     await page.waitForSelector('text="MCP Tools"', {
@@ -1076,16 +1091,8 @@ test(
 
     await awaitBootstrapTest(page, { skipModal: true });
 
-    // See note above: open the flow via the card's overlay button.
-    const flowOpenButton2 = page
-      .getByTestId("list-card")
-      .filter({
-        has: page.getByTestId("flow-name-div").filter({ hasText: "New Flow" }),
-      })
-      .getByTestId("list-card-open-button")
-      .first();
-    await flowOpenButton2.waitFor({ state: "visible", timeout: 10000 });
-    await flowOpenButton2.click();
+    // See note above: by id, not by name.
+    await openFlowById(page, flowUnderTest);
 
     // Wait for the MCP Tools component to be visible on canvas
     await page.waitForSelector('text="MCP Tools"', {
