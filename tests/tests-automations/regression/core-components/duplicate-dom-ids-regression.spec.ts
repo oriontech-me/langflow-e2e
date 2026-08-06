@@ -161,7 +161,7 @@ async function expectFieldIdsUniquePerNode(
 
 test.describe("Node parameter DOM ids — uniqueness across sibling nodes", () => {
   test("two API Request nodes expose the same field without duplicating its DOM id",
-    { tag: ["@regression", "@components"] },
+    { tag: ["@stable", "@regression", "@components"] },
     async ({ page }) => {
       await test.step("Open a blank flow and add two API Request nodes", async () => {
         createdFlowIds.push(await setupBlankFlow(page));
@@ -206,7 +206,7 @@ test.describe("Node parameter DOM ids — uniqueness across sibling nodes", () =
   );
 
   test("two Agent nodes expose the same field without duplicating its DOM id",
-    { tag: ["@regression", "@components", "@agents"] },
+    { tag: ["@stable", "@regression", "@components", "@agents"] },
     async ({ page }) => {
       await test.step("Open a blank flow and drag two Agent nodes onto the canvas", async () => {
         createdFlowIds.push(await setupBlankFlow(page));

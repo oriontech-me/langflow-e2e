@@ -1,6 +1,6 @@
 # Node Parameter DOM Ids — Uniqueness Across Sibling Nodes
 
-**Last validated:** Langflow 1.11.x — validated against a build carrying langflow#14312 (see *Preconditions*; the fix has **not** reached the 1.12 line yet, where both cases fail by design)
+**Last validated:** Langflow 1.12.x — `langflowai/langflow-nightly:latest` reporting `1.12.0.dev18`, which carries langflow#14312 (the fix reached `main` and `release-1.12.0`; see *Tags*)
 
 ---
 
@@ -23,17 +23,19 @@ If this test fails, either two nodes are colliding on a DOM id again (a renderer
 
 ## Tags *(required)*
 
-Case A: `@regression` `@components` · Case B: `@regression` `@components` `@agents`
+Case A: `@stable` `@regression` `@components` · Case B: `@stable` `@regression` `@components` `@agents`
 
-**`@stable` is deliberately absent, and this is the reason.** The upstream fix landed on the **`release-1.11.2`** branch (PR merged 2026-07-29). `langflowai/langflow-nightly:latest` — the image `daily-stable.yml` runs against — is built from the highest `release-*` branch, currently `release-1.12.0`, where the helper `get-node-scoped-dom-id.ts` is **verifiably absent** (it 404s on both `main` and `release-1.12.0`). Both cases therefore hard-fail on today's nightly *by design*. Tagging them `@stable` would open a `daily-failure` issue every weekday and trigger the `auto-remove-stable` path, which would strip the tag and commit to `main` — burning triage cycles to rediscover something already known.
-
-`@stable` should be added once the fix reaches `main` / the 1.12 line and a run against the nightly confirms both cases green. Verify with:
+**`@stable` was deliberately withheld until the fix reached the 1.12 line, and it now has (#1109).** When this spec was merged (#1102 / PR #1106) the upstream fix existed only on the **`release-1.11.2`** branch, while `langflowai/langflow-nightly:latest` — the image `daily-stable.yml` runs — is built from the highest `release-*` branch. Both cases therefore hard-failed on the nightly *by design*, and tagging them `@stable` then would have opened a `daily-failure` issue every weekday and tripped `auto-remove-stable` into stripping the tag and committing to `main`. The helper now resolves on `main` **and** on `release-1.12.0` at the same sha (`a8a903e`), and both cases run green on `1.12.0.dev18`:
 
 ```bash
-gh api repos/langflow-ai/langflow/contents/src/frontend/src/components/core/parameterRenderComponent/helpers/get-node-scoped-dom-id.ts?ref=main --jq .sha
+gh api repos/langflow-ai/langflow/contents/src/frontend/src/components/core/parameterRenderComponent/helpers/get-node-scoped-dom-id.ts?ref=release-1.12.0 --jq .sha
 ```
 
-`@release` is also deliberately absent: this is a DOM-contract / accessibility regression guard, not a happy-path flow required before a deploy.
+Note the ref that matters is the **release line the nightly is cut from**, not `main` — a fix present only on `main` is not in the image the daily runs.
+
+`@release` remains deliberately absent: this is a DOM-contract / accessibility regression guard, not a happy-path flow required before a deploy.
+
+`@agents` on Case B is a **subject** tag, not a dependency one: the Agent node is placed and inspected, never executed, so the case needs no provider credential (see *Preconditions*).
 
 ---
 
@@ -81,8 +83,9 @@ Measured behaviour on both sides of the upstream fix, two nodes on canvas:
 |---|---|---|
 | nightly `1.12.0.dev9` (pre-fix) | `popover-anchor-input-url_input x2` | `popover-anchor-input-input_value x2`, `textarea_str_system_prompt x2` |
 | build carrying langflow#14312 | none — ids read `…-APIRequest-<suffix>` | none — ids read `…-Agent-<suffix>` |
+| nightly `1.12.0.dev18` (post-merge-back, the promotion baseline) | none — `popover-anchor-input-url_input-APIRequest-P55sP` / `-APIRequest-c5ewx` | none — `textarea_str_system_prompt-Agent-k1lgI` / `-Agent-mBubM`, and `popover-anchor-input-input_value` scoped likewise |
 
-In both builds the field **testid** resolved to 2 elements — the contract half staying green across the fix.
+In every build the field **testid** resolved to 2 elements — the contract half staying green across the fix.
 
 ### Scope of the sweep, and what that costs
 
@@ -123,15 +126,13 @@ In both builds the field **testid** resolved to 2 elements — the contract half
 
 ## Preconditions *(optional)*
 
-- Langflow running at `PLAYWRIGHT_BASE_URL` on a build that includes langflow#14312 — currently the **`release-1.11.2`** line. On any build without it (including today's `langflowai/langflow-nightly:latest`, built from `release-1.12.0`) both cases fail **by design**; that is the negative control, not a defect in the test.
-- The positive validation for this spec ran against a local instance reporting version `1.11.1` / package `Langflow` that demonstrably carries the fix (its ids read `popover-anchor-input-url_input-APIRequest-<suffix>`), consistent with a build off the `release-1.11.2` line. Note that the **published** `langflowai/langflow:1.11.1` image does not contain the helper, so it is not a reproduction target.
-- No model provider credentials required — the nodes are placed and inspected, never executed, so the Agent case makes no LLM call.
+- Langflow running at `PLAYWRIGHT_BASE_URL` on a build that includes langflow#14312 — the `release-1.11.2` line and, since the merge-back, `main` / `release-1.12.0` and therefore `langflowai/langflow-nightly:latest`. On an older build without the helper both cases fail **by design**; that is the negative control, not a defect in the test. The **published** `langflowai/langflow:1.11.1` image does not contain the helper, so it is not a reproduction target.
+- No model provider credentials required — the nodes are placed and inspected, never executed, so the Agent case makes no LLM call. This holds even though Case B carries `@agents`.
 
 ---
 
 ## When to review this test *(optional)*
 
-- **The fix reaches `main` / the 1.12 line** — that is the trigger to add `@stable` (see *Tags*).
 - A new parameter renderer is added under `parameterRenderComponent/components/` **whose id lands on an `input`, `textarea` or `select`** — it must call `getNodeScopedDomId` or this test goes red. Renderers using a `span`, `div` or Radix switch are outside the sweep's reach.
 - The suite's selector strategy changes, or someone proposes scoping `data-testid`. This spec is the tripwire for that.
 - The Agent or API Request node stops exposing the asserted field, in which case the field assertion fails first and names it.
