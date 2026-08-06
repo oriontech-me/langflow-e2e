@@ -4,12 +4,15 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SettingsPage } from "../../../../pages";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { isProviderComponentAvailable } from "../../../../helpers/provider-setup/probe-component-available";
+import {
+  assertNodeConfigHeld,
+  waitForNodeConfigSettled,
+} from "../../../../helpers/flows/node-config-guard";
 
 /**
  * Ollama provider path (QA-CHECKLIST §7.6 "Configure and execute flow with
@@ -221,18 +224,23 @@ test.describe("Ollama Provider", () => {
     },
   );
 
-  test.fixme(
+  test(
     "the Ollama component lists the local model live and executes the flow",
     {
-      // Quarantined at triage (#1296): recurrent flake 2x same-signature
-      // (2026-07-30, 2026-08-05), 6 occurrences in the 30-day window — no
-      // `div-chat-message` arrives within the 180s budget (the locator resolved
-      // to 0 elements 183 times). Restore (`test` + `@stable`) in #1302.
+      // `test.fixme` lifted (#1302). The quarantine (#1296) read the failure as
+      // "no `div-chat-message` within the 180s budget"; the artifacts refute
+      // that budget reading three ways — the retry did the same step in 5.5s on
+      // the same runner, green dailies do it in 5.4-6.5s on a COLD container,
+      // and `div-chat-message` counts the user's own bubble, so 0 elements for
+      // 183 polls means the typed message never rendered. The failing DOM shows
+      // the Ollama node reverted to its defaults (Model Name empty, base URL
+      // back to localhost), which is why no run could start. Guarded above and
+      // below by `helpers/flows/node-config-guard.ts`.
       //
-      // This supersedes the #931 restoration rationale that stood here: @stable
-      // had been restored after 4 consecutive green `manual.yml` runs on the
-      // branch, on the grounds that the rebuilt run-completion wait held under
-      // runner-speed inference. It does not hold on the daily.
+      // `@stable` stays OFF until a `manual.yml` dispatch measures this green in
+      // the real CI environment — the mechanism fired on 2 of 26 dailies and
+      // cannot be reproduced locally at all (see the spec doc's Preconditions),
+      // so neither a local green nor a single CI green is admissible evidence.
       tag: ["@regression", "@model-provider", "@components", "@playground"],
     },
     async ({ page, request }) => {
@@ -328,7 +336,7 @@ test.describe("Ollama Provider", () => {
           await updatePromise;
         });
 
-        await test.step("the LIVE model dropdown lists the locally pulled model — select it", async () => {
+        const selectModel = async () => {
           await page.getByTestId("dropdown_str_model_name").click();
           const option = page
             .locator('[data-testid$="-option"]')
@@ -340,11 +348,23 @@ test.describe("Ollama Provider", () => {
           // instance actually serves, so this cannot drift from the CI image.
           await expect(option).toBeVisible({ timeout: 15000 });
           await option.click();
+        };
+
+        await test.step("the LIVE model dropdown lists the locally pulled model — select it", async () => {
+          await selectModel();
           await expect(page.getByTestId("value-dropdown-dropdown_str_model_name")).toContainText(
             probe.model,
             { timeout: 10000 },
           );
-          await waitForFlowSaveSettled(page);
+          // Not just `waitForFlowSaveSettled` (#1302): that barrier proves no
+          // flow-save PATCH is in flight, and says nothing about whether the
+          // selection survived one that already landed. This re-reads the widget
+          // after the quiet window and re-applies once if the value is gone.
+          await waitForNodeConfigSettled(page, {
+            valueTestId: "value-dropdown-dropdown_str_model_name",
+            expected: probe.model,
+            reapply: selectModel,
+          });
         });
 
         await test.step("execute the flow through the Playground", async () => {
@@ -352,6 +372,24 @@ test.describe("Ollama Provider", () => {
           const chatInput = page.getByTestId("input-chat-playground").last();
           await expect(chatInput).toBeVisible({ timeout: 30000 });
           await chatInput.fill(`Repeat this token exactly and nothing else: ${token}`);
+
+          // Immediately before the send, never earlier (#1302): the revert was
+          // observed with the Playground already OPEN and the canvas node behind
+          // it, and the run ships the in-memory graph — so this is the last
+          // moment at which what will execute can still be read. Without it the
+          // spec spends its whole 180 s budget on a `div-chat-message` that a
+          // node missing its required Model Name can never produce.
+          await assertNodeConfigHeld(page, {
+            valueTestId: "value-dropdown-dropdown_str_model_name",
+            expected: probe.model,
+            field: "Model Name",
+            companion: {
+              valueTestId: "popover-anchor-input-base_url",
+              expected: OLLAMA_BASE_URL_FROM_LANGFLOW,
+              field: "Ollama API URL",
+            },
+          });
+
           await page.getByTestId("button-send").last().click();
           await waitForRunToFinish(page);
 
