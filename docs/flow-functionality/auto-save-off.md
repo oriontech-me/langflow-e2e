@@ -58,8 +58,10 @@ before anything else runs.
 3. Leave via the back button (`icon-ChevronLeft`); the unsaved-changes dialog
    ("Unsaved changes will be permanently lost.") appears — click **Exit Anyway**;
    assert the editor was left
-4. Re-open the flow **by id** (`/flow/<id>`, waiting for its
-   `GET /api/v1/flows/<id>` to resolve and the canvas to mount); assert the
+4. Re-open the flow **by id** via `openFlowById` (`/flow/<id>`; the helper gates
+   on the canvas mounting and on the flow being writable, and the spec
+   additionally waits for the flow's own `GET /api/v1/flows/<id>` so the count
+   below cannot read a canvas whose graph has not been applied); assert the
    canvas has **0** nodes (`div-generic-node` count = 0) — the edit was discarded
 5. Add the Chat Input component again (hover the sidebar entry →
    `add-component-button-chat-input`)
@@ -107,8 +109,12 @@ fails if either save did not persist (see Notes on the hardening).
   search. Adds use the draggable wrapper hover → add button (the sidebar row is
   briefly `pointer-events-none`; dragging it is unreliable).
 - `data-testid="title-Chat Input"` / `div-generic-node` — node presence on canvas.
-- `GET /api/v1/flows/{id}` and the `/flow/{id}` route — the re-open path (see the
-  #1336 note below for why this is not the flows-list card).
+- `GET /api/v1/flows/{id}` and the `/flow/{id}` route — the re-open path, entered
+  through `helpers/flows/open-flow-by-id.ts` (see the #1336 note below for why
+  this is not the flows-list card).
+- `helpers/ui/assistant-onboarding.ts` — the onboarding flag is seeded before the
+  first navigation, so the tooltip upstream arms at canvas mount + 10 s cannot
+  land over the canvas-controls bar this spec clicks four times.
 - No API key — the Chat Input / Chat Output components are added to the graph,
   never executed.
 
@@ -151,6 +157,22 @@ fails if either save did not persist (see Notes on the hardening).
   again, from the other side). The re-open is therefore by URL, and each exit now
   asserts the editor was left — verified by forcing the save PATCH to 500, which
   now fails at the exit step instead of 45 s later on an unrelated locator.
+- **#1342 (the re-open uses the repo's by-id entry, not a local `goto`).** #1336's
+  fix hand-rolled `page.goto('/flow/{id}')` + a canvas wait, which was the fourth
+  copy of the block `helpers/flows/open-flow-by-id.ts` (#1214) was extracted to
+  stop. Migrated to `openFlowById`, which adds two guarantees the copy did not
+  have: the onboarding overlay cannot appear, and the editor is not handed back
+  while `POST /api/v1/authz/me/permissions` is still in flight — the #1005 window
+  in which a mutation is silently swallowed, and this spec adds a component
+  immediately after two of the three re-opens. **One thing did not come from the
+  helper and must stay**: the wait on the flow's own `GET /api/v1/flows/{id}`.
+  `openFlowById` returns on `canvas_controls_dropdown` + writability, neither of
+  which implies the graph has been applied — and the discard assertion
+  (`div-generic-node` count = 0) is the one check that PASSES VACUOUSLY on a
+  canvas that has not painted its nodes yet. The seed is called at the top of the
+  test rather than left to the helper, because upstream arms the tooltip at canvas
+  mount + 10 s over the bar `adjustScreenView` clicks, and the first editing phase
+  (two of those calls, plus the on-canvas save) happens before any re-open.
 - **#790 (load-collateral, critical clicks hardened).** On load-degraded /
   guard-tripped dailies (2026-07-15/16) the spec failed with
   `locator.click: Timeout 20000ms exceeded` on a manual-save click target. Not a
