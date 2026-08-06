@@ -791,22 +791,48 @@ test(
     await page.waitForSelector('[data-testid="blank-flow"]', {
       timeout: 30000,
     });
-    // The flow under test has to be addressed by id from here on (#1340). The
-    // id is read AFTER this navigation, never before it: `awaitBootstrapTest`
-    // reaches the templates modal through "New Flow", which parks the page on a
-    // placeholder flow Langflow deletes as soon as the modal navigates
-    // elsewhere (#490/#681).
-    const placeholderUrl = page.url();
-    await page.getByTestId("blank-flow").click();
-    await page.waitForURL(
-      (url) =>
-        /\/flow\/[0-9a-f-]{36}/.test(url.pathname) &&
-        url.toString() !== placeholderUrl,
-      { timeout: 30000 },
-    );
-    const flowUnderTest = new URL(page.url()).pathname.match(
+    // The flow under test has to be addressed by id from here on (#1340), and
+    // the id has to satisfy BOTH sources — neither alone is enough here:
+    //
+    //  - `page.url()` alone is the documented trap. `awaitBootstrapTest` reaches
+    //    the templates modal through "New Flow", so before the blank-flow
+    //    navigation the URL still carries the bootstrap PLACEHOLDER — the flow
+    //    Langflow deletes the moment the modal navigates elsewhere, and the one
+    //    authoring-conventions Pattern A warns about (#681/#505).
+    //  - the tracked `POST /flows` 201 ids alone do not say which flow the editor
+    //    ended up on: this page creates the placeholder AND the blank flow, so
+    //    picking one means trusting arrival order of two async body reads, and
+    //    the wrong pick is precisely the id that gets deleted.
+    //
+    // So: poll until the editor's URL carries an id this page is known to have
+    // created and that is not the placeholder. A transient or client-only id
+    // cannot satisfy the membership test, and a blank-flow click that never
+    // navigates fails HERE, naming the cause, instead of surfacing later as an
+    // unattributed timeout. Measured on nightly 1.12.0.dev18: the click issues
+    // its own `POST /flows` 201 and the URL changes every time (5/5) — the
+    // placeholder is never reused — so this is about attribution, not a defect.
+    const placeholderId = new URL(page.url()).pathname.match(
       /\/flow\/([0-9a-f-]{36})/,
-    )![1];
+    )?.[1];
+    await page.getByTestId("blank-flow").click();
+    const editorFlowId = () =>
+      new URL(page.url()).pathname.match(/\/flow\/([0-9a-f-]{36})/)?.[1];
+    await expect
+      .poll(
+        () => {
+          const id = editorFlowId();
+          return !!id && id !== placeholderId && createdFlowIds.includes(id);
+        },
+        {
+          timeout: 30000,
+          message:
+            "the blank-flow click never landed the editor on a newly created " +
+            "flow: the URL still holds the bootstrap placeholder, or its id is " +
+            "not among this page's POST /api/v1/flows 201 responses",
+        },
+      )
+      .toBe(true);
+    const flowUnderTest = editorFlowId()!;
     await page.getByTestId("sidebar-nav-mcp").click();
     await page.waitForSelector(
       '[data-testid="add-component-button-lf-starter_project"]',
