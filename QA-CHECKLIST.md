@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 448 `test()` calls carrying the `@stable` tag, distributed across 177 spec
+> 446 `test()` calls carrying the `@stable` tag, distributed across 175 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1227,7 +1227,6 @@
 - [x] API access modal switches the displayed snippet when changing language tabs → `api-access-modal-regression.spec.ts`
 - [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
 - [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
-- [x] user should be able to manually save a flow when the auto_save is off → `auto-save-off.spec.ts`
 - [x] connecting two compatible components creates exactly one edge → `canvas-connect-components.spec.ts`
 - [x] connecting the same compatible pair twice does not duplicate the edge → `canvas-connect-components.spec.ts`
 - [x] a type-incompatible pair does not connect → `canvas-connect-components.spec.ts`
@@ -1282,7 +1281,6 @@
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
-- [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
 - [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
