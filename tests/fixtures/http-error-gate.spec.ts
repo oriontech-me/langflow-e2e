@@ -245,6 +245,35 @@ test.describe("fixture declared-known-defect hatch", () => {
   );
 
   test(
+    "two declarations of the same defect are both credited",
+    { tag: ["@stable", "@regression"] },
+    async ({ page }) => {
+      // `classifyHttpError` resolves a response to ONE declaration with `find()`,
+      // so a defect declared twice — a shared helper plus an inline call, or a
+      // `beforeEach` plus a body — produces two distinct objects competing for
+      // the same response. Crediting only the one `find()` returned leaves the
+      // other at zero hits, and the teardown then fails this test with "did NOT
+      // occur" about a defect that fired. The passing of this test IS the
+      // assertion: reverting the fixture to credit a single declaration turns it
+      // red in teardown.
+      const hooked = page as PageWithErrorHooks;
+      const viaHelper: KnownHttpDefect = { ...DECLARED };
+      const viaBody: KnownHttpDefect = { ...DECLARED };
+      expect(
+        viaHelper,
+        "the two declarations must be distinct objects — identical ones would pass on the bug",
+      ).not.toBe(viaBody);
+
+      hooked.expectKnownHttpError(viaHelper);
+      hooked.expectKnownHttpError(viaBody);
+
+      await page.goto(`${origin}/`);
+      expect(await fetchFromPage(hooked, DECLARED_PATH)).toBe(422);
+      await page.waitForTimeout(1000);
+    },
+  );
+
+  test(
     "a declared defect that never fires fails the test",
     { tag: ["@stable", "@regression"] },
     async ({ page }) => {
