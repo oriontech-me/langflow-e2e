@@ -32,6 +32,9 @@ empty, a run "succeeds" but a button stays disabled — read the component's
 then `cat` it. Real case: three blind UI scouts failed to explain a disabled
 output inspector; one read of `lfx/components/models_and_agents/memory.py`
 revealed retrieval is flow-scoped (upstream PR #13087) and fixed the design.
+`models_and_agents` is a **core** family, so that path survives the `lfx-bundles`
+M4 shim deletion — a **vendor** family's path does not, and is only present at all
+if the image installs its distribution (`docs/component-distribution-policy.md`).
 
 ## Language rule (always)
 

@@ -117,6 +117,16 @@ Use the maintained core equivalents instead. The canonical case:
 
 > Selector mapping when migrating: `input_outputText Input/Output` → `input_outputChat Input/Output`; `button_run_text *` → `button_run_chat *`; the Chat Input output handle is `chat message` (not `output text`); the Chat Output input handle stays `inputs`. Chat Input/Output are added **minimized** (`minimized = True`) — expand the node (`more-options-modal` → `expand-button-modal`, wait for `hide-node-content` to disappear) before reaching run buttons / inspector fields / `shownode` handles, or connect via the collapsed `noshownode` handles when the node is only a connection source/sink.
 
+> **A component missing from the sidebar is not the same problem as a legacy one.** Since
+> 1.12, whether a component exists at all is a **packaging** decision per image: most
+> families moved into per-vendor distributions plus an aggregate `lfx-bundles` the nightly
+> does not install, so a family can be absent with no product announcement and it surfaces
+> as a `waitForSelector` timeout 30 s deep. Before treating that as a product bug, read
+> `docs/component-distribution-policy.md` — it holds the decision table (gate-and-skip,
+> demote the bullet, or a bundle-enabled lane), the measured inventory, and the pre-flight
+> drift report that names the cause at the gate. Do **not** decide it per incident; that is
+> how #898 and #907 were both diagnosed wrongly.
+
 **The only exception** is a test whose *purpose* is to validate legacy behavior itself — e.g. the legacy-visibility toggle (`core-components/legacy-components-toggle-regression.spec.ts`). In that case enabling `showLegacy` and using the legacy component is expected; state this explicitly in the spec doc's **What this test validates** section so a reviewer does not flag it.
 
 ---

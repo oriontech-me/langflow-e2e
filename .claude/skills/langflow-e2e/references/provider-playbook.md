@@ -16,9 +16,30 @@ shapes** — and that the issue body cannot tell you which one applies. Run the
    diverge (1.11: API lists Groq + Azure OpenAI, the Settings page renders
    neither; Mistral is absent from both). A divergence goes on the PR as a
    product observation — never assume either side alone.
-3. **Component source in the container:**
-   `docker exec langflow-e2e-runner sh -c 'cat …/lfx_bundles/<provider>/<provider>.py'`
-   (bundles moved out of `lfx.components.*` — a shim redirects until M4).
+3. **Component source in the container.** Do **not** hardcode a path — there are two
+   post-migration layouts and one of them is not installed. Ask Python where the
+   module actually is:
+
+   ```bash
+   docker exec langflow-e2e-runner python -c '
+   import importlib, pathlib
+   for mod in ("lfx_<provider>.components.<provider>", "lfx_bundles.<provider>", "lfx.components.<provider>"):
+       try:
+           m = importlib.import_module(mod)
+       except ModuleNotFoundError as e:
+           print("absent:", mod, "-", e); continue
+       print("found:", mod, "->", pathlib.Path(m.__file__).parent)
+       break'
+   ```
+
+   A **graduated** vendor lives at `lfx_<vendor>/components/<vendor>/<file>.py`; one
+   still inside the aggregate lives at `lfx_bundles/<vendor>/<vendor>.py` — and
+   `lfx-bundles` is **not installed** on the tested image, so for those vendors there
+   is no source in the container to read at all (read it from the upstream clone
+   instead). The `lfx.components.<vendor>` spelling is the shim, removed at M4, which
+   has **no published date** — see `docs/component-distribution-policy.md`. Measured
+   on `origin/release-1.12.0`: 79 of the 106 `lfx/components/*` directories are
+   shims.
    Read three things: is `api_key` `real_time_refresh`? Is the `model_name`
    dropdown **live-fetched or a static hardcoded list**? What is the field's
    **default value** (a default like Mistral's `codestral-latest` means the

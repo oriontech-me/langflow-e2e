@@ -1,0 +1,238 @@
+{
+  "version": "1.12.0.dev16",
+  "categories": {
+    "agentics": [
+      "AMapComponent",
+      "AgenerateComponent",
+      "AreduceComponent"
+    ],
+    "amazon": [
+      "ext:amazon:AmazonBedrockComponent@official",
+      "ext:amazon:AmazonBedrockConverseComponent@official",
+      "ext:amazon:AmazonBedrockEmbeddingsComponent@official",
+      "ext:amazon:S3BucketUploaderComponent@official"
+    ],
+    "anthropic": [
+      "ext:anthropic:AnthropicModelComponent@official"
+    ],
+    "azure": [
+      "ext:azure:AzureChatOpenAIComponent@official",
+      "ext:azure:AzureOpenAIEmbeddingsComponent@official"
+    ],
+    "cassandra": [
+      "ext:cassandra:CassandraChatMemory@official",
+      "ext:cassandra:CassandraGraphVectorStoreComponent@official",
+      "ext:cassandra:CassandraVectorStoreComponent@official"
+    ],
+    "cohere": [
+      "ext:cohere:CohereComponent@official",
+      "ext:cohere:CohereEmbeddingsComponent@official",
+      "ext:cohere:CohereRerankComponent@official"
+    ],
+    "crewai": [
+      "CrewAIAgentComponent",
+      "HierarchicalCrewComponent",
+      "HierarchicalTaskComponent",
+      "SequentialCrewComponent",
+      "SequentialTaskAgentComponent",
+      "SequentialTaskComponent"
+    ],
+    "custom_component": [
+      "CustomComponent"
+    ],
+    "data_source": [
+      "APIRequest",
+      "CSVtoData",
+      "JSONtoData",
+      "MockDataGenerator",
+      "NewsSearch",
+      "RSSReaderSimple",
+      "SQLComponent",
+      "URLComponent",
+      "UnifiedWebSearch"
+    ],
+    "datastax": [
+      "ext:datastax:AstraDBCQLToolComponent@official",
+      "ext:datastax:AstraDBChatMemory@official",
+      "ext:datastax:AstraDBDataAPIComponent@official",
+      "ext:datastax:AstraDBGraphVectorStoreComponent@official",
+      "ext:datastax:AstraDBToolComponent@official",
+      "ext:datastax:AstraDBVectorStoreComponent@official",
+      "ext:datastax:AstraVectorizeComponent@official",
+      "ext:datastax:Dotenv@official",
+      "ext:datastax:GraphRAGComponent@official",
+      "ext:datastax:HCDVectorStoreComponent@official"
+    ],
+    "docling": [
+      "ext:docling:ChunkDoclingDocumentComponent@official",
+      "ext:docling:DoclingInlineComponent@official",
+      "ext:docling:DoclingRemoteComponent@official",
+      "ext:docling:ExportDoclingDocumentComponent@official"
+    ],
+    "embeddings": [
+      "EmbeddingSimilarityComponent",
+      "TextEmbedderComponent"
+    ],
+    "files_and_knowledge": [
+      "Directory",
+      "File",
+      "FileSystemTool",
+      "Knowledge",
+      "KnowledgeBase",
+      "KnowledgeIngestion",
+      "MemoryBase",
+      "SaveToFile"
+    ],
+    "files_ingestion": [
+      "FileContentRetriever",
+      "FileDescriptionGeneratorComponent",
+      "MergeFlows"
+    ],
+    "flow_controls": [
+      "ConditionalRouter",
+      "DataConditionalRouter",
+      "FlowTool",
+      "HumanInput",
+      "Listen",
+      "LoopComponent",
+      "Notify",
+      "Pass",
+      "RunFlow",
+      "SubFlow"
+    ],
+    "google": [
+      "ext:google:BigQueryExecutorComponent@official",
+      "ext:google:GmailLoaderComponent@official",
+      "ext:google:GoogleDriveComponent@official",
+      "ext:google:GoogleDriveSearchComponent@official",
+      "ext:google:GoogleGenerativeAIComponent@official",
+      "ext:google:GoogleGenerativeAIEmbeddingsComponent@official",
+      "ext:google:GoogleOAuthToken@official",
+      "ext:google:GoogleSearchAPICore@official",
+      "ext:google:GoogleSerperAPICore@official"
+    ],
+    "ibm": [
+      "ext:ibm:DB2VectorStoreComponent@official",
+      "ext:ibm:WatsonxAIComponent@official",
+      "ext:ibm:WatsonxEmbeddingsComponent@official"
+    ],
+    "input_output": [
+      "ChatInput",
+      "ChatOutput",
+      "TextInput",
+      "TextOutput",
+      "Webhook"
+    ],
+    "langchain_utilities": [
+      "CSVAgent",
+      "CharacterTextSplitter",
+      "ConversationChain",
+      "HtmlLinkExtractor",
+      "JsonAgent",
+      "LLMCheckerChain",
+      "LLMMathChain",
+      "LangChain Hub Prompt",
+      "LangChainFakeEmbeddings",
+      "LanguageRecursiveTextSplitter",
+      "NaturalLanguageTextSplitter",
+      "OpenAIToolsAgent",
+      "OpenAPIAgent",
+      "RecursiveCharacterTextSplitter",
+      "RetrievalQA",
+      "RunnableExecutor",
+      "SQLAgent",
+      "SQLDatabase",
+      "SQLGenerator",
+      "SelfQueryRetriever",
+      "SemanticTextSplitter",
+      "ToolCallingAgent",
+      "VectorStoreInfo",
+      "VectorStoreRouterAgent",
+      "XMLAgent"
+    ],
+    "llm_operations": [
+      "BatchRunComponent",
+      "GuardrailValidator",
+      "LLMSelectorComponent",
+      "Smart Transform",
+      "SmartRouter",
+      "StructuredOutput"
+    ],
+    "models_and_agents": [
+      "A2AAgent",
+      "Agent",
+      "EmbeddingModel",
+      "LanguageModelComponent",
+      "MCPTools",
+      "Memory",
+      "Prompt Template"
+    ],
+    "ollama": [
+      "ext:ollama:ChatOllamaComponent@official",
+      "ext:ollama:OllamaEmbeddingsComponent@official"
+    ],
+    "openai": [
+      "ext:openai:OpenAIEmbeddingsComponent@official",
+      "ext:openai:OpenAIModelComponent@official"
+    ],
+    "oracle": [
+      "ext:oracle:OracleAutonomousDatabaseLoaderComponent@official",
+      "ext:oracle:OracleDocLoaderComponent@official",
+      "ext:oracle:OracleEmbeddingsComponent@official",
+      "ext:oracle:OracleVectorStoreComponent@official"
+    ],
+    "processing": [
+      "AlterMetadata",
+      "CombineText",
+      "CreateData",
+      "CreateList",
+      "DataFrameOperations",
+      "DataOperations",
+      "DataToDataFrame",
+      "DynamicCreateData",
+      "ExtractaKey",
+      "FilterData",
+      "FilterDataValues",
+      "JSONCleaner",
+      "MergeDataComponent",
+      "MessagetoData",
+      "Operations",
+      "OutputParser",
+      "ParseData",
+      "ParseDataFrame",
+      "ParseJSONData",
+      "ParserComponent",
+      "RegexExtractorComponent",
+      "SelectData",
+      "SplitText",
+      "StoreMessage",
+      "TextOperations",
+      "TypeConverterComponent",
+      "UpdateData"
+    ],
+    "prototypes": [
+      "PythonFunction"
+    ],
+    "toolguard": [
+      "ext:toolguard:PoliciesComponent@official"
+    ],
+    "tools": [
+      "CalculatorTool",
+      "GoogleSearchAPI",
+      "GoogleSerperAPI",
+      "PythonREPLTool",
+      "SearXNGTool",
+      "SearchAPI",
+      "SerpAPI",
+      "WikidataAPI",
+      "WikipediaAPI",
+      "YahooFinanceTool"
+    ],
+    "utilities": [
+      "CalculatorComponent",
+      "CurrentDate",
+      "IDGenerator",
+      "PythonREPLComponent"
+    ]
+  }
+}

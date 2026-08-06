@@ -2,6 +2,8 @@ import {
   request as playwrightRequest,
   type APIRequestContext,
 } from "@playwright/test";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import * as dotenv from "dotenv";
 import { getAuthToken } from "./helpers/auth/get-auth-token";
 import {
@@ -11,8 +13,25 @@ import {
   writeProviderHealth,
 } from "./helpers/provider-setup/provider-health";
 import { preconfigureRoutedProvider } from "./helpers/provider-setup/preconfigure-routed-provider";
+import {
+  catalogVerdict,
+  type CatalogSnapshot,
+} from "./helpers/other/component-catalog-drift";
 
 dotenv.config();
+
+/**
+ * The accepted component catalog, committed so drift shows up as a reviewable
+ * diff (#1040). Refresh with `npm run catalog:baseline`.
+ *
+ * Resolved from `__dirname` rather than the process cwd: `globalSetup` is loaded
+ * by Playwright, and a cwd-relative path would break the moment the suite is run
+ * from anywhere but the repo root.
+ */
+const CATALOG_BASELINE_PATH = path.join(
+  __dirname,
+  "assets/catalog/component-catalog-baseline.json",
+);
 
 /**
  * Pre-flight fail-fast gate (issue #884).
@@ -226,6 +245,97 @@ async function preconfigureRouting(ctx: APIRequestContext): Promise<void> {
   );
 }
 
+/**
+ * Report component-catalog drift against the committed baseline (#1040).
+ *
+ * Since 1.12 a component family's presence is a **packaging** decision per image,
+ * so a family can vanish with no product announcement — and it then surfaces as a
+ * generic `waitForSelector` timeout 30 s deep in a spec. That has already been
+ * misdiagnosed twice (#898, #907, both attributed to missing `langchain-*` extras;
+ * #1039 corrected the record). This is the gate whose whole job is to remove that
+ * misclassification tax (#884), so the cause is named before the first spec runs.
+ *
+ * **Never fatal, on purpose.** Drift is not by itself a failure: a *new* category
+ * costs nobody a test, and even a removed one is legitimate when the image simply
+ * stopped shipping a distribution we do not test (#1039's Groq/Mistral). Aborting
+ * a whole run over a reporting feature would trade real coverage for tidiness —
+ * #980's trade. What it must never do is read as clean when it produced no
+ * verdict, so every give-up path says so explicitly (#1012's rule).
+ *
+ * This function is therefore only I/O: read the file, make the request, print. The
+ * comparison lives in `catalogVerdict`, which cannot throw and always returns a
+ * verdict — a property a unit test pins, rather than a comment here claiming it.
+ * The inline version of this was one unguarded `for` away from aborting the whole
+ * run on a hand-edited baseline.
+ *
+ * Costs one `GET /api/v1/all`: measured 70–85 ms and 524 KB compressed on
+ * `1.12.0.dev10`, once per suite run.
+ */
+async function reportCatalogDrift(ctx: APIRequestContext): Promise<void> {
+  let baseline: unknown;
+  try {
+    baseline = JSON.parse(fs.readFileSync(CATALOG_BASELINE_PATH, "utf8"));
+  } catch (e) {
+    console.warn(
+      `[preflight] WARNING: could not read the component-catalog baseline at ${CATALOG_BASELINE_PATH} (${String(e)}). ` +
+        `Catalog drift is UNKNOWN for this run, not absent — a vanished component family ` +
+        `will surface as a 30s selector timeout instead of being named here (#1040). ` +
+        `Regenerate it with: npm run catalog:baseline`,
+    );
+    return;
+  }
+
+  let registry: unknown;
+  try {
+    // Authenticate EXPLICITLY. `/api/v1/all` answers 403 unauthenticated, and
+    // relying on the login `checkProviderCredentials` happens to have performed on
+    // this shared context would make the check silently ordering-dependent — and
+    // dead on exactly the run that matters least to lose but is easiest to miss:
+    // the credential-importing one sets `PREFLIGHT_SKIP_CREDENTIALS`, so that login
+    // never happens, and every CI lane's `Collect models` step would have warned
+    // "could not read the component catalog" on every run. A warning that always
+    // fires is the noise #1084 was raised about.
+    const auth = await getAuthToken(ctx).catch(() => "");
+    const res = await ctx.get("/api/v1/all", {
+      headers: auth ? { Authorization: auth } : undefined,
+      timeout: 30000,
+    });
+    if (!res.ok()) throw new Error(`HTTP ${res.status()}`);
+    registry = await res.json();
+  } catch (e) {
+    console.warn(
+      `[preflight] WARNING: could not read the component catalog (${String(e)}). ` +
+        `Catalog drift is UNKNOWN for this run, not absent (#1040).`,
+    );
+    return;
+  }
+
+  const verdict = catalogVerdict(baseline, registry);
+  const version = (baseline as CatalogSnapshot | null)?.version;
+  const baselineVersion = version ? ` (baseline: ${version})` : "";
+  if (verdict.kind === "unknown") {
+    console.warn(
+      `[preflight] WARNING: could not compare the component catalog against the baseline — ${verdict.reason}. ` +
+        `Catalog drift is UNKNOWN for this run, not absent (#1040). ` +
+        `Regenerate the baseline with: npm run catalog:baseline (it is \`category -> [type names]\`, ` +
+        `not the raw \`GET /api/v1/all\` body — do not hand-edit it)`,
+    );
+    return;
+  }
+  if (verdict.kind === "clean") {
+    console.log(
+      `[preflight] component catalog matches the baseline${baselineVersion} — ${verdict.categoryCount} categories.`,
+    );
+    return;
+  }
+  console.warn(
+    `[preflight] WARNING: the component catalog DRIFTED from the baseline${baselineVersion} (#1040):\n` +
+      verdict.lines.join("\n") +
+      `\n  Since 1.12 this is a packaging decision per image, not a Langflow feature change. ` +
+      `If the drift is expected, accept it with: npm run catalog:baseline`,
+  );
+}
+
 export default async function globalSetup(): Promise<void> {
   const ctx = await playwrightRequest.newContext({ baseURL: BASE_URL });
   try {
@@ -238,6 +348,7 @@ export default async function globalSetup(): Promise<void> {
       await checkProviderCredentials(ctx);
     }
     await preconfigureRouting(ctx);
+    await reportCatalogDrift(ctx);
   } finally {
     await ctx.dispose();
   }
