@@ -227,10 +227,15 @@ sidebar entry to the canonical **Language Model** component:
 > page-entry barrier failures straddled it. This file's own siblings passing on the
 > **same worker** 7 s and 17 s earlier rule out instance-wide breakage.
 > **The fix is in `tests/helpers/flows/add-component-from-sidebar.ts`, not here:**
-> it verifies the node count moved, re-issues the fill+click **once** when it did
-> not, and otherwise fails naming the swallowed click and the observed sidebar
-> state (unit-pinned in `add-component-from-sidebar.test.ts`, including that the
-> message is deliberately **not** infra-classifiable, per the #1262 rule). No
+> it requires a node **id that was not on the canvas before** to appear, re-issues
+> the fill+click **once** when none did, and otherwise fails naming the swallowed
+> click and the observed sidebar state (unit-pinned in
+> `add-component-from-sidebar.test.ts`, including that the message is deliberately
+> **not** infra-classifiable, per the #1262 rule). The post-condition is a set
+> difference rather than a `before + 1` count delta because a canvas can still be
+> mounting a loaded flow's own nodes when the baseline is taken — CI run
+> 31048371247 reported a healthy one-click add against an API-seeded flow as "left
+> 3 nodes on the canvas instead of 1". Exact counts stay with the callers. No
 > assertion here was weakened and no timeout raised — a longer wait provably cannot
 > fix it, since this test already waited 15 s and lost 3/3. Provider-credential
 > churn, the standing hypothesis, is **refuted**: the drop reproduces solo with no
