@@ -51,7 +51,9 @@ the model through the Playground.
   `npx playwright test tests/collect-models.spec.ts`.
 - At least one active provider API key in `.env` (OpenAI, Anthropic, or Google).
 - Run with `--workers=1` (agent specs create named flows that collide in
-  parallel). File is serial (`SimpleAgentTemplatePage.load()` wipes all flows).
+  parallel). File is serial. `SimpleAgentTemplatePage.load()` does **not** wipe
+  existing flows — the cross-worker delete-all was removed in #553 — and cleanup
+  is id-scoped via the shared tracker (see *Notes* → flow cleanup).
 
 ---
 
@@ -181,6 +183,15 @@ The spec generates **2 tests per active model** via `resolveTestTargets()` (defa
 
 ## Notes *(optional)*
 
+- **Flow cleanup is id-scoped, captured from the creation POST** (#1108's shared
+  tracker, wired in #1346). The spec previously had no cleanup at all, which cost
+  twice: an orphan `Simple Agent` per test on the shared instance, and — because
+  token attribution lives on the delete path (#1197) — tokens that reached the QA
+  platform with no spec to claim them (2026-08-06 daily: traces `1027dfd2` and
+  `6676e05d`, 936 + 918 tokens on `claude-haiku-4-5`, in the run's `unattributed`
+  bucket). The tracker rather than `load()`'s returned id, because `load()` can
+  throw **after** creating the flow (the #751/#1072 credential-settle guard throws
+  exactly there).
 - **Why refusal is hard-asserted but empty is not:** capable models reliably obey
   "reply with exactly this and nothing else", so a forced refusal (with a
   distinctive marker) is deterministic. Genuinely-empty output is not — models
