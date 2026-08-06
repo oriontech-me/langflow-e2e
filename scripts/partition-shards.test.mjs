@@ -1,4 +1,4 @@
-// Unit tests for the duration-balanced shard partitioner (issues #936, #1252).
+// Unit tests for the duration-balanced shard partitioner (issues #936, #1252, #1326).
 // Run with: node --test scripts/partition-shards.test.mjs
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -11,6 +11,8 @@ import {
   buildShards,
   classifyDurations,
   refreshDurations,
+  weighting,
+  UNKNOWN_QUANTILE,
 } from "./partition-shards.mjs";
 
 const CLI = path.join(import.meta.dirname, "partition-shards.mjs");
@@ -78,9 +80,10 @@ test("buildShards falls back to equal weights when durations are empty (count-ba
   assert.ok(Math.max(...counts) - Math.min(...counts) <= 1); // counts within 1
 });
 
-test("buildShards gives unknown files the median known weight, not zero", () => {
+test("buildShards gives unknown files a known-file weight, not zero", () => {
   // known weights: 100, 100, 100 ; unknown 'u' must NOT be treated as 0 (which would
-  // let it pile onto a heavy shard for free). Median = 100, so 'u' is a heavy file.
+  // let it pile onto a heavy shard for free). Every quantile of {100,100,100} is 100,
+  // so 'u' is a heavy file whichever one the fallback uses.
   const durations = { a: 100, b: 100, c: 100 };
   const files = ["a", "b", "c", "u"];
   const shards = buildShards(files, durations, 2);
@@ -88,6 +91,64 @@ test("buildShards gives unknown files the median known weight, not zero", () => 
   const loads = shards.map((s) => s.files.reduce((x, f) => x + eff[f], 0));
   assert.equal(Math.max(...loads), 200); // 2 heavy files per shard, balanced
   assert.equal(Math.min(...loads), 200);
+});
+
+// ---- #1326: an unmeasured file is not an AVERAGE file ------------------------
+//
+// What a run fails to measure is not a random sample: a file is excluded when it
+// failed, flaked or skipped, and the specs that do that here are the ones calling a
+// real model — the slowest ones. So the table converges on the cheap files and the
+// median of what IS measured systematically underweights what is not.
+
+test("the unknown-file fallback is the p75 of the measured files, not their median", () => {
+  // Median of 1..9 is 5; the p75 is 7. Pinning the VALUE (not just ">= median")
+  // because "raise the quantile" is the whole change: reverting UNKNOWN_QUANTILE to
+  // 0.5 must fail here rather than pass a directional assertion.
+  const durations = Object.fromEntries([1, 2, 3, 4, 5, 6, 7, 8, 9].map((v, i) => [`f${i}`, v]));
+  const files = [...Object.keys(durations), "unknown"];
+  const w = weighting(files, durations);
+  assert.equal(UNKNOWN_QUANTILE, 0.75);
+  assert.equal(w.fallback, 7);
+  assert.equal(w.weightOf("unknown"), 7);
+  assert.equal(w.weightOf("f0"), 1, "a measured file keeps its own duration");
+});
+
+test("the fallback is strictly above the median whenever the table is skewed", () => {
+  // The property that matters, stated independently of the exact quantile: the shape
+  // of a real table is a long right tail (the committed one runs 0.1 s to 161.8 s,
+  // median 16.3 s, p75 30.6 s), and the fallback must sit in that tail.
+  const durations = Object.fromEntries(
+    [0.1, 0.2, 0.4, 0.5, 1, 2, 8, 16, 24, 30, 45, 62, 145].map((v, i) => [`f${i}`, v]),
+  );
+  const files = [...Object.keys(durations), "unknown"];
+  const values = Object.values(durations).sort((a, b) => a - b);
+  const median = values[Math.floor(values.length / 2)];
+  assert.ok(
+    weighting(files, durations).fallback > median,
+    "an unmeasured file must not be weighted like a typical measured one",
+  );
+});
+
+test("weighting names the unmeasured files, sorted, and counts the measured ones", () => {
+  // The caller PRINTS these: a "170/178" ratio does not say the missing eight are the
+  // expensive ones, which is the reportable half of #1326 (#1012's rule).
+  const w = weighting(["z.spec.ts", "a.spec.ts", "m.spec.ts"], { "m.spec.ts": 10 });
+  assert.deepEqual(w.unmeasured, ["a.spec.ts", "z.spec.ts"]);
+  assert.deepEqual(w.measured, ["m.spec.ts"]);
+});
+
+test("weighting treats a 0, a negative and a non-number as unmeasured", () => {
+  const w = weighting(["a", "b", "c", "d"], { a: 12, b: 0, c: -5, d: "8" });
+  assert.deepEqual(w.unmeasured, ["b", "c", "d"]);
+  assert.equal(w.fallback, 12, "a single measured file is its own quantile");
+});
+
+test("weighting falls back to 1 with no measured file at all, never to 0", () => {
+  // Not 0: `buildShards` compares `b.load < best.load`, so over all-zero weights no
+  // shard is ever lighter than shard 1 and every file lands there.
+  const w = weighting(["a", "b"], {});
+  assert.equal(w.fallback, 1);
+  assert.equal(w.weightOf("a"), 1);
 });
 
 test("buildShards handles N greater than file count without dup or crash", () => {
@@ -300,6 +361,88 @@ test("matrix warns on a cold start, and stays quiet when no table was asked for"
     optedOut.stderr,
     /::warning::/,
     "a caller passing '-' asked for no table and must not be warned",
+  );
+});
+
+test("matrix NAMES the files with no recorded duration and the weight they got", () => {
+  // The ratio alone reads as a rounding error. What it hides is that the missing files
+  // are systematically the expensive ones — a heavy spec red for a month is invisible
+  // in "170/178" and is exactly the file whose weight is a guess (#1326/#1012).
+  const { stderr } = runMatrix("dur.json", {
+    "list.json": listReport(["a.spec.ts", "b.spec.ts", "heavy.spec.ts", "new.spec.ts"]),
+    "dur.json": { version: 1, durations: { "a.spec.ts": 4, "b.spec.ts": 8, "heavy.spec.ts": 40 } },
+  });
+  assert.match(stderr, /3\/4 with a recorded duration/);
+  assert.match(stderr, /1 file\(s\) have NO recorded duration and were weighted at 24\.0 s/);
+  assert.match(stderr, /^\s+new\.spec\.ts$/m, "the unmeasured file must be named, not just counted");
+  assert.doesNotMatch(stderr, /^\s+a\.spec\.ts$/m, "a measured file must not be listed as missing");
+});
+
+test("matrix lists at most 30 unmeasured files, and says how many it elided", () => {
+  // Capped so a cold start does not bury the shard sizes, but never silently (#1012).
+  const files = Array.from({ length: 41 }, (_, i) => `f${String(i).padStart(2, "0")}.spec.ts`);
+  const { stderr } = runMatrix("dur.json", {
+    "list.json": listReport(files),
+    "dur.json": { version: 1, durations: { "f00.spec.ts": 10 } },
+  });
+  const listed = stderr.split("\n").filter((l) => /^ {4}f\d\d\.spec\.ts$/.test(l));
+  assert.equal(listed.length, 30);
+  assert.match(stderr, /… and 10 more not listed here/);
+});
+
+test("matrix does not print an unmeasured list on a cold start", () => {
+  // With NOTHING measured every file is "unmeasured" and the list would be the whole
+  // suite; the ::warning:: already says the partition is a file-count balance.
+  const { stderr } = runMatrix("dur.json", { "list.json": listReport(["a.spec.ts", "b.spec.ts"]) });
+  assert.doesNotMatch(stderr, /have NO recorded duration/);
+  assert.match(stderr, /::warning::/);
+});
+
+// ---- #1326: `@destructive` cannot reach the partition input -------------------
+//
+// #1326 reported folder-deletion-integrity.spec.ts as a permanently unmeasurable
+// entry in the partition input, because @destructive runs in its own lane and never
+// appears in the merged report the refresh reads. It is not in the input at all, and
+// these two facts are why — assert them, because the claim expires the day either
+// changes and the file would then really be an unmeasurable fallback entry forever.
+
+const SPEC_DIR = path.join(import.meta.dirname, "..", "tests");
+
+/** Every `.spec.ts` under tests/, recursively. */
+const specFiles = (dir) =>
+  fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+    const p = path.join(dir, e.name);
+    return e.isDirectory() ? specFiles(p) : e.name.endsWith(".spec.ts") ? [p] : [];
+  });
+
+test("no test is tagged both @stable and @destructive", () => {
+  // CLAUDE.md forbids the combination (#1010: daily-stable.yml has no destructive
+  // lane, so such a test would silently never run). It is also what keeps the
+  // partition input free of a file that cannot be measured on the lane that partitions
+  // it — the @destructive test in folder-deletion-integrity is @release @api, and that
+  // file's three @stable tests do run, and do measure.
+  const offenders = [];
+  for (const file of specFiles(SPEC_DIR)) {
+    const src = fs.readFileSync(file, "utf8");
+    // `tag: [...]` arrays only — a mention in a comment is not a tag.
+    for (const m of src.matchAll(/tag:\s*\[([^\]]*)\]/g)) {
+      const tags = m[1];
+      if (/@stable\b/.test(tags) && /@destructive\b/.test(tags))
+        offenders.push(`${path.relative(SPEC_DIR, file)}: ${m[0].replace(/\s+/g, " ")}`);
+    }
+  }
+  assert.deepEqual(offenders, [], "a @stable @destructive test would enter the partition input but never run in that lane");
+});
+
+test("playwright.config.ts still excludes @destructive from every non-destructive run", () => {
+  // The second half: even a mis-tagged test would be kept out of `--grep @stable
+  // --list` by grepInvert, which a CLI --grep cannot override. Without this the guard
+  // above is the only thing standing between the partition and an unmeasurable file.
+  const config = fs.readFileSync(path.join(import.meta.dirname, "..", "playwright.config.ts"), "utf8");
+  assert.match(
+    config,
+    /grepInvert:\s*DESTRUCTIVE_LANE\s*\?\s*undefined\s*:\s*\/@destructive\//,
+    "the partition input assumes @destructive specs are never listed (#1326)",
   );
 });
 
