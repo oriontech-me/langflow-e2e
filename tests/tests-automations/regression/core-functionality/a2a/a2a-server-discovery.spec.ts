@@ -32,8 +32,8 @@ async function listedIds(request: APIRequestContext, headers: Record<string, str
   return { rows: rows as Array<Record<string, string>>, ids: new Set(rows.map((r: any) => r.id)) };
 }
 
-test.describe("A2A Server — agent discovery @api @a2a", () => {
-  test("discovery lists only agent-typed, A2A-enabled flows @api @a2a", async ({ request }) => {
+test.describe("A2A Server — agent discovery", () => {
+  test("discovery lists only agent-typed, A2A-enabled flows", { tag: ["@stable", "@api", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
@@ -89,7 +89,7 @@ test.describe("A2A Server — agent discovery @api @a2a", () => {
     }
   });
 
-  test("unpublishing removes the flow from discovery @api @a2a", async ({ request }) => {
+  test("unpublishing removes the flow from discovery", { tag: ["@stable", "@api", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 

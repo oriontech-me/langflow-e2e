@@ -1,6 +1,6 @@
 # A2A Server — Agent tab: eligibility gate, publishing, and the card editor
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev14`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
 
 **Issue:** #1244 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **U1**) ·
 **Depends on:** #1240 (`LANGFLOW_A2A_ENABLED=true` on every lane), #1242 / PR #1243
@@ -44,15 +44,16 @@ the spec cannot degrade into a DOM echo of itself.
 
 ## Tags *(required)*
 
-`@release` `@workspace` `@ui-ux` `@a2a`
+`@stable` `@release` `@workspace` `@ui-ux` `@a2a`
 
 - `@release` — publishing a flow as an agent is the happy path of the whole A2A
   feature; if this breaks, A2A is unusable regardless of how healthy the API is.
 - `@workspace` — drives the flow editor and canvas (component add, tab switch).
 - `@ui-ux` — the assertions are about what the interface renders and enables.
 - `@a2a` — functional area; requires `LANGFLOW_A2A_ENABLED=true` (`CLAUDE.md`).
-- **No `@stable` yet:** granted only after team validation (`CONTRIBUTING.md`).
-  New in #1244, no daily history.
+- `@stable` — validated by the team and promoted in #1349: the batch ran
+  **51/51 green** (17 tests × 3, `--retries=0`) on nightly `1.12.0.dev18`,
+  with no leaked flow and no backend error logged.
 
 ---
 

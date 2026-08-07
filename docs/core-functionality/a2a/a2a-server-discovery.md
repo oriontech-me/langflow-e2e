@@ -1,6 +1,6 @@
 # A2A Server — agent discovery list: what `/api/v1/a2a/agents` does and does not enumerate
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev14`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
 
 **Issue:** #1242 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T3**) ·
 **Depends on:** #1240 · **Jira:** epic `LE-1588`, registry `LE-1719`
@@ -33,14 +33,16 @@ orchestrator wires itself to a dead endpoint.
 
 ## Tags *(required)*
 
-`@api` `@a2a`
+`@stable` `@api` `@a2a`
 
 - `@api` — pure REST, no UI.
 - `@a2a` — this area's functional tag (added by #1242).
 - **No `@release`:** discovery is not on the critical publish path — a caller
   that already knows the flow id reaches the card directly. The card and
   `message/send` specs carry `@release`.
-- **No `@stable` yet** — pending team validation.
+- `@stable` — validated by the team and promoted in #1349: the batch ran
+  **51/51 green** (17 tests × 3, `--retries=0`) on nightly `1.12.0.dev18`,
+  with no leaked flow and no backend error logged.
 
 ---
 

@@ -49,8 +49,8 @@ async function sendText(
   );
 }
 
-test.describe("A2A Server — JSON-RPC message/send @api @release @a2a", () => {
-  test("message/send runs the flow and echoes the sentinel back @api @release @a2a", async ({
+test.describe("A2A Server — JSON-RPC message/send", () => {
+  test("message/send runs the flow and echoes the sentinel back", { tag: ["@stable", "@release", "@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
@@ -78,7 +78,7 @@ test.describe("A2A Server — JSON-RPC message/send @api @release @a2a", () => {
     }
   });
 
-  test("each call produces its own task @api @a2a", async ({ request }) => {
+  test("each call produces its own task", { tag: ["@stable", "@api", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
@@ -111,7 +111,7 @@ test.describe("A2A Server — JSON-RPC message/send @api @release @a2a", () => {
     }
   });
 
-  test("protocol errors come back as JSON-RPC errors over HTTP 200 @api @a2a", async ({
+  test("protocol errors come back as JSON-RPC errors over HTTP 200", { tag: ["@stable", "@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };

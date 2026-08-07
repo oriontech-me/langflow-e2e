@@ -75,8 +75,8 @@ async function publishViaApi(
   expect(res.status(), `PATCH /api/v1/flows/${flowId} — ${await res.text()}`).toBe(200);
 }
 
-test.describe("A2A Server — Agent tab publish flow @release @workspace @ui-ux @a2a", () => {
-  test("a flow without chat input and output cannot be published @release @workspace @ui-ux @a2a", async ({
+test.describe("A2A Server — Agent tab publish flow", () => {
+  test("a flow without chat input and output cannot be published", { tag: ["@stable", "@release", "@workspace", "@ui-ux", "@a2a"] }, async ({
     page,
   }) => {
     const headers = { Authorization: await getAuthToken(page.request) };
@@ -124,7 +124,7 @@ test.describe("A2A Server — Agent tab publish flow @release @workspace @ui-ux 
     }
   });
 
-  test("publishing from the Agent tab serves a card at the advertised URL @release @workspace @ui-ux @a2a", async ({
+  test("publishing from the Agent tab serves a card at the advertised URL", { tag: ["@stable", "@release", "@workspace", "@ui-ux", "@a2a"] }, async ({
     page,
   }) => {
     const headers = { Authorization: await getAuthToken(page.request) };
@@ -175,7 +175,7 @@ test.describe("A2A Server — Agent tab publish flow @release @workspace @ui-ux 
     }
   });
 
-  test("the card editor changes what the API serves @release @workspace @ui-ux @a2a", async ({
+  test("the card editor changes what the API serves", { tag: ["@stable", "@release", "@workspace", "@ui-ux", "@a2a"] }, async ({
     page,
   }) => {
     const headers = { Authorization: await getAuthToken(page.request) };

@@ -31,8 +31,8 @@ async function publish(
   return res.json();
 }
 
-test.describe("A2A Server — agent card @api @release @a2a", () => {
-  test("published agent flow serves a spec-valid card @api @release @a2a", async ({ request }) => {
+test.describe("A2A Server — agent card", () => {
+  test("published agent flow serves a spec-valid card", { tag: ["@stable", "@release", "@api", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
@@ -77,7 +77,7 @@ test.describe("A2A Server — agent card @api @release @a2a", () => {
     }
   });
 
-  test("card overrides change exactly what the card advertises @api @a2a", async ({ request }) => {
+  test("card overrides change exactly what the card advertises", { tag: ["@stable", "@api", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
@@ -122,7 +122,7 @@ test.describe("A2A Server — agent card @api @release @a2a", () => {
     }
   });
 
-  test("card is 404 while the flow is not published @api @a2a", async ({ request }) => {
+  test("card is 404 while the flow is not published", { tag: ["@stable", "@api", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
@@ -152,7 +152,7 @@ test.describe("A2A Server — agent card @api @release @a2a", () => {
     }
   });
 
-  test("card is 404 for an unknown flow id @api @a2a", async ({ request }) => {
+  test("card is 404 for an unknown flow id", { tag: ["@stable", "@api", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
