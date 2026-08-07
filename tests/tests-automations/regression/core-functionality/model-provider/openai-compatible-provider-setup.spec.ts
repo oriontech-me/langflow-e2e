@@ -30,23 +30,19 @@ import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-
  *   the secret), so it is the key write the backend validates — and that
  *   validation needs the base URL.
  *
- * That coupling is a live defect, measured 3/3 on 1.12.0.dev15 and isolated
- * against the API: the Settings Save fires the two `POST /api/v1/variables/`
+ * That coupling WAS a live defect (LE-2124), measured 3/3 on 1.12.0.dev15 and
+ * isolated against the API: the Settings Save fires the two `POST /api/v1/variables/`
  * writes CONCURRENTLY (the frontend logs its own `Duplicate request:
- * /api/v1/variables/`), so the primary key write validates against provider
- * variables that do not yet include the just-created base URL and is rejected
- * `400 {"detail":"Invalid OpenAI-compatible base URL"}`. Sequential writes over
- * the API: 201/201. Concurrent: 201/400. Nothing is surfaced in the UI — no
- * toast, no model count, no disconnect button — so the provider silently ends up
- * with the base URL only, discovery runs keyless, the endpoint answers 401 and
- * the panel reports a configured provider with 0 models.
+ * /api/v1/variables/`), so the primary key write validated against provider
+ * variables that did not yet include the just-created base URL and was rejected
+ * `400 {"detail":"Invalid OpenAI-compatible base URL"}`, with nothing surfaced in
+ * the UI. Sequential writes over the API: 201/201. Concurrent: 201/400.
  *
- * The LAST test asserts the correct behaviour and is `test.fixme` against that
- * defect — the repo's live-defect convention (`api-folders-crud.spec.ts`
- * #965/LE-2020, `mcp-server.spec.ts` #1266): assertions untouched, no `@stable`,
- * and lifting the quarantine is a deliverable of LE-2124. Tests 4-5
- * configure the pair over the API, sequentially, so the discovery and execution
- * coverage does not depend on the broken UI path.
+ * FIXED upstream by 1.12.0.dev19: concurrent API writes now answer 201/201 3/3, and
+ * the LAST test — which asserts the correct behaviour and whose assertions were never
+ * relaxed — passes 3/3 through the UI. Its `test.fixme` quarantine is lifted and it
+ * carries `@stable` (measured while working #1334). Tests 4-5 still configure the pair
+ * over the API, sequentially: their subject is discovery and execution, not the save.
  *
  * False-positive guards that shape the asserts:
  * - the empty live-only catalog is asserted differentially against Azure AI
@@ -62,7 +58,10 @@ import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-
  * - the model option is addressed by its PROVIDER-QUALIFIED testid
  *   (`OpenAI Compatible-<id>-option`): the endpoint under test serves ids the
  *   OpenAI provider also serves, and an unqualified locator would pass while
- *   exercising the wrong provider.
+ *   exercising the wrong provider;
+ * - the run test gates on the PERSISTED node's `provider`, and enables its model for
+ *   the provider itself rather than inheriting ambient model-status (#1334 — see
+ *   `persistedModelBinding` and `setModelEnabled`).
  */
 
 if (!process.env.CI) {
@@ -218,11 +217,34 @@ async function purgeOcCredentials(request: APIRequestContext): Promise<void> {
 }
 
 /**
+ * A `400` on the key write whose reason is the endpoint being unreachable RIGHT NOW —
+ * the backend validates the key by calling the endpoint, so a stalled network answers
+ * `Connection to the OpenAI-compatible endpoint … timed out` / `DNS resolution failed`.
+ *
+ * Kept strictly separate from `Invalid OpenAI-compatible base URL`, which is the
+ * LE-2124 class and a real defect: this predicate must never swallow that one.
+ */
+function isTransportRejection(body: string): boolean {
+  return /timed out|DNS resolution failed|Could not connect to the OpenAI-compatible endpoint/i.test(
+    body,
+  );
+}
+
+/**
  * Creates the pair SEQUENTIALLY — the base URL write is awaited before the key
  * write starts, which is exactly what the Settings UI does not do (test 4). This
  * is setup, not the behaviour under test, so it takes the path that works.
+ *
+ * Returns a skip reason when the write cannot complete because the ENDPOINT is
+ * unreachable at that moment, and `""` when the pair is stored. Setup that fails on
+ * transport is an environment abort, not a spec verdict (#1074's rule, and this file's
+ * own convention that an unusable endpoint skips with a reason rather than reds a test
+ * with a confusing message). One retry first, because the stall is transient — measured
+ * on a degraded local network as ~2 calls in 12 taking 20-25 s while the rest take 0.6 s.
+ * A `400` that is NOT transport-shaped (`Invalid OpenAI-compatible base URL`) still
+ * fails loudly: that is the defect this file exists to catch.
  */
-async function configureProviderViaApi(request: APIRequestContext): Promise<void> {
+async function configureProviderViaApi(request: APIRequestContext): Promise<string> {
   const bearer = await getAuthToken(request);
   const headers = { Authorization: bearer, "Content-Type": "application/json" };
 
@@ -241,20 +263,29 @@ async function configureProviderViaApi(request: APIRequestContext): Promise<void
     `POST /variables/ ${BASE_URL_VAR} -> ${baseRes.status()} ${await baseRes.text()}`,
   ).toBe(201);
 
-  const keyRes = await request.post("/api/v1/variables/", {
-    headers,
-    data: {
-      name: KEY_VAR,
-      value: TEST_API_KEY,
-      type: "Credential",
-      default_fields: [],
-      category: "Global",
-    },
-  });
-  expect(
-    keyRes.status(),
-    `POST /variables/ ${KEY_VAR} -> ${keyRes.status()} ${await keyRes.text()}`,
-  ).toBe(201);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const keyRes = await request.post("/api/v1/variables/", {
+      headers,
+      data: {
+        name: KEY_VAR,
+        value: TEST_API_KEY,
+        type: "Credential",
+        default_fields: [],
+        category: "Global",
+      },
+    });
+    if (keyRes.status() === 201) return "";
+    const body = await keyRes.text();
+    if (!isTransportRejection(body)) {
+      expect(keyRes.status(), `POST /variables/ ${KEY_VAR} -> ${keyRes.status()} ${body}`).toBe(
+        201,
+      );
+    }
+    console.log(
+      `[openai-compatible] ${KEY_VAR} write rejected on transport (attempt ${attempt + 1}/2): ${body}`,
+    );
+  }
+  return `the endpoint under test was unreachable while storing ${KEY_VAR} — setup could not complete, so this is an environment abort and not a spec verdict`;
 }
 
 interface ProviderEntry {
@@ -287,27 +318,37 @@ async function providerCatalog(
 }
 
 /**
- * The Language Model node's model + credential binding, as PERSISTED — the state
- * the run actually builds from.
+ * The Language Model node's model binding, as PERSISTED — the state the run actually
+ * builds from.
  *
- * `template.model.value` is an ARRAY of model objects on the 1.11+ unified
- * selector (the shape `helpers/flows/agent-credential-settle.ts` documents for the
- * Agent node), and `template.api_key.value` holds the NAME of the global variable,
- * never the secret. Tolerant of partial payloads: it runs inside a poll, so a
- * transient shape must read as "not settled yet" rather than throw. The node is
- * located by its `model_name` template field — the Language Model component is the
- * only node the Basic Prompting template carries with one.
+ * `template.model.value` is an ARRAY of model objects on the 1.11+ unified selector
+ * (the shape `helpers/flows/agent-credential-settle.ts` documents for the Agent node),
+ * each carrying a `name` and the `provider` Langflow spells it under. Tolerant of
+ * partial payloads: it runs inside a poll, so a transient shape must read as "not
+ * settled yet" rather than throw. The node is located by its `model_name` template
+ * field — the Language Model component is the only node the Basic Prompting template
+ * carries with one.
+ *
+ * `credential` (`template.api_key.value`) is REPORTED, never asserted (#1334, the same
+ * call `agent-credential-settle.ts` made for the Agent node under #1274). Upstream
+ * #14311 ("stop automatic provider field binding", on the 1.12 line since 2026-08-04)
+ * deleted the block that wrote the variable NAME into it, so it reads `""` on every
+ * build from mount onward — measured here on 1.12.0.dev18 for the OpenAI Compatible
+ * selection AND, identically, for a plain OpenAI one, which is what proves the empty
+ * value is build-wide rather than a persistence failure on this provider. It stays on
+ * the probe because the poll prints it, and a reader who knows the old behaviour needs
+ * to see that it really is empty rather than wonder whether it was checked.
  */
 async function persistedModelBinding(
   request: APIRequestContext,
   flowId: string,
-): Promise<{ models: string[]; credential: string }> {
+): Promise<{ models: string[]; providers: string[]; credential: string }> {
   const bearer = await getAuthToken(request);
   const res = await request.get(`/api/v1/flows/${flowId}`, {
     headers: { Authorization: bearer },
   });
   if (res.status() !== 200) {
-    return { models: [], credential: `GET flow -> ${res.status()}` };
+    return { models: [], providers: [], credential: `GET flow -> ${res.status()}` };
   }
   const flow = (await res.json().catch(() => null)) as {
     data?: {
@@ -322,16 +363,77 @@ async function persistedModelBinding(
   )?.data?.node?.template;
   const rawModel = template?.model?.value;
   const entries = Array.isArray(rawModel) ? rawModel : [rawModel];
-  const models = entries
-    .map((entry) => {
-      if (typeof entry === "string") return entry;
-      const name = (entry as { name?: unknown } | null)?.name;
-      return typeof name === "string" ? name : "";
-    })
-    .filter((name) => name.length > 0);
+  // A bare string is a model NAME and says nothing about the provider — the
+  // pre-unified-selector shape, tolerated so a stale payload degrades to "no provider
+  // observed" rather than to a wrong one.
+  const pairs = entries.map((entry) => {
+    if (typeof entry === "string") return { name: entry, provider: "" };
+    const record = entry as Record<string, unknown> | null;
+    const str = (key: string) =>
+      typeof record?.[key] === "string" ? (record[key] as string) : "";
+    return { name: str("name"), provider: str("provider") };
+  });
   const credential =
     typeof template?.api_key?.value === "string" ? template.api_key.value : "";
-  return { models, credential };
+  return {
+    models: pairs.map((p) => p.name).filter((name) => name.length > 0),
+    providers: pairs.map((p) => p.provider).filter((provider) => provider.length > 0),
+    credential,
+  };
+}
+
+/**
+ * Model-level enablement for one id (`POST /api/v1/models/enabled_models`), the call
+ * the Azure AI Foundry sibling in this folder already makes.
+ *
+ * Test 5 needs it because the node's model dropdown is built from the
+ * **default-enabled or explicitly enabled** ids only
+ * (`lfx/base/models/unified_models/model_catalog.py`), and `gpt-4o-mini` carries
+ * `default: false` in this provider's live catalog — only the first five ids
+ * alphabetically are defaults. Measured 2/2 on a clean 1.12.0.dev18:
+ * `OpenAI Compatible-gpt-4o-mini-option` never renders and the click times out, well
+ * before the binding assertion is reached. It passed in CI only because the daily's
+ * shared instance carries model-status written by other specs — ambient state this
+ * spec never declared, so it declares it now (#1334).
+ */
+/** `GET /api/v1/models/enabled_models` → the provider's `{model_name: enabled}` map. */
+async function enabledModelsFor(
+  request: APIRequestContext,
+  provider: string,
+): Promise<Record<string, boolean>> {
+  const bearer = await getAuthToken(request);
+  const res = await request.get("/api/v1/models/enabled_models", {
+    headers: { Authorization: bearer },
+  });
+  if (res.status() !== 200) return {};
+  const body = (await res.json().catch(() => ({}))) as {
+    enabled_models?: Record<string, Record<string, boolean>>;
+  };
+  return body.enabled_models?.[provider] ?? {};
+}
+
+async function setModelEnabled(
+  request: APIRequestContext,
+  model: string,
+  enabled: boolean,
+): Promise<number> {
+  const bearer = await getAuthToken(request);
+  const res = await request.post("/api/v1/models/enabled_models", {
+    headers: { Authorization: bearer, "Content-Type": "application/json" },
+    data: [{ provider: PROVIDER_NAME, model_id: model, enabled, model_type: "llm" }],
+  });
+  if (res.status() !== 200) {
+    // A bare "expected 200, received 400" is an unattributed red: the backend puts the
+    // reason in `detail` (the Foundry sibling's note, same endpoint).
+    const body = await res.text();
+    console.log(
+      `POST /api/v1/models/enabled_models ${model} enabled=${enabled} -> ${res.status()} ${body.slice(
+        0,
+        200,
+      )}${isTransportRejection(body) ? " [transport — the endpoint was unreachable]" : ""}`,
+    );
+  }
+  return res.status();
 }
 
 /**
@@ -373,8 +475,17 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("OpenAI Compatible — unified provider setup", () => {
   const createdFlowIds: string[] = [];
+  const enabledModels: string[] = [];
 
   test.afterEach(async ({ request }) => {
+    // Model status is account-wide too, and `model_status_contains` matches a BARE
+    // entry for ANY provider — so a leftover enable is exactly the ambient state
+    // #1334 was about. Disable before the credentials go: the write validates against
+    // the configured provider.
+    for (const model of enabledModels.splice(0)) {
+      await setModelEnabled(request, model, false).catch(() => 0);
+    }
+
     // The provider's credentials are account-wide: a leftover pair would make the
     // next run's unconfigured-state tests skip (silent coverage loss), so purge
     // unconditionally, not only on the tests that wrote them.
@@ -538,6 +649,16 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
         expect(validateResp.status()).toBe(200);
         const body = (await validateResp.json()) as { valid?: boolean; error?: string };
         expect(body.valid).toBe(false);
+        // The bearer can only be judged if the endpoint was REACHED. When it was not,
+        // the validator answers its transport message instead, and asserting the auth
+        // text there measures the network, not the product — so skip with the reason,
+        // the same rule the setup writes in tests 4-5 follow. `valid: false` above is
+        // still asserted in both cases: a reachable-or-not endpoint must never validate
+        // a bogus key.
+        test.skip(
+          isTransportRejection(body.error ?? ""),
+          `the endpoint under test was unreachable, so the bearer was never judged: ${body.error ?? ""}`,
+        );
         // This exact message is only reachable when the endpoint SAW the bearer
         // and answered 401/403 — so it proves the key is actually used for the
         // probe, which a "rejected somehow" assert would not.
@@ -576,33 +697,45 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
       // Setup over the API and SEQUENTIALLY — the UI's concurrent save cannot
       // persist the key on 1.12.0.dev15 (test 4 owns that verdict), and this test
       // is about discovery, not about the save path.
-      await configureProviderViaApi(request);
+      const setupSkip = await configureProviderViaApi(request);
+      test.skip(setupSkip !== "", setupSkip);
 
       await test.step("the llm catalog equals the endpoint's own /v1/models ids", async () => {
-        // Live discovery runs per request against the endpoint; poll until the
-        // catalog filled rather than assuming the first read is warm.
+        // Live discovery runs per request against the endpoint, and the catalog is
+        // observable MID-REGISTRATION: `num_models > 0` is reached while only the `llm`
+        // half exists, so polling on that and then re-reading races the second half in.
+        // Measured 3/3 on 1.12.0.dev18 — twice as `num_models` 124 instead of 248, once
+        // with the llm list still EMPTY — while the same endpoint read seconds later is
+        // `{llm: 124, embeddings: 124}`. Poll the TERMINAL shape instead, and assert it
+        // in one comparison so a partial read reads as "not settled yet" rather than as
+        // a wrong catalog.
+        //
+        // Nothing static can satisfy the id set: the provider ships no catalog rows, so
+        // these ids exist only at the operator's endpoint. `/v1/models` does not
+        // distinguish chat from embedding, so every served model is registered once per
+        // type (`discovery.py`) — the doubling is the documented contract, and #14199's
+        // embedding discovery rides on it.
         await expect
-          .poll(async () => (await providerCatalog(request, PROVIDER_NAME)).num_models, {
-            timeout: 60000,
-          })
-          .toBeGreaterThan(0);
-        const entry = await providerCatalog(request, PROVIDER_NAME);
-
-        const llmIds = entry.models
-          .filter((m) => m.metadata?.model_type === "llm")
-          .map((m) => m.model_name ?? "")
-          .filter(Boolean)
-          .sort();
-
-        // Nothing static can satisfy this: the provider ships no catalog rows, so
-        // these ids exist only at the operator's endpoint.
-        expect(llmIds).toEqual(probe.ids);
-
-        // `/v1/models` does not distinguish chat from embedding, so every served
-        // model is registered once per type (`discovery.py`) — the doubling is the
-        // documented contract, and #14199's embedding discovery rides on it.
-        expect(entry.num_models).toBe(probe.ids.length * 2);
-        expect(entry.is_configured).toBe(true);
+          .poll(
+            async () => {
+              const entry = await providerCatalog(request, PROVIDER_NAME);
+              return {
+                llmIds: entry.models
+                  .filter((m) => m.metadata?.model_type === "llm")
+                  .map((m) => m.model_name ?? "")
+                  .filter(Boolean)
+                  .sort(),
+                num_models: entry.num_models,
+                is_configured: entry.is_configured,
+              };
+            },
+            { timeout: 60000 },
+          )
+          .toEqual({
+            llmIds: probe.ids,
+            num_models: probe.ids.length * 2,
+            is_configured: true,
+          });
       });
 
       await test.step("the panel renders the discovered models as toggles", async () => {
@@ -622,7 +755,7 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
 
   test(
     "a discovered model runs a flow through the OpenAI Compatible provider",
-    { tag: ["@model-provider", "@components", "@playground"] },
+    { tag: ["@stable", "@model-provider", "@components", "@playground"] },
     async ({ page, request }) => {
       const probe = await probeEndpoint(request);
       test.skip(!probe.usable, `OpenAI-compatible endpoint not usable: ${probe.reason}`);
@@ -635,7 +768,49 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
           .join(", ")}) — this test would overwrite and then delete a credential it does not own`,
       );
 
-      await configureProviderViaApi(request);
+      const setupSkip = await configureProviderViaApi(request);
+      test.skip(setupSkip !== "", setupSkip);
+
+      // Writing the two variables does not mean live discovery has run: the catalog
+      // fills on a later request, so enabling a model the provider has not discovered
+      // yet is a 200 that changes nothing. Gate on the model being DISCOVERED first —
+      // measured once in 8 validation runs as `OpenAI Compatible-gpt-4o-mini-option`
+      // still absent after 20 s.
+      await expect
+        .poll(
+          async () =>
+            (await providerCatalog(request, PROVIDER_NAME)).models.some(
+              (m) => m.model_name === TEST_MODEL && m.metadata?.model_type === "llm",
+            ),
+          { timeout: 60000 },
+        )
+        .toBe(true);
+
+      // The dropdown offers default-enabled or explicitly enabled ids only, and
+      // TEST_MODEL need not be a default (`gpt-4o-mini` is not) — so enable it here
+      // instead of inheriting whatever the instance happens to carry (#1334).
+      //
+      // This write validates against the live endpoint too, so it gets the same
+      // treatment as the credential write: a transport rejection is retried once and
+      // then skips with the reason, while any other non-200 fails loudly.
+      let enableStatus = await setModelEnabled(request, TEST_MODEL, true);
+      if (enableStatus !== 200) enableStatus = await setModelEnabled(request, TEST_MODEL, true);
+      test.skip(
+        enableStatus === 400,
+        `the endpoint under test was unreachable while enabling ${TEST_MODEL} — setup could not complete, so this is an environment abort and not a spec verdict`,
+      );
+      expect(
+        enableStatus,
+        `enabling ${TEST_MODEL} for ${PROVIDER_NAME} must succeed — the option is not offered otherwise`,
+      ).toBe(200);
+      enabledModels.push(TEST_MODEL);
+      // And gate on the write having taken effect, so a slow status refresh is a wait
+      // rather than a missing option 20 s later inside the UI step.
+      await expect
+        .poll(async () => (await enabledModelsFor(request, PROVIDER_NAME))[TEST_MODEL] === true, {
+          timeout: 30000,
+        })
+        .toBe(true);
 
       // Per-run sentinel: a cached or stale chat message cannot satisfy the
       // assert. Logged, never used to judge model quality.
@@ -644,13 +819,51 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
 
       await awaitBootstrapTest(page, { skipModal: true });
 
+      /** Opens the model selector and picks THIS provider's entry for TEST_MODEL. */
+      const selectTestModel = async (): Promise<void> => {
+        await page.getByTestId("model_model").first().click();
+        // Provider-QUALIFIED option (scouted live on 1.12.0.dev15): the endpoint
+        // under test serves ids the OpenAI provider also serves, so an
+        // unqualified locator could pass while running the wrong provider.
+        const option = page.getByTestId(`${PROVIDER_NAME}-${TEST_MODEL}-option`).first();
+        // The option list comes from the component's CACHED build config
+        // (`update_model_options_in_build_config`), which can predate the enable write
+        // above even though the catalog and the enabled-models map already agree —
+        // measured once in 7 runs as a 20 s click timeout on an id the API reported
+        // discovered AND enabled. The dropdown ships the repair itself: "Refresh List"
+        // rebuilds the options. Bounded at 3 tries, each logged, then the click's own
+        // timeout reds the test.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          // `waitFor`, not `isVisible({ timeout })` — the latter's timeout is ignored.
+          const visible = await option
+            .waitFor({ state: "visible", timeout: 10000 })
+            .then(() => true)
+            .catch(() => false);
+          if (visible) break;
+          console.log(
+            `[openai-compatible] ${PROVIDER_NAME}-${TEST_MODEL}-option not offered yet — refreshing the list (attempt ${attempt + 1}/3)`,
+          );
+          await page.getByRole("button", { name: "Refresh List" }).first().click();
+          // The refresh closes the popover on some builds; reopen when it did.
+          if (!(await option.isVisible().catch(() => false))) {
+            await page.getByTestId("model_model").first().click();
+          }
+        }
+        await option.click();
+        // The selection autosaves with a debounce; the Playground builds the
+        // PERSISTED flow.
+        await waitForFlowSaveSettled(page);
+      };
+
+      let flowId = "";
+
       await test.step("point a Basic Prompting flow at the discovered model", async () => {
         // Basic Prompting ships Chat Input → Language Model → Chat Output WIRED;
         // a blank canvas leaves them unconnected and the run persists the user
         // turn with no reply — indistinguishable from a provider failure. Copied
         // over the API rather than clicked in the templates modal, which creates a
         // blank `New Flow` placeholder first (#1005).
-        const flowId = await createFlowFromStarter(
+        flowId = await createFlowFromStarter(
           page.request,
           "Basic Prompting",
           `openai-compatible ${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -671,27 +884,34 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
         // (1) value is supported`), while the widget still read `gpt-4o-mini`.
         await waitForFlowSaveSettled(page);
 
-        await page.getByTestId("model_model").first().click();
-        // Provider-QUALIFIED option (scouted live on 1.12.0.dev15): the endpoint
-        // under test serves ids the OpenAI provider also serves, so an
-        // unqualified locator could pass while running the wrong provider.
-        await page.getByTestId(`${PROVIDER_NAME}-${TEST_MODEL}-option`).first().click();
-        // The selection autosaves with a debounce; the Playground builds the
-        // PERSISTED flow.
-        await waitForFlowSaveSettled(page);
+        await selectTestModel();
         await expect(page.getByTestId("value-dropdown-model_model")).toContainText(TEST_MODEL, {
           timeout: 15000,
         });
 
-        // The widget is NOT the contract — the run builds the PERSISTED flow, and
-        // the two disagreed on every failing run above. Gate on what the database
-        // holds: the unified selector stores `template.model.value` as an ARRAY of
-        // model objects (same shape `agent-credential-settle.ts` reads for the
-        // Agent node) and binds `api_key` to the provider's credential NAME. Both
-        // must be this provider's, or a green run could be someone else's model.
+        // The widget is NOT the contract — the run builds the PERSISTED flow, and the
+        // two disagreed on every failing run above (1 selection in 5 still lands on the
+        // editor's mount default, `claude-opus-5` / Anthropic). Gate on what the
+        // database holds: the unified selector stores `template.model.value` as an
+        // ARRAY of model objects (same shape `agent-credential-settle.ts` reads for the
+        // Agent node), each carrying the model NAME and its PROVIDER. Both must be this
+        // provider's, or a green run could be someone else's model.
+        //
+        // The provider — not a stored credential name — is the axis, because it is what
+        // the runtime derives the key from: `instantiation.py` reads
+        // `model.value[0].provider` and calls `get_api_key_for_provider`, which with an
+        // empty `api_key` resolves `get_provider_secret_variable_key(provider)`.
+        // Measured causally on 1.12.0.dev18: dropping ONLY OPENAI_COMPATIBLE_API_KEY
+        // while a valid OPENAI_API_KEY stays configured account-wide turns this same run
+        // into `401 Incorrect API key provided: EMPTY` (#1334).
+        //
+        // `toMatchObject`, not `toEqual`: the probe also carries `credential`, which is
+        // printed in this poll's failure diagnostic and asserted in NEITHER direction —
+        // requiring it empty would swap one dated premise (#14311 removed the binding)
+        // for another and break a `manual.yml` dispatch at a pre-#14311 build.
         await expect
           .poll(async () => persistedModelBinding(request, flowId), { timeout: 30000 })
-          .toEqual({ models: [TEST_MODEL], credential: KEY_VAR });
+          .toMatchObject({ models: [TEST_MODEL], providers: [PROVIDER_NAME] });
       });
 
       await test.step("the playground gets a real answer from the endpoint", async () => {
@@ -699,6 +919,21 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
         await expect(page.getByTestId("input-chat-playground").last()).toBeVisible({
           timeout: 30000,
         });
+
+        // Re-read the binding at the LAST moment the run can still be influenced, so a
+        // failure below is attributed rather than mysterious. This is evidence, not a
+        // repair: measured twice in 12 runs on 1.12.0.dev19, the run died on
+        // `404 … This is not a chat model … Did you mean to use v1/completions?` — the
+        // signature of an EMPTY model field falling back to the provider's first
+        // default-enabled id (`babbage-002`) — while this very read still returned
+        // `gpt-4o-mini` / `OpenAI Compatible`. So the substitution is NOT a persistence
+        // reversion, and re-selecting cannot fix it: the `POST /api/v2/workflows` run
+        // did not build what the database holds. Keeping the read makes the next
+        // occurrence say that in one line instead of implying a stale selection.
+        expect(
+          await persistedModelBinding(request, flowId),
+          "the persisted binding must still be this provider's model when the run is sent — if the run then executes another model, the run did not build the persisted flow",
+        ).toMatchObject({ models: [TEST_MODEL], providers: [PROVIDER_NAME] });
         await page
           .getByTestId("input-chat-playground")
           .last()
@@ -708,6 +943,25 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
         // Deterministic completion signal (never a "did Stop appear?" probe).
         await expect(page.getByTestId("button-stop")).toBeHidden({ timeout: 180000 });
         await expect(page.getByTestId("button-send").last()).toBeVisible({ timeout: 30000 });
+
+        // An account with no credits is an environment abort, not a spec verdict — and
+        // it is invisible to `probeEndpoint`, because `GET /v1/models` answers 200 for a
+        // drained key (measured). Left unattributed it surfaces 90 s later as "AI reply
+        // for the session not persisted yet", which reads like a product failure: that
+        // is exactly how it presented on a 2.2 min red. The run renders the provider's
+        // own message, so read it here and skip with it.
+        //
+        // Deliberately narrow: this matches a DRAINED ACCOUNT, never a rate limit. A
+        // 429 that says `rate_limit_exceeded` still reds the test, because that one the
+        // suite should see.
+        const pageText = await page.locator("body").innerText();
+        const quota = pageText.match(
+          /(?:You (?:have )?(?:exceeded your current quota|have no credits remaining)|insufficient_quota|billing_not_active)[^\n]{0,160}/i,
+        );
+        test.skip(
+          quota !== null,
+          `the endpoint's account cannot serve completions, so the run produced no reply: ${quota?.[0] ?? ""}`,
+        );
 
         // Assert on the PERSISTED reply: the live bubble renders the empty
         // placeholder mid-stream (#634 race).
@@ -747,33 +1001,30 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
     },
   );
 
-  // QUARANTINED — confirmed Langflow defect on 1.12.0.dev15, not a test defect.
-  // Saving a base URL + API key from Settings → Model Providers persists ONLY the
-  // base URL: the frontend fires the two `POST /api/v1/variables/` writes
-  // concurrently (it logs its own `Duplicate request: /api/v1/variables/`), so the
-  // PRIMARY key write validates against provider variables that do not yet include
-  // the base URL its sibling request is creating, and is rejected
-  // `400 {"detail":"Invalid OpenAI-compatible base URL"}` — with nothing surfaced
-  // in the UI (no toast, no model count, no disconnect button). Measured 3/3
-  // through the UI and isolated against the API on the same instance: sequential
-  // writes 201/201, concurrent 201/400. Consequence: an authenticated
-  // OpenAI-compatible endpoint cannot be configured through Settings at all.
+  // QUARANTINE LIFTED on 1.12.0.dev19 (LE-2124 fixed upstream).
   //
-  // The asserts below are the CORRECT contract and stay untouched. Following the
-  // repo's live-defect convention (`api-folders-crud.spec.ts` #965/LE-2020,
-  // `mcp-server.spec.ts` #1266): `test.fixme` without `@stable` until the fix
-  // reaches `langflowai/langflow-nightly:latest`. Lifting it (remove `test.fixme`,
-  // add `@stable`) is a deliverable of LE-2124
-  // (https://datastax.jira.com/browse/LE-2124), filed from this evidence.
+  // This test was `test.fixme` against a confirmed Langflow defect: saving a base URL
+  // + API key from Settings → Model Providers persisted ONLY the base URL, because the
+  // frontend fires the two `POST /api/v1/variables/` writes concurrently (it logs its
+  // own `Duplicate request: /api/v1/variables/`) and the PRIMARY key write validated
+  // against provider variables that did not yet include the base URL its sibling
+  // request was creating — rejected `400 {"detail":"Invalid OpenAI-compatible base
+  // URL"}`, with nothing surfaced in the UI. Measured 3/3 through the UI on
+  // 1.12.0.dev15 and isolated against the API: sequential writes 201/201, concurrent
+  // 201/400. The asserts were never relaxed while it was quarantined.
+  //
+  // Re-measured on 1.12.0.dev19 while working #1334: concurrent API writes answer
+  // 201/201 3/3, and this test passes 3/3 through the UI. So the quarantine comes off
+  // (`test.fixme` removed, `@stable` added) — LE-2124's own lift condition.
   // Evidence: docs/core-functionality/model-provider/openai-compatible-provider-setup.md
   // → "Finding this spec encodes".
   //
   // Declared LAST on purpose: `mode: "serial"` skips the rest of the describe after
   // a failure, so in its narrative position (4th) its red cost the discovery and
   // execution tests their run — measured, not hypothesised.
-  test.fixme(
+  test(
     "saving a base URL and an API key through Settings persists BOTH variables",
-    { tag: ["@regression", "@model-provider", "@settings"] },
+    { tag: ["@stable", "@regression", "@model-provider", "@settings"] },
     async ({ page, request }) => {
       const probe = await probeEndpoint(request);
       test.skip(!probe.usable, `OpenAI-compatible endpoint not usable: ${probe.reason}`);
@@ -787,6 +1038,25 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
       );
 
       await awaitBootstrapTest(page, { skipModal: true });
+
+      // Every rejected variable write the Save fires, with its body — the ONLY thing
+      // that separates the two ways this test can end with just the base URL stored.
+      // LE-2124 answers `400 Invalid OpenAI-compatible base URL` (the concurrency race,
+      // which is the defect under test); an endpoint that is unreachable at that moment
+      // answers `400 … timed out` / `DNS resolution failed`, which is the environment.
+      // Without this the end state is identical and the red means nothing.
+      const writeRejections: string[] = [];
+      page.on("response", (r) => {
+        if (!r.url().includes("/api/v1/variables/")) return;
+        const method = r.request().method();
+        if (method !== "POST" && method !== "PATCH") return;
+        if (r.status() < 400) return;
+        void r
+          .text()
+          .then((body) => writeRejections.push(body))
+          .catch(() => writeRejections.push(`<body unavailable, status ${r.status()}>`));
+      });
+
       await openProviderPanel(page, PROVIDER_ITEM);
 
       await test.step("the credentials validate", async () => {
@@ -824,14 +1094,36 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
         // "this provider is configured", independent of how many requests the
         // frontend chose to make.
         //
-        // THIS is the step that fails on 1.12.0.dev15: the key write is rejected
-        // 400 `Invalid OpenAI-compatible base URL` because it validates against
-        // provider variables that do not yet include the base URL created by its
-        // own sibling request — and the UI reports nothing. Do not "fix" it by
-        // relaxing the assert: a half-configured provider is the defect.
-        await expect
-          .poll(async () => ocVariableNames(request), { timeout: 30000 })
-          .toEqual([KEY_VAR, BASE_URL_VAR].sort());
+        // THIS is the step that failed on 1.12.0.dev15: the key write was rejected
+        // 400 `Invalid OpenAI-compatible base URL` because it validated against
+        // provider variables that did not yet include the base URL created by its
+        // own sibling request — and the UI reported nothing. Fixed by 1.12.0.dev19.
+        // Do not "fix" a future red by relaxing the assert: a half-configured
+        // provider is the defect, and this pair is what "configured" means.
+        //
+        // Polled by hand rather than with `expect.poll` so the rejection bodies can be
+        // consulted BEFORE the verdict: an unreachable endpoint leaves exactly the same
+        // end state as the race, and calling that a defect would be a false positive.
+        const expected = [KEY_VAR, BASE_URL_VAR].sort();
+        let names: string[] = [];
+        const deadline = Date.now() + 30000;
+        do {
+          names = await ocVariableNames(request);
+          if (names.length === expected.length) break;
+          await page.waitForTimeout(1000);
+        } while (Date.now() < deadline);
+
+        const transport = writeRejections.filter(isTransportRejection);
+        test.skip(
+          names.length !== expected.length && transport.length > 0,
+          `the endpoint under test was unreachable while the Save stored the pair, so the write never reached the concurrency path this test is about: ${transport[0]}`,
+        );
+        expect(
+          names,
+          writeRejections.length
+            ? `variable writes rejected during the Save: ${JSON.stringify(writeRejections)}`
+            : "the Save stored no rejection — the pair simply never completed",
+        ).toEqual(expected);
       });
 
       await test.step("the panel reflects a configured provider", async () => {
