@@ -45,6 +45,10 @@ const MODULES: ModuleConfig[] = [
   { label: "`mcp/server/`",                                  sectionStart: "### mcp/server/" },
   { label: "`ui-ux/` — Canvas",                              sectionStart: "## ui-ux/" },
   { label: "`ui-ux/` — Settings",                            sectionStart: "#### 15.10" },
+  { label: "`security/` — Validation, SSRF, Secrets",        sectionStart: "## security/" },
+  { label: "`i18n/` — Language and Localization",            sectionStart: "## i18n/" },
+  { label: "`deployments/` — Deploy Page and Stepper",       sectionStart: "## deployments/" },
+  { label: "`memory/` — Memory Base Registration",           sectionStart: "## memory/" },
 ];
 
 const PART_II_HEADER = "# PART II — TEST AUTOMATION COVERAGE";
