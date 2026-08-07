@@ -164,6 +164,38 @@ it is how a spec passes on one instance and dies on a clean one. Test 5 therefor
 `POST /api/v1/models/enabled_models` — the endpoint the **Azure AI Foundry sibling in this
 same folder already uses** — and disables it again in cleanup.
 
+### The persisted binding cannot predict the executed model — do not strengthen it (#1372, LE-2156)
+
+Test 5's pre-send re-read of `GET /api/v1/flows/{id}` is **attribution, never repair**, and
+the reason is structural rather than a matter of tuning. `POST /api/v2/workflows` — the run
+the Playground issues — carries a `data` field that `WorkflowRunRequest` declares as an
+*"Optional live-canvas override of the flow's nodes/edges; **takes priority over the saved
+flow data**"*, and a capture of a **healthy** run confirms the frontend always sends it.
+The backend therefore builds the canvas, not the row. `GET /api/v1/flows/{id}` is not a
+weak observable here; it is the **wrong object**, and no amount of polling it harder can
+close the gap.
+
+Measured consequence: on 2 of 12 full-file runs the run answered
+`404 … This is not a chat model` while the persisted read at the last influenceable
+instant — after the Playground modal opened, immediately before `button-send` — returned
+`{models: ["gpt-4o-mini"], providers: ["OpenAI Compatible"]}` and the widget agreed. A
+re-selection repair loop was written, measured against exactly that, and **removed**:
+re-selecting cannot fix a state that is already correct.
+
+The mechanism is upstream (`LE-2156`, full report in
+`docs/upstream-bugs/UPSTREAM-BUG-model-input-cross-provider-default-fill.md`): an **empty**
+`ModelInput` value is filled with `options[0]`, and `options` is a **flat list across every
+enabled provider**, so the fill need not even be this provider — an OpenAI-Compatible node
+came back `claude-opus-5` / **Anthropic**. It fails loudly here only because this
+provider's endpoint-derived default set starts with completions-only ids; on 6 of the 8
+providers measured, `options[0]` is a working chat model and the same substitution runs
+**green** against a model nobody selected.
+
+So the only observable that predicts the executed model is the `data` payload of the run
+request. Two things follow for anyone editing this spec: the pre-send read stays as an
+attribution line and must not grow into a gate that pretends to prevent this, and a future
+guard that genuinely covers it belongs on the run request, not on the flow row.
+
 ---
 
 ## Tags *(required)*
