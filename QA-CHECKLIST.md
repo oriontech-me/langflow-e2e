@@ -827,7 +827,7 @@
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 30 | 5 | 3 | 2 |
-| `core-functionality/model-provider/` | 34 | 30 | 2 | 2 | 0 |
+| `core-functionality/model-provider/` | 34 | 31 | 2 | 1 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
@@ -838,7 +838,7 @@
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **393 (79%)** | **77 (15%)** | **17 (3%)** | **13 (3%)** |
+| **TOTAL** | **500** | **394 (79%)** | **77 (15%)** | **16 (3%)** | **13 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 458 `test()` calls carrying the `@stable` tag, distributed across 182 spec
+> 460 `test()` calls carrying the `@stable` tag, distributed across 182 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1160,6 +1160,8 @@
 - [x] the provider is offered with two variables and a live-only, empty catalog → `openai-compatible-provider-setup.spec.ts`
 - [x] an unreachable base URL is rejected and nothing is persisted → `openai-compatible-provider-setup.spec.ts`
 - [x] a reachable endpoint with a bogus key is rejected as an authentication failure → `openai-compatible-provider-setup.spec.ts`
+- [x] a discovered model runs a flow through the OpenAI Compatible provider → `openai-compatible-provider-setup.spec.ts`
+- [x] saving a base URL and an API key through Settings persists BOTH variables → `openai-compatible-provider-setup.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
