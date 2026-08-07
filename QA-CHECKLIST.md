@@ -832,13 +832,13 @@
 | `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `core-functionality/a2a/` | 18 | 10 | 0 | 1 | 7 |
+| `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **392 (78%)** | **77 (15%)** | **17 (3%)** | **14 (3%)** |
+| **TOTAL** | **500** | **393 (79%)** | **77 (15%)** | **17 (3%)** | **13 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 466 `test()` calls carrying the `@stable` tag, distributed across 185 spec
+> 467 `test()` calls carrying the `@stable` tag, distributed across 186 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1045,6 +1045,7 @@
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
 
 #### core-functionality/a2a/
+- [x] the Internal dropdown lists a locally published agent and calling it runs that flow → `a2a-client-agent-internal.spec.ts`
 - [x] published agent flow serves a spec-valid card → `a2a-server-agent-card.spec.ts`
 - [x] card overrides change exactly what the card advertises → `a2a-server-agent-card.spec.ts`
 - [x] card is 404 while the flow is not published → `a2a-server-agent-card.spec.ts`
