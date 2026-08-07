@@ -351,8 +351,8 @@
 - [-] Composio (tool integration for Agent) → `composio.spec.ts`
 - [x] Playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
 - [x] Playground input remains usable after API error (mocked) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
-- [x] Agent stops when configured stop condition is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts` (`max_iterations` is the Agent's only configurable stop mechanism — no dedicated stop-condition field exists; see #824)
-- [x] Agent stops when maximum number of iterations is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
+- [~] Agent stops when configured stop condition is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts` (`max_iterations` is the Agent's only configurable stop mechanism — no dedicated stop-condition field exists; see #824. **Partial for the same reason as the bullet below:** the stop itself is quarantined against #1264)
+- [~] Agent stops when maximum number of iterations is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts` (**partial: the stop assertion is quarantined (`test.fixme`, never `@stable`) against a live product failure — #1264.** With `max_iterations=1` on a task that needs several tool-calling iterations, the agent answers the task normally instead of returning `Model call limits exceeded: run limit (1/1)`; the message renders, so this is a content failure, not a timeout. Reproduced on 1.12.0.dev18 locally, off CI load, on `claude-haiku-4-5`, `claude-opus-5` and `claude-opus-4-5`, which rules out the mid-run backend wedge #1264's triage left open as a cover. The `@stable` causal control — a high limit finishes without the limit message — still runs, so what remains proven is that a high cap does not stop the agent, not that a low one does)
 - [x] Agent with multiple configured tools executes correctly → `agent-multi-tool-selection.spec.ts`
 - [ ] Agent with configured timeout respects the limit (no product surface on 1.12.x — the Agent component exposes no timeout field: its inputs are `max_iterations`, `max_tokens`, `n_messages`, `system_prompt`, `context_id`, `stream`, and tools; Langflow's only configurable per-component timeouts live on the A2A Agent (`timeout`) and MCP tools (`tool_execution_timeout`), not the Agent, and the Language Model / chat models expose none either. The client/transport execution timeout that bounds any run is covered by `ui-ux/execution-error-notification.spec.ts`. Not automatable as written; #825, same class as #824)
 - [x] Connecting an external model in Agent drops the prior model selection (connection-mode isolation, prevents stale provider config) → `llm-agents/agent-model-connection-isolation.spec.ts`
@@ -436,7 +436,7 @@
 
 #### 7.7 Model Parameters (Agent)
 - [x] Maximum token count — response truncated as configured → `llm-agents/agent-max-tokens.spec.ts`
-- [x] Maximum agent iterations → `core-functionality/llm-agents/agent-max-iterations.spec.ts`
+- [~] Maximum agent iterations → `core-functionality/llm-agents/agent-max-iterations.spec.ts` (partial — the stop assertion is quarantined against #1264; see §6.2 for the measurement)
 - [x] Use of custom `context_id` for memory isolation → `agent-context-id-isolation.spec.ts`
 - [x] Output formatting (JSON via output_schema, Markdown, plain text) → `agent-structured-output.spec.ts`
 
