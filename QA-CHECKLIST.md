@@ -832,13 +832,13 @@
 | `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `core-functionality/a2a/` | 18 | 9 | 0 | 1 | 8 |
+| `core-functionality/a2a/` | 18 | 10 | 0 | 1 | 7 |
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **391 (78%)** | **77 (15%)** | **17 (3%)** | **15 (3%)** |
+| **TOTAL** | **500** | **392 (78%)** | **77 (15%)** | **17 (3%)** | **14 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 465 `test()` calls carrying the `@stable` tag, distributed across 184 spec
+> 466 `test()` calls carrying the `@stable` tag, distributed across 185 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1053,6 +1053,7 @@
 - [x] publishing from the Agent tab serves a card at the advertised URL → `a2a-server-agent-tab-publish.spec.ts`
 - [x] the card editor changes what the API serves → `a2a-server-agent-tab-publish.spec.ts`
 - [x] the Try it panel round-trips a sentinel over the published endpoint → `a2a-server-agent-tab-try-it.spec.ts`
+- [x] the api-key gate follows the project the flow lives in → `a2a-server-auth-apikey.spec.ts`
 - [x] discovery lists only agent-typed, A2A-enabled flows → `a2a-server-discovery.spec.ts`
 - [x] unpublishing removes the flow from discovery → `a2a-server-discovery.spec.ts`
 - [x] message/send runs the flow and echoes the sentinel back → `a2a-server-jsonrpc-message-send.spec.ts`
