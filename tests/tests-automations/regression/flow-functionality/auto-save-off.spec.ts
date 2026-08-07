@@ -4,6 +4,8 @@ import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { openFlowById } from "../../../helpers/flows/open-flow-by-id";
+import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
 
 // Capture every flow THIS page creates from its POST /api/v1/flows → 201
 // responses and delete them id-scoped in afterEach. awaitBootstrapTest runs
@@ -98,11 +100,26 @@ async function expectLeftEditor(page: Page): Promise<void> {
  * reload proves that more strictly than an SPA route change. The
  * "open a flow from its list card" path stays covered by the specs whose
  * subject it is (`bulk-actions`, `mcp-server`).
+ *
+ * The entry itself is `openFlowById` (#1214/#1342), not a local `goto` — #1336's
+ * fix hand-rolled this block and became the fourth copy of exactly what that
+ * helper was extracted to stop. Two of its guarantees matter here and the copy
+ * had neither: the onboarding overlay cannot appear, and the editor is not handed
+ * back while `POST /api/v1/authz/me/permissions` is still in flight — the #1005
+ * window where a mutation is silently swallowed, and this spec adds a component
+ * immediately after two of the three re-opens.
+ *
+ * What does NOT come from the helper is the flow-load wait below. Keep it.
  */
 async function reopenFlow(page: Page, flowId: string): Promise<void> {
-  // The graph is applied to the canvas only after this GET resolves; waiting on
-  // it is what keeps the `div-generic-node` counts below from reading an empty
-  // canvas that simply had not rendered yet.
+  // Ordering gate, registered BEFORE the navigation the helper performs.
+  //
+  // `openFlowById` returns on `canvas_controls_dropdown` + writability, and
+  // neither implies the graph has been applied — the canvas chrome renders before
+  // the nodes do. That matters for exactly one assertion and it is the one most
+  // easily fooled: the discard check is `div-generic-node` count === 0, which
+  // PASSES VACUOUSLY on a canvas that has not painted its nodes yet. So the count
+  // is ordered after the flow's own GET, which is what applies the graph.
   const flowLoaded = page.waitForResponse(
     (resp) =>
       new URL(resp.url()).pathname === `/api/v1/flows/${flowId}` &&
@@ -110,11 +127,8 @@ async function reopenFlow(page: Page, flowId: string): Promise<void> {
       resp.status() === 200,
     { timeout: 45000 },
   );
-  await page.goto(`/flow/${flowId}`);
+  await openFlowById(page, flowId);
   await flowLoaded;
-  await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-    timeout: 45000,
-  });
 }
 
 test(
@@ -122,6 +136,16 @@ test(
   { tag: ["@stable", "@release", "@api", "@database", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
+
+    // Seeded HERE, not left to `openFlowById`'s own call, and the difference is
+    // measurable rather than tidiness: upstream arms the onboarding tooltip at
+    // canvas mount + 10 s and paints it OVER the canvas-controls bar, which is
+    // what `adjustScreenView` clicks (#1220's measurement). This test calls
+    // `adjustScreenView` four times across a ~15–25 s run, so the first editing
+    // phase — before any re-open — is inside that window. `addInitScript` only
+    // applies to loads that follow it, so it has to precede the bootstrap's
+    // navigation; the helper's later calls are idempotent per page.
+    await seedAssistantDiscovered(page);
 
     await page.route("**/api/v1/config", (route) => {
       route.fulfill({
