@@ -32,8 +32,10 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
 import {
+  formatSaveBusyFailure,
   rankCandidates,
   validateProviderWithFallback,
+  waitForButtonIdle,
   type ProviderRecord,
 } from "./collect-models";
 
@@ -476,4 +478,123 @@ test("google is unchanged — its entries are already the flash tier", () => {
 test("an unknown provider falls back to raw catalog order rather than dropping models", () => {
   const catalog = ["b", "a", "c"];
   assert.deepEqual(rankCandidates("groq", catalog), catalog);
+});
+
+// ─── waitForButtonIdle / formatSaveBusyFailure (#1355) ────────────────────────
+//
+// The incident these cover: `Collect models` failed twice in a row with
+// `locator.click: Timeout 20000ms exceeded` on a `Save` button the log itself
+// showed as `aria-busy="true" aria-disabled="true"` — the PREVIOUS provider's
+// validation still in flight. The click's own actionability wait is capped
+// below the ~35s a Google validation takes, so a slow-but-healthy save read as
+// a broken button, and the error named the wrong step.
+//
+// Driven with an injected clock and a fake locator: the real failure needs a
+// funded key and a slow backend, neither of which a unit lane has. What IS
+// unit-testable is the decision — when the wait gives up, and what it reports.
+
+/** A locator whose attribute/enabled readings are scripted per poll. */
+function fakeButton(states: Array<{ ariaBusy?: string | null; ariaDisabled?: string | null; enabled?: boolean }>) {
+  let poll = -1;
+  const at = () => states[Math.min(poll, states.length - 1)] ?? {};
+  return {
+    reads: () => poll + 1,
+    getAttribute: async (name: string) => {
+      // aria-busy is read first in each poll, so advance the cursor there.
+      if (name === "aria-busy") poll += 1;
+      const s = at();
+      return name === "aria-busy" ? (s.ariaBusy ?? null) : (s.ariaDisabled ?? null);
+    },
+    isEnabled: async () => at().enabled ?? true,
+  };
+}
+
+/** A clock that only advances when the code under test sleeps. */
+function fakeClock() {
+  let t = 0;
+  return {
+    now: () => t,
+    sleep: async (ms: number) => {
+      t += ms;
+    },
+  };
+}
+
+test("#1355: an already-idle button is answered on the first poll, without sleeping", async () => {
+  const clock = fakeClock();
+  const verdict = await waitForButtonIdle(fakeButton([{}]), { ...clock, timeoutMs: 60_000 });
+  assert.equal(verdict.idle, true);
+  assert.equal(verdict.polls, 1);
+  assert.equal(verdict.waitedMs, 0, "a ready button must not cost the caller any wall clock");
+});
+
+test("#1355: a busy button that settles is waited out rather than failed", async () => {
+  const clock = fakeClock();
+  const button = fakeButton([
+    { ariaBusy: "true", ariaDisabled: "true" },
+    { ariaBusy: "true", ariaDisabled: "true" },
+    {},
+  ]);
+  const verdict = await waitForButtonIdle(button, { ...clock, timeoutMs: 60_000, pollMs: 250 });
+  assert.equal(verdict.idle, true);
+  assert.equal(verdict.polls, 3);
+  assert.equal(verdict.waitedMs, 500, "two sleeps of 250ms — this is the ~35s validation being ridden out");
+});
+
+test("#1355: a button busy past the deadline gives up and reports WHY, naming the provider", async () => {
+  const clock = fakeClock();
+  const verdict = await waitForButtonIdle(fakeButton([{ ariaBusy: "true", ariaDisabled: "true" }]), {
+    ...clock,
+    timeoutMs: 1_000,
+    pollMs: 250,
+  });
+  assert.equal(verdict.idle, false);
+  assert.equal(verdict.ariaBusy, "true");
+
+  const message = formatSaveBusyFailure("anthropic", verdict);
+  assert.match(message, /provider "anthropic"/);
+  assert.match(message, /aria-busy\s+true/);
+  assert.match(message, /still BUSY/);
+  assert.match(
+    message,
+    /PREVIOUS provider's/,
+    "the whole point of the message: the busy button is a symptom of the provider before it",
+  );
+});
+
+test("#1355: aria-disabled alone is not idle, and reads as the not-modelled state", async () => {
+  const clock = fakeClock();
+  const verdict = await waitForButtonIdle(fakeButton([{ ariaDisabled: "true" }]), {
+    ...clock,
+    timeoutMs: 500,
+    pollMs: 250,
+  });
+  assert.equal(verdict.idle, false);
+  const message = formatSaveBusyFailure("google", verdict);
+  assert.match(message, /not busy, but not actionable/);
+  assert.doesNotMatch(message, /still BUSY/);
+});
+
+test("#1355: clean aria attributes with a really-disabled button is still not idle", async () => {
+  const clock = fakeClock();
+  const verdict = await waitForButtonIdle(fakeButton([{ enabled: false }]), {
+    ...clock,
+    timeoutMs: 500,
+    pollMs: 250,
+  });
+  assert.equal(
+    verdict.idle,
+    false,
+    "aria-disabled is advisory markup and isEnabled() reads the real state — either alone blocks the click",
+  );
+  assert.equal(verdict.enabled, false);
+});
+
+test("#1355: a zero timeout still OBSERVES once instead of reporting a state it never read", async () => {
+  const clock = fakeClock();
+  const button = fakeButton([{ ariaBusy: "true" }]);
+  const verdict = await waitForButtonIdle(button, { ...clock, timeoutMs: 0, pollMs: 250 });
+  assert.equal(verdict.polls, 1, "#1012: an unobserved state is unknown, never clean");
+  assert.equal(verdict.idle, false);
+  assert.equal(verdict.ariaBusy, "true");
 });
