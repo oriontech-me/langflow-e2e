@@ -1,6 +1,6 @@
 # MCP Client – Agent Using MCPTools
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x (1.12.0.dev19)
 
 ---
 
@@ -18,7 +18,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 
 ## Step by step *(required)*
 
-1. Load Simple Agent template via `SimpleAgentTemplatePage` (parameterized by `models.json`)
+1. Load the Simple Agent template with this spec's **own** `loadAgent` (parameterized by `models.json`) — *not* `SimpleAgentTemplatePage.load()`, for the reason in *Why this spec loads the agent itself* below — then block until the Agent node's persisted **provider binding** has settled
 2. Delete any existing `everything` MCP server via API, then register via JSON tab
 3. Poll `GET /api/v2/mcp/servers?action_count=true` until `toolsCount` is non-null
 4. Add MCPTools component to canvas
@@ -35,6 +35,7 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 ## Validation criterion *(required)*
 
 - The Playground renders a tool-invocation block for the `echo` tool (Proofs #1–#2) AND the agent's final response contains `"hello mcp"` (Proof #3) — together confirming the MCP echo tool was called and its result returned to the user.
+- **Precondition, asserted rather than assumed:** before the Playground is opened, the persisted Agent node names the **provider** of the requested model. A failure here is reported with the shared verdict taxonomy (`settled` / `default-provider` / `no-model` / `read-failed` / …) rather than a bare mismatch, so a run that never managed to read the flow is not reported as a wrong binding (#1371, the `read-failed` distinction #1261 needed).
 
 > **1.12 rendering (why the locators changed).** Through ~1.11 the tool call surfaced as a `.cursor-pointer` accordion row reading `"Called tool ECHO"`; on 1.12 the Playground renders it as a **testid** `tool_echo` inside `div-tools_tools_metadata` under an **"Agent Steps"** block, and the AI message container moved from `div-chat-message` to `chat-message-AI-<text>`. The tool round-trip itself is unchanged and healthy — verified on `1.12.0.dev0` via `GET /api/v1/monitor/messages` (`content_blocks: ["tool_use|text|text"]`, `tool_use name=echo`, `text="Echo: hello mcp"`). The old text-based selectors were stale drift (#894), not a product regression.
 
@@ -48,7 +49,8 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 - `src/frontend/src/components/core/parameterRenderComponent/components/mcpComponent/index.tsx` — tool mode toggle and toolset handle
 - `src/frontend/src/components/core/chatComponents/ContentBlockDisplay.tsx` (+ the Playground tool-metadata renderer) — emits the `div-tools_tools_metadata` / `tool_<name>` testids and the "Agent Steps" block asserted by Proofs #1–#2
 - npm package `@modelcontextprotocol/server-everything` — launched via `npx`
-- `tests/pages/SimpleAgentTemplatePage.ts` — loads Simple Agent template with configured provider/model
+- `tests/helpers/flows/agent-credential-settle.ts` — the shared probe, verdict taxonomy and failure formatter this spec's load guard settles on (#1274/#1371). Only the pure functions are shared; the wait loop is this spec's own
+- `tests/helpers/flows/load-template-by-name.ts` — loads the Simple Agent template and returns the created flow id
 - `tests/helpers/provider-setup/` — provider env key validation and model parameterization
 
 ---
@@ -71,8 +73,48 @@ Validates that an LLM agent can discover and call an MCP tool mid-conversation v
 
 ## Notes *(optional)*
 
-- `SimpleAgentTemplatePage.load()` deletes all existing flows before loading the template. MCP server registration must happen after the template loads, as server data lives in a separate DB table and survives the cleanup.
+- MCP server registration happens after the template loads; server data lives in a separate DB table and survives flow teardown.
 - The test is parameterized: one describe block is generated per active provider in `models.json`. Run with `--workers=1` to prevent parallel workers from deleting each other's flows.
+
+### Why this spec loads the agent itself, and what its guard settles on (#1371)
+
+This spec does **not** call `SimpleAgentTemplatePage.load()`, and until #1371 this
+document said three times that it did — in step 1, in the dependency list and here.
+That staleness is part of how the defect below survived two sweeps: a reader checking
+whether this spec used the shared, already-migrated guard would read the doc, see the
+page object named, and conclude it did.
+
+**Why it loads the agent itself.** `SimpleAgentTemplatePage.load()` always runs
+`providerSetupMap[provider]`, which opens the Model Providers panel and enables *every*
+model of the provider — each enable is a live synchronous credential validation that
+blocks the single-worker backend for ~35 s when the provider throttles it (#922/#927).
+This spec's `selectPinnedModel` picks the pinned model straight from the Agent dropdown
+and falls back to the shared setup only when the model is not offered. Adopting `load()`
+outright would delete the divergence at the cost of that, so the guard is re-pointed onto
+the shared axis while the cheap load path stays.
+
+**What the guard settles on.** The **provider of the persisted model**
+(`model.value[0].provider`), never `template.api_key.value`. Upstream
+[#14311](https://github.com/langflow-ai/langflow/pull/14311) (*"stop automatic provider
+field binding"*, on the 1.12 line since 2026-08-04) deleted the block that wrote the
+credential variable name into `api_key`; measured on `1.12.0.dev18`/`dev19` it reads
+`{value: "", load_from_db: false}` from mount onward on **every** build, for every
+provider. A guard waiting for that transition cannot settle — it can only spend its
+budget and fail. This spec carried the last surviving assertion on that field, missed by
+#1274 (which migrated the shared helper and 19 `@stable` specs with it) and by #1334
+(whose sweep grepped `credential:`, a spelling this copy does not use).
+
+The provider is not a weaker proxy for the credential: with `api_key` empty the runtime
+resolves the key **from** it — `instantiation.py` reads `model.value[0].provider` and
+calls `get_api_key_for_provider`, which falls through to
+`get_provider_secret_variable_key(provider)`. #1334 proved that causally: dropping only
+that provider's own credential turns the run into `401 … Incorrect API key provided:
+EMPTY` while the binding is unchanged.
+
+The race #751 exists for is unchanged and still real, which is why the guard is
+re-pointed rather than deleted: a freshly mounted Agent node carries the selector's
+default (`claude-opus-5` / Anthropic) and only later flips to the requested model, so a
+caller that reaches the Playground in between runs the wrong provider's model.
 
 - **Test title changed in #1184 when `MODEL_TEST_ID` is set.** This spec used to carry its own copy of the target resolver, and that copy labelled the pinned target `model:<id>` rather than `<provider> / <id>`. Under the shared `resolveTestTargets()` it matches every other parametrized spec:
 

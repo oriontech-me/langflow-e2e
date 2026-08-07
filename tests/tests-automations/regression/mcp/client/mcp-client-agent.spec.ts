@@ -5,11 +5,18 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import type { LoadSimpleAgentOptions } from "../../../../pages";
 import {
   hasProviderEnvKeys,
+  langflowProviderName,
   missingProviderEnvKeys,
   providerConfigMap,
   providerSetupMap,
   type Provider,
 } from "../../../../helpers/provider-setup";
+import {
+  classifyCredentialSettle,
+  formatCredentialSettleFailure,
+  readAgentCredentialProbe,
+  type AgentCredentialProbe,
+} from "../../../../helpers/flows/agent-credential-settle";
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { loadTemplateByName } from "../../../../helpers/flows/load-template-by-name";
@@ -67,24 +74,95 @@ async function selectPinnedModel(page: Page, model: string): Promise<boolean> {
   return true;
 }
 
-// #751: the model selection rebinds `api_key` via a debounced autosave — running the
-// Playground before it lands builds with the wrong provider's key.
+/** Budget for the settle guard below — the pre-#1371 value, deliberately unchanged. */
+const CREDENTIAL_SETTLE_TIMEOUT_MS = 20_000;
+
+/**
+ * Block until the Agent node's persisted **provider binding** has settled (#751).
+ *
+ * The race is real and unchanged: the node mounts on the model selector's DEFAULT
+ * model — measured `{ name: "claude-opus-5", provider: "Anthropic" }` — and only
+ * flips to the requested one once the editor's debounced autosave
+ * `PATCH /api/v1/flows/{id}` carries the pick. A caller that reaches the Playground
+ * in between runs the wrong provider's model with the wrong provider's key.
+ *
+ * **The axis is the provider, never `api_key` (#1371).** This function used to
+ * assert `template.api_key.value === "<PROVIDER>_API_KEY"`, and upstream
+ * [#14311](https://github.com/langflow-ai/langflow/pull/14311) deleted the block
+ * that wrote it. Measured on `1.12.0.dev19` before this change: `Expected
+ * "OPENAI_API_KEY" / Received ""`, 3 runs out of 3, always inside the load step —
+ * the field is empty from mount onward on every build, so the transition could
+ * only ever time out. This was the THIRD copy of that premise: #1274 migrated the
+ * shared helper and 19 `@stable` specs with it, #1334 migrated the inline copy in
+ * `openai-compatible-provider-setup.spec.ts`, and this one survived both because
+ * its sweep grepped `credential:`, a spelling this file never used.
+ *
+ * The provider is not a weaker proxy: with `api_key` empty the runtime resolves the
+ * key FROM it — `instantiation.py` reads `model.value[0].provider` and calls
+ * `get_api_key_for_provider`, which falls through to
+ * `get_provider_secret_variable_key(provider)`.
+ *
+ * Classification and the failure text come from the SHARED module so this file
+ * cannot drift off the axis again; only the wait loop is local, because this spec
+ * loads the agent its own way (see `loadAgent`).
+ */
 async function waitForAgentCredentialSettled(
   page: Page,
   flowId: string,
-  expectedCredential: string,
+  expectedProvider: string,
+  expectedModel?: string,
 ): Promise<void> {
   const auth = await getAuthToken(page.request);
   const headers = auth ? { Authorization: auth } : undefined;
-  await expect(async () => {
-    const res = await page.request.get(`/api/v1/flows/${flowId}`, { headers });
-    expect(res.ok()).toBe(true);
-    const flow = await res.json();
-    const agent = (flow?.data?.nodes ?? []).find(
-      (n: { data?: { type?: string } }) => n?.data?.type === "Agent",
+
+  const startedAt = Date.now();
+  let probe: AgentCredentialProbe | null = null;
+  let reads = 0;
+  let lastReadError: string | undefined;
+
+  try {
+    await expect(async () => {
+      let flow: unknown;
+      try {
+        const res = await page.request.get(`/api/v1/flows/${flowId}`, { headers });
+        expect(res.ok()).toBe(true);
+        flow = await res.json();
+      } catch (e: any) {
+        // Tracked, not swallowed: a guard that never managed to READ the flow must
+        // not report "the binding is wrong" about a payload nobody saw (#1261).
+        lastReadError = e?.message ?? String(e);
+        throw e;
+      }
+      reads += 1;
+      lastReadError = undefined;
+      probe = readAgentCredentialProbe(flow);
+      expect(classifyCredentialSettle(probe, expectedProvider, expectedModel)).toBe(
+        "settled",
+      );
+    }).toPass({
+      timeout: CREDENTIAL_SETTLE_TIMEOUT_MS,
+      intervals: [500, 1000, 2000],
+    });
+  } catch {
+    // Re-thrown as the shared, self-describing diagnostic. A bare `toBe` mismatch
+    // here reads as a provider-wiring bug and was triaged as one twice (#1072).
+    throw new Error(
+      formatCredentialSettleFailure({
+        flowId,
+        provider: expectedProvider,
+        expectedProvider,
+        expectedModel,
+        probe,
+        verdict:
+          reads === 0
+            ? "read-failed"
+            : classifyCredentialSettle(probe, expectedProvider, expectedModel),
+        elapsedMs: Date.now() - startedAt,
+        reads,
+        lastReadError,
+      }),
     );
-    expect(agent?.data?.node?.template?.api_key?.value).toBe(expectedCredential);
-  }).toPass({ timeout: 20000, intervals: [500, 1000, 2000] });
+  }
 }
 
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
@@ -102,10 +180,13 @@ async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<v
       await providerSetupMap[provider](page, options.model);
     }
 
+    // Langflow's own spelling of the provider — the payload never carries this
+    // repo's `Provider` key, so the comparison has to go through the mapper.
     await waitForAgentCredentialSettled(
       page,
       createdFlowId,
-      providerConfigMap[provider].envKeys[0],
+      langflowProviderName(provider),
+      options.model,
     );
   } catch (e: any) {
     if (e?.message?.startsWith("MODEL_NOT_AVAILABLE")) test.skip(true, e.message);
