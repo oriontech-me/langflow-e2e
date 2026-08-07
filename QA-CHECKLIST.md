@@ -916,47 +916,6 @@
 
 ---
 
-## deployments/ — Deployment Page and Publishing Stepper (1.12)
-
-> **New area (2026-08-06).** Found while validating the critical side of the risk matrix,
-> not by the issue corpus — this surface is too new to have accumulated upstream defects yet.
-> It shipped in `feat: deployment page and stepper UI with watsonx Orchestrate integration`
-> (`langflow-ai/langflow#12303`) and carries **20+ frontend components**: the deployments
-> table, the publishing stepper, per-deployment details, flow and version lists, custom tool
-> naming, connection search, and a provider modal.
->
-> **Impact is high by our own criterion:** langflow.org sells *"Drag. Drop. **Deploy**"*, and
-> this is the Deploy surface. It also carries the MCP relationship — a deployment is how a
-> project's flows reach an external consumer.
->
-> **Why it was invisible:** searching the checklist for "deployment" returns 6 hits, and all
-> 6 are Azure AI Foundry *deployment names* — a different meaning of the word. The third
-> ambiguity trap of this analysis, after `template` (component vs starter) and `language`
-> (Language Model vs locale).
->
-> **Scope boundary:** the deployment *mechanism* is in scope. Individual vendor destinations
-> reached through it (watsonx Orchestrate and any later addition) are **not** — same team
-> decision that excludes vendor bundles.
-
-#### 19.1 Deployments Page
-
-- [ ] The Deployments page renders its empty state for a project with no deployment, and the table once one exists
-- [ ] A deployment row expands to show its detail without navigating away
-- [ ] The details modal lists the flows included in the deployment and their versions
-
-#### 19.2 Publishing Stepper
-
-- [ ] The stepper publishes a flow end-to-end and reaches its success state
-- [ ] The stepper refuses to advance past a step with an incomplete required field, and names what is missing
-- [ ] A published deployment is reachable afterwards — the artifact the success screen points at resolves
-
-#### 19.3 Tool Naming and Connections
-
-- [ ] A custom tool name set in the stepper is what the external consumer sees over MCP (`tools/list`), not the flow's own name
-- [ ] Connection search narrows the list and its empty state renders when nothing matches (`langflow-ai/langflow#12659` fixed exactly this empty state — `@regression`)
-
----
-
 ## memory/ — Memory Base Registration (1.12)
 
 > **New area (2026-08-06).** The `Memories` panel inside the flow editor

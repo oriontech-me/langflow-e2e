@@ -13,10 +13,10 @@ from the *product*, never from our own test results.
 
 **Yes in the bulk — but every hole at the top is an area the checklist did not have.**
 
-The three highest residual risks (`security` 15.0, `deployments` 15.0, `memory` 12.0) all
-score 0.00 mitigation for the same reason: no bullet existed, so they were invisible to
-every coverage figure, including the 76 % headline. Only at rank 4 does an area with real
-coverage appear.
+`security` (15.0) and `Memory Base` (8.0) score 0.00 mitigation for the same reason: no
+bullet existed, so they were invisible to every coverage figure including the 76 % headline.
+Between them sits `MCP` at 10.5 — the matrix maximum for inherent risk, and the area whose
+remaining backlog turned out to be blocked or absent rather than merely unvalidated.
 
 Of the areas at inherent risk ≥ 16 (the product's most critical), **7 of 9 are properly
 defended** at mitigation 0.75–0.80: Canvas, Flow lifecycle, Playground, Component config,
@@ -36,29 +36,28 @@ Residual risk = `inherent × (1 − mitigation)` — the danger that still gets 
 | # | Residual | Area | Inherent | P × I | Mitigation | Bullets | Nature of the hole |
 |---|---|---|---|---|---|---|---|
 | 1 | **15.0** | **NEW security** | 15 | 3×5 | **0.00** | 11 | No checklist area at all |
-| 2 | **15.0** | **19 Deployments** | 15 | 3×5 | **0.00** | 8 | No checklist area at all; new 1.12 surface |
-| 3 | **12.0** | **20 Memory Base** | 12 | 3×4 | **0.00** | 8 | No checklist area at all; new 1.12 surface |
-| 4 | **10.5** | 13/14 MCP | **25** | 5×5 | 0.58 | 29 | Advertised promise; remaining backlog is blocked or absent |
-| 5 | **8.1** | 4 Auth / users | 15 | 3×5 | 0.46 | 14 | Max blast radius, low probability |
-| 6 | **7.4** | 6 Agents / LLM execution | **25** | 5×5 | 0.70 | 43 | Advertised promise, under-defended |
-| 7 | **7.4** | 11 Templates / starter | 8 | 2×4 | 0.08 | 34 | Coverage was phantom — see the correction below |
-| 8 | 6.3 | 16 A2A | 8 | 2×4 | 0.21 | 18 | Almost no coverage; specs exist, unvalidated |
-| 9 | 6.0 | 12.6 Build / graph engine | **20** | 4×5 | 0.70 | 8 | Subtle engine defects unasserted |
-| 10 | 6.0 | **NEW i18n / localization** | 6 | 2×3 | **0.00** | 5 | No checklist area; blocked on the en-US locale pin |
-| 11 | 5.1 | 15 Canvas / UI | **20** | 4×5 | 0.75 | 51 | Defended |
-| 12 | 4.8 | 12 Flow lifecycle | **20** | 4×5 | 0.76 | 24 | Defended |
-| 13 | 4.7 | 9 Playground / chat | **20** | 5×4 | 0.77 | 66 | Defended |
-| 14 | 4.6 | 2 Component config | **20** | 5×4 | 0.77 | 52 | Defended |
+| 2 | **10.5** | 13/14 MCP | **25** | 5×5 | 0.58 | 29 | Advertised promise; remaining backlog is blocked or absent |
+| 3 | **8.0** | **20 Memory Base** | 8 | 2×4 | **0.00** | 8 | No checklist area; new 1.12 surface |
+| 4 | **7.4** | 6 Agents / LLM execution | **25** | 5×5 | 0.70 | 43 | Advertised promise, under-defended |
+| 5 | **7.4** | 11 Templates / starter | 8 | 2×4 | 0.08 | 34 | Coverage was phantom — see the correction below |
+| 6 | **6.3** | 16 A2A | 8 | 2×4 | 0.21 | 18 | Almost no coverage; specs exist, unvalidated |
+| 7 | **6.0** | 12.6 Build / graph engine | **20** | 4×5 | 0.70 | 8 | Subtle engine defects unasserted |
+| 8 | **6.0** | **NEW i18n / localization** | 6 | 2×3 | **0.00** | 5 | No checklist area; blocked on the en-US locale pin |
+| 9 | 5.4 | 4 Auth / users | 10 | 2×5 | 0.46 | 14 | Max blast radius, low probability |
+| 10 | 5.1 | 15 Canvas / UI | **20** | 4×5 | 0.75 | 51 | Defended |
+| 11 | 4.8 | 12 Flow lifecycle | **20** | 4×5 | 0.76 | 24 | Defended |
+| 12 | 4.7 | 9 Playground / chat | **20** | 5×4 | 0.77 | 66 | Defended |
+| 13 | 4.6 | 2 Component config | **20** | 5×4 | 0.77 | 52 | Defended |
+| 14 | 4.4 | 1 REST API / endpoints | **20** | 4×5 | 0.78 | 28 | Defended |
 | 15 | 3.9 | 7 Model providers | 16 | 4×4 | 0.76 | 30 | Defended |
-| 16 | 3.3 | 1 REST API / endpoints | 15 | 3×5 | 0.78 | 28 | Defended |
-| 17 | 2.8 | 3.9 HITL | 6 | 2×3 | 0.53 | 3 | Low risk |
-| 18 | 2.7 | 10 Projects / folders | 6 | 2×3 | 0.55 | 15 | Correctly deprioritised |
-| 19 | 2.7 | 4.3 Global variables | 8 | 2×4 | 0.66 | 7 | Low risk |
-| 20 | 2.4 | 8 Observability | 12 | 4×3 | 0.80 | 24 | Over-invested relative to risk |
-| 21 | 2.4 | 5 Knowledge / files | 12 | 4×3 | 0.80 | 8 | Over-invested relative to risk |
-| 22 | 2.3 | 3.6 Loop / control flow | 9 | 3×3 | 0.75 | 16 | Defended |
-| 23 | 2.0 | 3.3 API Request / Webhook | 9 | 3×3 | 0.77 | 31 | Defended |
-| 24 | 1.2 | 7.7 Model parameters | 6 | 2×3 | 0.80 | 4 | Defended |
+| 16 | 2.8 | 3.9 HITL | 6 | 2×3 | 0.53 | 3 | Low risk |
+| 17 | 2.7 | 10 Projects / folders | 6 | 2×3 | 0.55 | 15 | Correctly deprioritised |
+| 18 | 2.7 | 4.3 Global variables | 8 | 2×4 | 0.66 | 7 | Low risk |
+| 19 | 2.4 | 8 Observability | 12 | 4×3 | 0.80 | 24 | Over-invested relative to risk |
+| 20 | 2.4 | 5 Knowledge / files | 12 | 4×3 | 0.80 | 8 | Over-invested relative to risk |
+| 21 | 2.3 | 3.6 Loop / control flow | 9 | 3×3 | 0.75 | 16 | Defended |
+| 22 | 2.0 | 3.3 API Request / Webhook | 9 | 3×3 | 0.77 | 31 | Defended |
+| 23 | 1.2 | 7.7 Model parameters | 6 | 2×3 | 0.80 | 4 | Defended |
 
 ## Two holes are taxonomy gaps, not coverage gaps
 
@@ -130,6 +129,24 @@ instance. Calling it a coverage gap would be wrong. Excluded, with counts:
 | database / infra | 22 | 9.4 | Postgres/SQLite/migrations |
 | docs / website | 14 | 5.4 | Not the product |
 | third-party tool components | 10 | 5.1 | Vendor integrations |
+
+### Deployments was scored, then dropped
+
+An area for the 1.12 Deployments page was scored and removed on 2026-08-07. Two reasons,
+in order of weight:
+
+1. **Its only implemented destination is watsonx Orchestrate**
+   (`WatsonxOrchestrateDeploymentService`, `watsonx_orchestrate`). There is no
+   vendor-neutral mechanism underneath it, so the page is a single vendor integration —
+   the same class as the excluded bundles, and excluded on the same team decision.
+2. Its apparent bug evidence was a **naming collision**: all 21 issues matching
+   "deployment" are docker / k8s / Render / Railway / GCP infrastructure, already counted
+   under `docker/deploy`. The page itself has zero reported defects.
+
+Recorded rather than deleted, because the first scoring of it used **invented** churn and
+bug figures (8.0 and 0.5). Measurement gave 4.25 and 0.0. That mistake is what prompted
+the rule now applied throughout: every probability input is measured, never estimated —
+see `measuredInputs` in `data.json`.
 
 ### The bundle decision is the single largest finding
 

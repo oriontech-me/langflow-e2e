@@ -47,7 +47,6 @@ const MODULES: ModuleConfig[] = [
   { label: "`ui-ux/` — Settings",                            sectionStart: "#### 15.10" },
   { label: "`security/` — Validation, SSRF, Secrets",        sectionStart: "## security/" },
   { label: "`i18n/` — Language and Localization",            sectionStart: "## i18n/" },
-  { label: "`deployments/` — Deploy Page and Stepper",       sectionStart: "## deployments/" },
   { label: "`memory/` — Memory Base Registration",           sectionStart: "## memory/" },
 ];
 

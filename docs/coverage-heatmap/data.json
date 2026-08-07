@@ -47,6 +47,7 @@
     ],
     "reason": "Team correction 2026-08-06: churn on these surfaces is a mechanical consequence of churn elsewhere, not independent evidence. A component change forces every starter template JSON that uses that node; a new UI string forces a locale update. Counting it double-counted component churn. Churn quintile floored to 1; bug evidence and impact untouched. Effect: Templates residual 7.0 -> 4.6 (rank 4 -> 8). i18n unchanged at 6.0, because its churn never drove its probability - the black-screen bug evidence did."
   },
+  "measuredInputs": "Every probability input is MEASURED, none estimated. Deployments and Memory Base were first scored with invented churn/bug figures (churn 8.0 and 6.0, bugs 0.5 each); measurement gave deployments churn 4.25 / bugs 0.0 and memory churn 1.02 / bugs 4.0 — memory's churn was 6x smaller than the invented value. Deployments was then dropped from scope entirely (team decision 2026-08-07): its only implemented destination is watsonx Orchestrate, so the page is a single vendor integration, the same class as the excluded bundles. Its 21 apparent bug matches were all docker/k8s/Render infrastructure, already out of scope under a different bucket.",
   "regeneratedFrom": "QA-CHECKLIST.md as committed on the branch — mitigation is DERIVED from the live bullet states, not carried over. The first generation predated the new bullets and went stale: MCP read 25 bullets/0.67 while the checklist had 29/0.58, and templates read 41/0.42 while the corrected section had 34/0.08. Deployments and Memory Base were discovered after that generation and were missing entirely. Adding two areas also re-scores every quintile, because quintiles are relative to the set — Auth moved 5.4 -> 8.1 for that reason alone, not because anything about Auth changed.",
   "mitigationScale": {
     "stable": 0.8,
@@ -74,42 +75,6 @@
       "judgementRationale": "SSRF/secret exposure; not a checklist area at all"
     },
     {
-      "area": "19 Deployments",
-      "residualRisk": 15,
-      "inherentRisk": 15,
-      "probability": 3,
-      "impact": 5,
-      "inputs": {
-        "bugQuintile": 1,
-        "churnQuintile": 5,
-        "fragility": 3,
-        "weightedBugs": 0.5,
-        "weightedChurn": 8
-      },
-      "mitigation": 0,
-      "checklistBullets": 8,
-      "inChecklist": true,
-      "judgementRationale": "'Drag. Drop. DEPLOY' is the advertised promise and this is the Deploy surface; new in 1.12, 20+ components. Vendor destinations reached through it are out of scope, like bundles"
-    },
-    {
-      "area": "20 Memory Base",
-      "residualRisk": 12,
-      "inherentRisk": 12,
-      "probability": 3,
-      "impact": 4,
-      "inputs": {
-        "bugQuintile": 1,
-        "churnQuintile": 4,
-        "fragility": 4,
-        "weightedBugs": 0.5,
-        "weightedChurn": 6
-      },
-      "mitigation": 0,
-      "checklistBullets": 8,
-      "inChecklist": true,
-      "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
-    },
-    {
       "area": "13/14 MCP",
       "residualRisk": 10.5,
       "inherentRisk": 25,
@@ -117,7 +82,7 @@
       "impact": 5,
       "inputs": {
         "bugQuintile": 5,
-        "churnQuintile": 3,
+        "churnQuintile": 4,
         "fragility": 5,
         "weightedBugs": 56.6,
         "weightedChurn": 3.14
@@ -128,22 +93,22 @@
       "judgementRationale": "Advertised promise ('build and deploy AI agents and MCP servers'); subprocess transport, session pooling, async"
     },
     {
-      "area": "4 Auth / users",
-      "residualRisk": 8.1,
-      "inherentRisk": 15,
-      "probability": 3,
-      "impact": 5,
+      "area": "20 Memory Base",
+      "residualRisk": 8,
+      "inherentRisk": 8,
+      "probability": 2,
+      "impact": 4,
       "inputs": {
-        "bugQuintile": 3,
+        "bugQuintile": 1,
         "churnQuintile": 2,
-        "fragility": 2,
-        "weightedBugs": 8.1,
-        "weightedChurn": 1.21
+        "fragility": 4,
+        "weightedBugs": 4,
+        "weightedChurn": 1.02
       },
-      "mitigation": 0.46,
-      "checklistBullets": 14,
+      "mitigation": 0,
+      "checklistBullets": 8,
       "inChecklist": true,
-      "judgementRationale": "Largest blast radius: broken auth = 100% of the product unreachable"
+      "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
     },
     {
       "area": "6 Agents / LLM execution",
@@ -170,7 +135,7 @@
       "probability": 2,
       "impact": 4,
       "inputs": {
-        "bugQuintile": 2,
+        "bugQuintile": 1,
         "churnQuintile": 1,
         "fragility": 3,
         "weightedBugs": 2.7,
@@ -236,6 +201,24 @@
       "judgementRationale": "Black screen by browser locale is total failure, but for a subset of users"
     },
     {
+      "area": "4 Auth / users",
+      "residualRisk": 5.4,
+      "inherentRisk": 10,
+      "probability": 2,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 2,
+        "churnQuintile": 2,
+        "fragility": 2,
+        "weightedBugs": 8.1,
+        "weightedChurn": 1.21
+      },
+      "mitigation": 0.46,
+      "checklistBullets": 14,
+      "inChecklist": true,
+      "judgementRationale": "Largest blast radius: broken auth = 100% of the product unreachable"
+    },
+    {
       "area": "15 Canvas / UI",
       "residualRisk": 5.1,
       "inherentRisk": 20,
@@ -261,7 +244,7 @@
       "impact": 5,
       "inputs": {
         "bugQuintile": 5,
-        "churnQuintile": 2,
+        "churnQuintile": 3,
         "fragility": 2,
         "weightedBugs": 66.8,
         "weightedChurn": 1.52
@@ -308,6 +291,24 @@
       "judgementRationale": "Every flow is built out of configured components"
     },
     {
+      "area": "1 REST API / endpoints",
+      "residualRisk": 4.4,
+      "inherentRisk": 20,
+      "probability": 4,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 4,
+        "churnQuintile": 4,
+        "fragility": 2,
+        "weightedBugs": 30.2,
+        "weightedChurn": 3.9
+      },
+      "mitigation": 0.78,
+      "checklistBullets": 28,
+      "inChecklist": true,
+      "judgementRationale": "'Flow as an API' is the advertised deploy path"
+    },
+    {
       "area": "7 Model providers",
       "residualRisk": 3.9,
       "inherentRisk": 16,
@@ -324,24 +325,6 @@
       "checklistBullets": 30,
       "inChecklist": true,
       "judgementRationale": "Core providers only (OpenAI/Anthropic/Gemini) after the bundle exclusion; external APIs and keys"
-    },
-    {
-      "area": "1 REST API / endpoints",
-      "residualRisk": 3.3,
-      "inherentRisk": 15,
-      "probability": 3,
-      "impact": 5,
-      "inputs": {
-        "bugQuintile": 4,
-        "churnQuintile": 3,
-        "fragility": 2,
-        "weightedBugs": 30.2,
-        "weightedChurn": 3.9
-      },
-      "mitigation": 0.78,
-      "checklistBullets": 28,
-      "inChecklist": true,
-      "judgementRationale": "'Flow as an API' is the advertised deploy path"
     },
     {
       "area": "3.9 HITL",
@@ -423,7 +406,7 @@
       "impact": 3,
       "inputs": {
         "bugQuintile": 4,
-        "churnQuintile": 4,
+        "churnQuintile": 5,
         "fragility": 3,
         "weightedBugs": 25.1,
         "weightedChurn": 6.59
