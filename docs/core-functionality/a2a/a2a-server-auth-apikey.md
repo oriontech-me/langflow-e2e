@@ -201,8 +201,21 @@ creates is deleted by id in `finally`.
   it is caught here because the first run of this test left one orphan key on the
   shared account, and the daily would have added one per day forever.
   `createProjectViaApi`'s teardown therefore sweeps keys matching the project's
-  (unique) generated name. **Candidate product defect — a project-scoped
-  credential outliving its project — not filed; recorded here.**
+  (unique) generated name.
+
+  **What the orphan actually is, measured rather than inferred:** the key is
+  scoped to the **user**, not to the project — `MCP Project <name>` is a label,
+  and the row carries `user_id`, `is_active: true` and `expires_at: null`. So it
+  is an ordinary account API key that grants whatever the user grants, not a
+  residual project credential. It is also **not** an exploitable leak: the
+  plaintext is returned only at creation time, and creating the project through
+  the API does not return it (the response carries only `auth_settings`,
+  `description`, `id`, `name`, `parent_id`) while the listing masks it
+  (`sk-sCiKY****…`). Nobody holds it. What accumulates is an active, never-expiring
+  credential per restricted project ever created, belonging to no project and
+  known to no one. **Candidate product defect — deleting a project should revoke
+  the key its creation minted — low severity, no user-facing impact today. Not
+  filed; recorded here.**
 
 ---
 
