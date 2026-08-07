@@ -714,7 +714,7 @@
 - [x] Execute numeric tool with inputs and verify result → `mcp/client/mcp-client-regression.spec.ts`
 - [x] Duplicate MCP server registration returns 409 Conflict → `mcp/client/mcp-server-registration-status-codes.spec.ts`
 - [x] Deleting a non-existent MCP server returns 404 Not Found → `mcp/client/mcp-server-registration-status-codes.spec.ts`
-- [x] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts`
+- [-] Agent uses MCPTools as tool and calls echo via MCP → `mcp/client/mcp-client-agent.spec.ts` (automated, not `@stable` — no lane runs it, so it cannot report a regression; #1371)
 - [x] Gemini × MCP tool-calling regression — agent invokes the echo MCP tool (regression for fixed upstream #440) → `mcp/client/mcp-client-agent-gemini-tool-regression.spec.ts`
 - [ ] List available resources via MCP protocol (client not-implementable on 1.11.x — MCPTools component and v2 client API expose tools only; server-side resources covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
 - [ ] Consume resource URI and inject content into flow (client not-implementable on 1.11.x — no client resource surface; server-side read covered in §14.1 → `mcp/server/mcp-server-resources.spec.ts`)
