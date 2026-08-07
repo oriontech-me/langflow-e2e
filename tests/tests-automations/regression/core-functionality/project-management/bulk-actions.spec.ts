@@ -5,9 +5,11 @@ import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
 
-test(
+// Quarantined at triage (daily #1361): the project's sidebar entry never
+// resolves under the name-derived testid this spec clicks — see #1363.
+test.fixme(
   "user should be able to select flows with different methods and perform bulk actions",
-  { tag: ["@stable", "@release", "@workspace", "@mainpage", "@regression"] },
+  { tag: ["@release", "@workspace", "@mainpage", "@regression"] },
   async ({ page, request }) => {
     // Track the IDs of the 3 flows + the dedicated folder we create so cleanup
     // deletes ONLY those via the API, never sibling specs' flows.

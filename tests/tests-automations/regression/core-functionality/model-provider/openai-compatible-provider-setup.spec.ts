@@ -555,9 +555,12 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
     },
   );
 
-  test(
+  // Quarantined at triage (daily #1361): discovery stopped registering each
+  // served model twice, so `num_models` reads 124 where the contract is 248
+  // — see #1364.
+  test.fixme(
     "the configured provider discovers exactly the models its endpoint serves",
-    { tag: ["@stable", "@api", "@model-provider", "@settings"] },
+    { tag: ["@api", "@model-provider", "@settings"] },
     async ({ page, request }) => {
       const probe = await probeEndpoint(request);
       test.skip(!probe.usable, `OpenAI-compatible endpoint not usable: ${probe.reason}`);

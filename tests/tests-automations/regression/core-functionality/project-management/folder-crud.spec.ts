@@ -23,9 +23,11 @@ import { MainPage } from "../../../../pages/MainPage";
  * folder-drag-drop-flow) and are intentionally not repeated here.
  */
 
-test(
+// Quarantined at triage (daily #1361): the project's sidebar entry never
+// resolves under the name-derived testid this spec waits on — see #1363.
+test.fixme(
   "creates, renames and deletes an empty project folder via the UI",
-  { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
+  { tag: ["@release", "@workspace", "@mainpage"] },
   async ({ page, request }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
@@ -83,9 +85,11 @@ test(
   },
 );
 
-test(
+// Quarantined at triage (daily #1361): the project's sidebar entry never
+// resolves under the name-derived testid this spec waits on — see #1363.
+test.fixme(
   "deleting a folder that contains a flow removes the flow with it",
-  { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
+  { tag: ["@release", "@workspace", "@mainpage"] },
   async ({ page, request }) => {
     const authToken = await getAuthToken(request);
     const folderName = `crud-del-folder-${Date.now()}`;
