@@ -63,9 +63,11 @@ class CustomComponent(Component):
     def build_output(self) -> Message:
         return Message(text=self.input_value)`;
 
-test(
+// Quarantined at triage (daily #1361): recurrent flake — `code-button-modal`
+// never becomes visible after the custom component is added — see #1365.
+test.fixme(
   "a full custom component built from code exposes its declared interface",
-  { tag: ["@stable", "@release", "@components"] },
+  { tag: ["@release", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 

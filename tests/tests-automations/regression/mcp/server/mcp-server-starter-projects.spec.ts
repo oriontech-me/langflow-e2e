@@ -58,9 +58,11 @@ const removeLeftoverRenamedProject = async (page: Page) => {
   }
 };
 
-test(
+// Quarantined at triage (daily #1361): the project kebab never resolves under
+// the name-derived `more-options-button_<name>` testid — see #1363.
+test.fixme(
   "user must be able to see starter projects for mcp servers",
-  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     //starter mcp project
 

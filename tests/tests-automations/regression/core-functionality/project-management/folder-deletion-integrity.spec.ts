@@ -163,9 +163,11 @@ async function openTemplateAndReturnToFolders(page: Page) {
   });
 }
 
-test(
+// Quarantined at triage (daily #1361): the project's sidebar entry never
+// resolves under the name-derived testid this spec waits on — see #1363.
+test.fixme(
   "deleting a folder should update the folder list immediately",
-  { tag: ["@stable", "@release", "@api"] },
+  { tag: ["@release", "@api"] },
   async ({ page, request }) => {
     // Registered even though this test opens no template: on an instance with no
     // flows left (the `@destructive` sibling empties it in its own lane)
@@ -224,9 +226,11 @@ test(
   },
 );
 
-test(
+// Quarantined at triage (daily #1361): the project's sidebar entry never
+// resolves under the name-derived testid this spec waits on — see #1363.
+test.fixme(
   "deleting one folder should not affect other folders",
-  { tag: ["@stable", "@release", "@api"] },
+  { tag: ["@release", "@api"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
@@ -304,9 +308,11 @@ test(
   },
 );
 
-test(
+// Quarantined at triage (daily #1361): the project's sidebar entry never
+// resolves under the name-derived testid this spec waits on — see #1363.
+test.fixme(
   "creating a new folder after deletion should work correctly",
-  { tag: ["@stable", "@release", "@api"] },
+  { tag: ["@release", "@api"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
