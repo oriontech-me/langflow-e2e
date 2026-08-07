@@ -11,7 +11,12 @@ from the *product*, never from our own test results.
 
 ## The verdict
 
-**Yes in the bulk, with four holes — and two of them are areas the checklist does not have.**
+**Yes in the bulk — but every hole at the top is an area the checklist did not have.**
+
+The three highest residual risks (`security` 15.0, `deployments` 15.0, `memory` 12.0) all
+score 0.00 mitigation for the same reason: no bullet existed, so they were invisible to
+every coverage figure, including the 76 % headline. Only at rank 4 does an area with real
+coverage appear.
 
 Of the areas at inherent risk ≥ 16 (the product's most critical), **7 of 9 are properly
 defended** at mitigation 0.75–0.80: Canvas, Flow lifecycle, Playground, Component config,
@@ -30,28 +35,30 @@ Residual risk = `inherent × (1 − mitigation)` — the danger that still gets 
 
 | # | Residual | Area | Inherent | P × I | Mitigation | Bullets | Nature of the hole |
 |---|---|---|---|---|---|---|---|
-| 1 | **15.0** | **NEW security** | 15 | 3×5 | **0.00** | **0** | No checklist area at all |
-| 2 | **8.2** | 13/14 MCP | **25** | 5×5 | 0.67 | 25 | Advertised promise, under-defended |
-| 3 | **7.4** | 6 Agents / LLM execution | **25** | 5×5 | 0.71 | 44 | Advertised promise, under-defended |
-| 4 | **6.3** | 16 A2A | 8 | 2×4 | 0.21 | 18 | Almost no coverage |
-| 5 | **6.0** | 12.6 Build / graph engine | **20** | 4×5 | 0.70 | 4 | Subtle engine defects unasserted |
-| 6 | **6.0** | **NEW i18n / localization** | 6 | 2×3 | **0.00** | **0** | No checklist area at all |
-| 7 | 5.4 | 4 Auth / users | 10 | 2×5 | 0.46 | 14 | Max blast radius, low probability |
-| 8 | 5.1 | 15 Canvas / UI | **20** | 4×5 | 0.75 | 51 | Defended |
-| 9 | 4.8 | 12 Flow lifecycle | **20** | 4×5 | 0.76 | 24 | Defended |
-| 10 | 4.7 | 9 Playground / chat | **20** | 5×4 | 0.77 | 66 | Defended |
-| 11 | 4.6 | 11 Templates / starter | 8 | 2×4 | 0.42 | 41 | 39 `[-]` bullets; churn derived, bugs only 2.7 |
-| 12 | 4.6 | 2 Component config | **20** | 5×4 | 0.77 | 52 | Defended |
-| 13 | 4.4 | 1 REST API / endpoints | **20** | 4×5 | 0.78 | 28 | Defended |
-| 14 | 3.9 | 7 Model providers | 16 | 4×4 | 0.76 | 30 | Defended |
-| 15 | 2.8 | 3.9 HITL | 6 | 2×3 | 0.53 | 3 | Low risk |
-| 16 | 2.7 | 4.3 Global variables | 8 | 2×4 | 0.66 | 7 | Low risk |
-| 17 | 2.4 | 8 Observability | 12 | 4×3 | 0.80 | 24 | Over-invested relative to risk |
-| 18 | 2.4 | 5 Knowledge / files | 12 | 4×3 | 0.80 | 8 | Over-invested relative to risk |
-| 19 | 2.3 | 3.6 Loop / control flow | 9 | 3×3 | 0.75 | 16 | Defended |
-| 20 | 2.0 | 3.3 API Request / Webhook | 9 | 3×3 | 0.77 | 31 | Defended |
-| 21 | 1.3 | 10 Projects / folders | 3 | 1×3 | 0.55 | 15 | Correctly deprioritised |
-| 22 | 1.2 | 7.7 Model parameters | 6 | 2×3 | 0.80 | 4 | Defended |
+| 1 | **15.0** | **NEW security** | 15 | 3×5 | **0.00** | 11 | No checklist area at all |
+| 2 | **15.0** | **19 Deployments** | 15 | 3×5 | **0.00** | 8 | No checklist area at all; new 1.12 surface |
+| 3 | **12.0** | **20 Memory Base** | 12 | 3×4 | **0.00** | 8 | No checklist area at all; new 1.12 surface |
+| 4 | **10.5** | 13/14 MCP | **25** | 5×5 | 0.58 | 29 | Advertised promise; remaining backlog is blocked or absent |
+| 5 | **8.1** | 4 Auth / users | 15 | 3×5 | 0.46 | 14 | Max blast radius, low probability |
+| 6 | **7.4** | 6 Agents / LLM execution | **25** | 5×5 | 0.70 | 43 | Advertised promise, under-defended |
+| 7 | **7.4** | 11 Templates / starter | 8 | 2×4 | 0.08 | 34 | Coverage was phantom — see the correction below |
+| 8 | 6.3 | 16 A2A | 8 | 2×4 | 0.21 | 18 | Almost no coverage; specs exist, unvalidated |
+| 9 | 6.0 | 12.6 Build / graph engine | **20** | 4×5 | 0.70 | 8 | Subtle engine defects unasserted |
+| 10 | 6.0 | **NEW i18n / localization** | 6 | 2×3 | **0.00** | 5 | No checklist area; blocked on the en-US locale pin |
+| 11 | 5.1 | 15 Canvas / UI | **20** | 4×5 | 0.75 | 51 | Defended |
+| 12 | 4.8 | 12 Flow lifecycle | **20** | 4×5 | 0.76 | 24 | Defended |
+| 13 | 4.7 | 9 Playground / chat | **20** | 5×4 | 0.77 | 66 | Defended |
+| 14 | 4.6 | 2 Component config | **20** | 5×4 | 0.77 | 52 | Defended |
+| 15 | 3.9 | 7 Model providers | 16 | 4×4 | 0.76 | 30 | Defended |
+| 16 | 3.3 | 1 REST API / endpoints | 15 | 3×5 | 0.78 | 28 | Defended |
+| 17 | 2.8 | 3.9 HITL | 6 | 2×3 | 0.53 | 3 | Low risk |
+| 18 | 2.7 | 10 Projects / folders | 6 | 2×3 | 0.55 | 15 | Correctly deprioritised |
+| 19 | 2.7 | 4.3 Global variables | 8 | 2×4 | 0.66 | 7 | Low risk |
+| 20 | 2.4 | 8 Observability | 12 | 4×3 | 0.80 | 24 | Over-invested relative to risk |
+| 21 | 2.4 | 5 Knowledge / files | 12 | 4×3 | 0.80 | 8 | Over-invested relative to risk |
+| 22 | 2.3 | 3.6 Loop / control flow | 9 | 3×3 | 0.75 | 16 | Defended |
+| 23 | 2.0 | 3.3 API Request / Webhook | 9 | 3×3 | 0.77 | 31 | Defended |
+| 24 | 1.2 | 7.7 Model parameters | 6 | 2×3 | 0.80 | 4 | Defended |
 
 ## Two holes are taxonomy gaps, not coverage gaps
 
