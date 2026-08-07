@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 467 `test()` calls carrying the `@stable` tag, distributed across 186 spec
+> 458 `test()` calls carrying the `@stable` tag, distributed across 182 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -962,7 +962,6 @@
 - [x] two API Request nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] two Agent nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
-- [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
@@ -1161,7 +1160,6 @@
 - [x] the provider is offered with two variables and a live-only, empty catalog → `openai-compatible-provider-setup.spec.ts`
 - [x] an unreachable base URL is rejected and nothing is persisted → `openai-compatible-provider-setup.spec.ts`
 - [x] a reachable endpoint with a bogus key is rejected as an authentication failure → `openai-compatible-provider-setup.spec.ts`
-- [x] the configured provider discovers exactly the models its endpoint serves → `openai-compatible-provider-setup.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
@@ -1233,14 +1231,8 @@
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
 #### core-functionality/project-management/
-- [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
 - [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
-- [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
-- [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
-- [x] deleting a folder should update the folder list immediately → `folder-deletion-integrity.spec.ts`
-- [x] deleting one folder should not affect other folders → `folder-deletion-integrity.spec.ts`
-- [x] creating a new folder after deletion should work correctly → `folder-deletion-integrity.spec.ts`
 - [x] getting-started progress increments as onboarding steps complete → `user-progress-track.spec.ts`
 
 #### flow-functionality/
@@ -1301,7 +1293,6 @@
 - [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
-- [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
