@@ -357,6 +357,189 @@ async function collectProviders(
 
 // ─── Model collection (UI navigation) ─────────────────────────────────────────
 
+/**
+ * How long to wait for the `Save` button to become actionable (#1355).
+ *
+ * Sized against the validation this file already documents as the slowest
+ * (~35s for Google), not against Playwright's actionability ceiling: the click
+ * that used to happen here carried the default 20s, which is SHORTER than a
+ * provider validation, so a save that was merely slow read as a broken button.
+ *
+ * Over-waiting is nearly free — the wait only costs time on a run that is
+ * already headed for a red, and the alternative is the whole lane aborting.
+ */
+const SAVE_IDLE_TIMEOUT_MS = 60_000;
+const SAVE_IDLE_POLL_MS = 250;
+
+/**
+ * Per-toggle and whole-provider ceilings for confirming a model was enabled (#1355).
+ *
+ * Two bounds, not one, for the reason the token-attribution sidecar gives (#1197
+ * §4.4): the per-item timeout bounds ONE write and never sees the sum, so 41
+ * slow-but-succeeding confirmations would spend 41 x TIMEOUT and blow the spec's
+ * own 5-minute budget. The aggregate bounds that sum. Against a healthy panel a
+ * confirmation costs tens of milliseconds, so neither fires.
+ */
+const TOGGLE_CONFIRM_TIMEOUT_MS = 5_000;
+const TOGGLE_CONFIRM_BUDGET_MS = 60_000;
+const TOGGLE_CONFIRM_POLL_MS = 100;
+
+/**
+ * Ceiling for the credential write a `Save` click issues (#1355).
+ *
+ * Measured, not guessed: with a funded OpenAI key, `POST /api/v1/variables/`
+ * answered 201 for all three providers, but anthropic's did not return until
+ * past 60s — which is exactly how long the previous version of this code spent
+ * waiting on the button before giving up on a request that was merely in
+ * flight. The cost grows with how many providers are already configured, so the
+ * ceiling is set well clear of the worst measurement rather than just above it.
+ *
+ * It is a backstop, not the mechanism: the wait ends when the response lands.
+ */
+const CREDENTIAL_SAVE_TIMEOUT_MS = 180_000;
+
+/** The `Locator` surface {@link waitForButtonIdle} reads — narrow so the unit lane can drive it with a fake. */
+export interface ButtonStateLocator {
+  getAttribute(name: string): Promise<string | null>;
+  isEnabled(): Promise<boolean>;
+}
+
+/**
+ * Wait for a model toggle to report itself enabled after a click (#1355).
+ *
+ * This is the serialiser. Enabling a model is a write, and the collector enables
+ * every model of every provider; firing those as fast as the clicks land is what
+ * queues up behind the next provider's Save. Waiting for `aria-checked="true"`
+ * makes each write land before the next is issued.
+ *
+ * Reports rather than throws, for the same reason {@link waitForButtonIdle}
+ * does: an unconfirmed toggle is worth counting, not worth failing the whole
+ * pre-flight over — the model may well be enabled anyway, and the run is more
+ * useful finishing.
+ */
+export async function waitForToggleChecked(
+  toggle: Pick<ButtonStateLocator, "getAttribute">,
+  options: {
+    timeoutMs?: number;
+    pollMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<{ checked: boolean; waitedMs: number; polls: number }> {
+  const timeoutMs = options.timeoutMs ?? TOGGLE_CONFIRM_TIMEOUT_MS;
+  const pollMs = options.pollMs ?? TOGGLE_CONFIRM_POLL_MS;
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+
+  const startedAt = now();
+  let polls = 0;
+  do {
+    polls += 1;
+    if ((await toggle.getAttribute("aria-checked")) === "true") {
+      return { checked: true, waitedMs: now() - startedAt, polls };
+    }
+    if (now() - startedAt >= timeoutMs) break;
+    await sleep(pollMs);
+  } while (now() - startedAt < timeoutMs);
+
+  return { checked: false, waitedMs: now() - startedAt, polls };
+}
+
+export interface ButtonIdleVerdict {
+  /** Every condition held: not busy, not aria-disabled, and enabled. */
+  idle: boolean;
+  ariaBusy: string | null;
+  ariaDisabled: string | null;
+  enabled: boolean;
+  waitedMs: number;
+  polls: number;
+}
+
+/**
+ * Poll a button until it is genuinely actionable, and REPORT what it observed
+ * either way (#1355).
+ *
+ * Why this exists rather than leaning on `click()`'s own actionability check:
+ * the providers panel marks `Save` with `aria-busy="true" aria-disabled="true"`
+ * while a save/validation is in flight — including the PREVIOUS provider's,
+ * since this file walks the providers in a loop. `click()` does wait for
+ * "enabled and stable", but with a ceiling shorter than the validation and,
+ * when it expires, an error naming the CLICK. That sent the reader to the wrong
+ * line: the button was fine, the provider before it had not settled.
+ *
+ * It returns a verdict instead of throwing so the caller can name the provider
+ * — this function does not know which one it is looking at — and so the whole
+ * decision is unit-testable without a browser.
+ *
+ * `enabled` is read LAST and only when the aria attributes look clean: the two
+ * are different claims (`aria-disabled` is advisory markup, `isEnabled()` reads
+ * the real disabled state) and a button can carry either alone.
+ */
+export async function waitForButtonIdle(
+  button: ButtonStateLocator,
+  options: {
+    timeoutMs?: number;
+    pollMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<ButtonIdleVerdict> {
+  const timeoutMs = options.timeoutMs ?? SAVE_IDLE_TIMEOUT_MS;
+  const pollMs = options.pollMs ?? SAVE_IDLE_POLL_MS;
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+
+  const startedAt = now();
+  let polls = 0;
+  let ariaBusy: string | null = null;
+  let ariaDisabled: string | null = null;
+  let enabled = false;
+
+  // A do/while, so a button that is already idle is answered on the first poll
+  // and a zero timeout still measures once rather than reporting a state it
+  // never looked at (#1012: an unobserved state is unknown, not clean).
+  do {
+    polls += 1;
+    ariaBusy = await button.getAttribute("aria-busy");
+    ariaDisabled = await button.getAttribute("aria-disabled");
+    enabled = ariaBusy !== "true" && ariaDisabled !== "true" ? await button.isEnabled() : false;
+    if (ariaBusy !== "true" && ariaDisabled !== "true" && enabled) {
+      return { idle: true, ariaBusy, ariaDisabled, enabled, waitedMs: now() - startedAt, polls };
+    }
+    if (now() - startedAt >= timeoutMs) break;
+    await sleep(pollMs);
+  } while (now() - startedAt < timeoutMs);
+
+  return { idle: false, ariaBusy, ariaDisabled, enabled, waitedMs: now() - startedAt, polls };
+}
+
+/**
+ * The message for a `Save` that never became actionable (#1355).
+ *
+ * Names the provider, the attribute state observed and — the part the old
+ * generic click timeout could not say — that the likely cause is the PREVIOUS
+ * provider's validation, so the reader does not go looking for a broken button.
+ */
+export function formatSaveBusyFailure(providerName: string, verdict: ButtonIdleVerdict): string {
+  const busy = verdict.ariaBusy === "true";
+  return [
+    `collect-models: the "Save" button for provider "${providerName}" never became actionable ` +
+      `after ${(verdict.waitedMs / 1000).toFixed(1)}s over ${verdict.polls} poll(s).`,
+    ``,
+    `  aria-busy      ${verdict.ariaBusy ?? "(absent)"}`,
+    `  aria-disabled  ${verdict.ariaDisabled ?? "(absent)"}`,
+    `  enabled        ${verdict.enabled}`,
+    ``,
+    busy
+      ? `  verdict        still BUSY — a save/validation is in flight. This panel is walked one\n` +
+        `                 provider at a time, so the usual cause is the PREVIOUS provider's\n` +
+        `                 validation not having settled, not this provider's key (#1355).`
+      : `  verdict        not busy, but not actionable either — the form is in a state this\n` +
+        `                 helper does not model. Check the panel markup before assuming a key\n` +
+        `                 problem (#1355).`,
+  ].join("\n");
+}
+
 async function collectModelsForProvider(
   page: Page,
   providerTestId: string,
@@ -385,15 +568,90 @@ async function collectModelsForProvider(
 
     const saveBtn = page.getByRole("button", { name: "Save", exact: true });
     if ((await saveBtn.count()) > 0) {
+      // BEFORE the click, and fail-loud (#1355): the panel marks `Save`
+      // `aria-busy="true" aria-disabled="true"` while a validation is in flight,
+      // including the previous provider's. `click()`'s own actionability wait is
+      // capped at 20s — shorter than the ~35s validation named below — so a busy
+      // button produced `locator.click: Timeout 20000ms exceeded` pointing at the
+      // click, for a provider that was never the problem.
+      const verdict = await waitForButtonIdle(saveBtn);
+      if (!verdict.idle) throw new Error(formatSaveBusyFailure(providerName, verdict));
+
+      // Wait for the credential WRITE itself, not for a clock (#1355).
+      //
+      // This is the measurement that settled it, taken locally with a funded
+      // OpenAI key and every `/api/v1/variables/` response logged: all three
+      // saves answer **201** — none is rejected — but anthropic's POST does not
+      // come back until AFTER the 60s the previous version of this code spent
+      // waiting on the button. So the request was never failing; it was in
+      // flight, and the form stays busy for as long as it is. Every fixed
+      // timeout here is a guess at a duration that grows with the number of
+      // providers already configured.
+      //
+      // Registered BEFORE the click, or the response can land first and be
+      // missed. Resolves to `null` on timeout rather than throwing: the save may
+      // still have succeeded, the `Disconnect` check below is the second opinion,
+      // and this helper's job is to report rather than to abort the pre-flight.
+      const savePending = page
+        .waitForResponse(
+          (r) => {
+            const method = r.request().method();
+            return (
+              /^\/api\/v1\/variables\/?$/.test(new URL(r.url()).pathname) &&
+              (method === "POST" || method === "PATCH" || method === "PUT")
+            );
+          },
+          { timeout: CREDENTIAL_SAVE_TIMEOUT_MS },
+        )
+        .catch(() => null);
+      const startedAt = Date.now();
       await saveBtn.click();
+      const saveResponse = await savePending;
+      const elapsedMs = Date.now() - startedAt;
+
+      if (!saveResponse) {
+        console.warn(
+          `⚠️  collect-models: no credential write observed for provider "${providerName}" within ` +
+            `${CREDENTIAL_SAVE_TIMEOUT_MS / 1000}s of clicking Save. The panel stays busy while a write is ` +
+            `in flight, so the NEXT provider is what pays for this (#1355).`,
+        );
+      } else if (!saveResponse.ok()) {
+        console.warn(
+          `⚠️  collect-models: the credential write for provider "${providerName}" answered ` +
+            `HTTP ${saveResponse.status()} after ${(elapsedMs / 1000).toFixed(1)}s. Its models will not ` +
+            `collect (#1355).`,
+        );
+      } else if (elapsedMs > 10_000) {
+        // Not a failure — a trend. The save cost grows with how many providers
+        // are already configured, and this line is what makes that visible
+        // before it crosses the ceiling again.
+        console.log(
+          `   collect-models: provider "${providerName}" credential write took ` +
+            `${(elapsedMs / 1000).toFixed(1)}s (HTTP ${saveResponse.status()}).`,
+        );
+      }
     }
 
     // Provider validation can take ~35s (Google) — wait for the configured state
     // (Disconnect button) rather than a fixed shorter timeout that would expire mid-validation.
-    await page
+    //
+    // The outcome is READ now instead of being swallowed (#1355). A save that
+    // never reaches the configured state is why the next steps collect zero
+    // models, and `.catch(() => {})` made "never configured" and "configured
+    // fine" the same observation — so the empty collection downstream looked
+    // like a provider with no models rather than a save that did not land.
+    const configured = await page
       .getByRole("button", { name: "Disconnect", exact: true })
       .waitFor({ state: "visible", timeout: 60000 })
-      .catch(() => {});
+      .then(() => true)
+      .catch(() => false);
+    if (!configured) {
+      console.warn(
+        `⚠️  collect-models: provider "${providerName}" never showed the configured state ` +
+          `("Disconnect") within 60s of Save. Whatever this run collects for it is suspect — ` +
+          `an empty model list below is that, not a provider without models (#1355).`,
+      );
+    }
   }
 
   // Wait for model toggles to load after provider is configured
@@ -408,6 +666,27 @@ async function collectModelsForProvider(
   const toggleCount = await toggles.count();
   const models: ModelRecord[] = [];
 
+  // Each enable is a WRITE, and this loop used to fire them as fast as the clicks
+  // land. Confirming each one before moving on serialises them.
+  //
+  // Honest about what this is worth: it was added believing these 41 writes were
+  // what wedged the next provider's Save, and the very next CI run REFUTED that —
+  // the failure was byte-identical with the serialisation in place. The measured
+  // cause is the credential write above, which stays in flight past 60s. This is
+  // kept because a burst of 41 unconfirmed writes against a backend the lanes run
+  // with `LANGFLOW_WORKERS=1` is worth avoiding on its own and costs nothing
+  // measurable (23.9s against 24.9s locally) — not because it fixed anything.
+  //
+  // The pair of bounds mirrors the token-attribution sidecar (#1197 §4.4): a
+  // per-toggle timeout bounds ONE write, and an aggregate budget bounds the sum —
+  // a per-item timeout alone would let 41 slow-but-succeeding writes spend
+  // 41 x TIMEOUT and blow the spec's own 5-minute budget.
+  //
+  // Past the budget the clicks CONTINUE unconfirmed: enabling a model is still
+  // worth attempting, and the count of unconfirmed ones is reported below rather
+  // than silently dropped (#1012).
+  let unconfirmed = 0;
+  let confirmBudgetLeft = TOGGLE_CONFIRM_BUDGET_MS;
   for (let i = 0; i < toggleCount; i++) {
     const toggle = toggles.nth(i);
     const modelName = await toggle.locator("..").locator("span.text-sm").textContent();
@@ -417,10 +696,42 @@ async function collectModelsForProvider(
     const isChecked = (await toggle.getAttribute("aria-checked")) === "true";
     if (!isChecked) {
       await toggle.click();
+      if (confirmBudgetLeft > 0) {
+        const confirm = await waitForToggleChecked(toggle, {
+          timeoutMs: Math.min(TOGGLE_CONFIRM_TIMEOUT_MS, confirmBudgetLeft),
+        });
+        confirmBudgetLeft -= confirm.waitedMs;
+        if (!confirm.checked) unconfirmed += 1;
+      } else {
+        unconfirmed += 1;
+      }
     }
   }
 
+  if (unconfirmed > 0) {
+    console.warn(
+      `⚠️  collect-models: ${unconfirmed} of ${toggleCount} model toggle(s) for provider ` +
+        `"${providerName}" were clicked but never confirmed enabled within the budget. The panel ` +
+        `is slow or wedged, and the NEXT provider's Save is what pays for it (#1355).`,
+    );
+  }
+
   console.log(`Models found (${providerName}):`, models.map((m) => m.model));
+
+  // An empty collection for a provider whose key IS set is a failure, and it used
+  // to print exactly like a healthy result (#1355). It is also the state that
+  // produces the SILENT daily: `Collect models` is `continue-on-error` there
+  // (#980), so a `models.json` missing this provider makes `resolveTestTargets()`
+  // resolve nothing and every parametrized spec skip — green by absence, the
+  // #570/#1012 trap. Warn rather than throw: the run is more useful finishing with
+  // the providers it did collect, and the PR lane fails on the Save above anyway.
+  if (apiKey && models.length === 0) {
+    console.warn(
+      `⚠️  collect-models: provider "${providerName}" has a key configured but collected ZERO models. ` +
+        `Its parametrized specs will SKIP wherever this models.json is used — a green run after this ` +
+        `line tested nothing for it (#1355).`,
+    );
+  }
 
   await page.getByTestId("sidebar-nav-Model Providers").click();
 
