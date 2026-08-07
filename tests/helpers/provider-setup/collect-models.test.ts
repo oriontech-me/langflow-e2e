@@ -830,6 +830,31 @@ test("#1370: a collector stall is recognisable, and a key verdict is not mistake
   assert.equal(isCollectorStallReason(undefined), false);
 });
 
+test("#1370: a Save that never went idle becomes a stall, and cannot launder into a billing warning", async () => {
+  // Found on this fix's own first CI run: anthropic's write was still in flight
+  // when google's turn came, google's Save never became actionable inside its
+  // own fixed 60s, and `waitForButtonIdle`'s caller THREW — ending the sweep
+  // over one provider's backend cost, which is the defect this issue is about.
+  // It is now recorded as a stall, and this pins both halves of what that has to
+  // mean: recognisable as a collector stall, and NOT downgradable to the
+  // transient billing/quota warning, which would make it disappear on every lane.
+  const clock = fakeClock();
+  const verdict = await waitForButtonIdle(fakeButton([{ ariaBusy: "true", ariaDisabled: "true" }]), {
+    ...clock,
+    timeoutMs: 60_000,
+    pollMs: 250,
+  });
+  assert.equal(verdict.idle, false);
+
+  const recorded = `${COLLECTOR_STALL_PREFIX}${formatSaveBusyFailure("google", verdict)}`;
+  assert.equal(isCollectorStallReason(recorded), true);
+  assert.equal(
+    BILLING_OR_QUOTA.test(recorded),
+    false,
+    `a busy Save must not classify as a billing/quota outage, got: ${recorded}`,
+  );
+});
+
 test("#1370: the empty-candidates path still produces the exact string the stall verdict replaces", async () => {
   // The link between the two files is a string comparison, so this pins that
   // `validateProviderWithFallback` keeps emitting the literal `collectProviders`

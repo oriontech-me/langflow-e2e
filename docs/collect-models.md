@@ -275,7 +275,7 @@ turned one slow write into a **lost PR lane**, each with its own fix and its own
 unit coverage. Read them in this order; the third is the one that costs coverage.
 
 **1 — A wait that never ran must not report a measurement.** The two waits after
-Save (the credential response, and the panel reaching `Disconnect`) ended in
+the Save click (the credential response, and the panel reaching `Disconnect`) ended in
 `.catch(() => null)` / `.catch(() => false)`, which makes *"the deadline expired"*
 and *"the page was closed under me"* the same observation. On run
 [31188034419](https://github.com/oriontech-me/langflow-e2e/actions/runs/31188034419)
@@ -295,14 +295,22 @@ negatives — which is why the issue's own preliminary question ("is 180 s simpl
 short?") is unanswerable from those runs. An aborted wait is **unknown**, not a
 negative (#1012, and the same `read-failed` distinction #1261 needed).
 
-**2 — Per-provider ceilings that the test's own budget cannot pay.** 180 s
-(write) + 60 s (`Disconnect`) + 15 s (toggles) is **255 s spent on a single
-provider**, inside a spec whose timeout is **300 s**. One stall therefore
-consumes the run by arithmetic, before any judgement about whether the wait was
-right. The sweep needs the same pair of bounds the toggle confirmation already
-has (`TOGGLE_CONFIRM_BUDGET_MS`, mirroring #1197 §4.4): a per-item timeout bounds
-ONE write and can never see the sum. Attempt 2 died exactly this way; attempt 3
-survived with ~15 s to spare while collecting all three providers.
+**2 — Per-provider ceilings that the test's own budget cannot pay.** 60 s
+(waiting for `Save` to become actionable) + 180 s (write) + 60 s (`Disconnect`) +
+15 s (toggles) is **315 s spent on a single provider**, inside a spec whose
+timeout is **300 s**. One stall therefore consumes the run by arithmetic, before
+any judgement about whether any single wait was right. The sweep needs the same
+pair of bounds the toggle confirmation already has (`TOGGLE_CONFIRM_BUDGET_MS`,
+mirroring #1197 §4.4): a per-item timeout bounds ONE wait and can never see the
+sum. Attempt 2 died exactly this way; attempt 3 survived with ~3 s to spare.
+
+The first of those three waits is also the one that used to **throw**, and that
+half was found on this fix's own first CI run rather than in the original
+incident: with anthropic's write still in flight, google's `Save` never became
+actionable inside its own fixed 60 s, and `collect-models` ended there. A busy
+`Save` is now recorded as that provider's stall and the sweep moves on — which
+loses no signal, because a stall still fails the gate on every lane that requires
+the provider, and on the daily that is all of them.
 
 **3 — `no models collected` is a collector verdict, not a key verdict.** When the
 panel never confirms the credential, `validateProviderWithFallback` receives

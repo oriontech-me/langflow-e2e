@@ -775,6 +775,10 @@ async function collectModelsForProvider(
   providersLeftAfterThis: number,
 ): Promise<ProviderCollection> {
   let stall: string | null = null;
+  // Whether a Save was actually issued. Without it the configured-state wait
+  // below would run for a provider this pass never saved — burning budget the
+  // remaining providers need, to answer a question nobody asked (#1370).
+  let saveClicked = false;
   await page.getByTestId(providerTestId).click();
 
   const apiKeyInput = page.getByPlaceholder(apiKeyPlaceholder);
@@ -796,15 +800,46 @@ async function collectModelsForProvider(
 
     const saveBtn = page.getByRole("button", { name: "Save", exact: true });
     if ((await saveBtn.count()) > 0) {
-      // BEFORE the click, and fail-loud (#1355): the panel marks `Save`
-      // `aria-busy="true" aria-disabled="true"` while a validation is in flight,
-      // including the previous provider's. `click()`'s own actionability wait is
-      // capped at 20s — shorter than the ~35s validation named below — so a busy
-      // button produced `locator.click: Timeout 20000ms exceeded` pointing at the
+      // BEFORE the click (#1355): the panel marks `Save` `aria-busy="true"
+      // aria-disabled="true"` while a validation is in flight, including the
+      // PREVIOUS provider's. `click()`'s own actionability wait is capped at 20s
+      // — shorter than the ~35s validation named below — so a busy button
+      // produced `locator.click: Timeout 20000ms exceeded` pointing at the
       // click, for a provider that was never the problem.
-      const verdict = await waitForButtonIdle(saveBtn);
-      if (!verdict.idle) throw new Error(formatSaveBusyFailure(providerName, verdict));
+      //
+      // This wait draws on the sweep's budget like the two below it, and it
+      // REPORTS instead of throwing (#1370). Both were found the hard way, on
+      // this fix's own first CI run: anthropic's write was still in flight when
+      // google's turn came, google's Save never went idle inside its own fixed
+      // 60s, and the throw ended the sweep — one provider's backend cost taking
+      // the whole pre-flight, which is the thing this issue is about. Recording
+      // it as a stall loses no signal: a stall still fails the gate on every
+      // lane that requires that provider, which on the daily is all of them.
+      const idlePlan = planSaveWait({
+        ceilingMs: SAVE_IDLE_TIMEOUT_MS,
+        remainingMs: budget.remainingMs,
+        providersLeftAfterThis,
+      });
+      const idleStartedAt = Date.now();
+      const verdict = idlePlan.wait
+        ? await waitForButtonIdle(saveBtn, { timeoutMs: idlePlan.timeoutMs })
+        : null;
+      budget.remainingMs -= Date.now() - idleStartedAt;
 
+      if (!idlePlan.wait) {
+        stall = `the "Save" button was never waited on — ${idlePlan.reason}`;
+        console.warn(
+          `⚠️  collect-models: skipped configuring provider "${providerName}" — ${idlePlan.reason}. ` +
+            `It is left unconfigured rather than clicked blind (#1370).`,
+        );
+      } else if (verdict && !verdict.idle) {
+        stall = formatSaveBusyFailure(providerName, verdict);
+        console.warn(`⚠️  collect-models: ${stall}`);
+      }
+    }
+
+    // The save itself, issued only when the button was observed actionable.
+    if (stall === null && (await saveBtn.count()) > 0) {
       // Wait for the credential WRITE itself, not for a clock (#1355).
       //
       // This is the measurement that settled it, taken locally with a funded
@@ -900,6 +935,7 @@ async function collectModelsForProvider(
           );
         }
       }
+      saveClicked = true;
     }
 
     // Provider validation can take ~35s (Google) — wait for the configured state
@@ -912,11 +948,13 @@ async function collectModelsForProvider(
     // like a provider with no models rather than a save that did not land.
     // Bounded by the same shared budget as the write above (#1370). It is the
     // second half of the 255 s a single stalling provider used to spend.
-    const configuredPlan = planSaveWait({
-      ceilingMs: CONFIGURED_STATE_TIMEOUT_MS,
-      remainingMs: budget.remainingMs,
-      providersLeftAfterThis,
-    });
+    const configuredPlan: SaveWaitPlan = saveClicked
+      ? planSaveWait({
+          ceilingMs: CONFIGURED_STATE_TIMEOUT_MS,
+          remainingMs: budget.remainingMs,
+          providersLeftAfterThis,
+        })
+      : { wait: false, reason: "no Save was issued for this provider" };
 
     if (!configuredPlan.wait) {
       stall ??= `the configured state was never waited for — ${configuredPlan.reason}`;
