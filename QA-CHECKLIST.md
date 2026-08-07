@@ -834,11 +834,11 @@
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
-| `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
+| `mcp/client/` | 13 | 9 | 2 | 0 | 2 |
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **394 (79%)** | **77 (15%)** | **16 (3%)** | **13 (3%)** |
+| **TOTAL** | **500** | **393 (79%)** | **78 (16%)** | **16 (3%)** | **13 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1363,7 +1363,7 @@
 | `core-functionality/llm-agents/` | 5 | 2 |
 | `core-functionality/model-provider/` | 2 | 0 |
 | `core-functionality/playground/` | 3 | 1 |
-| `mcp/client/` | 1 | 2 |
+| `mcp/client/` | 2 | 2 |
 | `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |
 
