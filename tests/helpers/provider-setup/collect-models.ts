@@ -384,6 +384,20 @@ const TOGGLE_CONFIRM_TIMEOUT_MS = 5_000;
 const TOGGLE_CONFIRM_BUDGET_MS = 60_000;
 const TOGGLE_CONFIRM_POLL_MS = 100;
 
+/**
+ * Ceiling for the credential write a `Save` click issues (#1355).
+ *
+ * Measured, not guessed: with a funded OpenAI key, `POST /api/v1/variables/`
+ * answered 201 for all three providers, but anthropic's did not return until
+ * past 60s — which is exactly how long the previous version of this code spent
+ * waiting on the button before giving up on a request that was merely in
+ * flight. The cost grows with how many providers are already configured, so the
+ * ceiling is set well clear of the worst measurement rather than just above it.
+ *
+ * It is a backstop, not the mechanism: the wait ends when the response lands.
+ */
+const CREDENTIAL_SAVE_TIMEOUT_MS = 180_000;
+
 /** The `Locator` surface {@link waitForButtonIdle} reads — narrow so the unit lane can drive it with a fake. */
 export interface ButtonStateLocator {
   getAttribute(name: string): Promise<string | null>;
@@ -562,7 +576,60 @@ async function collectModelsForProvider(
       // click, for a provider that was never the problem.
       const verdict = await waitForButtonIdle(saveBtn);
       if (!verdict.idle) throw new Error(formatSaveBusyFailure(providerName, verdict));
+
+      // Wait for the credential WRITE itself, not for a clock (#1355).
+      //
+      // This is the measurement that settled it, taken locally with a funded
+      // OpenAI key and every `/api/v1/variables/` response logged: all three
+      // saves answer **201** — none is rejected — but anthropic's POST does not
+      // come back until AFTER the 60s the previous version of this code spent
+      // waiting on the button. So the request was never failing; it was in
+      // flight, and the form stays busy for as long as it is. Every fixed
+      // timeout here is a guess at a duration that grows with the number of
+      // providers already configured.
+      //
+      // Registered BEFORE the click, or the response can land first and be
+      // missed. Resolves to `null` on timeout rather than throwing: the save may
+      // still have succeeded, the `Disconnect` check below is the second opinion,
+      // and this helper's job is to report rather than to abort the pre-flight.
+      const savePending = page
+        .waitForResponse(
+          (r) => {
+            const method = r.request().method();
+            return (
+              /^\/api\/v1\/variables\/?$/.test(new URL(r.url()).pathname) &&
+              (method === "POST" || method === "PATCH" || method === "PUT")
+            );
+          },
+          { timeout: CREDENTIAL_SAVE_TIMEOUT_MS },
+        )
+        .catch(() => null);
+      const startedAt = Date.now();
       await saveBtn.click();
+      const saveResponse = await savePending;
+      const elapsedMs = Date.now() - startedAt;
+
+      if (!saveResponse) {
+        console.warn(
+          `⚠️  collect-models: no credential write observed for provider "${providerName}" within ` +
+            `${CREDENTIAL_SAVE_TIMEOUT_MS / 1000}s of clicking Save. The panel stays busy while a write is ` +
+            `in flight, so the NEXT provider is what pays for this (#1355).`,
+        );
+      } else if (!saveResponse.ok()) {
+        console.warn(
+          `⚠️  collect-models: the credential write for provider "${providerName}" answered ` +
+            `HTTP ${saveResponse.status()} after ${(elapsedMs / 1000).toFixed(1)}s. Its models will not ` +
+            `collect (#1355).`,
+        );
+      } else if (elapsedMs > 10_000) {
+        // Not a failure — a trend. The save cost grows with how many providers
+        // are already configured, and this line is what makes that visible
+        // before it crosses the ceiling again.
+        console.log(
+          `   collect-models: provider "${providerName}" credential write took ` +
+            `${(elapsedMs / 1000).toFixed(1)}s (HTTP ${saveResponse.status()}).`,
+        );
+      }
     }
 
     // Provider validation can take ~35s (Google) — wait for the configured state
@@ -600,18 +667,19 @@ async function collectModelsForProvider(
   const models: ModelRecord[] = [];
 
   // Each enable is a WRITE, and this loop used to fire them as fast as the clicks
-  // land (#1355). That is what wedges the panel: with a funded OpenAI key the
-  // provider exposes 41 visible models where a drained one exposed none worth
-  // toggling, so a single provider went from ~0 writes to 41 against a backend
-  // the lanes run with `LANGFLOW_WORKERS=1`. The NEXT provider's Save then queues
-  // behind them and never settles — measured as anthropic never reaching its
-  // configured state within 60s, and google's Save still `aria-busy` 60s after
-  // that.
+  // land. Confirming each one before moving on serialises them.
   //
-  // Confirming each toggle before moving on is what serialises them. The pair of
-  // bounds mirrors the token-attribution sidecar (#1197 §4.4): a per-toggle
-  // timeout bounds ONE write, and an aggregate budget bounds the sum — a
-  // per-item timeout alone would let 41 slow-but-succeeding writes spend
+  // Honest about what this is worth: it was added believing these 41 writes were
+  // what wedged the next provider's Save, and the very next CI run REFUTED that —
+  // the failure was byte-identical with the serialisation in place. The measured
+  // cause is the credential write above, which stays in flight past 60s. This is
+  // kept because a burst of 41 unconfirmed writes against a backend the lanes run
+  // with `LANGFLOW_WORKERS=1` is worth avoiding on its own and costs nothing
+  // measurable (23.9s against 24.9s locally) — not because it fixed anything.
+  //
+  // The pair of bounds mirrors the token-attribution sidecar (#1197 §4.4): a
+  // per-toggle timeout bounds ONE write, and an aggregate budget bounds the sum —
+  // a per-item timeout alone would let 41 slow-but-succeeding writes spend
   // 41 x TIMEOUT and blow the spec's own 5-minute budget.
   //
   // Past the budget the clicks CONTINUE unconfirmed: enabling a model is still
