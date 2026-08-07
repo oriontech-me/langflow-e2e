@@ -371,10 +371,64 @@ async function collectProviders(
 const SAVE_IDLE_TIMEOUT_MS = 60_000;
 const SAVE_IDLE_POLL_MS = 250;
 
+/**
+ * Per-toggle and whole-provider ceilings for confirming a model was enabled (#1355).
+ *
+ * Two bounds, not one, for the reason the token-attribution sidecar gives (#1197
+ * §4.4): the per-item timeout bounds ONE write and never sees the sum, so 41
+ * slow-but-succeeding confirmations would spend 41 x TIMEOUT and blow the spec's
+ * own 5-minute budget. The aggregate bounds that sum. Against a healthy panel a
+ * confirmation costs tens of milliseconds, so neither fires.
+ */
+const TOGGLE_CONFIRM_TIMEOUT_MS = 5_000;
+const TOGGLE_CONFIRM_BUDGET_MS = 60_000;
+const TOGGLE_CONFIRM_POLL_MS = 100;
+
 /** The `Locator` surface {@link waitForButtonIdle} reads — narrow so the unit lane can drive it with a fake. */
 export interface ButtonStateLocator {
   getAttribute(name: string): Promise<string | null>;
   isEnabled(): Promise<boolean>;
+}
+
+/**
+ * Wait for a model toggle to report itself enabled after a click (#1355).
+ *
+ * This is the serialiser. Enabling a model is a write, and the collector enables
+ * every model of every provider; firing those as fast as the clicks land is what
+ * queues up behind the next provider's Save. Waiting for `aria-checked="true"`
+ * makes each write land before the next is issued.
+ *
+ * Reports rather than throws, for the same reason {@link waitForButtonIdle}
+ * does: an unconfirmed toggle is worth counting, not worth failing the whole
+ * pre-flight over — the model may well be enabled anyway, and the run is more
+ * useful finishing.
+ */
+export async function waitForToggleChecked(
+  toggle: Pick<ButtonStateLocator, "getAttribute">,
+  options: {
+    timeoutMs?: number;
+    pollMs?: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<{ checked: boolean; waitedMs: number; polls: number }> {
+  const timeoutMs = options.timeoutMs ?? TOGGLE_CONFIRM_TIMEOUT_MS;
+  const pollMs = options.pollMs ?? TOGGLE_CONFIRM_POLL_MS;
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+
+  const startedAt = now();
+  let polls = 0;
+  do {
+    polls += 1;
+    if ((await toggle.getAttribute("aria-checked")) === "true") {
+      return { checked: true, waitedMs: now() - startedAt, polls };
+    }
+    if (now() - startedAt >= timeoutMs) break;
+    await sleep(pollMs);
+  } while (now() - startedAt < timeoutMs);
+
+  return { checked: false, waitedMs: now() - startedAt, polls };
 }
 
 export interface ButtonIdleVerdict {
@@ -545,6 +599,26 @@ async function collectModelsForProvider(
   const toggleCount = await toggles.count();
   const models: ModelRecord[] = [];
 
+  // Each enable is a WRITE, and this loop used to fire them as fast as the clicks
+  // land (#1355). That is what wedges the panel: with a funded OpenAI key the
+  // provider exposes 41 visible models where a drained one exposed none worth
+  // toggling, so a single provider went from ~0 writes to 41 against a backend
+  // the lanes run with `LANGFLOW_WORKERS=1`. The NEXT provider's Save then queues
+  // behind them and never settles — measured as anthropic never reaching its
+  // configured state within 60s, and google's Save still `aria-busy` 60s after
+  // that.
+  //
+  // Confirming each toggle before moving on is what serialises them. The pair of
+  // bounds mirrors the token-attribution sidecar (#1197 §4.4): a per-toggle
+  // timeout bounds ONE write, and an aggregate budget bounds the sum — a
+  // per-item timeout alone would let 41 slow-but-succeeding writes spend
+  // 41 x TIMEOUT and blow the spec's own 5-minute budget.
+  //
+  // Past the budget the clicks CONTINUE unconfirmed: enabling a model is still
+  // worth attempting, and the count of unconfirmed ones is reported below rather
+  // than silently dropped (#1012).
+  let unconfirmed = 0;
+  let confirmBudgetLeft = TOGGLE_CONFIRM_BUDGET_MS;
   for (let i = 0; i < toggleCount; i++) {
     const toggle = toggles.nth(i);
     const modelName = await toggle.locator("..").locator("span.text-sm").textContent();
@@ -554,7 +628,24 @@ async function collectModelsForProvider(
     const isChecked = (await toggle.getAttribute("aria-checked")) === "true";
     if (!isChecked) {
       await toggle.click();
+      if (confirmBudgetLeft > 0) {
+        const confirm = await waitForToggleChecked(toggle, {
+          timeoutMs: Math.min(TOGGLE_CONFIRM_TIMEOUT_MS, confirmBudgetLeft),
+        });
+        confirmBudgetLeft -= confirm.waitedMs;
+        if (!confirm.checked) unconfirmed += 1;
+      } else {
+        unconfirmed += 1;
+      }
     }
+  }
+
+  if (unconfirmed > 0) {
+    console.warn(
+      `⚠️  collect-models: ${unconfirmed} of ${toggleCount} model toggle(s) for provider ` +
+        `"${providerName}" were clicked but never confirmed enabled within the budget. The panel ` +
+        `is slow or wedged, and the NEXT provider's Save is what pays for it (#1355).`,
+    );
   }
 
   console.log(`Models found (${providerName}):`, models.map((m) => m.model));

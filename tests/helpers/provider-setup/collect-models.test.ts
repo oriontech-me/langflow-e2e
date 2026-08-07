@@ -36,6 +36,7 @@ import {
   rankCandidates,
   validateProviderWithFallback,
   waitForButtonIdle,
+  waitForToggleChecked,
   type ProviderRecord,
 } from "./collect-models";
 
@@ -597,4 +598,72 @@ test("#1355: a zero timeout still OBSERVES once instead of reporting a state it 
   assert.equal(verdict.polls, 1, "#1012: an unobserved state is unknown, never clean");
   assert.equal(verdict.idle, false);
   assert.equal(verdict.ariaBusy, "true");
+});
+
+// ─── waitForToggleChecked (#1355, second half) ────────────────────────────────
+//
+// The measured cause behind the busy Save: enabling a model is a WRITE, and the
+// collector enables every model of every provider. With a funded OpenAI key the
+// panel exposes 41 visible models where a drained key exposed none worth
+// toggling, so one provider went from ~0 writes to 41 against a backend the
+// lanes run with LANGFLOW_WORKERS=1 — and the NEXT provider's Save queued behind
+// them and never settled. Confirming each toggle is what serialises them.
+
+/** A toggle whose `aria-checked` readings are scripted per poll. */
+function fakeToggle(readings: Array<string | null>) {
+  let i = -1;
+  return {
+    getAttribute: async () => {
+      i += 1;
+      return readings[Math.min(i, readings.length - 1)] ?? null;
+    },
+  };
+}
+
+test("#1355: a toggle already checked confirms on the first poll, without sleeping", async () => {
+  const clock = fakeClock();
+  const result = await waitForToggleChecked(fakeToggle(["true"]), { ...clock, timeoutMs: 5_000 });
+  assert.equal(result.checked, true);
+  assert.equal(result.polls, 1);
+  assert.equal(result.waitedMs, 0, "the healthy path must not add wall clock per model");
+});
+
+test("#1355: a toggle that lands a moment later is waited out, serialising the write", async () => {
+  const clock = fakeClock();
+  const result = await waitForToggleChecked(fakeToggle(["false", "false", "true"]), {
+    ...clock,
+    timeoutMs: 5_000,
+    pollMs: 100,
+  });
+  assert.equal(result.checked, true);
+  assert.equal(result.polls, 3);
+  assert.equal(result.waitedMs, 200);
+});
+
+test("#1355: a toggle that never confirms gives up at its own timeout and says so", async () => {
+  const clock = fakeClock();
+  const result = await waitForToggleChecked(fakeToggle(["false"]), {
+    ...clock,
+    timeoutMs: 500,
+    pollMs: 100,
+  });
+  assert.equal(result.checked, false);
+  assert.ok(result.waitedMs >= 500, "must not return before its own deadline");
+});
+
+test("#1355: waitedMs is what lets the caller bound the SUM, not just each write", async () => {
+  // The per-item timeout never sees the total. 41 toggles each taking 5s would
+  // spend 205s and blow the spec's own 5-minute budget, so the caller subtracts
+  // `waitedMs` from an aggregate budget — this asserts the field it needs to do
+  // that is real, and measured, not a constant.
+  const clock = fakeClock();
+  const slow = await waitForToggleChecked(fakeToggle(["false", "false", "true"]), {
+    ...clock,
+    timeoutMs: 5_000,
+    pollMs: 250,
+  });
+  const fast = await waitForToggleChecked(fakeToggle(["true"]), { ...fakeClock(), timeoutMs: 5_000 });
+  assert.equal(slow.waitedMs, 500);
+  assert.equal(fast.waitedMs, 0);
+  assert.ok(slow.waitedMs > fast.waitedMs, "a slow confirmation must cost the budget more than a fast one");
 });
