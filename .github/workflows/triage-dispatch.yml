@@ -105,7 +105,28 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Subscription auth, not the API key. This job is axis A of #1183 — the
+          # measured ~10x of the whole spec suite — and on 2026-08-07 one propose
+          # run billed $1.78 (28 turns, 2.9M tokens against `claude-sonnet-5`,
+          # cache reads dominating). It fires on essentially every red daily, so
+          # the recurring cost is ~$1.78 per business day and steps up ~50% on
+          # 2026-09-01 when the Sonnet introductory band expires, with no change
+          # in consumption. `claude_code_oauth_token` is the action's documented
+          # alternative to `anthropic_api_key`, and it draws on a Claude Code
+          # subscription that is already paid for, so the marginal dollar cost of
+          # this job becomes zero.
+          #
+          # What it costs instead, so nobody rediscovers it as a surprise:
+          #   - the run consumes the SUBSCRIPTION's rate-limit window, shared with
+          #     interactive sessions. The daily fires ~09:20 BRT.
+          #   - this spend leaves the Console usage dashboard. `ANTHROPIC_API_KEY`
+          #     still exists for the specs' provider calls (tens of thousands of
+          #     tokens a day, per reports/token-history.jsonl) — so a spike there
+          #     is now unambiguously the specs, never the agent.
+          #   - the OAuth token EXPIRES. When it does, this step fails and the red
+          #     daily goes untriaged until a human notices. Re-mint with
+          #     `claude setup-token` and `gh secret set CLAUDE_CODE_OAUTH_TOKEN`.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: "/langflow-e2e-triage --phase propose ${{ inputs.issue && format('--issue {0}', inputs.issue) || '' }}"
           # --model pinned (#1178): the action's default is `claude-opus-5[1m]`, and
           # nothing here needs Opus-tier reasoning at Opus-tier price. Sonnet 5
@@ -144,7 +165,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Same subscription auth as propose, and for the same reason — see the
+          # long note on that step. This one runs at --max-turns 40, so it is the
+          # more expensive of the two whenever a human approves a plan.
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: "/langflow-e2e-triage --phase execute --issue ${{ github.event.issue.number }}"
           # Same pin as propose (#1178). NOT gated on a report: execute is triggered
           # by a human "pode abrir" on a plan that already exists, so it has
