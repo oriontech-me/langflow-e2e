@@ -12,6 +12,7 @@ import {
 import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targets";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 
 /**
  * Agent robustness on a degenerate model output (QA-CHECKLIST §6.5,
@@ -37,6 +38,33 @@ if (!process.env.CI) {
 // would normally answer, so a refusal / empty reply can only come from the
 // instruction we set.
 const USER_MESSAGE = "What is the capital of France?";
+
+// Id-scoped cleanup for every flow this spec's page creates (#1108's shared
+// tracker, never a delete-all sweep — #553). This spec had NO cleanup at all: the
+// flow it ran the agent on was left behind, which cost twice. It leaked an orphan
+// `Simple Agent` per test on the shared instance, and — because token attribution
+// lives on the delete path (#1197) — its tokens reached the platform with no spec
+// to claim them. Measured on the 2026-08-06 daily (#1346): traces `1027dfd2` and
+// `6676e05d`, 936 + 918 tokens on `claude-haiku-4-5`, in the run's `unattributed`
+// bucket. The `attrib_cost` records this spec DID produce came from
+// `loadTemplateByName`'s own cleanup of the surplus flows it creates — those never
+// ran, so they carried no traces and the attribution read came back empty.
+//
+// The tracker rather than the returned id: `load()` can throw AFTER creating the
+// flow (the #751/#1072 credential-settle guard throws exactly there), and an id
+// captured from the creation POST survives that.
+let flows: ReturnType<typeof trackCreatedFlows>;
+
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
+
+// Attribution is derived from the running test by `cleanup` itself (#1197 §1.1) —
+// no explicit `attribution` option is needed, and the whole sidecar stays inert
+// unless the lane sets TOKENS_ATTRIB.
+test.afterEach(async ({ request }) => {
+  await flows.cleanup(request);
+});
 
 async function loadAgent(page: Page, options: LoadSimpleAgentOptions): Promise<void> {
   try {

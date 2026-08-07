@@ -67,5 +67,6 @@ This is a pure UI/state assertion — no LLM call is made.
 ## Notes *(optional)*
 
 - In connection mode, `selectedModel` is intentionally overridden to `{ name: "Connect other models" }` in `modelInputComponent/index.tsx`, which is why the trigger shows that label rather than the empty `"Select a model"` placeholder.
-- Run with `--workers=1`: `SimpleAgentTemplatePage.load()` deletes all flows before loading the template, so parallel agent specs would wipe each other's flows. The spec also sets file-level serial mode.
+- Run with `--workers=1`: agent specs create named flows that collide in parallel. The spec also sets file-level serial mode. `SimpleAgentTemplatePage.load()` does **not** delete existing flows — the cross-worker delete-all was removed in #553.
+- **Flow cleanup is id-scoped, from the creation POST** (#1108's shared tracker, wired in #1346). The spec previously had no cleanup at all and left an orphan `Simple Agent` behind per run. It never executes the flow, so it produced no trace and no unattributed tokens on the 2026-08-06 daily — the leak was the whole cost here; the tracker also closes the token-attribution path (#1197), which lives on the delete call.
 - The spec is provider-agnostic and runs a single target on purpose — the connection-mode clear does not vary by provider, so looping every model would add cost without coverage.

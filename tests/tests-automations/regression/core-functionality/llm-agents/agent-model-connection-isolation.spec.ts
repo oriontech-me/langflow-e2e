@@ -4,6 +4,7 @@ import fs from "fs";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
+import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
 import {
   hasProviderEnvKeys,
   keyedProviderNames,
@@ -95,10 +96,33 @@ async function loadAgent(page: Page): Promise<void> {
   }
 }
 
-// SimpleAgentTemplatePage.load() deletes all flows before loading the template.
-// Serial mode only serializes the blocks within this file; isolation from
-// sibling agent specs that also wipe flows relies on running with --workers=1
-// (required by this folder's CLAUDE.md).
+// Id-scoped cleanup for every flow this spec's page creates (#1108's shared
+// tracker, never a delete-all sweep — #553). This spec had NO cleanup at all, so
+// it left an orphan `Simple Agent` behind per run. Unlike the two sibling specs
+// #1346 measured, this one never executes the flow, so it produced no trace and no
+// unattributed tokens on the 2026-08-06 daily — the leak is the whole cost here,
+// and the attribution path is closed for free by the same hook.
+//
+// The tracker rather than the returned id: `load()` can throw AFTER creating the
+// flow (the #751/#1072 credential-settle guard throws exactly there), and an id
+// captured from the creation POST survives that.
+let flows: ReturnType<typeof trackCreatedFlows>;
+
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
+
+// Attribution is derived from the running test by `cleanup` itself (#1197 §1.1) —
+// no explicit `attribution` option is needed, and the whole sidecar stays inert
+// unless the lane sets TOKENS_ATTRIB.
+test.afterEach(async ({ request }) => {
+  await flows.cleanup(request);
+});
+
+// Serial mode only serializes the blocks within this file; isolation from sibling
+// agent specs relies on running with --workers=1 (required by this folder's
+// CLAUDE.md). `SimpleAgentTemplatePage.load()` does NOT wipe existing flows — the
+// cross-worker delete-all was removed in #553.
 test.describe.configure({ mode: "serial" });
 
 test.describe("Agent Model Connection Isolation", () => {

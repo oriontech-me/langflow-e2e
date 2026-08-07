@@ -29,6 +29,21 @@ Two tests establish this **causally**:
 > completes). The bug appears **fixed**, so this is authored as a normal passing
 > `@stable` test, not an expected-fail. Flagged on the issue/PR.
 
+> **Quarantine (2026-08-06, nightly 1.12.0.dev18):** Test 1 is `test.fixme`
+> against **#1264** — the product no longer enforces the cap. With
+> `max_iterations = 1` the agent answers the task normally
+> (`"I'll fetch that URL for you."` and variants) instead of returning the limit
+> message; the bubble renders and the locator resolves 34 times, so this is a
+> **content** failure, not a timeout. Reproduced LOCALLY on 1.12.0.dev18, off CI
+> load, on `claude-haiku-4-5`, `claude-opus-5` and `claude-opus-4-5` — which is
+> what rules out the mid-run backend wedge #1264's triage left open as a possible
+> cover. Quarantined rather than left red because the test is `@regression` and
+> never `@stable`: the daily does not run it, so a red here only failed the PR
+> lane of any diff touching this file — and the file is serial, so it also skipped
+> the `@stable` causal control. Test 2 is deliberately NOT quarantined; on its own
+> it proves only that a high limit finishes. Lifting the quarantine is #1264's
+> call, once the cap is enforced again on `langflowai/langflow-nightly:latest`.
+
 If this fails, the agent no longer honours its iteration cap — a regression in a
 core safety/cost control.
 
@@ -38,7 +53,9 @@ core safety/cost control.
 
 `@stable` `@regression` `@agents` `@playground`
 
-`@stable` added only after multiple clean `--retries=0` runs on the fresh nightly.
+`@stable` added only after multiple clean `--retries=0` runs on the fresh nightly,
+and it is carried by **Test 2 only** — Test 1 has never carried it and is now
+`test.fixme` (see the quarantine note above; #1264).
 `@regression` — guards the max-iterations enforcement from regressing (the bug
 #481 documented); `@agents` — agent execution; `@playground` — the flow is run
 through the Playground.
@@ -52,7 +69,9 @@ through the Playground.
   `npx playwright test tests/collect-models.spec.ts`.
 - At least one active provider API key in `.env`.
 - Run with `--workers=1` (agent specs create named flows that collide in
-  parallel). File is serial (`SimpleAgentTemplatePage.load()` wipes all flows).
+  parallel). File is serial. `SimpleAgentTemplatePage.load()` does **not** wipe
+  existing flows — the cross-worker delete-all was removed in #553 — and cleanup
+  is id-scoped via the shared tracker (see *Notes* → flow cleanup).
 
 ---
 
@@ -166,6 +185,14 @@ flaky). The fetch is SSRF-blocked backend-side, but that is irrelevant — the
 
 ## Notes *(optional)*
 
+- **Flow cleanup is id-scoped, captured from the creation POST** (#1108's shared
+  tracker, wired in #1346). The spec previously had no cleanup at all, which cost
+  twice: an orphan `Simple Agent` per test on the shared instance, and — because
+  token attribution lives on the delete path (#1197) — tokens that reached the QA
+  platform with no spec to claim them (2026-08-06 daily: trace `e7c60610`, 2,266
+  tokens over 2 `claude-haiku-4-5` calls, in the run's `unattributed` bucket). The
+  tracker rather than `load()`'s returned id, because `load()` can throw **after**
+  creating the flow (the #751/#1072 credential-settle guard throws exactly there).
 - **Observable found during reproduction:** setting `max_iterations=1` yields the
   AI message `Model call limits exceeded: run limit (1/1)`; a high limit
   completes. This is a clean, deterministic signal — far more robust than
