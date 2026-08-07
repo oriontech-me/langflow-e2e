@@ -616,6 +616,14 @@ jobs:
       # Read by the sidecar only; the poller has its own TOKENS_MAX_SECONDS.
       TOKENS_BUDGET_MS: "15000"
 
+      # The single provider this lane runs its LLM specs against (#1169), named
+      # ONCE because two steps depend on it and they must not drift: "Collect
+      # models" below fails only on this provider, and "Pin the lane to a single
+      # provider's settled model" resolves this provider's settled model. Two
+      # literals would let a future change to one of them silently gate on a
+      # provider the lane no longer runs (#1370).
+      PR_LANE_PROVIDER: openai
+
     steps:
       - uses: actions/checkout@v7
 
@@ -700,6 +708,24 @@ jobs:
           # backend; the health gate below is what covers that case.
           PLAYWRIGHT_RETRIES: "0"
           PLAYWRIGHT_BASE_URL: "http://localhost:7860/"
+          # Which provider a COLLECTOR stall may fail this step on (#1370).
+          #
+          # A provider the collector never managed to configure is recorded
+          # `inactive` having never been probed at all — a collector verdict, not
+          # a key one — and every such provider used to fail this step. On a lane
+          # that pins itself to ONE provider (below), a stalled anthropic changes
+          # no spec this job will execute, and yet it exits here non-zero, which
+          # on THIS lane is a hard gate: the impacted-specs step never runs and
+          # the PR gets no E2E coverage of its own diff. Measured 2026-08-07 on
+          # run 31188034419, where anthropic stalled on all three attempts and
+          # two of them cost the whole lane.
+          #
+          # This narrows the COLLECTOR-stall verdict only. Every other failure —
+          # a dead key, a provider the image cannot build, a total wipeout, a
+          # broken Model Providers UI — still fails this step for every provider,
+          # unchanged. Unset elsewhere (daily-stable.yml, manual.yml, local), so
+          # every env-keyed provider stays required there.
+          COLLECT_REQUIRED_PROVIDERS: ${{ env.PR_LANE_PROVIDER }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -784,7 +810,9 @@ jobs:
       # with no sweep there is no settled model to read.
       - name: Pin the lane to a single provider's settled model
         if: needs.detect-specs.outputs.needs_models == 'true'
-        run: node scripts/select-pr-model-target.mjs --provider openai
+        # Same provider the Collect models step gates on, read from one place so
+        # the two cannot drift apart (#1370).
+        run: node scripts/select-pr-model-target.mjs --provider "$PR_LANE_PROVIDER"
 
       # In-run token consumption recorder, extended to this lane (#1183 — measure
       # the suite's real LLM spend per lane/provider). Same mechanism as

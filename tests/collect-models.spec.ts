@@ -2,7 +2,11 @@ import * as dotenv from "dotenv";
 import path from "path";
 import fs from "fs";
 import { expect, test } from "./fixtures/fixtures";
-import { collectAll } from "./helpers/provider-setup/collect-models";
+import {
+  collectAll,
+  isCollectorStallReason,
+  resolveRequiredProviders,
+} from "./helpers/provider-setup/collect-models";
 import type { ProviderRecord } from "./helpers/provider-setup/collect-models";
 import { keyedProviderNames, providerConfigMap, type Provider } from "./helpers/provider-setup";
 import { isBuildAxisReason } from "./helpers/provider-setup/probe-component-buildable";
@@ -148,6 +152,10 @@ test(
         const envKeys = providerConfigMap[p.provider as Provider]?.envKeys ?? [];
         const hasEnvKey = envKeys.some((k: string) => !!process.env[k]);
         if (!hasEnvKey || p.status === "active") continue;
+        // A provider the COLLECTOR never configured is not a key/account/config
+        // verdict at all — its key was never probed (#1370). It gets its own
+        // step below, which is what decides whether it is fatal on THIS lane.
+        if (isCollectorStallReason(p.error)) continue;
         if (BILLING_OR_QUOTA.test(p.error ?? "")) {
           console.warn(
             `⚠️  provider "${p.provider}" inactive for a TRANSIENT billing/quota reason — ` +
@@ -171,6 +179,62 @@ test(
         activeCount,
         "no provider probed active — every configured key failed; collection is unusable",
       ).toBeGreaterThan(0);
+    });
+
+    await test.step("a provider the COLLECTOR never configured fails the lanes that need it", async () => {
+      // Separate from the step above because it is a different verdict about a
+      // different layer (#1370). A stalled save hands
+      // `validateProviderWithFallback` zero candidates, so the provider is
+      // recorded `inactive` having never been probed — and under the old
+      // classification that landed in `hardFailures` and failed the spec as a
+      // "real key/account/config problem", for a provider whose build axis had
+      // reported OK and whose key was never touched.
+      //
+      // Why it is scoped rather than always fatal: `pr-validation.yml` pins its
+      // own run to ONE provider (`select-pr-model-target.mjs --provider openai`,
+      // #1169), so a stalled anthropic there changes no spec that lane will
+      // execute — and yet it exited this pre-flight non-zero, which on that lane
+      // is a hard gate, so the PR got no E2E coverage of its own diff at all.
+      // Unset (the daily, manual.yml, every local run) still requires every
+      // env-keyed provider, so #570's guarantee is unchanged where it bites.
+      const providers = JSON.parse(fs.readFileSync(PROVIDERS_PATH, "utf-8")) as ProviderRecord[];
+      const keyed = providers
+        .filter((p) => {
+          const envKeys = providerConfigMap[p.provider as Provider]?.envKeys ?? [];
+          return envKeys.some((k: string) => !!process.env[k]);
+        })
+        .map((p) => p.provider);
+
+      const { required, unrecognised } = resolveRequiredProviders(
+        process.env.COLLECT_REQUIRED_PROVIDERS,
+        keyed,
+      );
+      // A typo in a workflow must not quietly require nothing — that is how a
+      // gate disappears for good (#1012).
+      expect(
+        unrecognised,
+        `COLLECT_REQUIRED_PROVIDERS names provider(s) this run has no key for — either a typo or an ` +
+          `unset secret. Providers with a key this run: ${keyed.join(", ") || "<none>"}`,
+      ).toEqual([]);
+
+      const stalled = providers.filter((p) => isCollectorStallReason(p.error));
+      // Reported whether or not it is fatal here: an unconfigured provider still
+      // makes every spec parametrized on it skip, wherever this models.json is
+      // consumed (#570/#1012).
+      for (const p of stalled) {
+        console.warn(
+          `⚠️  provider "${p.provider}" was never configured by the collector — its parametrized specs ` +
+            `will SKIP wherever this models.json is used: ${p.error}`,
+        );
+      }
+
+      const fatal = stalled.filter((p) => required.includes(p.provider));
+      expect(
+        fatal.map((p) => p.provider),
+        `provider(s) this lane cannot run without were never configured by the collector — this is NOT a ` +
+          `key or account problem, the key was never probed: ` +
+          fatal.map((p) => `${p.provider} — ${p.error}`).join(" | "),
+      ).toEqual([]);
     });
   },
 );

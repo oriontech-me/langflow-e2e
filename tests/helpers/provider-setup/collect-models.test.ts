@@ -32,8 +32,14 @@ import assert from "node:assert/strict";
 import * as fs from "fs";
 import * as path from "path";
 import {
+  classifyWaitFailure,
+  COLLECTOR_STALL_PREFIX,
   formatSaveBusyFailure,
+  isCollectorStallReason,
+  NO_MODELS_COLLECTED,
+  planSaveWait,
   rankCandidates,
+  resolveRequiredProviders,
   validateProviderWithFallback,
   waitForButtonIdle,
   waitForToggleChecked,
@@ -649,6 +655,264 @@ test("#1355: a toggle that never confirms gives up at its own timeout and says s
   });
   assert.equal(result.checked, false);
   assert.ok(result.waitedMs >= 500, "must not return before its own deadline");
+});
+
+// ─── classifyWaitFailure (#1370) ─────────────────────────────────────────────
+//
+// The incident: on run 31188034419 attempt 2 the spec hit its own 5-minute
+// timeout, the context closed, and the two pending post-Save waits — one of
+// 180s, one of 60s — both rejected at once. Their `.catch(() => null)` /
+// `.catch(() => false)` reported that as two MEASURED negatives, 12 ms apart,
+// at most 15.2s after the click. The log therefore said "no credential write
+// observed within 180s" about a wait that never ran, which is why the question
+// the issue asked ("is 180s simply short?") could not be answered from it.
+//
+// The strings below are VERBATIM from a live Playwright probe of both surfaces
+// (`page.waitForResponse` and `locator.waitFor`), not from memory: an aborted
+// wait rejects with a plain `Error`, an expired one with a `TimeoutError`.
+
+/** What Playwright throws when the context closes under a pending wait. */
+const ABORTED_RESPONSE = Object.assign(
+  new Error("page.waitForResponse: Target page, context or browser has been closed"),
+  { name: "Error" },
+);
+const ABORTED_LOCATOR = Object.assign(
+  new Error("locator.waitFor: Target page, context or browser has been closed"),
+  { name: "Error" },
+);
+
+/** What it throws when the deadline genuinely passes. */
+const EXPIRED_RESPONSE = Object.assign(
+  new Error('page.waitForResponse: Timeout 800ms exceeded while waiting for event "response"'),
+  { name: "TimeoutError" },
+);
+const EXPIRED_LOCATOR = Object.assign(new Error("locator.waitFor: Timeout 800ms exceeded."), {
+  name: "TimeoutError",
+});
+
+test("#1370: a wait cut short by the closing context is ABORTED, never an expiry", () => {
+  // The whole defect in one assertion: reading this as `expired` is what printed
+  // "no credential write observed within 180s" 12 ms after the previous warning.
+  assert.equal(classifyWaitFailure(ABORTED_RESPONSE).kind, "aborted");
+  assert.equal(classifyWaitFailure(ABORTED_LOCATOR).kind, "aborted");
+});
+
+test("#1370: a genuine deadline is EXPIRED on both wait surfaces", () => {
+  assert.equal(classifyWaitFailure(EXPIRED_RESPONSE).kind, "expired");
+  assert.equal(classifyWaitFailure(EXPIRED_LOCATOR).kind, "expired");
+});
+
+test("#1370: the aborted case is matched by MESSAGE, because its name is a plain Error", () => {
+  // Keying on `name` alone is the tempting shortcut and it fails here: a closed
+  // context does not produce a TimeoutError, so `name !== "TimeoutError"` would
+  // have to mean "aborted", which would then swallow every unrecognised error
+  // as a confident claim about the page closing.
+  assert.equal(ABORTED_RESPONSE.name, "Error");
+  assert.equal(classifyWaitFailure(ABORTED_RESPONSE).kind, "aborted");
+});
+
+test("#1370: an unrecognised failure is UNKNOWN — neither a measurement nor a cause", () => {
+  const verdict = classifyWaitFailure(new Error("net::ERR_CONNECTION_RESET at http://localhost:7860"));
+  assert.equal(verdict.kind, "unknown", "#1012: an unevaluated wait is unknown, never clean and never negative");
+  assert.match(verdict.detail, /ERR_CONNECTION_RESET/, "an unknown must never be anonymous");
+});
+
+test("#1370: a non-Error rejection does not crash the classifier", () => {
+  assert.equal(classifyWaitFailure("something odd").kind, "unknown");
+  assert.equal(classifyWaitFailure(undefined).kind, "unknown");
+});
+
+test("#1370: the detail is the FIRST line, so a Playwright call log does not flood the warning", () => {
+  const noisy = Object.assign(
+    new Error(
+      "locator.waitFor: Timeout 60000ms exceeded.\nCall log:\n  - waiting for getByRole('button')\n  - locator resolved to <button>",
+    ),
+    { name: "TimeoutError" },
+  );
+  assert.equal(classifyWaitFailure(noisy).detail, "locator.waitFor: Timeout 60000ms exceeded.");
+});
+
+// ─── planSaveWait (#1370) ────────────────────────────────────────────────────
+//
+// The arithmetic nobody did: 180s (credential write) + 60s (configured state) +
+// 15s (toggles) is 255s spent on ONE provider inside a 300s test timeout. The
+// ceilings were each sized against a measurement and none against the only clock
+// that can end the run. Attempt 2 died at exactly 5 minutes; attempt 3 survived
+// the same stall with 3s to spare.
+
+test("#1370: the FIRST provider of three cannot spend the whole budget", () => {
+  // 210s budget, two providers still to come, 30s reserved for each: 150s, not
+  // the 180s ceiling. That gap is the mechanism, not a rounding artifact — the
+  // ceiling is what ONE wait may cost, the budget is what the sweep may cost,
+  // and before #1370 only the first of those existed.
+  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 210_000, providersLeftAfterThis: 2 });
+  assert.deepEqual(plan, { wait: true, timeoutMs: 150_000 });
+});
+
+test("#1370: the ceiling still binds when the budget is ample", () => {
+  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 600_000, providersLeftAfterThis: 2 });
+  assert.deepEqual(plan, { wait: true, timeoutMs: 180_000 }, "a wait must never outlive its own ceiling");
+});
+
+test("#1370: the ceiling is capped by what the budget can still afford", () => {
+  // anthropic has already spent most of the sweep; the last provider is what the
+  // reserve protects.
+  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 100_000, providersLeftAfterThis: 1 });
+  assert.deepEqual(plan, { wait: true, timeoutMs: 70_000 }, "100s minus a 30s reserve for the one still to come");
+});
+
+test("#1370: the LAST provider reserves nothing and may spend the remainder", () => {
+  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 40_000, providersLeftAfterThis: 0 });
+  assert.deepEqual(plan, { wait: true, timeoutMs: 40_000 });
+});
+
+test("#1370: an exhausted budget SKIPS the wait instead of shortening it to zero", () => {
+  // Load-bearing: Playwright reads `timeout: 0` as NO timeout, so an exhausted
+  // budget arriving as a number would wait forever — the exact opposite of the
+  // budget's purpose. The discriminated result makes that unreachable.
+  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 30_000, providersLeftAfterThis: 1 });
+  assert.equal(plan.wait, false);
+  assert.match((plan as { reason: string }).reason, /budget is down to 30s/);
+  assert.match((plan as { reason: string }).reason, /1 provider\(s\) still to configure/);
+});
+
+test("#1370: no reachable input yields a zero or negative timeout", () => {
+  // The property, not one example: whatever the budget state, either the wait is
+  // refused or it carries a timeout Playwright will honour as a deadline.
+  for (const remainingMs of [-50_000, 0, 1, 4_999, 5_000, 29_999, 210_000]) {
+    for (const providersLeftAfterThis of [0, 1, 2, 5]) {
+      const plan = planSaveWait({ ceilingMs: 180_000, remainingMs, providersLeftAfterThis });
+      if (plan.wait) {
+        assert.ok(
+          plan.timeoutMs >= 5_000,
+          `remaining=${remainingMs} left=${providersLeftAfterThis} produced timeoutMs=${plan.timeoutMs}`,
+        );
+      }
+    }
+  }
+});
+
+test("#1370: the two waits share one budget — 180 + 60 can no longer both be spent", () => {
+  // The 255s-in-a-300s-test arithmetic, replayed. The credential wait takes its
+  // full ceiling on the second of three providers, and the configured-state wait
+  // that follows is then bounded by what is left rather than by its own 60s.
+  const budget = { remainingMs: 210_000 };
+  const credential = planSaveWait({
+    ceilingMs: 180_000,
+    remainingMs: budget.remainingMs,
+    providersLeftAfterThis: 1,
+  });
+  assert.equal(credential.wait, true);
+  budget.remainingMs -= (credential as { timeoutMs: number }).timeoutMs;
+
+  const configured = planSaveWait({
+    ceilingMs: 60_000,
+    remainingMs: budget.remainingMs,
+    providersLeftAfterThis: 1,
+  });
+  assert.equal(configured.wait, false, "30s left, all of it reserved for the provider still to come");
+
+  const spent = 210_000 - budget.remainingMs;
+  assert.ok(spent <= 180_000, `one provider must not be able to spend 240s of a 210s budget, spent ${spent}`);
+});
+
+// ─── The collector-stall verdict (#1370) ─────────────────────────────────────
+
+test("#1370: a collector stall is recognisable, and a key verdict is not mistaken for one", () => {
+  assert.equal(isCollectorStallReason(`${COLLECTOR_STALL_PREFIX}no credential write answered within 180s`), true);
+  assert.equal(isCollectorStallReason(NO_MODELS_COLLECTED), false);
+  assert.equal(
+    isCollectorStallReason("Incorrect API key provided: sk-proj-***"),
+    false,
+    "a dead key must keep failing the env-keyed step",
+  );
+  assert.equal(isCollectorStallReason(null), false);
+  assert.equal(isCollectorStallReason(undefined), false);
+});
+
+test("#1370: a Save that never went idle becomes a stall, and cannot launder into a billing warning", async () => {
+  // Found on this fix's own first CI run: anthropic's write was still in flight
+  // when google's turn came, google's Save never became actionable inside its
+  // own fixed 60s, and `waitForButtonIdle`'s caller THREW — ending the sweep
+  // over one provider's backend cost, which is the defect this issue is about.
+  // It is now recorded as a stall, and this pins both halves of what that has to
+  // mean: recognisable as a collector stall, and NOT downgradable to the
+  // transient billing/quota warning, which would make it disappear on every lane.
+  const clock = fakeClock();
+  const verdict = await waitForButtonIdle(fakeButton([{ ariaBusy: "true", ariaDisabled: "true" }]), {
+    ...clock,
+    timeoutMs: 60_000,
+    pollMs: 250,
+  });
+  assert.equal(verdict.idle, false);
+
+  const recorded = `${COLLECTOR_STALL_PREFIX}${formatSaveBusyFailure("google", verdict)}`;
+  assert.equal(isCollectorStallReason(recorded), true);
+  assert.equal(
+    BILLING_OR_QUOTA.test(recorded),
+    false,
+    `a busy Save must not classify as a billing/quota outage, got: ${recorded}`,
+  );
+});
+
+test("#1370: the empty-candidates path still produces the exact string the stall verdict replaces", async () => {
+  // The link between the two files is a string comparison, so this pins that
+  // `validateProviderWithFallback` keeps emitting the literal `collectProviders`
+  // matches on. Reword one side only and the stall verdict silently stops
+  // firing — the provider goes back to failing as a "key/account/config problem".
+  const { validate } = fakeValidator("anthropic", new Map());
+  const result = await quiet(() => validateProviderWithFallback("anthropic", [], validate));
+  assert.equal(result.error, NO_MODELS_COLLECTED);
+});
+
+// ─── resolveRequiredProviders (#1370) ────────────────────────────────────────
+
+test("#1370: unset requires every provider this run has a key for — today's behaviour", () => {
+  assert.deepEqual(resolveRequiredProviders(undefined, ["openai", "anthropic", "google"]), {
+    required: ["openai", "anthropic", "google"],
+    unrecognised: [],
+  });
+  assert.deepEqual(resolveRequiredProviders("", ["openai"]), { required: ["openai"], unrecognised: [] });
+  assert.deepEqual(resolveRequiredProviders("   ", ["openai"]), { required: ["openai"], unrecognised: [] });
+});
+
+test("#1370: the PR lane requires only the provider it pins itself to", () => {
+  // A stalled anthropic changes no spec that lane runs — it pins openai
+  // (#1169) — and yet it used to exit this pre-flight non-zero and cost the PR
+  // its entire E2E run.
+  assert.deepEqual(resolveRequiredProviders("openai", ["openai", "anthropic", "google"]), {
+    required: ["openai"],
+    unrecognised: [],
+  });
+});
+
+test("#1370: a typo is reported, never silently required-nothing", () => {
+  // The failure mode this guards: `openai ` misspelt filters to an empty
+  // `required`, the gate matches nothing, and it is gone with every check green.
+  const verdict = resolveRequiredProviders("openia", ["openai", "anthropic"]);
+  assert.deepEqual(verdict.required, []);
+  assert.deepEqual(verdict.unrecognised, ["openia"]);
+});
+
+test("#1370: naming a provider whose secret is unset is reported the same way", () => {
+  // Indistinguishable from a typo at this layer, and it must be: a lane that
+  // requires openai on a run with no OPENAI_API_KEY has a broken configuration,
+  // not a satisfied gate.
+  assert.deepEqual(resolveRequiredProviders("openai", ["anthropic"]), {
+    required: [],
+    unrecognised: ["openai"],
+  });
+});
+
+test("#1370: separators and case do not change the selection", () => {
+  assert.deepEqual(
+    resolveRequiredProviders(" OpenAI, anthropic ", ["openai", "anthropic", "google"]).required,
+    ["openai", "anthropic"],
+  );
+  assert.deepEqual(resolveRequiredProviders("openai google", ["openai", "google"]).required, [
+    "openai",
+    "google",
+  ]);
 });
 
 test("#1355: waitedMs is what lets the caller bound the SUM, not just each write", async () => {
