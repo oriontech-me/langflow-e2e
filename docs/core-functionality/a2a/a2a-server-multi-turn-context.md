@@ -1,6 +1,6 @@
 # A2A Server — multi-turn context: a conversation keeps its thread
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev14`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
 
 **Issue:** #1247 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T5**) ·
 **Depends on:** #1240 (`LANGFLOW_A2A_ENABLED=true` on every lane), #1242 / PR #1243
@@ -34,13 +34,14 @@ Three things have to hold, and each one alone is insufficient:
 
 ## Tags *(required)*
 
-`@api` `@a2a`
+`@stable` `@api` `@a2a`
 
 - `@api` — drives `/api/v1/a2a/{id}/jsonrpc` and `/api/v1/monitor/messages` through
   `request`; no UI.
 - `@a2a` — functional area; requires `LANGFLOW_A2A_ENABLED=true` (`CLAUDE.md`).
-- **No `@stable` yet:** granted only after team validation (`CONTRIBUTING.md`).
-  New in #1247, no daily history.
+- `@stable` — validated by the team and promoted in #1349: the batch ran
+  **51/51 green** (17 tests × 3, `--retries=0`) on nightly `1.12.0.dev18`,
+  with no leaked flow and no backend error logged.
 
 ---
 

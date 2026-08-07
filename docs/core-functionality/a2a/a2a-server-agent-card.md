@@ -1,6 +1,6 @@
 # A2A Server — agent card: spec-valid fields, overrides and publication gating
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev14`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
 
 **Issue:** #1242 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T2**) ·
 **Depends on:** #1240 (`LANGFLOW_A2A_ENABLED=true` on every lane) ·
@@ -40,14 +40,15 @@ they discover the **wrong** contract — a `url` that does not answer, a
 
 ## Tags *(required)*
 
-`@api` `@release` `@a2a`
+`@stable` `@api` `@release` `@a2a`
 
 - `@api` — drives `/api/v1/flows/` and `/api/v1/a2a/*` via `request`, no UI.
 - `@release` — the card is the happy path of publishing a flow as an agent; a
   broken card breaks A2A wholesale.
 - `@a2a` — new functional tag for this area, added to `CLAUDE.md` by #1242.
-- **No `@stable` yet:** granted only after team validation (`CONTRIBUTING.md`).
-  This spec is new in #1242 and has no daily history.
+- `@stable` — validated by the team and promoted in #1349: the batch ran
+  **51/51 green** (17 tests × 3, `--retries=0`) on nightly `1.12.0.dev18`,
+  with no leaked flow and no backend error logged.
 
 ---
 

@@ -51,8 +51,8 @@ const sessionEndingIn = (sessions: Map<string, MonitorMessage[]>, contextId: str
   return hit![1];
 };
 
-test.describe("A2A Server — multi-turn context @api @a2a", () => {
-  test("a conversation keeps its thread only while the caller quotes the contextId @api @a2a", async ({
+test.describe("A2A Server — multi-turn context", () => {
+  test("a conversation keeps its thread only while the caller quotes the contextId", { tag: ["@stable", "@api", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };

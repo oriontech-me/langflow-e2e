@@ -1,6 +1,6 @@
 # A2A Server — JSON-RPC `message/send`: round-trip and error envelopes
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev14`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
 
 **Issue:** #1242 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T4**) ·
 **Depends on:** #1240 · **Jira:** epic `LE-1588`, transport `LE-1805`,
@@ -36,12 +36,14 @@ where `LE-2081` (RCE on the public A2A endpoint) lived.
 
 ## Tags *(required)*
 
-`@api` `@release` `@a2a`
+`@stable` `@api` `@release` `@a2a`
 
 - `@api` — REST/JSON-RPC only, no UI.
 - `@release` — running a published agent is the feature; nothing ships if this is red.
 - `@a2a` — area tag (added by #1242).
-- **No `@stable` yet** — pending team validation.
+- `@stable` — validated by the team and promoted in #1349: the batch ran
+  **51/51 green** (17 tests × 3, `--retries=0`) on nightly `1.12.0.dev18`,
+  with no leaked flow and no backend error logged.
 
 ---
 

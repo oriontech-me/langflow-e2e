@@ -81,8 +81,8 @@ async function taskRpc(
   return res;
 }
 
-test.describe("A2A Server — task lifecycle @api @regression @a2a", () => {
-  test("a task can be read back and refuses a cancel it cannot honour @api @regression @a2a", async ({
+test.describe("A2A Server — task lifecycle", () => {
+  test("a task can be read back and refuses a cancel it cannot honour", { tag: ["@stable", "@api", "@regression", "@a2a"] }, async ({
     request,
   }) => {
     const headers = { Authorization: await getAuthToken(request) };
@@ -132,7 +132,7 @@ test.describe("A2A Server — task lifecycle @api @regression @a2a", () => {
     }
   });
 
-  test("a task id is invisible to another flow @api @regression @a2a", async ({ request }) => {
+  test("a task id is invisible to another flow", { tag: ["@stable", "@api", "@regression", "@a2a"] }, async ({ request }) => {
     const headers = { Authorization: await getAuthToken(request) };
     await requireA2aEnabled(request, headers);
 
@@ -162,7 +162,7 @@ test.describe("A2A Server — task lifecycle @api @regression @a2a", () => {
     }
   });
 
-  test("cancelling a running task moves it to canceled @api @regression @a2a", async ({
+  test("cancelling a running task moves it to canceled", { tag: ["@stable", "@api", "@regression", "@a2a"] }, async ({
     request,
     baseURL,
   }) => {

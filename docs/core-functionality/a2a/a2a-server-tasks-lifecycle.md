@@ -1,6 +1,6 @@
 # A2A Server — task lifecycle: read back, cancel, and fail closed
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev14`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
 
 **Issue:** #1247 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **T6**) ·
 **Depends on:** #1240 (`LANGFLOW_A2A_ENABLED=true` on every lane), #1242 / PR #1243
@@ -41,13 +41,15 @@ Two behaviours are safety properties rather than conveniences:
 
 ## Tags *(required)*
 
-`@api` `@regression` `@a2a`
+`@stable` `@api` `@regression` `@a2a`
 
 - `@api` — drives `/api/v1/a2a/{id}/jsonrpc` through `request`; no UI.
 - `@regression` — the spec-code mapping is a **fix** that can regress to -32603,
   and the cross-flow gate is a leak that was closed deliberately.
 - `@a2a` — functional area; requires `LANGFLOW_A2A_ENABLED=true` (`CLAUDE.md`).
-- **No `@stable` yet:** granted only after team validation (`CONTRIBUTING.md`).
+- `@stable` — validated by the team and promoted in #1349: the batch ran
+  **51/51 green** (17 tests × 3, `--retries=0`) on nightly `1.12.0.dev18`,
+  with no leaked flow and no backend error logged.
 
 ---
 

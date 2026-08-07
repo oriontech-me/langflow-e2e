@@ -1,6 +1,6 @@
 # A2A Server — Agent tab: the "Try it" panel round-trips over the live endpoint
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev14`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev18`)
 
 **Issue:** #1244 · **Scoped by:** #1195 → `a2a-coverage-scope.md` (row **U3**) ·
 **Depends on:** #1240 (`LANGFLOW_A2A_ENABLED=true` on every lane), #1242 / PR #1243
@@ -33,7 +33,7 @@ sentinel only once (the user turn, with no reply), fails.
 
 ## Tags *(required)*
 
-`@workspace` `@ui-ux` `@a2a`
+`@stable` `@workspace` `@ui-ux` `@a2a`
 
 - `@workspace` — drives the flow editor.
 - `@ui-ux` — the subject is what the panel renders after a send.
@@ -41,8 +41,9 @@ sentinel only once (the user turn, with no reply), fails.
 - **No `@release`:** publishing is the release-critical path and carries the tag
   (`a2a-server-agent-tab-publish.spec.ts`); "Try it" is a confirmation affordance,
   not a gate on shipping.
-- **No `@stable` yet:** granted only after team validation (`CONTRIBUTING.md`).
-  New in #1244, no daily history.
+- `@stable` — validated by the team and promoted in #1349: the batch ran
+  **51/51 green** (17 tests × 3, `--retries=0`) on nightly `1.12.0.dev18`,
+  with no leaked flow and no backend error logged.
 
 ---
 

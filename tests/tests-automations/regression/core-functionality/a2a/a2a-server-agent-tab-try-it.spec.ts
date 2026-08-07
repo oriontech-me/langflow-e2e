@@ -15,8 +15,8 @@ import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 // The flow is a Chat Input -> Chat Output passthrough, so the reply is deterministic
 // — the sentinel comes back verbatim, with no LLM and no provider key in the path.
 
-test.describe("A2A Server — Agent tab Try it panel @workspace @ui-ux @a2a", () => {
-  test("the Try it panel round-trips a sentinel over the published endpoint @workspace @ui-ux @a2a", async ({
+test.describe("A2A Server — Agent tab Try it panel", () => {
+  test("the Try it panel round-trips a sentinel over the published endpoint", { tag: ["@stable", "@workspace", "@ui-ux", "@a2a"] }, async ({
     page,
   }) => {
     const headers = { Authorization: await getAuthToken(page.request) };
