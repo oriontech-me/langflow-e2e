@@ -245,6 +245,15 @@ function mostCommonError(counts: Map<string, number>): { error: string; count: n
   return { error, count };
 }
 
+/**
+ * Recorded when the panel handed the probe nothing to probe. Named so
+ * `collectProviders` can recognise the state and, when the collector also
+ * reported a stall, replace it with a verdict that names the right layer
+ * (#1370) — a string comparison against a literal spelled twice is how that
+ * link silently breaks.
+ */
+export const NO_MODELS_COLLECTED = "no models collected from the providers panel";
+
 export async function validateProviderWithFallback(
   provider: string,
   candidates: string[],
@@ -255,7 +264,7 @@ export async function validateProviderWithFallback(
       provider,
       model: null,
       status: "inactive",
-      error: "no models collected from the providers panel",
+      error: NO_MODELS_COLLECTED,
       checkedAt: new Date().toISOString(),
     };
   }
@@ -322,6 +331,7 @@ export async function validateProviderWithFallback(
 async function collectProviders(
   models: ModelRecord[],
   buildAxis: Record<string, ProviderVerdict>,
+  stalls: Map<string, string>,
 ): Promise<ProviderRecord[]> {
   console.log("Validating providers via API (key axis)...");
 
@@ -342,6 +352,16 @@ async function collectProviders(
       // provider cannot run either way, and the reason must name the layer that
       // is missing rather than blaming the key.
       return { ...r, status: "inactive" as const, error: axis.reason ?? "build axis failed" };
+    }
+    // A provider the collector never configured has NO key verdict to report:
+    // `validateProviderWithFallback` was handed zero candidates and never probed
+    // anything. Saying "real key/account/config problem" about it names the
+    // wrong layer, which is what cost the PR lane its E2E run (#1370). Applied
+    // only to that exact state — a provider that collected models despite a
+    // stalled wait was genuinely probed, and its verdict stands.
+    const stall = stalls.get(r.provider);
+    if (stall && r.error === NO_MODELS_COLLECTED) {
+      return { ...r, error: `${COLLECTOR_STALL_PREFIX}${stall}` };
     }
     return r;
   });
@@ -395,8 +415,198 @@ const TOGGLE_CONFIRM_POLL_MS = 100;
  * ceiling is set well clear of the worst measurement rather than just above it.
  *
  * It is a backstop, not the mechanism: the wait ends when the response lands.
+ *
+ * It is also a CEILING and not a promise: what a provider actually gets is
+ * whatever {@link planSaveWait} can still afford out of the sweep-wide budget
+ * below.
  */
 const CREDENTIAL_SAVE_TIMEOUT_MS = 180_000;
+
+/** Ceiling for the panel reaching the configured state (`Disconnect`) after a save. */
+const CONFIGURED_STATE_TIMEOUT_MS = 60_000;
+
+/**
+ * Budget shared by every post-Save wait in the sweep (#1370).
+ *
+ * The per-provider ceilings above were each sized against a measurement and
+ * NONE of them against the spec's own 5-minute timeout
+ * (`playwright.config.ts`), which is the only clock that can actually end the
+ * run. 180 s + 60 s + 15 s is **255 s spent on one provider** out of 300 s, so a
+ * single stalling provider consumed the run by arithmetic — measured on
+ * run 31188034419 attempt 2, which died at exactly 5 minutes with two waits
+ * completing 12 ms apart because the context had closed under them. Attempt 3
+ * survived the same anthropic stall with **3 s** to spare.
+ *
+ * Same pair of bounds the toggle confirmation already uses
+ * ({@link TOGGLE_CONFIRM_BUDGET_MS}, mirroring #1197 §4.4): a per-item timeout
+ * bounds ONE wait and can never see the sum.
+ *
+ * 210 s is the 300 s test timeout minus ~90 s reserved for everything that is
+ * NOT a post-Save wait — the build axis, the Settings navigation, the per-
+ * provider toggle sweeps (bounded at 15 s each), the key probes and the two file
+ * writes. Measured at ~55 s on the CI attempt above and ~24 s locally, so the
+ * reserve is deliberately generous: over-reserving costs a stalling provider its
+ * models, under-reserving costs the whole run.
+ */
+const SWEEP_SAVE_BUDGET_MS = 210_000;
+
+/**
+ * Floor kept back for each provider still to be configured.
+ *
+ * Without it the first stalling provider spends the entire budget and every
+ * provider after it gets nothing — which is the failure this budget exists to
+ * prevent, just moved one provider along. Google's credential write measured
+ * 15.7 s on the CI run, so 30 s leaves a healthy provider room.
+ */
+const SAVE_RESERVE_PER_PROVIDER_MS = 30_000;
+
+/**
+ * Below this, the wait is skipped instead of shortened.
+ *
+ * Load-bearing, not cosmetic: Playwright reads `timeout: 0` as **no timeout at
+ * all**, so an exhausted budget arriving at `waitForResponse` as `0` would wait
+ * forever — the exact opposite of what the budget is for. {@link planSaveWait}
+ * therefore returns a discriminated "don't wait" rather than a small number, so
+ * a zero can never reach Playwright by construction.
+ */
+const MIN_SAVE_WAIT_MS = 5_000;
+
+/**
+ * Why a wait ended without an answer — `expired` and `aborted` are NOT the same
+ * observation (#1370).
+ *
+ * The two post-Save waits used to end in `.catch(() => null)` / `.catch(() =>
+ * false)`, which made "my deadline passed" and "the page was closed under me"
+ * indistinguishable. On run 31188034419 attempt 2 the test hit its own 5-minute
+ * timeout and both pending waits rejected at once:
+ *
+ *     14:49:30.036  ⚠️ no credential write observed for provider "google" within 180s
+ *     14:49:30.048  ⚠️ provider "google" never showed the configured state within 60s
+ *     14:49:30.088  Error: locator.count: Target page, context or browser has been closed
+ *
+ * A 180 s wait and a 60 s wait, 12 ms apart, at most 15.2 s after the click.
+ * Neither measured anything, and the log read as two measured negatives — which
+ * is why the question "is 180 s simply too short?" was unanswerable from those
+ * runs. An aborted wait is UNKNOWN, never a negative (#1012).
+ */
+export type WaitFailureKind = "expired" | "aborted" | "unknown";
+
+export interface WaitFailure {
+  kind: WaitFailureKind;
+  /** First line of the underlying error, so an `unknown` is never anonymous. */
+  detail: string;
+}
+
+/**
+ * Classify why a Playwright wait rejected.
+ *
+ * The discriminator is measured, not assumed — both `page.waitForResponse` and
+ * `locator.waitFor` behave identically:
+ *
+ * | ended by | `name` | message |
+ * |---|---|---|
+ * | context closed | `Error` | `… Target page, context or browser has been closed` |
+ * | deadline | `TimeoutError` | `… Timeout 800ms exceeded …` |
+ *
+ * The closed-context case is tested FIRST and by message: it rejects with a
+ * plain `Error`, so keying on `name` alone would file it under `unknown`.
+ */
+export function classifyWaitFailure(error: unknown): WaitFailure {
+  const named = error as { name?: unknown; message?: unknown } | null;
+  const name = typeof named?.name === "string" ? named.name : "";
+  const message = typeof named?.message === "string" ? named.message : String(error ?? "");
+  const detail = message.split("\n")[0]?.trim() ?? "";
+
+  if (/target (?:page, context or browser|closed)|has been closed|test ended/i.test(message)) {
+    return { kind: "aborted", detail };
+  }
+  if (name === "TimeoutError" || /timeout \d+\s*m?s exceeded/i.test(message)) {
+    return { kind: "expired", detail };
+  }
+  // Neither signature matched. Reporting it as an expiry would invent a
+  // measurement; reporting it as an abort would invent a cause.
+  return { kind: "unknown", detail };
+}
+
+export type SaveWaitPlan = { wait: true; timeoutMs: number } | { wait: false; reason: string };
+
+/**
+ * Decide what one post-Save wait may spend out of the sweep's shared budget.
+ *
+ * Pure, so the arithmetic that #1370 got wrong is testable without a browser.
+ * The returned `timeoutMs` is never `0` — see {@link MIN_SAVE_WAIT_MS}.
+ */
+export function planSaveWait(options: {
+  ceilingMs: number;
+  remainingMs: number;
+  providersLeftAfterThis: number;
+  reservePerProviderMs?: number;
+  minWaitMs?: number;
+}): SaveWaitPlan {
+  const reservePerProvider = options.reservePerProviderMs ?? SAVE_RESERVE_PER_PROVIDER_MS;
+  const minWaitMs = options.minWaitMs ?? MIN_SAVE_WAIT_MS;
+  const reserved = Math.max(0, options.providersLeftAfterThis) * reservePerProvider;
+  const allowed = Math.min(options.ceilingMs, options.remainingMs - reserved);
+
+  if (allowed < minWaitMs) {
+    return {
+      wait: false,
+      reason:
+        `the sweep's shared budget is down to ${Math.max(0, Math.round(options.remainingMs / 1000))}s ` +
+        `with ${Math.max(0, options.providersLeftAfterThis)} provider(s) still to configure, so waiting ` +
+        `here would leave them nothing`,
+    };
+  }
+  return { wait: true, timeoutMs: allowed };
+}
+
+/**
+ * Marks a provider the COLLECTOR never managed to configure — as opposed to one
+ * whose key was probed and rejected (#1370).
+ *
+ * Same convention as the `build axis: ` prefix, and for the same reason: a
+ * verdict has to name the layer it is about. Without it, a stalled save reached
+ * `validateProviderWithFallback` with zero candidates, recorded
+ * `no models collected from the providers panel`, and the spec failed it under
+ * "real key/account/config problem" — for a provider whose key was never probed
+ * at all and whose build axis had reported OK. The #1011 mistake in a new place.
+ */
+export const COLLECTOR_STALL_PREFIX = "collector stall: ";
+
+export function isCollectorStallReason(error: string | null | undefined): boolean {
+  return typeof error === "string" && error.startsWith(COLLECTOR_STALL_PREFIX);
+}
+
+/**
+ * Which providers this LANE cannot run without (#1370).
+ *
+ * Unset — the daily, `manual.yml` and every local run — means every provider
+ * whose env key is set, i.e. today's behaviour unchanged. `pr-validation.yml`
+ * sets it to the one provider that lane already pins itself to
+ * (`select-pr-model-target.mjs --provider openai`, #1169), because a stalled
+ * anthropic there changes no spec that lane will execute and yet exits the
+ * shared pre-flight non-zero, taking the PR's whole E2E run with it.
+ *
+ * A name that is not among the providers this run has a key for is returned as
+ * `unrecognised` rather than dropped: silently requiring nothing is how a typo
+ * in a workflow disables a gate for good (#1012).
+ */
+export function resolveRequiredProviders(
+  raw: string | undefined,
+  keyedAndConfigured: readonly string[],
+): { required: string[]; unrecognised: string[] } {
+  const listed = (raw ?? "")
+    .split(/[\s,]+/)
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+  if (listed.length === 0) return { required: [...keyedAndConfigured], unrecognised: [] };
+
+  const known = new Set(keyedAndConfigured);
+  return {
+    required: listed.filter((entry) => known.has(entry)),
+    unrecognised: listed.filter((entry) => !known.has(entry)),
+  };
+}
 
 /** The `Locator` surface {@link waitForButtonIdle} reads — narrow so the unit lane can drive it with a fake. */
 export interface ButtonStateLocator {
@@ -540,13 +750,31 @@ export function formatSaveBusyFailure(providerName: string, verdict: ButtonIdleV
   ].join("\n");
 }
 
+/** Mutable remainder of {@link SWEEP_SAVE_BUDGET_MS}, threaded through the loop. */
+interface SweepBudget {
+  remainingMs: number;
+}
+
+/**
+ * What one provider's pass produced: its models, and — when the collector never
+ * managed to configure it — the reason, so the verdict downstream can name the
+ * collector instead of blaming the key (#1370).
+ */
+interface ProviderCollection {
+  models: ModelRecord[];
+  stall: string | null;
+}
+
 async function collectModelsForProvider(
   page: Page,
   providerTestId: string,
   providerName: string,
   apiKeyPlaceholder: string,
   apiKeyEnvVar: string,
-): Promise<ModelRecord[]> {
+  budget: SweepBudget,
+  providersLeftAfterThis: number,
+): Promise<ProviderCollection> {
+  let stall: string | null = null;
   await page.getByTestId(providerTestId).click();
 
   const apiKeyInput = page.getByPlaceholder(apiKeyPlaceholder);
@@ -589,46 +817,88 @@ async function collectModelsForProvider(
       // providers already configured.
       //
       // Registered BEFORE the click, or the response can land first and be
-      // missed. Resolves to `null` on timeout rather than throwing: the save may
-      // still have succeeded, the `Disconnect` check below is the second opinion,
-      // and this helper's job is to report rather than to abort the pre-flight.
-      const savePending = page
-        .waitForResponse(
-          (r) => {
-            const method = r.request().method();
-            return (
-              /^\/api\/v1\/variables\/?$/.test(new URL(r.url()).pathname) &&
-              (method === "POST" || method === "PATCH" || method === "PUT")
-            );
-          },
-          { timeout: CREDENTIAL_SAVE_TIMEOUT_MS },
-        )
-        .catch(() => null);
-      const startedAt = Date.now();
-      await saveBtn.click();
-      const saveResponse = await savePending;
-      const elapsedMs = Date.now() - startedAt;
+      // missed. Never throws: the save may still have succeeded, the
+      // `Disconnect` check below is the second opinion, and this helper's job is
+      // to report rather than to abort the pre-flight.
+      //
+      // What it may SPEND is the sweep's, not this provider's (#1370): the
+      // ceiling alone let one stalling provider eat a 300 s test budget in
+      // 255 s of waits.
+      const plan = planSaveWait({
+        ceilingMs: CREDENTIAL_SAVE_TIMEOUT_MS,
+        remainingMs: budget.remainingMs,
+        providersLeftAfterThis,
+      });
 
-      if (!saveResponse) {
+      if (!plan.wait) {
+        stall = `the credential write was never waited for — ${plan.reason}`;
         console.warn(
-          `⚠️  collect-models: no credential write observed for provider "${providerName}" within ` +
-            `${CREDENTIAL_SAVE_TIMEOUT_MS / 1000}s of clicking Save. The panel stays busy while a write is ` +
-            `in flight, so the NEXT provider is what pays for this (#1355).`,
+          `⚠️  collect-models: skipped waiting for provider "${providerName}"'s credential write — ` +
+            `${plan.reason}. Whatever it collects below is unverified (#1370).`,
         );
-      } else if (!saveResponse.ok()) {
-        console.warn(
-          `⚠️  collect-models: the credential write for provider "${providerName}" answered ` +
-            `HTTP ${saveResponse.status()} after ${(elapsedMs / 1000).toFixed(1)}s. Its models will not ` +
-            `collect (#1355).`,
-        );
-      } else if (elapsedMs > 10_000) {
-        // Not a failure — a trend. The save cost grows with how many providers
-        // are already configured, and this line is what makes that visible
-        // before it crosses the ceiling again.
-        console.log(
-          `   collect-models: provider "${providerName}" credential write took ` +
-            `${(elapsedMs / 1000).toFixed(1)}s (HTTP ${saveResponse.status()}).`,
-        );
+        await saveBtn.click();
+      } else {
+        const savePending = page
+          .waitForResponse(
+            (r) => {
+              const method = r.request().method();
+              return (
+                /^\/api\/v1\/variables\/?$/.test(new URL(r.url()).pathname) &&
+                (method === "POST" || method === "PATCH" || method === "PUT")
+              );
+            },
+            { timeout: plan.timeoutMs },
+          )
+          .then((response) => ({ response, failure: null as WaitFailure | null }))
+          .catch((error: unknown) => ({ response: null, failure: classifyWaitFailure(error) }));
+        const startedAt = Date.now();
+        await saveBtn.click();
+        const { response: saveResponse, failure } = await savePending;
+        const elapsedMs = Date.now() - startedAt;
+        budget.remainingMs -= elapsedMs;
+
+        if (failure?.kind === "aborted") {
+          // The wait never ran. Printing "no write observed within Ns" here is
+          // what made run 31188034419 attempt 2 unreadable — two waits totalling
+          // 240 s reported as measured negatives 12 ms apart, because the test
+          // had already timed out and closed the context (#1370, #1012).
+          stall = `the credential write was never observed — the wait was cut short (${failure.detail})`;
+          console.warn(
+            `⚠️  collect-models: the credential-write wait for provider "${providerName}" was CUT SHORT ` +
+              `after ${(elapsedMs / 1000).toFixed(1)}s — the page or context closed under it ` +
+              `(${failure.detail}). This run gives NO signal about that write; it is unknown, not absent (#1370).`,
+          );
+        } else if (failure?.kind === "unknown") {
+          stall = `the credential write was never observed — the wait failed for an unrecognised reason (${failure.detail})`;
+          console.warn(
+            `⚠️  collect-models: the credential-write wait for provider "${providerName}" failed after ` +
+              `${(elapsedMs / 1000).toFixed(1)}s for a reason this code does not recognise ` +
+              `(${failure.detail}). Treated as no signal rather than as a measurement (#1370).`,
+          );
+        } else if (!saveResponse) {
+          stall = `no credential write answered within ${(plan.timeoutMs / 1000).toFixed(0)}s of clicking Save`;
+          console.warn(
+            `⚠️  collect-models: no credential write observed for provider "${providerName}" within ` +
+              `${(plan.timeoutMs / 1000).toFixed(0)}s of clicking Save. The panel stays busy while a write is ` +
+              `in flight, so the NEXT provider is what pays for this (#1355).`,
+          );
+        } else if (!saveResponse.ok()) {
+          stall = `the credential write answered HTTP ${saveResponse.status()}`;
+          console.warn(
+            `⚠️  collect-models: the credential write for provider "${providerName}" answered ` +
+              `HTTP ${saveResponse.status()} after ${(elapsedMs / 1000).toFixed(1)}s. Its models will not ` +
+              `collect (#1355).`,
+          );
+        } else if (elapsedMs > 10_000) {
+          // Not a failure — a trend. The save cost grows with how many providers
+          // are already configured, and this line is what makes that visible
+          // before it crosses the ceiling again.
+          console.log(
+            `   collect-models: provider "${providerName}" credential write took ` +
+              `${(elapsedMs / 1000).toFixed(1)}s (HTTP ${saveResponse.status()}), leaving ` +
+              `${Math.max(0, Math.round(budget.remainingMs / 1000))}s of the sweep's shared budget.`,
+          );
+        }
       }
     }
 
@@ -640,17 +910,62 @@ async function collectModelsForProvider(
     // models, and `.catch(() => {})` made "never configured" and "configured
     // fine" the same observation — so the empty collection downstream looked
     // like a provider with no models rather than a save that did not land.
-    const configured = await page
-      .getByRole("button", { name: "Disconnect", exact: true })
-      .waitFor({ state: "visible", timeout: 60000 })
-      .then(() => true)
-      .catch(() => false);
-    if (!configured) {
+    // Bounded by the same shared budget as the write above (#1370). It is the
+    // second half of the 255 s a single stalling provider used to spend.
+    const configuredPlan = planSaveWait({
+      ceilingMs: CONFIGURED_STATE_TIMEOUT_MS,
+      remainingMs: budget.remainingMs,
+      providersLeftAfterThis,
+    });
+
+    if (!configuredPlan.wait) {
+      stall ??= `the configured state was never waited for — ${configuredPlan.reason}`;
       console.warn(
-        `⚠️  collect-models: provider "${providerName}" never showed the configured state ` +
-          `("Disconnect") within 60s of Save. Whatever this run collects for it is suspect — ` +
-          `an empty model list below is that, not a provider without models (#1355).`,
+        `⚠️  collect-models: skipped waiting for provider "${providerName}" to reach the configured ` +
+          `state ("Disconnect") — ${configuredPlan.reason}. Whatever it collects below is unverified (#1370).`,
       );
+    } else {
+      const configuredAt = Date.now();
+      const configured = await page
+        .getByRole("button", { name: "Disconnect", exact: true })
+        .waitFor({ state: "visible", timeout: configuredPlan.timeoutMs })
+        .then(() => ({ ok: true, failure: null as WaitFailure | null }))
+        .catch((error: unknown) => ({ ok: false, failure: classifyWaitFailure(error) }));
+      budget.remainingMs -= Date.now() - configuredAt;
+
+      if (!configured.ok && configured.failure?.kind !== "expired") {
+        // `aborted` and `unknown` are both "no signal", but they are not the
+        // same claim and the warning must not pick one for the reader: an
+        // aborted wait names the page closing, an unknown one names nothing at
+        // all. Saying "cut short" about an unrecognised error would invent the
+        // cause, which is the mirror of the defect this whole branch exists for.
+        const observed =
+          configured.failure?.kind === "aborted"
+            ? "was CUT SHORT — the page or context closed under it"
+            : "failed for a reason this code does not recognise";
+        const detail = configured.failure?.detail ?? "no detail";
+        stall ??= `the configured state was never observed — the wait ${
+          configured.failure?.kind === "aborted" ? "was cut short" : "failed unrecognisably"
+        } (${detail})`;
+        console.warn(
+          `⚠️  collect-models: the configured-state wait for provider "${providerName}" ${observed} ` +
+            `(${detail}). This run gives NO signal about whether the save landed; it is unknown, not a ` +
+            `failed save (#1370).`,
+        );
+      } else if (!configured.ok) {
+        stall ??= `the panel never reached the configured state ("Disconnect") within ${(configuredPlan.timeoutMs / 1000).toFixed(0)}s of Save`;
+        console.warn(
+          `⚠️  collect-models: provider "${providerName}" never showed the configured state ` +
+            `("Disconnect") within ${(configuredPlan.timeoutMs / 1000).toFixed(0)}s of Save. Whatever this ` +
+            `run collects for it is suspect — an empty model list below is that, not a provider without ` +
+            `models (#1355).`,
+        );
+      } else {
+        // The save landed after all, so nothing the waits above recorded is a
+        // stall any more. Leaving it set would report a configured provider as
+        // one the collector never reached.
+        stall = null;
+      }
     }
   }
 
@@ -735,32 +1050,43 @@ async function collectModelsForProvider(
 
   await page.getByTestId("sidebar-nav-Model Providers").click();
 
-  return models;
+  return { models, stall };
 }
 
-async function collectModels(page: Page): Promise<ModelRecord[]> {
+async function collectModels(page: Page): Promise<{
+  models: ModelRecord[];
+  stalls: Map<string, string>;
+}> {
   const settingsPage = new SettingsPage(page);
   await settingsPage.navigate();
   await page.getByTestId("sidebar-nav-Model Providers").click();
 
   const allModels: ModelRecord[] = [];
+  const stalls = new Map<string, string>();
+
+  // One budget for the whole sweep, spent down as each provider's post-Save
+  // waits actually run (#1370).
+  const budget: SweepBudget = { remainingMs: SWEEP_SAVE_BUDGET_MS };
+  const providers = [...keyedProviders];
 
   // Keyed providers only. This sweep SAVES an API key per provider through the
   // Settings UI, so a keyless one (Ollama, #1187) has nothing for it to do here —
   // and its model list is the live instance's, not a catalog to collect.
-  for (const [provider, config] of keyedProviders) {
-    allModels.push(
-      ...(await collectModelsForProvider(
-        page,
-        config.providerTestId,
-        provider,
-        config.keyPlaceholder,
-        config.envKeys[0],
-      )),
+  for (const [index, [provider, config]] of providers.entries()) {
+    const collection = await collectModelsForProvider(
+      page,
+      config.providerTestId,
+      provider,
+      config.keyPlaceholder,
+      config.envKeys[0],
+      budget,
+      providers.length - 1 - index,
     );
+    allModels.push(...collection.models);
+    if (collection.stall) stalls.set(provider, collection.stall);
   }
 
-  return allModels;
+  return { models: allModels, stalls };
 }
 
 // ─── Main export ───────────────────────────────────────────────────────────────
@@ -809,10 +1135,10 @@ export async function collectAll(page: Page): Promise<void> {
   const buildAxis = await probeBuildAxis(page.request, keyedProviderNames);
 
   // Step 2: Collect models from UI via Settings
-  const models = await collectModels(page);
+  const { models, stalls } = await collectModels(page);
 
   // Step 3: Validate the key axis and merge both verdicts
-  const providers = await collectProviders(models, buildAxis);
+  const providers = await collectProviders(models, buildAxis, stalls);
   fs.writeFileSync(PROVIDERS_PATH, JSON.stringify(providers, null, 2), "utf-8");
   console.log(`providers.json saved with ${providers.length} providers.`);
 

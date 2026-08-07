@@ -396,6 +396,18 @@ jobs:
       - name: Collect models
         id: collect_models
         run: npx playwright test tests/collect-models.spec.ts --reporter=line
+        # NOT a hard gate here, deliberately, and the asymmetry with
+        # pr-validation.yml is intentional rather than an oversight (#1370 asked
+        # for it in writing). There this step gates the job: a red sweep means
+        # the impacted specs never run, which is right, because a spec that needs
+        # a model must not run without one (#1152). Here a red sweep costs the
+        # provider's parametrized specs and nothing else, and losing a scheduled
+        # day of @stable coverage to a drained key is the worse trade (#980).
+        #
+        # COLLECT_REQUIRED_PROVIDERS is therefore deliberately UNSET below: this
+        # lane rotates providers by weekday (#1185) and owes multi-provider
+        # coverage, so every env-keyed provider stays required. Narrowing it is
+        # the PR lane's move, and only because that lane pins itself to one.
         continue-on-error: true
         env:
           CI: "true"

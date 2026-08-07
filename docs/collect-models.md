@@ -1,6 +1,6 @@
 # Collect Models
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x (1.12.0.dev19)
 
 ---
 
@@ -67,8 +67,11 @@ surface (the #505 lesson).
 3. For each configured provider (OpenAI, Anthropic, Google):
    a. Click the provider entry to open its configuration panel
    b. If an API key is present in the environment and the panel is visible, enter the key and click Save / Replace
-   c. Wait for model toggles to load; enable any that are unchecked
-   d. Record each model name paired with the provider
+   c. Wait for the credential **write** to answer and for the panel to reach the
+      configured state, both **against a sweep-wide deadline** rather than a
+      per-provider clock — see *A stalling provider must not cost the sweep* below
+   d. Wait for model toggles to load; enable any that are unchecked
+   e. Record each model name paired with the provider
 4. Write the collected model list to `data/models.json`
 5. **Probe the KEY axis:** for each provider, call its API directly to confirm the
    key is active. The probe walks the collected catalog in preference order rather
@@ -97,7 +100,10 @@ contract; the SPEC now verifies the outcome):
   Settings UI collection broke — the exact silent failure the old contract
   hid);
 - every provider with its env key set that came back `inactive` carries a
-  non-empty `error` (the probe's reason is visible, never silently dropped).
+  non-empty `error` (the probe's reason is visible, never silently dropped);
+- a provider the **collector** never managed to configure is reported as that,
+  and never as a key/account/config failure — see *A stalling provider must not
+  cost the sweep* (#1370).
 
 A provider with a key that genuinely fails its probe (e.g. a model the
 account cannot access) is a legitimate `inactive` — recorded, logged, not a
@@ -258,6 +264,71 @@ exists to prevent. Two consequences, both load-bearing:
   reports the **most frequent** error instead of the last, on the same signal the
   early exit uses: a model-scoped message names its model and so occurs once,
   while an account-scoped one occurs for every candidate.
+
+### A stalling provider must not cost the sweep (#1370)
+
+One provider's credential write can stay in flight far longer than the others' —
+measured at **103 s** locally (#1355/#1357) and past **240 s** in CI, always
+anthropic, whichever position it holds in the loop. That is a backend cost this
+spec does not control. What it does control is the three separate defects that
+turned one slow write into a **lost PR lane**, each with its own fix and its own
+unit coverage. Read them in this order; the third is the one that costs coverage.
+
+**1 — A wait that never ran must not report a measurement.** The two waits after
+Save (the credential response, and the panel reaching `Disconnect`) ended in
+`.catch(() => null)` / `.catch(() => false)`, which makes *"the deadline expired"*
+and *"the page was closed under me"* the same observation. On run
+[31188034419](https://github.com/oriontech-me/langflow-e2e/actions/runs/31188034419)
+attempt 2 the test hit its own 5-minute Playwright timeout, the context closed,
+and both pending waits rejected at once:
+
+```
+14:49:14.871  ⚠️ anthropic ... collected ZERO models
+14:49:30.036  ⚠️ no credential write observed for provider "google" within 180s
+14:49:30.048  ⚠️ provider "google" never showed the configured state ("Disconnect") within 60s
+14:49:30.088  Error: locator.count: Target page, context or browser has been closed
+```
+
+A 180 s wait and a 60 s wait completed **12 ms apart**, at most 15.2 s after the
+click. Neither observed anything. The log nonetheless read as two measured
+negatives — which is why the issue's own preliminary question ("is 180 s simply
+short?") is unanswerable from those runs. An aborted wait is **unknown**, not a
+negative (#1012, and the same `read-failed` distinction #1261 needed).
+
+**2 — Per-provider ceilings that the test's own budget cannot pay.** 180 s
+(write) + 60 s (`Disconnect`) + 15 s (toggles) is **255 s spent on a single
+provider**, inside a spec whose timeout is **300 s**. One stall therefore
+consumes the run by arithmetic, before any judgement about whether the wait was
+right. The sweep needs the same pair of bounds the toggle confirmation already
+has (`TOGGLE_CONFIRM_BUDGET_MS`, mirroring #1197 §4.4): a per-item timeout bounds
+ONE write and can never see the sum. Attempt 2 died exactly this way; attempt 3
+survived with ~15 s to spare while collecting all three providers.
+
+**3 — `no models collected` is a collector verdict, not a key verdict.** When the
+panel never confirms the credential, `validateProviderWithFallback` receives
+**zero candidates** and records
+`error: "no models collected from the providers panel"`. That string does not
+match `BILLING_OR_QUOTA`, so it lands in `hardFailures` and fails the spec under
+the message *"real key/account/config problem"* — for a provider whose key was
+**never probed at all** and whose build axis reported ✅. It is the #1011 mistake
+in a new place: the loud failure names the wrong layer. A provider the collector
+never managed to configure gets its own verdict, distinct from both a working key
+and a rotten one, and the spec asserts on it separately.
+
+**What follows for the PR lane, and why this is not a weakened assertion.**
+`pr-validation.yml` pins its run to one provider's settled model (`PR lane pinned
+to openai / gpt-4o-mini`, #1169); the daily rotates and keeps the multi-provider
+coverage. So on the PR lane a stalled anthropic changes **no spec that lane will
+execute**, and yet it exits the shared `Collect models` pre-flight non-zero, which
+on that lane is a hard gate — the impacted-specs step never runs and the PR gets
+no E2E coverage of its own diff. #570's guarantee is preserved where it bites: a
+provider that silently collects nothing still fails **any lane that would have
+used it**, and a total wipeout still fails everywhere. What changes is that the
+gate stops failing on a provider the lane has already excluded from its own run.
+
+The daily makes the opposite trade deliberately (`continue-on-error: true`, #980
+— a day of coverage outweighs a diagnostic red). That asymmetry is intentional and
+is now stated in both workflows rather than implied by one of them.
 
 ---
 

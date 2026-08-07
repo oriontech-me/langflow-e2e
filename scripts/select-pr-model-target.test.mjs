@@ -206,3 +206,71 @@ test("pr-validation.yml still runs the pin between the health gate and the specs
   assert.ok(pin > gate, "the model pin must follow the health gate");
   assert.ok(run > pin, "the model pin must precede the impacted-specs run");
 });
+
+test("pr-validation.yml gates and pins on ONE provider name, not two literals (#1370)", () => {
+  // What this pins is an ABSENCE, like the --grep composition guard (#1275): no
+  // provider name spelled twice. It cannot prove the lane behaves correctly —
+  // the tests above and collect-models.test.ts do that — but the defect it
+  // guards is drift between two independent literals, which is exactly the class
+  // a structural read catches.
+  //
+  // Why it matters: `Collect models` now fails a COLLECTOR stall only on the
+  // provider this lane pins itself to. If a later change moves the pin to
+  // anthropic and leaves the gate on openai, the lane would gate on a provider
+  // it does not run and run one it does not gate — reopening #1370 from the
+  // other side, with every check green.
+  const yaml = fs.readFileSync(
+    path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"),
+    "utf-8",
+  );
+
+  assert.match(
+    yaml,
+    /^\s*PR_LANE_PROVIDER:\s*\S+/m,
+    "the lane's provider must be declared once, at job level",
+  );
+  assert.match(
+    yaml,
+    /COLLECT_REQUIRED_PROVIDERS:\s*\$\{\{\s*env\.PR_LANE_PROVIDER\s*\}\}/,
+    "the collector-stall gate must read the lane's provider, not a literal",
+  );
+  assert.match(
+    yaml,
+    /select-pr-model-target\.mjs --provider "\$PR_LANE_PROVIDER"/,
+    "the model pin must read the lane's provider, not a literal",
+  );
+  // The literal may appear exactly once in EXECUTABLE yaml — as the value of
+  // PR_LANE_PROVIDER itself. A second occurrence is a second source of truth.
+  // Comment lines are excluded on purpose: the surrounding prose names the
+  // provider several times while explaining the trade, and a guard that forbade
+  // that would be answered by deleting the explanation.
+  const declared = yaml.match(/^\s*PR_LANE_PROVIDER:\s*(\S+)/m)[1];
+  const executable = yaml
+    .split("\n")
+    .filter((line) => !/^\s*#/.test(line))
+    .join("\n");
+  const occurrences = executable.split(new RegExp(`\\b${declared}\\b`)).length - 1;
+  assert.equal(
+    occurrences,
+    1,
+    `"${declared}" appears ${occurrences}x outside comments in pr-validation.yml — it must be ` +
+      "spelled once, as PR_LANE_PROVIDER's value, or the gate and the pin can drift apart",
+  );
+});
+
+test("daily-stable.yml does NOT narrow the collector-stall gate (#1370)", () => {
+  // The asymmetry is deliberate and this is the half that can regress silently.
+  // The daily rotates providers by weekday (#1185) and owes multi-provider
+  // coverage, so every env-keyed provider stays required there; copying the PR
+  // lane's narrowing across would let a stalled provider go unreported on the
+  // one lane whose whole job is to notice.
+  const yaml = fs.readFileSync(
+    path.join(REPO_ROOT, ".github/workflows/daily-stable.yml"),
+    "utf-8",
+  );
+  assert.doesNotMatch(
+    yaml,
+    /COLLECT_REQUIRED_PROVIDERS:/,
+    "daily-stable.yml must leave the collector-stall gate at its default (every env-keyed provider)",
+  );
+});
