@@ -832,13 +832,13 @@
 | `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
 | `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
-| `core-functionality/a2a/` | 18 | 0 | 9 | 1 | 8 |
+| `core-functionality/a2a/` | 18 | 9 | 0 | 1 | 8 |
 | `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
 | `mcp/client/` | 13 | 10 | 1 | 0 | 2 |
 | `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **385 (77%)** | **86 (17%)** | **14 (3%)** | **15 (3%)** |
+| **TOTAL** | **500** | **394 (79%)** | **77 (15%)** | **14 (3%)** | **15 (3%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 448 `test()` calls carrying the `@stable` tag, distributed across 177 spec
+> 465 `test()` calls carrying the `@stable` tag, distributed across 184 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1043,6 +1043,25 @@
 - [x] Webhook component — valid JSON payload is propagated as structured Data output → `webhook-component-regression.spec.ts`
 - [x] Webhook component — invalid JSON payload is encapsulated in {payload: ...} → `webhook-component-regression.spec.ts`
 - [x] GET /api/v1/monitor/messages returns 200 with array response → `webhook-component-regression.spec.ts`
+
+#### core-functionality/a2a/
+- [x] published agent flow serves a spec-valid card → `a2a-server-agent-card.spec.ts`
+- [x] card overrides change exactly what the card advertises → `a2a-server-agent-card.spec.ts`
+- [x] card is 404 while the flow is not published → `a2a-server-agent-card.spec.ts`
+- [x] card is 404 for an unknown flow id → `a2a-server-agent-card.spec.ts`
+- [x] a flow without chat input and output cannot be published → `a2a-server-agent-tab-publish.spec.ts`
+- [x] publishing from the Agent tab serves a card at the advertised URL → `a2a-server-agent-tab-publish.spec.ts`
+- [x] the card editor changes what the API serves → `a2a-server-agent-tab-publish.spec.ts`
+- [x] the Try it panel round-trips a sentinel over the published endpoint → `a2a-server-agent-tab-try-it.spec.ts`
+- [x] discovery lists only agent-typed, A2A-enabled flows → `a2a-server-discovery.spec.ts`
+- [x] unpublishing removes the flow from discovery → `a2a-server-discovery.spec.ts`
+- [x] message/send runs the flow and echoes the sentinel back → `a2a-server-jsonrpc-message-send.spec.ts`
+- [x] each call produces its own task → `a2a-server-jsonrpc-message-send.spec.ts`
+- [x] protocol errors come back as JSON-RPC errors over HTTP 200 → `a2a-server-jsonrpc-message-send.spec.ts`
+- [x] a conversation keeps its thread only while the caller quotes the contextId → `a2a-server-multi-turn-context.spec.ts`
+- [x] a task can be read back and refuses a cancel it cannot honour → `a2a-server-tasks-lifecycle.spec.ts`
+- [x] a task id is invisible to another flow → `a2a-server-tasks-lifecycle.spec.ts`
+- [x] cancelling a running task moves it to canceled → `a2a-server-tasks-lifecycle.spec.ts`
 
 #### core-functionality/auth/
 - [x] logout must redirect user to login page → `logout-flow.spec.ts`
