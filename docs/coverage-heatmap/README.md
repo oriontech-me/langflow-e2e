@@ -37,7 +37,7 @@ Residual risk = `inherent × (1 − mitigation)` — the danger that still gets 
 |---|---|---|---|---|---|---|---|
 | 1 | **15.0** | **NEW security** | 15 | 3×5 | **0.00** | 11 | No checklist area at all |
 | 2 | **10.5** | 13/14 MCP | **25** | 5×5 | 0.58 | 29 | Advertised promise; remaining backlog is blocked or absent |
-| 3 | **8.0** | **20 Memory Base** | 8 | 2×4 | **0.00** | 8 | No checklist area; new 1.12 surface |
+| 3 | **8.0** | **20 Memory Base** | 8 | 2×4 | **0.00** | 15 | No checklist area; new 1.12 surface |
 | 4 | **7.4** | 6 Agents / LLM execution | **25** | 5×5 | 0.70 | 43 | Advertised promise, under-defended |
 | 5 | **7.4** | 11 Templates / starter | 8 | 2×4 | 0.08 | 34 | Coverage was phantom — see the correction below |
 | 6 | **6.3** | 16 A2A | 8 | 2×4 | 0.21 | 18 | Almost no coverage; specs exist, unvalidated |

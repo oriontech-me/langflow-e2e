@@ -948,9 +948,34 @@
 - [ ] `Create Memory` is disabled with an empty form **and stays disabled with only the Name filled** — the gate, not just the initial render
 - [ ] Cancelling closes the modal and creates nothing, asserted against `GET /api/v1/knowledge_bases` rather than against the UI alone
 
-#### 20.3 Registration End-to-End
+#### 20.3 Registration End-to-End (item 1 of 2)
 
 - [ ] Completing the form creates a memory base that is present **both** in `GET /api/v1/knowledge_bases` and in the panel (the panel alone could render optimistic local state). Needs a provider exposing an **embedding** model; with none the picker reads `No Models Enabled` and the test must skip with that reason, never pass silently
+
+#### 20.4 Ingestion (item 2 of 2 — separate wave item)
+
+> **Tracked separately from registration by team decision (2026-08-07).** Registration
+> and ingestion are one product surface but two pieces of work, and the evidence points
+> the other way from the bullets above: **all three of Memory Base's real upstream defects
+> are ingestion**, while the registration surface §20.1–20.3 cover has none reported yet.
+>
+> Routes confirmed against the running instance: `POST /{kb}/ingest`,
+> `POST /preview-chunks`, `GET /{kb}/chunks`, `GET /{kb}/runs`, `GET /{kb}/runs/{id}`,
+> `POST /{kb}/cancel`, `GET /connectors`, `POST /test-connection`.
+>
+> **One connector ships today** — `folder` ("Ingest every matching file from a server-side
+> folder", `requires_credentials: false`), measured on 1.12.0. A test needs no external
+> service, but it does need a server-side path the instance can read.
+
+- [ ] Chunk settings chosen in the UI are the ones actually applied to the ingested chunks — `@regression` for `langflow-ai/langflow#13884` (*"the initial chunk settings are not properly set"*, `jira`)
+- [ ] `POST /preview-chunks` previews with the same settings the ingestion will use, so the preview is not a different code path from the run
+- [ ] Ingesting from the `folder` connector produces chunks readable back via `GET /{kb}/chunks`
+- [ ] An ingestion run is observable while it happens: `GET /{kb}/runs` lists it and `GET /{kb}/runs/{id}` reports its state
+- [ ] `POST /{kb}/cancel` stops an in-flight ingestion and the run reports the cancellation rather than silently completing
+- [ ] An embedding provider that cannot be reached fails the ingestion **with the provider named** — `@regression` for the two reported cases: an unreachable Ollama endpoint (`langflow-ai/langflow#13883`, `jira`) and Google embedding models rejected outright (`langflow-ai/langflow#12277`)
+- [ ] A knowledge base bound to a memory base refuses ingestion through the `_check_memory_base_association` guard, which the API declares on five routes and nothing asserts
+
+---
 
 ---
 

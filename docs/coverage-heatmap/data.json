@@ -106,7 +106,7 @@
         "weightedChurn": 1.02
       },
       "mitigation": 0,
-      "checklistBullets": 8,
+      "checklistBullets": 15,
       "inChecklist": true,
       "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
     },
