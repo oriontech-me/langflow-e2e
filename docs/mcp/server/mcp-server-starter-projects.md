@@ -1,6 +1,6 @@
 # MCP Server — starter projects & project folder CRUD (UI)
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev20`)
 
 ---
 
@@ -122,8 +122,10 @@ is out of sync with the project folder), or the duplicate-server guard is gone.
 - Settings → MCP Servers page (`mcp_server_name_<index>`, `add-mcp-server-button-page`,
   `add-mcp-server-button`, `json-input`) via `helpers/ui/go-to-settings.ts`
   (`navigateSettingsPages`).
-- Project folder CRUD (`add-project-button`, `more-options-button_<name>`,
-  Rename/Delete, `input-project`, `sidebar-nav-<name>`).
+- Project folder CRUD (`add-project-button`, Rename/Delete, `input-project`, and
+  the project entry plus its kebab — addressed through
+  `helpers/ui/project-sidebar.ts`, which matches the id-derived testids of the
+  nightly and the name-derived ones of `main` / `1.11.x`, #1363).
 - `helpers/filesystem/clean-old-folders.ts`, `helpers/filesystem/convert-test-name.ts`,
   `helpers/other/await-bootstrap-test.ts`.
 - Basic Prompting template + the flow MCP tab (Test 2).

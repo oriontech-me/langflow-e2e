@@ -2,6 +2,7 @@ import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { projectSidebarEntry } from "../../../../helpers/ui/project-sidebar";
 
 test(
   "creating a flow in a specific folder via API places it in that folder",
@@ -111,13 +112,17 @@ test(
       // Navigate to the home page and wait for it to load
       await awaitBootstrapTest(page, { skipModal: true });
 
-      // The folder must appear in the left sidebar
-      await expect(
-        page.getByTestId(`sidebar-nav-${folderName}`),
-      ).toBeVisible({ timeout: 15000 });
+      // The folder must appear in the left sidebar. Addressed by the id/name
+      // pair: the nightly keys the testid on the project id, 1.11.x on its
+      // name (#1363).
+      const folder = projectSidebarEntry(page, {
+        id: folderId,
+        name: folderName,
+      });
+      await expect(folder).toBeVisible({ timeout: 15000 });
 
       // Click the folder in the sidebar
-      await page.getByTestId(`sidebar-nav-${folderName}`).click();
+      await folder.click();
 
       // The flow we created must appear in the main content area
       await expect(page.getByText(flowName)).toBeVisible({ timeout: 15000 });

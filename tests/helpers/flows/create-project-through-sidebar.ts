@@ -1,6 +1,10 @@
 import { expect, type Page } from "@playwright/test";
+import {
+  projectSidebarEntry,
+  type ProjectRef,
+} from "../ui/project-sidebar";
 
-export type CreatedProject = { id: string; name: string };
+export type CreatedProject = ProjectRef;
 
 /**
  * Creates a project (folder) through the home sidebar's `add-project-button`
@@ -37,27 +41,36 @@ export async function createProjectThroughSidebar(
   await page.getByTestId("add-project-button").click();
 
   const project = (await (await created).json()) as CreatedProject;
-  await expect(page.getByTestId(`sidebar-nav-${project.name}`)).toBeVisible({
-    timeout: 15000,
-  });
-  return { id: project.id, name: project.name };
+  const ref = { id: project.id, name: project.name };
+  await expect(projectSidebarEntry(page, ref)).toBeVisible({ timeout: 15000 });
+  return ref;
 }
 
 /**
- * Renames a project through the sidebar's inline input, addressing it by its
- * `sidebar-nav-<name>` testid rather than by a substring text match — the same
- * ambiguity described above, on the rename side. Double-clicking the testid
- * opens `input-project` (confirmed live on `1.12.0.dev9`).
+ * Renames a project through the sidebar's inline input, addressing it by the
+ * id/name pair rather than by a substring text match — the same ambiguity
+ * described above, on the rename side. Double-clicking the entry opens
+ * `input-project` (confirmed live on `1.12.0.dev20`).
+ *
+ * Returns the project under its NEW name, which is what every later assertion
+ * has to address it by: on `1.11.x` the entry's testid is name-derived and
+ * therefore changes with the rename, while on the nightly it is the id and does
+ * not (#1363). Asserting on the returned ref's text is what proves the rename
+ * committed on both lines — the id-derived testid alone would be visible
+ * whether the rename landed or not.
  */
 export async function renameProjectThroughSidebar(
   page: Page,
-  currentName: string,
+  project: ProjectRef,
   newName: string,
-): Promise<void> {
-  await page.getByTestId(`sidebar-nav-${currentName}`).dblclick();
+): Promise<ProjectRef> {
+  await projectSidebarEntry(page, project).dblclick();
   await page.getByTestId("input-project").fill(newName);
   await page.keyboard.press("Enter");
-  await expect(page.getByTestId(`sidebar-nav-${newName}`)).toBeVisible({
+
+  const renamed = { id: project.id, name: newName };
+  await expect(projectSidebarEntry(page, renamed)).toContainText(newName, {
     timeout: 15000,
   });
+  return renamed;
 }

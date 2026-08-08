@@ -2,9 +2,10 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folders";
-import { convertTestName } from "../../../../helpers/filesystem/convert-test-name";
+import { createProjectThroughSidebar } from "../../../../helpers/flows/create-project-through-sidebar";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
+import { openProjectOptions } from "../../../../helpers/ui/project-sidebar";
 
 /** The name test 1 renames its first project to. */
 const RENAMED_PROJECT = "renamed_project";
@@ -58,11 +59,9 @@ const removeLeftoverRenamedProject = async (page: Page) => {
   }
 };
 
-// Quarantined at triage (daily #1361): the project kebab never resolves under
-// the name-derived `more-options-button_<name>` testid — see #1363.
-test.fixme(
+test(
   "user must be able to see starter projects for mcp servers",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     //starter mcp project
 
@@ -81,8 +80,12 @@ test.fixme(
 
     //add new folders
 
-    await page.getByTestId("add-project-button").click();
-    await page.getByTestId("add-project-button").click();
+    // Created through the helper rather than two bare `add-project-button`
+    // clicks, so the test holds the id AND the backend-assigned name of each
+    // project. Both are needed to address the sidebar entry and its kebab: the
+    // nightly keys those testids on the project id, 1.11.x on its name (#1363).
+    const firstProject = await createProjectThroughSidebar(page);
+    await createProjectThroughSidebar(page);
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
@@ -103,24 +106,17 @@ test.fixme(
 
     //rename a folder
 
-    const getFirstFolderName = convertTestName(
-      (await page.getByText("New Project").first().textContent()) as string,
-    );
+    // Renamed through the kebab's own "Rename" entry (the double-click path is
+    // covered by folder-crud.spec.ts), addressing the project this test created
+    // instead of "whichever entry reads 'New Project' first" — a sibling worker
+    // creating its own project mid-run could otherwise be the one renamed.
+    await openProjectOptions(page, firstProject);
+    await page.getByText("Rename", { exact: true }).last().click();
+    await page.getByTestId("input-project").last().fill(RENAMED_PROJECT);
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(1000);
 
-    await page
-      .getByText("New Project")
-      .first()
-      .hover()
-      .then(async () => {
-        await page
-          .getByTestId(`more-options-button_${getFirstFolderName}`)
-          .last()
-          .click();
-        await page.getByText("Rename", { exact: true }).last().click();
-        await page.getByTestId("input-project").last().fill(RENAMED_PROJECT);
-        await page.keyboard.press("Enter");
-        await page.waitForTimeout(1000);
-      });
+    const renamedProject = { id: firstProject.id, name: RENAMED_PROJECT };
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
@@ -133,18 +129,10 @@ test.fixme(
     //delete a folder
 
     await page.getByTestId("icon-ChevronLeft").first().click();
-    await page
-      .getByTestId("sidebar-nav-renamed_project")
-      .hover()
-      .then(async () => {
-        await page
-          .getByTestId("more-options-button_renamed_project")
-          .last()
-          .click();
-        await page.getByText("Delete", { exact: true }).last().click();
-        await page.getByText("Delete", { exact: true }).last().click();
-        await page.waitForTimeout(1000);
-      });
+    await openProjectOptions(page, renamedProject);
+    await page.getByText("Delete", { exact: true }).last().click();
+    await page.getByText("Delete", { exact: true }).last().click();
+    await page.waitForTimeout(1000);
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
