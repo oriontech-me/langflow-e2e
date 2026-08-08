@@ -7,6 +7,10 @@ import {
 } from "../../../../helpers/flows/create-project-through-sidebar";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import {
+  projectSidebarEntry,
+  type ProjectRef,
+} from "../../../../helpers/ui/project-sidebar";
 import { MainPage } from "../../../../pages/MainPage";
 
 /**
@@ -23,50 +27,54 @@ import { MainPage } from "../../../../pages/MainPage";
  * folder-drag-drop-flow) and are intentionally not repeated here.
  */
 
-// Quarantined at triage (daily #1361): the project's sidebar entry never
-// resolves under the name-derived testid this spec waits on — see #1363.
-test.fixme(
+test(
   "creates, renames and deletes an empty project folder via the UI",
-  { tag: ["@release", "@workspace", "@mainpage"] },
+  { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
   async ({ page, request }) => {
     await awaitBootstrapTest(page, { skipModal: true });
 
     const mainPage = new MainPage(page);
     const renamedFolder = `crud-folder-${Date.now()}`;
     let createdId: string | undefined;
-    let createdName = "";
+    let project: ProjectRef | undefined;
 
     try {
       await test.step("Create a new folder from the sidebar", async () => {
-        // `createProjectThroughSidebar` returns the name the backend assigned —
-        // "New Project" only while that name is free, `New Project (N)`
-        // otherwise. Asserting on the literal `sidebar-nav-New Project` was a
-        // bet on the instance having no other folder by that name (#1023).
-        const created = await createProjectThroughSidebar(page);
-        createdId = created.id;
-        createdName = created.name;
+        // `createProjectThroughSidebar` returns the id AND the name the backend
+        // assigned — "New Project" only while that name is free, `New Project
+        // (N)` otherwise. Asserting on the literal `sidebar-nav-New Project` was
+        // a bet on the instance having no other folder by that name (#1023);
+        // since #1363 the entry is addressed by that pair, because the nightly
+        // keys the testid on the id and 1.11.x still keys it on the name.
+        project = await createProjectThroughSidebar(page);
+        createdId = project.id;
       });
 
       await test.step("Rename the folder to a unique name", async () => {
-        await renameProjectThroughSidebar(page, createdName, renamedFolder);
+        project = await renameProjectThroughSidebar(
+          page,
+          project!,
+          renamedFolder,
+        );
         // Asserting on the unique renamed entry is enough to prove the rename
         // committed. We deliberately do NOT assert that "New Project" is gone:
         // several specs create folders via the UI in parallel against the same
         // backend, so a generic "New Project" entry from another worker may
         // legitimately exist at the same time.
-        await expect(
-          page.getByTestId(`sidebar-nav-${renamedFolder}`),
-        ).toBeVisible({ timeout: 15000 });
+        await expect(projectSidebarEntry(page, project)).toContainText(
+          renamedFolder,
+          { timeout: 15000 },
+        );
       });
 
       await test.step("Delete the folder", async () => {
-        await mainPage.deleteProject(renamedFolder);
+        await mainPage.deleteProject(project!);
         await expect(
           page.getByText("Project deleted successfully"),
         ).toBeVisible({ timeout: 15000 });
-        await expect(
-          page.getByTestId(`sidebar-nav-${renamedFolder}`),
-        ).not.toBeVisible({ timeout: 10000 });
+        await expect(projectSidebarEntry(page, project!)).not.toBeVisible({
+          timeout: 10000,
+        });
       });
     } finally {
       // The UI delete above is the assertion, NOT the cleanup (#1023): the
@@ -85,11 +93,9 @@ test.fixme(
   },
 );
 
-// Quarantined at triage (daily #1361): the project's sidebar entry never
-// resolves under the name-derived testid this spec waits on — see #1363.
-test.fixme(
+test(
   "deleting a folder that contains a flow removes the flow with it",
-  { tag: ["@release", "@workspace", "@mainpage"] },
+  { tag: ["@stable", "@release", "@workspace", "@mainpage"] },
   async ({ page, request }) => {
     const authToken = await getAuthToken(request);
     const folderName = `crud-del-folder-${Date.now()}`;
@@ -124,22 +130,24 @@ test.fixme(
       await awaitBootstrapTest(page, { skipModal: true });
       const mainPage = new MainPage(page);
 
+      const project: ProjectRef = { id: folderId, name: folderName };
+
       await test.step("The folder and its flow are listed", async () => {
-        await expect(
-          page.getByTestId(`sidebar-nav-${folderName}`),
-        ).toBeVisible({ timeout: 15000 });
-        await mainPage.clickProject(folderName);
+        await expect(projectSidebarEntry(page, project)).toBeVisible({
+          timeout: 15000,
+        });
+        await mainPage.clickProject(project);
         await expect(page.getByText(flowName)).toBeVisible({ timeout: 15000 });
       });
 
       await test.step("Delete the folder", async () => {
-        await mainPage.deleteProject(folderName);
+        await mainPage.deleteProject(project);
         await expect(
           page.getByText("Project deleted successfully"),
         ).toBeVisible({ timeout: 15000 });
-        await expect(
-          page.getByTestId(`sidebar-nav-${folderName}`),
-        ).not.toBeVisible({ timeout: 10000 });
+        await expect(projectSidebarEntry(page, project)).not.toBeVisible({
+          timeout: 10000,
+        });
         folderDeleted = true;
       });
 

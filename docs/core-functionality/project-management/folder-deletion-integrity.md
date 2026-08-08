@@ -1,6 +1,6 @@
 # Folder Deletion Integrity
 
-**Last validated:** Langflow 1.12.x (`1.12.0.dev10`)
+**Last validated:** Langflow 1.12.x (`1.12.0.dev20`)
 
 ---
 
@@ -52,10 +52,10 @@ see *The destructive lane* below.
 **Test 1 — `deleting a folder should update the folder list immediately`**
 1. Create the target folder via `POST /api/v1/projects/` (API setup, so the
    deletion target is deterministic and the UI create flow is not re-tested here)
-2. `awaitBootstrapTest(page, { skipModal: true })`; assert `sidebar-nav-{name}` is visible
+2. `awaitBootstrapTest(page, { skipModal: true })`; assert the folder's sidebar entry is visible
 3. Delete it through the UI via `MainPage.deleteProject(name)`
 4. Assert the `"Project deleted successfully"` toast
-5. Assert `sidebar-nav-{name}` is **no longer visible** — the no-stale-data observable
+5. Assert the folder's sidebar entry is **no longer visible** — the no-stale-data observable
 6. Assert `add-project-button` is still visible (the page did not break)
 7. `finally`: if the UI deletion did not complete, remove the folder through
    `deleteProject()` so a failed assertion cannot leak a project (#965)
@@ -66,7 +66,7 @@ see *The destructive lane* below.
    `createProjectThroughSidebar` (`add-project-button`, then rename the entry the
    backend reports → type the name → Enter)
 3. Assert both sidebar entries exist
-4. Delete the alpha folder via its `more-options-button_<name>` → `btn-delete-project` → confirm
+4. Delete the alpha folder via its kebab → `btn-delete-project` → confirm
 5. Assert the toast, assert the alpha entry is gone and the beta one is still visible
 6. Click the beta folder and assert `mainpage_title` renders — the survivor is still usable
 7. Delete it (cleanup through the same UI path; afterEach still removes both ids)
@@ -75,7 +75,7 @@ see *The destructive lane* below.
 1. Bootstrap, template round-trip, create `folder-one-<stamp>` through the UI
 2. Delete it, assert the toast and that its sidebar entry is gone
 3. **Immediately** create `folder-two-<stamp>` through the same UI path
-4. Assert it appears and `sidebar-nav-folder-two-<stamp>` is visible — proves no
+4. Assert it appears and the `folder-two-<stamp>` entry is visible — proves no
    stale-cache collision between the deletion and the next creation
 5. Delete it (cleanup)
 
@@ -85,7 +85,7 @@ see *The destructive lane* below.
    against real content rather than only empty folders
 2. Bootstrap with `skipModal: true`
 3. Loop: count `sidebar-nav-*` entries in `project-sidebar`, delete the first one
-   through the UI (hover → `more-options-button_{kebab}` → `btn-delete-project` →
+   through the UI (hover → its kebab → `btn-delete-project` →
    confirm → toast), re-count; repeat until zero
 4. Assert the count reached `0`
 5. Assert the sidebar shows `"Start creating a project or flow"`
@@ -427,7 +427,7 @@ seeded on the same instance:
   the `project-sidebar` and its `sidebar-nav-*` entries; the loop in test 4 and
   every visibility assertion depend on those testids.
 - `src/frontend/src/pages/MainPage/components/dropdown/` — the
-  `more-options-button_{name}` → `btn-delete-project` → confirm path used by
+  the kebab → `btn-delete-project` → confirm path used by
   tests 2, 3 and 4.
 - `src/frontend/src/pages/MainPage/pages/emptyPage/` — the empty-project screen:
   the `"Start creating a project or flow"` copy and `new_project_btn_empty_page`

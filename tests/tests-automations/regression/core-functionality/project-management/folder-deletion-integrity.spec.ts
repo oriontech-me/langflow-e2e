@@ -12,6 +12,12 @@ import {
 } from "../../../../helpers/flows/create-project-through-sidebar";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import {
+  openProjectOptions,
+  projectOptionsButton,
+  projectSidebarEntry,
+  type ProjectRef,
+} from "../../../../helpers/ui/project-sidebar";
 import { MainPage } from "../../../../pages/MainPage";
 
 /**
@@ -163,11 +169,9 @@ async function openTemplateAndReturnToFolders(page: Page) {
   });
 }
 
-// Quarantined at triage (daily #1361): the project's sidebar entry never
-// resolves under the name-derived testid this spec waits on — see #1363.
-test.fixme(
+test(
   "deleting a folder should update the folder list immediately",
-  { tag: ["@release", "@api"] },
+  { tag: ["@stable", "@release", "@api"] },
   async ({ page, request }) => {
     // Registered even though this test opens no template: on an instance with no
     // flows left (the `@destructive` sibling empties it in its own lane)
@@ -190,10 +194,12 @@ test.fixme(
       await awaitBootstrapTest(page, { skipModal: true });
       const mainPage = new MainPage(page);
 
-      const folderBeforeDelete = page.getByTestId(`sidebar-nav-${folderName}`);
-      await expect(folderBeforeDelete).toBeVisible({ timeout: 15000 });
+      const project: ProjectRef = { id: folderId, name: folderName };
+      await expect(projectSidebarEntry(page, project)).toBeVisible({
+        timeout: 15000,
+      });
 
-      await mainPage.deleteProject(folderName);
+      await mainPage.deleteProject(project);
 
       // Verify success message
       await expect(page.getByText("Project deleted successfully")).toBeVisible({
@@ -201,9 +207,9 @@ test.fixme(
       });
 
       // Verify the folder is removed from the sidebar immediately (no stale data)
-      await expect(
-        page.getByTestId(`sidebar-nav-${folderName}`),
-      ).not.toBeVisible({ timeout: 10000 });
+      await expect(projectSidebarEntry(page, project)).not.toBeVisible({
+        timeout: 10000,
+      });
 
       // Verify the page is still functional by checking for the add project button
       await expect(page.getByTestId("add-project-button")).toBeVisible({
@@ -226,11 +232,9 @@ test.fixme(
   },
 );
 
-// Quarantined at triage (daily #1361): the project's sidebar entry never
-// resolves under the name-derived testid this spec waits on — see #1363.
-test.fixme(
+test(
   "deleting one folder should not affect other folders",
-  { tag: ["@release", "@api"] },
+  { tag: ["@stable", "@release", "@api"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
@@ -249,26 +253,32 @@ test.fixme(
     // Create both folders. `createProjectThroughSidebar` returns the name the
     // backend actually assigned, so the rename addresses THIS folder instead of
     // guessing with `getByText("New Project").last()` — see the helper's note.
-    const alphaProject = await createProjectThroughSidebar(page);
-    createdProjectIds.add(alphaProject.id);
-    await renameProjectThroughSidebar(page, alphaProject.name, alpha);
+    const alphaCreated = await createProjectThroughSidebar(page);
+    createdProjectIds.add(alphaCreated.id);
+    const alphaProject = await renameProjectThroughSidebar(
+      page,
+      alphaCreated,
+      alpha,
+    );
 
-    const betaProject = await createProjectThroughSidebar(page);
-    createdProjectIds.add(betaProject.id);
-    await renameProjectThroughSidebar(page, betaProject.name, beta);
+    const betaCreated = await createProjectThroughSidebar(page);
+    createdProjectIds.add(betaCreated.id);
+    const betaProject = await renameProjectThroughSidebar(
+      page,
+      betaCreated,
+      beta,
+    );
 
     // Verify both folders exist
-    await expect(page.getByTestId(`sidebar-nav-${alpha}`)).toBeVisible({
+    await expect(projectSidebarEntry(page, alphaProject)).toBeVisible({
       timeout: 5000,
     });
-    await expect(page.getByTestId(`sidebar-nav-${beta}`)).toBeVisible({
+    await expect(projectSidebarEntry(page, betaProject)).toBeVisible({
       timeout: 5000,
     });
 
     // Delete the first folder
-    const folderAlpha = page.getByTestId(`sidebar-nav-${alpha}`);
-    await folderAlpha.hover();
-    await page.getByTestId(`more-options-button_${alpha}`).click();
+    await openProjectOptions(page, alphaProject);
     await page.getByTestId("btn-delete-project").click();
     await page.getByText("Delete").last().click();
 
@@ -278,12 +288,12 @@ test.fixme(
     });
 
     // Verify the deleted folder is removed
-    await expect(page.getByTestId(`sidebar-nav-${alpha}`)).not.toBeVisible({
+    await expect(projectSidebarEntry(page, alphaProject)).not.toBeVisible({
       timeout: 5000,
     });
 
     // Verify the sibling folder still exists and is accessible
-    const folderBeta = page.getByTestId(`sidebar-nav-${beta}`);
+    const folderBeta = projectSidebarEntry(page, betaProject);
     await expect(folderBeta).toBeVisible({ timeout: 5000 });
 
     // Click it to ensure the app is functional
@@ -297,8 +307,7 @@ test.fixme(
     // Clean up - delete the remaining folder through the same UI path. afterEach
     // still deletes both ids via the API: this UI delete can 500 silently
     // (#965), and the toast alone does not prove the folder is gone.
-    await folderBeta.hover();
-    await page.getByTestId(`more-options-button_${beta}`).click();
+    await openProjectOptions(page, betaProject);
     await page.getByTestId("btn-delete-project").click();
     await page.getByText("Delete").last().click();
 
@@ -308,11 +317,9 @@ test.fixme(
   },
 );
 
-// Quarantined at triage (daily #1361): the project's sidebar entry never
-// resolves under the name-derived testid this spec waits on — see #1363.
-test.fixme(
+test(
   "creating a new folder after deletion should work correctly",
-  { tag: ["@release", "@api"] },
+  { tag: ["@stable", "@release", "@api"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
@@ -328,14 +335,12 @@ test.fixme(
     const two = `folder-two-${stamp}`;
 
     // Create the first folder
-    const oneProject = await createProjectThroughSidebar(page);
-    createdProjectIds.add(oneProject.id);
-    await renameProjectThroughSidebar(page, oneProject.name, one);
+    const oneCreated = await createProjectThroughSidebar(page);
+    createdProjectIds.add(oneCreated.id);
+    const oneProject = await renameProjectThroughSidebar(page, oneCreated, one);
 
     // Delete it
-    const folderOne = page.getByTestId(`sidebar-nav-${one}`);
-    await folderOne.hover();
-    await page.getByTestId(`more-options-button_${one}`).click();
+    await openProjectOptions(page, oneProject);
     await page.getByTestId("btn-delete-project").click();
     await page.getByText("Delete").last().click();
 
@@ -344,23 +349,22 @@ test.fixme(
     });
 
     // Verify folder is deleted
-    await expect(page.getByTestId(`sidebar-nav-${one}`)).not.toBeVisible({
+    await expect(projectSidebarEntry(page, oneProject)).not.toBeVisible({
       timeout: 5000,
     });
 
     // Create a new folder immediately after the deletion — the assertion under
     // test: no stale-cache collision between a deletion and the next creation.
-    const twoProject = await createProjectThroughSidebar(page);
-    createdProjectIds.add(twoProject.id);
-    await renameProjectThroughSidebar(page, twoProject.name, two);
+    const twoCreated = await createProjectThroughSidebar(page);
+    createdProjectIds.add(twoCreated.id);
+    const twoProject = await renameProjectThroughSidebar(page, twoCreated, two);
 
-    const folderTwo = page.getByTestId(`sidebar-nav-${two}`);
+    const folderTwo = projectSidebarEntry(page, twoProject);
     await expect(folderTwo).toBeVisible({ timeout: 5000 });
 
     // Clean up through the UI; afterEach still deletes both ids via the API
     // because this delete can 500 silently (#965).
-    await folderTwo.hover();
-    await page.getByTestId(`more-options-button_${two}`).click();
+    await openProjectOptions(page, twoProject);
     await page.getByTestId("btn-delete-project").click();
     await page.getByText("Delete").last().click();
 
@@ -461,27 +465,18 @@ test(
         break;
       }
 
-      // Extract folder name from testid (e.g., "sidebar-nav-Starter Project" -> "starter-project")
-      const folderName = folderTestId.replace("sidebar-nav-", "");
-      const kebabName = folderName.toLowerCase().replace(/\s+/g, "-");
+      // The entry's testid suffix is whatever upstream keys it on — the project
+      // id on the nightly, its name on 1.11.x (#1363). Feeding it as BOTH halves
+      // of the ref makes `projectOptionsButton` try both kebab spellings as one
+      // locator, which is what the `isVisible()` fallback here used to do by
+      // hand — and it fell through to `more-options-button_*`.first() when
+      // neither matched, i.e. it could delete a folder other than the one it had
+      // just hovered.
+      const suffix = folderTestId.replace("sidebar-nav-", "");
+      const project = { id: suffix, name: suffix };
 
-      // Hover and click more options
       await firstFolder.hover();
-
-      // Try to find and click the more options button
-      const moreOptionsButton = page.getByTestId(
-        `more-options-button_${kebabName}`,
-      );
-
-      if (await moreOptionsButton.isVisible()) {
-        await moreOptionsButton.click();
-      } else {
-        // Try with the original name format
-        const altMoreOptions = page
-          .locator(`[data-testid^="more-options-button_"]`)
-          .first();
-        await altMoreOptions.click();
-      }
+      await projectOptionsButton(page, project).click();
 
       await page.getByTestId("btn-delete-project").click();
       await page.getByText("Delete").last().click();

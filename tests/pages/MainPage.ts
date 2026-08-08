@@ -3,6 +3,11 @@ import { BasePage } from "./BasePage";
 import { SidebarComponent } from "./SidebarComponent";
 import { addFlowToTestOnEmptyLangflow } from "../helpers/flows/add-flow-to-test-on-empty-langflow";
 import { waitForPageEntry } from "../helpers/other/page-entry-barrier";
+import {
+  openProjectOptions,
+  projectSidebarEntry,
+  type ProjectRef,
+} from "../helpers/ui/project-sidebar";
 
 export class MainPage extends BasePage {
   readonly sidebar: SidebarComponent;
@@ -90,19 +95,20 @@ export class MainPage extends BasePage {
     });
   }
 
-  async deleteProject(name: string) {
-    const slug = name.toLowerCase().replace(/\s+/g, "-");
-    await this.page.getByTestId(`sidebar-nav-${name}`).last().hover();
-    await this.page.getByTestId(`more-options-button_${slug}`).click();
+  /**
+   * Deletes a project through the sidebar kebab, addressing it by the pair the
+   * create response returns — see `helpers/ui/project-sidebar.ts` for why both
+   * the id- and the name-derived testid are matched (#1363).
+   */
+  async deleteProject(project: ProjectRef) {
+    await openProjectOptions(this.page, project);
     await this.page.getByTestId("btn-delete-project").click();
     await this.page.getByText("Delete").last().click();
   }
 
-  async uploadFlowByDragDrop(projectName: string, jsonContent: string) {
-    await this.page.waitForSelector(
-      `[data-testid="sidebar-nav-${projectName}"]`,
-      { timeout: 100000 },
-    );
+  async uploadFlowByDragDrop(project: ProjectRef, jsonContent: string) {
+    const entry = projectSidebarEntry(this.page, project);
+    await entry.first().waitFor({ state: "visible", timeout: 100000 });
     const dataTransfer = await this.page.evaluateHandle((data) => {
       const dt = new DataTransfer();
       const file = new File([data], "flowtest.json", {
@@ -112,9 +118,7 @@ export class MainPage extends BasePage {
       return dt;
     }, jsonContent);
 
-    await this.page
-      .getByTestId(`sidebar-nav-${projectName}`)
-      .dispatchEvent("drop", { dataTransfer });
+    await entry.first().dispatchEvent("drop", { dataTransfer });
     await this.page.waitForTimeout(1000);
   }
 
@@ -125,7 +129,7 @@ export class MainPage extends BasePage {
     await this.page.mouse.up();
   }
 
-  async clickProject(name: string) {
-    await this.page.getByTestId(`sidebar-nav-${name}`).click();
+  async clickProject(project: ProjectRef) {
+    await projectSidebarEntry(this.page, project).click();
   }
 }

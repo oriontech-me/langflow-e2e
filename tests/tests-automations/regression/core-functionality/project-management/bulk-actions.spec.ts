@@ -4,12 +4,11 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import { projectSidebarEntry } from "../../../../helpers/ui/project-sidebar";
 
-// Quarantined at triage (daily #1361): the project's sidebar entry never
-// resolves under the name-derived testid this spec clicks — see #1363.
-test.fixme(
+test(
   "user should be able to select flows with different methods and perform bulk actions",
-  { tag: ["@release", "@workspace", "@mainpage", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@mainpage", "@regression"] },
   async ({ page, request }) => {
     // Track the IDs of the 3 flows + the dedicated folder we create so cleanup
     // deletes ONLY those via the API, never sibling specs' flows.
@@ -71,7 +70,7 @@ test.fixme(
       // too — so no part of the historically flaky modal path (#723) is
       // exercised. The folder view (`/all/folder/<id>`) shows ONLY these 3 flows.
       await awaitBootstrapTest(page, { skipModal: true });
-      await page.getByTestId(`sidebar-nav-${folderName}`).click();
+      await projectSidebarEntry(page, { id: folderId, name: folderName }).click();
 
       // Determinism guard: the folder listing must hold exactly the 3 flows we
       // created — nothing else can be here, so this confirms isolation before any

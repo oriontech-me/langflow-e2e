@@ -1,6 +1,6 @@
 # Project Management – Navigate Between Folders
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev20`)
 
 ---
 
@@ -42,7 +42,7 @@ list.
 2. Create folder **B** via `POST /api/v1/projects/` (unique name `nav-folderB-<timestamp>`); capture `folderBId`.
 3. Create flow **A** via `POST /api/v1/flows/` with `folder_id = folderAId` (unique name `nav-flowA-<timestamp>`); assert the echoed `folder_id` matches; capture `flowAId`.
 4. Create flow **B** via `POST /api/v1/flows/` with `folder_id = folderBId` (unique name `nav-flowB-<timestamp>`); assert the echoed `folder_id` matches; capture `flowBId`.
-5. Bootstrap the session (`awaitBootstrapTest(page, { skipModal: true })`); assert both `sidebar-nav-<folderA>` and `sidebar-nav-<folderB>` are visible.
+5. Bootstrap the session (`awaitBootstrapTest(page, { skipModal: true })`); assert both folders' sidebar entries are visible.
 6. `clickProject(folderA)` → assert flow **A** name is visible **and** flow **B** name is hidden (`toBeHidden` / `toHaveCount(0)`).
 7. `clickProject(folderB)` → assert flow **B** name is visible **and** flow **A** name is hidden.
 8. **Cleanup (finally):** delete `flowAId`, `flowBId` (id-scoped, ignored if already gone), then folders `folderAId`, `folderBId` via `DELETE /api/v1/projects/{id}`.
@@ -63,7 +63,7 @@ timestamped names make each `getByText` unambiguous under `fullyParallel`.
 
 ## External dependencies *(required)*
 
-- Home sidebar testids: `project-sidebar`, `sidebar-nav-<name>` (via `MainPage.clickProject`), `mainpage_title`.
+- Home sidebar testids: `project-sidebar`, `mainpage_title`, and the project entry addressed through `helpers/ui/project-sidebar.ts` (via `MainPage.clickProject`) — `sidebar-nav-<project id>` on the nightly, `sidebar-nav-<name>` on `main` / `1.11.x` (#1363).
 - Flow listing surface: the flow name rendered on the home grid (asserted via `page.getByText(<flowName>)`, the same surface `folder-crud.spec.ts` uses after `clickProject`).
 - REST API: `POST`/`DELETE /api/v1/projects/` (folders), `POST`/`DELETE /api/v1/flows/` with `folder_id` (auth via `getAuthToken`).
 - No LLM or provider API key required (model-independent).

@@ -3,6 +3,10 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import {
+  projectSidebarEntry,
+  type ProjectRef,
+} from "../../../../helpers/ui/project-sidebar";
 import { MainPage } from "../../../../pages/MainPage";
 
 /**
@@ -78,24 +82,29 @@ test(
 
       const mainPage = new MainPage(page);
 
+      // Addressed by the id/name pair the create response returns: the nightly
+      // keys the sidebar testid on the id, 1.11.x on the name (#1363).
+      const projectA: ProjectRef = { id: folderAId!, name: folderAName };
+      const projectB: ProjectRef = { id: folderBId!, name: folderBName };
+
       await test.step("Both folders are listed in the project sidebar", async () => {
         await awaitBootstrapTest(page, { skipModal: true });
-        await expect(
-          page.getByTestId(`sidebar-nav-${folderAName}`),
-        ).toBeVisible({ timeout: 15000 });
-        await expect(
-          page.getByTestId(`sidebar-nav-${folderBName}`),
-        ).toBeVisible({ timeout: 15000 });
+        await expect(projectSidebarEntry(page, projectA)).toBeVisible({
+          timeout: 15000,
+        });
+        await expect(projectSidebarEntry(page, projectB)).toBeVisible({
+          timeout: 15000,
+        });
       });
 
       await test.step("Folder A shows flow A and not flow B", async () => {
-        await mainPage.clickProject(folderAName);
+        await mainPage.clickProject(projectA);
         await expect(page.getByText(flowAName)).toBeVisible({ timeout: 15000 });
         await expect(page.getByText(flowBName)).toHaveCount(0);
       });
 
       await test.step("Folder B shows flow B and not flow A", async () => {
-        await mainPage.clickProject(folderBName);
+        await mainPage.clickProject(projectB);
         await expect(page.getByText(flowBName)).toBeVisible({ timeout: 15000 });
         await expect(page.getByText(flowAName)).toHaveCount(0);
       });

@@ -1,6 +1,6 @@
 # Project Management – Bulk Actions on Flows
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev20`)
 
 ---
 
@@ -52,7 +52,7 @@ The test creates its 3 flows in a **dedicated project/folder** via the REST API 
 
 ## External dependencies *(required)*
 
-- Home listing UI testids: `list-card`, `checkbox-*`, `flow-name-div`, `download-bulk-btn`, `delete-bulk-btn`, and the folder sidebar entry (`sidebar-nav-<folderName>`).
+- Home listing UI testids: `list-card`, `checkbox-*`, `flow-name-div`, `download-bulk-btn`, `delete-bulk-btn`, and the folder sidebar entry, addressed through `helpers/ui/project-sidebar.ts` — `sidebar-nav-<project id>` on the nightly, `sidebar-nav-<name>` on `main` / `1.11.x` (#1363).
 - REST API `POST /api/v1/projects/` + `DELETE /api/v1/projects/{id}` for the dedicated folder, `POST /api/v1/flows/` (via the `createFlow` helper, with `folder_id`) for flow creation, and `DELETE /api/v1/flows/{id}` for ID-scoped cleanup (auth via `getAuthToken`).
 - No starter template or LLM/provider API key required — flows are created empty via the API.
 
