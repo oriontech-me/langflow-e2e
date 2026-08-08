@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-07
+> **Last updated:** 2026-08-08
 
 ---
 
@@ -854,7 +854,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 460 `test()` calls carrying the `@stable` tag, distributed across 182 spec
+> 467 `test()` calls carrying the `@stable` tag, distributed across 185 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1233,8 +1233,14 @@
 - [x] User must be able to stop building from inside Playground → `stop-button-playground.spec.ts`
 
 #### core-functionality/project-management/
+- [x] user should be able to select flows with different methods and perform bulk actions → `bulk-actions.spec.ts`
 - [x] user should be able to edit flow name and see it reflected in the main page listing → `edit-flow-name.spec.ts`
 - [x] flow settings enforce character limits and persist name & description → `flowSettings.spec.ts`
+- [x] creates, renames and deletes an empty project folder via the UI → `folder-crud.spec.ts`
+- [x] deleting a folder that contains a flow removes the flow with it → `folder-crud.spec.ts`
+- [x] deleting a folder should update the folder list immediately → `folder-deletion-integrity.spec.ts`
+- [x] deleting one folder should not affect other folders → `folder-deletion-integrity.spec.ts`
+- [x] creating a new folder after deletion should work correctly → `folder-deletion-integrity.spec.ts`
 - [x] getting-started progress increments as onboarding steps complete → `user-progress-track.spec.ts`
 
 #### flow-functionality/
@@ -1295,6 +1301,7 @@
 - [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
 - [x] execute the exposed tool over the MCP protocol echoes the input → `mcp-server-protocol.spec.ts`
 - [x] resources/list surfaces the uploaded flow file as a resource → `mcp-server-resources.spec.ts`
+- [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
