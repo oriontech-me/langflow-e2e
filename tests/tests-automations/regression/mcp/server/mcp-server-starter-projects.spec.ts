@@ -4,8 +4,9 @@ import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-te
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folders";
 import { createProjectThroughSidebar } from "../../../../helpers/flows/create-project-through-sidebar";
-import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
+import { trackCreatedFlows } from "../../../../helpers/flows/track-created-flows";
+import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 import { openProjectOptions } from "../../../../helpers/ui/project-sidebar";
 
@@ -82,61 +83,61 @@ const removeLeftoverRenamedProject = async (page: Page) => {
 // So the cleanup below is not redundant with `cleanOldFolders`. That helper
 // guards against OTHER runs' leftovers; this one stops the file from producing
 // them.
-const createdFlowIds = new Set<string>();
 const createdProjectIds = new Set<string>();
 
-/**
- * Records every flow the PAGE creates, so teardown deletes exactly those.
- *
- * A response listener rather than a push at one call site: the flow this file
- * leaks is not created by an explicit step but as a side effect of opening a
- * starter template, and `awaitBootstrapTest`'s empty-instance branch can seed
- * one too (#1023).
- */
-function trackCreatedFlows(page: Page): void {
-  page.on("response", (response) => {
-    if (response.request().method() !== "POST" || response.status() !== 201) {
-      return;
-    }
-    if (new URL(response.url()).pathname.replace(/\/$/, "") !== "/api/v1/flows") {
-      return;
-    }
-    response
-      .json()
-      .then((body: { id?: string }) => {
-        if (body?.id) createdFlowIds.add(body.id);
-      })
-      .catch(() => {});
-  });
-}
+// Flows go through the SHARED tracker (#1108), not a hand-rolled listener. The
+// block that would be written here was copied into 51 spec files and drifted on
+// four axes; two of them decide whether this file's leak is actually fixed.
+// **One of the 51 settles its in-flight body reads** — the id lands a tick after
+// the `201`, so a teardown that snapshots immediately drops it and the flow leaks
+// anyway. And `cleanup` resolves the bearer itself and **never throws out of
+// teardown**: `getAuthToken` throws once its retry budget is spent (a backend
+// wedged at teardown, #1077), and a throw in an `afterEach` is a hook error that
+// fails an otherwise-green test — the opposite of what cleanup is for. It also
+// leaves the editor before deleting (#1288) and reports failures instead of
+// swallowing them (#1012).
+let flows: ReturnType<typeof trackCreatedFlows>;
+
+test.beforeEach(({ page }) => {
+  flows = trackCreatedFlows(page);
+});
 
 test.afterEach(async ({ page, request }) => {
-  const flowIds = [...createdFlowIds];
+  await flows.cleanup(request);
+
   const projectIds = [...createdProjectIds];
-  createdFlowIds.clear();
   createdProjectIds.clear();
-  if (flowIds.length === 0 && projectIds.length === 0) return;
+  if (projectIds.length === 0) return;
 
-  // Off the canvas BEFORE deleting anything (#1023): test 2 ends inside the flow
-  // editor, and deleting a flow underneath a mounted editor makes it keep asking
-  // for a flow that no longer exists — 404s the fixture logs as
-  // `🚨 Backend Error`, an artifact of teardown order rather than a defect.
-  // `about:blank` rather than `/` so teardown adds no backend traffic of its own.
-  await page.goto("about:blank").catch(() => {});
+  // The tracker unmounts only when it has flows to delete, and test 1 has none
+  // while still holding projects — so the navigation is done here too. Deleting a
+  // project under a mounted home view makes it refetch a folder that is already
+  // gone, which the fixture logs as `🚨 Backend Error` (#1023). Idempotent: when
+  // the tracker already navigated, this is a second `about:blank`.
+  await unmountEditorForCleanup(page);
 
-  const headers = { Authorization: await getAuthToken(request) };
-  for (const id of flowIds) {
-    // Reported, never swallowed: a failed cleanup must not fail the hook and
-    // mask the assertion that already ran, but it must not be silent either.
-    await deleteFlow(request, id, { headers }).catch((error) => {
-      console.warn(`⚠️ Orphan flow left behind (${id}): ${error}`);
-    });
+  // Same contract as the tracker's own bearer, for the same reason (#1086/#1077):
+  // caught so a wedged backend cannot turn teardown into a hook error, and NAMED
+  // rather than degraded silently to an empty token — otherwise the 401s below
+  // would read as the projects' fault.
+  let options: { headers: Record<string, string> } | undefined;
+  try {
+    const bearer = await getAuthToken(request);
+    options = bearer ? { headers: { Authorization: bearer } } : undefined;
+  } catch (error) {
+    console.warn(
+      `⚠️  cleanup: no auth token — the project deletes below run on the browser ` +
+        `session alone, so a 401 here is THAT and not the project (#1086/#1077): ${error}`,
+    );
   }
+
   // `deleteProject` treats 404 — the project test 1 already deleted through the
   // UI — as the desired end state, and retries the 500 the endpoint answers
-  // under contention (#965).
+  // under contention (#965). Reported, never swallowed: a failed cleanup must not
+  // fail the hook and mask the assertion that already ran, but it must not be
+  // silent either (#1012).
   for (const id of projectIds) {
-    await deleteProject(request, id, { headers }).catch((error) => {
+    await deleteProject(request, id, options).catch((error) => {
       console.warn(`⚠️ Orphan project left behind (${id}): ${error}`);
     });
   }
@@ -148,7 +149,6 @@ test(
   async ({ page }) => {
     //starter mcp project
 
-    trackCreatedFlows(page);
     await awaitBootstrapTest(page, {
       skipModal: true,
     });
@@ -235,7 +235,6 @@ test(
   "user must not be able to add duplicate mcp servers from starter projects",
   { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
-    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
     await page.getByTestId("side_nav_options_all-templates").click();
