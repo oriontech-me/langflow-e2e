@@ -1,8 +1,10 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { cleanOldFolders } from "../../../../helpers/filesystem/clean-old-folders";
 import { createProjectThroughSidebar } from "../../../../helpers/flows/create-project-through-sidebar";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { deleteProject } from "../../../../helpers/flows/delete-project";
 import { navigateSettingsPages } from "../../../../helpers/ui/go-to-settings";
 import { openProjectOptions } from "../../../../helpers/ui/project-sidebar";
@@ -59,12 +61,94 @@ const removeLeftoverRenamedProject = async (page: Page) => {
   }
 };
 
+// Ids of what a test created, deleted id-scoped in afterEach (#1376) — never a
+// global sweep, which wipes what other workers are building (#515).
+//
+// Measured on `1.12.0.dev20` over three consecutive runs of this file, counting
+// `GET /api/v1/flows/?get_all=true` and `GET /api/v1/projects/` around each:
+//
+//   flows     34 -> 35 -> 36 -> 37     (+1 every run, unbounded)
+//   projects   1 ->  2 ->  2 ->  2     (+1, then flat)
+//
+// The two halves fail differently, and the second is the one worth naming. Test
+// 2 opens the Basic Prompting template, which creates a flow nothing deletes —
+// that leak is monotonic and visible. Test 1 creates TWO projects and only ever
+// deletes the one it renames, and that leak reads as zero from run 2 onwards
+// only because `cleanOldFolders` at the top of test 1 sweeps the PREVIOUS run's
+// leftover. It is not absent, it is absorbed — and #1363 is the incident where
+// that absorption stopped working: with the sweep silently deleting nothing,
+// `New Project (N)` accumulated inside a single test's own retries.
+//
+// So the cleanup below is not redundant with `cleanOldFolders`. That helper
+// guards against OTHER runs' leftovers; this one stops the file from producing
+// them.
+const createdFlowIds = new Set<string>();
+const createdProjectIds = new Set<string>();
+
+/**
+ * Records every flow the PAGE creates, so teardown deletes exactly those.
+ *
+ * A response listener rather than a push at one call site: the flow this file
+ * leaks is not created by an explicit step but as a side effect of opening a
+ * starter template, and `awaitBootstrapTest`'s empty-instance branch can seed
+ * one too (#1023).
+ */
+function trackCreatedFlows(page: Page): void {
+  page.on("response", (response) => {
+    if (response.request().method() !== "POST" || response.status() !== 201) {
+      return;
+    }
+    if (new URL(response.url()).pathname.replace(/\/$/, "") !== "/api/v1/flows") {
+      return;
+    }
+    response
+      .json()
+      .then((body: { id?: string }) => {
+        if (body?.id) createdFlowIds.add(body.id);
+      })
+      .catch(() => {});
+  });
+}
+
+test.afterEach(async ({ page, request }) => {
+  const flowIds = [...createdFlowIds];
+  const projectIds = [...createdProjectIds];
+  createdFlowIds.clear();
+  createdProjectIds.clear();
+  if (flowIds.length === 0 && projectIds.length === 0) return;
+
+  // Off the canvas BEFORE deleting anything (#1023): test 2 ends inside the flow
+  // editor, and deleting a flow underneath a mounted editor makes it keep asking
+  // for a flow that no longer exists — 404s the fixture logs as
+  // `🚨 Backend Error`, an artifact of teardown order rather than a defect.
+  // `about:blank` rather than `/` so teardown adds no backend traffic of its own.
+  await page.goto("about:blank").catch(() => {});
+
+  const headers = { Authorization: await getAuthToken(request) };
+  for (const id of flowIds) {
+    // Reported, never swallowed: a failed cleanup must not fail the hook and
+    // mask the assertion that already ran, but it must not be silent either.
+    await deleteFlow(request, id, { headers }).catch((error) => {
+      console.warn(`⚠️ Orphan flow left behind (${id}): ${error}`);
+    });
+  }
+  // `deleteProject` treats 404 — the project test 1 already deleted through the
+  // UI — as the desired end state, and retries the 500 the endpoint answers
+  // under contention (#965).
+  for (const id of projectIds) {
+    await deleteProject(request, id, { headers }).catch((error) => {
+      console.warn(`⚠️ Orphan project left behind (${id}): ${error}`);
+    });
+  }
+});
+
 test(
   "user must be able to see starter projects for mcp servers",
   { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     //starter mcp project
 
+    trackCreatedFlows(page);
     await awaitBootstrapTest(page, {
       skipModal: true,
     });
@@ -85,7 +169,11 @@ test(
     // project. Both are needed to address the sidebar entry and its kebab: the
     // nightly keys those testids on the project id, 1.11.x on its name (#1363).
     const firstProject = await createProjectThroughSidebar(page);
-    await createProjectThroughSidebar(page);
+    const secondProject = await createProjectThroughSidebar(page);
+    // Both, not just the renamed one: the second is the project this file used
+    // to leave behind on every run (#1376).
+    createdProjectIds.add(firstProject.id);
+    createdProjectIds.add(secondProject.id);
 
     await navigateSettingsPages(page, "Settings", "MCP Servers");
 
@@ -147,6 +235,7 @@ test(
   "user must not be able to add duplicate mcp servers from starter projects",
   { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
+    trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
     await page.getByTestId("side_nav_options_all-templates").click();
