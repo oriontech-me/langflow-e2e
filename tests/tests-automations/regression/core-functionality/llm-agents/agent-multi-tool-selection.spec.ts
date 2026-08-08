@@ -179,9 +179,9 @@ async function setSystemPrompt(page: Page, prompt: string): Promise<void> {
 // tokens for a single perform_search -- a 5x spread, and the query is the
 // agent's choice, not ours. Two calls at the top of that range exceed 128k on
 // their own, so no iteration cap can guarantee this test. Real stabilisation
-// needs the payload bounded upstream (langflow-ai/langflow#14469); until then
-// this test stays out of @stable and #1378 stays open. Re-measure before
-// changing this number -- do not re-derive it on paper.
+// needs the payload bounded upstream (langflow-ai/langflow#14469); until that
+// lands this test stays out of @stable and its checklist bullet stays [-].
+// Re-measure before changing this number -- do not re-derive it on paper.
 //
 // max_iterations is an advanced field: expose it on the node body via the
 // inspector, then fill it -- the same handles agent-max-iterations.spec.ts uses.

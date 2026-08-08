@@ -228,10 +228,9 @@ describe with two tests:
 > tokens for one call, a 5× spread, with the query chosen by the agent and
 > not by us. Two calls at the top of that range exceed 128k on their own, so
 > **no iteration cap can guarantee this test.** Real stabilisation needs the
-> payload bounded upstream (`langflow-ai/langflow#14469`). Until then this
-> test stays out of `@stable`, its checklist bullet stays `[-]`, and #1378
-> stays open. **Re-measure before changing the number — do not re-derive it
-> on paper.**
+> payload bounded upstream (`langflow-ai/langflow#14469`). Until that lands,
+> this test stays out of `@stable` and its checklist bullet stays `[-]`.
+> **Re-measure before changing the number — do not re-derive it on paper.**
 
 ---
 
@@ -322,10 +321,10 @@ tools in the wrong order, fails).
 
 - **LLM provider API** (per `models.json` target): one completion with one
   tool round-trip for tests 1–2. **Test 3 is not one round-trip** — it runs a
-  multi-tool sequence bounded by the `max_iterations` cap of 4, so it costs up
-  to 4 model calls and sends up to ~90k tokens (see the context-budget note in
-  Step by step). It was unbounded before #1378, at up to 15 calls and millions
-  of tokens.
+  multi-tool sequence bounded by the `max_iterations` cap of **8**, so it costs
+  up to 8 model calls; the heaviest measured run sent **129,150** tokens in a
+  single request (see the note in Step by step). It was unbounded before the
+  cap, at up to 15 calls and requests of millions of tokens.
 - **Web Search → DuckDuckGo + every linked page** (tests 2 and 3): the
   component scrapes each result's full page text, so this test's token cost is
   set by whatever pages DuckDuckGo returns that day. Unbounded upstream
