@@ -369,7 +369,7 @@
 
 #### 6.4 Tools and Integrations
 - [ ] Agent with integrated external MCP tool executes action and returns result
-- [-] Agent executes multiple tools in sequence → `llm-agents/agent-multi-tool-selection.spec.ts` (Test 3 — chained fetch→search, ordered `tool_use` assert; `@stable` gated on the clean baseline #818, per #827)
+- [-] Agent executes multiple tools in sequence → `llm-agents/agent-multi-tool-selection.spec.ts` (Test 3 — chained fetch→search, ordered `tool_use` assert; `@stable` gated on the clean baseline #818, per #827. #1378 bounded the run with a measured `max_iterations` cap after the unbounded Web Search payload blew the context up — still `[-]`: the cap raises the pass rate, it does not make the agent's convergence deterministic)
 - [x] Tool returns error — agent handles it and continues execution → `core-functionality/llm-agents/agent-tool-error-handling.spec.ts`
 - [x] Multiple connected tools — agent selects the correct one for each prompt → `agent-multi-tool-selection.spec.ts`
 - [x] Tool with invalid name — validation prevents execution with clear message → `core-functionality/llm-agents/agent-tool-name-validation.spec.ts`

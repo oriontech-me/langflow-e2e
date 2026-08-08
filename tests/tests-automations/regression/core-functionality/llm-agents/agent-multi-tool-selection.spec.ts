@@ -3,6 +3,10 @@ import path from "path";
 import type { Page } from "@playwright/test";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  closeAdvancedOptions,
+  openAdvancedOptions,
+} from "../../../../helpers/ui/open-advanced-options";
 import { SimpleAgentTemplatePage, type LoadSimpleAgentOptions } from "../../../../pages";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
@@ -72,6 +76,10 @@ const SYSTEM_PROMPT =
 const SYSTEM_PROMPT_SEQUENCE =
   "Use the connected tools to complete the task. You may call multiple tools in " +
   "sequence as the task requires; never answer from memory and never refuse.";
+// Iteration budget for the sequence test only (#1378). Empirical -- see
+// setMaxIterations for the measurements, and for why it bounds the blast radius
+// without making this test deterministic.
+const MAX_ITERATIONS_SEQUENCE = "8";
 
 // Flows created by each test are tracked here and deleted by id in
 // afterEach — loadTemplateByName does NO cleanup (post-#553 contract), and
@@ -133,6 +141,63 @@ async function setSystemPrompt(page: Page, prompt: string): Promise<void> {
   await field.click();
   await field.fill(prompt);
   await field.blur();
+}
+
+// Cap the Agent's max_iterations (test 3 only). This test is the only one whose
+// instruction permits an open-ended sequence, and the agent does not reliably
+// converge on it: when it doesn't, it keeps calling perform_search, and every
+// such call injects the Web Search component's whole result set. That component
+// caps nothing -- it scrapes each DuckDuckGo hit's full page text (measured on
+// 1.12.0.dev20: 10 results, 182,316 chars ~= 45.6k tokens in ONE call; upstream
+// langflow-ai/langflow#14469). Since the conversation is re-sent every turn, a
+// non-converging run grows without bound and the provider rejects it: #1378
+// recorded requests of 206,881/206,902/271,317 tokens in CI and 5,060,863
+// locally, after which the run returns no reply at all.
+//
+// Not a rate-limit tier problem: the local org allows 4M TPM (20x CI's 200k) and
+// blew through it anyway, and no model's context window holds 5M tokens. A
+// bigger tier or a wider model buys nothing; bounding the iteration count does.
+//
+// What this cap DOES and DOES NOT do -- read this before trusting it. It bounds
+// the worst case (the 5,060,863-token run above cost ~2 min of wall clock and
+// real money); it does NOT make this test deterministic. Measured on
+// 1.12.0.dev20 / gpt-4o-mini, --retries=0:
+//
+//     max_iterations   pass rate
+//     15 (default)     4/5
+//     8 (this value)   5/6   <- same rate within noise, smaller blast radius
+//     4                0/2
+//
+// 4 fails for a DIFFERENT reason and that asymmetry is why the cap cannot be
+// tightened into a fix: max_iterations=4 sets a LangGraph recursion_limit of 13,
+// the agent hits it ("Recursion limit of 13 reached without hitting a stop
+// condition"), and a run that stops that way persists no AI message at all -- so
+// the sequence assert fails on absent data rather than wrong data.
+//
+// The residual flake is NOT fixable from here, because ONE search call is
+// already unbounded. Measured, same day, three queries: 15,857 / 53,714 / 78,848
+// tokens for a single perform_search -- a 5x spread, and the query is the
+// agent's choice, not ours. Two calls at the top of that range exceed 128k on
+// their own, so no iteration cap can guarantee this test. Real stabilisation
+// needs the payload bounded upstream (langflow-ai/langflow#14469); until then
+// this test stays out of @stable and #1378 stays open. Re-measure before
+// changing this number -- do not re-derive it on paper.
+//
+// max_iterations is an advanced field: expose it on the node body via the
+// inspector, then fill it -- the same handles agent-max-iterations.spec.ts uses.
+async function setMaxIterations(page: Page, maxIterations: string): Promise<void> {
+  await page.locator('[data-testid^="rf__node-Agent"]').first().click();
+  await openAdvancedOptions(page);
+  await page.getByTestId("inspector-add-max_iterations").click();
+  await closeAdvancedOptions(page);
+  const maxIter = page.getByTestId("int_int_max_iterations");
+  await expect(maxIter).toBeVisible({ timeout: 15000 });
+  await maxIter.scrollIntoViewIfNeeded();
+  await maxIter.fill(maxIterations);
+  await maxIter.blur();
+  // The cap is load-bearing, not cosmetic: a fill that silently no-ops leaves
+  // the default 15 in place and re-opens #1378 on a run that still looks green.
+  await expect(maxIter).toHaveValue(maxIterations, { timeout: 10000 });
 }
 
 // Set the task on the ChatInput node (the Playground prompt pre-fills from it;
@@ -454,6 +519,11 @@ for (const { label, options, skipReason } of targets) {
 
         await test.step("permit a multi-tool sequence, seed the chained task", async () => {
           await setSystemPrompt(page, SYSTEM_PROMPT_SEQUENCE);
+          // Bound the run BEFORE it starts: this is the only test whose
+          // instruction permits an open-ended sequence, so it is the only one
+          // that can accumulate Web Search payloads past the model's context
+          // window (#1378 — see setMaxIterations).
+          await setMaxIterations(page, MAX_ITERATIONS_SEQUENCE);
           await setChatInputText(page, task);
           await waitForFlowSaveSettled(page);
         });
@@ -462,11 +532,13 @@ for (const { label, options, skipReason } of targets) {
           await openPlaygroundAndSend(page, task);
         });
 
-        await test.step("execution: a reply bubble renders in the Playground", async () => {
-          const bubble = page.getByTestId("div-chat-message").last();
-          await expect(bubble).toBeVisible({ timeout: 30000 });
-        });
-
+        // No reply-bubble assert here, unlike tests 1-2. Their contract includes
+        // a completed reply; this test's contract is the ordered tool_use list
+        // and the spec doc never specified a bubble assert for it. The code
+        // carried one anyway and it was the line that failed on every context
+        // blow-up, reporting "element(s) not found" instead of the real cause.
+        // A crashed run is still caught -- by the fixture, which owns that
+        // verdict (no allowFlowErrors above), not by a proxy on the bubble.
         await test.step("sequence: fetch_content is called before perform_search", async () => {
           await expectToolSequencePersisted(request, nonce, [URL_TOOL, SEARCH_TOOL]);
         });

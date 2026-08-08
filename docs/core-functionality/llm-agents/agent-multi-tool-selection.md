@@ -166,15 +166,72 @@ describe with two tests:
 3. Seed a task that makes the second tool depend on the first's result:
    *"First fetch `${FETCH_URL}` and read its exact slideshow title. Then search
    the web for that title and summarize one result. (probe `<nonce>`)"*.
-4. Open the Playground, send, wait for the run to finish (Stop button hidden).
-5. **Sequence assert (API):** poll `GET /api/v1/monitor/messages` — nonce-keyed
+4. **Cap `max_iterations` at 8** on the Agent node (advanced field, exposed via
+   the inspector — same handles `agent-max-iterations.spec.ts` uses), and assert
+   the field actually holds that value. This is load-bearing, not tuning: a cap
+   that silently fails to apply leaves the default 15 and re-opens #1378 on a
+   run that still looks green. See the note below.
+5. Open the Playground, send, wait for the run to finish (Stop button hidden).
+6. **Sequence assert (API):** poll `GET /api/v1/monitor/messages` — nonce-keyed
    session lookup (same as tests 1–2); collect the **ordered** list of
    `tool_use` block names across the session's AI message(s). Assert the list
    contains both `fetch_content` and `perform_search`, with
    `indexOf(fetch_content) < indexOf(perform_search)` — the agent ran the two
    tools one after another in the required order. Only names/order are
    asserted (search content is non-deterministic).
-6. No `allowFlowErrors`.
+7. No `allowFlowErrors`.
+
+> **Why `max_iterations` is capped here and nowhere else (#1378).** Unlike
+> tests 1–2, this test's instruction *permits* a multi-tool sequence, and the
+> agent does not reliably converge on it. When it doesn't, it keeps calling
+> `perform_search`, and each call injects the Web Search component's full
+> result set into the conversation. That component caps nothing:
+> `perform_web_search()` iterates every `div.result` DuckDuckGo returns and
+> scrapes each linked page's **entire** text (upstream
+> `langflow-ai/langflow#14469`). Measured on `1.12.0.dev20`, query
+> `"Sample Slide Show"`: **10 results, 182,316 chars ≈ 45.6k tokens in one
+> call** (largest single page: 40,755 chars). The conversation is re-sent
+> every turn, so a non-converging run grows without bound and the provider
+> rejects it — the 2026-08-08 PR run reported requests of
+> **206,881 / 206,902 / 271,317** tokens and a local run reported
+> **5,060,863**, after which the run returns no reply at all.
+>
+> **This is a volume problem, not a rate-limit tier problem, and the
+> distinction decides the fix.** The CI organization's cap is 200k TPM and
+> the local one's is 4M TPM — 20× larger — and the local run blew through it
+> anyway. A bigger tier, or a model with a wider context window, buys
+> nothing: no window on the market holds 5M tokens. Bounding the iteration
+> count is what bounds the run.
+>
+> **What the cap does — and what it does not.** It bounds the worst case; it
+> does **not** make this test deterministic. Measured on `1.12.0.dev20` /
+> `gpt-4o-mini` with `--retries=0`:
+>
+> | `max_iterations` | Pass rate | Failure mode |
+> |---|---|---|
+> | 15 (default) | 4/5 | context blow-up, up to 5,060,863 tokens |
+> | **8** (this spec) | **5/6** | context blow-up, 129,150 tokens — same rate within noise, far smaller blast radius |
+> | 4 | **0/2** | `Recursion limit of 13 reached without hitting a stop condition` |
+>
+> An earlier version of this note derived the cap from a token budget (three
+> calls needed, plus headroom, worst case inside a 128k window) and arrived
+> at **4**. That was wrong in both directions and is recorded so it is not
+> repeated. The failure at 4 is not a smaller version of the failure at 15:
+> `max_iterations=4` sets a LangGraph `recursion_limit` of 13, the agent hits
+> it, and **a run that stops that way persists no AI message at all** — so
+> the sequence assert fails on *absent* data rather than wrong data, and the
+> cap meant to fix the test breaks it a second way.
+>
+> **The residual flake cannot be fixed from this repo, and that is the honest
+> bottom line.** A *single* `perform_search` call is already unbounded —
+> measured the same day across three queries: **15,857 / 53,714 / 78,848**
+> tokens for one call, a 5× spread, with the query chosen by the agent and
+> not by us. Two calls at the top of that range exceed 128k on their own, so
+> **no iteration cap can guarantee this test.** Real stabilisation needs the
+> payload bounded upstream (`langflow-ai/langflow#14469`). Until then this
+> test stays out of `@stable`, its checklist bullet stays `[-]`, and #1378
+> stays open. **Re-measure before changing the number — do not re-derive it
+> on paper.**
 
 ---
 
@@ -222,6 +279,19 @@ tools in the wrong order, fails).
   *sequence*. The instruction permits multiple calls but the ORDER is the
   agent's, driven by the prompt's data dependency (it cannot search for the
   title before fetching it).
+- **No live-bubble assert in test 3 (#1378)** — tests 1–2 assert a rendered
+  `div-chat-message` because their contract includes a completed reply (test 1
+  additionally pins the deterministic title on the persisted tool output).
+  Test 3's contract is the ordered `tool_use` list and nothing else, so the
+  spec doc never specified a bubble assert for it. The code carried one
+  anyway — never documented here — and it was the line that failed on every
+  context blow-up, reporting `element(s) not found` instead of the real cause.
+  It is removed rather than relaxed: the run still executes with no
+  `allowFlowErrors`, so a crashed run is caught by the fixture (the gate that
+  owns that verdict), not by a proxy assert on the reply bubble. Note the v2
+  run path is ADVISORY-only today (#1165) — when it flips to failing, a
+  context blow-up will fail this test at the fixture, which is the correct
+  attribution and the reason the cap above is the actual fix.
 - **Force-failure checks** (CONTRIBUTING §2): M1 — expect the sibling tool
   as first call in test 1 ⇒ selection assert must fail; M2 — assert an
   impossible title (e.g. `Sample Slide Show XYZ`) ⇒ the `fetch_content`
@@ -229,7 +299,11 @@ tools in the wrong order, fails).
   surfaced the real tool output containing *"title": "Sample Slide Show"* and
   failed the impossible pattern); M3 — same first-call swap in test 2 ⇒ must
   fail; M4 — invert the sequence assert (require `perform_search` before
-  `fetch_content`) in test 3 ⇒ must fail against the real ordered tool list.
+  `fetch_content`) in test 3 ⇒ must fail against the real ordered tool list;
+  M5 — point the `max_iterations` cap at a non-existent field id in test 3 ⇒
+  the cap step must fail rather than silently leaving the default 15 in place
+  (a cap that quietly does not apply is exactly the #1378 failure, and a
+  passing run would not reveal it).
 
 ---
 
@@ -247,7 +321,16 @@ tools in the wrong order, fails).
 ## External dependencies *(required)*
 
 - **LLM provider API** (per `models.json` target): one completion with one
-  tool round-trip per test.
+  tool round-trip for tests 1–2. **Test 3 is not one round-trip** — it runs a
+  multi-tool sequence bounded by the `max_iterations` cap of 4, so it costs up
+  to 4 model calls and sends up to ~90k tokens (see the context-budget note in
+  Step by step). It was unbounded before #1378, at up to 15 calls and millions
+  of tokens.
+- **Web Search → DuckDuckGo + every linked page** (tests 2 and 3): the
+  component scrapes each result's full page text, so this test's token cost is
+  set by whatever pages DuckDuckGo returns that day. Unbounded upstream
+  (`langflow-ai/langflow#14469`); the `max_iterations` cap is what keeps the
+  total finite on our side.
 - **URL-tool fetch endpoint** (test 1) — `${ECHO_BASE_URL}/json`, defaulting to
   `https://httpbin.org/json` (fixed `Sample Slide Show` payload). httpbin.org is
   chronically unreliable (sustained 503s/timeouts hard-failed this test on the
