@@ -1005,8 +1005,8 @@
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 11 | 0 | 0 | 0 | 11 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
-| `memory/` — Memory Base Registration | 15 | 0 | 0 | 0 | 15 |
-| **TOTAL** | **531** | **393 (74%)** | **37 (7%)** | **20 (4%)** | **81 (15%)** |
+| `memory/` — Memory Base Registration | 15 | 7 | 0 | 0 | 8 |
+| **TOTAL** | **531** | **400 (75%)** | **37 (7%)** | **20 (4%)** | **74 (14%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1022,7 +1022,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 463 `test()` calls carrying the `@stable` tag, distributed across 181 spec
+> 471 `test()` calls carrying the `@stable` tag, distributed across 182 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1309,6 +1309,16 @@
 - [x] should display error message when using invalid authentication for provider <provider> → `provider-invalid-auth-error.spec.ts`
 - [x] a provider credential variable can be removed through the Global Variables UI → `remove-provider-api-key.spec.ts`
 - [x] DELETE /api/v1/variables/{id} removes a provider API key variable → `remove-provider-api-key.spec.ts`
+
+#### core-functionality/memory/
+- [x] the Memories panel opens with its empty state, a Create action and a search field → `memory-base-panel.spec.ts`
+- [x] the Create Memory modal is scoped to the current flow → `memory-base-panel.spec.ts`
+- [x] the Create Memory modal exposes its five controls → `memory-base-panel.spec.ts`
+- [x] Vector Database defaults to Chroma Local and Batch Size to 1 → `memory-base-panel.spec.ts`
+- [x] Embedding Model carries no default model when a provider offers embeddings → `memory-base-panel.spec.ts`
+- [x] the Embedding Model control is absent when no provider offers embeddings → `memory-base-panel.spec.ts`
+- [x] Create Memory stays disabled with an empty form and with only the Name filled → `memory-base-panel.spec.ts`
+- [x] cancelling the Create Memory modal creates no memory base → `memory-base-panel.spec.ts`
 
 #### core-functionality/model-provider/
 - [x] Anthropic API key is configured via Settings → Model Providers → `anthropic-provider.spec.ts`
