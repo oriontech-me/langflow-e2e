@@ -937,16 +937,16 @@
 
 #### 20.1 Memories Panel
 
-- [ ] The Memories panel opens from the flow editor (`sidebar-nav-memories`) and shows its empty state (`No memory selected`) rather than a blank panel
-- [ ] The panel offers registration (`Create`) and a memory search field
+- [x] The Memories panel opens from the flow editor (`sidebar-nav-memories`) and shows its empty state rather than a blank panel — asserted by element id (`#no-memory-selected-title` / `#no-memory-selected-description`), not by the i18n text, which moves under a locale change (§18) → `core-functionality/memory/memory-base-panel.spec.ts`
+- [x] The panel offers registration (`Create`, asserted **enabled** — it renders disabled without a `currentFlowId`) and a `Search memories...` field; neither carries a `data-testid`, so both resolve by role/placeholder → `core-functionality/memory/memory-base-panel.spec.ts`
 
 #### 20.2 Create Memory Modal
 
-- [ ] The modal is **scoped to the flow** — it titles `Create a memory for "<flow name>"`, proving a memory base belongs to a flow rather than being global
-- [ ] It exposes its five controls: Name (`#memory-name`), Embedding Model (`memory-embedding-model`), Vector Database (`memory-db-provider`), Batch Size (`#memory-batch-size`) and the LLM Preprocessing toggle
-- [ ] Vector Database defaults to `Chroma Local` (bundled, so no external vector service is needed) and Embedding Model has **no** default
-- [ ] `Create Memory` is disabled with an empty form **and stays disabled with only the Name filled** — the gate, not just the initial render
-- [ ] Cancelling closes the modal and creates nothing, asserted against `GET /api/v1/knowledge_bases` rather than against the UI alone
+- [x] The modal is **scoped to the flow**, proving a memory base belongs to a flow rather than being global — heading `Create Memory` plus the **description** `Create a memory for "<flow name>"` (measured: the flow-scoped string is the description, not the title, and `Create Memory` is also the submit label) naming the exact flow the test created → `core-functionality/memory/memory-base-panel.spec.ts`
+- [x] It exposes its five controls: Name (`#memory-name`), Embedding Model (`#memory-embedding-model`), Vector Database (`#memory-db-provider`), Batch Size (`#memory-batch-size`) and the LLM Preprocessing toggle (`#llm-preprocessing-switch`), with the preprocessing branch's two extra required fields absent while the toggle is off → `core-functionality/memory/memory-base-panel.spec.ts`
+- [x] Vector Database defaults to `Chroma Local` (bundled, so no external vector service is needed) and Batch Size to `1`; Embedding Model has **no** default — two mutually exclusive tests decided by an API probe (`GET /api/v1/models` → a provider that is `is_configured` **and** `is_enabled` **and** exposes a `metadata.model_type=embeddings` model): with one, the control renders unset and no `Provider:` line shows; with none, the required label renders with **no control** under it. **Product gap recorded, not filed:** that picker is the shared model widget rendered without `showEmptyState`, so a memory base cannot be created and nothing says why, while the Knowledge Base modal passes `showEmptyState: true` and renders `No Models Enabled` + `Manage Model Providers` → `core-functionality/memory/memory-base-panel.spec.ts`
+- [x] `Create Memory` is disabled with an empty form **and stays disabled with only the Name filled** — the gate, not just the initial render (the required Embedding Model is what holds it, since Vector Database and Batch Size carry defaults) → `core-functionality/memory/memory-base-panel.spec.ts`
+- [x] Cancelling closes the modal and creates nothing, asserted against the API rather than against the UI alone — **`GET /api/v1/memories?flow_id=<id>` → `total: 0`**, which is the endpoint the panel actually lists from (measured: opening it fires exactly that one request); `GET /api/v1/knowledge_bases` is a different resource this surface never calls, kept only as a secondary check that the flow's name is absent → `core-functionality/memory/memory-base-panel.spec.ts`
 
 #### 20.3 Registration End-to-End (item 1 of 2)
 
