@@ -1,191 +1,189 @@
-# Memory Base — registration from the FlowPage Memories panel
+# Memory Base — registering a memory base end-to-end
 
-**File:** `tests/tests-automations/regression/core-functionality/memory/memory-base-registration.spec.ts`
-**Last validated:** `1.12.x`
-**Status:** SPEC — awaiting confirmation, no test code written yet
+**Last validated:** Langflow 1.12.x
 
 ---
 
-## What this test validates
+## What this test validates *(required)*
 
-The **Memory Base** surface introduced in 1.12: the `Memories` panel inside the
-Flow editor and the `Create Memory` modal that registers one. A memory base is a
-Knowledge Base (`/api/v1/knowledge_bases`) bound to a flow, storing vectors in a
-configured vector database.
+The write half of the memory-base surface: **completing the Create Memory form
+actually registers a memory base**, and the registration is real server state
+rather than optimistic UI. The read half — the panel, the modal's controls,
+defaults and submit gate — is `memory-base-panel.spec.ts` (issue #1398) and is
+deliberately not repeated here.
 
-This area has **no coverage today** — no spec, no checklist bullet. It was missed
-because "memory" was already taken in our vocabulary by the Agent's conversation
-memory (Message History, session isolation, `context_id`), which is unrelated.
+1. **should register a memory base from the Create Memory modal** — with an
+   embeddings provider configured, filling Name and selecting an Embedding Model
+   enables `Create Memory`; submitting it answers `201` on
+   `POST /api/v1/memories`, the memory appears in the Memories panel, and
+   `GET /api/v1/memories?flow_id=<id>` reports it with a server-assigned `id`
+   and `kb_name`. The panel is then re-read **after a full page reload**, which
+   is what distinguishes persisted state from an optimistic local render.
+   Skips, naming the state, when no configured provider exposes an embeddings
+   model.
+2. **should expose a registered memory base through the Memory Base API only,
+   never through the generic knowledge-base list** — a memory base created
+   through `POST /api/v1/memories` is listed by `GET /api/v1/memories` and its
+   `kb_name` is **absent** from `GET /api/v1/knowledge_bases`. Provider-free, so
+   this half of the file has coverage on any instance.
 
-## Tags
+---
 
-`@regression` `@workspace` (cross-cutting) + `@files` (functional).
+## Tags *(required)*
 
-`@files` is the closest existing functional tag — the surface is knowledge/vector
-ingestion. **Not `@stable`** on the first delivery: `@stable` is added only after
-team validation.
+Test 1: `@release` `@workspace` (cross-cutting) + `@ui-ux` `@model-provider`
+(functional).
+Test 2: `@api` `@workspace` (cross-cutting) + `@files` (functional).
 
-Scenario 5 additionally carries `@model-provider`, because it is the only one
-that needs an embedding provider.
+`@model-provider` is on test 1 only — it is the only one that resolves a model.
+`@files` on test 2 is the repo's functional tag for the knowledge/vector
+ingestion family, which is the resource boundary that test asserts.
 
-## Validation criterion
+**`@stable` decision:** proposed for both. Test 2 is provider-free and fully
+deterministic. Test 1 skips loudly rather than failing when the daily's provider
+key is drained (a state this account has been in three times — #772, #1029,
+#1169), so it cannot redden the daily for a credential reason. Confirm with the
+team before the PR; a `@stable` test must not be `@destructive`, and neither is.
 
-The suite passes when, on a flow with no memory base:
+---
 
-1. The `Memories` panel opens from the flow sidebar and shows its empty state.
-2. The `Create Memory` modal exposes its five documented controls and its
-   defaults.
-3. `Create Memory` stays **disabled** until every required field is filled.
-4. `Cancel` closes the modal and creates nothing — asserted against
-   `GET /api/v1/knowledge_bases`, not against the UI alone.
-5. *(provider-dependent)* Completing the form creates a memory base that appears
-   both in the panel and in `GET /api/v1/knowledge_bases`.
+## Validation criterion *(required)*
 
-## External dependencies
+- **The API axis is `/api/v1/memories`, not `/api/v1/knowledge_bases` — the
+  issue's wording is wrong here and the correction is load-bearing, not
+  cosmetic.** Issue #1399 asks for the memory base to be present "both in
+  `GET /api/v1/knowledge_bases` and in the panel". Measured on 1.12.0.dev22: a
+  memory base created through the API leaves `GET /api/v1/knowledge_bases/`
+  answering `[]`. This is **by design**, stated in the shipped source
+  (`langflow/api/v1/knowledge_bases.py`, in `list_knowledge_bases`): *"Skip KBs
+  that are managed by a Memory Base — those are exposed through the Memory Base
+  APIs, not the generic KB list."* Asserting presence in `knowledge_bases` would
+  therefore fail forever; asserting *absence* there is the falsifiable statement
+  the issue was reaching for, and it is the one this spec makes.
+- **The two-sided check the issue asks for is kept, on the right pair.** The
+  panel could render optimistic local state, so the panel assertion is paired
+  with `GET /api/v1/memories?flow_id=<id>` — the endpoint the panel itself lists
+  from — and the panel is additionally re-read after `page.reload()`. A memory
+  written only into client state survives neither.
+- **The created record is asserted by its server-assigned shape, not just by
+  name.** `POST /api/v1/memories` returns `id`, `flow_id` equal to the flow the
+  test created, and `kb_name` matching `^<sanitized name>_[0-9a-f]{8}$` — the
+  auto-generated backing KB name documented in `create_memory_base`. Asserting
+  the `kb_name` pattern is what lets test 2 look the KB up by the exact string
+  the server chose, instead of by a name the test invented.
+- **The provider precondition is decided by an API probe before the browser
+  opens, never by a `count()` on the control.** `GET /api/v1/models`, looking
+  for a provider that is `is_configured` **and** `is_enabled` **and** carries a
+  model whose `metadata.model_type` is `embeddings`. The Embedding Model picker
+  is the shared model widget rendered **without** `showEmptyState`, so with no
+  configured provider at all the control is absent from the DOM entirely — a
+  `count() === 0` check would read a genuine regression that removes the control
+  as "no provider configured". The skip reason names the measured state.
+- **A configured key is NOT the whole precondition — the embeddings model must
+  also be enabled, and none is by default.** Measured on 1.12.0.dev22 with
+  `OPENAI_API_KEY` configured: `GET /api/v1/models` reports openai
+  `is_configured: true`, `is_enabled: true` with three embeddings models, while
+  `GET /api/v1/models/enabled_models` reports **all three `false`** — and the
+  open picker lists exactly one option, `No Models Enabled` (the string issue
+  #1399 predicts, reached by this route rather than by an absent key). The
+  picker lists from `/api/v1/models/enabled_models`, not from `/api/v1/models`.
+  The test therefore **enables one embeddings model itself** through
+  `POST /api/v1/models/enabled_models` before the page loads, and restores the
+  model's previous flag in cleanup. That is setup, not a weakened assertion: the
+  registration behaviour under test is unaffected, and without it the test would
+  skip on every instance the suite ever runs against, which is coverage of
+  nothing. The write is **additive** (measured: the handler merges the update
+  into the user's enabled/disabled variable lists rather than replacing the map),
+  so it cannot disturb a parallel worker's model enablement.
+- **The enablement must precede the page load.** The frontend caches the model
+  list: enabling a model while the modal is open leaves the picker reading
+  `No Models Enabled` until `refresh-model-list` is clicked (measured). The
+  spec avoids the refresh path entirely by doing the API write first.
+- **A skip is never a silent pass.** Test 1 skips with the concrete reason; test
+  2 runs regardless, so the file always executes at least one falsifiable
+  assertion about registration.
+- **No embedding call is made.** Registration writes the KB directory and
+  `embedding_metadata.json`; ingestion — which would call the provider — is out
+  of scope (§20.4). The provider only needs to be *configured*, so a drained key
+  still satisfies test 1.
+
+---
+
+## External dependencies *(required)*
 
 - A running Langflow **1.12.x** instance with the Memories panel
-  (`sidebar-nav-memories`).
-- **Scenarios 1–4: none.** No provider, no key, no network beyond the instance.
-- **Scenario 5 only:** a configured provider exposing an **embedding** model.
-  With none, the picker renders `No Models Enabled` and the scenario `test.skip`s
-  with that reason — never a silent pass.
+  (`sidebar-nav-memories`) and the `/api/v1/memories` router.
+- **Test 1 only:** a configured, enabled provider exposing an **embedding**
+  model (e.g. OpenAI's `text-embedding-3-small`). No inference call is made, so
+  a configured-but-drained key is sufficient. With no such provider, test 1
+  skips with that reason. The model's own enablement is not a precondition —
+  the test writes it (see Validation criterion) via
+  `POST /api/v1/models/enabled_models` and `GET /api/v1/models/enabled_models`.
+- **Test 2: none** — it creates its memory base through the API with an
+  `embedding_model` string and no provider configured (measured: `201`).
 - The default vector database is **Chroma Local**, bundled with the instance, so
-  scenario 5 needs no external vector service.
-
-**Note — the API is absent from the instance's OpenAPI schema.** `GET /openapi.json`
-lists 104 paths and none is `knowledge_bases`, yet the endpoint answers `200`.
-Assertions therefore target observed responses, not the published schema.
-
----
-
-## Scenarios
-
-### 1.1 Memories panel opens with its empty state [ ]
-
-**File:** `core-functionality/memory/memory-base-registration.spec.ts`
-**Objective:** The panel is reachable from the flow editor and reports "no memory"
-honestly, so later scenarios start from a known state.
-**Precondition:** A flow open in the editor with no memory base registered.
-
-**Step by step**
-
-1. Create a flow via `POST /api/v1/flows/` and open it (repo pattern: `goto("/")`
-   then open the card by name — `page.goto("/flow/{id}")` races the SPA cache).
-2. Click `sidebar-nav-memories`.
-
-**Validation:** The `Memories` heading is visible, the empty state reads
-`No memory selected` / `Select a memory from the sidebar to view details`, and a
-`Create` control is present.
+  no external vector service is required.
+- `POST /api/v1/flows/` + `DELETE /api/v1/flows/{id}` (flow lifecycle),
+  `POST /api/v1/memories`, `GET /api/v1/memories?flow_id=<id>`,
+  `DELETE /api/v1/memories/{id}` (`204`) and `GET /api/v1/knowledge_bases/`.
+- **`/api/v1/memories` is absent from `/openapi.json`** — it answers `403`
+  unauthenticated and `200` with the session. Do not conclude from the published
+  schema that the route does not exist.
 
 ---
 
-### 1.2 Create Memory modal exposes its contract [ ]
+## Cleanup *(required)*
 
-**Objective:** Pin the form's shape and defaults, so an upstream change to either
-is caught rather than absorbed.
-**Precondition:** Scenario 1.1 state, modal closed.
-
-**Step by step**
-
-1. Click `Create` in the Memories panel.
-2. Read the modal.
-
-**Validation:** The dialog titles `Create Memory` and scopes itself to the flow
-(`Create a memory for "<flow name>"`). It exposes:
-
-| Control | Selector | Expectation |
-|---|---|---|
-| Name | `input#memory-name` | required, placeholder `Memory name` |
-| Embedding Model | `memory-embedding-model` | required, empty (`Select a model`) |
-| Vector Database | `memory-db-provider` | required, **defaults to `Chroma Local`** |
-| Batch Size | `input#memory-batch-size` | required, placeholder `1` |
-| LLM Preprocessing | checkbox | optional, off by default |
-| Cancel | `btn-cancel-modal` | enabled |
-
-The flow-name assertion is the load-bearing one: it proves a memory base is
-**scoped to a flow**, not global.
+Every test creates its own flow (`POST /api/v1/flows/`) and its own memory base,
+and deletes both id-scoped in `afterEach`: `DELETE /api/v1/memories/{id}` first
+(the record and its on-disk KB directory), then `deleteFlow`, leaving the editor
+via `unmountEditorForCleanup` before the flow goes so the editor's polls cannot
+404 into the fixture's HTTP log. The memory-base id comes from the `POST`
+response (test 2) or from `GET /api/v1/memories?flow_id=<id>` (test 1), never
+from a name lookup and never from a delete-all sweep (#553/#520) — the account
+is shared with parallel workers.
 
 ---
 
-### 1.3 Create is gated on the required fields [ ]
+## What this test does not cover *(optional)*
 
-**Objective:** The primary action cannot submit an incomplete registration.
-**Precondition:** Modal open, untouched.
-
-**Step by step**
-
-1. Assert `Create Memory` is disabled with the form empty.
-2. Fill `#memory-name` with a per-run sentinel.
-3. Assert it is **still** disabled — Name alone is not enough (Embedding Model
-   has no value and no default).
-
-**Validation:** The button is disabled in both states. Asserting the second state
-is what makes this a gate test rather than a render test.
-
-> **Known limitation.** `Create Memory` carries **no `data-testid`** — it is
-> located by role+name. Same for the Name and Batch Size inputs (`id` only), the
-> search field and the empty state. Only the two dropdowns and Cancel have
-> testids. This is worth raising upstream; until then the spec documents the
-> weaker locators rather than inventing testids that do not exist.
+- The panel, the modal's controls, its defaults and its disabled gate —
+  `memory-base-panel.spec.ts` (§20.1–20.2).
+- Ingestion, chunk preview, run history, cancel and connectors — §20.4, a
+  separate wave item, and where all three known upstream defects live.
+- The LLM Preprocessing branch (`preprocessing: true` + `preproc_model`), which
+  the API answers `422` for when the model is missing.
+- Non-`chroma` vector databases (Chroma Cloud, OpenSearch, pgvector), which need
+  DB Providers configured.
+- Duplicate-name handling (`409`), `PATCH`, `/flush`, `/regenerate` and
+  `/mismatch`.
+- The Agent's conversation memory (§6.3) — a different surface sharing the word.
 
 ---
 
-### 1.4 Cancel creates nothing [ ]
+## Notes *(optional)*
 
-**Objective:** Abandoning the form leaves no server-side record — the failure mode
-a UI-only assertion would miss.
-**Precondition:** Modal open with `#memory-name` filled.
-
-**Step by step**
-
-1. Record `GET /api/v1/knowledge_bases` (baseline).
-2. Click `btn-cancel-modal`.
-3. Re-read `GET /api/v1/knowledge_bases`.
-
-**Validation:** The modal closes, the panel is back to its empty state, and the
-API list is byte-identical to the baseline.
-
----
-
-### 1.5 Registering a memory base end-to-end [ ] — provider-dependent
-
-**Objective:** The happy path the feature exists for.
-**Precondition:** A provider with an **embedding** model configured. If
-`memory-embedding-model` offers `No Models Enabled`, `test.skip` with that reason.
-
-**Step by step**
-
-1. Open the modal, fill `#memory-name` with a per-run sentinel.
-2. Select an embedding model via `value-dropdown-memory-embedding-model`.
-3. Leave Vector Database at `Chroma Local` and Batch Size at its default.
-4. Assert `Create Memory` is now **enabled**, then click it.
-5. Wait for the `POST` to `/api/v1/knowledge_bases` to answer `201`.
-
-**Validation:** The sentinel appears in the Memories sidebar **and** in
-`GET /api/v1/knowledge_bases`. Both are required: the panel alone could render
-optimistic local state.
-
-**Cleanup:** `DELETE /api/v1/knowledge_bases/{name}` in `afterEach`, plus the
-flow. The suite has a documented history of cross-worker damage from destructive
-cleanup (#519/#562), so cleanup deletes **only** the sentinel it created — never
-"all memory bases".
-
----
-
-## Open decisions for the team
-
-1. **Area placement.** This spec proposes a new
-   `core-functionality/memory/` area. The alternative is folding it into
-   `core-functionality/knowledge-ingestion-management/` (§5, 8 bullets, all
-   validated), which today covers the **component-based** ingestion path (Split
-   Text, vector store components) — a different mechanism reaching a similar
-   outcome. Separate area recommended; §5 covers components, this covers a
-   managed platform object.
-2. **Is this surface in the team's scope at all?** Bundles and data migration
-   were both scoped out to other owners this cycle. This is a platform feature
-   and the same question applies before the tests are written.
-3. **Deferred deliberately:** ingestion (`POST /{kb_name}/ingest`), chunk preview,
-   run history (`/runs`), cancel, connectors and the `memory base association`
-   guards (5 routes carry `_check_memory_base_association`). Those are a second
-   spec once registration is covered — this one stops at *registering* it, which
-   is what was asked.
+- **This doc supersedes its own earlier draft.** The version written during the
+  §20 audit described all five scenarios of the surface and asserted them
+  against `GET /api/v1/knowledge_bases`. Scenarios 1–4 shipped as
+  `memory-base-panel.spec.ts`, and that spec's own measurement contradicted the
+  endpoint; the source read above settles it.
+- **Measured facts, 1.12.0.dev22** (`langflowai/langflow-nightly:latest`):
+  `POST /api/v1/memories` with `{name, flow_id, embedding_model, threshold}`
+  answers `201` with `backend_type: "chroma"`, `backend_config: {}`,
+  `auto_capture: true` and `kb_name: "<sanitized>_<8 hex>"`;
+  `GET /api/v1/knowledge_bases/` answers `200 []` with that memory base
+  present; `DELETE /api/v1/memories/{id}` answers `204` and the list returns to
+  `total: 0`.
+- **The UI path, measured end to end on 1.12.0.dev22** with one embeddings model
+  enabled: opening the picker lists the enabled model as a `role=option`;
+  choosing it sets `#memory-embedding-model` to the model id and renders
+  `Provider: OpenAI`; `Create Memory` becomes enabled once Name is filled;
+  clicking it fires `POST /api/v1/memories/` → `201`, closes the dialog, and the
+  panel lists the name. After `reload()` and reopening the panel the name is
+  still there. The submit button and the panel's list item carry **no**
+  `data-testid` (the item is a plain `div`), so they resolve by role+name and by
+  exact text inside the panel's `aside`.
+- **Batch Size is `threshold` on the wire** — the modal's `#memory-batch-size`
+  maps to the `threshold` field (default `50` in the model, `1` in the modal).
+  Worth knowing before reading a payload and concluding a field is missing.

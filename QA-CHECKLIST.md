@@ -950,7 +950,8 @@
 
 #### 20.3 Registration End-to-End (item 1 of 2)
 
-- [ ] Completing the form creates a memory base that is present **both** in `GET /api/v1/knowledge_bases` and in the panel (the panel alone could render optimistic local state). Needs a provider exposing an **embedding** model; with none the picker reads `No Models Enabled` and the test must skip with that reason, never pass silently
+- [x] Completing the form creates a memory base that is present **both** in the panel and in the API — asserted against **`GET /api/v1/memories?flow_id=<id>`** (the endpoint the panel lists from) with the server-assigned `id` and `kb_name` (`<sanitized name>_<8 hex>`), plus the panel re-read **after a full page reload**, which is what separates persisted state from an optimistic local render. Needs a provider exposing an **embedding** model; with none the test skips naming that state, never passing silently. **Measured correction:** a configured key is not the whole precondition — every embeddings model ships **disabled** in `GET /api/v1/models/enabled_models` (which is what the picker lists from), so the picker reads `No Models Enabled` until one is enabled; the test enables one via `POST /api/v1/models/enabled_models` before the page loads (an additive merge) and restores the flag in cleanup → `core-functionality/memory/memory-base-registration.spec.ts`
+- [x] A registered memory base is exposed through the Memory Base API and **not** through the generic knowledge-base list — its `kb_name` is absent from `GET /api/v1/knowledge_bases`. This is the shipped design (`list_knowledge_bases` skips KBs managed by a Memory Base), so the presence check the wave item asked for would fail forever; the absence is the falsifiable form. Provider-free, so this half has coverage even on an instance where the registration test skips → `core-functionality/memory/memory-base-registration.spec.ts`
 
 #### 20.4 Ingestion (item 2 of 2 — separate wave item)
 
