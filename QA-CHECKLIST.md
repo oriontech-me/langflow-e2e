@@ -991,19 +991,22 @@
 | `core-components/` — Core Components | 91 | 87 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 40 | 30 | 5 | 3 | 2 |
+| `core-functionality/llm-agents/` | 39 | 30 | 3 | 3 | 3 |
 | `core-functionality/model-provider/` | 34 | 31 | 2 | 1 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
-| `core-functionality/templates/` | 41 | 2 | 39 | 0 | 0 |
+| `core-functionality/templates/` | 34 | 2 | 0 | 4 | 28 |
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
-| `flow-functionality/` | 28 | 24 | 1 | 3 | 0 |
+| `flow-functionality/` | 32 | 24 | 1 | 3 | 4 |
 | `mcp/client/` | 13 | 9 | 2 | 0 | 2 |
-| `mcp/server/` | 12 | 10 | 1 | 0 | 1 |
+| `mcp/server/` | 16 | 10 | 1 | 0 | 5 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| **TOTAL** | **500** | **393 (79%)** | **78 (16%)** | **16 (3%)** | **13 (3%)** |
+| `security/` — Validation, SSRF, Secrets | 11 | 0 | 0 | 0 | 11 |
+| `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
+| `memory/` — Memory Base Registration | 15 | 0 | 0 | 0 | 15 |
+| **TOTAL** | **531** | **393 (74%)** | **37 (7%)** | **20 (4%)** | **81 (15%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1528,11 +1531,11 @@
 | `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 5 | 2 |
+| `core-functionality/llm-agents/` | 3 | 3 |
 | `core-functionality/model-provider/` | 2 | 0 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 2 | 2 |
-| `mcp/server/` | 1 | 1 |
+| `mcp/server/` | 1 | 5 |
 | `ui-ux/` — Canvas | 0 | 0 |
 
 ---
@@ -1545,7 +1548,7 @@
 |--------|-----------------|---------------|
 | `core-functionality/observability-monitoring/` | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 0 | 0 |
-| `flow-functionality/` | 1 | 0 |
+| `flow-functionality/` | 1 | 4 |
 | `core-functionality/project-management/` | 6 | 0 |
-| `core-functionality/templates/` | 39 | 0 |
+| `core-functionality/templates/` | 0 | 28 |
 | `ui-ux/` — Settings | 0 | 0 |
