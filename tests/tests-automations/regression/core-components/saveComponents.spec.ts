@@ -62,7 +62,7 @@ async function cleanupSavedChatInputs(
 test.describe("save component tests", () => {
   test(
     "saving a canvas component as a template makes it reusable from the sidebar",
-    { tag: ["@stable", "@regression", "@components", "@ui-ux"] },
+    { tag: ["@regression", "@components", "@ui-ux"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
       let savedBefore = new Set<string>();

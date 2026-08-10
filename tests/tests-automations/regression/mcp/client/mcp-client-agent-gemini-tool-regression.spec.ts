@@ -138,7 +138,7 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
 
   test(
     "Gemini invokes the echo MCP tool (regression for fixed upstream #440)",
-    { tag: ["@mcp", "@agents", "@regression", "@model-provider", "@stable"] },
+    { tag: ["@mcp", "@agents", "@regression", "@model-provider"] },
     async ({ page, request }) => {
       test.skip(!!skipReason, skipReason ?? "");
       test.skip(

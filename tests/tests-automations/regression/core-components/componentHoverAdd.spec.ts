@@ -3,7 +3,7 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 
 test(
   "user can add components by hovering and clicking the plus icon",
-  { tag: ["@release", "@components", "@workspace", "@stable"] },
+  { tag: ["@release", "@components", "@workspace"] },
 
   async ({ page }) => {
     await awaitBootstrapTest(page);
