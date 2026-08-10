@@ -240,3 +240,12 @@ Key settings in `playwright.config.ts`:
 - Fully parallel, 5-minute timeout per test
 - 3 retries locally, 2 retries in CI; trace captured on first retry
 - HTML reporter locally, blob reporter in CI
+- Browser locale `en-US` by default, resolved by `tests/fixtures/locale.ts` rather than
+  hardcoded (#1400): a spec opts out with `test.use(withLocale("pt-BR"))`, a whole run
+  with `PW_LOCALE`, and an invalid tag aborts the config instead of falling back to
+  English. **It does not decide the language Langflow renders** — measured on
+  `1.12.0.dev20`, the UI reads `localStorage.languagePreference` and never
+  `navigator.language`, and the frontend pins `Accept-Language: i18n.language` on every
+  `/api/**` call, so the context locale reaches neither the UI strings nor the backend's
+  `set_locale` middleware. It governs `Intl` formatting and the document `Accept-Language`
+  only; `CONTRIBUTING.md` → *Browser locale* has the three-axis table

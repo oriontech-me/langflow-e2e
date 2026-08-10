@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import * as dotenv from "dotenv";
+import { resolveRunLocale } from "./tests/fixtures/locale";
 
 dotenv.config();
 
@@ -47,6 +48,17 @@ if (!DESTRUCTIVE_LANE) {
   console.error(
     "[lane] @destructive tests are excluded from this run — run them with: PW_DESTRUCTIVE=1 npx playwright test --grep @destructive",
   );
+}
+
+/**
+ * Browser locale for this run (#1400). `en-US` unless PW_LOCALE asks otherwise;
+ * an unusable value throws here instead of falling back to English, and a real
+ * override announces itself — on stderr, never stdout (#1024, see the notice's
+ * doc in `tests/fixtures/locale.ts`).
+ */
+const RUN_LOCALE = resolveRunLocale();
+if (RUN_LOCALE.notice) {
+  console.error(RUN_LOCALE.notice);
 }
 
 export default defineConfig({
@@ -120,10 +132,15 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
-    // Pin the browser context locale (and Accept-Language header) so the
-    // English-string assertions throughout the suite stay stable regardless
-    // of host machine settings or future i18n locale detection. See issue #225.
-    locale: "en-US",
+    // The browser context locale (and the document `Accept-Language`), pinned so
+    // the English-string assertions throughout the suite stay stable regardless
+    // of host machine or CI runner settings (#225). It is a resolved value rather
+    // than a literal since #1400: a spec opts out per describe with
+    // `test.use(withLocale("pt-BR"))`, and a whole run with PW_LOCALE. It does
+    // NOT decide the language Langflow renders — that comes from
+    // localStorage.languagePreference; `tests/fixtures/locale.ts` has the
+    // measurement and the other two axes.
+    locale: RUN_LOCALE.locale,
     actionTimeout: 20000,
     trace: "on-first-retry",
     screenshot: process.env.CI ? "only-on-failure" : "off",

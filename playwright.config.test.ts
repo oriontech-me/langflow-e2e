@@ -45,9 +45,15 @@ const PLAYWRIGHT_CLI = path.join(REPO_ROOT, "node_modules", "@playwright", "test
  *    invisibly. That means requiring the config by absolute path and pointing
  *    ts-node at the repo tsconfig explicitly, since it resolves from cwd too.
  */
-function importConfig(env: Record<string, string> = {}): { stdout: string; stderr: string } {
+function importConfig(
+  env: Record<string, string> = {},
+  { allowFailure = false }: { allowFailure?: boolean } = {},
+): { stdout: string; stderr: string; status: number | null } {
   const base = { ...process.env };
   delete base.PW_DESTRUCTIVE;
+  // Same hermetic reason as PW_DESTRUCTIVE: the locale override (#1400) is an
+  // exported variable a developer may well have set in the shell that runs these.
+  delete base.PW_LOCALE;
 
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "config-1024-"));
   try {
@@ -72,8 +78,48 @@ function importConfig(env: Record<string, string> = {}): { stdout: string; stder
         },
       },
     );
-    assert.equal(run.status, 0, `importing the config failed: ${run.stderr}`);
-    return { stdout: run.stdout, stderr: run.stderr };
+    if (!allowFailure) {
+      assert.equal(run.status, 0, `importing the config failed: ${run.stderr}`);
+    }
+    return { stdout: run.stdout, stderr: run.stderr, status: run.status };
+  } finally {
+    fs.rmSync(cwd, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The resolved `use.locale` of a real config import (#1400).
+ *
+ * Reads the value the runner would actually consume rather than re-deriving it
+ * from `resolveRunLocale` — `locale.test.ts` already covers the resolution, and
+ * what is unproven without this is the WIRING: that the config still puts it in
+ * `use`, under the key Playwright reads.
+ */
+function configLocale(env: Record<string, string> = {}): string {
+  const base = { ...process.env };
+  delete base.PW_DESTRUCTIVE;
+  delete base.PW_LOCALE;
+
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "config-1400-"));
+  try {
+    return execFileSync(
+      process.execPath,
+      [
+        "--require",
+        require.resolve("ts-node/register"),
+        "-e",
+        `const c = require(${JSON.stringify(path.join(REPO_ROOT, "playwright.config.ts"))});` +
+          `process.stdout.write(String((c.default ?? c).use.locale));`,
+      ],
+      {
+        cwd,
+        encoding: "utf-8",
+        env: { ...base, ...env, TS_NODE_PROJECT: path.join(REPO_ROOT, "tsconfig.json") },
+        // stderr piped and dropped: the config announces the @destructive
+        // exclusion on every import, and this reader is only after the value.
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    );
   } finally {
     fs.rmSync(cwd, { recursive: true, force: true });
   }
@@ -102,6 +148,47 @@ test("stdout stays clean in the destructive lane too", () => {
   assert.equal(stdout, "");
   // Inside the lane there is nothing to announce — the tests are running.
   assert.doesNotMatch(stderr, /@destructive tests are excluded/);
+});
+
+// --- Browser locale (#1400) -------------------------------------------------
+// The suite's default must survive the parameterisation: every English-string
+// assertion depends on `use.locale` still being en-US when nothing asks otherwise.
+
+test("the default run is still pinned to en-US", () => {
+  assert.equal(configLocale(), "en-US");
+});
+
+test("PW_LOCALE reaches use.locale", () => {
+  // Canonicalised on the way through, so a lowercase dispatch value works.
+  assert.equal(configLocale({ PW_LOCALE: "pt-br" }), "pt-BR");
+});
+
+test("an override announces itself on stderr, and stdout stays clean", () => {
+  // Same contract as the @destructive notice (#1010/#1024): visible in the log,
+  // off the data path the daily's shard matrix parses.
+  const { stdout, stderr } = importConfig({ PW_LOCALE: "pt-BR" });
+  assert.equal(
+    stdout,
+    "",
+    `the locale notice must not reach stdout — it would break the shard-matrix ` +
+      `JSON contract. Got: ${JSON.stringify(stdout)}`,
+  );
+  assert.match(stderr, /browser locale overridden to pt-BR/);
+  assert.match(stderr, /PW_LOCALE/);
+});
+
+test("a run at the default locale says nothing about locale at all", () => {
+  const { stderr } = importConfig();
+  assert.doesNotMatch(stderr, /browser locale overridden/);
+});
+
+test("an unusable PW_LOCALE aborts the config with the cause named", () => {
+  // Fail-closed: the alternative is the whole suite silently running in en-US
+  // under a command line that asked for something else.
+  const { status, stderr } = importConfig({ PW_LOCALE: "pt_BR" }, { allowFailure: true });
+  assert.notEqual(status, 0, "an invalid locale must abort, not fall back");
+  assert.match(stderr, /PW_LOCALE/);
+  assert.match(stderr, /pt_BR/);
 });
 
 test("the daily's prep command produces parseable JSON", () => {
