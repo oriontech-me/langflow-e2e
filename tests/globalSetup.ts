@@ -13,6 +13,7 @@ import {
   writeProviderHealth,
 } from "./helpers/provider-setup/provider-health";
 import { preconfigureRoutedProvider } from "./helpers/provider-setup/preconfigure-routed-provider";
+import { freezeModelCatalog } from "./helpers/provider-setup/catalog-snapshot";
 import {
   catalogVerdict,
   type CatalogSnapshot,
@@ -336,7 +337,42 @@ async function reportCatalogDrift(ctx: APIRequestContext): Promise<void> {
   );
 }
 
+/**
+ * Freeze the model catalog for this run (#1386).
+ *
+ * Runs FIRST and touches no network, because it must hold even on the paths where the
+ * rest of this file gives up: it is what keeps the runner's view of `models.json` and
+ * every worker's view identical, and 18 specs derive their `test.describe` title from
+ * that file. `globalSetup` precedes the load task, so this lands before the first
+ * title is computed. See `helpers/provider-setup/catalog-snapshot.ts` for why the
+ * catalog is a run-scoped value rather than a file each process re-reads.
+ *
+ * Never fatal: an unreadable catalog is exactly the state the resolvers already
+ * handle, and reporting it here means the cause is named before the specs skip
+ * (#1012) rather than aborting a whole shard over a file that is gitignored by design.
+ */
+function freezeCatalog(): void {
+  const verdict = freezeModelCatalog();
+  if (verdict.reason) {
+    console.warn(`[preflight] WARNING: ${verdict.reason}`);
+  }
+  if (verdict.kind === "absent") {
+    console.log(
+      "[preflight] models.json absent — the EMPTY catalog is frozen for this run. " +
+        "Provider-parametrized specs will report the fallback target; run " +
+        "`npx playwright test tests/collect-models.spec.ts` first to populate it.",
+    );
+    return;
+  }
+  console.log(
+    `[preflight] model catalog frozen for this run` +
+      (verdict.count === undefined ? "" : ` — ${verdict.count} models`) +
+      ". A mid-run write to models.json can no longer change a test's title (#1386).",
+  );
+}
+
 export default async function globalSetup(): Promise<void> {
+  freezeCatalog();
   const ctx = await playwrightRequest.newContext({ baseURL: BASE_URL });
   try {
     await assertBackendHealthy(ctx);

@@ -138,7 +138,15 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
 
   test(
     "Gemini invokes the echo MCP tool (regression for fixed upstream #440)",
-    { tag: ["@mcp", "@agents", "@regression", "@model-provider"] },
+    // `@stable` was auto-removed by the daily of 2026-08-10 (commit c954cd9, run
+    // 31373880200) on a failure that never ran this test: the shard's own
+    // `collect-models.spec.ts` rewrote `models.json` after the runner had computed
+    // this file's titles, so the worker could not find the test by title
+    // (`duration 0`, `workerIndex -1`, no browser). Restored with the cause fixed at
+    // the source — the catalog is now frozen per run, see
+    // `helpers/provider-setup/catalog-snapshot.ts` (#1386) — and the assertion itself
+    // re-validated 3/3 with `--retries=0` on 1.12.0.dev22 with google configured.
+    { tag: ["@mcp", "@agents", "@regression", "@model-provider", "@stable"] },
     async ({ page, request }) => {
       test.skip(!!skipReason, skipReason ?? "");
       test.skip(
