@@ -163,6 +163,45 @@ test("PW_LOCALE reaches use.locale", () => {
   assert.equal(configLocale({ PW_LOCALE: "pt-br" }), "pt-BR");
 });
 
+test("no project shadows the resolved locale", () => {
+  // The two tests above read the GLOBAL `use`, and Playwright resolves
+  // `project.use` over it — so a `locale` added to any project (easy to do next
+  // to the `...devices["Desktop Chrome"]` spread, which carries no locale key of
+  // its own today) would pin every run to that value with both of them still
+  // green, and PW_LOCALE would silently stop working. Assert the absence
+  // directly; `tests/fixtures/locale-gate.spec.ts` catches the same mutation from
+  // the browser side, and neither is redundant: this one runs with no backend.
+  const projects = JSON.parse(
+    execFileSync(
+      process.execPath,
+      [
+        "--require",
+        require.resolve("ts-node/register"),
+        "-e",
+        `const c = require(${JSON.stringify(path.join(REPO_ROOT, "playwright.config.ts"))});` +
+          `process.stdout.write(JSON.stringify(((c.default ?? c).projects ?? []).map((p) => ` +
+          `({ name: p.name, locale: (p.use ?? {}).locale ?? null }))));`,
+      ],
+      {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        env: { ...process.env, TS_NODE_PROJECT: path.join(REPO_ROOT, "tsconfig.json") },
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    ),
+  ) as Array<{ name: string; locale: string | null }>;
+
+  assert.ok(projects.length > 0, "the config declares no projects at all");
+  for (const project of projects) {
+    assert.equal(
+      project.locale,
+      null,
+      `project "${project.name}" sets its own locale, which overrides the ` +
+        `resolved one and makes PW_LOCALE a no-op`,
+    );
+  }
+});
+
 test("an override announces itself on stderr, and stdout stays clean", () => {
   // Same contract as the @destructive notice (#1010/#1024): visible in the log,
   // off the data path the daily's shard matrix parses.

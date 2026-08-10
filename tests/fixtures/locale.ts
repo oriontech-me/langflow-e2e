@@ -29,17 +29,27 @@
  * 2. **`Intl` formatting and the document/asset `Accept-Language` ARE.** The same
  *    instant renders `12/31/1969, 9:00:00 PM` under en-US and `31/12/1969,
  *    21:00:00` under pt-BR. This is the axis the option exists for.
- * 3. **The backend's locale is NOT.** Langflow's `set_locale` middleware
- *    (`src/backend/base/langflow/main.py`) reads `Accept-Language`, but the
- *    frontend's axios layer pins `Accept-Language: i18n.language` on every
- *    `/api/**` call, so it always sent `en` regardless of the context locale. A
- *    spec that needs a localised backend response sets `extraHTTPHeaders` on a
- *    direct API request.
+ * 3. **The backend's locale is reached, but only by leakage — do not rely on it
+ *    in either direction.** Langflow's `set_locale` middleware
+ *    (`src/backend/base/langflow/main.py`) reads `Accept-Language` and really does
+ *    answer in it: `GET /api/v1/flows/basic_examples/` returns "Basic Prompting"
+ *    under `en` and "Sugestões básicas" under `pt`. The frontend pins
+ *    `Accept-Language: i18n.language` on the calls that go through its axios
+ *    interceptors, so most requests send `en` whatever the context locale is —
+ *    **17 of the 20 `/api/` requests the home screen makes** under `locale:
+ *    "pt-BR"`. The other **3 carry the context locale**: a browser-issued
+ *    subresource (`/api/v1/files/profile_pictures/…svg`) never passes through the
+ *    interceptor, and neither did two `/api/v9/invites/…` XHRs. A spec whose
+ *    subject is the backend's locale must therefore set `Accept-Language`
+ *    explicitly via `extraHTTPHeaders` on a direct API request rather than infer
+ *    it from the context.
  *
- * That measurement is why `withLocale()` returns **only** `locale`: bundling
- * `extraHTTPHeaders: { "Accept-Language": … }` into it would override the header
- * the frontend sets per request, leaving the app announcing one language to the
- * backend while rendering another — a state no product build can reach.
+ * That split is why `withLocale()` returns **only** `locale`. Adding
+ * `extraHTTPHeaders: { "Accept-Language": … }` would at minimum change those 3
+ * leaked requests, and its precedence against the header the axios interceptor
+ * assigns per request is **unmeasured** — so the language the backend sees would
+ * become a per-request race between two layers, in a helper whose whole job is to
+ * make one axis explicit.
  */
 
 /**
@@ -72,16 +82,29 @@ export const LANGFLOW_UI_LANGUAGES = [
 ] as const;
 
 /**
+ * The one well-formed tag Chromium refuses. `Intl.getCanonicalLocales("und")`
+ * returns `["und"]` — it is valid BCP-47 for "undetermined" — but
+ * `newContext({ locale: "und" })` dies with `Protocol error
+ * (Emulation.setLocaleOverride): Invalid locale name`, which is exactly the
+ * opaque browser-launch failure this validation exists to prevent. (`"root"` is
+ * rejected by `Intl` itself, so it needs no entry here. Both measured against the
+ * repo's pinned Chromium.)
+ */
+const BROWSER_REJECTED_LOCALES = new Set(["und"]);
+
+/**
  * Validate and canonicalise a BCP-47 tag, naming the caller in the failure.
  *
  * Fail-closed on purpose: an unusable value must abort with its cause named
  * rather than fall back to `en-US`, which would run the whole suite in English
  * under a command line that asked for something else (#1012's rule).
  *
- * The check is **syntactic** — `Intl.getCanonicalLocales` accepts any
- * well-formed tag, so `"xx"` passes and only the browser will tell you it is not
- * a real language. It does catch the slip this is most likely to see: the POSIX
- * spelling `pt_BR`, which is a `RangeError`.
+ * The check is **syntactic**, with one measured exception (`und`, above). A
+ * well-formed tag for a language that does not exist is NOT caught and does not
+ * announce itself anywhere: `xx` and `zz-ZZ` both launch, and Chromium silently
+ * renders an ISO-ish fallback (`1969-12-31 21:00:00`) instead of erroring. What
+ * this does catch is the slip it is actually likely to see — the POSIX spelling
+ * `pt_BR`, a `RangeError`.
  */
 export function canonicalLocale(value: string, source: string): string {
   const trimmed = value.trim();
@@ -90,6 +113,14 @@ export function canonicalLocale(value: string, source: string): string {
     canonical = Intl.getCanonicalLocales(trimmed);
   } catch {
     canonical = [];
+  }
+  if (canonical.length === 1 && BROWSER_REJECTED_LOCALES.has(canonical[0])) {
+    throw new Error(
+      `${source}: ${JSON.stringify(value)} is a well-formed BCP-47 tag that ` +
+        `Chromium refuses ("Invalid locale name"), which would kill every test ` +
+        `in the run with a browser-launch error instead of this one. Pick a real ` +
+        `language tag such as "pt-BR".`,
+    );
   }
   if (canonical.length !== 1) {
     throw new Error(
@@ -113,9 +144,11 @@ export function canonicalLocale(value: string, source: string): string {
  * ```
  *
  * A bare `test.use({ locale })` is what `CONTRIBUTING.md` bans, and the ban is
- * worth keeping for two reasons this helper preserves: the tag is validated at
- * collection time instead of producing a confusing browser-launch failure, and
- * every opt-out in the suite is findable with one grep.
+ * worth keeping for two reasons this helper preserves: the tag is checked at
+ * collection time — including `und`, the one well-formed tag that would otherwise
+ * kill the run with an opaque `Emulation.setLocaleOverride` error — and every
+ * opt-out in the suite is findable with one grep. It cannot vouch for the tag
+ * being a real language: see `canonicalLocale`.
  *
  * Returns only `locale` — see the header for the measurement behind that.
  */
@@ -126,8 +159,6 @@ export function withLocale(locale: string): { locale: string } {
 export interface RunLocale {
   /** The value `playwright.config.ts` puts in `use.locale`. */
   locale: string;
-  /** Where it came from — `env` only when `PW_LOCALE` carried a usable value. */
-  source: "default" | "env";
   /**
    * Set only when the effective locale differs from `DEFAULT_LOCALE`. The config
    * prints it on **stderr**: an override changes what every English-string
@@ -153,18 +184,17 @@ export function resolveRunLocale(
   // already reads PLAYWRIGHT_RETRIES — an exported-but-blank variable is the
   // shell's idea of "not set", not a request for an invalid locale.
   if (raw === undefined || raw.trim() === "") {
-    return { locale: DEFAULT_LOCALE, source: "default" };
+    return { locale: DEFAULT_LOCALE };
   }
 
   const locale = canonicalLocale(raw, LOCALE_ENV_VAR);
   if (locale === DEFAULT_LOCALE) {
     // Asked for the default explicitly: nothing changed, nothing to announce.
-    return { locale, source: "env" };
+    return { locale };
   }
 
   return {
     locale,
-    source: "env",
     notice:
       `[lane] browser locale overridden to ${locale} via ${LOCALE_ENV_VAR} — ` +
       `every English-string assertion in this run executes under it, and the ` +

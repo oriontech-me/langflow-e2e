@@ -24,7 +24,6 @@ test("an unset, empty or whitespace PW_LOCALE resolves to the default", () => {
   for (const env of [{}, { [LOCALE_ENV_VAR]: "" }, { [LOCALE_ENV_VAR]: "  " }]) {
     const resolved = resolveRunLocale(env);
     assert.equal(resolved.locale, DEFAULT_LOCALE);
-    assert.equal(resolved.source, "default");
     assert.equal(
       resolved.notice,
       undefined,
@@ -41,9 +40,7 @@ test("the default is en-US", () => {
 });
 
 test("PW_LOCALE overrides the run and is canonicalised", () => {
-  const resolved = resolveRunLocale({ [LOCALE_ENV_VAR]: "pt-br" });
-  assert.equal(resolved.locale, "pt-BR");
-  assert.equal(resolved.source, "env");
+  assert.equal(resolveRunLocale({ [LOCALE_ENV_VAR]: "pt-br" }).locale, "pt-BR");
 });
 
 test("an override announces what it changed, and how to undo it", () => {
@@ -62,7 +59,6 @@ test("an override announces what it changed, and how to undo it", () => {
 test("asking for the default explicitly changes nothing and announces nothing", () => {
   const resolved = resolveRunLocale({ [LOCALE_ENV_VAR]: "en-US" });
   assert.equal(resolved.locale, DEFAULT_LOCALE);
-  assert.equal(resolved.source, "env");
   assert.equal(resolved.notice, undefined);
 });
 
@@ -95,12 +91,21 @@ test("withLocale returns a canonicalised, test.use-shaped object", () => {
 });
 
 test("withLocale sets ONLY locale", () => {
-  // Load-bearing, not cosmetic. Measured on 1.12.0.dev20: the frontend pins
-  // `Accept-Language: i18n.language` on every /api/** call, so adding
-  // `extraHTTPHeaders` here would override it and leave the app announcing one
-  // language to the backend while rendering another — a state no product build
-  // can reach, and therefore a test asserting nothing real.
+  // Load-bearing, not cosmetic. Measured on 1.12.0.dev20: 17 of the 20 /api/
+  // requests the home screen makes carry the header the frontend's axios
+  // interceptor pins, and 3 carry the context locale. Adding `extraHTTPHeaders`
+  // here would change those 3 and race the interceptor on the other 17 — see
+  // locale.ts, axis 3.
   assert.deepEqual(Object.keys(withLocale("de-DE")), ["locale"]);
+});
+
+test("the one well-formed tag Chromium refuses is rejected here", () => {
+  // `und` passes Intl.getCanonicalLocales but kills newContext() with
+  // "Protocol error (Emulation.setLocaleOverride): Invalid locale name" — the
+  // opaque browser-launch failure this validation claims to prevent. Measured
+  // against the repo's pinned Chromium.
+  assert.throws(() => withLocale("und"), /Chromium refuses/);
+  assert.throws(() => resolveRunLocale({ [LOCALE_ENV_VAR]: "und" }), /und/);
 });
 
 test("withLocale names itself when the tag is unusable", () => {

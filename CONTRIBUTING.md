@@ -156,11 +156,13 @@ Measured on Langflow Nightly `1.12.0.dev20`, two browser contexts identical exce
 |---|---|---|
 | The language the UI renders | `localStorage.languagePreference`, written by the language selector in the app header and in Settings → General | **No.** `<html lang>` stays `en` and every string stays English |
 | `Intl` formatting + the document/asset `Accept-Language` | the browser context `locale` | **Yes.** The same instant renders `12/31/1969, 9:00:00 PM` vs `31/12/1969, 21:00:00` |
-| The locale the backend's `set_locale` middleware sees | the frontend pins `Accept-Language: i18n.language` on every `/api/**` call | **No.** A spec that needs this sets `extraHTTPHeaders` on a direct API request |
+| The locale the backend's `set_locale` middleware sees | the frontend pins `Accept-Language: i18n.language` on the calls that go through its axios interceptors — but not on everything | **Partly, by leakage.** 17 of the 20 `/api/` requests the home screen makes sent `en` under `locale: "pt-BR"`; 3 carried `pt-BR` |
 
 `src/frontend/src/i18n.ts` reads `localStorage.getItem("languagePreference")` (default `"en"`) and never consults `navigator.language` — there is no language-detector plugin. So a test that needs a **translated UI** must drive the language selector or seed that key; changing the browser locale will not do it, and assuming it does is how such a spec fails and gets misdiagnosed as a product bug.
 
-For the same reason `withLocale()` sets **only** `locale`: bundling `extraHTTPHeaders: { "Accept-Language": … }` into it would override the header the frontend sets per request, leaving the app announcing one language to the backend while rendering another — a state no product build can reach.
+The third row cuts both ways, so do not rely on it in either direction. The backend really does localise — `GET /api/v1/flows/basic_examples/` returns `Basic Prompting` under `Accept-Language: en` and `Sugestões básicas` under `pt` — and the context locale really does reach it on the requests the interceptor never sees: a browser-issued subresource (`/api/v1/files/profile_pictures/…svg`) and two `/api/v9/invites/…` XHRs, in that measurement. **A spec whose subject is the backend's locale must set `Accept-Language` explicitly** via `extraHTTPHeaders` on a direct API request rather than infer it from the context.
+
+That split is also why `withLocale()` sets **only** `locale`. Bundling `extraHTTPHeaders: { "Accept-Language": … }` into it would change those leaked requests, and its precedence against the header the interceptor assigns per request is unmeasured — turning the language the backend sees into a per-request race between two layers, inside a helper whose whole job is to make one axis explicit.
 
 ---
 
