@@ -1,0 +1,474 @@
+{
+  "generated": "2026-08-06",
+  "method": "docs/superpowers/specs/2026-08-06-coverage-heatmap-risk-analysis-design.md",
+  "formula": {
+    "probability": "round((2*bugQuintile + churnQuintile + fragility)/4)",
+    "inherent": "probability * impact",
+    "residual": "inherent * (1 - mitigation)"
+  },
+  "corpus": {
+    "upstreamBugIssues": 1912,
+    "excludedAsQuestion": 41,
+    "classified": 1546,
+    "unclassified": 325,
+    "unclassifiedPct": 17,
+    "decay": {
+      "2023": 0.1,
+      "2024": 0.3,
+      "2025": 0.6,
+      "2026": 1
+    },
+    "jiraBoost": 1.5
+  },
+  "scopeExclusions": {
+    "vendorBundles": {
+      "issues": 227,
+      "weighted": 128,
+      "reason": "Team decision 2026-08-06: separately-shipped vendor bundles are no longer supported by this QA team. Core providers (OpenAI/Anthropic/Gemini) remain in scope."
+    },
+    "other": {
+      "dockerDeploy": 115,
+      "installPackaging": 94,
+      "backendInternals": 50,
+      "desktopPlatform": 37,
+      "databaseInfra": 22,
+      "docsWebsite": 14,
+      "thirdPartyTools": 10,
+      "reason": "Not reachable by a Playwright spec against a running instance."
+    }
+  },
+  "ambiguousTemplateFix": {
+    "reason": "Two ambiguity fixes. (1) Classifier fix 2026-08-06: 'template' is ambiguous in Langflow — the Prompt Template COMPONENT is not a starter template. 5 of the 10 issues previously attributed to starter templates were Prompt Template component defects. The component now matches first. Starter templates: weighted 6.1 -> 2.7 (5 issues); Component config 90.9 -> 94.3. Unclassified residue unchanged at 325, so no issue was lost. Ranking unaffected: the bug quintile fell 2 -> 1 but probability still rounds to 2, residual stays 4.6. (2) Same class in i18n: the rule matched 'language', so 'Language Model' provider issues (Groq/Cohere as Language Model) were counted as localization. Genuine i18n is 5 issues, weighted 5.5, ALL of them in 2026 — a sharper signal than the 7/6.7 it replaced, not a weaker one. Ranking unaffected: still 6.0, rank 6. Both were found by reading the issues behind a number, not by review of the rules."
+  },
+  "derivedChurnCorrection": {
+    "areas": [
+      "11 Templates / starter",
+      "NEW i18n / localization"
+    ],
+    "reason": "Team correction 2026-08-06: churn on these surfaces is a mechanical consequence of churn elsewhere, not independent evidence. A component change forces every starter template JSON that uses that node; a new UI string forces a locale update. Counting it double-counted component churn. Churn quintile floored to 1; bug evidence and impact untouched. Effect: Templates residual 7.0 -> 4.6 (rank 4 -> 8). i18n unchanged at 6.0, because its churn never drove its probability - the black-screen bug evidence did."
+  },
+  "measuredInputs": "Every probability input is MEASURED, none estimated. Deployments and Memory Base were first scored with invented churn/bug figures (churn 8.0 and 6.0, bugs 0.5 each); measurement gave deployments churn 4.25 / bugs 0.0 and memory churn 1.02 / bugs 4.0 — memory's churn was 6x smaller than the invented value. Deployments was then dropped from scope entirely (team decision 2026-08-07): its only implemented destination is watsonx Orchestrate, so the page is a single vendor integration, the same class as the excluded bundles. Its 21 apparent bug matches were all docker/k8s/Render infrastructure, already out of scope under a different bucket.",
+  "regeneratedFrom": "QA-CHECKLIST.md as committed on the branch — mitigation is DERIVED from the live bullet states, not carried over. The first generation predated the new bullets and went stale: MCP read 25 bullets/0.67 while the checklist had 29/0.58, and templates read 41/0.42 while the corrected section had 34/0.08. Deployments and Memory Base were discovered after that generation and were missing entirely. Adding two areas also re-scores every quintile, because quintiles are relative to the set — Auth moved 5.4 -> 8.1 for that reason alone, not because anything about Auth changed.",
+  "mitigationScale": {
+    "stable": 0.8,
+    "automatedNotValidated": 0.4,
+    "partialOrFlaky": 0.25,
+    "none": 0
+  },
+  "areas": [
+    {
+      "area": "NEW security",
+      "residualRisk": 15,
+      "inherentRisk": 15,
+      "probability": 3,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 3,
+        "churnQuintile": 1,
+        "fragility": 3,
+        "weightedBugs": 11.3,
+        "weightedChurn": 0.39
+      },
+      "mitigation": 0,
+      "checklistBullets": 11,
+      "inChecklist": true,
+      "judgementRationale": "SSRF/secret exposure; not a checklist area at all"
+    },
+    {
+      "area": "13/14 MCP",
+      "residualRisk": 10.5,
+      "inherentRisk": 25,
+      "probability": 5,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 5,
+        "churnQuintile": 4,
+        "fragility": 5,
+        "weightedBugs": 56.6,
+        "weightedChurn": 3.14
+      },
+      "mitigation": 0.58,
+      "checklistBullets": 29,
+      "inChecklist": true,
+      "judgementRationale": "Advertised promise ('build and deploy AI agents and MCP servers'); subprocess transport, session pooling, async"
+    },
+    {
+      "area": "20 Memory Base",
+      "residualRisk": 8,
+      "inherentRisk": 8,
+      "probability": 2,
+      "impact": 4,
+      "inputs": {
+        "bugQuintile": 1,
+        "churnQuintile": 2,
+        "fragility": 4,
+        "weightedBugs": 4,
+        "weightedChurn": 1.02
+      },
+      "mitigation": 0,
+      "checklistBullets": 15,
+      "inChecklist": true,
+      "judgementRationale": "Knowledge/RAG is an advertised use case; depends on an embedding provider, a vector store and async ingestion. New in 1.12"
+    },
+    {
+      "area": "6 Agents / LLM execution",
+      "residualRisk": 7.4,
+      "inherentRisk": 25,
+      "probability": 5,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 5,
+        "churnQuintile": 3,
+        "fragility": 5,
+        "weightedBugs": 61.1,
+        "weightedChurn": 2.79
+      },
+      "mitigation": 0.7,
+      "checklistBullets": 43,
+      "inChecklist": true,
+      "judgementRationale": "Advertised promise; LLM nondeterminism and tool-calling"
+    },
+    {
+      "area": "11 Templates / starter",
+      "residualRisk": 7.4,
+      "inherentRisk": 8,
+      "probability": 2,
+      "impact": 4,
+      "inputs": {
+        "bugQuintile": 1,
+        "churnQuintile": 1,
+        "fragility": 3,
+        "weightedBugs": 2.7,
+        "weightedChurn": 24.54
+      },
+      "mitigation": 0.08,
+      "checklistBullets": 34,
+      "inChecklist": true,
+      "judgementRationale": "'Hundreds of pre-built flows' is advertised; the onboarding path"
+    },
+    {
+      "area": "16 A2A",
+      "residualRisk": 6.3,
+      "inherentRisk": 8,
+      "probability": 2,
+      "impact": 4,
+      "inputs": {
+        "bugQuintile": 1,
+        "churnQuintile": 1,
+        "fragility": 4,
+        "weightedBugs": 1,
+        "weightedChurn": 0.1
+      },
+      "mitigation": 0.21,
+      "checklistBullets": 18,
+      "inChecklist": true,
+      "judgementRationale": "Agent-to-agent sits inside the advertised promise; new protocol over the network"
+    },
+    {
+      "area": "12.6 Build / graph engine",
+      "residualRisk": 6,
+      "inherentRisk": 20,
+      "probability": 4,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 3,
+        "churnQuintile": 5,
+        "fragility": 4,
+        "weightedBugs": 11.5,
+        "weightedChurn": 8.32
+      },
+      "mitigation": 0.7,
+      "checklistBullets": 8,
+      "inChecklist": true,
+      "judgementRationale": "If a run fails nothing else in the product matters; async graph execution"
+    },
+    {
+      "area": "NEW i18n / localization",
+      "residualRisk": 6,
+      "inherentRisk": 6,
+      "probability": 2,
+      "impact": 3,
+      "inputs": {
+        "bugQuintile": 2,
+        "churnQuintile": 1,
+        "fragility": 2,
+        "weightedBugs": 5.5,
+        "weightedChurn": 2.62
+      },
+      "mitigation": 0,
+      "checklistBullets": 5,
+      "inChecklist": true,
+      "judgementRationale": "Black screen by browser locale is total failure, but for a subset of users"
+    },
+    {
+      "area": "4 Auth / users",
+      "residualRisk": 5.4,
+      "inherentRisk": 10,
+      "probability": 2,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 2,
+        "churnQuintile": 2,
+        "fragility": 2,
+        "weightedBugs": 8.1,
+        "weightedChurn": 1.21
+      },
+      "mitigation": 0.46,
+      "checklistBullets": 14,
+      "inChecklist": true,
+      "judgementRationale": "Largest blast radius: broken auth = 100% of the product unreachable"
+    },
+    {
+      "area": "15 Canvas / UI",
+      "residualRisk": 5.1,
+      "inherentRisk": 20,
+      "probability": 4,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 4,
+        "churnQuintile": 5,
+        "fragility": 3,
+        "weightedBugs": 21,
+        "weightedChurn": 14.76
+      },
+      "mitigation": 0.75,
+      "checklistBullets": 51,
+      "inChecklist": true,
+      "judgementRationale": "'Drag. Drop. Deploy.' — the entry mechanism, not polish; ReactFlow state"
+    },
+    {
+      "area": "12 Flow lifecycle",
+      "residualRisk": 4.8,
+      "inherentRisk": 20,
+      "probability": 4,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 5,
+        "churnQuintile": 3,
+        "fragility": 2,
+        "weightedBugs": 66.8,
+        "weightedChurn": 1.52
+      },
+      "mitigation": 0.76,
+      "checklistBullets": 24,
+      "inChecklist": true,
+      "judgementRationale": "Cannot create/save/import a flow = product unusable"
+    },
+    {
+      "area": "9 Playground / chat",
+      "residualRisk": 4.7,
+      "inherentRisk": 20,
+      "probability": 5,
+      "impact": 4,
+      "inputs": {
+        "bugQuintile": 5,
+        "churnQuintile": 4,
+        "fragility": 4,
+        "weightedBugs": 51.5,
+        "weightedChurn": 5.3
+      },
+      "mitigation": 0.77,
+      "checklistBullets": 66,
+      "inChecklist": true,
+      "judgementRationale": "The user's main verification loop; SSE streaming"
+    },
+    {
+      "area": "2 Component config",
+      "residualRisk": 4.6,
+      "inherentRisk": 20,
+      "probability": 5,
+      "impact": 4,
+      "inputs": {
+        "bugQuintile": 5,
+        "churnQuintile": 5,
+        "fragility": 3,
+        "weightedBugs": 94.3,
+        "weightedChurn": 21.7
+      },
+      "mitigation": 0.77,
+      "checklistBullets": 52,
+      "inChecklist": true,
+      "judgementRationale": "Every flow is built out of configured components"
+    },
+    {
+      "area": "1 REST API / endpoints",
+      "residualRisk": 4.4,
+      "inherentRisk": 20,
+      "probability": 4,
+      "impact": 5,
+      "inputs": {
+        "bugQuintile": 4,
+        "churnQuintile": 4,
+        "fragility": 2,
+        "weightedBugs": 30.2,
+        "weightedChurn": 3.9
+      },
+      "mitigation": 0.78,
+      "checklistBullets": 28,
+      "inChecklist": true,
+      "judgementRationale": "'Flow as an API' is the advertised deploy path"
+    },
+    {
+      "area": "7 Model providers",
+      "residualRisk": 3.9,
+      "inherentRisk": 16,
+      "probability": 4,
+      "impact": 4,
+      "inputs": {
+        "bugQuintile": 4,
+        "churnQuintile": 4,
+        "fragility": 5,
+        "weightedBugs": 34.9,
+        "weightedChurn": 5.37
+      },
+      "mitigation": 0.76,
+      "checklistBullets": 30,
+      "inChecklist": true,
+      "judgementRationale": "Core providers only (OpenAI/Anthropic/Gemini) after the bundle exclusion; external APIs and keys"
+    },
+    {
+      "area": "3.9 HITL",
+      "residualRisk": 2.8,
+      "inherentRisk": 6,
+      "probability": 2,
+      "impact": 3,
+      "inputs": {
+        "bugQuintile": 1,
+        "churnQuintile": 1,
+        "fragility": 4,
+        "weightedBugs": 0.5,
+        "weightedChurn": 0.1
+      },
+      "mitigation": 0.53,
+      "checklistBullets": 3,
+      "inChecklist": true,
+      "judgementRationale": "New in 1.11; async wait on human action"
+    },
+    {
+      "area": "10 Projects / folders",
+      "residualRisk": 2.7,
+      "inherentRisk": 6,
+      "probability": 2,
+      "impact": 3,
+      "inputs": {
+        "bugQuintile": 2,
+        "churnQuintile": 1,
+        "fragility": 1,
+        "weightedBugs": 4.2,
+        "weightedChurn": 0.2
+      },
+      "mitigation": 0.55,
+      "checklistBullets": 15,
+      "inChecklist": true,
+      "judgementRationale": "Organisational; a workaround always exists"
+    },
+    {
+      "area": "4.3 Global variables",
+      "residualRisk": 2.7,
+      "inherentRisk": 8,
+      "probability": 2,
+      "impact": 4,
+      "inputs": {
+        "bugQuintile": 2,
+        "churnQuintile": 3,
+        "fragility": 2,
+        "weightedBugs": 5.7,
+        "weightedChurn": 1.67
+      },
+      "mitigation": 0.66,
+      "checklistBullets": 7,
+      "inChecklist": true,
+      "judgementRationale": "Blocks provider configuration for every flow"
+    },
+    {
+      "area": "8 Observability",
+      "residualRisk": 2.4,
+      "inherentRisk": 12,
+      "probability": 4,
+      "impact": 3,
+      "inputs": {
+        "bugQuintile": 4,
+        "churnQuintile": 4,
+        "fragility": 4,
+        "weightedBugs": 24.6,
+        "weightedChurn": 4.04
+      },
+      "mitigation": 0.8,
+      "checklistBullets": 24,
+      "inChecklist": true,
+      "judgementRationale": "Diagnostic — does not block building or running"
+    },
+    {
+      "area": "5 Knowledge / files",
+      "residualRisk": 2.4,
+      "inherentRisk": 12,
+      "probability": 4,
+      "impact": 3,
+      "inputs": {
+        "bugQuintile": 4,
+        "churnQuintile": 5,
+        "fragility": 3,
+        "weightedBugs": 25.1,
+        "weightedChurn": 6.59
+      },
+      "mitigation": 0.8,
+      "checklistBullets": 8,
+      "inChecklist": true,
+      "judgementRationale": "Core file surface only after the bundle exclusion"
+    },
+    {
+      "area": "3.6 Loop / control flow",
+      "residualRisk": 2.3,
+      "inherentRisk": 9,
+      "probability": 3,
+      "impact": 3,
+      "inputs": {
+        "bugQuintile": 3,
+        "churnQuintile": 2,
+        "fragility": 3,
+        "weightedBugs": 9.3,
+        "weightedChurn": 1.22
+      },
+      "mitigation": 0.75,
+      "checklistBullets": 16,
+      "inChecklist": true,
+      "judgementRationale": "Control-flow components; affects the flows that use them"
+    },
+    {
+      "area": "3.3 API Request / Webhook",
+      "residualRisk": 2,
+      "inherentRisk": 9,
+      "probability": 3,
+      "impact": 3,
+      "inputs": {
+        "bugQuintile": 3,
+        "churnQuintile": 2,
+        "fragility": 3,
+        "weightedBugs": 11,
+        "weightedChurn": 1
+      },
+      "mitigation": 0.77,
+      "checklistBullets": 31,
+      "inChecklist": true,
+      "judgementRationale": "Network-dependent component, widely used but replaceable"
+    },
+    {
+      "area": "7.7 Model parameters",
+      "residualRisk": 1.2,
+      "inherentRisk": 6,
+      "probability": 2,
+      "impact": 3,
+      "inputs": {
+        "bugQuintile": 2,
+        "churnQuintile": 2,
+        "fragility": 3,
+        "weightedBugs": 4.4,
+        "weightedChurn": 1
+      },
+      "mitigation": 0.8,
+      "checklistBullets": 4,
+      "inChecklist": true,
+      "judgementRationale": "Wrong params silently change model behaviour"
+    }
+  ]
+}

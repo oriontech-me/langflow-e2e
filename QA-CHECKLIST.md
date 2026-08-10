@@ -347,8 +347,7 @@
 - [x] Agent responds to multiple consecutive messages in the same session
 
 #### 6.2 Other execution tests
-- [-] Agent displays reasoning steps in Playground → `agent-reasoning-steps.spec.ts`
-- [-] Composio (tool integration for Agent) → `composio.spec.ts`
+- [ ] ~~Composio (tool integration for Agent)~~ — **out of scope (2026-08-06):** Composio is a separately-shipped vendor bundle, and this QA team no longer supports that surface. `composio.spec.ts` exists but must not be promoted: doing so would count coverage the team does not sustain. See `docs/coverage-heatmap/` — vendor bundles are the single largest source of upstream defects (227 issues) and are excluded from the risk model for the same reason
 - [x] Playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
 - [x] Playground input remains usable after API error (mocked) → `llm-agents/llm-invalid-api-key-ui.spec.ts`
 - [~] Agent stops when configured stop condition is reached → `core-functionality/llm-agents/agent-max-iterations.spec.ts` (`max_iterations` is the Agent's only configurable stop mechanism — no dedicated stop-condition field exists; see #824. **Partial for the same reason as the bullet below:** the stop itself is quarantined against #1264)
@@ -573,55 +572,62 @@
 ### core-functionality/templates/ — Predefined Flow and Component Models
 
 #### 11.1 Basic Templates
-- [-] Basic Prompting (OpenAI)
-- [-] Basic Prompting (Anthropic)
-- [-] Simple Agent (OpenAI)
-- [-] Simple Agent (Anthropic)
-- [-] Simple Agent with memory
-- [-] Vector Store RAG
-- [x] Memory Chatbot
-- [-] **Basic Prompting** (OpenAI) → `core/integrations/Basic Prompting.spec.ts`
-- [-] **Basic Prompting** (Anthropic) → `core/integrations/Basic Prompting Anthropic.spec.ts`
-- [-] **Simple Agent** (OpenAI) → `core/integrations/Simple Agent.spec.ts`
-- [-] **Simple Agent** (Anthropic) → `core/integrations/Simple Agent Anthropic.spec.ts`
-- [-] **Simple Agent** with memory → `core/integrations/Simple Agent Memory.spec.ts`
-- [-] **Vector Store RAG** → `core/integrations/Vector Store.spec.ts`
-- [x] **Memory Chatbot** → `llm-agents/memory-history-regression.spec.ts`
+
+> **Corrected 2026-08-06.** This block listed all 7 entries **twice** — once plain, once
+> bold with a `core/integrations/*.spec.ts` reference. That path is **Langflow's own
+> upstream test suite**, not this repo, so those references were never automation of ours.
+> The duplicates are removed and each entry now carries its real state.
+>
+> `[~]` here means the template is **instantiated and run** by specs that assert something
+> else (33 specs open *Basic Prompting* from the gallery, 20 open *Simple Agent*), so its
+> creation path is exercised while nothing asserts the template's own behaviour.
+
+- [~] Basic Prompting (OpenAI) — instantiated from the template gallery by 33 specs as a fixture; no assertion on the template itself
+- [ ] Basic Prompting (Anthropic) — the provider variant is never exercised
+- [~] Simple Agent (OpenAI) — instantiated by 20 specs as a fixture
+- [ ] Simple Agent (Anthropic)
+- [ ] Simple Agent with memory
+- [ ] Vector Store RAG
+- [x] Memory Chatbot → `llm-agents/memory-history-regression.spec.ts`
 
 #### 11.2 Content Generation Templates
-- [-] Blog Writer
-- [-] Instagram Copywriter
-- [-] Twitter Thread Generator
-- [-] SEO Keyword Generator
-- [-] Portfolio Website Code Generator
-- [-] SaaS Pricing
+
+- [ ] Blog Writer
+- [ ] Instagram Copywriter
+- [ ] Twitter Thread Generator
+- [ ] SEO Keyword Generator
+- [~] Portfolio Website Code Generator — opened from the gallery by `ui-ux/refresh-dropdown-list.spec.ts`; nothing asserts the template
+- [ ] SaaS Pricing
 
 #### 11.3 Analysis and Processing Templates
-- [-] Document QA
-- [-] Invoice Summarizer
-- [-] Financial Report Parser
-- [-] Image Sentiment Analysis
-- [-] Text Sentiment Analysis
-- [-] Youtube Analysis
+
+- [ ] Document QA
+- [ ] Invoice Summarizer
+- [ ] Financial Report Parser
+- [ ] Image Sentiment Analysis
+- [ ] Text Sentiment Analysis
+- [ ] Youtube Analysis
 
 #### 11.4 Agent Templates
-- [-] Dynamic Agent
-- [-] Hierarchical Agent
-- [-] Sequential Task Agent
-- [-] Social Media Agent
-- [-] Travel Planning Agent
-- [-] Market Research
-- [-] Research Translation Loop
-- [-] Pokedex Agent
-- [-] Price Deal Finder
-- [-] News Aggregator
+
+- [ ] Dynamic Agent
+- [ ] Hierarchical Agent
+- [ ] Sequential Task Agent
+- [ ] Social Media Agent
+- [ ] Travel Planning Agent
+- [ ] Market Research
+- [~] Research Translation Loop — driven as the fixture of `core-components/loop-component-regression.spec.ts` (ArXiv loop), which asserts the Loop component, not the template
+- [ ] Pokedex Agent
+- [ ] Price Deal Finder
+- [ ] News Aggregator
 
 #### 11.5 Advanced Templates
-- [-] Custom Component Generator
-- [-] Prompt Chaining
-- [-] Decision Flow
-- [-] Similarity
-- [-] MCP Server (starter projects)
+
+- [ ] Custom Component Generator
+- [ ] Prompt Chaining
+- [ ] Decision Flow
+- [ ] Similarity
+- [x] MCP Server (starter projects) → `mcp/server/mcp-server-starter-projects.spec.ts` (same coverage recorded in §14.1)
 
 ---
 
@@ -693,6 +699,10 @@
 - [!] Run Flow component executes another flow — runs again after the #966 quarantine lift, but **not `@stable`** while the upstream `New Flow` dead-click defect ([LE-2019](https://datastax.jira.com/browse/LE-2019)) is open; the shared helper gates on the flows list having rendered so the suite stays out of the broken window → `flow-functionality/run-flow.spec.ts`
 - [x] Run a flow from the canvas — terminal-node run builds the whole graph; all nodes reach build success and output is produced → `flow-functionality/flow-execution-canvas.spec.ts`
 - [x] Stop building flow → `flow-functionality/stop-building.spec.ts`
+- [ ] A cyclic graph is refused with a cycle-specific error, and the flow stays editable afterwards (the engine's own contract; a total engine failure is caught indirectly by the 63 `@stable` specs that trigger a run, a subtle one by nothing)
+- [ ] Partial failure — when one branch of a multi-branch graph raises, the branches that do not depend on it still produce their output, and the failed node is the one flagged
+- [ ] Execution order respects data dependency — a node that consumes another's output never builds first (asserted on the run stream, not on wall-clock timing)
+- [ ] A node whose upstream produced no value is skipped rather than run with an empty input
 - [!] Playground button disabled with empty flow — needs review → `regression/flow-functionality/generalBugs-shard-3.spec.ts` (**test skipped: assertion was a no-op, current Langflow behavior to confirm**)
 
 ---
@@ -735,6 +745,10 @@
 - [x] stdio `command` must be a single executable — a command with an embedded argument is refused and the same registration split into `command` + `args` is accepted (upstream hardening `#14073`; #1091) → `mcp/server/mcp-server.spec.ts`
 - [x] The project's own Streamable HTTP endpoint registers as an MCP server and exposes its flows as tools → `mcp/server/mcp-server.spec.ts`
 - [-] Resource exposed by server is accessible via URI — flow files are exposed as MCP resources: `resources/list` is `@stable`; `resources/read` blocked by a live Langflow regression on 1.12.x (`AttributeError: 'str' object has no attribute 'hex'`, filed upstream **LE-2012**) — kept as a guard, not promoted → `mcp/server/mcp-server-resources.spec.ts`
+- [ ] Install this project into an MCP client — `GET /{project_id}/installed` reports the current state, `POST /{project_id}/install` performs it, and the UI reflects both (the user-facing way an MCP Server is actually consumed; no bullet covered this before 2026-08-06)
+- [ ] `GET /{project_id}/composer-url` returns a URL that resolves, and the copy control in the UI yields the same value
+- [ ] Per-project MCP configuration — `GET`/`PATCH /{project_id}` selects which flows are exposed as tools, and a de-selected flow disappears from `tools/list` over the protocol
+- [ ] A registered server is read back individually (`GET /servers/{name}`) with the same fields it was created with, and `PATCH /servers/{name}` updates them (only the list, create, delete and 409/404 paths are covered today)
 - [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
 ---
@@ -811,6 +825,157 @@
 - [~] All documented shortcuts work — all 27 `defaultShortcuts` rows are listed with a non-empty key binding in Settings → Shortcuts (`ui-ux/settings-navigation.spec.ts`), and 7 of them are exercised on canvas (`ui-ux/langflowShortcuts.spec.ts`) plus 1 rebound end-to-end (`ui-ux/settings-shortcuts-edit.spec.ts`); the remaining 20 (API, Docs, Download, Play, Group, Minimize, Freeze, Save, Code, Update, Controls, sidebar search, …) are not exercised yet
 - [x] Edit a keyboard shortcut (Duplicate → `Ctrl/Cmd+Alt+U`) persists to the table and the new combination triggers the action on canvas → `ui-ux/settings-shortcuts-edit.spec.ts`
 - [x] API Keys table renders `created_at`/`expires_at` in the viewer's local timezone (UTC→local), shows "Never" for unused keys and ∞ for no-expiry keys (PR #13471) → `ui-ux/api-keys-timezone-display.spec.ts`
+
+---
+
+## security/ — Input Validation, SSRF and Secret Exposure
+
+> **New area (2026-08-06).** Opened by the risk analysis in `docs/coverage-heatmap/`, which
+> ranked it **1st by residual risk (15.0)** — not because the danger is the highest, but
+> because it had **no checklist entry at all** and was therefore invisible to every coverage
+> count, including the 76 % headline.
+>
+> **Scope boundary — this section does not cover authentication or authorization.** Those
+> are already covered and counted elsewhere: `api/flows/` (401/403 across flow endpoints,
+> API-key expiry) and `core-functionality/auth/` (session expiry, admin password). Every
+> bullet here is a surface with **no existing coverage**, each traceable to an upstream
+> defect.
+
+#### 17.1 URL Validation and SSRF
+
+- [ ] A component that fetches a URL (API Request) rejects a loopback address when it is not
+      in `LANGFLOW_SSRF_ALLOWED_HOSTS`, and accepts it when it is — the round trip of the
+      guard, not just the rejection (upstream regression: `ensure_url` ignoring the allow-list
+      for loopback, `langflow-ai/langflow#14264`)
+- [ ] A private RFC-1918 address is rejected by the same guard unless allow-listed
+- [ ] The rejection surfaces to the user as an error in the UI, not as a silent empty result
+- [ ] `LANGFLOW_SSRF_ALLOWED_HOSTS` with a CIDR entry admits the whole range
+      (the mechanism `.github/actions/resolve-echo-endpoint` already depends on, currently
+      asserted nowhere)
+
+#### 17.2 Code Execution Endpoints
+
+- [ ] `POST /api/v1/validate/code` rejects a payload crafted to execute on validation
+      (**recurring upstream defect — reported in 2023 as #696 and again in 2026 as #13336,
+      three years apart on the same endpoint**, which is the strongest recurrence signal in
+      the whole bug corpus)
+- [ ] The custom-component endpoint rejects the same class of payload
+      (`langflow-ai/langflow#7900`)
+- [ ] A rejected payload leaves no partial component created
+
+#### 17.3 Secret Exposure
+
+- [ ] A flow run using a Credential-type global variable does **not** render the secret value
+      in the trace detail (`langflow-ai/langflow#7313` — TracingService exposing secrets)
+- [ ] The same secret is absent from the exported flow JSON
+- [ ] The same secret is absent from the API response of a run
+
+#### 17.4 Tweaks Injection
+
+- [ ] Tweak values passed to `POST /api/v1/run/{id}` cannot reach template fields as
+      executable input (`langflow-ai/langflow#9319`, `#8672`)
+
+---
+
+## i18n/ — Interface Language and Localization
+
+> **New area (2026-08-06).** Also opened by the risk analysis (residual risk **6.0**, 6th),
+> and also absent from the checklist until now. Every one of the 5 upstream defects behind it
+> is from **2026** — this is a surface that only started failing this year.
+>
+> **Not a duplicate of `#### 15.10`.** `ui-ux/settings-general-section.spec.ts` (`@stable`)
+> asserts that the **Language group renders** with its description. Nothing asserts that
+> **changing** the language works, and that is exactly where the reported failures are.
+>
+> **Blocked on a prerequisite, by the project's own rule.** `CONTRIBUTING.md` →
+> *Browser locale is pinned to `en-US`* fixes the context locale and `Accept-Language`
+> for every test in every project, because the suite asserts English strings throughout,
+> and it states that non-English coverage *"is a separate, parameterised concern — raise
+> it as its own issue rather than editing the shared default."* §18.2 in particular
+> cannot run under that pin. These bullets therefore need that parameterisation issue
+> opened and resolved **first**; writing them against a per-test `locale` override would
+> violate the rule they depend on.
+
+#### 18.1 Language Selection
+
+- [ ] Changing the display language in Settings → General actually re-renders the interface
+      in the selected language (the seam immediately past `settings-general-section.spec.ts`)
+- [ ] The selected language persists across a reload and a new session
+- [ ] Every language offered in the selector has a locale bundle that loads
+      (`langflow-ai/langflow#12738`, `#12740` — shipped selector entries with missing `ru`
+      and `ko` bundles)
+
+#### 18.2 Locale Resilience
+
+- [ ] The application boots without a blank screen when the browser language is one Langflow
+      does not ship a bundle for — **the product's known total-failure mode**: a missing
+      Chinese bundle (`#12923`, `#13477`) and Norwegian Bokmål `nb-NO` (`#13196`) each render
+      a black screen, so the product does not open at all for those users
+- [ ] A locale bundle missing individual keys falls back to English for those keys instead of
+      failing the render
+
+---
+
+## memory/ — Memory Base Registration (1.12)
+
+> **New area (2026-08-06).** The `Memories` panel inside the flow editor
+> (`sidebar-nav-memories`) and the `Create Memory` modal that registers a memory
+> base against `/api/v1/knowledge_bases` — 13 routes, none of them covered.
+>
+> **Not the Agent's conversation memory.** Searching the checklist for "memory"
+> returns 10 bullets and every one is about Message History, session isolation or
+> `context_id` (§6.3). Those are unrelated to this surface despite the shared word
+> — the fourth naming collision found in this audit, after `template`, `language`
+> and `deployment`.
+>
+> **Scope:** registration only. Ingestion (`POST /{kb}/ingest`), chunk preview, run
+> history, cancellation, connectors and the five routes guarded by
+> `_check_memory_base_association` are a separate item.
+>
+> Selectors below were harvested from a live 1.12.0 instance — see
+> `docs/core-functionality/memory/memory-base-registration.md`.
+
+#### 20.1 Memories Panel
+
+- [ ] The Memories panel opens from the flow editor (`sidebar-nav-memories`) and shows its empty state (`No memory selected`) rather than a blank panel
+- [ ] The panel offers registration (`Create`) and a memory search field
+
+#### 20.2 Create Memory Modal
+
+- [ ] The modal is **scoped to the flow** — it titles `Create a memory for "<flow name>"`, proving a memory base belongs to a flow rather than being global
+- [ ] It exposes its five controls: Name (`#memory-name`), Embedding Model (`memory-embedding-model`), Vector Database (`memory-db-provider`), Batch Size (`#memory-batch-size`) and the LLM Preprocessing toggle
+- [ ] Vector Database defaults to `Chroma Local` (bundled, so no external vector service is needed) and Embedding Model has **no** default
+- [ ] `Create Memory` is disabled with an empty form **and stays disabled with only the Name filled** — the gate, not just the initial render
+- [ ] Cancelling closes the modal and creates nothing, asserted against `GET /api/v1/knowledge_bases` rather than against the UI alone
+
+#### 20.3 Registration End-to-End (item 1 of 2)
+
+- [ ] Completing the form creates a memory base that is present **both** in `GET /api/v1/knowledge_bases` and in the panel (the panel alone could render optimistic local state). Needs a provider exposing an **embedding** model; with none the picker reads `No Models Enabled` and the test must skip with that reason, never pass silently
+
+#### 20.4 Ingestion (item 2 of 2 — separate wave item)
+
+> **Tracked separately from registration by team decision (2026-08-07).** Registration
+> and ingestion are one product surface but two pieces of work, and the evidence points
+> the other way from the bullets above: **all three of Memory Base's real upstream defects
+> are ingestion**, while the registration surface §20.1–20.3 cover has none reported yet.
+>
+> Routes confirmed against the running instance: `POST /{kb}/ingest`,
+> `POST /preview-chunks`, `GET /{kb}/chunks`, `GET /{kb}/runs`, `GET /{kb}/runs/{id}`,
+> `POST /{kb}/cancel`, `GET /connectors`, `POST /test-connection`.
+>
+> **One connector ships today** — `folder` ("Ingest every matching file from a server-side
+> folder", `requires_credentials: false`), measured on 1.12.0. A test needs no external
+> service, but it does need a server-side path the instance can read.
+
+- [ ] Chunk settings chosen in the UI are the ones actually applied to the ingested chunks — `@regression` for `langflow-ai/langflow#13884` (*"the initial chunk settings are not properly set"*, `jira`)
+- [ ] `POST /preview-chunks` previews with the same settings the ingestion will use, so the preview is not a different code path from the run
+- [ ] Ingesting from the `folder` connector produces chunks readable back via `GET /{kb}/chunks`
+- [ ] An ingestion run is observable while it happens: `GET /{kb}/runs` lists it and `GET /{kb}/runs/{id}` reports its state
+- [ ] `POST /{kb}/cancel` stops an in-flight ingestion and the run reports the cancellation rather than silently completing
+- [ ] An embedding provider that cannot be reached fails the ingestion **with the provider named** — `@regression` for the two reported cases: an unreachable Ollama endpoint (`langflow-ai/langflow#13883`, `jira`) and Google embedding models rejected outright (`langflow-ai/langflow#12277`)
+- [ ] A knowledge base bound to a memory base refuses ingestion through the `_check_memory_base_association` guard, which the API declares on five routes and nothing asserts
+
+---
 
 ---
 
