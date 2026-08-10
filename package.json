@@ -40,6 +40,6 @@
     "playwright": "1.58.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.4.5",
-    "typescript-eslint": "^8.65.0"
+    "typescript-eslint": "^8.66.0"
   }
 }
