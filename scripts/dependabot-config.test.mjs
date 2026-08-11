@@ -118,6 +118,33 @@ function ignoreEntries() {
 
 const ENTRIES = ignoreEntries();
 
+/**
+ * The major version package.json declares for `name`, as a number.
+ *
+ * Both reads it replaces did `declared.match(/(\d+)/)[1]` on a value that can be
+ * absent or carry no digits, and a guard that dies with `Cannot read properties of
+ * undefined (reading 'match')` names its own plumbing instead of the config change
+ * that caused it. Two states are plausible rather than theoretical: `typescript`
+ * leaving package.json (replacing it is on the table for TS 7, per the ignore's own
+ * rationale), and a specifier with no numeric major — `"latest"`, a git URL, a
+ * `workspace:*` range. Both now fail saying which package and which specifier.
+ */
+function declaredMajor(name) {
+  const declared = PKG.devDependencies?.[name] ?? PKG.dependencies?.[name];
+  assert.ok(
+    declared,
+    `${CONFIG_PATH} ignores "${name}", which package.json does not declare — ` +
+      `remove the ignore entry or restore the dependency`,
+  );
+  const m = declared.match(/(\d+)/);
+  assert.ok(
+    m,
+    `package.json declares "${name}": "${declared}", which carries no numeric major, ` +
+      `so this guard cannot compare it against the ignore range`,
+  );
+  return Number(m[1]);
+}
+
 function entryFor(name) {
   const found = ENTRIES.filter((e) => e.name === name);
   // Exactly one: a second, wider entry for the same package later in the list would
@@ -159,8 +186,7 @@ test("the typescript ignore starts at the NEXT major, so no bot can take one", (
   const versions = listValues(entry.body, "versions");
   assert.ok(versions, "the typescript ignore lost its versions: range");
 
-  const declared = PKG.devDependencies?.typescript ?? PKG.dependencies?.typescript;
-  const onMajor = Number(declared.match(/(\d+)/)[1]);
+  const onMajor = declaredMajor("typescript");
 
   const bounds = [...versions].map((v) => {
     const m = v.match(/^>=?\s*(\d+)/);
@@ -187,12 +213,17 @@ test("no ignore range can block the major this repo is actually on", () => {
     const versions = listValues(entry.body, "versions");
     if (!versions) continue;
 
-    const declared = PKG.devDependencies?.[entry.name] ?? PKG.dependencies?.[entry.name];
-    assert.ok(declared, `${CONFIG_PATH} ignores "${entry.name}", which package.json does not declare`);
-    const onMajor = Number(declared.match(/(\d+)/)[1]);
+    const onMajor = declaredMajor(entry.name);
 
     for (const v of versions) {
-      const lower = Number(v.match(/^>=?\s*(\d+)/)[1]);
+      const m = v.match(/^>=?\s*(\d+)/);
+      assert.ok(
+        m,
+        `the ignore for "${entry.name}" carries \`${v}\`, which is not a lower-bound ` +
+          `range this guard can read (e.g. an upper bound or a wildcard) — widen the ` +
+          `guard deliberately rather than leaving it unable to judge the entry`,
+      );
+      const lower = Number(m[1]);
       assert.ok(
         lower > onMajor,
         `the ignore for "${entry.name}" starts at ${lower}, but package.json is on ${onMajor} — it would block the current line`,
