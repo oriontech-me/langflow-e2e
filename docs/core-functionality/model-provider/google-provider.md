@@ -41,6 +41,12 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 - `GOOGLE_API_KEY` set in `.env` (both tests self-skip without it).
 - `models.json` / `providers.json` generated via
   `npx playwright test tests/collect-models.spec.ts` (Google must be `active`).
+  **Test 2 additionally gates on the health `collect-models` recorded there**
+  (#1415) — a provider recorded `inactive` skips it with the collected reason
+  instead of making a live call against a dead key. A local run with no
+  `providers.json` fails OPEN (nothing skips); a stale `inactive` record is
+  bypassed with `IGNORE_PROVIDER_HEALTH=1`. **Test 1 is deliberately not gated**
+  — see the gate note below.
 - Run with `--workers=1` (Test 2 loads a named template via
   `SimpleAgentTemplatePage`; agent-family convention). File is serial.
 
@@ -186,6 +192,25 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 - **Per-run sentinel** proves *this* execution produced the output.
 - **Shared global key:** the Google key is global and persists across runs. Test 1
   is idempotent — it re-saves and asserts the request outcomes, not a fresh start.
+- **Provider-health gate on Test 2 only (#1415, mechanism from #1029):** only
+  Test 2 makes a live completion call, so only it is gated on
+  `providerSkipGate("google")`. `hasProviderEnvKeys` measures presence of the env
+  var and never its health, so a key that exists but is dead — drained balance,
+  revoked key, **or a monthly spending cap, which is exactly what happened to
+  this provider on run 30374528125 and is why #1029 built the gate** — used to
+  run the test anyway: the Agent's run never completes, the Stop button stays
+  visible past the 120 s wait, no `div-chat-message` renders, and the workflow
+  auto-removes `@stable`. A billing outage reported as a product regression.
+  Measured on the OpenAI copy of the same bug twice (#772/#775, then #1333).
+  **Test 1 is deliberately NOT gated:** `validate_model_provider_key`
+  (`lfx/base/models/unified_models.py`) makes a real `llm.invoke("test")` but
+  only raises when the error message contains `401`, `authentication` or
+  `api key` — every other failure hits a bare `return` ("allow saving despite
+  minor errors"), so a quota/billing failure still answers `{valid: true}` and
+  Test 1 still passes. It therefore keeps covering the Settings save path on a
+  day the account is dry; gating it would trade real coverage for nothing.
+  **Resilience, not a root-cause fix** — the key still has to be usable for
+  §7.4.2 to be exercised at all; the general remedy is **#976**.
 - **#636 flake (fixed 2026-07-14):** the persist waiter matched `PATCH` only, but
   the frontend fires `POST /variables/` (create, 201) when the key does not yet
   exist and `PATCH /variables/{id}` (update, 200) when it does. On a fresh CI
