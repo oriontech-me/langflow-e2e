@@ -1,8 +1,8 @@
 # OpenAI Compatible — unified provider setup (base URL + optional key, live-only catalog)
 
-**Last validated:** Langflow 1.12.x (1.12.0.dev18)
+**Last validated:** Langflow 1.12.x (1.12.0.dev23)
 **Spec file:** `tests/tests-automations/regression/core-functionality/model-provider/openai-compatible-provider-setup.spec.ts`
-**Issue:** #1193 (Wave 5 — 1.11.0 feature coverage, QA-CHECKLIST §7.8); #1334 (test 5's binding assertion)
+**Issue:** #1193 (Wave 5 — 1.11.0 feature coverage, QA-CHECKLIST §7.8); #1334 (test 5's binding assertion); #1364 (test 4's quarantine, lifted — the partial-catalog finding below)
 **Upstream:** langflow-ai/langflow#13940, #14199, #14311
 
 ---
@@ -93,6 +93,56 @@ the rest of a describe after a failure — in its narrative position (4th) its r
 the discovery and execution tests their run, measured. Tests 4 and 5 still configure the
 pair **via the API, sequentially**: their subject is discovery and execution, not the
 save.
+
+### Finding this spec encoded — a live catalog read is only as reliable as one endpoint call (#1364)
+
+The daily of 2026-08-07 red test 4 on `num_models` reading **124** where the contract is
+`2 × ids.length` = 248, and triage quarantined it on the reading that **embedding
+registration had been dropped** upstream. Measured on 1.12.0.dev23, that reading is
+**refuted**, and so is the successor reading (a *registration window* that converges):
+
+| What was measured | Result |
+|---|---|
+| 30 consecutive `GET /api/v1/models?provider=OpenAI Compatible`, taken **60 s after** configuring | 22× `248 {llm:124, embeddings:124}`, 6× `124 {llm:124}`, 1× `124 {embeddings:124}`, 1× `0 {}` |
+| 20 authenticated `GET https://api.openai.com/v1/models` **from inside the container** | 16 at 0.6–1.1 s, 3 at ~20 s, 1 past a 30 s cap |
+| 20 **unfiltered** `GET /api/v1/models` — the request the Settings page makes — with the pair stored | p50 **5.0 s**, p90 **8.9 s**, max **14.6 s**; 2 of the 20 reported `num_models` 124 |
+
+Two things follow. **Both halves are registered** — the missing half is sometimes the
+`llm` one and sometimes the `embeddings` one, which no "second registration stopped
+happening" explanation survives. And the partial read is **not** a warm-up state: it
+still occurs minutes in, at roughly the rate the endpoint stalls.
+
+The mechanism is in the bundle, and it is by design:
+`lfx_openai_compatible/discovery.py :: fetch_live_openai_compatible_models` is called
+**once per model type on every request**, each call a fresh
+`GET <base>/v1/models` with `_TIMEOUT_SECONDS = 5`, and its docstring states the
+degrade — *"Returns an empty list (never raises) … so a missing or broken endpoint
+simply contributes no models"*. A stall longer than 5 s therefore costs exactly one
+half of the catalog, and two stalls cost all of it, with **nothing in the 200 response
+distinguishing that from a provider that genuinely serves fewer models**.
+
+Consequences recorded here rather than re-derived:
+
+- **For the spec:** every catalog read is polled on the shape it must terminate at
+  (#1369 already did this for the API read; #1364 extends it to the panel, which makes
+  its own uncached request and does not refetch). The assertion itself is unchanged —
+  a real removal of the second registration cannot reach `2 × ids` and reds with the
+  full expected-vs-received shape.
+- **For the panel's own waits:** the same latency is *inside* the Settings page load, so
+  `openProviderPanel` waits `PANEL_TIMEOUT_MS` (45 s) rather than the suite's usual 15 s.
+  That 15 s sat **on** the observed maximum and red run 5 of this issue's validation
+  burst — `provider-list` not found after 15 s, against a provider the step above had
+  just proved complete.
+- **For the product:** this is the user-facing form of the same thing — a Settings
+  visit landing on a stalled call shows a half-populated (or empty) model list for a
+  correctly configured provider, with no error. Not filed upstream; noted on #1364 as
+  a candidate, since the tight 5 s timeout plus the silent `[]` is a resilience choice
+  rather than a broken code path.
+- **For triage:** it also explains the two neighbours held next to #1364 — the
+  `Connection to the OpenAI-compatible endpoint … timed out` 400s seen on the PR lane
+  and on the 2026-08-07 daily's test 3 are the *same* stall reaching a path that
+  reports it, and the 2026-08-06 `toEqual` red on this same line was the `llm` half
+  missing rather than a different defect.
 
 ### What test 5 gates on, and why it is NOT the stored credential (#1334)
 
@@ -204,16 +254,22 @@ Declaration order in the file, which is also execution order (`mode: "serial"`):
 
 | Test | Tags |
 |---|---|
-| 1 — provider offered with a live-only, empty catalog | `@model-provider`, `@settings`, `@api` |
-| 2 — unreachable base URL rejected, nothing persisted | `@model-provider`, `@settings` |
-| 3 — bogus key on a real endpoint rejected with the auth message | `@model-provider`, `@settings` |
-| 4 — live discovery mirrors the endpoint's `/v1/models` | `@model-provider`, `@settings`, `@api` |
+| 1 — provider offered with a live-only, empty catalog | `@stable`, `@model-provider`, `@settings`, `@api` |
+| 2 — unreachable base URL rejected, nothing persisted | `@stable`, `@model-provider`, `@settings` |
+| 3 — bogus key on a real endpoint rejected with the auth message | `@stable`, `@model-provider`, `@settings` |
+| 4 — live discovery mirrors the endpoint's `/v1/models` | `@stable`, `@model-provider`, `@settings`, `@api` |
 | 5 — a discovered model runs in a flow | `@stable`, `@model-provider`, `@components`, `@playground` |
 | 6 — Settings Save persists BOTH variables | `@stable`, `@model-provider`, `@settings`, `@regression` |
 
 Cross-cutting: `@api` / `@regression` / `@components` as above. Functional:
 `@model-provider` on all six, plus `@settings` for the Settings-page tests and
 `@playground` for the execution test.
+
+**Test 4 carried no `@stable` and a `test.fixme` between 2026-08-07 and #1364's
+verdict** — the 2026-08-07 triage quarantined it against a suspected upstream removal
+of embedding discovery. Both are lifted: the removal is refuted, the red is the
+endpoint stalling past discovery's 5 s timeout (see the finding above), and the read is
+polled on its terminal shape. **All six tests carry `@stable`.**
 
 **Test 6 carried no `@stable` while it was quarantined** (`test.fixme`) against a
 confirmed live product defect: it must not enter `daily-stable.yml`, which opens a
@@ -328,14 +384,18 @@ both OpenAI and OpenAI Compatible is unambiguous); playground
    satisfy the id set — the ids exist only at the operator's endpoint; and `/v1/models`
    does not distinguish chat from embedding, so every served model is registered once
    per type (documented in `lfx_openai_compatible/discovery.py`).
-4. **Why the terminal shape and not `num_models > 0`:** the catalog is observable
-   mid-registration. Polling on `> 0` and then re-reading races the embeddings half in —
-   measured 3/3 on 1.12.0.dev18, twice as `num_models` 124 instead of 248 and once with
-   the llm list still **empty**, while the same endpoint seconds later reads
-   `{llm: 124, embeddings: 124}`. A partial read must count as "not settled yet", never
-   as a wrong catalog (#1334, found while validating that issue's fix).
+4. **Why the terminal shape and not `num_models > 0`:** the catalog is recomputed on
+   every request, so a single read can be missing either half — 8 of 30 reads a full
+   minute after configuring, at the rate the endpoint stalls past discovery's 5 s
+   timeout (the #1364 finding above). A partial read must count as "the endpoint
+   stalled on this request", never as a wrong catalog.
 5. UI: the panel renders `llm-toggle-<id>` for the first five ids alphabetically
-   — the default-enabled set (`default: i < MIN_DEFAULT_MODELS`).
+   — the default-enabled set (`default: i < MIN_DEFAULT_MODELS`). The panel makes its
+   **own** catalog request and never refetches, so it is **reopened** up to 3 times
+   (each logged) rather than waited on: a page that loaded on an embeddings-only read
+   renders no `llm-toggle-*` at all, and a bare `toBeVisible` would burn its timeout
+   against a provider step 3 just proved complete. The assertion after the loop is
+   unconditional.
 
 **Test 5 — a discovered model runs in a flow** *(setup via API, sequentially)*
 0. Wait for live discovery to list `OPENAI_COMPATIBLE_TEST_MODEL`
@@ -454,6 +514,15 @@ stored:
 
 Measured on 1.12.0.dev15: 5 passed, 1 quarantined per run. On 1.12.0.dev19 after #1334:
 **6 passed**, none quarantined.
+
+On **1.12.0.dev23** after #1364, 8 runs at `--workers=1 --retries=0`: **zero failures**.
+Test 4 — the one this issue quarantined — is 7 passed / 1 skipped, against 5 passed /
+1 **failed** over the 6 runs taken before the panel budget was resized. The skips are
+all the endpoint stalling (`OpenAI-compatible endpoint not usable`, `Connection to …
+timed out`), each with its reason printed, and they are the file's pre-existing
+environment-abort design rather than anything this issue changed: tests 3 and 6 take
+5/8 and 5/8 here on a host measured at 4 stalled calls in 20. On a lane whose egress is
+healthy they run.
 
 ---
 
