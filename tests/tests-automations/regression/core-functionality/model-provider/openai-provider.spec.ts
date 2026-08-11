@@ -9,6 +9,7 @@ import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
 } from "../../../../helpers/provider-setup";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { resolveGptModel } from "../../../../helpers/provider-setup/resolve-gpt-model";
@@ -200,12 +201,23 @@ test.describe("OpenAI Provider", () => {
 
   test(
     "configured OpenAI selects a GPT model in the Agent and executes the flow",
-    { tag: ["@model-provider", "@agents", "@playground"] },
+    { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
     async ({ page, request }) => {
-      test.skip(
-        !hasProviderEnvKeys(PROVIDER),
-        `Missing env vars for provider "${PROVIDER}": ${missingProviderEnvKeys(PROVIDER).join(", ")}`,
-      );
+      // Health, not mere presence (#1029's gate, applied here by #1333). This
+      // test makes a live completion call, so a key that EXISTS but is dead
+      // cannot produce a verdict about Langflow: on the 2026-08-06 daily the
+      // account had no credits, the Agent's run never completed, Stop stayed
+      // visible past the 120 s wait, no `div-chat-message` ever rendered, all
+      // three attempts hard-failed and the workflow auto-removed @stable
+      // (cb3082d) — for the second time (cf. #772/#775). `providerSkipGate`
+      // reads the same providers.json the provider-parametrized specs honour,
+      // so the same outage now skips with the reason collect-models measured.
+      // Test 1 is deliberately left on the env-presence gate: it makes no
+      // completion call and `validate-provider` answers 2xx on a credit-less
+      // key, so it still passes and still covers the Settings save path on a
+      // dry day. Resilience only — funding the account is #976.
+      const providerGate = providerSkipGate(PROVIDER);
+      test.skip(providerGate.skip, providerGate.reason);
 
       // Per-run sentinel: a match proves THIS execution produced the output.
       const token = `OPENAI-${Date.now()}`;
