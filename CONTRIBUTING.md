@@ -131,11 +131,38 @@ Use the maintained core equivalents instead. The canonical case:
 
 ---
 
-## Browser locale is pinned to `en-US`
+## Browser locale — `en-US` by default, opt-in per spec
 
-`playwright.config.ts` pins the browser context locale (and the `Accept-Language` header) to `en-US` for every test in every project. The suite asserts on English strings throughout — toast titles, button labels, status messages, upstream error text — so the locale must stay fixed regardless of host machine settings, CI runner defaults, or future i18n locale detection in Langflow.
+`playwright.config.ts` runs every test in every project under `en-US` (#225). The suite asserts on English strings throughout — toast titles, button labels, status messages, upstream error text — so the default must stay fixed regardless of host machine settings or CI runner defaults, and **changing it is not a per-spec decision**.
 
-Do **not** override `locale` per test or per project. If a test ever needs a non-English locale (e.g. deliberate multi-locale coverage), that is a separate, parameterised concern — raise it as its own issue rather than editing the shared default.
+Do **not** write `test.use({ locale })` directly. A spec that genuinely needs a different browser locale opts in through the one sanctioned helper (#1400), which validates the tag at collection time and keeps every opt-out findable with a single grep:
+
+```ts
+import { withLocale } from "../../../fixtures/locale";
+
+test.describe("date rendering under a non-English locale", () => {
+  test.use(withLocale("pt-BR"));
+  // …
+});
+```
+
+A whole run can be moved with `PW_LOCALE=pt-BR npx playwright test …`. The config announces the override on stderr and **refuses** an invalid tag (including the POSIX spelling `pt_BR`) rather than falling back to English behind your back.
+
+### What the locale does and does not change
+
+Measured on Langflow Nightly `1.12.0.dev20`, two browser contexts identical except `locale` (#1400). Non-English behaviour has **three independent axes**, and this option governs only the middle one:
+
+| Axis | Controlled by | Changes with `locale`? |
+|---|---|---|
+| The language the UI renders | `localStorage.languagePreference`, written by the language selector in the app header and in Settings → General | **No.** `<html lang>` stays `en` and every string stays English |
+| `Intl` formatting + the document/asset `Accept-Language` | the browser context `locale` | **Yes.** The same instant renders `12/31/1969, 9:00:00 PM` vs `31/12/1969, 21:00:00` |
+| The locale the backend's `set_locale` middleware sees | the frontend pins `Accept-Language: i18n.language` on the calls that go through its axios interceptors — but not on everything | **Partly, by leakage.** 17 of the 20 `/api/` requests the home screen makes sent `en` under `locale: "pt-BR"`; 3 carried `pt-BR` |
+
+`src/frontend/src/i18n.ts` reads `localStorage.getItem("languagePreference")` (default `"en"`) and never consults `navigator.language` — there is no language-detector plugin. So a test that needs a **translated UI** must drive the language selector or seed that key; changing the browser locale will not do it, and assuming it does is how such a spec fails and gets misdiagnosed as a product bug.
+
+The third row cuts both ways, so do not rely on it in either direction. The backend really does localise — `GET /api/v1/flows/basic_examples/` returns `Basic Prompting` under `Accept-Language: en` and `Sugestões básicas` under `pt` — and the context locale really does reach it on the requests the interceptor never sees: a browser-issued subresource (`/api/v1/files/profile_pictures/…svg`) and two `/api/v9/invites/…` XHRs, in that measurement. **A spec whose subject is the backend's locale must set `Accept-Language` explicitly** via `extraHTTPHeaders` on a direct API request rather than infer it from the context.
+
+That split is also why `withLocale()` sets **only** `locale`. Bundling `extraHTTPHeaders: { "Accept-Language": … }` into it would change those leaked requests, and its precedence against the header the interceptor assigns per request is unmeasured — turning the language the backend sees into a per-request race between two layers, inside a helper whose whole job is to make one axis explicit.
 
 ---
 
