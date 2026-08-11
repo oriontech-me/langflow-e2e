@@ -748,7 +748,7 @@
 - [ ] Install this project into an MCP client — `GET /{project_id}/installed` reports the current state, `POST /{project_id}/install` performs it, and the UI reflects both (the user-facing way an MCP Server is actually consumed; no bullet covered this before 2026-08-06)
 - [ ] `GET /{project_id}/composer-url` returns a URL that resolves, and the copy control in the UI yields the same value
 - [ ] Per-project MCP configuration — `GET`/`PATCH /{project_id}` selects which flows are exposed as tools, and a de-selected flow disappears from `tools/list` over the protocol
-- [ ] A registered server is read back individually (`GET /servers/{name}`) with the same fields it was created with, and `PATCH /servers/{name}` updates them (only the list, create, delete and 409/404 paths are covered today)
+- [x] A registered server is read back individually via `GET /servers/{name}` with the same fields it was created with, and `PATCH /servers/{name}` updates them — merging per top-level key and refusing to rename (#1397) → `mcp/server/mcp-server.spec.ts`
 - [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
 ---

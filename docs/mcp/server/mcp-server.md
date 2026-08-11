@@ -1,6 +1,6 @@
 # MCP Server — add-server modal: stdio / HTTP registration, field persistence & tool refresh
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev9`)
+**Last validated:** Langflow 1.12.x (tests 1–7 on nightly `1.12.0.dev9`; tests 8–9 on `1.12.0.dev20`)
 
 ---
 
@@ -25,24 +25,39 @@ enforces (QA-CHECKLIST §14.1):
 5. **Streamable HTTP against Langflow itself** — a project's own
    `/api/v1/mcp/project/{id}/streamable` endpoint registers as an MCP server and
    exposes the project's flows as tools.
+6. **The single-server read-back and update API** (#1397) — a registered server
+   is readable on its own at `GET /api/v2/mcp/servers/{name}` with exactly the
+   fields it was created with, and `PATCH /api/v2/mcp/servers/{name}` updates
+   them, merging at the top level and refusing to rename.
 
 If this fails, external MCP servers can no longer be registered from the UI, the
-modal loses field state, the tool list serves stale data after an edit, or the
+modal loses field state, the tool list serves stale data after an edit, the
 stdio input-shape validation that keeps every policy layer seeing the same argv
-has been dropped.
+has been dropped, or the API the modal's edit path is built on stops returning
+what it stored.
 
 ---
 
 ## Tags *(required)*
 
 `@release` `@workspace` `@components` `@mcp` `@stable`
-(plus `@regression` on the command/args contract test)
+(plus `@regression` on the command/args contract test, and `@api` on the
+read-back/update tests)
 
 - `@stable` — promoted under #1091 after the file was brought back to green on
   nightly `1.12.0.dev9` with repeated `--workers=1 --retries=0` runs and a
   per-test force-failure check. Before #1091 the file carried no `@stable` and
   therefore ran in **no automated lane**, which is why every stdio registration
-  in it had been broken since 2026-07-15 without a single red run.
+  in it had been broken since 2026-07-15 without a single red run. Tests 8 and 9
+  ship `@stable` from the start (#1397): they are pure API, need no subprocess,
+  no npm registry and no LLM, and were validated per CONTRIBUTING before the PR.
+- `@api` — on tests 8 and 9 only; they exercise
+  `GET`/`PATCH /api/v2/mcp/servers/{name}` directly and never drive the modal.
+  They carry **no** `@regression`: that tag means "test for a previously fixed
+  bug" (`CLAUDE.md`), which is earned by the contract test below and by the
+  409/404 sibling spec, but these two are new coverage of a path with no bug
+  history. `@api` + `@stable` (cross-cutting) and `@mcp` (functional) satisfy the
+  tagging rule on their own.
 - `@regression` — on the contract test only: it guards an intentional upstream
   security change (see *External dependencies*), so a silent removal of that
   validation must fail the suite.
@@ -57,7 +72,9 @@ has been dropped.
 - The default MCP starter project exists (`lf-starter_project`).
 - **Network egress to the npm registry** — the stdio tests run real MCP servers
   via `npx`. A cold container downloads the package on first use; see the
-  timeout budgets below.
+  timeout budgets below. **Tests 8 and 9 are exempt**: registration is
+  persist-only, so they register a non-existent package and never start a
+  subprocess.
 - `npx` on `PATH` inside the Langflow container (it ships there; verified on the
   nightly image).
 - No LLM / provider key required — no agent executes.
@@ -153,6 +170,40 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
    `args === ["@modelcontextprotocol/server-everything"]`.
 6. Delete the server via the API.
 
+### 8 — `a registered MCP server is read back individually with the fields it was created with` *(new, #1397)*
+
+Pure API, no browser navigation and no subprocess: registration is persist-only,
+so a **deliberately non-existent package** is used (the same reasoning as test 3)
+and nothing is fetched from the npm registry.
+
+1. Pre-clean the per-worker name (a crashed retry could have left it behind).
+2. `POST /api/v2/mcp/servers/{name}` with `command: npx`,
+   `args: ["mcp-server-read-back-probe"]` and one `env` pair; assert 2xx.
+3. `GET /api/v2/mcp/servers/{name}`: assert **200** and that the body is exactly
+   the config that was posted — `command`, `args` and `env` equal, and no extra
+   keys. The `env` value round-trips through the encrypted column, so this also
+   covers decryption on read.
+4. Assert the single read carries **no `name`** field: the name is owned by the
+   URL path, not the body (this is the same rule test 9 pins from the write side).
+5. Assert the server is also listed by `GET /api/v2/mcp/servers`, so a single-read
+   endpoint that answered from somewhere the list does not see would fail.
+
+### 9 — `PATCH updates a registered server, merges at the top level, and refuses to rename it` *(new, #1397)*
+
+1. Register the same shape as test 8.
+2. `PATCH` with a **different** `args` package and nothing else: assert 200, then
+   assert the change through a fresh `GET` — the response body alone would pass
+   even if nothing were persisted.
+3. Assert `command` **and** `env` survived: neither was mentioned by the patch, so
+   both surviving is the evidence that the merge is per top-level key rather than
+   a whole-document replace.
+4. `PATCH` with only `env` (a different single pair): assert `command`/`args`
+   survive and the previous `env` pair is **gone** — the merge replaces a key's
+   value wholesale, it does not deep-merge into it.
+5. `PATCH` with a body `name` that disagrees with the URL: assert **422** and a
+   detail matching `/name is immutable/i`, then assert via `GET` that the stored
+   config is untouched and carries no stray `name` key.
+
 ---
 
 ## Validation criterion *(required)*
@@ -175,6 +226,16 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
 - **The tool list refreshes on edit**: after changing `args[0]` from
   sequential-thinking to server-everything, the node exposes `echo-0-option`;
   after reverting, `sequentialthinking-0-option`.
+- **The single-server read returns what was stored, and only that.**
+  `GET /api/v2/mcp/servers/{name}` answers 200 with a body deep-equal to the
+  posted config — including the `env` pair, decrypted — with no `name` key and no
+  extra keys, and the same server appears in the list endpoint.
+- **`PATCH` persists, merges per top-level key, and cannot rename.** A changed
+  `args` is visible on a subsequent `GET` and leaves `env` intact; a subsequent
+  `env`-only patch leaves `command`/`args` intact and *replaces* the whole `env`
+  object; a body `name` disagreeing with the URL is refused with 422 and changes
+  nothing. Each patch names as few keys as possible, so what survives is evidence
+  about the merge rather than about the patch echoing itself back.
 
 ## Guarding against false positives *(how)*
 
@@ -191,6 +252,15 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
 - **Canvas-controls postcondition gate** (`zoom_out` hidden) in test 5 fails at
   the canvas controls instead of ~60 lines later as `<html> intercepts pointer
   events` (#576/#997/#1053).
+- **Tests 8 and 9 assert through a fresh `GET`, never through the write's own
+  response body.** `POST` and `PATCH` both echo the config back, so an endpoint
+  that validated and returned without persisting would pass an echo-only assert.
+- **Test 9 asserts a refusal next to a success**, the same argument as test 7: a
+  422-only assert would still pass against an endpoint that refused *every*
+  patch, and the merge assertions prove it is discriminating.
+- **Deep equality, not field spot-checks**, on the read-back: an endpoint that
+  quietly added a `name`, a `transport` label or a stray body key would pass a
+  per-field check and fail this one.
 - **Force-failure check** (CONTRIBUTING §2) executed per test during VERIFY.
 
 ---
@@ -203,6 +273,22 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
 - Protocol-level tool listing/execution — `mcp-server-protocol.spec.ts`.
 - Flow-file **resources** — `mcp-server-resources.spec.ts`.
 - Registration **status codes** (409/404) — `mcp/client/mcp-server-registration-status-codes.spec.ts`.
+- **The read/update paths for a name that does not exist.** Measured on nightly
+  `1.12.0.dev20` and deliberately left unasserted, because both look wrong and
+  asserting either way would be a decision this spec should not make on its own:
+  `GET /api/v2/mcp/servers/{unknown}` answers **200 `null`** rather than the 404
+  its sibling `DELETE` returns (upstream `#14005` fixed the delete path and left
+  this one), and `PATCH /api/v2/mcp/servers/{unknown}` answers **200 and creates
+  the server** — so a typo'd name silently registers a ghost instead of failing.
+  Asserting today's behaviour would enshrine it; asserting the corrected
+  behaviour would ship a durably red `@stable` test, which the current triage
+  policy strips within a day. Both belong in a product-finding issue first.
+- **The stdio security policy on the PATCH path.** Also measured: a merge patch
+  that sends `args` **without** `command` is validated with no command in scope,
+  so `{"args": ["-y", "…"]}` is refused with 422 (`dangerous keyword '-y'`) while
+  the identical args are accepted by `POST` alongside `command: npx`. An
+  args-only patch is otherwise fine — measured 200 — so test 9 sends one
+  deliberately and simply avoids `-y`; the asymmetry itself is not asserted here.
 - The rest of the stdio security policy — the arg blocklist
   (`DANGEROUS_KEYWORDS`), shell-metacharacter rejection, the docker-arg policy
   and the env blocklist are **not** covered here; test 7 covers only the
@@ -232,7 +318,17 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
   `add-mcp-server-button-page`, `mcp-server-menu-button-<name>`,
   `btn_delete_delete_confirmation_modal`).
 - MCPTools node (`dropdown_str_tool`, `mcp-server-dropdown`, `list_item_<name>`).
-- `GET`/`DELETE /api/v2/mcp/servers[/{name}]`, `helpers/auth/get-auth-token.ts`,
+- `src/backend/base/langflow/api/v2/mcp.py` — the MCP v2 server API behind tests
+  8 and 9: `get_server_endpoint` (the single read, which returns the *decrypted*
+  config), `update_server(..., merge_existing=True)` (the PATCH merge and its
+  version guard) and `_enforce_immutable_server_name` (the 422 whose detail test 9
+  matches).
+- `src/backend/base/langflow/api/v2/schemas.py` — `MCPServerConfig`, the PATCH/POST
+  request model. Its `extra="allow"` is precisely why the immutable-name rule has
+  to exist, and its `_validate_stdio_security` validator is what refuses an
+  args-only patch (see *What this test does not cover*).
+- `GET`/`PATCH`/`POST`/`DELETE /api/v2/mcp/servers[/{name}]`,
+  `helpers/auth/get-auth-token.ts`,
   `helpers/other/await-bootstrap-test.ts`, `helpers/ui/adjust-screen-view.ts`,
   `helpers/ui/zoom-out.ts`, `helpers/flows/delete-flow.ts`,
   `helpers/flows/add-component-from-sidebar.ts`
@@ -250,6 +346,11 @@ Unchanged by #1091 (no stdio surface). Derives the project's own
 - If the MCPTools node's tool-input testid derivation changes (integers are
   lowercased into `int_int_<name>`; strings keep their case in
   `popover-anchor-input-<name>`).
+- If `MCPServerConfig` gains or drops a field, or the single read starts
+  returning a wrapper (a `name`, a transport label) instead of the bare config —
+  test 8's deep equality is the assertion that will say so.
+- If the PATCH merge changes granularity (deep-merging `env` instead of
+  replacing it), or `_enforce_immutable_server_name` stops answering 422.
 
 ---
 

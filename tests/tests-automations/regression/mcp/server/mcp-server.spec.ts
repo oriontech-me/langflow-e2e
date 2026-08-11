@@ -1,3 +1,4 @@
+import { randomUUID } from "crypto";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
@@ -138,8 +139,7 @@ test.afterEach(async ({ request }) => {
 // exemption: a spec that keeps appearing as collateral while others do not).
 // Lifting the quarantine (remove test.fixme + restore @stable) is a
 // deliverable of #1266.
-test.fixme(
-  "user must be able to change mode of MCP tools without any issues",
+test.fixme("user must be able to change mode of MCP tools without any issues",
   { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
@@ -335,8 +335,7 @@ test.fixme(
   },
 );
 
-test(
-  "user must be able to add and delete MCP server from sidebar",
+test("user must be able to add and delete MCP server from sidebar",
   { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
@@ -421,8 +420,7 @@ test(
   },
 );
 
-test(
-  "STDIO MCP server fields should persist after saving and editing",
+test("STDIO MCP server fields should persist after saving and editing",
   { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
@@ -587,8 +585,7 @@ test(
   },
 );
 
-test(
-  "HTTP/SSE MCP server fields should persist after saving and editing",
+test("HTTP/SSE MCP server fields should persist after saving and editing",
   { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
@@ -780,8 +777,7 @@ test(
   },
 );
 
-test(
-  "mcp server tools should be refreshed when editing a server",
+test("mcp server tools should be refreshed when editing a server",
   { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     // Three `TOOL_LIST_TIMEOUT` waits (register A, edit to B, re-register A)
@@ -1168,8 +1164,7 @@ test(
   },
 );
 
-test(
-  "Streamable HTTP MCP server with server-everything should load tools correctly",
+test("Streamable HTTP MCP server with server-everything should load tools correctly",
   { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
@@ -1272,8 +1267,7 @@ test(
   },
 );
 
-test(
-  "stdio command with an embedded argument is refused, and command plus args is accepted",
+test("stdio command with an embedded argument is refused, and command plus args is accepted",
   { tag: ["@regression", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     // The refused registration is a deliberate 422. The fixture only FAILS a
@@ -1358,6 +1352,249 @@ test(
       ).json();
       expect(stored.command).toBe(NPX);
       expect(stored.args).toEqual([PKG_EVERYTHING]);
+    });
+  },
+);
+
+// ─── Single-server read-back and update (#1397) ──────────────────────────────
+//
+// The two tests below are the API half of this file: every test above registers
+// through the modal and spot-checks the result, while `GET /servers/{name}` and
+// `PATCH /servers/{name}` — the endpoints the modal's own edit path is built on —
+// had no coverage of their own. Only list / create / delete and the 409/404 pair
+// (`mcp/client/mcp-server-registration-status-codes.spec.ts`) did.
+//
+// Three deliberate choices, all measured on nightly 1.12.0.dev20:
+//
+//  1. **No subprocess, no npm registry.** Registration persists the config
+//     without probing it, so these register a deliberately non-existent package —
+//     the same reasoning as the `uvx mcp-server-test` persistence test above.
+//     That is what lets them be `@stable` from the start: nothing here can flake
+//     on a cold `npx` download.
+//  2. **Every assertion reads back with a fresh GET**, never the write's own
+//     response body. `POST` and `PATCH` both echo the config, so an endpoint that
+//     validated and returned without persisting would pass an echo-only check.
+//  3. **Pure `page.request`.** The deliberate 422 in the update test runs outside
+//     the browser page, so it never reaches the fixture's `page.on("response")`
+//     backend-error monitor — no `allowHttpErrors()` needed. Same reasoning as
+//     the sibling status-codes spec.
+//
+// NOT asserted here, and the spec doc says why: `GET` of an unknown name answers
+// 200 `null` rather than the 404 its sibling `DELETE` returns, and `PATCH` of an
+// unknown name answers 200 and CREATES the server. Both look wrong; asserting
+// today's behaviour would enshrine it and asserting the corrected behaviour would
+// ship a durably red `@stable` test. They belong in a product-finding issue.
+
+// Worker index + timestamp disambiguate parallel workers; the UUID also rules out
+// two independent invocations against the same instance colliding in the same
+// millisecond (a local run against the instance the daily is using).
+const API_PROBE_UNIQUE = `${process.env.TEST_WORKER_INDEX ?? "0"}-${Date.now()}-${randomUUID().slice(0, 8)}`;
+const PKG_PROBE_A = "mcp-server-read-back-probe";
+const PKG_PROBE_B = "mcp-server-updated-probe";
+
+/** Auth + JSON headers for the v2 MCP API, asserted non-empty. */
+async function mcpApiHeaders(page: Page): Promise<Record<string, string>> {
+  const authHeader = await getAuthToken(page.request);
+  expect(
+    authHeader,
+    "Auth token is empty — the instance returned no access_token, so the " +
+      "assertions below would fail for an auth reason, not for the contract",
+  ).toBeTruthy();
+  return {
+    Authorization: authHeader,
+    "Content-Type": "application/json",
+  };
+}
+
+test("a registered MCP server is read back individually with the fields it was created with",
+  { tag: ["@api", "@mcp", "@stable"] },
+  async ({ page }) => {
+    const serverName = `read-back-${API_PROBE_UNIQUE}`;
+    const path = `/api/v2/mcp/servers/${serverName}`;
+    // `env` is stored encrypted and returned decrypted, so asserting it here also
+    // covers that round trip — a read that returned the ciphertext would fail.
+    const config = {
+      command: NPX,
+      args: [PKG_PROBE_A],
+      env: { MCP_PROBE_TOKEN: "probe-value" },
+    };
+    const headers = await mcpApiHeaders(page);
+
+    await test.step("Pre-clean: drop anything a crashed retry left under this name", async () => {
+      // The name is stable within a worker process, so a retry that died after
+      // registering would otherwise hit 409 on the POST below.
+      await page.request.delete(path, { headers });
+    });
+
+    await test.step("Register the server through the v2 API", async () => {
+      const created = await page.request.post(path, { headers, data: config });
+      // Registered for `afterEach` BEFORE the assertion: a POST that commits the
+      // row and then answers non-2xx would otherwise abort this step with the
+      // name unknown to the cleanup, leaking a server nothing can reclaim (the
+      // suffix has moved on). An unnecessary push is free — `afterEach` lists
+      // first and only deletes names it actually finds.
+      registeredServers.push(serverName);
+      expect(
+        created.status(),
+        `Registering a fresh name should succeed (2xx). Body: ${await created.text()}`,
+      ).toBeLessThan(300);
+    });
+
+    await test.step("GET /servers/{name} returns exactly the stored config", async () => {
+      const resp = await page.request.get(path, { headers });
+      expect(resp.status(), "the single-server read must answer 200").toBe(200);
+
+      const stored = (await resp.json()) as Record<string, unknown>;
+
+      // FIRST, so it can actually be the assertion that reports: the deep
+      // equality below subsumes it, and placed after it this could never fail.
+      // The name is owned by the URL path — the same rule the update test pins
+      // from the write side (422 on a body `name`).
+      expect(
+        Object.keys(stored),
+        "the config must not carry a `name` — it lives in the URL",
+      ).not.toContain("name");
+
+      expect(
+        stored,
+        "the single read must return the config as posted. Deep equality, not " +
+          "per-field checks: a body that quietly gained a `name`, a transport " +
+          "label or any other key must fail here",
+      ).toEqual(config);
+    });
+
+    await test.step("The same server is visible in the list endpoint", async () => {
+      // A single-read endpoint answering from a store the list does not see would
+      // otherwise pass every assertion above.
+      expect(await listMcpServerNames(page)).toContain(serverName);
+    });
+  },
+);
+
+test("PATCH updates a registered server, merges at the top level, and refuses to rename it",
+  { tag: ["@api", "@mcp", "@stable"] },
+  async ({ page }) => {
+    const serverName = `update-${API_PROBE_UNIQUE}`;
+    const path = `/api/v2/mcp/servers/${serverName}`;
+    const headers = await mcpApiHeaders(page);
+    const readStored = async (): Promise<Record<string, unknown>> => {
+      const resp = await page.request.get(path, { headers });
+      expect(resp.status(), "the read-back must answer 200").toBe(200);
+      const body = (await resp.json()) as Record<string, unknown> | null;
+      // Checked, not assumed (the convention `listMcpServerNames` sets above):
+      // this endpoint answers 200 with a `null` body for a name it does not
+      // know, so an unguarded read would die as `Cannot read properties of
+      // null` inside whichever assertion called this, hiding the fact that the
+      // server went missing mid-test.
+      expect(
+        body,
+        "the server vanished mid-test — GET answered 200 with a null body",
+      ).not.toBeNull();
+      return body as Record<string, unknown>;
+    };
+
+    await test.step("Pre-clean: drop anything a crashed retry left under this name", async () => {
+      await page.request.delete(path, { headers });
+    });
+
+    await test.step("Register the server through the v2 API", async () => {
+      const created = await page.request.post(path, {
+        headers,
+        data: {
+          command: NPX,
+          args: [PKG_PROBE_A],
+          env: { MCP_PROBE_TOKEN: "probe-value" },
+        },
+      });
+      // Registered before the assertion, for the reason spelled out in the
+      // read-back test above.
+      registeredServers.push(serverName);
+      expect(
+        created.status(),
+        `Registering a fresh name should succeed (2xx). Body: ${await created.text()}`,
+      ).toBeLessThan(300);
+    });
+
+    await test.step("PATCH changes args and the change is persisted, not just echoed", async () => {
+      // args ONLY, no `command`: that is what makes the next two assertions
+      // evidence of a merge rather than of an echo — both surviving keys are
+      // keys this patch never mentioned. Measured 200 on 1.12.0.dev20; the
+      // stdio policy refuses an args-only patch only when the args carry a
+      // dangerous keyword (`-y`), which these deliberately do not.
+      const patched = await page.request.patch(path, {
+        headers,
+        data: { args: [PKG_PROBE_B] },
+      });
+      expect(
+        patched.status(),
+        `PATCH of a registered server must succeed. Body: ${await patched.text()}`,
+      ).toBe(200);
+
+      const stored = await readStored();
+      expect(stored.args, "the new args must be readable back").toEqual([
+        PKG_PROBE_B,
+      ]);
+      expect(
+        stored.command,
+        "command must survive a patch that never mentioned it",
+      ).toBe(NPX);
+      expect(
+        stored.env,
+        "a key the patch did not mention must survive — the merge is per " +
+          "top-level key, not a whole-document replace",
+      ).toEqual({ MCP_PROBE_TOKEN: "probe-value" });
+    });
+
+    await test.step("PATCH replaces a key's value wholesale rather than deep-merging it", async () => {
+      const patched = await page.request.patch(path, {
+        headers,
+        data: { env: { MCP_PROBE_OTHER: "second-value" } },
+      });
+      expect(
+        patched.status(),
+        `an env-only PATCH must succeed. Body: ${await patched.text()}`,
+      ).toBe(200);
+
+      const stored = await readStored();
+      expect(
+        stored.env,
+        "env must be REPLACED by the patched object, not merged into it — a " +
+          "deep merge would leave MCP_PROBE_TOKEN behind",
+      ).toEqual({ MCP_PROBE_OTHER: "second-value" });
+      expect(stored.command, "command must survive an env-only patch").toBe(NPX);
+      expect(stored.args, "args must survive an env-only patch").toEqual([
+        PKG_PROBE_B,
+      ]);
+    });
+
+    await test.step("PATCH cannot rename the server, and a refused patch changes nothing", async () => {
+      // The refusal is asserted next to the successful patches above for the same
+      // reason the command/args contract test asserts both directions: a 422-only
+      // check would pass against an endpoint that refused every patch.
+      const renamed = await page.request.patch(path, {
+        headers,
+        data: { name: `${serverName}-renamed` },
+      });
+      expect(
+        renamed.status(),
+        "a body `name` disagreeing with the URL must be refused with 422",
+      ).toBe(422);
+      const detail = (await renamed.json()) as { detail?: unknown };
+      expect(
+        typeof detail?.detail === "string" ? detail.detail : "",
+        "the 422 must be the immutable-name rule, not an unrelated validation error",
+      ).toMatch(/name is immutable/i);
+
+      const stored = await readStored();
+      expect(
+        stored,
+        "a refused patch must leave the stored config untouched and must not " +
+          "persist the rejected `name` as stray config",
+      ).toEqual({
+        command: NPX,
+        args: [PKG_PROBE_B],
+        env: { MCP_PROBE_OTHER: "second-value" },
+      });
     });
   },
 );
