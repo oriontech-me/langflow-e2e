@@ -4,6 +4,7 @@ import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test"
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { ensureCustomComponentButton } from "../../../helpers/ui/ensure-custom-component-button";
+import { addCustomComponent } from "../../../helpers/flows/add-custom-component";
 
 // Capture every flow THIS page creates from its POST /api/v1/flows → 201
 // responses and delete them id-scoped in afterEach. awaitBootstrapTest runs
@@ -39,12 +40,15 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-test.fixme(
+test(
   "user should be able to edit name and description of a node",
-  // Quarantined at triage (#1296): recurrent flake 2x (2026-07-17, 2026-08-05) —
-  // the `div-generic-node` click times out at 20s, so the node never becomes
-  // clickable. Restore (`test` + `@stable`) in #1301.
-  { tag: ["@release", "@workspace", "@components"] },
+  // Quarantine lifted in #1301. The `div-generic-node` click timing out at 20s was
+  // never a node that would not take a click — measured on nightly 1.12.0.dev23,
+  // 0 of 26 attempts had one — it was the ADD being swallowed, so there was no
+  // node at all (9 of 10 first clicks produced none within 40s). The add now goes
+  // through `addCustomComponent`, which re-issues the click once and otherwise
+  // fails naming the swallowed add.
+  { tag: ["@stable", "@release", "@workspace", "@components"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);
@@ -68,7 +72,7 @@ test.fixme(
     await page.getByTestId("blank-flow").click();
 
     await ensureCustomComponentButton(page);
-    await page.getByTestId("sidebar-custom-component-button").click();
+    await addCustomComponent(page);
 
     await page.getByTestId("div-generic-node").click();
 

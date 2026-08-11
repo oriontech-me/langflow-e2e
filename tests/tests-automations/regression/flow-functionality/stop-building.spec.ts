@@ -1,31 +1,43 @@
 import { expect, test } from "../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
-import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { ensureCustomComponentButton } from "../../../helpers/ui/ensure-custom-component-button";
+import { addCustomComponent } from "../../../helpers/flows/add-custom-component";
+import {
+  trackCreatedFlows,
+  type FlowTracker,
+} from "../../../helpers/flows/track-created-flows";
 
-// Flow created by the test (blank-flow → /flow/{id}); captured so afterEach can
-// delete only this one via the API. Targeted (not cleanAllFlows) so the teardown
-// is safe under parallel runs, and idempotent if capture never happened.
-let createdFlowId: string | undefined;
+// Every flow THIS page creates, captured from its POST /api/v1/flows → 201
+// responses and deleted id-scoped in afterEach (the shared cleanup of #1108).
+//
+// It used to capture ONE id, read off the canvas URL. That missed two flows per
+// run and #1301 counted them: the flow `awaitBootstrapTest` creates on its way
+// through the templates modal was never captured at all, and a run that died
+// before reaching the URL read captured nothing — 5 orphan "New Flow"s survived 4
+// solo runs. Capturing the creation responses covers both, and is what the rest
+// of the suite already does.
+let flows: FlowTracker | undefined;
 
-test.afterEach(async ({ page }) => {
-  if (!createdFlowId) return;
-  const login = await page.request.get("/api/v1/auto_login");
-  const headers: Record<string, string> = {};
-  if (login.ok()) {
-    const body = await login.json();
-    if (body?.access_token) headers.Authorization = `Bearer ${body.access_token}`;
-  }
-  await deleteFlow(page.request, createdFlowId, { headers });
-  createdFlowId = undefined;
+test.beforeEach(async ({ page }) => {
+  flows = trackCreatedFlows(page);
 });
 
-test.fixme("user must be able to stop a building from the canvas",
-  // Quarantined at triage (#1296): recurrent flake 2x (2026-07-14, 2026-08-05) —
-  // the `div-generic-node` click times out at 20s, so the node never becomes
-  // clickable. Restore (`test` + `@stable`) in #1301.
-  { tag: ["@release", "@workspace", "@components"] },
+test.afterEach(async ({ request }) => {
+  if (!flows) return;
+  await flows.cleanup(request);
+  flows.dispose();
+  flows = undefined;
+});
+
+test("user must be able to stop a building from the canvas",
+  // Quarantine lifted in #1301. The `div-generic-node` click timing out at 20s was
+  // never a node that would not take a click — measured on nightly 1.12.0.dev23,
+  // 0 of 26 attempts had one — it was the ADD being swallowed, so there was no
+  // node at all (9 of 10 first clicks produced none within 40s). The add now goes
+  // through `addCustomComponent`, which re-issues the click once and otherwise
+  // fails naming the swallowed add.
+  { tag: ["@stable", "@release", "@workspace", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -39,18 +51,37 @@ test.fixme("user must be able to stop a building from the canvas",
       // before we reach for the sidebar. Anchoring on this (instead of a tight
       // waitForSelector) lets the button click auto-wait for visibility and
       // avoids the "sidebar-custom-component-button hidden" flake.
+      //
+      // The overlay is waited out FIRST, and the 10s budget this carried was too
+      // tight — both measured under #1301 on nightly 1.12.0.dev23. On a
+      // blank-flow entry the `flow-builder-welcome-panel` covers the canvas and
+      // `canvas_controls_dropdown` is not even in the DOM until it clears: the
+      // overlay was up on 3 of 3 entries, and the controls appeared at ~1s on one
+      // and ~10.6s on another. At 10s that failed 2 of 3 solo runs on a freshly
+      // created instance — at the step BEFORE the swallowed add this issue is
+      // about, which is why it reads as an unrelated failure. Waiting the overlay
+      // out explicitly keeps the attribution: a stuck overlay fails as the
+      // overlay, not as controls that "never appeared". 30s is the budget
+      // `setupBlankFlow` already uses for this same observable.
+      const welcomeOverlay = page.locator(
+        '[data-testid="flow-builder-welcome-panel"]',
+      );
+      if (await welcomeOverlay.isVisible().catch(() => false)) {
+        await expect(welcomeOverlay).toBeHidden({ timeout: 30000 });
+      }
+
       await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
-        timeout: 10000,
+        timeout: 30000,
       });
 
-      // Canvas mounted at /flow/{id} — wait for the URL to settle before
-      // reading it, so teardown reliably captures the id (a bare page.url()
-      // here can race the navigation and miss it, leaking the flow).
+      // The canvas is mounted at /flow/{id}; kept as a step barrier, not as the
+      // teardown's source of truth — cleanup reads the creation responses now
+      // (see the tracker note at the top), which is what covers a run that dies
+      // before this line.
       await page.waitForURL(/\/flow\/[^/?#]+/, { timeout: 10000 });
-      createdFlowId = page.url().split("/flow/")[1]?.split(/[/?#]/)[0];
 
       await ensureCustomComponentButton(page);
-      await page.getByTestId("sidebar-custom-component-button").click();
+      await addCustomComponent(page);
       await adjustScreenView(page);
     });
 
@@ -115,6 +146,21 @@ class CustomComponent(Component):
       await page.locator("textarea").fill(waitTimeoutCode);
 
       await page.getByText("Check & Save").last().click();
+
+      // The code modal must be GONE before the canvas is touched again.
+      // `adjustScreenView` clicks `canvas_controls_dropdown`, and while the modal
+      // is open its Radix overlay (`fixed inset-0 z-50`) intercepts every pointer
+      // event on the canvas — the click is on a button Playwright reports as
+      // "visible, enabled and stable", so it retries until the 20 s actionability
+      // budget expires instead of failing on something nameable. Measured under
+      // #1301 on nightly 1.12.0.dev23: 1 of 3 combined runs died here with 41
+      // retries of "subtree intercepts pointer events", at the step AFTER the
+      // swallowed add this issue is about, which is why it read as the same bug.
+      await expect(page.locator('[role="dialog"][data-state="open"]')).toHaveCount(
+        0,
+        { timeout: 30000 },
+      );
+
       await adjustScreenView(page, { numberOfZoomOut: 2 });
     });
 

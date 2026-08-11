@@ -193,6 +193,78 @@ test("the no-search message stays unclassifiable as infra, like the search one",
   );
 });
 
+test("the dedicated Custom Component button names no term, but still reports its input", () => {
+  // #1301. The Components tab HAS a search box; this button just does not use it.
+  // Reporting it as `no-search-box` (the MCP-tab clause) would tell the reader the
+  // surface has no input when it does — and `search input: ""` on a tab that owns
+  // one is a real observation about the sidebar, so it must still be read back.
+  const msg = swallowedAddMessage({
+    ...DETAIL,
+    surface: "dedicated-button",
+    searchTerm: null,
+    searchValue: "",
+    addButtonTestId: "sidebar-custom-component-button",
+  });
+
+  assert.match(msg, /without typing a search term/);
+  assert.match(msg, /sidebar-custom-component-button/);
+  assert.match(msg, /search input: ""/);
+  assert.doesNotMatch(msg, /no search box/i);
+  assert.doesNotMatch(msg, /after filling the sidebar search/);
+  // It is not a "+" button — naming it one sends the reader to the wrong control.
+  assert.match(msg, /custom-component button still visible/);
+  assert.doesNotMatch(msg, /"\+" button still visible/);
+});
+
+test("the dedicated button quotes ONLY the rate measured on it", () => {
+  // Each surface has its own measurement. #1304's 4/20 was taken on the
+  // Components-tab "+" buttons and #1335's 1/5 on the drag; quoting either here
+  // would attribute a number to a surface it was never taken on.
+  const msg = swallowedAddMessage({
+    ...DETAIL,
+    surface: "dedicated-button",
+    searchTerm: null,
+    searchValue: "",
+  });
+
+  assert.match(msg, /issue #1301/);
+  assert.match(msg, /9 of 10/);
+  assert.match(msg, /14 of 14/);
+  assert.match(msg, /1\.12\.0\.dev23/);
+  assert.doesNotMatch(msg, /4\/20/);
+  assert.doesNotMatch(msg, /1\/5/);
+});
+
+test("the surface defaults to what searchTerm implies, so every pre-#1301 message is unchanged", () => {
+  // 34+ call sites never pass a surface. If the default drifted, all of them would
+  // start describing a control they never clicked.
+  assert.equal(
+    swallowedAddMessage(DETAIL),
+    swallowedAddMessage({ ...DETAIL, surface: "search" }),
+  );
+  const noSearchBox = { ...DETAIL, searchTerm: null, searchValue: null };
+  assert.equal(
+    swallowedAddMessage(noSearchBox),
+    swallowedAddMessage({ ...noSearchBox, surface: "no-search-box" }),
+  );
+});
+
+test("the dedicated-button message stays unclassifiable as infra", () => {
+  // #1262's rule reaches the new surface too: a genuine regression in adding a
+  // Custom Component must stay eligible for @stable auto-removal.
+  assert.equal(
+    classifyInfraError(
+      swallowedAddMessage({
+        ...DETAIL,
+        surface: "dedicated-button",
+        searchTerm: null,
+        searchValue: "",
+      }),
+    ),
+    null,
+  );
+});
+
 test("the swallowed-click message is NOT classifiable as an infra failure", () => {
   // Same rule as the page-entry barrier (#1262): claiming infra here would exempt
   // the failure from @stable auto-removal and hide a genuine add regression.
