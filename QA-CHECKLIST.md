@@ -1023,7 +1023,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 484 `test()` calls carrying the `@stable` tag, distributed across 189 spec
+> 485 `test()` calls carrying the `@stable` tag, distributed across 189 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1344,6 +1344,7 @@
 - [x] a discovered model runs a flow through the OpenAI Compatible provider → `openai-compatible-provider-setup.spec.ts`
 - [x] saving a base URL and an API key through Settings persists BOTH variables → `openai-compatible-provider-setup.spec.ts`
 - [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
+- [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
 - [x] a misconfigured flow surfaces an appropriate build-error message → `flow-error-message.spec.ts`
