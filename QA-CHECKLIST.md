@@ -1023,7 +1023,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 485 `test()` calls carrying the `@stable` tag, distributed across 189 spec
+> 484 `test()` calls carrying the `@stable` tag, distributed across 189 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1494,7 +1494,6 @@
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
 - [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
-- [x] mcp server tools should be refreshed when editing a server → `mcp-server.spec.ts`
 - [x] stdio command with an embedded argument is refused, and command plus args is accepted → `mcp-server.spec.ts`
 - [x] a registered MCP server is read back individually with the fields it was created with → `mcp-server.spec.ts`
 - [x] PATCH updates a registered server, merges at the top level, and refuses to rename it → `mcp-server.spec.ts`

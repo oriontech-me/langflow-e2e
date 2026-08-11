@@ -778,7 +778,7 @@ test("HTTP/SSE MCP server fields should persist after saving and editing",
 );
 
 test("mcp server tools should be refreshed when editing a server",
-  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     // Three `TOOL_LIST_TIMEOUT` waits (register A, edit to B, re-register A)
     // plus the settings round-trips do not fit the suite's 5-minute per-test
