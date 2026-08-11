@@ -72,9 +72,17 @@ test.describe("browser locale — withLocale() opts a describe block out", () =>
       // Asserted through `Intl` as well as `navigator.language`: the option is
       // only worth having because it changes formatting, and a stub that set the
       // navigator property alone would pass the line above.
-      expect(await page.evaluate(() => new Date(0).toLocaleString())).toContain(
-        "31/12/1969",
-      );
+      //
+      // NUMBER formatting, not a date. The first version of this gate asserted
+      // `new Date(0).toLocaleString()` contained "31/12/1969" — which is true
+      // only in a negative-UTC-offset zone. It passed on a UTC-3 laptop and
+      // failed on the UTC CI runner, where epoch 0 is "01/01/1970, 00:00:00":
+      // a locale assertion that was really reading the TIMEZONE. Number grouping
+      // and the decimal separator differ between en-US (1,234.5) and pt-BR
+      // (1.234,5) with no clock involved.
+      expect(
+        await page.evaluate(() => new Intl.NumberFormat().format(1234.5)),
+      ).toBe("1.234,5");
     },
   );
 });
