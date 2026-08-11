@@ -9,22 +9,45 @@
 The **consumption** side of a project's MCP server (QA-CHECKLIST §14.1): how a user
 actually connects a client to it.
 
-1. **The connection URL the API publishes is a real endpoint.**
-   `GET /api/v1/mcp/project/{id}/composer-url` returns the project's streamable and
-   legacy-SSE URLs, and the streamable one answers a real MCP `initialize` identifying
-   **that** project — "resolves" asserted against the protocol, not against a 200.
-2. **The UI hands the user the same value.** The MCP Server tab's JSON configuration —
-   the thing the copy button puts on the clipboard — carries the *identical* URL
-   string, not a re-derived or stale one.
-3. **The installed state is reported per client, and the UI reflects it.**
-   `GET /api/v1/mcp/project/{id}/installed` reports `installed`/`available` for Cursor,
-   Windsurf and Claude, and each auto-install button's enabled state matches the answer
-   **the page itself received** — the response is captured from the page's own request,
-   so the two cannot be read from different states.
+1. **The URL the UI hands the user is rooted at the origin they are browsing.** The
+   MCP Server tab's JSON configuration — what the copy button puts on the clipboard —
+   carries a connection URL built from `window.location.origin`, so someone copying
+   from a remote Langflow gets a URL pointing at that remote rather than at the
+   server's own idea of its hostname.
+2. **The UI and the API agree on the path**, and **the copied URL is a live endpoint.**
+   `GET /api/v1/mcp/project/{id}/composer-url` publishes the project's streamable and
+   legacy-SSE paths; the copied URL's path is the streamable one, and running an MCP
+   `initialize` **against the copied string** identifies that same project — "resolves"
+   asserted against the protocol, on the value a user would actually paste.
+3. **The installed state is reported per client, and the auto-install list reflects
+   it.** `GET /api/v1/mcp/project/{id}/installed` reports `installed`/`available` for
+   Cursor, Windsurf and Claude, and each button's enabled state matches the answer
+   **the page itself received** — captured from the page's own request, so the two
+   cannot be read from different states. A third test routes one client to
+   `available: true`, because in every environment the suite runs in all three are
+   false and the correspondence would otherwise be indistinguishable from a constant.
 
-If this fails, the advertised path for consuming an MCP server is broken: the URL the
-UI copies no longer matches the one the API publishes, the published URL is not a live
-endpoint, or the install list shows a state the backend did not report.
+If this fails, the advertised path for consuming an MCP server is broken: the UI hands
+out a URL that does not resolve for the user who copied it, the two sides disagree
+about which endpoint the project is served on, or the install list shows a state the
+backend did not report.
+
+### The mechanism — the obvious reading is wrong, and it decides what may be asserted
+
+**The MCP Server tab never fetches `composer-url`.** That query is gated on an OAuth
+project with MCP Composer enabled (`useMcpServer.ts`), which the default deployment is
+not; the tab's only MCP calls are `GET /{id}?mcp_enabled=false` and `GET /{id}/installed`
+(measured). So the two URLs are **independent derivations of the same address**: the
+backend builds `http://{settings.host}:{port}/…`
+(`api/utils/mcp/config_utils.py`), the frontend builds `${window.location.origin}/…`
+(`customization/utils/custom-mcp-url.ts`).
+
+Nothing propagates from one to the other. Asserting the two absolute URLs are the same
+**string** therefore asserts a coincidence of deployment, not a product property: the
+first version of this spec did exactly that and **failed on a healthy instance merely
+reached as `127.0.0.1` instead of `localhost`** — a red that would have looked like a
+product defect, on `manual.yml`'s external-URL job in particular. What is invariant is
+one property from each side: the UI's origin rule, and agreement on the path.
 
 ---
 
@@ -44,7 +67,10 @@ endpoint, or the install list shows a state the backend did not report.
 
 ## Preconditions *(optional)*
 
-- Langflow running at `PLAYWRIGHT_BASE_URL`; auto-login superuser.
+- Langflow running at `PLAYWRIGHT_BASE_URL`; auto-login superuser. **Any** base URL
+  works — the spec deliberately does not require it to match the backend's configured
+  `host:port` (see *The mechanism*); verified green against both
+  `http://localhost:7860/` and `http://127.0.0.1:7860/`.
 - At least one project exists (the default `Starter Project` satisfies this).
 - Clipboard read/write permission — already granted to every context by
   `playwright.config.ts`.
@@ -56,49 +82,62 @@ endpoint, or the install list shows a state the backend did not report.
 
 A file-local helper opens the MCP Server tab from the home page (`mcp-btn` →
 `mcp-server-title`) **while capturing the `GET …/installed` response the page itself
-issues**, and returns that project id together with the parsed body. Both tests start
+issues**, and returns that project id together with the parsed body. All three tests start
 from it, so neither depends on the other and neither assumes which project the UI
 selects by default.
 
-### 1 — `the composer URL resolves, and the JSON the UI copies carries the same value`
+### 1 — `the URL the UI copies is rooted at the user's own origin, agrees with the API, and resolves`
 
 1. Open the tab; take the project id from the page's own request.
 2. `GET /api/v1/mcp/project/{id}/composer-url`: assert 200, `uses_composer: false`,
-   `error_message: null`, and that `streamable_http_url` / `legacy_sse_url` end in this
-   project's `/streamable` and `/sse` paths.
-3. **Resolve it:** run the MCP handshake against the returned **absolute**
-   `streamable_http_url` and assert `serverInfo.name === langflow-mcp-project-{id}`.
-   A URL that 200s but belongs to another project would pass a status check.
-4. Switch to the **JSON** tab, click `icon-copy`, and wait for it to become
-   `icon-check` (the control's own confirmation).
-5. Read the clipboard, parse it as JSON, and assert it declares exactly one server
-   under `mcpServers` whose `args` **contain the composer URL verbatim**.
+   `error_message: null`, and that the **pathnames** of `streamable_http_url` and
+   `legacy_sse_url` are this project's `/streamable` and `/sse`. Paths, not absolute
+   URLs — the origin is the backend's own `settings.host:port` (see *The mechanism*).
+3. Switch to the **JSON** tab, click `icon-copy`, and poll the clipboard until it is
+   non-empty. Parse it; assert exactly one server under `mcpServers` and exactly one
+   `http` argument, and take that as the copied URL.
+4. Assert the copied URL's **origin** equals the page's own origin — the frontend's
+   rule, and the property that makes the URL usable by whoever copied it.
+5. Assert the copied URL's **path** equals the path the API published: the two
+   independent derivations agree on where the project is served.
+6. **Resolve it:** run the MCP handshake **against the copied URL** and assert
+   `serverInfo.name === langflow-mcp-project-{id}`. Reachable by construction, since
+   its origin is the page's own.
 
-### 2 — `installed state is reported per client and the auto-install list reflects it`
+### 2 — `the auto-install list reflects the install state the page was given`
 
 1. Open the tab, capturing the `installed` response.
 2. Assert the API reports exactly the three supported clients — `cursor`, `windsurf`,
    `claude` — each with boolean `installed` and `available`.
-3. Read the page's own locality rule (`window.location.hostname` against
-   `localhost`/`127.0.0.1`/`0.0.0.0`, which is what
-   `useCustomIsLocalConnection` uses).
-4. For each of **Cursor**, **Claude** and **Windsurf**, assert the button's disabled
-   state equals `!available || !isLocalConnection` — the product's own rule, so the
-   assertion holds on any base URL and in any environment rather than hard-coding
-   "disabled".
+3. For each of **Cursor**, **Claude** and **Windsurf**, assert (polled) that the
+   button's disabled state equals `!available || !isLocalConnection`, with locality
+   read from the page exactly as `useCustomIsLocalConnection` computes it.
+
+### 3 — `a client reported as available is offered, while the others stay disabled`
+
+1. Route `GET …/installed` to report `cursor` as `available: true` and the other two
+   as false, then open the tab.
+2. Assert the page received the routed state — otherwise this test silently becomes a
+   copy of test 2.
+3. Assert the same correspondence as test 2, which now separates "reflects the API"
+   from "always disabled": **Cursor enabled, Claude and Windsurf disabled**.
+
+The button is only asserted to be offered. It is never clicked — that would
+`POST /install`, which writes real MCP client configuration.
 
 ---
 
 ## Validation criterion *(required)*
 
-- `composer-url` answers with both transport URLs for the project the UI is showing,
-  and the streamable one completes an MCP `initialize` whose `serverInfo.name` names
-  that same project.
-- The clipboard JSON's `args` contain the composer URL **string for string**. A UI that
-  rebuilt the URL from its own state — or served a cached one after a host change —
-  fails here even though both would still "look" correct.
-- `installed` reports all three supported clients with both booleans, and every
-  auto-install button agrees with the response the page received.
+- `composer-url` answers 200 with `uses_composer: false`, no error message, and both
+  transport **paths** for the project the UI is showing.
+- The copied configuration carries exactly one connection URL; its **origin** is the
+  page's own, and its **path** is the streamable path the API published.
+- That copied URL completes an MCP `initialize` whose `serverInfo.name` names the same
+  project — so the string the user pastes is a live endpoint, not just well-formed.
+- `installed` reports all three supported clients with both booleans, every
+  auto-install button agrees with the response the page received, and a client routed
+  to `available: true` is **offered** while the other two stay disabled.
 
 ## Guarding against false positives *(how)*
 
@@ -110,13 +149,21 @@ selects by default.
 - **The `installed` body is the one the page received**, captured from its request
   rather than fetched again afterwards. A second fetch could observe a different state
   and turn a genuine UI/API disagreement into a green run.
-- **The URL is asserted by resolving it**, not by pattern-matching. Asserting
-  `toContain("/streamable")` would pass against a URL pointing at another project or a
-  dead host.
-- **The clipboard comparison is exact.** `toContain(projectId)` would pass on a URL
-  with the wrong scheme, host or transport.
-- **The disabled-state assertion mirrors the product rule** rather than the current
-  environment, so it cannot silently degrade into "everything is disabled here anyway".
+- **The URL is asserted by resolving it**, not by pattern-matching, and by resolving
+  the **copied** one — the string a user pastes — rather than one the test rebuilt.
+- **The path comparison is exact** (`toBe`, whole pathname). `toContain(projectId)`
+  would pass on a URL with the wrong transport, and comparing the whole absolute URL
+  would fail on a healthy instance reached by a different name (see *The mechanism*).
+- **The disabled-state correspondence is given discriminating power by a routed
+  test.** Mirroring the product rule is not enough on its own: with all three clients
+  unavailable in every lane, the rule evaluates to a constant, and a mutation replacing
+  it with a hardcoded `true` survives. With one client routed to `available: true` that
+  mutation fails — verified.
+- **The clipboard is polled, not gated on the `icon-check` confirmation**, which
+  resets after 1 s and would make a successful copy fail whenever the first sample
+  lands late.
+- **The page entry is attributed** (`waitForPageEntry`, #1262): on a wedged backend the
+  failure names the backend instead of reading as a UI defect.
 - **Force-failure check** (CONTRIBUTING §2) executed per assertion during VERIFY.
 
 ---
@@ -138,9 +185,21 @@ selects by default.
      container in every lane, so the peer is the bridge gateway and the call answers
      `500 "MCP configuration can only be installed from a local connection"`. Measured
      against the local nightly container.
-  Covering it needs an environment that is disposable **and** originates the call from
-  inside the container — a dedicated lane, not this spec. The §14.1 bullet is therefore
-  marked `[~]` rather than `[x]`, and this is the gap.
+  Covering the **write** needs an environment that is disposable **and** originates the
+  call from inside the container — a dedicated lane, not this spec. The §14.1 bullet is
+  therefore marked `[~]` rather than `[x]`, and this is the gap.
+
+  **There is, however, a write-safe half worth a follow-up.** `install_mcp_config`
+  rejects an unavailable client with `400 "<Client> is not installed on this system"`
+  **before** `config_path.parent.mkdir()` and before the write
+  (`mcp_projects.py`) — so for a client that `GET /installed` reports as
+  `available: false`, the POST provably cannot touch the filesystem on any machine. A
+  spec that reads `installed`, skips loudly if any client reports `available: true`,
+  then POSTs and asserts the refusal would exercise the endpoint's guard rails —
+  including the **locality guard**, which `get_client_ip`'s own docstring frames as an
+  anti-spoofing control and which nothing regression-tests today. It is still not
+  "performs the install", and the skip reason must be asserted (#570's green-all-skip),
+  so it belongs in its own issue rather than here.
 - **The auto-install click path**, for the same reason — and in every environment the
   suite runs in the buttons are disabled, because no client's config directory exists
   inside the container.
@@ -152,7 +211,11 @@ selects by default.
   shape (`mcpServers`, `uvx`, `mcp-proxy`) and the key substitution. This spec asserts
   the one thing that spec does not: that the copied URL **equals** the API's.
 - **Tool selection and the protocol itself** — `mcp-server-project-config.spec.ts`
-  (#1396) and `mcp-server-protocol.spec.ts`.
+  (#1396) and `mcp-server-protocol.spec.ts`. That spec also asserts `composer-url`'s
+  shape and a `serverInfo.name`; the overlap is deliberate and minimal — here those two
+  are the **precondition** for the path-agreement and the copied-URL handshake, which
+  is what this spec is actually about. The URL it hands to the handshake is the one the
+  UI copied, not one the test built.
 
 ---
 
