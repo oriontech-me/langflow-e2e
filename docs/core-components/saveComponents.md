@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/saveComponents.spec.ts`
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev23`)
 
 ---
 
@@ -28,11 +28,22 @@ surfaces in the sidebar under the `disclosure-saved` disclosure.
   race.
 - A **Chat Input** component is added from the sidebar. The add button is scoped
   to the built-in Input & Output entry
-  (`input_outputChat Input` → `add-component-button-chat-input`) because when a
-  saved component named "Chat Input" also exists, a homonymous
-  `add-component-button-chat-input` renders under it and the bare testid is
-  ambiguous. The node is then selected (`title-Chat Input`) and saved via
-  `more-options-modal` → `icon-SaveAll`.
+  (`input_output_chat input_draggable` → `add-component-button-chat-input`)
+  because when a saved component named "Chat Input" also exists, a homonymous
+  `add-component-button-chat-input` renders under the Saved section and the bare
+  testid is ambiguous. The node is then selected (`title-Chat Input`) and saved
+  via `more-options-modal` → `icon-SaveAll`.
+- **The scoping ancestor is the `group/draggable` wrapper, not the row div**
+  (#1384). Upstream's a11y pass (`langflow-ai/langflow#14250`, `46d25720c2`, on
+  the `release-1.12.0` line) moved the `flex shrink-0` container holding the "+"
+  **out** of `data-testid={sectionName + display_name}` and made it that div's
+  sibling. The old chain `input_outputChat Input → add-component-button-chat-input`
+  therefore matched nothing and the click timed out (20 s) on the 2026-08-10
+  daily. The wrapper (`<section>_<name>_draggable`) is still one per section —
+  `saved_components_chat input_draggable` for the saved homonym — so it
+  disambiguates exactly as the row div used to. This spec only needs to *add* a
+  Chat Input; the button is a means, not the subject, so the change is a locator
+  fix with no assertion moved.
 - **Saving does not replace a same-named component — it suffixes it**
   ("Chat Input" → "Chat Input (1)") and opens a modal, which would break a clean
   save. The Saved-components namespace is global per user, and the node's inline
@@ -95,7 +106,8 @@ item, or the saved entity is not stored as an `is_component` flow.
 - `tests/helpers/flows/create-flow.ts` — API blank-flow creation;
   `tests/helpers/flows/delete-flow.ts` — id-scoped cleanup / pre-clean;
   `tests/helpers/auth/get-auth-token.ts` — auth.
-- Sidebar add (scoped): `input_outputChat Input` → `add-component-button-chat-input`.
+- Sidebar add (scoped): `input_output_chat input_draggable` → `add-component-button-chat-input`.
+- `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/sidebarDraggableComponent.tsx` — owns which ancestor the "+" button hangs off; moving it again breaks the scoped add (#1384).
 - Node more-options save affordance: `more-options-modal`, `icon-SaveAll`.
 - Sidebar Saved section: `disclosure-saved`, `saved_components_<name>_draggable`.
 - Saved-component API: `GET /api/v1/flows/?components_only=true` (list, diff, cleanup).
@@ -110,7 +122,7 @@ throwaway scout before authoring (`disclosure-saved`,
 
 ## Preconditions
 
-- Langflow running at `PLAYWRIGHT_BASE_URL` on a recent nightly (1.11.x).
+- Langflow running at `PLAYWRIGHT_BASE_URL` on a recent nightly (1.12.x).
 - Auth via `auto_login` (repo default).
 
 ---
