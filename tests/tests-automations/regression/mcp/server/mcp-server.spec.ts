@@ -139,8 +139,7 @@ test.afterEach(async ({ request }) => {
 // exemption: a spec that keeps appearing as collateral while others do not).
 // Lifting the quarantine (remove test.fixme + restore @stable) is a
 // deliverable of #1266.
-test.fixme(
-  "user must be able to change mode of MCP tools without any issues",
+test.fixme("user must be able to change mode of MCP tools without any issues",
   { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
@@ -336,8 +335,7 @@ test.fixme(
   },
 );
 
-test(
-  "user must be able to add and delete MCP server from sidebar",
+test("user must be able to add and delete MCP server from sidebar",
   { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
@@ -422,8 +420,7 @@ test(
   },
 );
 
-test(
-  "STDIO MCP server fields should persist after saving and editing",
+test("STDIO MCP server fields should persist after saving and editing",
   { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
@@ -588,8 +585,7 @@ test(
   },
 );
 
-test(
-  "HTTP/SSE MCP server fields should persist after saving and editing",
+test("HTTP/SSE MCP server fields should persist after saving and editing",
   { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
@@ -781,8 +777,7 @@ test(
   },
 );
 
-test(
-  "mcp server tools should be refreshed when editing a server",
+test("mcp server tools should be refreshed when editing a server",
   { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     // Three `TOOL_LIST_TIMEOUT` waits (register A, edit to B, re-register A)
@@ -1169,8 +1164,7 @@ test(
   },
 );
 
-test(
-  "Streamable HTTP MCP server with server-everything should load tools correctly",
+test("Streamable HTTP MCP server with server-everything should load tools correctly",
   { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
@@ -1273,8 +1267,7 @@ test(
   },
 );
 
-test(
-  "stdio command with an embedded argument is refused, and command plus args is accepted",
+test("stdio command with an embedded argument is refused, and command plus args is accepted",
   { tag: ["@regression", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     // The refused registration is a deliberate 422. The fixture only FAILS a
