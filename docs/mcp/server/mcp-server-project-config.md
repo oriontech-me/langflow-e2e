@@ -238,15 +238,20 @@ project). Teardown deletes the flow and then the project.
   client can call. Measured on `1.12.0.dev20`. Not asserted here — this spec's subject
   is the selection, and MCP tool naming deserves a spec of its own — but it is why the
   guard above is a hard failure rather than a comment.
-- **The project's name prefix is six characters, and that is load-bearing.**
+- **The project's name prefix must be at most six characters, and that is load-bearing.**
   Creating a project derives an MCP server named `lf-${sanitize_mcp_name(name)[:26]}`
   (`MAX_MCP_SERVER_NAME_LENGTH` is 30 minus the `lf-` prefix) and that derived name
   must be unique per user, while `createProjectViaApi` appends a 20-character
-  `-${Date.now()}-${rand5}`. A longer prefix pushes the unique part past the cut, and
-  every project this spec creates then collides with the previous one:
-  `POST /api/v1/projects/` → **409** `MCP server name conflict:
-  'lf-e2e_mcp_project_config_178' already exists for a different project`. That is
-  how the first version of this spec failed under `--workers=4 --repeat-each=3`.
+  `-${Date.now()}-${rand5}`. Six or fewer is what **guarantees** the whole unique part
+  stays inside the cut. Past six the suffix is truncated from the right and the
+  conflict risk grows with the prefix rather than becoming certain at once — at seven
+  characters four of the five random characters still survive — whereas the
+  22-character prefix the first version of this spec used (`e2e_mcp_project_config`)
+  left nothing past the first three digits of the timestamp, so there every project it
+  created collided with the previous one: `POST /api/v1/projects/` → **409**
+  `MCP server name conflict: 'lf-e2e_mcp_project_config_178' already exists for a
+  different project`. That is how that version failed under
+  `--workers=4 --repeat-each=3`.
   **This is a product behaviour, not a test artefact** — reproduced with two ordinary
   names on `1.12.0.dev20`: `Marketing Automation Project Alpha` creates, and
   `Marketing Automation Project Beta` is refused, because they share their first 26

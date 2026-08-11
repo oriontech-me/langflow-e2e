@@ -131,19 +131,23 @@ test.describe("MCP Server — per-project tool exposure", () => {
         `(lowercase, [a-z0-9_]) or both endpoints will serve a different string`,
     ).toMatch(/^[a-z][a-z0-9_]*$/);
 
-    // The prefix is FIVE characters, and that is load-bearing rather than terse.
-    // Creating a project derives an MCP server named
-    // `lf-${sanitize_mcp_name(name)[:26]}` (`MAX_MCP_SERVER_NAME_LENGTH` is 30,
-    // minus the `lf-` prefix), and that derived name must be unique per user.
-    // `createProjectViaApi` appends `-${Date.now()}-${rand5}` — 20 characters —
-    // so a prefix longer than 6 pushes the unique part past the cut and every
-    // project this spec creates collides with the previous one:
-    // `POST /api/v1/projects/` → 409 "MCP server name conflict:
+    // The prefix LENGTH is load-bearing rather than terse. Creating a project
+    // derives an MCP server named `lf-${sanitize_mcp_name(name)[:26]}`
+    // (`MAX_MCP_SERVER_NAME_LENGTH` is 30, minus the `lf-` prefix), and that
+    // derived name must be unique per user. `createProjectViaApi` appends
+    // `-${Date.now()}-${rand5}` — 20 characters — so **≤6 is what guarantees the
+    // whole unique part survives the cut**. Past 6 the suffix is truncated from
+    // the right and the conflict risk grows with the prefix rather than becoming
+    // certain at once: at 7 characters four of the five random characters still
+    // survive, while the 22-character prefix the first version of this spec used
+    // (`e2e_mcp_project_config`) left nothing past the first three digits of the
+    // timestamp — so there every project it created collided with the previous
+    // one: `POST /api/v1/projects/` → 409 "MCP server name conflict:
     // 'lf-e2e_mcp_project_config_178' already exists for a different project".
     // Measured on 1.12.0.dev20 with `--workers=4 --repeat-each=3`, which is how
-    // the first version of this spec failed. Filed as #1409 — it reproduces with
-    // two ordinary project names. Five characters give 5+1+13+1+5 = 25, one
-    // character inside the cut, so the whole suffix survives with slack.
+    // that version failed. Filed as #1409 — it reproduces with two ordinary
+    // project names. Five characters give 5+1+13+1+5 = 25, one inside the cut, so
+    // the whole suffix survives with slack.
     const project = await createProjectViaApi(request, headers, {
       namePrefix: "e2ecf",
       description: "Per-project MCP exposure (#1396)",
