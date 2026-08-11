@@ -37,9 +37,15 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-test(
+// Quarantined at triage (daily #1417): recurrent flake — the sidebar
+// add-component click does not place the node, so `button_run_api request`
+// never enters the DOM (`element(s) not found`, not "present but not
+// visible"). Same signature on the 2026-07-16, 07-20 and 08-11 dailies.
+// Lifting the quarantine (remove test.fixme + restore @stable) is a
+// deliverable of #1423.
+test.fixme(
   "a misconfigured flow surfaces an appropriate build-error message",
-  { tag: ["@stable", "@release", "@components", "@observability"] },
+  { tag: ["@release", "@components", "@observability"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     // The build failure below is intentional — without this the fixture's

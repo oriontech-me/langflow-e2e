@@ -135,9 +135,16 @@ async function expectReplyContainsToken(
 test.describe.configure({ mode: "serial" });
 
 test.describe("OpenAI Provider", () => {
-  test(
+  // Quarantined at triage (daily #1417): recurrent flake — the POST/PATCH
+  // /api/v1/variables/ persist call is answered non-2xx while
+  // validate-provider succeeds, so the key authenticates but does not
+  // persist. Same signature on the 2026-07-13 and 08-11 dailies; that match
+  // needs settling, because both `ok()` assertions below emit it and the
+  // 07-13 daily fell in the quota-drained window (see #1424). Lifting the
+  // quarantine (remove test.fixme + restore @stable) is a deliverable of #1424.
+  test.fixme(
     "OpenAI API key is configured via Settings → Model Providers",
-    { tag: ["@stable", "@model-provider", "@settings"] },
+    { tag: ["@model-provider", "@settings"] },
     async ({ page }) => {
       test.skip(
         !hasProviderEnvKeys(PROVIDER),
