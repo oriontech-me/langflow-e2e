@@ -1023,7 +1023,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 474 `test()` calls carrying the `@stable` tag, distributed across 184 spec
+> 477 `test()` calls carrying the `@stable` tag, distributed across 187 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1118,6 +1118,7 @@
 - [x] Should delete a single component with the Backspace key → `componentDelete.spec.ts`
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
+- [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
 - [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
 - [x] Data Operations Text mode returns the Case Conversion result as a Message → `data-operations-component.spec.ts`
 - [x] Data Operations Word Count switches the Text-mode output to JSON and counts the text → `data-operations-component.spec.ts`
@@ -1187,6 +1188,7 @@
 - [x] Prompt Template — `{1var}` (leading digit) is rejected with an error toast and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] Prompt Template — `{}` (empty braces) is accepted by the parser and creates no handle → `prompt-template-invalid-patterns-regression.spec.ts`
 - [x] Prompt Template — repeating the same variable produces exactly one handle (deduplication contract) → `prompt-template-invalid-patterns-regression.spec.ts`
+- [x] saving a canvas component as a template makes it reusable from the sidebar → `saveComponents.spec.ts`
 - [x] should allow only one Chat Input on the canvas → `singleton-components.spec.ts`
 - [x] should not allow adding a Webhook while a Chat Input is on the canvas → `singleton-components.spec.ts`
 - [x] should not allow duplicating a Chat Input → `singleton-components.spec.ts`
@@ -1505,6 +1507,7 @@
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
+- [x] user can search and add components using keyboard shortcuts → `keyboardComponentSearch.spec.ts`
 - [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
 - [x] the main menu lists every item, reports the running version and links out → `main-menu-actions.spec.ts`
 - [x] the main menu's Settings action navigates to the Settings page → `main-menu-actions.spec.ts`
