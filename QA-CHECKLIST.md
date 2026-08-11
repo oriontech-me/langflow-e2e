@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-10
+> **Last updated:** 2026-08-11
 
 ---
 
@@ -1023,7 +1023,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 473 `test()` calls carrying the `@stable` tag, distributed across 183 spec
+> 474 `test()` calls carrying the `@stable` tag, distributed across 184 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1469,6 +1469,7 @@
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
 #### mcp/client/
+- [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
 - [x] configures MCP server via JSON, selects echo tool, runs it, and verifies output → `mcp-client-regression.spec.ts`
 - [x] configures MCP server via HTTP form tab and verifies registration → `mcp-client-regression.spec.ts`
 - [x] selects get-sum tool, provides numeric inputs, and verifies sum in output → `mcp-client-regression.spec.ts`
