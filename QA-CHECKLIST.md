@@ -1023,7 +1023,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 481 `test()` calls carrying the `@stable` tag, distributed across 188 spec
+> 482 `test()` calls carrying the `@stable` tag, distributed across 188 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1340,6 +1340,7 @@
 - [x] the provider is offered with two variables and a live-only, empty catalog → `openai-compatible-provider-setup.spec.ts`
 - [x] an unreachable base URL is rejected and nothing is persisted → `openai-compatible-provider-setup.spec.ts`
 - [x] a reachable endpoint with a bogus key is rejected as an authentication failure → `openai-compatible-provider-setup.spec.ts`
+- [x] the configured provider discovers exactly the models its endpoint serves → `openai-compatible-provider-setup.spec.ts`
 - [x] a discovered model runs a flow through the OpenAI Compatible provider → `openai-compatible-provider-setup.spec.ts`
 - [x] saving a base URL and an API key through Settings persists BOTH variables → `openai-compatible-provider-setup.spec.ts`
 - [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
