@@ -191,19 +191,59 @@ test.describe(`MCP Client – Gemini tool regression (#440) [${PROVIDER} / ${gem
           page.getByTestId(`add-component-button-${MCP_SERVER_NAME}`),
         ).toBeVisible({ timeout: 30000 });
 
+        // `action_count=true` makes the backend START every registered stdio MCP
+        // server to count its actions, so its cost grows with how many are
+        // registered on the instance and with how cold the `npx` cache is —
+        // measured at 9-15 s with the two servers Langflow registers for its own
+        // projects, and past the suite's 20 s `actionTimeout` while THIS server is
+        // still spinning up. A probe that times out THROWS, and `expect.poll`
+        // propagates the throw instead of polling again, so one slow probe used to
+        // abort the whole 90 s window on the first attempt — the poll could not
+        // tolerate the very slowness it exists to wait out. A failed probe is now
+        // "not ready yet" (and says so), while the assertion below is unchanged: if
+        // the server never reports a tool count, the poll still times out red.
+        let lastProbeError = "";
         await expect
           .poll(
             async () => {
-              const resp = await page.request.get(
-                "/api/v2/mcp/servers?action_count=true",
-              );
-              const servers: Array<{ name: string; toolsCount: number | null }> =
-                await resp.json();
-              return servers.find((s) => s.name === MCP_SERVER_NAME)?.toolsCount ?? null;
+              try {
+                const resp = await page.request.get(
+                  "/api/v2/mcp/servers?action_count=true",
+                  { timeout: 45000 },
+                );
+                if (!resp.ok()) {
+                  lastProbeError = `HTTP ${resp.status()}`;
+                  return null;
+                }
+                const servers: Array<{ name: string; toolsCount: number | null }> =
+                  await resp.json();
+                return servers.find((s) => s.name === MCP_SERVER_NAME)?.toolsCount ?? null;
+              } catch (e) {
+                lastProbeError = String(e);
+                return null;
+              }
             },
-            { timeout: 90000, intervals: [3000] },
+            {
+              timeout: 150000,
+              intervals: [3000],
+              message:
+                `MCP server "${MCP_SERVER_NAME}" never reported a tool count. A probe ` +
+                `that keeps failing is named in the last-probe warning printed below.`,
+            },
           )
-          .not.toBeNull();
+          .not.toBeNull()
+          .catch((e) => {
+            // Never silent (#1012): the assertion message cannot carry a value
+            // captured during the poll, so the last probe failure is printed
+            // alongside it — the difference between "the server never started" and
+            // "every probe timed out" is the whole diagnosis.
+            if (lastProbeError) {
+              console.warn(
+                `[mcp] last probe of /api/v2/mcp/servers?action_count=true failed: ${lastProbeError}`,
+              );
+            }
+            throw e;
+          });
       });
 
       await test.step("Add MCPTools component to canvas", async () => {
