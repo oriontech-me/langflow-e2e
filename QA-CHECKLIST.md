@@ -1001,13 +1001,13 @@
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
 | `flow-functionality/` | 32 | 24 | 1 | 3 | 4 |
 | `mcp/client/` | 13 | 9 | 2 | 0 | 2 |
-| `mcp/server/` | 16 | 10 | 1 | 0 | 5 |
+| `mcp/server/` | 16 | 11 | 1 | 0 | 4 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 11 | 0 | 0 | 0 | 11 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
-| **TOTAL** | **532** | **402 (76%)** | **37 (7%)** | **20 (4%)** | **73 (14%)** |
+| **TOTAL** | **532** | **403 (76%)** | **37 (7%)** | **20 (4%)** | **72 (14%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1023,7 +1023,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 477 `test()` calls carrying the `@stable` tag, distributed across 187 spec
+> 479 `test()` calls carrying the `@stable` tag, distributed across 187 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1490,6 +1490,8 @@
 - [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] mcp server tools should be refreshed when editing a server → `mcp-server.spec.ts`
 - [x] stdio command with an embedded argument is refused, and command plus args is accepted → `mcp-server.spec.ts`
+- [x] a registered MCP server is read back individually with the fields it was created with → `mcp-server.spec.ts`
+- [x] PATCH updates a registered server, merges at the top level, and refuses to rename it → `mcp-server.spec.ts`
 
 #### ui-ux/
 - [x] select and delete a flow → `actionsMainPage-shard-1.spec.ts`
@@ -1552,7 +1554,7 @@
 | `core-functionality/model-provider/` | 2 | 0 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 2 | 2 |
-| `mcp/server/` | 1 | 5 |
+| `mcp/server/` | 1 | 4 |
 | `ui-ux/` — Canvas | 0 | 0 |
 
 ---
