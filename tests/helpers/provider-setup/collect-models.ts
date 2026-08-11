@@ -405,7 +405,7 @@ const TOGGLE_CONFIRM_BUDGET_MS = 60_000;
 const TOGGLE_CONFIRM_POLL_MS = 100;
 
 /**
- * Ceiling for the credential write a `Save` click issues (#1355).
+ * Ceiling for the credential write a `Save` click issues (#1355, resized #1385).
  *
  * Measured, not guessed: with a funded OpenAI key, `POST /api/v1/variables/`
  * answered 201 for all three providers, but anthropic's did not return until
@@ -414,19 +414,37 @@ const TOGGLE_CONFIRM_POLL_MS = 100;
  * flight. The cost grows with how many providers are already configured, so the
  * ceiling is set well clear of the worst measurement rather than just above it.
  *
+ * 180 s was that clearance, and the daily has since measured past it. Every
+ * anthropic credential write observed on CI since the wait existed:
+ *
+ * | date | shard results |
+ * |---|---|
+ * | 2026-08-07 (run 31163810520) | 111.1 s ✅, 176.2 s ✅, >180 s ✗, >180 s ✗ |
+ * | 2026-08-10 (run 31373880200) | 105.8 s ✅, >176 s ✗, >176 s ✗, >175 s ✗ |
+ *
+ * So the ceiling sat in the MIDDLE of the observed distribution — the largest
+ * success (176.2 s) is 2 % under it. 240 s is set past the tail instead.
+ *
+ * The duration is CONTENTION, not a fixed cost, and that is why raising the
+ * ceiling is the right move rather than a mask: the same save measured **5.9 s**
+ * locally against an idle backend with two providers already configured
+ * (probe on 1.12.0.dev22, `Disconnect` 0.5 s behind the 201). The lanes run
+ * `LANGFLOW_WORKERS=1`, and the openai pass that precedes this one enables 41
+ * models — the write queues behind that burst.
+ *
  * It is a backstop, not the mechanism: the wait ends when the response lands.
  *
  * It is also a CEILING and not a promise: what a provider actually gets is
  * whatever {@link planSaveWait} can still afford out of the sweep-wide budget
  * below.
  */
-const CREDENTIAL_SAVE_TIMEOUT_MS = 180_000;
+const CREDENTIAL_SAVE_TIMEOUT_MS = 240_000;
 
 /** Ceiling for the panel reaching the configured state (`Disconnect`) after a save. */
 const CONFIGURED_STATE_TIMEOUT_MS = 60_000;
 
 /**
- * Budget shared by every post-Save wait in the sweep (#1370).
+ * Budget shared by every post-Save wait in the sweep (#1370, resized #1385).
  *
  * The per-provider ceilings above were each sized against a measurement and
  * NONE of them against the spec's own 5-minute timeout
@@ -441,24 +459,61 @@ const CONFIGURED_STATE_TIMEOUT_MS = 60_000;
  * ({@link TOGGLE_CONFIRM_BUDGET_MS}, mirroring #1197 §4.4): a per-item timeout
  * bounds ONE wait and can never see the sum.
  *
- * 210 s is the 300 s test timeout minus ~90 s reserved for everything that is
- * NOT a post-Save wait — the build axis, the Settings navigation, the per-
- * provider toggle sweeps (bounded at 15 s each), the key probes and the two file
- * writes. Measured at ~55 s on the CI attempt above and ~24 s locally, so the
- * reserve is deliberately generous: over-reserving costs a stalling provider its
- * models, under-reserving costs the whole run.
+ * #1370 sized this at 210 s = the 300 s test timeout minus a ~90 s reserve. That
+ * arithmetic was right and the INPUT was wrong: 300 s is
+ * `playwright.config.ts`'s default for a PRODUCT spec, and nothing about it was
+ * ever derived from what this sweep costs. Against a 240 s anthropic write it
+ * leaves 30 s for google — which google's `Save`-idle wait then spends before a
+ * Save is ever clicked, so google is recorded as a stall having never been
+ * configured. That is what turned one anthropic problem into 5 of the run's 6
+ * skips across three areas on 2026-08-10, on 3 of 4 shards (#1385).
+ *
+ * So the pre-flight now sets its own timeout (`tests/collect-models.spec.ts`)
+ * and this budget is sized from the measurements instead:
+ *
+ *     openai   ~5 s write      + ~10 s toggles
+ *     anthropic 240 s ceiling  + 60 s configured-state
+ *     google   ~19 s write     + 60 s idle (contended) + 60 s configured-state
+ *     ----------------------------------------------------------------
+ *     ~450 s of post-Save waits in the WORST case, ~35 s in the healthy one
+ *
+ * Over-sizing is nearly free — the budget is only ever spent by waits that
+ * actually run, so a healthy sweep still finishes in well under a minute of it
+ * and the extra clock is only consumed on a run already headed for a red.
  */
-const SWEEP_SAVE_BUDGET_MS = 210_000;
+const SWEEP_SAVE_BUDGET_MS = 450_000;
 
 /**
  * Floor kept back for each provider still to be configured.
  *
  * Without it the first stalling provider spends the entire budget and every
  * provider after it gets nothing — which is the failure this budget exists to
- * prevent, just moved one provider along. Google's credential write measured
- * 15.7 s on the CI run, so 30 s leaves a healthy provider room.
+ * prevent, just moved one provider along.
+ *
+ * 30 s (#1370) was sized against ONE wait — google's credential write, measured
+ * at 15.7 s. A provider's pass is three waits, and on 2026-08-10 the first of
+ * them spent the whole reserve: google's `Save` sat non-actionable for the full
+ * 30 s while anthropic's write was still in flight, so the reserve bought a
+ * diagnostic and no configuration at all. 60 s is sized against the whole pass
+ * (idle + write + configured-state) at the worst per-wait figures the daily has
+ * measured for a provider that is NOT the one stalling (#1385).
  */
-const SAVE_RESERVE_PER_PROVIDER_MS = 30_000;
+const SAVE_RESERVE_PER_PROVIDER_MS = 60_000;
+
+/**
+ * Cap on what the `Save`-idle wait may take out of one provider's own allowance
+ * (#1385).
+ *
+ * The idle wait is the only one of the three that is about the PREVIOUS
+ * provider: it waits for the panel to stop being busy with a write this provider
+ * did not issue. Letting it draw the provider's full allowance is how google
+ * reached its own Save with nothing left — the reserve protected google from
+ * anthropic and then google's first wait spent it anyway.
+ *
+ * A half share leaves the credential write, which is the wait that actually
+ * configures the provider, at least as much as the wait for someone else's.
+ */
+const SAVE_IDLE_SHARE_OF_REMAINING = 0.5;
 
 /**
  * Below this, the wait is skipped instead of shortened.
@@ -528,13 +583,26 @@ export function classifyWaitFailure(error: unknown): WaitFailure {
   return { kind: "unknown", detail };
 }
 
-export type SaveWaitPlan = { wait: true; timeoutMs: number } | { wait: false; reason: string };
+export type SaveWaitPlan =
+  | { wait: true; timeoutMs: number; ceilingMs: number; shortenedByBudget: boolean }
+  | { wait: false; reason: string };
 
 /**
  * Decide what one post-Save wait may spend out of the sweep's shared budget.
  *
  * Pure, so the arithmetic that #1370 got wrong is testable without a browser.
  * The returned `timeoutMs` is never `0` — see {@link MIN_SAVE_WAIT_MS}.
+ *
+ * `shareOfRemaining` bounds a wait to a FRACTION of what this provider can
+ * afford, on top of the reserve that protects the providers after it (#1385).
+ * The reserve and the share answer different questions — "will the NEXT provider
+ * have anything left" versus "will THIS provider's own remaining waits" — and
+ * google needed both: the reserve gave it 30 s, and its first wait spent all of
+ * it before a Save was ever clicked.
+ *
+ * The plan carries the ceiling it was measured against, so a caller reporting a
+ * failure can say whether the wait got its full ceiling or a shortened slice of
+ * it. Without that, a budget-exhausted wait prints a verdict about the panel.
  */
 export function planSaveWait(options: {
   ceilingMs: number;
@@ -542,11 +610,14 @@ export function planSaveWait(options: {
   providersLeftAfterThis: number;
   reservePerProviderMs?: number;
   minWaitMs?: number;
+  shareOfRemaining?: number;
 }): SaveWaitPlan {
   const reservePerProvider = options.reservePerProviderMs ?? SAVE_RESERVE_PER_PROVIDER_MS;
   const minWaitMs = options.minWaitMs ?? MIN_SAVE_WAIT_MS;
+  const share = options.shareOfRemaining ?? 1;
   const reserved = Math.max(0, options.providersLeftAfterThis) * reservePerProvider;
-  const allowed = Math.min(options.ceilingMs, options.remainingMs - reserved);
+  const affordable = options.remainingMs - reserved;
+  const allowed = Math.min(options.ceilingMs, affordable, Math.floor(affordable * share));
 
   if (allowed < minWaitMs) {
     return {
@@ -557,8 +628,55 @@ export function planSaveWait(options: {
         `here would leave them nothing`,
     };
   }
-  return { wait: true, timeoutMs: allowed };
+  return {
+    wait: true,
+    timeoutMs: allowed,
+    ceilingMs: options.ceilingMs,
+    shortenedByBudget: allowed < options.ceilingMs,
+  };
 }
+
+/**
+ * The three post-Save waits, each bound to its own ceiling and share (#1385).
+ *
+ * They exist as named functions rather than three inline `planSaveWait` calls
+ * because the call site is where the fix actually lives and a `Page` is not
+ * something the unit lane can drive: pinning the arithmetic alone would pin a
+ * spelling, not a behaviour (#1226's lesson). With these, "the idle wait is
+ * share-capped and the credential write is not" is an assertion instead of a
+ * code-reading exercise, and so are the live ceilings.
+ */
+export function planIdleWait(remainingMs: number, providersLeftAfterThis: number): SaveWaitPlan {
+  return planSaveWait({
+    ceilingMs: SAVE_IDLE_TIMEOUT_MS,
+    remainingMs,
+    providersLeftAfterThis,
+    // The one wait that is about the PREVIOUS provider — see
+    // SAVE_IDLE_SHARE_OF_REMAINING.
+    shareOfRemaining: SAVE_IDLE_SHARE_OF_REMAINING,
+  });
+}
+
+export function planCredentialWait(remainingMs: number, providersLeftAfterThis: number): SaveWaitPlan {
+  // No share: this is the wait that actually configures the provider, so it may
+  // take everything the reserve leaves it.
+  return planSaveWait({
+    ceilingMs: CREDENTIAL_SAVE_TIMEOUT_MS,
+    remainingMs,
+    providersLeftAfterThis,
+  });
+}
+
+export function planConfiguredWait(remainingMs: number, providersLeftAfterThis: number): SaveWaitPlan {
+  return planSaveWait({
+    ceilingMs: CONFIGURED_STATE_TIMEOUT_MS,
+    remainingMs,
+    providersLeftAfterThis,
+  });
+}
+
+/** The sweep's starting budget, exported so a test asserts the live value. */
+export const sweepSaveBudgetMs = SWEEP_SAVE_BUDGET_MS;
 
 /**
  * Marks a provider the COLLECTOR never managed to configure — as opposed to one
@@ -723,36 +841,164 @@ export async function waitForButtonIdle(
   return { idle: false, ariaBusy, ariaDisabled, enabled, waitedMs: now() - startedAt, polls };
 }
 
+/** One provider's post-Save spend out of the sweep budget, in walk order. */
+export interface BudgetSpend {
+  provider: string;
+  ms: number;
+}
+
 /**
- * The message for a `Save` that never became actionable (#1355).
+ * What the sweep can say about the wait itself, as opposed to the button
+ * (#1385). Optional so the unit lane can exercise the button-only message.
+ */
+export interface SaveBusyContext {
+  /** What the wait was actually granted, and what it would have had unshortened. */
+  grantedMs: number;
+  ceilingMs: number;
+  /** Budget left when the wait was planned, and who had already spent it. */
+  remainingBudgetMs: number;
+  spentBefore: readonly BudgetSpend[];
+  /**
+   * Characters in the API-key field when the wait ran. `null` when it could not
+   * be read — an unread field is unknown, not empty (#1012).
+   */
+  keyFieldChars: number | null;
+}
+
+/**
+ * The message for a `Save` that never became actionable (#1355, re-attributed
+ * #1385).
  *
  * Names the provider, the attribute state observed and — the part the old
  * generic click timeout could not say — that the likely cause is the PREVIOUS
  * provider's validation, so the reader does not go looking for a broken button.
+ *
+ * Both of the original verdict lines were WRONG on 2026-08-10, in opposite
+ * directions, and on the same sweep:
+ *
+ *   - The wait had been shortened to 30.0 s of its 60 s ceiling because
+ *     anthropic had spent 176 s of the shared budget. Neither branch could say
+ *     that, so a budget verdict was printed as a panel verdict.
+ *   - Two of the three shards printed `aria-busy (absent) / aria-disabled
+ *     (absent) / enabled false` and concluded "a state this helper does not
+ *     model", pointing the reader at the panel markup. That state is
+ *     reproducible in one step: it is the `Save` button with an EMPTY key field
+ *     (measured locally on 1.12.0.dev22 — with the key typed, the same button
+ *     is actionable on the first poll). The panel is fine; the key did not reach
+ *     the field.
+ *
+ * So the budget is reported FIRST when it shortened the wait, and the key field
+ * is reported whenever it was readable — a claim about markup is the last
+ * resort, not the default.
  */
-export function formatSaveBusyFailure(providerName: string, verdict: ButtonIdleVerdict): string {
+export function formatSaveBusyFailure(
+  providerName: string,
+  verdict: ButtonIdleVerdict,
+  context?: SaveBusyContext,
+): string {
   const busy = verdict.ariaBusy === "true";
-  return [
+  const lines = [
     `collect-models: the "Save" button for provider "${providerName}" never became actionable ` +
       `after ${(verdict.waitedMs / 1000).toFixed(1)}s over ${verdict.polls} poll(s).`,
     ``,
     `  aria-busy      ${verdict.ariaBusy ?? "(absent)"}`,
     `  aria-disabled  ${verdict.ariaDisabled ?? "(absent)"}`,
     `  enabled        ${verdict.enabled}`,
-    ``,
-    busy
-      ? `  verdict        still BUSY — a save/validation is in flight. This panel is walked one\n` +
+  ];
+
+  if (context) {
+    lines.push(
+      `  key field      ${
+        context.keyFieldChars === null
+          ? "(unreadable — unknown, not empty)"
+          : `${context.keyFieldChars} character(s)`
+      }`,
+    );
+    lines.push(
+      `  wait granted   ${(context.grantedMs / 1000).toFixed(1)}s of a ${(context.ceilingMs / 1000).toFixed(1)}s ceiling`,
+    );
+  }
+  lines.push(``);
+
+  // Ordered by what the evidence can actually support. A shortened wait is a
+  // fact about this sweep; an empty key field is a fact about this panel; the
+  // markup claim is what is left when neither applies.
+  if (context && context.grantedMs < context.ceilingMs) {
+    lines.push(
+      `  verdict        BUDGET, not the panel — this wait was shortened to ` +
+        `${(context.grantedMs / 1000).toFixed(1)}s of its\n` +
+        `                 ${(context.ceilingMs / 1000).toFixed(1)}s ceiling because the sweep's shared budget was down to ` +
+        `${Math.max(0, Math.round(context.remainingBudgetMs / 1000))}s.\n` +
+        `                 Spent before this provider: ${formatBudgetSpend(context.spentBefore)}.\n` +
+        `                 Do NOT read the attributes above as a verdict about the form (#1385).`,
+    );
+  } else if (context && context.keyFieldChars === 0) {
+    lines.push(
+      `  verdict        the API-key field is EMPTY, so "Save" is correctly disabled — this is not\n` +
+        `                 a panel-markup problem and not a key problem. The key was typed before\n` +
+        `                 this wait, so it did not reach the field (a re-render under load will do\n` +
+        `                 it). Retype before assuming anything about the button (#1385).`,
+    );
+  } else if (busy) {
+    lines.push(
+      `  verdict        still BUSY — a save/validation is in flight. This panel is walked one\n` +
         `                 provider at a time, so the usual cause is the PREVIOUS provider's\n` +
-        `                 validation not having settled, not this provider's key (#1355).`
-      : `  verdict        not busy, but not actionable either — the form is in a state this\n` +
-        `                 helper does not model. Check the panel markup before assuming a key\n` +
-        `                 problem (#1355).`,
-  ].join("\n");
+        `                 validation not having settled, not this provider's key (#1355).`,
+    );
+  } else {
+    // The last resort, and it must not borrow authority it does not have: the
+    // "everything else was ruled out" clause is only true when a context was
+    // supplied to rule things out WITH. Without one this is the #1355 message
+    // unchanged, which is exactly what it is.
+    const ruledOut =
+      context && context.keyFieldChars !== null
+        ? `not busy, not budget-limited, and the key field holds ` +
+          `${context.keyFieldChars} character(s) — but not actionable either.\n` +
+          `                 The form`
+        : `not busy, but not actionable either — the form`;
+    lines.push(
+      `  verdict        ${ruledOut} is in a state this helper does not model. Check the panel\n` +
+        `                 markup before assuming a key problem (#1355).`,
+    );
+  }
+
+  return lines.join("\n");
 }
 
-/** Mutable remainder of {@link SWEEP_SAVE_BUDGET_MS}, threaded through the loop. */
+/**
+ * Render who spent the shared budget before this provider (#1385).
+ *
+ * Exported because it is the sentence that makes a collateral stall readable —
+ * "google never got a Save" means nothing without "anthropic spent 176.0s".
+ * An empty list is stated rather than rendered as an empty string: nothing spent
+ * before this provider is itself a finding, since it means the budget went
+ * somewhere this record does not see.
+ */
+export function formatBudgetSpend(spent: readonly BudgetSpend[]): string {
+  if (spent.length === 0) return "nothing (this is the first provider of the sweep)";
+  return spent.map((s) => `"${s.provider}" ${(s.ms / 1000).toFixed(1)}s`).join(", ");
+}
+
+/**
+ * Mutable remainder of {@link SWEEP_SAVE_BUDGET_MS}, threaded through the loop.
+ *
+ * `spent` is the per-provider ledger (#1385). The budget alone answers "is there
+ * time left"; the ledger answers "who took it", which is the whole of what makes
+ * a collateral stall readable — the 2026-08-10 daily reported google as an
+ * unexplained non-actionable button and never named the 176 s anthropic had
+ * spent one line earlier.
+ */
 interface SweepBudget {
   remainingMs: number;
+  spent: BudgetSpend[];
+}
+
+/** Deduct from the shared budget and record it against the provider that spent it. */
+function chargeBudget(budget: SweepBudget, provider: string, ms: number): void {
+  budget.remainingMs -= ms;
+  const existing = budget.spent.find((entry) => entry.provider === provider);
+  if (existing) existing.ms += ms;
+  else budget.spent.push({ provider, ms });
 }
 
 /**
@@ -815,25 +1061,44 @@ async function collectModelsForProvider(
       // the whole pre-flight, which is the thing this issue is about. Recording
       // it as a stall loses no signal: a stall still fails the gate on every
       // lane that requires that provider, which on the daily is all of them.
-      const idlePlan = planSaveWait({
-        ceilingMs: SAVE_IDLE_TIMEOUT_MS,
-        remainingMs: budget.remainingMs,
-        providersLeftAfterThis,
-      });
+      // The idle wait is bounded by a SHARE of what this provider can afford, not
+      // by the whole of it (#1385): it waits out the previous provider's write,
+      // and on 2026-08-10 it spent google's entire 30 s allowance doing so, so
+      // google reached its own Save with nothing left and was never configured.
+      const idlePlan = planIdleWait(budget.remainingMs, providersLeftAfterThis);
+      // Snapshot BEFORE the wait: the ledger and the remainder are what the
+      // failure message needs to attribute a shortened wait, and both move as
+      // soon as this wait is charged.
+      const spentBefore = budget.spent.map((entry) => ({ ...entry }));
+      const remainingBeforeIdle = budget.remainingMs;
       const idleStartedAt = Date.now();
       const verdict = idlePlan.wait
         ? await waitForButtonIdle(saveBtn, { timeoutMs: idlePlan.timeoutMs })
         : null;
-      budget.remainingMs -= Date.now() - idleStartedAt;
+      chargeBudget(budget, providerName, Date.now() - idleStartedAt);
 
       if (!idlePlan.wait) {
         stall = `the "Save" button was never waited on — ${idlePlan.reason}`;
         console.warn(
           `⚠️  collect-models: skipped configuring provider "${providerName}" — ${idlePlan.reason}. ` +
-            `It is left unconfigured rather than clicked blind (#1370).`,
+            `It is left unconfigured rather than clicked blind (#1370). Spent before it: ` +
+            `${formatBudgetSpend(spentBefore)}.`,
         );
       } else if (verdict && !verdict.idle) {
-        stall = formatSaveBusyFailure(providerName, verdict);
+        // Read the field the button's disabled state actually depends on. It is
+        // one call, only on the failure path, and it is what separates "the
+        // markup is unmodelled" from "the key never landed in the input".
+        const keyFieldChars = await apiKeyInput
+          .inputValue()
+          .then((value) => value.length)
+          .catch(() => null);
+        stall = formatSaveBusyFailure(providerName, verdict, {
+          grantedMs: idlePlan.timeoutMs,
+          ceilingMs: idlePlan.ceilingMs,
+          remainingBudgetMs: remainingBeforeIdle,
+          spentBefore,
+          keyFieldChars,
+        });
         console.warn(`⚠️  collect-models: ${stall}`);
       }
     }
@@ -859,11 +1124,7 @@ async function collectModelsForProvider(
       // What it may SPEND is the sweep's, not this provider's (#1370): the
       // ceiling alone let one stalling provider eat a 300 s test budget in
       // 255 s of waits.
-      const plan = planSaveWait({
-        ceilingMs: CREDENTIAL_SAVE_TIMEOUT_MS,
-        remainingMs: budget.remainingMs,
-        providersLeftAfterThis,
-      });
+      const plan = planCredentialWait(budget.remainingMs, providersLeftAfterThis);
 
       if (!plan.wait) {
         stall = `the credential write was never waited for — ${plan.reason}`;
@@ -890,7 +1151,7 @@ async function collectModelsForProvider(
         await saveBtn.click();
         const { response: saveResponse, failure } = await savePending;
         const elapsedMs = Date.now() - startedAt;
-        budget.remainingMs -= elapsedMs;
+        chargeBudget(budget, providerName, elapsedMs);
 
         if (failure?.kind === "aborted") {
           // The wait never ran. Printing "no write observed within Ns" here is
@@ -949,11 +1210,7 @@ async function collectModelsForProvider(
     // Bounded by the same shared budget as the write above (#1370). It is the
     // second half of the 255 s a single stalling provider used to spend.
     const configuredPlan: SaveWaitPlan = saveClicked
-      ? planSaveWait({
-          ceilingMs: CONFIGURED_STATE_TIMEOUT_MS,
-          remainingMs: budget.remainingMs,
-          providersLeftAfterThis,
-        })
+      ? planConfiguredWait(budget.remainingMs, providersLeftAfterThis)
       : { wait: false, reason: "no Save was issued for this provider" };
 
     if (!configuredPlan.wait) {
@@ -969,7 +1226,7 @@ async function collectModelsForProvider(
         .waitFor({ state: "visible", timeout: configuredPlan.timeoutMs })
         .then(() => ({ ok: true, failure: null as WaitFailure | null }))
         .catch((error: unknown) => ({ ok: false, failure: classifyWaitFailure(error) }));
-      budget.remainingMs -= Date.now() - configuredAt;
+      chargeBudget(budget, providerName, Date.now() - configuredAt);
 
       if (!configured.ok && configured.failure?.kind !== "expired") {
         // `aborted` and `unknown` are both "no signal", but they are not the
@@ -1103,8 +1360,9 @@ async function collectModels(page: Page): Promise<{
   const stalls = new Map<string, string>();
 
   // One budget for the whole sweep, spent down as each provider's post-Save
-  // waits actually run (#1370).
-  const budget: SweepBudget = { remainingMs: SWEEP_SAVE_BUDGET_MS };
+  // waits actually run (#1370), with a per-provider ledger so a collateral stall
+  // can name who spent it (#1385).
+  const budget: SweepBudget = { remainingMs: SWEEP_SAVE_BUDGET_MS, spent: [] };
   const providers = [...keyedProviders];
 
   // Keyed providers only. This sweep SAVES an API key per provider through the
@@ -1123,6 +1381,16 @@ async function collectModels(page: Page): Promise<{
     allModels.push(...collection.models);
     if (collection.stall) stalls.set(provider, collection.stall);
   }
+
+  // Printed on EVERY sweep, not only a failing one (#1385). The budget is the
+  // mechanism that decides whether a provider gets configured at all, and it was
+  // invisible until it had already cost one: a healthy line here is what makes a
+  // creeping write cost readable before it crosses the ceiling.
+  console.log(
+    `   collect-models: post-Save waits spent ` +
+      `${Math.round((SWEEP_SAVE_BUDGET_MS - budget.remainingMs) / 1000)}s of the sweep's ` +
+      `${Math.round(SWEEP_SAVE_BUDGET_MS / 1000)}s shared budget — ${formatBudgetSpend(budget.spent)}.`,
+  );
 
   return { models: allModels, stalls };
 }

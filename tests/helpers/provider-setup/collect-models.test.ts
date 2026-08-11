@@ -34,10 +34,15 @@ import * as path from "path";
 import {
   classifyWaitFailure,
   COLLECTOR_STALL_PREFIX,
+  formatBudgetSpend,
   formatSaveBusyFailure,
   isCollectorStallReason,
   NO_MODELS_COLLECTED,
+  planConfiguredWait,
+  planCredentialWait,
+  planIdleWait,
   planSaveWait,
+  sweepSaveBudgetMs,
   rankCandidates,
   resolveRequiredProviders,
   validateProviderWithFallback,
@@ -569,6 +574,133 @@ test("#1355: a button busy past the deadline gives up and reports WHY, naming th
   );
 });
 
+// ─── What the failure message is ALLOWED to claim (#1385) ────────────────────
+//
+// Both verdict lines were wrong on run 31373880200, in opposite directions, on
+// the same sweep. Shard 2 printed `aria-busy true … still BUSY` for a wait that
+// had been clipped to 30.0s of its 60s ceiling; shards 3 and 4 printed
+// `(absent)/(absent)/enabled false … a state this helper does not model` and
+// sent the reader to the panel markup. That second state is reproducible in one
+// step — it is the Save button with an EMPTY key field (measured on
+// 1.12.0.dev22; with the key typed the same button is actionable on poll 1).
+
+/** The verdict for google exactly as run 31373880200 shard 4 measured it. */
+const GOOGLE_20260810 = {
+  idle: false,
+  ariaBusy: null,
+  ariaDisabled: null,
+  enabled: false,
+  waitedMs: 30_100,
+  polls: 117,
+};
+
+test("#1385: a wait the BUDGET shortened says so, and claims nothing about the markup", () => {
+  const message = formatSaveBusyFailure("google", GOOGLE_20260810, {
+    grantedMs: 30_000,
+    ceilingMs: 60_000,
+    remainingBudgetMs: 30_000,
+    spentBefore: [
+      { provider: "openai", ms: 4_000 },
+      { provider: "anthropic", ms: 176_000 },
+    ],
+    keyFieldChars: 0,
+  });
+
+  assert.match(message, /BUDGET, not the panel/);
+  assert.match(message, /shortened to 30\.0s of its\n\s+60\.0s ceiling/);
+  assert.match(message, /"anthropic" 176\.0s/, "the collateral is unreadable without naming who spent it");
+  assert.doesNotMatch(
+    message,
+    /does not model/,
+    "the shipped message pointed at the panel markup for a wait that was never given its ceiling",
+  );
+  assert.doesNotMatch(message, /still BUSY/);
+});
+
+test("#1385: the budget verdict OUTRANKS the empty key field", () => {
+  // Both were true on 2026-08-10. Only one of them is a claim this sweep can
+  // support: with 30s of a 60s ceiling, the wait never established anything
+  // about the field either.
+  const message = formatSaveBusyFailure("google", GOOGLE_20260810, {
+    grantedMs: 30_000,
+    ceilingMs: 60_000,
+    remainingBudgetMs: 30_000,
+    spentBefore: [{ provider: "anthropic", ms: 176_000 }],
+    keyFieldChars: 0,
+  });
+  assert.match(message, /BUDGET, not the panel/);
+  assert.doesNotMatch(message, /API-key field is EMPTY/);
+  assert.match(message, /key field\s+0 character\(s\)/, "still REPORTED, just not made the verdict");
+});
+
+test("#1385: a full-ceiling wait on an empty key field names the field, not the markup", () => {
+  const message = formatSaveBusyFailure("google", GOOGLE_20260810, {
+    grantedMs: 60_000,
+    ceilingMs: 60_000,
+    remainingBudgetMs: 300_000,
+    spentBefore: [{ provider: "anthropic", ms: 20_000 }],
+    keyFieldChars: 0,
+  });
+  assert.match(message, /API-key field is EMPTY/);
+  assert.match(message, /did not reach the field/);
+  assert.doesNotMatch(message, /does not model/);
+});
+
+test("#1385: an unreadable key field is UNKNOWN, and cannot become the empty-field verdict", () => {
+  // #1012's rule: a field nobody could read is not a field that was empty.
+  const message = formatSaveBusyFailure("google", GOOGLE_20260810, {
+    grantedMs: 60_000,
+    ceilingMs: 60_000,
+    remainingBudgetMs: 300_000,
+    spentBefore: [],
+    keyFieldChars: null,
+  });
+  assert.match(message, /unreadable — unknown, not empty/);
+  assert.doesNotMatch(message, /API-key field is EMPTY/);
+  assert.match(message, /does not model/, "no supportable claim left — the last resort is the right one here");
+});
+
+test("#1385: a populated field, a full ceiling and a busy button still get the #1355 verdict", () => {
+  const message = formatSaveBusyFailure(
+    "google",
+    { idle: false, ariaBusy: "true", ariaDisabled: "true", enabled: false, waitedMs: 60_000, polls: 240 },
+    {
+      grantedMs: 60_000,
+      ceilingMs: 60_000,
+      remainingBudgetMs: 300_000,
+      spentBefore: [{ provider: "anthropic", ms: 20_000 }],
+      keyFieldChars: 108,
+    },
+  );
+  assert.match(message, /still BUSY/);
+  assert.match(message, /PREVIOUS provider's/);
+  assert.doesNotMatch(message, /BUDGET, not the panel/);
+});
+
+test("#1385: with no context at all the message is exactly the #1355 one", () => {
+  // The context is optional so the helper stays callable from anywhere; a caller
+  // that has nothing to add must not be made to invent it.
+  const message = formatSaveBusyFailure("google", GOOGLE_20260810);
+  assert.match(message, /does not model/);
+  assert.doesNotMatch(message, /key field/);
+  assert.doesNotMatch(message, /wait granted/);
+});
+
+test("#1385: the spend ledger renders who took the budget, and states an empty one", () => {
+  assert.equal(
+    formatBudgetSpend([
+      { provider: "openai", ms: 4_000 },
+      { provider: "anthropic", ms: 176_000 },
+    ]),
+    '"openai" 4.0s, "anthropic" 176.0s',
+  );
+  assert.match(
+    formatBudgetSpend([]),
+    /first provider of the sweep/,
+    "an empty ledger is a finding, not an empty string",
+  );
+});
+
 test("#1355: aria-disabled alone is not idle, and reads as the not-modelled state", async () => {
   const clock = fakeClock();
   const verdict = await waitForButtonIdle(fakeButton([{ ariaDisabled: "true" }]), {
@@ -740,37 +872,87 @@ test("#1370: the detail is the FIRST line, so a Playwright call log does not flo
 // that can end the run. Attempt 2 died at exactly 5 minutes; attempt 3 survived
 // the same stall with 3s to spare.
 
+// Every case below passes `reservePerProviderMs: 30_000` EXPLICITLY. It was the
+// default when #1370 shipped and #1385 has since raised it to 60s, so pinning it
+// here keeps these tests replaying the incident they were written from rather
+// than silently re-deriving against whatever today's constant is. The live
+// defaults get their own replay at the bottom of the #1385 block.
+const RESERVE_1370 = { reservePerProviderMs: 30_000 };
+
 test("#1370: the FIRST provider of three cannot spend the whole budget", () => {
   // 210s budget, two providers still to come, 30s reserved for each: 150s, not
   // the 180s ceiling. That gap is the mechanism, not a rounding artifact — the
   // ceiling is what ONE wait may cost, the budget is what the sweep may cost,
   // and before #1370 only the first of those existed.
-  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 210_000, providersLeftAfterThis: 2 });
-  assert.deepEqual(plan, { wait: true, timeoutMs: 150_000 });
+  const plan = planSaveWait({
+    ceilingMs: 180_000,
+    remainingMs: 210_000,
+    providersLeftAfterThis: 2,
+    ...RESERVE_1370,
+  });
+  assert.deepEqual(plan, {
+    wait: true,
+    timeoutMs: 150_000,
+    ceilingMs: 180_000,
+    shortenedByBudget: true,
+  });
 });
 
 test("#1370: the ceiling still binds when the budget is ample", () => {
-  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 600_000, providersLeftAfterThis: 2 });
-  assert.deepEqual(plan, { wait: true, timeoutMs: 180_000 }, "a wait must never outlive its own ceiling");
+  const plan = planSaveWait({
+    ceilingMs: 180_000,
+    remainingMs: 600_000,
+    providersLeftAfterThis: 2,
+    ...RESERVE_1370,
+  });
+  assert.deepEqual(
+    plan,
+    { wait: true, timeoutMs: 180_000, ceilingMs: 180_000, shortenedByBudget: false },
+    "a wait must never outlive its own ceiling",
+  );
 });
 
 test("#1370: the ceiling is capped by what the budget can still afford", () => {
   // anthropic has already spent most of the sweep; the last provider is what the
   // reserve protects.
-  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 100_000, providersLeftAfterThis: 1 });
-  assert.deepEqual(plan, { wait: true, timeoutMs: 70_000 }, "100s minus a 30s reserve for the one still to come");
+  const plan = planSaveWait({
+    ceilingMs: 180_000,
+    remainingMs: 100_000,
+    providersLeftAfterThis: 1,
+    ...RESERVE_1370,
+  });
+  assert.deepEqual(
+    plan,
+    { wait: true, timeoutMs: 70_000, ceilingMs: 180_000, shortenedByBudget: true },
+    "100s minus a 30s reserve for the one still to come",
+  );
 });
 
 test("#1370: the LAST provider reserves nothing and may spend the remainder", () => {
-  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 40_000, providersLeftAfterThis: 0 });
-  assert.deepEqual(plan, { wait: true, timeoutMs: 40_000 });
+  const plan = planSaveWait({
+    ceilingMs: 180_000,
+    remainingMs: 40_000,
+    providersLeftAfterThis: 0,
+    ...RESERVE_1370,
+  });
+  assert.deepEqual(plan, {
+    wait: true,
+    timeoutMs: 40_000,
+    ceilingMs: 180_000,
+    shortenedByBudget: true,
+  });
 });
 
 test("#1370: an exhausted budget SKIPS the wait instead of shortening it to zero", () => {
   // Load-bearing: Playwright reads `timeout: 0` as NO timeout, so an exhausted
   // budget arriving as a number would wait forever — the exact opposite of the
   // budget's purpose. The discriminated result makes that unreachable.
-  const plan = planSaveWait({ ceilingMs: 180_000, remainingMs: 30_000, providersLeftAfterThis: 1 });
+  const plan = planSaveWait({
+    ceilingMs: 180_000,
+    remainingMs: 30_000,
+    providersLeftAfterThis: 1,
+    ...RESERVE_1370,
+  });
   assert.equal(plan.wait, false);
   assert.match((plan as { reason: string }).reason, /budget is down to 30s/);
   assert.match((plan as { reason: string }).reason, /1 provider\(s\) still to configure/);
@@ -778,15 +960,24 @@ test("#1370: an exhausted budget SKIPS the wait instead of shortening it to zero
 
 test("#1370: no reachable input yields a zero or negative timeout", () => {
   // The property, not one example: whatever the budget state, either the wait is
-  // refused or it carries a timeout Playwright will honour as a deadline.
-  for (const remainingMs of [-50_000, 0, 1, 4_999, 5_000, 29_999, 210_000]) {
+  // refused or it carries a timeout Playwright will honour as a deadline. The
+  // share is swept too (#1385) — a fraction is a second way to reach zero.
+  for (const remainingMs of [-50_000, 0, 1, 4_999, 5_000, 29_999, 210_000, 450_000]) {
     for (const providersLeftAfterThis of [0, 1, 2, 5]) {
-      const plan = planSaveWait({ ceilingMs: 180_000, remainingMs, providersLeftAfterThis });
-      if (plan.wait) {
-        assert.ok(
-          plan.timeoutMs >= 5_000,
-          `remaining=${remainingMs} left=${providersLeftAfterThis} produced timeoutMs=${plan.timeoutMs}`,
-        );
+      for (const shareOfRemaining of [undefined, 1, 0.5, 0.1, 0]) {
+        const plan = planSaveWait({
+          ceilingMs: 180_000,
+          remainingMs,
+          providersLeftAfterThis,
+          shareOfRemaining,
+        });
+        if (plan.wait) {
+          assert.ok(
+            plan.timeoutMs >= 5_000,
+            `remaining=${remainingMs} left=${providersLeftAfterThis} share=${shareOfRemaining} ` +
+              `produced timeoutMs=${plan.timeoutMs}`,
+          );
+        }
       }
     }
   }
@@ -801,6 +992,7 @@ test("#1370: the two waits share one budget — 180 + 60 can no longer both be s
     ceilingMs: 180_000,
     remainingMs: budget.remainingMs,
     providersLeftAfterThis: 1,
+    ...RESERVE_1370,
   });
   assert.equal(credential.wait, true);
   budget.remainingMs -= (credential as { timeoutMs: number }).timeoutMs;
@@ -809,11 +1001,166 @@ test("#1370: the two waits share one budget — 180 + 60 can no longer both be s
     ceilingMs: 60_000,
     remainingMs: budget.remainingMs,
     providersLeftAfterThis: 1,
+    ...RESERVE_1370,
   });
   assert.equal(configured.wait, false, "30s left, all of it reserved for the provider still to come");
 
   const spent = 210_000 - budget.remainingMs;
   assert.ok(spent <= 180_000, `one provider must not be able to spend 240s of a 210s budget, spent ${spent}`);
+});
+
+// ─── The share cap and the collateral stall (#1385) ──────────────────────────
+//
+// #1370's reserve answers "will the NEXT provider have anything left". It cannot
+// answer "will THIS provider's own remaining waits", and on 2026-08-10 that gap
+// cost google every one of its 30s: the Save-idle wait — the one wait that is
+// about the PREVIOUS provider, not this one — spent the whole reserve before a
+// Save was ever clicked, so google was recorded as a stall having never been
+// configured, on 3 of 4 shards.
+
+test("#1385: the idle wait cannot spend a provider's whole allowance on the previous one", () => {
+  // google's exact position on run 31373880200: last provider, 30s left.
+  const withoutShare = planSaveWait({
+    ceilingMs: 60_000,
+    remainingMs: 30_000,
+    providersLeftAfterThis: 0,
+  });
+  assert.deepEqual(
+    withoutShare,
+    { wait: true, timeoutMs: 30_000, ceilingMs: 60_000, shortenedByBudget: true },
+    "the shipped behaviour: every remaining millisecond goes to waiting on anthropic",
+  );
+
+  const withShare = planSaveWait({
+    ceilingMs: 60_000,
+    remainingMs: 30_000,
+    providersLeftAfterThis: 0,
+    shareOfRemaining: 0.5,
+  });
+  assert.equal(withShare.wait, true);
+  assert.equal((withShare as { timeoutMs: number }).timeoutMs, 15_000);
+});
+
+test("#1385: the share narrows a wait, it never widens one past its ceiling", () => {
+  const plan = planSaveWait({
+    ceilingMs: 60_000,
+    remainingMs: 450_000,
+    providersLeftAfterThis: 0,
+    shareOfRemaining: 0.5,
+  });
+  assert.equal((plan as { timeoutMs: number }).timeoutMs, 60_000, "half of 450s is 225s — the ceiling still binds");
+  assert.equal((plan as { shortenedByBudget: boolean }).shortenedByBudget, false);
+});
+
+test("#1385: a plan reports whether the BUDGET shortened it, not just the number", () => {
+  // The flag is what lets the failure message separate "this button is broken"
+  // from "this wait was never given the time to find out".
+  const full = planSaveWait({ ceilingMs: 60_000, remainingMs: 450_000, providersLeftAfterThis: 0 });
+  assert.equal((full as { shortenedByBudget: boolean }).shortenedByBudget, false);
+
+  const clipped = planSaveWait({ ceilingMs: 60_000, remainingMs: 40_000, providersLeftAfterThis: 0 });
+  assert.equal((clipped as { shortenedByBudget: boolean }).shortenedByBudget, true);
+  assert.equal((clipped as { ceilingMs: number }).ceilingMs, 60_000, "the plan carries what it WOULD have had");
+});
+
+test("#1385: only the IDLE wait is share-capped — the write that configures a provider is not", () => {
+  // Pins the call site, not the arithmetic: `planSaveWait` cannot tell which of
+  // the three waits it is serving, so dropping the share at the call site would
+  // pass every test above it. 40s left, last provider, nothing reserved.
+  const idle = planIdleWait(40_000, 0);
+  const credential = planCredentialWait(40_000, 0);
+  const configured = planConfiguredWait(40_000, 0);
+
+  assert.equal((idle as { timeoutMs: number }).timeoutMs, 20_000, "half — the previous provider's overhang");
+  assert.equal((credential as { timeoutMs: number }).timeoutMs, 40_000, "all of it — this is the wait that saves");
+  assert.equal((configured as { timeoutMs: number }).timeoutMs, 40_000);
+});
+
+test("#1385: the live ceilings are the measured ones, not the ones that were exceeded", () => {
+  // A ceiling reachable only through a plan, so the numbers cannot drift apart
+  // from the call site. 180s sat in the middle of the observed anthropic
+  // distribution (largest success 176.2s, two shards past 180s).
+  const ample = 10 * 60 * 1000;
+  assert.equal((planCredentialWait(ample, 0) as { ceilingMs: number }).ceilingMs, 240_000);
+  assert.equal((planIdleWait(ample, 0) as { ceilingMs: number }).ceilingMs, 60_000);
+  assert.equal((planConfiguredWait(ample, 0) as { ceilingMs: number }).ceilingMs, 60_000);
+  assert.equal(sweepSaveBudgetMs, 450_000);
+});
+
+test("#1385: the live reserve is a whole PASS per remaining provider, not one wait", () => {
+  // Only observable where it binds — with 450s of budget it usually does not, so
+  // a near-exhausted state is what pins it. 100s left with one provider to come:
+  // 60s is held back, so this wait may have 40s. At #1370's 30s reserve it would
+  // be 70s, which is the arithmetic that left google unable to click Save at all.
+  const plan = planCredentialWait(100_000, 1);
+  assert.equal(
+    (plan as { timeoutMs: number }).timeoutMs,
+    40_000,
+    "the provider still to come needs idle + write + configured-state, not just a write",
+  );
+});
+
+test("#1385: run 31373880200 replayed on the LIVE defaults — google keeps a usable allowance", () => {
+  // The whole incident, in the arithmetic that produced it, driven through the
+  // functions the sweep itself calls. anthropic takes its full credential
+  // ceiling; the question is what google has left afterwards. Lowering
+  // SWEEP_SAVE_BUDGET_MS, the reserve or the ceilings fails HERE rather than on
+  // a shard three days later.
+  const budget = { remainingMs: sweepSaveBudgetMs };
+
+  // openai — fast in every run measured (~5s write), with two providers to come.
+  budget.remainingMs -= 5_000;
+
+  // anthropic: spends its entire ceiling and still leaves the sweep solvent.
+  const anthropic = planCredentialWait(budget.remainingMs, 1);
+  assert.equal(anthropic.wait, true);
+  assert.equal(
+    (anthropic as { timeoutMs: number }).timeoutMs,
+    240_000,
+    "a slow anthropic must reach its full ceiling — 176.2s succeeded once and 180s was exceeded twice",
+  );
+  budget.remainingMs -= (anthropic as { timeoutMs: number }).timeoutMs;
+
+  // google's idle wait — the one that got 30s and spent all of it on 2026-08-10.
+  const googleIdle = planIdleWait(budget.remainingMs, 0);
+  assert.equal(googleIdle.wait, true);
+  assert.equal(
+    (googleIdle as { timeoutMs: number }).timeoutMs,
+    60_000,
+    "google's Save-idle wait gets its FULL ceiling even after anthropic spends 240s",
+  );
+  budget.remainingMs -= (googleIdle as { timeoutMs: number }).timeoutMs;
+
+  // …and google's own credential write, which never happened at all on 3 of 4
+  // shards, still comfortably clears its measured 10.5–18.8s cost.
+  const googleWrite = planCredentialWait(budget.remainingMs, 0);
+  assert.equal(googleWrite.wait, true);
+  assert.ok(
+    (googleWrite as { timeoutMs: number }).timeoutMs >= 60_000,
+    `google's credential write must not be squeezed by a stalling anthropic; got ` +
+      `${(googleWrite as { timeoutMs: number }).timeoutMs}ms`,
+  );
+});
+
+test("#1385: the sweep budget fits inside the pre-flight's own test timeout", () => {
+  // The constraint #1370 got backwards. The budget is only meaningful if the
+  // test outlives it, and `tests/collect-models.spec.ts` is now what guarantees
+  // that — 12 minutes against ~450s of waits plus the ~90s of build axis,
+  // navigation, toggle sweeps, key probes and file writes.
+  const PREFLIGHT_TIMEOUT_MS = 12 * 60 * 1000;
+  const NON_WAIT_RESERVE_MS = 90_000;
+  assert.ok(
+    sweepSaveBudgetMs + NON_WAIT_RESERVE_MS < PREFLIGHT_TIMEOUT_MS,
+    `${sweepSaveBudgetMs}ms of waits plus ${NON_WAIT_RESERVE_MS}ms of everything else must fit in ` +
+      `${PREFLIGHT_TIMEOUT_MS}ms, or the budget is decorative and the test timeout is the real bound`,
+  );
+
+  const spec = fs.readFileSync(path.join(__dirname, "../../collect-models.spec.ts"), "utf-8");
+  assert.match(
+    spec,
+    /test\.setTimeout\(12 \* 60 \* 1000\)/,
+    "the spec must set the timeout this budget was sized against — the config default is 5 minutes",
+  );
 });
 
 // ─── The collector-stall verdict (#1370) ─────────────────────────────────────
