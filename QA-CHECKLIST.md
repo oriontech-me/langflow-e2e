@@ -744,6 +744,7 @@
 - [x] Tool list refreshes when a registered server is edited to run a different package → `mcp/server/mcp-server.spec.ts`
 - [x] stdio `command` must be a single executable — a command with an embedded argument is refused and the same registration split into `command` + `args` is accepted (upstream hardening `#14073`; #1091) → `mcp/server/mcp-server.spec.ts`
 - [x] The project's own Streamable HTTP endpoint registers as an MCP server and exposes its flows as tools → `mcp/server/mcp-server.spec.ts`
+- [x] A registered server is read back individually via `GET /servers/{name}` with the fields it was created with, and `PATCH /servers/{name}` updates them — merging per top-level key and refusing to rename (#1397) → `mcp/server/mcp-server.spec.ts`
 - [-] Resource exposed by server is accessible via URI — flow files are exposed as MCP resources: `resources/list` is `@stable`; `resources/read` blocked by a live Langflow regression on 1.12.x (`AttributeError: 'str' object has no attribute 'hex'`, filed upstream **LE-2012**) — kept as a guard, not promoted → `mcp/server/mcp-server-resources.spec.ts`
 - [ ] Install this project into an MCP client — `GET /{project_id}/installed` reports the current state, `POST /{project_id}/install` performs it, and the UI reflects both (the user-facing way an MCP Server is actually consumed; no bullet covered this before 2026-08-06)
 - [ ] `GET /{project_id}/composer-url` returns a URL that resolves, and the copy control in the UI yields the same value
