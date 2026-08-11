@@ -62,7 +62,7 @@ async function cleanupSavedChatInputs(
 test.describe("save component tests", () => {
   test(
     "saving a canvas component as a template makes it reusable from the sidebar",
-    { tag: ["@regression", "@components", "@ui-ux"] },
+    { tag: ["@stable", "@regression", "@components", "@ui-ux"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
       let savedBefore = new Set<string>();
@@ -102,10 +102,17 @@ test.describe("save component tests", () => {
         // Scope the add button to the official Input & Output entry: when a
         // saved component named "Chat Input" already exists (a prior/parallel
         // run), a homonymous `add-component-button-chat-input` also renders under
-        // `saved_componentsChat Input`, so the bare testid is ambiguous. The
-        // `input_outputChat Input` container disambiguates to the built-in one.
+        // the Saved section, so the bare testid is ambiguous.
+        //
+        // The scoping ancestor is the `group/draggable` WRAPPER
+        // (`input_output_chat input_draggable`), not the row div
+        // (`input_outputChat Input`): upstream #14250 moved the "+" out of the row
+        // and made it the row's sibling, so the old chain stopped resolving and
+        // this click timed out on the 2026-08-10 daily (#1384). The wrapper is
+        // still per-section (`saved_components_chat input_draggable` for the saved
+        // homonym), so it disambiguates exactly as the row div used to.
         await page
-          .getByTestId("input_outputChat Input")
+          .getByTestId("input_output_chat input_draggable")
           .getByTestId("add-component-button-chat-input")
           .click();
         await adjustScreenView(page);
@@ -128,13 +135,31 @@ test.describe("save component tests", () => {
         // exactly one new saved component must appear. Capture its id for
         // id-scoped cleanup FIRST (before UI assertions) so a later failure still
         // tears it down. The durable backend signal is is_component=true.
-        const created = (await listSavedComponents(request, bearer)).filter(
-          (f) => !savedBefore.has(f.id),
-        );
-        expect(
-          created.length,
-          "exactly one new saved component should be created by the save",
-        ).toBe(1);
+        //
+        // The read is POLLED, not taken once: clicking `icon-SaveAll` only
+        // dispatches `POST /api/v1/flows/` and the click resolves well before it
+        // lands. Measured on nightly 1.12.0.dev23 — the single read fired
+        // 47–187 ms after the click while the 201 arrived at 294–478 ms, so it
+        // saw 0 new components on 3 runs out of 3 with the save itself healthy
+        // every time (#1384). This waits for the write; a save that never
+        // persists still fails, on the same assertion, after the budget.
+        let created: Awaited<ReturnType<typeof listSavedComponents>> = [];
+        await expect
+          .poll(
+            async () => {
+              created = (await listSavedComponents(request, bearer)).filter(
+                (f) => !savedBefore.has(f.id),
+              );
+              return created.length;
+            },
+            {
+              message:
+                "exactly one new saved component should be created by the save",
+              timeout: 20000,
+              intervals: [200, 300, 500, 1000, 2000],
+            },
+          )
+          .toBe(1);
         savedComponent = created[0];
         createdFlowIds.push(savedComponent.id);
         expect(savedComponent.is_component).toBe(true);

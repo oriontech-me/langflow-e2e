@@ -16,66 +16,74 @@ One journey test (the shortcut chain only means something end to end):
    without typing the character into it (the field stays empty).
 2. Typing `chat` filters the tree — the `input_output_chat input_draggable` card
    appears and `models_and_agentsPrompt Template` does not.
-3. `Tab` is pressed until focus lands on the Chat Input entry's
-   **"Add Chat Input to canvas"** button (`add-component-button-chat-input`,
-   bounded loop, asserted by `data-testid`), then `Space` adds the component: the
-   canvas goes to exactly one node whose testid matches `/^rf__node-ChatInput-/`.
-4. `Tab` walks to `add-component-button-chat-output` and `Enter` adds it: two
+3. `Tab` is pressed until focus lands on the Chat Input **entry row**
+   (`input_outputChat Input` — a `role="button"` with the accessible name
+   *"Add Chat Input to canvas"*; bounded loop, asserted by `data-testid` and by
+   `role`), then `Space` adds the component: the canvas goes to exactly one node
+   whose testid matches `/^rf__node-ChatInput-/`.
+4. `Tab` walks to the `input_outputChat Output` row and `Enter` adds it: two
    nodes, the new one matching `/^rf__node-ChatOutput-/`.
 5. `Escape` with the search focused blurs it (focus leaves
    `sidebar-search-input`).
 
-### The keyboard affordance moved (upstream, 1.12 line) — #1124
+### The keyboard affordance has moved TWICE — #1124, then #1384
 
-Until nightly `1.12.0.dev6` the sidebar result **card wrapper**
-(`<category>_<name>_draggable`) carried `tabIndex={0}` plus an `onKeyDown`
-handler for `Enter`/`Space`, so the card itself was the tab stop and the `+`
-button was explicitly removed from the tab order (`tabIndex={-1}`).
+The tab stop that adds a component has changed element twice on the 1.12 line.
+Both moves were deliberate a11y work upstream, and both broke this spec's focus
+target — so the table below is the contract, and the row this spec targets is
+whichever element currently carries `tabIndex={0}` **and** the `Enter`/`Space`
+handler:
 
-On the `release-1.12.0` line — the branch `langflowai/langflow-nightly:latest`
-is built from, and therefore what `daily-stable.yml` runs — that anti-pattern was
-replaced by a real control:
+| | ≤ `1.12.0.dev6` (and the 1.11 line) | `1.12.0.dev10` … `dev21` | ≥ `1.12.0.dev23` (upstream #14250) |
+|---|---|---|---|
+| Card wrapper `<category>_<name>_draggable` | `tabIndex={0}` + `onKeyDown` | no `tabIndex` — not a tab stop | no `tabIndex` — the hover group only |
+| Row div `<category><Display Name>` | (held the "+" as a descendant) | (held the "+" as a descendant) | **`tabIndex={0}` + `role="button"` + `aria-label` + `onKeyDown` (Enter/Space)** — and the "+" is now its SIBLING |
+| `add-component-button-<slug>` | `tabIndex={-1}` (skipped) | focusable `<button aria-label="Add <name> to canvas">` | `tabIndex={-1}` — **out of the tab order again** |
+| Plus-icon reveal class | `group-focus/draggable` | `group-focus-within/draggable` | `group-focus-within/draggable` |
 
-| | ≤ `1.12.0.dev6` (and the 1.11 line) | ≥ `1.12.0.dev10` |
-|---|---|---|
-| Card wrapper `…_draggable` | `tabIndex={0}` + `onKeyDown` (Enter/Space) | no `tabIndex` — **not a tab stop** |
-| `add-component-button-<slug>` | `tabIndex={-1}` (skipped) | focusable `<button aria-label="Add <name> to canvas">` |
-| Plus-icon reveal class | `group-focus/draggable` | `group-focus-within/draggable` |
+The second move landed in `langflow-ai/langflow#14250` (commit `46d25720c2`,
+merged 2026-08-07, on `release-1.12.0` — the branch the nightly is built from,
+and not on upstream `main`), and 2026-08-10 was the first daily to see it. The
+failure was the walk running the full 10-press budget and ending on
+`datastaxAstra DB Chat Memory` — a *row* testid, because rows are the tab stops
+now.
 
-The user-facing journey is unchanged (and more accessible: a native button with
-an accessible name instead of a `div` emulating one), so this is an intentional
-product change, not a regression. What broke was the test's focus target: the
-old target is no longer reachable by `Tab`, and the walk ran past it into the
-bundle sections — the recorded daily failure ended on
-`add-component-button-valkey-chat-memory`, the 10th tab stop.
+**Keyboard-add is still reachable, so the expectation changed, not the
+affordance.** Measured on nightly `1.12.0.dev23` with a scout: from the search
+field, 3 `Tab` presses land on `input_outputChat Input`
+(`role="button"`, `aria-label="Add Chat Input to canvas"`, `tabindex="0"`), and
+`Space` there creates `rf__node-ChatInput-…`. That is why this is recorded as an
+**intentional product change**, not a regression: one tab stop per row instead of
+two, with the row exposing the accessible name the button used to carry.
 
-The spec therefore walks to the **add button**, which is also the handle the rest
-of this suite already uses for sidebar adds
-(`tests/helpers/flows/add-component-from-sidebar.ts`). Targeting the button (and
-not "either the button or the old wrapper") is deliberate: accepting both would
-stop guarding the a11y contract upstream just shipped. Consequence, stated
-explicitly: against a **1.11.x** image this spec fails at step 3 — expected, not
-a regression, until the change reaches a release line.
+The spec therefore walks to the **row** and asserts it is a `role="button"` before
+activating it — targeting the row *and* checking the role is what keeps the
+assertion about an operable control rather than "some div took focus". Accepting
+either the row or the button was rejected for the same reason #1124 rejected it:
+it would stop guarding the contract upstream just shipped. Consequence, stated
+explicitly: against an image older than `1.12.0.dev23` this spec fails at step 3.
 
-**That failure names itself.** Upstream's nightly image is built from a pinned
-release branch (`release-1.12.0`) while upstream `main` still carries the old
-shape, so the pin moving to a branch cut from `main` would reproduce #1124's exact
-signature. When the walk runs out of presses it therefore checks whether a
-`…_draggable` wrapper is still a tab stop (`tabindex="0"`) and, if so, appends
-*"this build predates the 1.12 a11y change (#1124), not a regression"* to the
-error. On a build that has the change the hint is empty, so a genuine keyboard
-regression still reads as one.
+**That failure names itself.** The nightly image is built from a pinned release
+branch, so a pin moving to a branch cut from `main` brings an older shape back.
+When the walk runs out of presses it reports which older shape it observed — a
+`…_draggable` wrapper still carrying `tabindex="0"` (the pre-`dev10`, #1124
+shape), or an `add-component-button-*` that is still focusable (the
+`dev10`–`dev21`, pre-#14250 shape) — and, if neither, says nothing, so a genuine
+keyboard regression still reads as one.
 
-### Chat Input is a singleton — the second walk is shorter
+### Chat Input is a singleton — the row stays a tab stop, the "+" does not
 
 `ChatInput` is constrained to one instance per flow
-(`evaluatePlacement` → `singleton`, tooltip *"Chat Input already added"*), so
-once step 3 adds it the Chat Input entry becomes `disabled` and stops rendering
-its add button. Its tab stop disappears, which is why step 4 reaches
-`add-component-button-chat-output` in the same number of presses that step 3
-needed for Chat Input. The walk is bounded by testid, not by a press count, so
-this costs the spec nothing — it is documented only so a reviewer is not
-surprised by the asymmetry.
+(`evaluatePlacement` → `singleton`, tooltip *"Chat Input already added"*), so once
+step 3 adds it the Chat Input entry becomes `disabled` and stops rendering its add
+button. Since #14250 the **row keeps `tabIndex={0}` even when disabled** (only
+`handleKeyDown` early-returns), so — unlike the `dev10`–`dev21` shape, where the
+button's tab stop vanished with it — the disabled Chat Input row still consumes a
+press and step 4 reaches `input_outputChat Output` on the 4th press, one more than
+step 3 needed. Measured both ways on `1.12.0.dev23`. The walk is bounded by testid,
+not by a press count, so this costs the spec nothing; it is documented only so a
+reviewer is not surprised, and because it is the fact that makes a fixed-press walk
+a bad idea here.
 
 ### The `/` press is retried, bounded — #1124 second symptom
 
@@ -114,26 +122,26 @@ assertion).
 |---|---|
 | `/` from the canvas | `sidebar-search-input` is focused AND its value is still `""` |
 | Type `chat` | `input_output_chat input_draggable` visible, `models_and_agentsPrompt Template` hidden |
-| `Tab` walk | focus reaches `add-component-button-chat-input` within a bounded number of presses (3 on `1.12.0.dev10`, budget 10) |
+| `Tab` walk | focus reaches `input_outputChat Input` within a bounded number of presses (3 on `1.12.0.dev23`, budget 10) and the focused element has `role="button"` |
 | `Space` | exactly 1 `.react-flow__node`, testid matching `/^rf__node-ChatInput-/` |
-| `Tab` + `Enter` | focus reaches `add-component-button-chat-output`; exactly 2 nodes, the new one matching `/^rf__node-ChatOutput-/` |
+| `Tab` + `Enter` | focus reaches `input_outputChat Output` (4th press — the disabled Chat Input row is still a tab stop); exactly 2 nodes, the new one matching `/^rf__node-ChatOutput-/` |
 | `Escape` | `sidebar-search-input` is not focused |
 
 Non-criterion (deliberate): the search text after adding a component (the field
 keeps its query on 1.12), `Escape` clearing the query (it does not), and the
-`aria-label` wording of the add button (an i18n string — the testid is the
-contract this spec asserts).
+`aria-label` **wording** of the focused row (an i18n string — the testid and the
+`role` are the contract this spec asserts).
 
 ## External dependencies
 
 - `sidebar-search-input`, the `<category>_<name>_draggable` result cards, the
-  per-result `add-component-button-<slug>` buttons, and the canvas
-  `.react-flow__node` / `rf__node-<Type>-<hash>` testids.
-- The `/` shortcut binding and the sidebar add button's native `Space`/`Enter`
-  activation (upstream `sidebarDraggableComponent.tsx`). A change to the focus
-  **order** does not break the test (it walks by testid); moving the keyboard
-  affordance to another element does, by design — that is the contract under
-  test.
+  per-result `<category><Display Name>` rows (the keyboard tab stops), and the
+  canvas `.react-flow__node` / `rf__node-<Type>-<hash>` testids.
+- The `/` shortcut binding and the row's `onKeyDown` `Space`/`Enter` handler
+  (upstream `sidebarDraggableComponent.tsx`). A change to the focus **order** does
+  not break the test (it walks by testid); moving the keyboard affordance to
+  another element does, by design — that is the contract under test, and it has
+  now moved twice (#1124, #1384).
 - `POST /api/v1/flows/` — the empty flow the editor opens on.
 
 No provider API key, no LLM, no flow build.
@@ -152,9 +160,9 @@ Flow cleanup: the flow is created via the API and deleted by id in `afterEach`.
   1. Click the canvas pane, press `/` (bounded retry), read focus and the field
      value.
   2. Type `chat`; read the matching and non-matching cards.
-  3. Press `Tab` until `add-component-button-chat-input` has focus; press
-     `Space`; read the node count and the node testid.
-  4. Press `Tab` until `add-component-button-chat-output` has focus; press
+  3. Press `Tab` until the `input_outputChat Input` row has focus; read its
+     `role`; press `Space`; read the node count and the node testid.
+  4. Press `Tab` until the `input_outputChat Output` row has focus; press
      `Enter`; read the node count and the new node's testid.
   5. Focus the search field, press `Escape`, read focus.
 - **Validation:** as tabulated above — the criterion is the *identity* of the
@@ -162,4 +170,4 @@ Flow cleanup: the flow is created via the API and deleted by id in `afterEach`.
 
 ## Last validated
 
-1.12.x (nightly `1.12.0.dev10`)
+1.12.x (nightly `1.12.0.dev23`)

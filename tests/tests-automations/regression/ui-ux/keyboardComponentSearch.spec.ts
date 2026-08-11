@@ -17,19 +17,21 @@ import { deleteFlow } from "../../../helpers/flows/delete-flow";
 // walk stops on the expected testid and each added node is asserted by TYPE. The
 // inherited version also opened a blank flow through the UI and never deleted it.
 
-// The result card is the observable of the FILTER, not a focus target: on the
-// 1.12 line it carries no tabIndex. The keyboard affordance is the per-result
-// "Add <name> to canvas" button, the same handle the rest of the suite uses to
-// add from the sidebar (helpers/flows/add-component-from-sidebar.ts). See the
-// spec doc -> "The keyboard affordance moved (upstream, 1.12 line) — #1124".
+// The result card wrapper is the observable of the FILTER, not a focus target:
+// on the 1.12 line it carries no tabIndex. The keyboard affordance is the
+// per-result ROW (`<category><Display Name>`) — a `role="button"` carrying
+// tabIndex={0}, an aria-label "Add <name> to canvas" and the Enter/Space
+// handler. It has moved twice on this line: card wrapper -> add button (#1124)
+// -> row (#1384, upstream #14250, which put the "+" back at tabIndex={-1}). See
+// the spec doc -> "The keyboard affordance has moved TWICE".
 const CHAT_INPUT_CARD = "input_output_chat input_draggable";
-const CHAT_INPUT_ADD = "add-component-button-chat-input";
-const CHAT_OUTPUT_ADD = "add-component-button-chat-output";
+const CHAT_INPUT_ROW = "input_outputChat Input";
+const CHAT_OUTPUT_ROW = "input_outputChat Output";
 // A component that must not survive the "chat" query.
 const NON_MATCHING_CARD = "models_and_agentsPrompt Template";
 // Bounded Tab walk: the live order needs 3 presses (sidebar-options-trigger ->
-// disclosure-<category> -> the add button), so this only runs out when the
-// component is unreachable by keyboard — which is the failure being tested.
+// disclosure-<category> -> the row), so this only runs out when the component is
+// unreachable by keyboard — which is the failure being tested.
 const MAX_TAB_PRESSES = 10;
 
 /** The `data-testid` of the currently focused element, if it has one. */
@@ -40,25 +42,37 @@ async function focusedTestId(page: Page): Promise<string | null> {
 }
 
 /**
- * Diagnostic for the way this walk is most likely to break again: an image that
- * predates the 1.12 a11y change, where the result CARD wrapper is the tab stop
- * and the add button is out of the tab order (#1124). The nightly image is built
- * from a release branch (`release-1.12.0` at the time of writing) while upstream
- * `main` still carries the old shape, so the pin moving to a branch cut from
- * `main` is enough to bring the old DOM back — with the exact failure signature
- * of #1124. Naming it in the error saves triage from re-deriving it.
+ * Diagnostic for the way this walk is most likely to break again: an image whose
+ * sidebar predates the CURRENT tab-stop shape. The nightly image is built from a
+ * release branch (`release-1.12.0` at the time of writing) while upstream `main`
+ * lags it, so the pin moving to a branch cut from `main` is enough to bring an
+ * older DOM back. Both older shapes are named, because they fail identically
+ * (the walk runs out of presses) and are repaired differently.
  *
- * Returns "" on a build that has the change, so a genuine keyboard regression
- * reads as one.
+ * Returns "" on a build that has the current shape, so a genuine keyboard
+ * regression reads as one.
  */
 async function legacyTabStopHint(page: Page): Promise<string> {
-  const legacyTabStops = await page
+  const cardWrapperTabStops = await page
     .locator('[data-testid$="_draggable"][tabindex="0"]')
     .count();
+  if (cardWrapperTabStops > 0) {
+    return (
+      ` — the result card wrapper is the tab stop and neither the row nor the ` +
+      `add button is: this build predates the 1.12 a11y change (#1124), not a ` +
+      `regression.`
+    );
+  }
 
-  return legacyTabStops > 0
-    ? ` — the result card wrapper is the tab stop and the add button is not: ` +
-        `this build predates the 1.12 a11y change (#1124), not a regression.`
+  // Pre-#14250 (nightly dev10..dev21): the "+" button was the tab stop and the
+  // row was not. `tabindex="-1"` is what #14250 put back on the button, so a
+  // button WITHOUT it is the older shape.
+  const focusableAddButtons = await page
+    .locator('[data-testid^="add-component-button-"]:not([tabindex="-1"])')
+    .count();
+  return focusableAddButtons > 0
+    ? ` — the add button is the tab stop and the row is not: this build ` +
+        `predates upstream #14250 (#1384), not a regression.`
     : "";
 }
 
@@ -128,7 +142,7 @@ test.describe("ui-ux — keyboard component search", () => {
   });
 
   test("user can search and add components using keyboard shortcuts",
-    { tag: ["@workspace", "@ui-ux"] },
+    { tag: ["@stable", "@workspace", "@ui-ux"] },
     async ({ page }) => {
       const search = page.getByTestId("sidebar-search-input");
       const nodes = page.locator(".react-flow__node");
@@ -154,7 +168,17 @@ test.describe("ui-ux — keyboard component search", () => {
       });
 
       await test.step("Tab reaches the first result and Space adds it", async () => {
-        await tabUntilFocused(page, CHAT_INPUT_ADD);
+        await tabUntilFocused(page, CHAT_INPUT_ROW);
+
+        // The row is a div, so "it took focus" alone would also be satisfied by
+        // an inert wrapper that happens to be tabbable. `role="button"` is what
+        // makes the tab stop an operable control (and it is not an i18n string,
+        // unlike the aria-label the row also carries).
+        await expect(page.getByTestId(CHAT_INPUT_ROW)).toHaveAttribute(
+          "role",
+          "button",
+        );
+
         await page.keyboard.press("Space");
 
         await expect(nodes).toHaveCount(1, { timeout: 15000 });
@@ -169,9 +193,12 @@ test.describe("ui-ux — keyboard component search", () => {
       await test.step("Tab reaches the next result and Enter adds it", async () => {
         await search.click();
         // ChatInput is a singleton: now that one is on the canvas its entry is
-        // disabled and stops rendering an add button, so this walk costs the
-        // same number of presses the Chat Input one did.
-        await tabUntilFocused(page, CHAT_OUTPUT_ADD);
+        // disabled and stops rendering its add button — but since #14250 the ROW
+        // keeps tabIndex={0} even when disabled (only its key handler
+        // early-returns), so it still costs a press and this walk needs one MORE
+        // than the Chat Input one did. Bounded by testid, not by press count,
+        // precisely so that asymmetry costs nothing.
+        await tabUntilFocused(page, CHAT_OUTPUT_ROW);
         await page.keyboard.press("Enter");
 
         await expect(nodes).toHaveCount(2, { timeout: 15000 });
