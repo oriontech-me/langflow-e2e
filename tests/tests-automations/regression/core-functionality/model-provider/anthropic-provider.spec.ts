@@ -13,6 +13,7 @@ import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
 } from "../../../../helpers/provider-setup";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 /**
  * Anthropic (Claude) provider path (QA-CHECKLIST §7.3) as a provider-centric journey:
@@ -182,6 +183,15 @@ test.describe("Anthropic Provider", () => {
     "Anthropic API key is configured via Settings → Model Providers",
     { tag: ["@stable", "@model-provider", "@settings"] },
     async ({ page }) => {
+      // Env presence, NOT provider health — deliberate (#1415). This test makes
+      // no completion call, and the backend's validate_model_provider_key
+      // (lfx/base/models/unified_models.py) only rejects a key when the error
+      // message contains "401"/"authentication"/"api key"; every other failure
+      // hits a bare `return` ("allow saving despite minor errors"), so a drained
+      // account still answers {valid: true} and this test still passes. Measured
+      // on the 2026-07-27 daily: Anthropic was dry, this test passed, Test 2
+      // hard-failed. Gating it would trade real coverage of the Settings save
+      // path for nothing on exactly the days the account is down.
       test.skip(
         !hasProviderEnvKeys(PROVIDER),
         `Missing env vars for provider "${PROVIDER}": ${missingProviderEnvKeys(PROVIDER).join(", ")}`,
@@ -240,10 +250,14 @@ test.describe("Anthropic Provider", () => {
     "configured Anthropic selects a Claude model in the Agent and executes the flow",
     { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
     async ({ page }) => {
-      test.skip(
-        !hasProviderEnvKeys(PROVIDER),
-        `Missing env vars for provider "${PROVIDER}": ${missingProviderEnvKeys(PROVIDER).join(", ")}`,
-      );
+      // Health, not mere presence (#1029's gate, applied here by #1415). This
+      // test makes a live completion call, so a key that EXISTS but is dead
+      // cannot produce a verdict about Langflow. Measured on the 2026-07-27
+      // daily (run 30261409427), where the Anthropic account was drained: THIS
+      // test hard-failed 3/3 while Test 1 passed — see the comment on Test 1.
+      // Test 3 carries the same gate; Test 1 deliberately does not.
+      const providerGate = providerSkipGate(PROVIDER);
+      test.skip(providerGate.skip, providerGate.reason);
 
       // Per-run sentinel: a match proves THIS execution produced the output.
       const token = `ANTHROPIC-${Date.now()}`;
@@ -270,10 +284,10 @@ test.describe("Anthropic Provider", () => {
     "switches between Claude model families (Haiku → Sonnet → Opus)",
     { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
     async ({ page }) => {
-      test.skip(
-        !hasProviderEnvKeys(PROVIDER),
-        `Missing env vars for provider "${PROVIDER}": ${missingProviderEnvKeys(PROVIDER).join(", ")}`,
-      );
+      // Same live-completion gate as Test 2 — the switch is proven by executing
+      // on the switched-to Sonnet model, so a dead key wedges this one too.
+      const providerGate = providerSkipGate(PROVIDER);
+      test.skip(providerGate.skip, providerGate.reason);
 
       const haiku = resolveClaudeModel("haiku");
       const sonnet = resolveClaudeModel("sonnet");

@@ -44,6 +44,12 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   execution with a billing error — see Notes).
 - `models.json` / `providers.json` generated via
   `npx playwright test tests/collect-models.spec.ts` (Anthropic must be `active`).
+  **Tests 2–3 additionally gate on the health `collect-models` recorded there**
+  (#1415) — a provider recorded `inactive` skips them with the collected reason
+  instead of making a live call against a dead key. A local run with no
+  `providers.json` fails OPEN (nothing skips); a stale `inactive` record is
+  bypassed with `IGNORE_PROVIDER_HEALTH=1`. **Test 1 is deliberately not gated**
+  — see the gate note below.
 - Run with `--workers=1` (Tests 2–3 load a named template via
   `SimpleAgentTemplatePage`; agent-family convention). File is serial.
 
@@ -204,12 +210,24 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   cost per run (and Opus is the most expensive tier) for no extra mechanism
   coverage — the switch mechanism is identical per family and
   execution-after-switch is already proven on Sonnet.
-- **Zero-credit trap (found live during #503):** a valid-but-unfunded key
-  passes Langflow's configure/validate and lists all 12 Claude models, but
-  every real inference fails with "credit balance is too low". The spec
-  requires an *active* provider (`providers.json`), which collect-models
-  verifies with a real 1-token inference — that gate, not the configure step,
-  is what catches an unfunded key before the agent tests burn retries.
+- **Zero-credit trap (found live during #503; the gate was only added in #1415):**
+  a valid-but-unfunded key passes Langflow's configure/validate and lists all 12
+  Claude models, but every real inference fails with "credit balance is too low".
+  The reason is in the backend: `validate_model_provider_key`
+  (`lfx/base/models/unified_models.py`) does make a real `llm.invoke("test")`
+  with `max_tokens=1`, but it only raises when the error message contains `401`,
+  `authentication` or `api key` — every other failure hits a bare `return`
+  ("allow saving despite minor errors"). A drained account raises
+  `credit balance is too low`, which matches none of those, so
+  `POST /api/v1/models/validate-provider` answers `{valid: true}` and the
+  configure step passes. **This note used to claim the spec "requires an active
+  provider (providers.json)" — it did not.** Nothing here read `providers.json`
+  until #1415; the mechanism was documented but never implemented, and the cost
+  was measured on the 2026-07-27 daily
+  ([run 30261409427](https://github.com/oriontech-me/langflow-e2e/actions/runs/30261409427)),
+  where the Anthropic account was drained: Test 1 passed, Test 2 hard-failed
+  3/3, and Test 3 never ran (serial mode skips after a failure). Tests 2–3 now
+  gate on `providerSkipGate("anthropic")`.
 - **Flow cleanup (id-scoped):** Tests 2–3 create a flow via
   `SimpleAgentTemplatePage.load()`, which does NO cleanup (post-#553 contract —
   the id is discarded by the POM). The spec tracks every
@@ -222,3 +240,14 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
 - **Shared global key:** the Anthropic key is global and persists across runs.
   Test 1 is idempotent — it re-saves and asserts the request outcomes, not a
   fresh start.
+- **Why the gate is per test, not per file (#1415, mechanism from #1029):** only
+  Tests 2–3 make a live completion call, so only they are gated. Test 1 keeps
+  the env-presence gate on purpose: on a drained account it still passes (the
+  backend code path above), so it still covers the Settings save path on a day
+  the account is dry — gating it would trade real coverage for nothing. This is
+  the asymmetry #1333 settled for the OpenAI copy of the same bug, applied here
+  after confirming the premise holds for Anthropic in two independent ways: the
+  shared backend code path, and the 2026-07-27 daily, where Test 1 passed on the
+  drained account while Test 2 hard-failed. **Resilience, not a root-cause fix**
+  — the account still has to be funded for §7.3.2/§7.3.3 to be exercised at all;
+  the general remedy is **#976**.

@@ -11,6 +11,7 @@ import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
 } from "../../../../helpers/provider-setup";
+import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
 
 /**
@@ -96,6 +97,15 @@ test.describe("Google Provider", () => {
         `Missing env vars for provider "${PROVIDER}": ${missingProviderEnvKeys(PROVIDER).join(", ")}`,
       );
 
+      // The gate above is env presence, NOT provider health — deliberate
+      // (#1415). This test makes no completion call, and the backend's
+      // validate_model_provider_key (lfx/base/models/unified_models.py) only
+      // rejects a key when the error message contains "401"/"authentication"/
+      // "api key"; every other failure hits a bare `return` ("allow saving
+      // despite minor errors"), so a spend-capped or drained key still answers
+      // {valid: true} and this test still passes. Gating it would trade real
+      // coverage of the Settings save path for nothing on exactly the days the
+      // account is down. Test 2, which does call the model, IS gated.
       await awaitBootstrapTest(page, { skipModal: true });
 
       await test.step("open Settings → Model Providers → Google Generative AI", async () => {
@@ -156,10 +166,16 @@ test.describe("Google Provider", () => {
     "configured Google selects a Gemini model in the Agent and executes the flow",
     { tag: ["@stable", "@model-provider", "@agents", "@playground"] },
     async ({ page }) => {
-      test.skip(
-        !hasProviderEnvKeys(PROVIDER),
-        `Missing env vars for provider "${PROVIDER}": ${missingProviderEnvKeys(PROVIDER).join(", ")}`,
-      );
+      // Health, not mere presence (#1029's gate, applied here by #1415). This
+      // test makes a live completion call, so a key that EXISTS but is dead
+      // cannot produce a verdict about Langflow — and this is the provider the
+      // gate was BUILT for: on run 30374528125 the Google key had exceeded its
+      // monthly spending cap, models.json still listed all 36 Google models (it
+      // mirrors the Langflow catalog, not the validation), and the live calls
+      // that followed blocked past gunicorn's 300 s timeout. Test 1 deliberately
+      // stays on the env-presence gate — see the comment there.
+      const providerGate = providerSkipGate(PROVIDER);
+      test.skip(providerGate.skip, providerGate.reason);
 
       // Per-run sentinel: a match proves THIS execution produced the output.
       const token = `GOOGLE-${Date.now()}`;
