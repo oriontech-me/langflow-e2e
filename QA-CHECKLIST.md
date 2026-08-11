@@ -747,9 +747,8 @@
 - [-] Resource exposed by server is accessible via URI — flow files are exposed as MCP resources: `resources/list` is `@stable`; `resources/read` blocked by a live Langflow regression on 1.12.x (`AttributeError: 'str' object has no attribute 'hex'`, filed upstream **LE-2012**) — kept as a guard, not promoted → `mcp/server/mcp-server-resources.spec.ts`
 - [ ] Install this project into an MCP client — `GET /{project_id}/installed` reports the current state, `POST /{project_id}/install` performs it, and the UI reflects both (the user-facing way an MCP Server is actually consumed; no bullet covered this before 2026-08-06)
 - [ ] `GET /{project_id}/composer-url` returns a URL that resolves, and the copy control in the UI yields the same value
-- [ ] Per-project MCP configuration — `GET`/`PATCH /{project_id}` selects which flows are exposed as tools, and a de-selected flow disappears from `tools/list` over the protocol
+- [x] Per-project MCP configuration — `GET`/`PATCH /{project_id}` selects which flows are exposed as tools, and a de-selected flow disappears from `tools/list` over the protocol (invocation after de-selection is a separate finding, #1408) → `mcp/server/mcp-server-project-config.spec.ts`
 - [x] A registered server is read back individually via `GET /servers/{name}` with the same fields it was created with, and `PATCH /servers/{name}` updates them — merging per top-level key and refusing to rename (#1397) → `mcp/server/mcp-server.spec.ts`
-- [x] Per-project tool exposure — `PATCH`/`GET /api/v1/mcp/project/{id}` selects which flows are exposed, and a de-selected flow disappears from `tools/list` **over the protocol** (invocation after de-selection is a separate finding, #1408) → `mcp/server/mcp-server-project-config.spec.ts`
 - [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
 ---

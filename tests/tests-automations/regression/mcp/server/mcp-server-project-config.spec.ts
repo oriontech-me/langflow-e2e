@@ -90,15 +90,18 @@ test.describe("MCP Server — per-project tool exposure", () => {
   // Unique per run, and a valid MCP tool name (snake_case): `tools/list`
   // containment is then an assertion about THIS run's flow.
   //
-  // Deliberately SHORT. The protocol does not serve `action_name` verbatim — it
-  // serves `get_unique_name(sanitize_mcp_name(action_name), 30, …)`, and
-  // `MAX_MCP_TOOL_NAME_LENGTH` is 30 (`src/lfx/src/lfx/base/mcp/constants.py`),
-  // while the REST endpoint returns the stored name untouched. A 35-character
-  // name therefore round-trips through `GET` and comes back **truncated** in
-  // `tools/list`, which reads exactly like the tool having failed to publish.
-  // Measured on 1.12.0.dev20 while writing this spec. Base-36 keeps it ~21 chars
-  // and inside the sanitizer's character class, so the name reaching the client
-  // is the one written here.
+  // Deliberately SHORT, and deliberately already in the sanitizer's normal form.
+  // Neither endpoint echoes `action_name` verbatim: the REST listing serves
+  // `sanitize_mcp_name(action_name)` at its default cap of 46
+  // (`mcp_projects.py:314`), and the protocol serves
+  // `get_unique_name(sanitize_mcp_name(action_name), 30, …)` —
+  // `MAX_MCP_TOOL_NAME_LENGTH` is 30 (`src/lfx/src/lfx/base/mcp/constants.py`).
+  // So the two agree only for a name that is ALREADY lowercase `[a-z0-9_]` and
+  // within 30 characters; a 35-character one comes back whole from `GET` and
+  // **truncated** from `tools/list`, which reads exactly like a tool that failed
+  // to publish. Measured on 1.12.0.dev20 while writing this spec — it cost a red
+  // run. Base-36 keeps this ~21 characters and inside the character class, so
+  // the name the client sees is the one written here.
   const actionName = `e2e_cfg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
   const actionDescription = "E2E per-project exposure tool";
 
@@ -112,16 +115,23 @@ test.describe("MCP Server — per-project tool exposure", () => {
     headers = { Authorization: authorization };
 
     // Fixture guard, not product coverage: the assertions below compare the
-    // protocol's tool name to `actionName` for equality, which only holds while
-    // it survives the 30-char cap. Fails here, naming the cap, rather than as a
-    // confusing tools/list miss if someone lengthens the prefix.
+    // served tool name to `actionName` for equality, which holds only while the
+    // name survives BOTH transformations unchanged — the 30-char cap and the
+    // sanitizer's character class. Fails here, naming the rule, rather than as a
+    // confusing tools/list miss if someone lengthens the prefix or writes a
+    // hyphen or a capital into it.
     expect(
       actionName.length,
       `the action name must stay within MAX_MCP_TOOL_NAME_LENGTH (30) or the ` +
         `protocol will serve a truncated name: ${actionName}`,
     ).toBeLessThanOrEqual(30);
+    expect(
+      actionName,
+      `the action name must already be in sanitize_mcp_name's normal form ` +
+        `(lowercase, [a-z0-9_]) or both endpoints will serve a different string`,
+    ).toMatch(/^[a-z][a-z0-9_]*$/);
 
-    // The prefix is SIX characters, and that is load-bearing rather than terse.
+    // The prefix is FIVE characters, and that is load-bearing rather than terse.
     // Creating a project derives an MCP server named
     // `lf-${sanitize_mcp_name(name)[:26]}` (`MAX_MCP_SERVER_NAME_LENGTH` is 30,
     // minus the `lf-` prefix), and that derived name must be unique per user.
@@ -131,10 +141,11 @@ test.describe("MCP Server — per-project tool exposure", () => {
     // `POST /api/v1/projects/` → 409 "MCP server name conflict:
     // 'lf-e2e_mcp_project_config_178' already exists for a different project".
     // Measured on 1.12.0.dev20 with `--workers=4 --repeat-each=3`, which is how
-    // the first version of this spec failed. At six characters the whole
-    // timestamp and random suffix survive the truncation.
+    // the first version of this spec failed. Filed as #1409 — it reproduces with
+    // two ordinary project names. Five characters give 5+1+13+1+5 = 25, one
+    // character inside the cut, so the whole suffix survives with slack.
     const project = await createProjectViaApi(request, headers, {
-      namePrefix: "e2ecfg",
+      namePrefix: "e2ecf",
       description: "Per-project MCP exposure (#1396)",
     });
     projectId = project.projectId;
@@ -148,12 +159,29 @@ test.describe("MCP Server — per-project tool exposure", () => {
     // The afterAll's own live `request`: Playwright forbids reusing the
     // beforeAll one. Flow first, then the project — deleting a project with a
     // flow still in it is a different, untested path.
+    //
+    // Errors are collected rather than swallowed: `deleteFlow` and
+    // `deleteProject` are written to THROW so a cleanup regression stays visible
+    // (#545/#965), and a bare `.catch(() => {})` re-introduces exactly the silent
+    // leak they guard against — here a leak is two things, a project and the
+    // `lf-<name>` entry it registers in the shared MCP server list that
+    // `mcp-server-starter-projects.spec.ts` asserts on. Collecting also keeps the
+    // second cleanup running when the first fails, which a bare `await` would not.
+    const failures: string[] = [];
     if (flowId) {
-      await deleteFlow(request, flowId, { headers }).catch(() => {});
+      await deleteFlow(request, flowId, { headers }).catch((e) =>
+        failures.push(`flow ${flowId}: ${e}`),
+      );
     }
     if (deleteProjectFn) {
-      await deleteProjectFn(request).catch(() => {});
+      await deleteProjectFn(request).catch((e) =>
+        failures.push(`project ${projectId}: ${e}`),
+      );
     }
+    expect(
+      failures,
+      `teardown left state on the shared instance: ${failures.join(" | ")}`,
+    ).toEqual([]);
   });
 
   test("project MCP settings round-trip through GET and PATCH", { tag: ["@stable", "@api", "@mcp"] },
@@ -235,8 +263,17 @@ test.describe("MCP Server — per-project tool exposure", () => {
           undefined,
           2,
         );
+        // Checked, not defaulted: `resp.result?.tools ?? []` turns ANY failed
+        // response into an empty list, which passes the de-selection assertion
+        // below for entirely the wrong reason. Verified by mutation — pointing
+        // this step at a bogus JSON-RPC method left the spec green.
+        expect(resp.error, JSON.stringify(resp.error)).toBeUndefined();
+        expect(
+          Array.isArray(resp.result?.tools),
+          `tools/list must answer with a tools array; got ${JSON.stringify(resp.result)}`,
+        ).toBe(true);
         const tools: Array<{ name: string; description?: string }> =
-          resp.result?.tools ?? [];
+          resp.result.tools;
         const tool = tools.find((t) => t.name === actionName);
         expect(
           tool,
@@ -292,7 +329,14 @@ test.describe("MCP Server — per-project tool exposure", () => {
           undefined,
           4,
         );
-        const names: string[] = (resp.result?.tools ?? []).map(
+        // The load-bearing guard of this spec: an absent action proves
+        // de-selection ONLY if the call itself succeeded.
+        expect(resp.error, JSON.stringify(resp.error)).toBeUndefined();
+        expect(
+          Array.isArray(resp.result?.tools),
+          `tools/list must answer with a tools array; got ${JSON.stringify(resp.result)}`,
+        ).toBe(true);
+        const names: string[] = resp.result.tools.map(
           (t: { name: string }) => t.name,
         );
         expect(
@@ -309,9 +353,13 @@ test.describe("MCP Server — per-project tool exposure", () => {
         expect(enabled.status(), await enabled.text()).toBe(200);
         expect((await enabled.json()).tools).toEqual([]);
 
-        // The query parameter selects WHICH set is listed — it does not toggle
-        // anything — and this half also proves the flow was withdrawn from
-        // exposure rather than deleted or detached from the project.
+        // `?mcp_enabled=false` does not invert the filter — it removes it.
+        // `_build_project_tools_response` adds `WHERE mcp_enabled = true` ONLY
+        // when the parameter is truthy (`mcp_projects.py:301`), so `false`
+        // returns every flow in the project. This project holds exactly one, so
+        // the assertion below is about that flow either way, and what it proves
+        // is that the flow was withdrawn from exposure rather than deleted or
+        // detached from the project.
         const disabled = await request.get(
           `/api/v1/mcp/project/${projectId}?mcp_enabled=false`,
           { headers },

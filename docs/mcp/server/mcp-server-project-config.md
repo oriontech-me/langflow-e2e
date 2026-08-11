@@ -13,7 +13,8 @@ selection.
 1. **The selection round-trips.** `PATCH /api/v1/mcp/project/{project_id}` sets a
    flow's `mcp_enabled`, `action_name` and `action_description`, and
    `GET /api/v1/mcp/project/{project_id}` reads them back — listing the **enabled**
-   flows by default, and the **disabled** ones under `?mcp_enabled=false`.
+   flows by default, and **every** flow in the project under `?mcp_enabled=false`,
+   which removes the filter rather than inverting it.
 2. **Selecting exposes it over the protocol, for real.** The enabled flow appears in
    `tools/list` on the project's own streamable endpoint under its `action_name`,
    described by its `action_description`, and `tools/call` actually runs it — so the
@@ -88,8 +89,10 @@ project). Teardown deletes the flow and then the project.
 4. `PATCH` the same flow to `mcp_enabled: false`; assert 200.
 5. `tools/list` again: assert the `action_name` is **gone**.
 6. `GET /api/v1/mcp/project/{project}`: assert `tools: []`, and that
-   `?mcp_enabled=false` now returns the flow with `mcp_enabled: false` — the query
-   parameter selects which set is listed, it does not toggle anything.
+   `?mcp_enabled=false` returns the flow with `mcp_enabled: false`. That parameter
+   **removes** the `WHERE mcp_enabled = true` clause rather than inverting it
+   (`mcp_projects.py:301`), so on a project holding one flow the two readings are
+   "the exposed set" and "the whole project".
 
 ---
 
@@ -101,8 +104,9 @@ project). Teardown deletes the flow and then the project.
   action is listed and callable; after de-selection it is absent from `tools/list`.
 - `tools/call` on the enabled action returns the exact sentinel that was sent, so the
   exposure is a working tool rather than an advertised name.
-- The `?mcp_enabled=false` listing returns the de-selected flow — proving the flow was
-  not deleted or detached, only withdrawn from exposure.
+- The unfiltered listing (`?mcp_enabled=false`) still returns the flow, now with
+  `mcp_enabled: false` — proving it was withdrawn from exposure rather than deleted or
+  detached from the project.
 
 ## Guarding against false positives *(how)*
 
@@ -118,10 +122,17 @@ project). Teardown deletes the flow and then the project.
   that listed the tool but could not run it would pass a containment-only test.
 - **The handshake asserts the project identity**, so a misdirected endpoint fails at
   step 1 instead of producing an empty `tools/list` that looks like correct
-  de-selection.
+  de-selection. That single assertion is byte-identical to one in
+  `mcp-server-protocol.spec.ts`, and the repetition is deliberate: there it is the
+  coverage, here it is the precondition that makes an *absence* meaningful.
 - **A fixture guard on the action name's length** fails in `beforeAll`, naming the
   30-character cap, rather than as a `tools/list` miss that reads like a product
   defect (see *Notes*).
+- **Both `tools/list` calls check the JSON-RPC response before reading it.** Reading
+  `resp.result?.tools ?? []` would turn any failed call into an empty list, and the
+  de-selection assertion — the one this spec exists for — would then pass for exactly
+  the wrong reason. Proven by mutation: with the guard removed, pointing that step at a
+  bogus JSON-RPC method left the spec green.
 - **Force-failure check** (CONTRIBUTING §2) executed per assertion during VERIFY.
 
 ---
@@ -184,7 +195,9 @@ project). Teardown deletes the flow and then the project.
 - If `GET /{project_id}` changes shape — it currently returns
   `{ tools: [...], auth_settings }`, and each tool entry carries **both** the action
   pair and the flow's own name/description.
-- If `?mcp_enabled` stops being a filter over the listing.
+- If `?mcp_enabled` stops behaving as an on/off for the `mcp_enabled = true` filter —
+  note it never selected the disabled set, and a build that made it do so would change
+  what step 6 means without failing it on a single-flow project.
 - If the streamable endpoint's `serverInfo.name` stops being
   `langflow-mcp-project-{id}`.
 - If #1408 is fixed: add the post-de-selection `tools/call` assertion here and move
@@ -205,15 +218,26 @@ project). Teardown deletes the flow and then the project.
   specs into this PR's impacted-E2E lane (the import-graph selection, #1054) in
   exchange for two lines. The file-local helper reads the same fixture and calls the
   same `createFlow`.
-- **The protocol does not serve `action_name` verbatim, and that cost a red run.**
-  `tools/list` serves `get_unique_name(sanitize_mcp_name(action_name), 30, …)` —
-  `MAX_MCP_TOOL_NAME_LENGTH` is **30** (`src/lfx/src/lfx/base/mcp/constants.py`) —
-  while `GET /api/v1/mcp/project/{id}` returns the stored `action_name` untouched.
-  The first version of this spec used a 35-character name: the REST round trip
-  passed, and `tools/list` then answered with the name cut at 30
-  (`e2e_project_cfg_1786413140760_`), which reads exactly like the tool having
-  failed to publish. Measured on `1.12.0.dev20`. The action name is now ~21
-  characters and a `beforeAll` guard fails if that stops being true.
+- **Neither endpoint echoes `action_name` verbatim, and the difference cost a red
+  run.** The REST listing serves `sanitize_mcp_name(action_name)` at the sanitizer's
+  default cap of **46** (`mcp_projects.py:314`), while `tools/list` serves
+  `get_unique_name(sanitize_mcp_name(action_name), 30, …)` — `MAX_MCP_TOOL_NAME_LENGTH`
+  is **30** (`src/lfx/src/lfx/base/mcp/constants.py`). The two therefore agree only for
+  a name that is already lowercase `[a-z0-9_]` **and** within 30 characters. The first
+  version of this spec used a 35-character name: the REST round trip passed and
+  `tools/list` answered with the name cut at 30 (`e2e_project_cfg_1786413140760_`),
+  which reads exactly like the tool having failed to publish. Both halves measured on
+  `1.12.0.dev20` — an `E2E-Probe-…` name comes back from `GET` lowercased and
+  underscored, not as sent. The action name is now ~21 characters and a `beforeAll`
+  guard asserts **both** the cap and the character class.
+- **A truncated tool name is not merely renamed — it is uninvocable.** `tools/call`
+  with the exact name `tools/list` itself served for a 37-character action
+  (`e2e_probe_action_name_that_is_`) answers
+  `isError: true, "Flow with name 'e2e_probe_action_name_that_is_' not found"`: the
+  listing truncates while the lookup does not, so the server advertises a tool no
+  client can call. Measured on `1.12.0.dev20`. Not asserted here — this spec's subject
+  is the selection, and MCP tool naming deserves a spec of its own — but it is why the
+  guard above is a hard failure rather than a comment.
 - **The project's name prefix is six characters, and that is load-bearing.**
   Creating a project derives an MCP server named `lf-${sanitize_mcp_name(name)[:26]}`
   (`MAX_MCP_SERVER_NAME_LENGTH` is 30 minus the `lf-` prefix) and that derived name
@@ -226,10 +250,11 @@ project). Teardown deletes the flow and then the project.
   **This is a product behaviour, not a test artefact** — reproduced with two ordinary
   names on `1.12.0.dev20`: `Marketing Automation Project Alpha` creates, and
   `Marketing Automation Project Beta` is refused, because they share their first 26
-  characters. Worth knowing before adding another project-creating spec: of the
+  characters. Filed as **#1409**. Worth knowing before adding another project-creating spec: of the
   prefixes the suite uses today, `a2a-authgate` (12 chars) truncates to exactly the
   timestamp boundary, so it survives only because two projects are unlikely to be
-  created in the same millisecond.
+  created in the same millisecond. This spec's own prefix is five characters, one
+  inside the cut.
 - **`PATCH` merges per flow id.** `update_project_mcp_settings` iterates the project's
   flows and touches only those named in `settings`, so this test cannot disable
   anything it did not create — worth knowing before reusing this pattern against a
