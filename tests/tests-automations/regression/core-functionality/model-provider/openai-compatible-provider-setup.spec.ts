@@ -44,6 +44,18 @@ import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-
  * carries `@stable` (measured while working #1334). Tests 4-5 still configure the pair
  * over the API, sequentially: their subject is discovery and execution, not the save.
  *
+ * A SECOND property of being live-only shapes every read in tests 4-5, and is what
+ * #1364 measured: the catalog is recomputed on every request, so the endpoint's
+ * latency is inside the assertion. `discovery.py` fetches once per model type with a
+ * 5 s timeout and degrades to `[]` on any failure without raising, so one stalled call
+ * halves `num_models` (248 → 124) and two empty it — silently, and permanently rather
+ * than only while warming up. Measured on 1.12.0.dev23 a minute after configuring:
+ * 22 of 30 reads complete, 7 partial, 1 empty, against 4 of 20 endpoint calls taking
+ * ≥ 20 s from inside the container. Hence every read here is POLLED on the shape it
+ * must terminate at, and the panel — which makes its own uncached request — is reopened
+ * rather than waited on. Nothing is softened by that: the poll cannot reach `2 × ids`
+ * if the second registration ever really stops.
+ *
  * False-positive guards that shape the asserts:
  * - the empty live-only catalog is asserted differentially against Azure AI
  *   Foundry's seed catalog on the SAME instance and run, so a catalog-wide or
@@ -445,7 +457,18 @@ async function setModelEnabled(
  * (`<div data-testid="model-provider-selection"></div>`), so it is present in the
  * DOM but zero-sized, and `toBeVisible` fails on it — measured on 1.12.0.dev15.
  * Foundry escapes that only because its seed catalog fills the container.
+ *
+ * The budget below is NOT the suite's usual 15 s, and the difference is this
+ * provider's doing: the page builds its list from `GET /api/v1/models`, which runs
+ * live discovery for every configured live-only provider inside the request. Timed on
+ * 1.12.0.dev23 with the pair stored, 20 samples: p50 5.0 s, p90 8.9 s, **max 14.6 s**
+ * — so a 15 s wait sits ON the observed maximum and reds on the tail, which is what
+ * run 5 of #1364's validation burst did (`provider-list` not found, 15 s, on a healthy
+ * provider). 45 s covers it with room and costs nothing on the fast path or on the
+ * unconfigured tests, where discovery returns immediately for want of a base URL.
  */
+const PANEL_TIMEOUT_MS = 45000;
+
 async function openProviderPanel(page: Page, providerItemTestId: string): Promise<void> {
   await new SettingsPage(page).navigate();
   await page.getByTestId("sidebar-nav-Model Providers").click();
@@ -453,9 +476,13 @@ async function openProviderPanel(page: Page, providerItemTestId: string): Promis
     "Model Providers",
     { timeout: 15000 },
   );
-  await expect(page.getByTestId("provider-list")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId("provider-list")).toBeVisible({
+    timeout: PANEL_TIMEOUT_MS,
+  });
   await page.getByTestId(providerItemTestId).click();
-  await expect(page.getByTestId(BASE_URL_INPUT)).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId(BASE_URL_INPUT)).toBeVisible({
+    timeout: PANEL_TIMEOUT_MS,
+  });
 }
 
 /** The provider's `validate-provider` response, armed BEFORE the Save click. */
@@ -676,12 +703,13 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
     },
   );
 
-  // Quarantined at triage (daily #1361): discovery stopped registering each
-  // served model twice, so `num_models` reads 124 where the contract is 248
-  // — see #1364.
-  test.fixme(
+  // Quarantined at triage (daily #1361) on the reading that discovery had stopped
+  // registering each served model twice. Refuted and un-quarantined under #1364:
+  // both halves are registered, and a `num_models` of 124 is one of the two live
+  // fetches having timed out on that request — see the comment inside step 1.
+  test(
     "the configured provider discovers exactly the models its endpoint serves",
-    { tag: ["@api", "@model-provider", "@settings"] },
+    { tag: ["@stable", "@api", "@model-provider", "@settings"] },
     async ({ page, request }) => {
       const probe = await probeEndpoint(request);
       test.skip(!probe.usable, `OpenAI-compatible endpoint not usable: ${probe.reason}`);
@@ -701,14 +729,26 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
       test.skip(setupSkip !== "", setupSkip);
 
       await test.step("the llm catalog equals the endpoint's own /v1/models ids", async () => {
-        // Live discovery runs per request against the endpoint, and the catalog is
-        // observable MID-REGISTRATION: `num_models > 0` is reached while only the `llm`
-        // half exists, so polling on that and then re-reading races the second half in.
-        // Measured 3/3 on 1.12.0.dev18 — twice as `num_models` 124 instead of 248, once
-        // with the llm list still EMPTY — while the same endpoint read seconds later is
-        // `{llm: 124, embeddings: 124}`. Poll the TERMINAL shape instead, and assert it
-        // in one comparison so a partial read reads as "not settled yet" rather than as
-        // a wrong catalog.
+        // Live discovery runs PER REQUEST, and a stalled endpoint silently costs a
+        // whole half of the catalog. `GET /api/v1/models` calls
+        // `fetch_live_openai_compatible_models` once per model type, each a fresh
+        // `GET <base>/v1/models` with `_TIMEOUT_SECONDS = 5`, and ANY failure returns
+        // `[]` instead of raising (`lfx_openai_compatible/discovery.py`, whose
+        // docstring states the degrade). So one read is 248 when both calls answer in
+        // time, 124 when either times out, and 0 when both do — with nothing in the
+        // response saying which happened.
+        //
+        // Measured on 1.12.0.dev23 (#1364), 30 consecutive reads taken a full MINUTE
+        // after configuring, so this is not a warm-up window that converges: 22× 248,
+        // 6× `{llm}` only, 1× `{embeddings}` only, 1× empty. Which half is missing
+        // varies, which is what rules out "the second registration stopped happening".
+        // The cause is on the wire: 20 authenticated `GET https://api.openai.com/v1/
+        // models` from inside the container measured 16 at 0.6-1.1 s and 4 at ≥ 20 s.
+        //
+        // Poll the TERMINAL shape, and assert it in ONE comparison, so a partial read
+        // reads as "the endpoint stalled on this request" rather than as a wrong
+        // catalog. A real removal of the second registration still reds: the poll can
+        // never reach `2 × ids` and fails with the full expected-vs-received shape.
         //
         // Nothing static can satisfy the id set: the provider ships no catalog rows, so
         // these ids exist only at the operator's endpoint. `/v1/models` does not
@@ -740,14 +780,44 @@ test.describe("OpenAI Compatible — unified provider setup", () => {
 
       await test.step("the panel renders the discovered models as toggles", async () => {
         await awaitBootstrapTest(page, { skipModal: true });
-        await openProviderPanel(page, PROVIDER_ITEM);
 
-        await expect(page.getByTestId("llm-models-section")).toBeVisible({ timeout: 30000 });
         // The first MIN_DEFAULT_MODELS ids (alphabetically, as discovery sorts
         // them) are the default-enabled set, so the first one always has a toggle.
-        await expect(page.getByTestId(`llm-toggle-${probe.ids[0]}`)).toBeVisible({
-          timeout: 30000,
-        });
+        const firstToggle = page.getByTestId(`llm-toggle-${probe.ids[0]}`);
+
+        // The panel issues its OWN catalog request, subject to the same per-request
+        // stall as the poll above — and it does not refetch. A page that loaded on an
+        // embeddings-only read renders no `llm-toggle-*` at all, so a bare
+        // `toBeVisible` would sit out its whole timeout against a provider the step
+        // above just proved complete (1 read in 30 above, and 1 more empty). Reopen
+        // the panel up to 3 times, each logged; the LAST attempt is not caught, so a
+        // page that genuinely cannot render reds with its own error, and the
+        // assertions after the loop are unconditional either way.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const lastAttempt = attempt === 2;
+          try {
+            await openProviderPanel(page, PROVIDER_ITEM);
+          } catch (e) {
+            if (lastAttempt) throw e;
+            console.log(
+              `[openai-compatible] the provider panel did not render — the page's own catalog read stalled (attempt ${attempt + 1}/3): ${
+                (e as Error).message.split("\n")[0]
+              }`,
+            );
+            continue;
+          }
+          const rendered = await firstToggle
+            .waitFor({ state: "visible", timeout: 20000 })
+            .then(() => true)
+            .catch(() => false);
+          if (rendered) break;
+          console.log(
+            `[openai-compatible] llm-toggle-${probe.ids[0]} absent — the panel's own catalog read returned no llm half (attempt ${attempt + 1}/3)`,
+          );
+        }
+
+        await expect(page.getByTestId("llm-models-section")).toBeVisible({ timeout: 30000 });
+        await expect(firstToggle).toBeVisible({ timeout: 30000 });
         await expect(page.getByTestId(PROVIDER_ITEM)).toContainText(/\d+ models/);
       });
     },
