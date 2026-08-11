@@ -138,28 +138,45 @@ test("the dev-dependencies group takes minor and patch only", () => {
   assert.deepEqual(types, new Set(["minor", "patch"]));
 });
 
-// ── the typescript ignore stays as narrow as its evidence ───────────────────
+// ── no typescript major arrives as a bot PR ─────────────────────────────────
 
-test("the typescript ignore blocks 7.x and up, not every major", () => {
+test("the typescript ignore starts at the NEXT major, so no bot can take one", () => {
+  // Derived from package.json rather than hardcoded, and that is the whole point.
+  // The first version of this test asserted the literal `[7]`, on the rationale that
+  // TS 6 was let through deliberately. That rationale expired the moment the reviewer
+  // decided (#1390 closed, #1419) — and the test then failed the PR implementing the
+  // decision, which is precisely the failure mode this file's header warns about: a
+  // guard pinning a proxy instead of the reason.
+  //
+  // The reason, which does not expire: a TypeScript major is never a version bump
+  // here. TS 6 needs two `tsconfig.json` lines (`ignoreDeprecations: "6.0"` and
+  // `types: ["node"]`, the latter because ts-node stops finding @types/node) and TS 7
+  // needs ts-node replaced outright. Dependabot edits package.json and the lockfile
+  // only, so its PR either lands red or — worse, and measured — lands with `tsc` green
+  // and every ts-node gate broken. So each major is gated behind a deliberate PR, and
+  // the ignore tracks whatever major the repo is on: adopting one moves BOTH numbers.
   const entry = entryFor("typescript");
   const versions = listValues(entry.body, "versions");
-
   assert.ok(versions, "the typescript ignore lost its versions: range");
-  // `update-types: semver-major` is the tempting shorthand and it is wrong here: it
-  // would also block TS 6, against which this repo has no evidence — the JS compiler
-  // API is intact there, ts-node runs, and typescript-eslint's peer range admits it.
-  assert.equal(
-    listValues(entry.body, "update-types"),
-    null,
-    "scoped by update-types instead of a version range — that blocks TS 6 too, which the file's own rationale does not justify",
-  );
+
+  const declared = PKG.devDependencies?.typescript ?? PKG.dependencies?.typescript;
+  const onMajor = Number(declared.match(/(\d+)/)[1]);
 
   const bounds = [...versions].map((v) => {
     const m = v.match(/^>=?\s*(\d+)/);
     assert.ok(m, `\`${v}\` is not a lower-bound range this guard can read`);
     return Number(m[1]);
   });
-  assert.deepEqual(bounds, [7], "the ignore no longer starts at the major the rationale is about");
+  // Exactly the next major: a higher bound would leave the majors in between open to
+  // the bot, which is the same hole from the other side. `update-types: semver-major`
+  // expresses the same thing and is deliberately NOT asserted against any more — the
+  // old test forbade it because it would have caught TS 6, and that objection is gone.
+  assert.deepEqual(
+    bounds,
+    [onMajor + 1],
+    `package.json is on typescript ${onMajor}, so the ignore must start at ${onMajor + 1} — ` +
+      `every major belongs to a human PR that can also edit tsconfig.json`,
+  );
 });
 
 test("no ignore range can block the major this repo is actually on", () => {

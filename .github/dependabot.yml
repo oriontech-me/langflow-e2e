@@ -93,7 +93,7 @@ updates:
       - dependency-name: "@playwright/test"
       - dependency-name: "playwright"
 
-      # typescript >= 7 ONLY, and scoped by version range rather than by
+      # typescript >= 6, and scoped by version range rather than by
       # `update-types: semver-major` on purpose. TS 7 is the native (Go) port, and it
       # is not a version bump for this repo — it is three migrations at once, each
       # measured against 7.0.2 on #1204:
@@ -113,28 +113,69 @@ updates:
       # the repo's imports, and waiting for typescript-eslint support. A bot cannot
       # do that — same reasoning as the @playwright/test pin above.
       #
-      # None of it is true of TS 6, and a `semver-major` scope would have blocked TS 6
-      # while citing those three reasons. Measured against 6.0.3, the version
-      # Dependabot is proposing today (#1228): the JS compiler API is intact and
-      # ts-node runs; the same tsconfig yields `TS5107 ... is deprecated and will stop
-      # functioning in TypeScript 7.0`, silenced by one `ignoreDeprecations: "6.0"`
-      # line; and typescript-eslint 8.65.0's peer range (`<6.1.0`) admits it. So TS 6
-      # is deliberately let through — as its own PR, since the group takes no majors —
-      # for a reviewer to decide on. Blocking a major nobody has evidence against is
-      # how a rationale rots into a rule.
+      # TS 6 is none of those three things, and it was deliberately let through for a
+      # reviewer to decide on — the right call, because blocking a major nobody has
+      # evidence against is how a rationale rots into a rule. The reviewer decided
+      # (PR #1390, closed; #1419): TS 6 is ADOPTABLE and not worth adopting yet. The
+      # range therefore widened from `>=7` to `>=6`, and this is the evidence, since an
+      # ignore whose justification is left implicit rots the same way a block does.
+      #
+      # This paragraph replaces a MEASUREMENT THAT WAS WRONG (#1228 recorded that the
+      # `TS5107 moduleResolution=node10 is deprecated` error is "silenced by one
+      # `ignoreDeprecations: "6.0"` line"). It is silenced for `tsc` only. Measured
+      # against 6.0.3 with a real `npm ci`, three variants:
+      #
+      #                                                        tsc      ts-node
+      #   `ignoreDeprecations: "6.0"` only                     pass     39 FAILURES
+      #   `module` + `moduleResolution: node16`                pass     39 FAILURES
+      #   `ignoreDeprecations: "6.0"` + `types: ["node"]`      pass     pass
+      #
+      # The ts-node column is `test:units`, and the same break takes
+      # `check:checklist-coverage`, `regressions:check` and `coverage:summary` with it:
+      # `TS2591 Cannot find name 'fs' / 'process' / '__filename'`. Under TS 6 ts-node
+      # stops picking up `@types/node` automatically — isolated to `npx ts-node -e
+      # 'import * as fs from "fs"'`, which fails without `types: ["node"]` and passes
+      # with it. Note which variant is the dangerous one: the "correct"
+      # `moduleResolution` migration leaves `tsc` green and ts-node dead, a state the
+      # TypeScript job alone cannot see (the QA-CHECKLIST guard job catches it, because
+      # it runs through ts-node).
+      #
+      # So the price is TWO tsconfig lines, not one — and with them everything passes
+      # (tsc 0, `test:units` 552/552, `test:scripts` 796/796, the three ts-node gates
+      # green, lint unchanged). What made it not worth paying: no language feature this
+      # suite uses; `types: ["node"]` disables automatic `@types` inclusion, which is
+      # harmless while `@types/node` is the only one and a silent trap the day a second
+      # arrives; and `typescript-eslint@8.66` peers `typescript >=4.8.4 <6.1.0`, so
+      # 6.1 breaks `npm ci` — the install, not the typecheck. Adopting 6.0.x buys a
+      # major with no path forward until typescript-eslint 9.
+      #
+      # REVISIT when either half changes: a reason to want TS 6, or a typescript-eslint
+      # release admitting 6.1+. Adopting it is then a deliberate PR carrying the two
+      # tsconfig lines — never a merged bot PR, which cannot edit tsconfig.json and
+      # would land red.
       - dependency-name: "typescript"
         versions:
-          - ">=7"
+          - ">=6"
 
       # There is deliberately NO entry for @flakiness/playwright. 2.0.0 dropped Node
       # 20 (`engines` went to `>=22.9.0`) while every lane here pins "20" — but 2.0.1,
       # `latest` since 2026-07-30, restored `^20.17.0 || >=22.9.0`. An ignore written
       # against 2.0.0 would have blocked a release that was already compatible, and a
       # guard tying its removal to the Node pins would have failed the PR that removed
-      # it. v2 arrives as its own PR, which is where its two real breaking changes
-      # (the dropped `flakiness-playwright-shard` bin, unused here — sharding is
-      # scripts/partition-shards.mjs; and `shardBalancing` needing Playwright 1.62+,
-      # also unused) can be checked against what this repo does.
+      # it. v2 arrives as its own PR, which is where its two real breaking changes can
+      # be checked against what this repo does — and it did (2.0.1 merged in PR #1389).
+      # Both were confirmed inert against the installed package, not read off the
+      # changelog: the dropped `flakiness-playwright-shard` bin is unused (sharding is
+      # scripts/partition-shards.mjs, and only `flakiness-playwright-timings` remains in
+      # its `bin`), and `preprocess()` — the hook needing Playwright 1.62+ against the
+      # 1.58.2 pin — RETURNS IMMEDIATELY unless `shardBalancing` is configured, as does
+      # the "requires 1.62+" warning, so the version gap is unreachable. `flakinessProject`
+      # and the `FK_ENV_*` vars daily-stable.yml relies on both survive. Smoke-tested on
+      # node 20.20.2 + Playwright 1.58.2: the reporter loads, runs and writes a report,
+      # exit 0, no warning. Not covered by that, and unavoidable here: the OIDC UPLOAD
+      # path, which has no local credential and which the PR lane never exercises —
+      # a manifest-only change resolves to zero impacted specs (see this file's header),
+      # so the first real exercise of it is the next daily.
 
   - package-ecosystem: "github-actions"
     directory: "/"
