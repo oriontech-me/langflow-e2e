@@ -1,4 +1,6 @@
 import type { Page } from "@playwright/test";
+import { CUSTOM_COMPONENT_BUTTON_TESTID } from "../helpers/flows/add-component-from-sidebar";
+import { addCustomComponent } from "../helpers/flows/add-custom-component";
 
 export class SidebarComponent {
   constructor(private readonly page: Page) {}
@@ -10,11 +12,16 @@ export class SidebarComponent {
     await this.page.getByTestId("sidebar-search-input").fill(term);
   }
 
+  // Delegates to the shared helper rather than clicking the button itself:
+  // Langflow drops this click and only an identical second one repairs it
+  // (#1301 — 14 of 16 swallowed, 14 of 14 repaired, nightly 1.12.0.dev23). A
+  // bare click here would reintroduce the defect for the first caller that
+  // reaches for the POM instead of the helper.
   async addCustomComponent() {
     await this.page
-      .getByTestId("sidebar-custom-component-button")
+      .getByTestId(CUSTOM_COMPONENT_BUTTON_TESTID)
       .waitFor({ state: "visible", timeout: 3000 });
-    await this.page.getByTestId("sidebar-custom-component-button").click();
+    await addCustomComponent(this.page);
   }
 
   async selectTemplate(name: string) {

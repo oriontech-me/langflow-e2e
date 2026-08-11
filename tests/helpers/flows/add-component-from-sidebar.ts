@@ -94,6 +94,21 @@ export function classifyAddOutcome(
  */
 export type AddGesture = "click" | "drag";
 
+/**
+ * Which sidebar affordance issued the add. It changes what evidence there is to
+ * report, not merely which sentence runs:
+ *
+ * - `search` — the Components tab: a term was typed, so the input can be read
+ *   back and an emptied input is itself an observation.
+ * - `no-search-box` — the MCP tab (#1335): there is no input at all, so "the
+ *   search was reset" is not a statement that can be made.
+ * - `dedicated-button` — `sidebar-custom-component-button` (#1301): the tab HAS a
+ *   search box, the button just does not use it. Reporting this as
+ *   `no-search-box` would tell the reader the surface has no input when it does,
+ *   and reporting it as `search` would name a term nobody typed.
+ */
+export type AddSurface = "search" | "no-search-box" | "dedicated-button";
+
 type AddFailureDetail = {
   /** `null` when the sidebar tab has no search box — see #1335. */
   searchTerm: string | null;
@@ -107,6 +122,11 @@ type AddFailureDetail = {
   searchValue: string | null;
   /** Defaults to `"click"` — the only gesture before #1335's second half. */
   gesture?: AddGesture;
+  /**
+   * Defaults to what `searchTerm` implies, so every pre-#1301 caller keeps its
+   * exact message.
+   */
+  surface?: AddSurface;
 };
 
 export function swallowedAddMessage(d: AddFailureDetail): string {
@@ -117,29 +137,46 @@ export function swallowedAddMessage(d: AddFailureDetail): string {
   // term to name and no input to report. Kept as two explicit clauses rather
   // than an empty string: `sidebar search input: ""` is a real observation (the
   // input was reset) and must not read the same as "there is no input".
+  const surface: AddSurface =
+    d.surface ?? (d.searchTerm === null ? "no-search-box" : "search");
+
   const target = isDrag
     ? `dragTo() from getByTestId("${d.addButtonTestId}") onto the canvas`
     : `getByTestId("${d.addButtonTestId}")`;
   const trigger =
-    d.searchTerm === null
-      ? `${target} on a sidebar tab with no search box`
-      : `${target} after filling the sidebar search with "${d.searchTerm}"`;
+    surface === "dedicated-button"
+      ? `${target} without typing a search term (this button drops a blank ` +
+        `Custom Component straight onto the canvas)`
+      : surface === "no-search-box"
+        ? `${target} on a sidebar tab with no search box`
+        : `${target} after filling the sidebar search with "${d.searchTerm}"`;
   const searchState =
     d.searchValue === null
       ? `sidebar search input: <none on this tab>`
       : `sidebar search input: "${d.searchValue}"`;
-  // The click rate is #1304's own 4/20 measurement; quoting it for a drag would
+  // Each surface quotes only the rate measured ON IT. Quoting the click's 4/20
+  // for a drag, or #1304's Components-tab rate for the dedicated button, would
   // attribute a number to a surface it was never taken on.
   const evidence = isDrag
     ? `The drag(s) completed and the app never registered the add (issue #1304's ` +
       `class on the drag surface — measured 1/5 on nightly 1.12.0.dev18 in ` +
       `mcp-server-tab.spec.ts, #1335)`
-    : `The click(s) were accepted by the DOM and the app never registered the ` +
-      `add (issue #1304 — measured 4/20 on nightly 1.12.0.dev17, the ` +
-      `swallowed-click class of #420/#966 on the sidebar surface of #537)`;
+    : surface === "dedicated-button"
+      ? `The click(s) were accepted by the DOM and the app never registered the ` +
+        `add (issue #1301 — measured 9 of 10 first clicks producing no node ` +
+        `within 40s on nightly 1.12.0.dev23, and 14 of 14 repaired by an ` +
+        `identical second click; #1304's swallowed-add class on the dedicated ` +
+        `Custom Component button)`
+      : `The click(s) were accepted by the DOM and the app never registered the ` +
+        `add (issue #1304 — measured 4/20 on nightly 1.12.0.dev17, the ` +
+        `swallowed-click class of #420/#966 on the sidebar surface of #537)`;
   const visibility = isDrag
     ? `sidebar entry still visible: ${d.buttonStillVisible ? "yes" : "no"}`
-    : `"+" button still visible: ${d.buttonStillVisible ? "yes" : "no"}`;
+    : surface === "dedicated-button"
+      ? `custom-component button still visible: ${
+          d.buttonStillVisible ? "yes" : "no"
+        }`
+      : `"+" button still visible: ${d.buttonStillVisible ? "yes" : "no"}`;
 
   return (
     `the sidebar ${gesture} add was swallowed: no new node reached the canvas ` +
@@ -258,12 +295,59 @@ export const dragComponentFromSidebar = async (
   canvasSelector: string = CANVAS_SELECTOR,
 ) => addWithRepair(page, searchTerm, componentTestId, "drag", canvasSelector);
 
+/** The dedicated "New Custom Component" control in the Components sidebar. */
+export const CUSTOM_COMPONENT_BUTTON_TESTID = "sidebar-custom-component-button";
+
+/**
+ * Same swallowed-click repair, for the dedicated **New Custom Component** button
+ * — the one sidebar add that types no search term because the button drops a
+ * blank Custom Component straight onto the canvas.
+ *
+ * Added for #1301, whose two `@stable` specs are exactly the ones that clicked it
+ * bare, and both reported the drop as the node they went on to touch rather than
+ * as the add: `edit-name-description-node.spec.ts:42` and
+ * `stop-building.spec.ts:24` each timed out at 20 s on `div-generic-node` on the
+ * 2026-08-05 daily (run 30997773754).
+ *
+ * **The issue's prime suspect was refuted by measurement, and the distinction
+ * decides the fix.** #1301 asked first whether the node is rendered-but-not-
+ * clickable — an overlay (`canvas-controls`, the provider welcome screen) or a
+ * node still accepting no pointer events. Instrumented on nightly 1.12.0.dev23,
+ * 26 attempts across two probes: **0 of 26 had a node present that would not
+ * take a click**. When the node exists it renders in 3–7 ms, the topmost element
+ * at its centre is its own `node-name` span with `pointer-events: all`, and the
+ * click lands in 16–89 ms. The node was simply never created.
+ *
+ * **And it is not a short wait either**, which is the other reading a 20 s
+ * timeout invites: with the repair click suppressed and the budget raised to
+ * **40 s**, 9 of 10 first clicks produced no node at all and the canvas still
+ * held **zero** nodes at the end of the window — so nothing arrives late, and a
+ * longer caller timeout could not have fixed either spec. With a 12 s budget and
+ * the repair click restored, 14 of 16 first clicks were swallowed and **14 of 14
+ * were repaired by an identical second click**.
+ *
+ * Not folded into `addComponentFromSidebarWithoutSearch`: that name and its
+ * message describe a tab that *has* no search box (the MCP tab), while this tab
+ * has one and the button ignores it — so the failure evidence differs, and
+ * reusing it would tell the reader the Components tab has no input.
+ */
+export const addCustomComponentFromSidebar = async (page: Page) =>
+  addWithRepair(
+    page,
+    null,
+    CUSTOM_COMPONENT_BUTTON_TESTID,
+    "click",
+    CANVAS_SELECTOR,
+    "dedicated-button",
+  );
+
 const addWithRepair = async (
   page: Page,
   searchTerm: string | null,
   addButtonTestId: string,
   gesture: AddGesture,
   canvasSelector: string = CANVAS_SELECTOR,
+  surface: AddSurface = searchTerm === null ? "no-search-box" : "search",
 ) => {
   const before = await nodeIds(page);
 
@@ -290,13 +374,17 @@ const addWithRepair = async (
       afterCount: after.length,
       attempts,
       gesture,
+      surface,
       perAttemptMs: ADD_LANDED_TIMEOUT_MS,
       buttonStillVisible: await page
         .getByTestId(addButtonTestId)
         .isVisible()
         .catch(() => false),
+      // Read whenever the surface HAS an input, including the dedicated-button
+      // case that types nothing into it: an input that went away is an
+      // observation about the sidebar, and only the MCP tab has none to read.
       searchValue:
-        searchTerm === null
+        surface === "no-search-box"
           ? null
           : await page
               .getByTestId("sidebar-search-input")
