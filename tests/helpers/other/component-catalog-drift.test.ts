@@ -436,7 +436,17 @@ test("catalogVerdict is CLEAN on the real baseline against its own registry shap
     registry[category] = Object.fromEntries(types.map((t) => [t, { template: {} }]));
   }
   const verdict = catalogVerdict(baseline, registry);
-  assert.equal(verdict.kind, "clean", verdict.lines.join("\n") || verdict.reason);
+  // The `?? ""` is load-bearing under @types/node >= 26, which split
+  // `assert.equal`'s message parameter into two overloads — `Error |
+  // AssertMessageFunction` or a REQUIRED `string` — so a `string | undefined`
+  // (`reason` is optional on the verdict) matches neither and fails the typecheck.
+  assert.equal(
+    verdict.kind,
+    "clean",
+    verdict.lines.join("\n") ||
+      verdict.reason ||
+      `not clean, with neither lines nor a reason: ${verdict.kind}`,
+  );
   assert.equal(verdict.categoryCount, Object.keys(baseline.categories).length);
 
   // And it reports drift when one family is dropped from that same registry.
