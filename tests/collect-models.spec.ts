@@ -40,6 +40,26 @@ test(
   "collect providers status and models from UI",
   { tag: ["@stable", "@model-provider", "@settings"] },
   async ({ page }) => {
+    // This pre-flight owns its own clock (#1385).
+    //
+    // `playwright.config.ts` sets 5 minutes, and that number is the default for a
+    // PRODUCT spec — nothing about it was ever derived from what this sweep
+    // costs. #1370 nonetheless sized the sweep's shared post-Save budget from it
+    // (210 s = 300 s minus a ~90 s reserve), which made the suite-wide default
+    // the binding constraint on how many providers get configured: against an
+    // anthropic credential write measured at 105–180 s+ on CI, 30 s was left for
+    // google, google's Save-idle wait spent it before a Save was ever clicked,
+    // and 5 of the run's 6 skips on 2026-08-10 followed from that on 3 of 4
+    // shards.
+    //
+    // 12 minutes is the sweep's worst measured shape (~450 s of post-Save waits,
+    // see SWEEP_SAVE_BUDGET_MS) plus the ~90 s of build axis, navigation, toggle
+    // sweeps, key probes and file writes, with room over. It costs nothing on a
+    // healthy run — the whole sweep measures ~55 s on CI and ~24 s locally — and
+    // it is still far below the lanes' own `timeout-minutes` (90 on the daily),
+    // so a wedged pre-flight is bounded here rather than by the job.
+    test.setTimeout(12 * 60 * 1000);
+
     await page.goto("/");
     await page.waitForSelector('[data-testid="mainpage_title"]', { timeout: 30000 });
 

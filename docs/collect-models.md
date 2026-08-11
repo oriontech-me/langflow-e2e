@@ -338,6 +338,68 @@ The daily makes the opposite trade deliberately (`continue-on-error: true`, #980
 — a day of coverage outweighs a diagnostic red). That asymmetry is intentional and
 is now stated in both workflows rather than implied by one of them.
 
+### The shared budget was solved against the wrong clock (#1385)
+
+Defect 2 above is right about the arithmetic and wrong about its **input**. It
+sized the sweep's shared budget at `210 s = the 300 s test timeout minus a ~90 s
+reserve` — and 300 s is `playwright.config.ts`'s default for a **product** spec.
+Nothing about it was ever derived from what this sweep costs, so a suite-wide
+default became the bound on how many providers get configured.
+
+On [run 31373880200](https://github.com/oriontech-me/langflow-e2e/actions/runs/31373880200)
+(2026-08-10) that produced, on **3 of 4 shards**, in this order:
+
+```
+no credential write observed for provider "anthropic" within 176s of clicking Save
+skipped waiting for provider "anthropic" … the sweep's shared budget is down to 30s
+Models found (anthropic): []
+the "Save" button for provider "google" never became actionable after 30.1s over 117 poll(s)
+Models found (google): []
+```
+
+Google's 30 s was the whole of its reserve, and its **first** wait spent it — the
+`Save`-idle wait, which is the one wait that is about the *previous* provider.
+Google therefore never clicked Save at all, and 5 of the run's 6 skips followed
+across three areas. Shard 1, which did not stall, collected all three.
+
+Every anthropic credential write CI has measured since the wait existed:
+
+| date | shard results |
+|---|---|
+| 2026-08-07 ([31163810520](https://github.com/oriontech-me/langflow-e2e/actions/runs/31163810520)) | 111.1 s ✅, 176.2 s ✅, >180 s ✗, >180 s ✗ |
+| 2026-08-10 ([31373880200](https://github.com/oriontech-me/langflow-e2e/actions/runs/31373880200)) | 105.8 s ✅, >176 s ✗, >176 s ✗, >175 s ✗ |
+
+So the 180 s ceiling sat in the **middle** of the distribution, 2 % above the
+largest success. The duration is **contention, not a fixed cost**: the same save
+measures **5.9 s** against an idle local backend with two providers already
+configured (1.12.0.dev22, `Disconnect` 0.5 s behind the 201). The lanes run
+`LANGFLOW_WORKERS=1` and the openai pass ahead of it enables 41 models.
+
+Four changes, each unit-covered and each verified by mutation:
+
+1. **The pre-flight owns its own clock.** `tests/collect-models.spec.ts` sets
+   `test.setTimeout(12 min)`, and the budget is sized from the sweep's worst
+   measured shape (~450 s of post-Save waits) instead of from a product default.
+   It costs nothing on a healthy run — the whole sweep measures ~55 s on CI.
+2. **The reserve is a whole PASS per remaining provider** (30 s → 60 s). 30 s was
+   sized against one wait, google's 15.7 s write; a provider's pass is three.
+3. **The `Save`-idle wait may take at most half of what its provider can
+   afford.** The reserve protects the *next* provider; nothing protected a
+   provider from its own first wait, which is precisely how google lost its 30 s.
+4. **The credential ceiling moves 180 s → 240 s**, past the observed tail.
+
+**And the diagnostic no longer over-claims.** Both verdict lines were wrong on
+that one sweep, in opposite directions. Shard 2 printed `still BUSY` for a wait
+clipped to 30.0 s of its 60 s ceiling; shards 3 and 4 printed `aria-busy
+(absent) / aria-disabled (absent) / enabled false` and concluded *"a state this
+helper does not model"*, sending the reader to the panel markup. That second
+state is reproducible in one step — it is the `Save` button with an **empty key
+field** (measured on 1.12.0.dev22; with the key typed the same button is
+actionable on poll 1). The message now reports what the sweep can support, in
+that order: a budget-shortened wait says so **and names who spent it**, an empty
+key field is named as such, and the markup claim is the last resort rather than
+the default.
+
 ---
 
 ## External dependencies *(required)*
