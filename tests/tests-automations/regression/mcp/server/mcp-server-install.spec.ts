@@ -2,7 +2,8 @@ import type { Page, Response } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { mcpHandshake } from "../../../../helpers/mcp/mcp-streamable-client";
-import { waitForPageEntry } from "../../../../helpers/other/page-entry-barrier";
+import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 /**
  * MCP Server — connecting a project to an MCP client (QA-CHECKLIST §14.1, #1395).
@@ -25,7 +26,16 @@ import { waitForPageEntry } from "../../../../helpers/other/page-entry-barrier";
  * pins, is one property from each side: the UI roots the URL at the origin the
  * user is browsing, and the two agree on the PATH.
  *
- * Read-only by construction — no project, no flow, nothing to clean up.
+ * ENTRY, and why it is not read-only. The MCP Server tab only exists once the
+ * home page has content: on an instance where the user has created nothing, the
+ * page renders the empty state (`new_project_btn_empty_page`) and `mcp-btn` is
+ * absent — measured against a disposable container, which is also how this spec
+ * first failed in CI while passing on a developer box full of leftovers. The
+ * starter examples do NOT satisfy it: that container reported 26 flows over the
+ * API and still rendered the empty page. So the entry goes through
+ * `awaitBootstrapTest`, the repo's own answer to that branch, which creates one
+ * flow when it finds the empty state — and this spec therefore deletes any flow
+ * it caused, id-scoped, instead of claiming to create nothing.
  *
  * NOT exercised: `POST /{project_id}/install`, for two measured reasons. It
  * rewrites the REAL MCP client configuration of whichever machine runs Langflow
@@ -73,10 +83,13 @@ async function openMcpServerTab(
   // printed alongside — and confused with — the real failure.
   installedResponse.catch(() => {});
 
-  await page.goto("/");
-  // Attributed (#1262): on a wedged backend a bare 30 s wait on `mcp-btn` reads
-  // as a UI defect, and the `@stable` auto-removal cannot tell it apart from one.
-  await waitForPageEntry(page, '[data-testid="mcp-btn"]', 30000);
+  // Lands on the home page WITH content, creating a flow only when the instance
+  // renders the empty state. It carries the attributed page-entry barrier
+  // (#1262) internally, so a wedged backend is still named rather than surfacing
+  // as an unexplained timeout. `skipModal` because this spec never needs the
+  // templates modal that bootstrap otherwise leaves open.
+  await awaitBootstrapTest(page, { skipModal: true });
+  await expect(page.getByTestId("mcp-btn")).toBeVisible({ timeout: 30000 });
   await page.getByTestId("mcp-btn").click({ timeout: 30000 });
   await expect(page.getByTestId("mcp-server-title")).toBeVisible({
     timeout: 30000,
@@ -178,6 +191,39 @@ async function assertAutoInstallButtons(
 }
 
 test.describe("MCP Server — connect a project to a client", () => {
+  // Pattern A (authoring-conventions): the ids come from the POST responses, not
+  // from the canvas URL — `awaitBootstrapTest` may park the page on a placeholder
+  // flow Langflow then deletes (#681). Usually empty: only an instance in the
+  // empty state makes bootstrap create anything.
+  const createdFlowIds: string[] = [];
+
+  test.beforeEach(async ({ page }) => {
+    createdFlowIds.length = 0;
+    page.on("response", (resp) => {
+      if (
+        resp.url().includes("/api/v1/flows") &&
+        resp.request().method() === "POST" &&
+        resp.status() === 201
+      ) {
+        resp
+          .json()
+          .then((body: { id?: string }) => {
+            if (body?.id) createdFlowIds.push(body.id);
+          })
+          .catch(() => {});
+      }
+    });
+  });
+
+  test.afterEach(async ({ request }) => {
+    const ids = createdFlowIds.splice(0);
+    if (ids.length === 0) return;
+    const authorization = await getAuthToken(request);
+    for (const id of ids) {
+      await deleteFlow(request, id, { headers: { Authorization: authorization } });
+    }
+  });
+
   test("the URL the UI copies is rooted at the user's own origin, agrees with the API, and resolves", { tag: ["@stable", "@api", "@mcp"] },
     async ({ page }) => {
       const { projectId } = await openMcpServerTab(page);

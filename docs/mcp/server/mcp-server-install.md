@@ -74,13 +74,21 @@ one property from each side: the UI's origin rule, and agreement on the path.
 - At least one project exists (the default `Starter Project` satisfies this).
 - Clipboard read/write permission — already granted to every context by
   `playwright.config.ts`.
-- No project or flow is created, so there is nothing to clean up.
+- **Content on the home page.** The MCP Server tab only exists once the home page
+  has some; on an instance where the user created nothing it renders the empty state
+  (`new_project_btn_empty_page`) and `mcp-btn` is absent. The starter examples do
+  **not** satisfy it — a disposable container reported 26 flows over the API and still
+  rendered the empty page (measured). The entry therefore goes through
+  `awaitBootstrapTest`, which creates one flow in that case; any flow it causes is
+  deleted id-scoped in `afterEach`.
 
 ---
 
 ## Step by step *(required)*
 
-A file-local helper opens the MCP Server tab from the home page (`mcp-btn` →
+A file-local helper enters through `awaitBootstrapTest` (which lands on a home page
+with content, creating a flow only if it finds the empty state, and carries the
+attributed page-entry barrier of #1262), opens the MCP Server tab (`mcp-btn` →
 `mcp-server-title`) **while capturing the `GET …/installed` response the page itself
 issues**, and returns that project id together with the parsed body. All three tests start
 from it, so neither depends on the other and neither assumes which project the UI
@@ -162,8 +170,13 @@ The button is only asserted to be offered. It is never clicked — that would
 - **The clipboard is polled, not gated on the `icon-check` confirmation**, which
   resets after 1 s and would make a successful copy fail whenever the first sample
   lands late.
-- **The page entry is attributed** (`waitForPageEntry`, #1262): on a wedged backend the
-  failure names the backend instead of reading as a UI defect.
+- **The page entry is attributed** (via `awaitBootstrapTest`'s own barrier, #1262): on
+  a wedged backend the failure names the backend instead of reading as a UI defect.
+- **The entry is exercised on an instance that has never been used.** The first version
+  of this spec was read-only and entered with a bare wait on `mcp-btn`; it passed on a
+  developer box full of leftovers and failed all three tests in CI, where the home page
+  renders the empty state. Every change here is now validated against a disposable
+  container as well as the local one.
 - **Force-failure check** (CONTRIBUTING §2) executed per assertion during VERIFY.
 
 ---
@@ -269,9 +282,12 @@ The button is only asserted to be offered. It is never clicked — that would
   the click would answer 500. Not asserted here — the spec pins the product's own rule,
   which both branches satisfy today — but worth knowing before reading a 500 from this
   endpoint as a new regression.
-- **Read-only by construction.** Both tests only read; they create no project and no
-  flow, which is why there is no `afterEach` and why they are safe to run against a
-  shared instance at any concurrency.
+- **Not read-only, and the earlier claim that it was is what broke it in CI.** The
+  tests themselves only read, but the *entry* cannot: a home page with no content has
+  no MCP Server tab at all. `awaitBootstrapTest` creates a single flow in that case and
+  `afterEach` deletes it id-scoped (pattern A — ids from the `POST /api/v1/flows` 201
+  responses, never the canvas URL, #681). On an instance that already has content
+  nothing is created and nothing is deleted.
 - **The tab reaches `GET /api/v1/mcp/project/{id}?mcp_enabled=false`** to list the
   project's flows — the unfiltered listing, which is the semantics
   `mcp-server-project-config.md` records: that parameter removes the
