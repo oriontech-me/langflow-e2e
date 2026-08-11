@@ -79,8 +79,7 @@
 // which is precisely why `scripts/select-pr-model-target.mjs` never emits one without
 // the other. Narrowing it here instead would contradict three documents and change 15
 // specs; that trade was weighed for #1184 and declined.
-import * as fs from "fs";
-import * as path from "path";
+import { MODELS_PATH, readCatalogText } from "./catalog-snapshot";
 import { providerConfigMap, type Provider } from "./provider-config";
 import { providerSkipReasons } from "./provider-health";
 import { ollamaTestModel } from "./ollama-endpoint";
@@ -176,8 +175,6 @@ export interface ResolveTestTargetsOptions {
   catalogPath?: string;
 }
 
-const MODELS_PATH = path.join(__dirname, "data", "models.json");
-
 // Model families that cannot serve a chat completion. Verbatim from
 // agent-markdown-output.spec.ts.
 const NON_CHAT = /embedding|tts|audio|whisper|realtime|image|moderation|search/i;
@@ -218,7 +215,13 @@ const CAPABILITY_MISSING_REASON: Record<ModelCapability, (p: string) => string> 
 };
 
 function readCatalog(jsonPath: string = MODELS_PATH): ModelRecord[] {
-  if (!fs.existsSync(jsonPath)) {
+  // Reads the run's FROZEN catalog, not the file, whenever `globalSetup` took a
+  // snapshot (#1386). The title of 18 specs is derived from what this returns, and
+  // the runner and the workers must derive it from the same bytes — see
+  // `catalog-snapshot.ts`. With no snapshot (a `--list`, a unit test, a direct
+  // import) this is the file, exactly as before.
+  const raw = readCatalogText(jsonPath);
+  if (raw === undefined) {
     console.warn("models.json not found — run collect-models.spec.ts first.");
     return [];
   }
@@ -228,7 +231,7 @@ function readCatalog(jsonPath: string = MODELS_PATH): ModelRecord[] {
   // different suite than the one intended while reporting as normal (#1035). The
   // pre-#1184 copies threw here too (`JSON.parse` with no `try`), so failing loud
   // restores that rather than inventing it.
-  const parsed = JSON.parse(fs.readFileSync(jsonPath, "utf-8"));
+  const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) {
     throw new Error(
       `${jsonPath} must be an array of { provider, model } records, got ` +

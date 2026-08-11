@@ -1,5 +1,4 @@
-import path from "path";
-import fs from "fs";
+import { readCatalogText } from "./catalog-snapshot";
 
 // Resolve a Gemini flash chat model from models.json, preferring fast, cheap,
 // non-image/non-tts/non-preview ones. Returns undefined if none/absent — then
@@ -8,9 +7,14 @@ import fs from "fs";
 // language-model-regression.spec.ts (#596): tests must pin a deterministic
 // Gemini model instead of depending on catalog/dropdown ordering.
 export function resolveGeminiModel(): string | undefined {
-  const jsonPath = path.resolve(__dirname, "data/models.json");
-  if (!fs.existsSync(jsonPath)) return undefined;
-  const models = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as Array<{
+  // The run's FROZEN catalog when there is one (#1386). This value reaches a
+  // `test.describe` title in `mcp-client-agent-gemini-tool-regression.spec.ts`, so it
+  // must be identical in the runner (collection) and in the worker (execution) —
+  // reading the file directly made it depend on when each process happened to look,
+  // and `collect-models.spec.ts` rewrites that file from inside the same run.
+  const raw = readCatalogText();
+  if (raw === undefined) return undefined;
+  const models = JSON.parse(raw) as Array<{
     provider: string;
     model: string;
   }>;

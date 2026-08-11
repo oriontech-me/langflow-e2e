@@ -60,6 +60,16 @@ check encodes the expected #440 state.
 > **`@stable` — promoted under #947** after #440 was confirmed fixed on
 > 1.12.0.dev5 and the positive assertion (Gemini invokes `echo`) ran clean
 > `--workers=1 --retries=0` with a per-test force-failure check.
+>
+> **Removed and restored under #1386.** The daily of 2026-08-10 (run 31373880200)
+> auto-removed the tag on a failure that never executed the test: this file's
+> `test.describe` title interpolates `resolveGeminiModel()`, resolved at module
+> load, and the shard's own `collect-models.spec.ts` rewrote `models.json` after
+> the runner had computed the title — so the worker reported `Test not found in
+> the worker process` with `duration 0` and `workerIndex -1`. The cause is fixed
+> at the source (the catalog is frozen for the whole run —
+> `tests/helpers/provider-setup/catalog-snapshot.ts`), and the assertion itself
+> was re-validated 3/3 with `--retries=0` on 1.12.0.dev22 with Google configured.
 
 ---
 
