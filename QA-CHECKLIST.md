@@ -749,6 +749,7 @@
 - [ ] `GET /{project_id}/composer-url` returns a URL that resolves, and the copy control in the UI yields the same value
 - [ ] Per-project MCP configuration — `GET`/`PATCH /{project_id}` selects which flows are exposed as tools, and a de-selected flow disappears from `tools/list` over the protocol
 - [x] A registered server is read back individually via `GET /servers/{name}` with the same fields it was created with, and `PATCH /servers/{name}` updates them — merging per top-level key and refusing to rename (#1397) → `mcp/server/mcp-server.spec.ts`
+- [x] Per-project tool exposure — `PATCH`/`GET /api/v1/mcp/project/{id}` selects which flows are exposed, and a de-selected flow disappears from `tools/list` **over the protocol** (invocation after de-selection is a separate finding, #1408) → `mcp/server/mcp-server-project-config.spec.ts`
 - [ ] Prompt exposed by server returns correct template (no product surface on 1.11.x — MCP server `prompts/list` returns `[]`; #829)
 
 ---
