@@ -41,12 +41,25 @@ and the per-wave convergence target.** Everything else is a pointer.
 
 > Snapshot — refresh from `QA-CHECKLIST.md` when it changes. Do not hand-maintain.
 
-- **Coverage (validated `[x]` / total):** ~59% (268 / 454 checklist bullets)
-- **`@stable` `test()` calls:** ~298 across 111 spec files
-- **Total `test()` calls:** ~541 in ~222 spec files
-- **Disabled tests:** 54 `test.skip` (51 files) + 1 `test.fixme` (`webhook-component-regression.spec.ts`)
-- **Spec-doc coverage:** ~117 docs under `docs/`
-- **Langflow version last validated against:** `1.10.x`
+_Refreshed 2026-08-10. Every figure below is copied from the source named beside it —
+do not compute one by hand._
+
+- **Coverage (validated `[x]` / total):** **76%** (402 / 532 checklist bullets) — the
+  auto-generated Coverage Summary table in `QA-CHECKLIST.md`
+- **`@stable` `test()` calls:** **473** across **183** spec files — the auto-generated
+  `Phase 0 — Validated` header in `QA-CHECKLIST.md`
+- **Total `test()` calls:** **679** in **254** spec files — `PW_DESTRUCTIVE=1 npx
+  playwright test --list --reporter=json` (the destructive lane is excluded from a
+  plain `--list`, so a bare count misses it)
+- **Disabled tests:** **13** `test.fixme` + **6** statically skipped `test()` — the
+  same `--list`, counting Playwright's own `skip`/`fixme` annotations. The previous
+  figure (54 `test.skip`) came from grepping `test.skip(`, which counts every
+  **conditional in-body** `test.skip(cond, reason)` — a runtime gate, not a disabled
+  test. There are ~159 of those; the *Disabled-test triage* pool item below is sized
+  off the wrong one of the two.
+- **Spec-doc coverage:** **201** of 251 regression specs have a doc; 122 of those also
+  declare upstream dependencies — `npm run validate:specs`
+- **Langflow version last validated against:** `1.12.x` (nightly `1.12.0.dev20`)
 
 **Biggest structural gaps** (where coverage is near-zero relative to product value):
 
@@ -190,7 +203,10 @@ Convergence: ~74% → **~87%**
 Exit: the inherited canvas surface and MCP client/server are validated under `@stable`.
 Review (2026-08-11): reassess delivered vs. target; promote a pool item (templates, once scoped) into a dated wave.
 
-### Wave 5 — 1.11.0 feature coverage  ·  2026-07-31 → 2026-08-14 ◀ **CURRENT**
+### ✅ Wave 5 — 1.11.0 feature coverage  ·  2026-07-31 → 2026-08-14 · **DONE** (delivered 2026-08-10)
+
+> Delivered ahead of the window. GitHub milestone *Wave 5 — 1.11.0 feature coverage*
+> closed 2026-08-10 with **13** issues, 0 open.
 
 First wave driven by an upstream release rather than the inherited backlog: Langflow
 1.11.0 shipped new user-facing features with zero suite coverage. Backlog bullets live
@@ -214,6 +230,36 @@ Exit: the six named specs are validated under `@stable` (Azure spec may remain
 credential-gated); the A2A scoping issue produced named checklist bullets.
 Review (2026-08-14): reassess; date the A2A spec batch and revisit the pool
 (templates refresh, MCP-servers-in-DB persistence) for Wave 6.
+
+### Wave 6 — Security, MCP consumption & Memory Base  ·  2026-08-10 → 2026-08-27 ◀ **CURRENT**
+
+First **risk-driven** wave: the order comes from the coverage audit (#1350), which
+ranked residual risk per area and found two areas with **no checklist entry at all**.
+It takes the top-ranked ones — security (residual 15.0), MCP consumption (10.5) and
+Memory Base (8.0) — plus the prerequisite that blocks the i18n batch. Off-band on
+purpose: 23 checklist bullets, so it does not target the 50–60 band.
+
+Requires (GitHub milestone *Wave 6 — Security, MCP consumption & Memory Base*, 10 issues):
+- **Create** (`[ ]` → `[x]`): security — SSRF allow-list round trip (#1391),
+  code-execution endpoints (#1392), secret exposure in traces/export (#1393), tweaks
+  injection (#1394); MCP consumption — install a project into an MCP client (#1395)
+  and per-project tool exposure (#1396); Memory Base — the Memories panel (#1398) and
+  end-to-end registration (#1399).
+- **Extend**: the MCP single-server read-back/update API (#1397).
+- **Prerequisite (infra, no coverage bullet):** parameterise the browser locale
+  (#1400) — `CONTRIBUTING.md` pinned `en-US` for every project and banned overriding
+  it, so the i18n bullets (§18.1–18.2) could not be written at all until it landed.
+
+Notes: the security batch needs no LLM key. #1400 unblocks the i18n batch, which is
+**not** in this wave — schedule it after. The audit's own finding that the `[-]`
+backlog is 41 items smaller than it looked (#1350) means the "~171 `[-]` promotions"
+premise below needs revisiting before the next validation-heavy wave is filled.
+
+Convergence: directional — the denominator grows by 23 new bullets, so a flat or
+falling `%` here is expected and is not a regression.
+Exit: the nine named spec items are validated under `@stable`; #1400 has landed and the
+i18n batch is datable.
+Review (2026-08-27): reassess; date the i18n batch and revisit the pool.
 
 ---
 
