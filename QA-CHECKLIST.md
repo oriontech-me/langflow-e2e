@@ -1001,13 +1001,13 @@
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
 | `flow-functionality/` | 32 | 24 | 1 | 3 | 4 |
 | `mcp/client/` | 13 | 9 | 2 | 0 | 2 |
-| `mcp/server/` | 16 | 12 | 1 | 0 | 3 |
+| `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 11 | 0 | 0 | 0 | 11 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
-| **TOTAL** | **532** | **404 (76%)** | **37 (7%)** | **20 (4%)** | **71 (13%)** |
+| **TOTAL** | **532** | **405 (76%)** | **37 (7%)** | **21 (4%)** | **69 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1023,7 +1023,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 481 `test()` calls carrying the `@stable` tag, distributed across 188 spec
+> 484 `test()` calls carrying the `@stable` tag, distributed across 189 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1479,6 +1479,9 @@
 - [x] deleting a non-existent MCP server returns 404 Not Found → `mcp-server-registration-status-codes.spec.ts`
 
 #### mcp/server/
+- [x] the URL the UI copies is rooted at the user's own origin, agrees with the API, and resolves → `mcp-server-install.spec.ts`
+- [x] the auto-install list reflects the install state the page was given → `mcp-server-install.spec.ts`
+- [x] a client reported as available is offered, while the others stay disabled → `mcp-server-install.spec.ts`
 - [x] project MCP settings round-trip through GET and PATCH → `mcp-server-project-config.spec.ts`
 - [x] an exposed flow is served over the protocol, and de-selecting withdraws it → `mcp-server-project-config.spec.ts`
 - [x] generated endpoint advertises the project and lists the enabled flow → `mcp-server-protocol.spec.ts`
@@ -1556,7 +1559,7 @@
 | `core-functionality/model-provider/` | 2 | 0 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 2 | 2 |
-| `mcp/server/` | 1 | 3 |
+| `mcp/server/` | 1 | 1 |
 | `ui-ux/` — Canvas | 0 | 0 |
 
 ---
