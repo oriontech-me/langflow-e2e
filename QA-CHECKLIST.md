@@ -1023,7 +1023,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 484 `test()` calls carrying the `@stable` tag, distributed across 189 spec
+> 481 `test()` calls carrying the `@stable` tag, distributed across 188 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1106,7 +1106,6 @@
 - [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input → Chat Output — inspector-attached file is rendered in the Playground message → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input — clicking the dismiss button on the Files field clears the value → `chat-input-files-field-regression.spec.ts`
-- [x] Chat Input component — renders on canvas with Message output handle and Input Text field → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Output component — renders on canvas with Inputs handle and run button → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input → Chat Output connection is accepted on canvas (Message ↔ Message) → `chat-input-output-component-regression.spec.ts`
 - [x] Chat Input → Chat Output — Input Text value propagates to ChatOutput on run → `chat-input-output-component-regression.spec.ts`
@@ -1343,11 +1342,9 @@
 - [x] a reachable endpoint with a bogus key is rejected as an authentication failure → `openai-compatible-provider-setup.spec.ts`
 - [x] a discovered model runs a flow through the OpenAI Compatible provider → `openai-compatible-provider-setup.spec.ts`
 - [x] saving a base URL and an API key through Settings persists BOTH variables → `openai-compatible-provider-setup.spec.ts`
-- [x] OpenAI API key is configured via Settings → Model Providers → `openai-provider.spec.ts`
 - [x] configured OpenAI selects a GPT model in the Agent and executes the flow → `openai-provider.spec.ts`
 
 #### core-functionality/observability-monitoring/
-- [x] a misconfigured flow surfaces an appropriate build-error message → `flow-error-message.spec.ts`
 - [x] Clearing traces for a flow whose trace has spans succeeds (cascade), leaving no traces behind → `traces-delete-cascade.spec.ts`
 - [x] DELETE /api/v1/monitor/traces returns 404 for an unknown flow_id → `traces-delete.spec.ts`
 - [x] DELETE /api/v1/monitor/traces?flow_id=... clears all traces, and a second DELETE on the empty owned flow still returns 204 → `traces-delete.spec.ts`
