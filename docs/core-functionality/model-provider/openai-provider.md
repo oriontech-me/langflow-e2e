@@ -38,6 +38,13 @@ PR #775 — the key had no quota, not the test — and **restored in #992** once
 the quota was confirmed back (live HTTP 200 completion on `gpt-4o-mini`) and
 the test ran clean at `--retries=0`.
 
+It was auto-removed a **second** time on the 2026-08-06 daily (commit `cb3082d`,
+run 31093877484) for the same underlying reason — the account had no credits —
+and **restored in #1333**, again on a live HTTP 200 completion plus 5 clean
+`--retries=0` runs. The recurrence is what motivated the provider-health gate
+below: without it, a dead-but-present key produces a hard failure that reads
+like a product regression and costs the tag every time the account drains.
+
 ---
 
 ## Preconditions *(optional)*
@@ -45,7 +52,10 @@ the test ran clean at `--retries=0`.
 - Langflow running at `PLAYWRIGHT_BASE_URL`.
 - `OPENAI_API_KEY` set in `.env` (both tests self-skip without it).
 - `models.json` / `providers.json` generated via
-  `npx playwright test tests/collect-models.spec.ts`.
+  `npx playwright test tests/collect-models.spec.ts`. **Test 2 additionally gates
+  on the health `collect-models` recorded there** — see the gate note below. A
+  local run with no `providers.json` fails OPEN (nothing skips); a stale
+  `inactive` record is bypassed with `IGNORE_PROVIDER_HEALTH=1`.
 - Run with `--workers=1` (Test 2 loads a named template via
   `SimpleAgentTemplatePage`; agent-family convention). File is serial.
 
@@ -79,6 +89,11 @@ the test ran clean at `--retries=0`.
 
 **Test 2 — configured OpenAI is selectable in the Agent and executes** (§7.2.2 + §7.2.3)
 
+0. **Provider-health gate** — `providerSkipGate("openai")` skips the test when
+   `collect-models` recorded OpenAI `inactive` (drained balance, revoked key,
+   spend cap), quoting the collected reason. This test makes a live completion
+   call, so a dead key cannot produce a verdict about Langflow — see the gate
+   note below.
 1. `SimpleAgentTemplatePage.load({ provider: "openai", model })` — with the key
    configured, this selects a **GPT** model in the Agent's `model_model`
    dropdown (bullet §7.2.2). `model` resolves from `models.json` (a GPT chat
@@ -186,6 +201,31 @@ the test ran clean at `--retries=0`.
   runs (not deleted by `cleanAllFlows`). Test 1 is therefore idempotent — it
   re-saves the same key and asserts the configured state rather than assuming a
   fresh, unconfigured start.
+- **Provider-health gate on Test 2 only (#1333, mechanism from #1029):** the two
+  tests gate differently on purpose. Both require `OPENAI_API_KEY` to be *set*;
+  only Test 2 also requires the provider to be *usable*. `hasProviderEnvKeys`
+  measures presence, never health — so on the 2026-08-06 daily, where the account
+  had no credits (`collect-models` recorded `openai inactive — You have no
+  credits remaining`, and 6 of that run's 9 skips quoted it), Test 2 ran anyway:
+  the Agent's run never completed, the Stop button stayed visible past the 120 s
+  wait, no `div-chat-message` ever rendered, all three attempts hard-failed and
+  the workflow auto-removed `@stable` (`cb3082d`). A red that says nothing about
+  Langflow, for the second time (cf. #772/#775). `providerSkipGate("openai")`
+  reads the same `providers.json` the provider-**parametrized** specs already
+  honour, so a dead key now yields a skip quoting the measured reason.
+  **Test 1 is deliberately NOT gated:** it makes no completion call, and
+  `POST /api/v1/models/validate-provider` answers 2xx on a credit-less key
+  (OpenAI authenticates the key without checking balance — `GET /v1/models`
+  behaves the same, which is why the probe cannot see a drained account and only
+  the real call returns 429 `no credits remaining`). Test 1 therefore still
+  passes and still covers the Settings save path on a day the account is dry;
+  gating it would trade real coverage for nothing. **This is a resilience fix,
+  not a root-cause fix** — the account still has to be funded for §7.2.3 to be
+  exercised at all. The general remedy (probe candidate keys and resolve a live
+  one before the suite, fail loud when every candidate is dead) is tracked at
+  **#976**; this gate only stops the outage from being reported as a product
+  regression in the meantime. The same gap exists in `anthropic-provider.spec.ts`
+  and `google-provider.spec.ts`, tracked at **#1415**.
 - **#636 flake (fixed 2026-07-14):** the persist waiter matched `PATCH` only, but
   the frontend fires `POST /variables/` (create, 201) when the key does not yet
   exist and `PATCH /variables/{id}` (update, 200) when it does. On a fresh CI
