@@ -41,8 +41,8 @@ what it stored.
 ## Tags *(required)*
 
 `@release` `@workspace` `@components` `@mcp` `@stable`
-(plus `@regression` on the command/args contract test, and
-`@api` `@regression` on the read-back/update tests)
+(plus `@regression` on the command/args contract test, and `@api` on the
+read-back/update tests)
 
 - `@stable` — promoted under #1091 after the file was brought back to green on
   nightly `1.12.0.dev9` with repeated `--workers=1 --retries=0` runs and a
@@ -53,6 +53,11 @@ what it stored.
   no npm registry and no LLM, and were validated per CONTRIBUTING before the PR.
 - `@api` — on tests 8 and 9 only; they exercise
   `GET`/`PATCH /api/v2/mcp/servers/{name}` directly and never drive the modal.
+  They carry **no** `@regression`: that tag means "test for a previously fixed
+  bug" (`CLAUDE.md`), which is earned by the contract test below and by the
+  409/404 sibling spec, but these two are new coverage of a path with no bug
+  history. `@api` + `@stable` (cross-cutting) and `@mcp` (functional) satisfy the
+  tagging rule on their own.
 - `@regression` — on the contract test only: it guards an intentional upstream
   security change (see *External dependencies*), so a silent removal of that
   validation must fail the suite.
@@ -186,10 +191,12 @@ and nothing is fetched from the npm registry.
 ### 9 — `PATCH updates a registered server, merges at the top level, and refuses to rename it` *(new, #1397)*
 
 1. Register the same shape as test 8.
-2. `PATCH` with `command` + a **different** `args` package: assert 200, then
+2. `PATCH` with a **different** `args` package and nothing else: assert 200, then
    assert the change through a fresh `GET` — the response body alone would pass
    even if nothing were persisted.
-3. Assert `env` **survived** the args-only change: the merge is per top-level key.
+3. Assert `command` **and** `env` survived: neither was mentioned by the patch, so
+   both surviving is the evidence that the merge is per top-level key rather than
+   a whole-document replace.
 4. `PATCH` with only `env` (a different single pair): assert `command`/`args`
    survive and the previous `env` pair is **gone** — the merge replaces a key's
    value wholesale, it does not deep-merge into it.
@@ -227,7 +234,8 @@ and nothing is fetched from the npm registry.
   `args` is visible on a subsequent `GET` and leaves `env` intact; a subsequent
   `env`-only patch leaves `command`/`args` intact and *replaces* the whole `env`
   object; a body `name` disagreeing with the URL is refused with 422 and changes
-  nothing.
+  nothing. Each patch names as few keys as possible, so what survives is evidence
+  about the merge rather than about the patch echoing itself back.
 
 ## Guarding against false positives *(how)*
 
@@ -278,9 +286,9 @@ and nothing is fetched from the npm registry.
 - **The stdio security policy on the PATCH path.** Also measured: a merge patch
   that sends `args` **without** `command` is validated with no command in scope,
   so `{"args": ["-y", "…"]}` is refused with 422 (`dangerous keyword '-y'`) while
-  the identical args are accepted by `POST` alongside `command: npx`. Tests 8/9
-  avoid `-y` entirely and always send `command` with `args`; the asymmetry itself
-  is not asserted here.
+  the identical args are accepted by `POST` alongside `command: npx`. An
+  args-only patch is otherwise fine — measured 200 — so test 9 sends one
+  deliberately and simply avoids `-y`; the asymmetry itself is not asserted here.
 - The rest of the stdio security policy — the arg blocklist
   (`DANGEROUS_KEYWORDS`), shell-metacharacter rejection, the docker-arg policy
   and the env blocklist are **not** covered here; test 7 covers only the

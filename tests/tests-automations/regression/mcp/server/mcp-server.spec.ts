@@ -1413,9 +1413,8 @@ async function mcpApiHeaders(page: Page): Promise<Record<string, string>> {
   };
 }
 
-test(
-  "a registered MCP server is read back individually with the fields it was created with",
-  { tag: ["@regression", "@api", "@mcp", "@stable"] },
+test("a registered MCP server is read back individually with the fields it was created with",
+  { tag: ["@api", "@mcp", "@stable"] },
   async ({ page }) => {
     const serverName = `read-back-${API_PROBE_UNIQUE}`;
     const path = `/api/v2/mcp/servers/${serverName}`;
@@ -1436,11 +1435,16 @@ test(
 
     await test.step("Register the server through the v2 API", async () => {
       const created = await page.request.post(path, { headers, data: config });
+      // Registered for `afterEach` BEFORE the assertion: a POST that commits the
+      // row and then answers non-2xx would otherwise abort this step with the
+      // name unknown to the cleanup, leaking a server nothing can reclaim (the
+      // suffix has moved on). An unnecessary push is free — `afterEach` lists
+      // first and only deletes names it actually finds.
+      registeredServers.push(serverName);
       expect(
         created.status(),
         `Registering a fresh name should succeed (2xx). Body: ${await created.text()}`,
       ).toBeLessThan(300);
-      registeredServers.push(serverName);
     });
 
     await test.step("GET /servers/{name} returns exactly the stored config", async () => {
@@ -1448,20 +1452,22 @@ test(
       expect(resp.status(), "the single-server read must answer 200").toBe(200);
 
       const stored = (await resp.json()) as Record<string, unknown>;
+
+      // FIRST, so it can actually be the assertion that reports: the deep
+      // equality below subsumes it, and placed after it this could never fail.
+      // The name is owned by the URL path — the same rule the update test pins
+      // from the write side (422 on a body `name`).
+      expect(
+        Object.keys(stored),
+        "the config must not carry a `name` — it lives in the URL",
+      ).not.toContain("name");
+
       expect(
         stored,
         "the single read must return the config as posted. Deep equality, not " +
           "per-field checks: a body that quietly gained a `name`, a transport " +
           "label or any other key must fail here",
       ).toEqual(config);
-
-      // Implied by the equality above, asserted on its own for the failure
-      // message: the name is owned by the URL path, which is the same rule the
-      // update test pins from the write side (422 on a body `name`).
-      expect(
-        Object.keys(stored),
-        "the config must not carry a `name` — it lives in the URL",
-      ).not.toContain("name");
     });
 
     await test.step("The same server is visible in the list endpoint", async () => {
@@ -1472,9 +1478,8 @@ test(
   },
 );
 
-test(
-  "PATCH updates a registered server, merges at the top level, and refuses to rename it",
-  { tag: ["@regression", "@api", "@mcp", "@stable"] },
+test("PATCH updates a registered server, merges at the top level, and refuses to rename it",
+  { tag: ["@api", "@mcp", "@stable"] },
   async ({ page }) => {
     const serverName = `update-${API_PROBE_UNIQUE}`;
     const path = `/api/v2/mcp/servers/${serverName}`;
@@ -1482,7 +1487,17 @@ test(
     const readStored = async (): Promise<Record<string, unknown>> => {
       const resp = await page.request.get(path, { headers });
       expect(resp.status(), "the read-back must answer 200").toBe(200);
-      return (await resp.json()) as Record<string, unknown>;
+      const body = (await resp.json()) as Record<string, unknown> | null;
+      // Checked, not assumed (the convention `listMcpServerNames` sets above):
+      // this endpoint answers 200 with a `null` body for a name it does not
+      // know, so an unguarded read would die as `Cannot read properties of
+      // null` inside whichever assertion called this, hiding the fact that the
+      // server went missing mid-test.
+      expect(
+        body,
+        "the server vanished mid-test — GET answered 200 with a null body",
+      ).not.toBeNull();
+      return body as Record<string, unknown>;
     };
 
     await test.step("Pre-clean: drop anything a crashed retry left under this name", async () => {
@@ -1498,21 +1513,24 @@ test(
           env: { MCP_PROBE_TOKEN: "probe-value" },
         },
       });
+      // Registered before the assertion, for the reason spelled out in the
+      // read-back test above.
+      registeredServers.push(serverName);
       expect(
         created.status(),
         `Registering a fresh name should succeed (2xx). Body: ${await created.text()}`,
       ).toBeLessThan(300);
-      registeredServers.push(serverName);
     });
 
     await test.step("PATCH changes args and the change is persisted, not just echoed", async () => {
-      // `command` is sent alongside `args` on purpose: the stdio policy validates
-      // the patch body on its own, so an args-only patch is checked with no
-      // command in scope (see the spec doc — that asymmetry is not this test's
-      // subject, and sending both keeps this assertion about the merge).
+      // args ONLY, no `command`: that is what makes the next two assertions
+      // evidence of a merge rather than of an echo — both surviving keys are
+      // keys this patch never mentioned. Measured 200 on 1.12.0.dev20; the
+      // stdio policy refuses an args-only patch only when the args carry a
+      // dangerous keyword (`-y`), which these deliberately do not.
       const patched = await page.request.patch(path, {
         headers,
-        data: { command: NPX, args: [PKG_PROBE_B] },
+        data: { args: [PKG_PROBE_B] },
       });
       expect(
         patched.status(),
@@ -1523,7 +1541,10 @@ test(
       expect(stored.args, "the new args must be readable back").toEqual([
         PKG_PROBE_B,
       ]);
-      expect(stored.command, "command must survive its own patch").toBe(NPX);
+      expect(
+        stored.command,
+        "command must survive a patch that never mentioned it",
+      ).toBe(NPX);
       expect(
         stored.env,
         "a key the patch did not mention must survive — the merge is per " +
@@ -1536,7 +1557,10 @@ test(
         headers,
         data: { env: { MCP_PROBE_OTHER: "second-value" } },
       });
-      expect(patched.status()).toBe(200);
+      expect(
+        patched.status(),
+        `an env-only PATCH must succeed. Body: ${await patched.text()}`,
+      ).toBe(200);
 
       const stored = await readStored();
       expect(
