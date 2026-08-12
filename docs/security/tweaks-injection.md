@@ -23,11 +23,11 @@ If these tests fail, an API caller holding only run permission on a flow can exe
 
 ## Tags *(required)*
 
-`@api` `@regression`
+`@stable` `@api` `@regression`
 
 No **functional** tag applies: the tag table has no security area, and the closest siblings (`api/flows/api-run-with-tweaks.spec.ts`, `api/flows/api-run-flow.spec.ts`) also carry only cross-cutting tags. `@regression` is what issue #1394 asks for; `@api` marks the layer.
 
-`@stable` is intentionally absent on first delivery — it is added only after team validation (`CONTRIBUTING.md`). The checklist bullet ships as `[-]`.
+`@stable` ships with the first delivery by the maintainer's decision, so this security boundary is watched by `daily-stable.yml` from day one rather than after a validation cycle. The lane profile fits: the file is pure API (no browser, no LLM, no provider key, ~3 s for all three tests), so it costs the daily almost nothing and cannot fail for a provider-outage reason. It is **not** `@destructive` — it creates and deletes only its own two flows and its own API key, so it is safe in the daily's normal lane (`@stable` + `@destructive` would silently never run, #1010). The checklist bullet is therefore `[x]`.
 
 ---
 

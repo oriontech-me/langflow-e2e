@@ -155,7 +155,7 @@ test.describe("Tweaks injection — POST /api/v1/run refuses executable fields",
 
   test(
     "a code tweak cannot replace a component's implementation",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       const sentinel = `PWNED-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const code = maliciousChatInputCode(sentinel);
@@ -212,7 +212,7 @@ test.describe("Tweaks injection — POST /api/v1/run refuses executable fields",
 
   test(
     "the refusal is field-scoped: an unprotected field on the same node still applies",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // The control that makes the test above evidence rather than a tautology:
       // same flow, same node, same addressing modes, same request shape — only
@@ -245,7 +245,7 @@ test.describe("Tweaks injection — POST /api/v1/run refuses executable fields",
 
   test(
     "an executable field on a code-execution component is refused while the same request's benign tweak lands",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       const sentinel = `PWNED-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const benignSender = `BENIGN-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
