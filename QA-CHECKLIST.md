@@ -1005,10 +1005,10 @@
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 11 | 0 | 0 | 0 | 11 |
+| `security/` — Validation, SSRF, Secrets | 11 | 0 | 1 | 0 | 10 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
-| **TOTAL** | **532** | **409 (77%)** | **37 (7%)** | **17 (3%)** | **69 (13%)** |
+| **TOTAL** | **532** | **409 (77%)** | **38 (7%)** | **17 (3%)** | **68 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
