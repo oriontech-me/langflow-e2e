@@ -872,7 +872,7 @@
 
 #### 17.4 Tweaks Injection
 
-- [-] Tweak values passed to `POST /api/v1/run/{id}` cannot reach template fields as
+- [x] Tweak values passed to `POST /api/v1/run/{id}` cannot reach template fields as
       executable input (`langflow-ai/langflow#9319`, `#8672`)
       → security/tweaks-injection.spec.ts
 
