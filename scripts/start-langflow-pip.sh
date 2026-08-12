@@ -29,6 +29,7 @@ LANGFLOW_SUPERUSER="${LANGFLOW_SUPERUSER:-langflow}" \
 LANGFLOW_SUPERUSER_PASSWORD="${LANGFLOW_SUPERUSER_PASSWORD:-langflow123}" \
 LANGFLOW_DEACTIVATE_TRACING=true \
 LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
+LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}" \
   langflow run --host 0.0.0.0 --port "${PORT}" --no-open-browser \
     --workers "${LANGFLOW_WORKERS:-1}" &
 # LANGFLOW_A2A_ENABLED defaults to true: the product default is OFF, A2A's router
@@ -36,6 +37,12 @@ LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
 # the flag is off — so a spec written against a disabled server passes while
 # testing nothing (#1240; surface scoped in #1195). Set it to false to reproduce
 # the disabled state deliberately.
+# LANGFLOW_SSRF_ALLOWED_HOSTS mirrors the Docker start script and all four CI
+# lanes: the SSRF guard blocks private addresses, so without it a self-hosted
+# echo endpoint (ECHO_BASE_URL) or any private-network service is refused locally
+# while working in CI, silently. Loopback stays OUT of the list on purpose —
+# specs use an SSRF-blocked loopback fetch as a deterministic error generator and
+# security/ssrf-url-validation.spec.ts asserts that refusal.
 # --workers defaults to 1: Langflow's own default is (2*cpu)+1 workers, each
 # holding the full in-memory state, which exhausts memory on a constrained dev
 # box and gets a worker SIGKILLed mid-build (ERR_EMPTY_RESPONSE / node run never
