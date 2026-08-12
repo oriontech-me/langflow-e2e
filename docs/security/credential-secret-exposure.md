@@ -65,9 +65,9 @@ The spec runs **3 tests** in a serial describe via Playwright's `request` fixtur
 **Test 2 — the export carries the binding, never the secret** *(`@api @regression`)*
 
 1. `POST /api/v1/flows/download/` with `[flowId]` — the endpoint behind the UI's Export/Download action — and assert `200`.
-2. Assert the exported payload contains **both variable names** and, for both fields, `"load_from_db": true`. The export must keep the *binding* — a flow exported without it would import as a broken flow, so this is the control that step 3 is not passing because the field vanished.
+2. Assert the exported payload contains **both variable names**. The export must keep the *binding* — a flow exported without it would import as a broken flow, so this is the control that step 3 is not passing because the field vanished. The check is textual here because a multi-id export answers with an archive rather than a flow object, and the variable name is the binding's observable in both shapes.
 3. Assert neither sentinel appears in the raw exported payload.
-4. Repeat steps 2–3 on `GET /api/v1/flows/{flowId}` — the read path the editor and every API client use, and the one an operator is most likely to pipe into a file.
+4. `GET /api/v1/flows/{flowId}` — the read path the editor and every API client use, and the one an operator is most likely to pipe into a file. Assert the same absence, and assert the binding **structurally** on the stored flow: for each node, `template.<field>.value` is the variable name, `load_from_db` is `true` and `password` is `true`.
 
 **Test 3 — the run response resolves the credential without echoing it** *(`@api @regression`)*
 
@@ -123,11 +123,11 @@ The spec runs **3 tests** in a serial describe via Playwright's `request` fixtur
 - `tests/helpers/flows/create-credential-consumer-flow-via-api.ts` (new) — builds the two-node flow from the live catalog; owns the `SecretStrInput` code template and the `password`/`load_from_db` field shape.
 - `tests/helpers/flows/delete-flow.ts` — id-scoped teardown.
 - `src/lfx/src/lfx/custom/custom_component/component.py` — `_get_trace_value()` (the `"**********"` mask for `password=True`), `_mask_secret_value()`, `get_trace_as_inputs()` and `_build_with_tracing()`. This is the code path `#7313` is about and the one Test 1 pins.
-- `src/lfx/src/lfx/io/inputs.py` — `SecretStrInput` (`password=True`), the declaration that drives the mask.
+- `src/lfx/src/lfx/inputs/inputs.py` — `SecretStrInput` (`password=True`), the declaration that drives the mask.
 - `src/backend/base/langflow/services/database/models/transactions/model.py` — `SENSITIVE_KEYS_PATTERN`, `_mask_sensitive_value()`, `sanitize_data()`: the **independent, name-based** sanitizer behind `/api/v1/monitor/transactions`. Test 1 step 6 deliberately asserts absence rather than the mask shape, because this path masks differently per field name.
 - `src/backend/base/langflow/api/v1/monitor.py` — `GET /api/v1/monitor/traces`, `/traces/{trace_id}`, `/transactions`, `/builds`: the surfaces Tests 1 and 3 read.
 - `src/backend/base/langflow/services/tracing/formatting.py` — builds the span payload (`inputs`, `outputs`) the trace detail returns.
 - `src/backend/base/langflow/api/v1/flows.py` — `GET /api/v1/flows/{id}` and `POST /api/v1/flows/download/`: Test 2's two export surfaces.
-- `src/backend/base/langflow/api/v1/variables.py` — `POST /api/v1/variables/` with `type: "Credential"`, and the variable service that resolves a `load_from_db` field at build time.
+- `src/backend/base/langflow/api/v1/variable.py` — `POST /api/v1/variables/` with `type: "Credential"`, and the variable service that resolves a `load_from_db` field at build time.
 - `src/backend/base/langflow/api/v1/endpoints.py` — `POST /api/v1/run/{flow_id}`: the `SimplifiedAPIRequest` schema, `output_type: "debug"`, and the `RunResponse` shape Test 3 reads.
 - Upstream reference: `langflow-ai/langflow#7313` — the defect that defines the boundary.
