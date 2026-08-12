@@ -17,14 +17,14 @@ import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-
 // neither the welcome overlay nor the templates modal was ever requested.
 //
 // That no-op is a PRODUCT defect, filed upstream as LE-2019 (evidence:
-// docs/upstream-bugs/UPSTREAM-BUG-new-flow-dead-click.md). The shared helper now
-// gates on the flows list having rendered, which keeps the suite out of the broken
-// window — but it does not fix the product, so `@stable` deliberately STAYS OFF
-// until LE-2019 lands on the nightly and this spec is re-validated there (#966 stays
-// open tracking it). See docs/flow-functionality/run-flow.md.
+// docs/upstream-bugs/UPSTREAM-BUG-new-flow-dead-click.md). The shared helper gates
+// on the flows list having rendered, which keeps the suite out of the broken window;
+// the product fix itself landed upstream in langflow#14349 (*stop flow route request
+// storm*), whose files are present on `release-1.12.0`, so `@stable` is restored here
+// after re-validation on `1.12.0.dev23` (#966). See docs/flow-functionality/run-flow.md.
 test(
   "user should be able to use Run Flow without any issues",
-  { tag: ["@release", "@workspace", "@api", "@regression"] },
+  { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
   async ({ page, request }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });

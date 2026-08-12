@@ -1,6 +1,6 @@
 # Global Variable Edit (Settings page)
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev23`)
 
 ---
 
@@ -19,6 +19,33 @@ If these break, users either lose the Settings-page entry point to global variab
 ## Tags *(required)*
 
 `@stable` `@release` `@workspace` `@regression`
+
+### Flake history — #1235 (quarantine lifted, `@stable` restored 2026-08-11)
+
+Test 2 failed the dailies of **2026-07-27** and **2026-08-03**: the row click never
+opened the Update Variable modal, so the `Update Variable` heading assertion timed
+out. Quarantined in PR #1236 (`test.fixme` + `@stable` removed).
+
+**Root cause — PRODUCT defect, filed as [LE-2123](https://datastax.jira.com/browse/LE-2123).**
+The RBAC foundations that landed on `release-1.12.0` (langflow#14215, `2e677bf843`)
+wrap this page in a `PermissionsProvider`, and `canMutateVariable()` returns
+`false` while `POST /api/v1/authz/me/permissions` is still loading — so
+`onRowClicked` returns early and the click is **silently dropped**, with no
+spinner, no disabled styling and no feedback of any kind. Normally a 1–2 s window;
+one failed first call stretches it to ~31 s through the shared request wrapper's
+5× exponential-backoff ladder, which is why it read as a flake. Evidence and the
+503-injection repro: `docs/upstream-bugs/UPSTREAM-BUG-global-variables-permission-gate-dead-window.md`.
+
+**Fixed upstream by langflow#14404** (*show Global Variables permission loading
+state*, merged into `release-1.12.0` on 2026-08-05), which hides the table behind
+a loading state instead of rendering rows that only look interactive.
+Re-validated on `1.12.0.dev23`: 3 consecutive runs at `--workers=1 --retries=0`,
+green, plus a force-fail of the heading assertion.
+
+**Not this bug:** the recorded flake of `remove-provider-api-key.spec.ts:17` was
+grouped into #1235 at triage and later shown to be a *test* defect (it reproduces
+at ~75 % on a healthy build with the gate open). That half was fixed and restored
+separately in #1276; only this spec traces to LE-2123.
 
 ---
 

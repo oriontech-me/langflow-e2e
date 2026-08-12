@@ -104,7 +104,7 @@
 #### 1.3.1 Folder (Project) CRUD via API
 - [x] POST `/api/v1/projects/` → creates folder, returns id and name → `api/flows/api-folders-crud.spec.ts`
 - [x] GET `/api/v1/projects/` → lists folders including the created one → `api/flows/api-folders-crud.spec.ts`
-- [!] DELETE `/api/v1/projects/{id}` → returns 204 and the folder leaves the listing — quarantined (#965): under concurrent writes the endpoint answers **500** (`sqlite3.OperationalError: database is locked`) and the folder survives; measured 44% of deletes on `1.12.0.dev7` vs 6% on stable `1.10.3` at the same 2-client contention. Product defect filed as [LE-2020](https://datastax.jira.com/browse/LE-2020); the `204` assertion is unchanged. The same ticket also covers `PATCH /api/v1/flows/{id}` (§12.5, #932) — one root cause, two endpoints → `api/flows/api-folders-crud.spec.ts`
+- [x] DELETE `/api/v1/projects/{id}` → returns 204 and the folder leaves the listing — quarantine lifted 2026-08-11 (#965). It answered **500** (`sqlite3.OperationalError: database is locked`) under concurrent writes with the folder surviving, 44% of deletes on `1.12.0.dev7` vs 6% on stable `1.10.3`; fixed upstream by langflow#14308 (`run_with_lock_retry`, forward-ported to `release-1.12.0`) and re-measured on `1.12.0.dev23` at 24/24 `204` at P=2 and 32/32 at P=4 ([LE-2020](https://datastax.jira.com/browse/LE-2020)). The `204` assertion is unchanged. Same ticket also covered `PATCH /api/v1/flows/{id}` (§12.5, #932) — one root cause, two endpoints → `api/flows/api-folders-crud.spec.ts`
 
 #### 1.4 Components via API
 - [x] GET `/api/v1/all` → lists all available components → `api/flows/api-custom-component-creation.spec.ts`
@@ -307,7 +307,7 @@
 #### 4.3 Global Variables (API Keys)
 - [x] Create global variable
 - [-] Use global variable in component (API key) → `ui-ux/use-global-variable-in-component.spec.ts`
-- [!] Edit existing global variable — quarantined (#1235): clicking the variable's ag-grid row does not open the Update Variable modal, recurrent on the dailies of 2026-07-27 and 2026-08-03. Same surface and same shape as the provider-credential removal below (§7.5) — filed as one cause → `ui-ux/global-variable-edit.spec.ts`
+- [x] Edit existing global variable — quarantine lifted 2026-08-11 (#1235). The row click was silently dropped while the RBAC permission query loaded, so the Update Variable modal never opened (dailies 2026-07-27 and 2026-08-03, [LE-2123](https://datastax.jira.com/browse/LE-2123)); fixed upstream by langflow#14404 (permission loading state) and re-validated on `1.12.0.dev23`. The provider-credential removal below (§7.5) was grouped here at triage and proved to be a separate *test* defect, fixed in #1276 → `ui-ux/global-variable-edit.spec.ts`
 - [x] Delete global variable → `ui-ux/global-variables-crud.spec.ts`
 - [x] Create global variable of type "Generic" → `ui-ux/global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `ui-ux/global-variables-crud.spec.ts`
@@ -691,12 +691,12 @@
 #### 12.5 Flow Operations
 - [x] Lock flow — prevents editing → `flow-functionality/lock-flow.spec.ts`
 - [x] Unlock flow → `flow-functionality/flow-lock.spec.ts`
-- [!] Move flow between folders via API — quarantined (#932): under concurrent writes `PATCH /api/v1/flows/{id}` answers **500** (`sqlite3.OperationalError: database is locked` on `UPDATE flow SET folder_id`) and the flow does not move; 14/24 at 2 concurrent clients, 0/30 serial. **Same root cause as #965**, not a separate one — the daily artifact shows the failing assert is `expect(patchRes.status()).toBe(200)` receiving 500, not a stale `folder_id`. Product defect tracked under [LE-2020](https://datastax.jira.com/browse/LE-2020); the `200` assertion is unchanged → `api/flows/api-folders-crud.spec.ts`
+- [x] Move flow between folders via API — quarantine lifted 2026-08-11 (#932). Under concurrent writes `PATCH /api/v1/flows/{id}` answered **500** (`sqlite3.OperationalError: database is locked` on `UPDATE flow SET folder_id`) and the flow did not move (14/24 at 2 clients, 0/30 serial). **Same root cause as #965** — the daily artifact shows the failing assert is `expect(patchRes.status()).toBe(200)` receiving 500, not a stale `folder_id`. Tracked under [LE-2020](https://datastax.jira.com/browse/LE-2020); `api/v1/flows.py` now wraps its update path in `run_with_lock_retry` and `1.12.0.dev23` measures 32/32 `200` with the association persisted at P=4. The `200` assertion is unchanged → `api/flows/api-folders-crud.spec.ts`
 - [x] Publish flow → `flow-functionality/publish-flow.spec.ts`
 - [x] Save flow components as template → `core-components/saveComponents.spec.ts`
 
 #### 12.6 Flow Execution
-- [!] Run Flow component executes another flow — runs again after the #966 quarantine lift, but **not `@stable`** while the upstream `New Flow` dead-click defect ([LE-2019](https://datastax.jira.com/browse/LE-2019)) is open; the shared helper gates on the flows list having rendered so the suite stays out of the broken window → `flow-functionality/run-flow.spec.ts`
+- [x] Run Flow component executes another flow — `@stable` restored 2026-08-11 (#966). The upstream `New Flow` dead-click defect ([LE-2019](https://datastax.jira.com/browse/LE-2019)) is fixed by langflow#14349, present on the nightly line; the shared helper still gates on the flows list having rendered, and the spec was re-validated on `1.12.0.dev23` → `flow-functionality/run-flow.spec.ts`
 - [x] Run a flow from the canvas — terminal-node run builds the whole graph; all nodes reach build success and output is produced → `flow-functionality/flow-execution-canvas.spec.ts`
 - [x] Stop building flow → `flow-functionality/stop-building.spec.ts`
 - [ ] A cyclic graph is refused with a cycle-specific error, and the flow stays editable afterwards (the engine's own contract; a total engine failure is caught indirectly by the 63 `@stable` specs that trigger a run, a subtle one by nothing)

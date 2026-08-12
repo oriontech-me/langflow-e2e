@@ -1,6 +1,6 @@
 # Flow Functionality — Run Flow
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev6`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev23`)
 
 ---
 
@@ -50,7 +50,7 @@ If this breaks, users cannot compose flows via the Run Flow component — a core
 
 ---
 
-## Flake history — #966 (recurrent; quarantine partially lifted, `@stable` still off)
+## Flake history — #966 (quarantine fully lifted, `@stable` restored 2026-08-11)
 
 Failed the dailies of **2026-07-16** and **2026-07-27** with the same signature at
 `run-flow.spec.ts:98` (step 5 above): neither the `FlowBuilderWelcome` overlay nor
@@ -99,12 +99,21 @@ It is **not** a 1.12 regression: the nightly frontend tree is byte-identical to 
 1.11.x releases, and the create-then-navigate path on this button arrived in 1.10.1
 via upstream PR #12575 (1.10.0 opened the templates modal and created nothing).
 
-**Consequence for this spec's tags:** `test.fixme` is lifted so the scenario runs
-again (it carries `@release`, so parking it left a release-gate path unverified),
-but **`@stable` stays off** until LE-2019 lands on the nightly and this spec is
-re-validated there. The helper gate keeps the suite out of the broken window; it
-does not fix the product, and the suite must not claim a validated behavior that
-upstream still breaks. `#966` stays open tracking that.
+**Consequence for this spec's tags:** `test.fixme` was lifted first so the scenario
+ran again (it carries `@release`, so parking it left a release-gate path
+unverified), while **`@stable` stayed off** until LE-2019 landed on the nightly —
+the helper gate keeps the suite out of the broken window but does not fix the
+product, and the suite must not claim a validated behavior that upstream still
+breaks.
+
+**Resolved 2026-08-11.** The upstream fix is langflow#14349 (*stop flow route
+request storm*, merged 2026-07-30), whose two files
+(`customization/hooks/use-custom-navigate.ts` and the `use-load-flow-for-route`
+test) are present and byte-identical on `release-1.11.2`, `release-1.12.0` and
+`main` — so it reaches the nightly line the daily runs. Re-validated on
+`1.12.0.dev23`: 3 consecutive runs at `--workers=1 --retries=0`, all green, plus a
+force-fail of the final `toHaveValue` assertion to rule out a false positive.
+`@stable` restored and #966 closed.
 
 ### A second product defect on the same back-navigation (issue #1153)
 

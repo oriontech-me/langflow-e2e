@@ -1,6 +1,6 @@
 # API Folders (Projects) CRUD
 
-**Last validated:** Langflow 1.12.x (`1.12.0.dev6` / `1.12.0.dev7`)
+**Last validated:** Langflow 1.12.x (`1.12.0.dev23`)
 
 ---
 
@@ -16,16 +16,21 @@ If any of these tests fail against `langflowai/langflow-nightly:latest`, the fol
 ## Tags *(required)*
 `@stable` `@release` `@api` `@regression`
 
-Tests 1 and 2 carry `@stable`. Tests 3 and 4 do **not**, and both are currently
-`test.fixme` — each for a different, independently tracked reason:
+All four tests carry `@stable`. Tests 3 and 4 spent 2026-07-24 → 2026-08-11 as
+`test.fixme` without `@stable`, each tracked by its own issue, and both
+quarantines were lifted together once the upstream fix reached the nightly:
 
-- **Test 3** (`DELETE`) — quarantined for **#965**. The endpoint returns `500`
-  instead of `204` under concurrent writes; a product defect, not a test defect
-  (measurements below). `@stable` stays off and the test stays `test.fixme`
-  until the upstream fix lands on `langflowai/langflow-nightly:latest`, at which
-  point the test is re-validated there and both are restored.
-- **Test 4** (`PATCH folder_id`) — quarantined for **#932**, a *different* root
-  cause (see *Relationship between #965 and #932* below).
+- **Test 3** (`DELETE`) — quarantined for **#965**: the endpoint returned `500`
+  instead of `204` under concurrent writes (a product defect, not a test defect —
+  measurements below). Upstream added `services/database/lock_retry.py` and
+  wrapped this endpoint in `run_with_lock_retry` (langflow#14308), which was then
+  forward-ported to `release-1.12.0`. Re-validated on `1.12.0.dev23`: the
+  contention burst returns `204` **24/24 at P=2 and 32/32 at P=4**.
+- **Test 4** (`PATCH folder_id`) — quarantined for **#932**, the *same* root cause
+  on a second endpoint (see *Relationship between #965 and #932* below).
+  `api/v1/flows.py` now wraps its update path in `run_with_lock_retry` as well;
+  re-validated on `1.12.0.dev23` at **32/32 PATCH `200` with the association
+  persisted, P=4**.
 
 ---
 
@@ -70,7 +75,7 @@ widening the assertion would hide a product defect — see the section below.
 ---
 
 ## Validation criterion *(required)*
-- The **active** tests (1 and 2) pass 3× in a row at `--retries=0 --workers=1`
+- All four tests pass 3× in a row at `--retries=0 --workers=1`
   against `langflowai/langflow-nightly:latest`.
 - Status codes match: folder `POST` returns `201`; folder `GET` returns `200`; folder `DELETE` returns `204`; flow `PATCH`/`GET` return `200`.
 - **Move is durable and observable**: after `PATCH /api/v1/flows/{id}` with a new `folder_id`, a fresh `GET /api/v1/flows/{id}` reports the new `folder_id` — proving the association moved and persisted, not just that the request was accepted.
@@ -83,17 +88,30 @@ widening the assertion would hide a product defect — see the section below.
   `500`, because a swallowed `500`
   leaves a permanent orphan (see the defect below). The observable is
   `GET /api/v1/projects/` no longer listing the id, not the status of one call.
-- **Quarantine gate for test 3 (#965)** — the concrete observable that lifts it:
-  the burst under *concurrent writes* returns `204` for every delete. Measured on
-  `1.12.0.dev7` with 2 concurrent clients issuing create+delete cycles, **44 %**
-  of the deletes come back `500` (40 of 90); the criterion is 0 of 90 with the
-  same script, at which point `test.fixme` and `@stable` are restored together.
-  A serial pass is NOT sufficient evidence — serially the endpoint is already
-  green (10/10), which is exactly why the daily saw this as a flake.
+- **Quarantine gate for tests 3 and 4 (#965 / #932) — met on 2026-08-11.** The
+  gate was never a serial pass: serially both endpoints were already green
+  (10/10, 0/30), which is exactly why the daily saw this as a flake. The
+  observable is the burst under *concurrent writes*. Measured on `1.12.0.dev23`
+  with `docs/upstream-bugs/scripts/scout-965-scope.py` and
+  `scout-932-probe.py`: `DELETE /projects` **24/24 `204` at P=2, 32/32 at P=4**
+  (against 11/24 failing at P=2 on `1.12.0.dev7`), and `PATCH /flows` **32/32
+  `200` with the association persisted at P=4** (against 20/24 failing on
+  `1.12.0.dev8`). Re-check with the same two scripts before trusting a future
+  green: the endpoints are only as safe as the retry wrapper upstream keeps.
 
 ---
 
-## Known product defect behind the quarantine of test 3 (#965)
+## Known product defect behind the quarantine of test 3 (#965) — FIXED upstream
+
+> **Status (2026-08-11): fixed on the nightly line, quarantine lifted.** Upstream
+> langflow#14308 added `services/database/lock_retry.py` and wrapped
+> `delete_project` in `run_with_lock_retry`; the module was absent from
+> `1.12.0.dev10` (which is why #932 recorded the forward-port as an open ask) and
+> is present in `1.12.0.dev23`, together with the call site in both
+> `api/v1/projects.py` and `api/v1/flows.py`. The measurements below are the
+> historical evidence for LE-2020 — keep them, they are what the contention gate
+> in *Validation criterion* compares against. Everything in the present tense in
+> this section describes builds up to `1.12.0.dev8`.
 
 `DELETE /api/v1/projects/{id}` answers **`500`** — not `204` — whenever another
 write transaction is in flight, and **the folder is not deleted**. The response
