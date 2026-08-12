@@ -31,6 +31,12 @@ import { resolveTestTargets } from "../../../../helpers/provider-setup/test-targ
  * Issue #481 flagged a backend bug (parameter ignored) and asked to gate this
  * expected-fail. Reproduction on 1.11.0.dev33 shows the parameter is RESPECTED
  * (1 → run limit (1/1); high → finishes), so this is a normal passing @stable test.
+ *
+ * #1264 read as "the cap is no longer enforced" and quarantined Test 1. It was
+ * this spec's own fetch target: an SSRF-blocked URL that can never succeed puts
+ * every run on the tool-error path, where LangGraph's recursion_limit
+ * (max_iterations * 2 + 5, agent.py:559) fires BEFORE the model-call cap. See
+ * TARGET_URL below and the spec doc for the measurement.
  */
 
 if (!process.env.CI) {
@@ -38,19 +44,44 @@ if (!process.env.CI) {
 }
 
 // Force a real tool-calling loop with data the model CANNOT fabricate, so it must
-// call the URL tool — guaranteeing more than one model call, so a limit of 1 is
-// genuinely exceeded. The target is the running instance's own version endpoint:
-// the model cannot know the exact nightly version, so it always attempts the
-// fetch (unlike a famous page like example.com, whose contents it has memorised,
-// or an arithmetic task it computes inline). The fetch itself is SSRF-blocked
-// backend-side, but that is irrelevant — the *attempt* consumes the iteration,
-// which is what proves the cap. See the spec doc for the full rationale.
-const TARGET_URL = "http://localhost:7860/api/v1/version";
+// call the URL tool — guaranteeing a second model call, so a limit of 1 is
+// genuinely exceeded. `/uuid` returns a fresh random UUID per request: unknowable
+// (unlike a famous page like example.com, whose contents the model has memorised,
+// or an arithmetic task it computes inline) AND not derivable from the URL itself
+// (unlike an echoed/base64 sentinel, which a model decodes without fetching).
+//
+// The fetch must also SUCCEED, which is the #1264 lesson and the reason this is
+// not the instance's own SSRF-blocked /api/v1/version any more. "The attempt
+// consumes the iteration" is true but insufficient: a tool that can never succeed
+// gives the model nothing to finish on, so the run's length stops being a property
+// of the cap and becomes a property of the model's appetite for retrying. Under
+// the daily's provider rotation (#1185) claude-haiku-4-5 and gpt-4o-mini gave up
+// after 2 calls (711-2,276 tokens) while gemini-3.5-flash retried address variants
+// until LangGraph's recursion_limit (max_iterations * 2 + 5 -> 45) killed the run:
+// 733,990 tokens over 11 calls on one trace, 94% of that day's whole-suite spend,
+// no final message at all, and a red attempt 0 that only passed on retry
+// (2026-08-12 daily, run 31581590030). With a reachable target a normal run is
+// exactly two model calls.
+//
+// CI resolves ECHO_BASE_URL to the lane's in-network go-httpbin (#1128); locally
+// it falls back to the public host, same contract as agent-multi-tool-selection.
+const ECHO_BASE = (
+  process.env.ECHO_BASE_URL ??
+  process.env.HTTPBIN_BASE_URL ??
+  "https://httpbin.org"
+).replace(/\/$/, "");
+const TARGET_URL = `${ECHO_BASE}/uuid`;
 const SYSTEM_PROMPT =
   "You have web tools. To answer any question about a URL you MUST call the URL fetch tool. Never guess or invent responses.";
-const TASK = `Fetch ${TARGET_URL} and tell me the exact "version" value it returns.`;
+const TASK = `Fetch ${TARGET_URL} and tell me the exact "uuid" value it returns.`;
 const LIMIT_MESSAGE = /model call limits exceeded/i;
-const HIGH_LIMIT = "20";
+// The value only the fetch can supply — guards the causal control against a
+// refusal or a blank run passing its negative assertion.
+const UUID_SHAPE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+// Headroom only has to exceed the two calls a successful fetch needs. It also
+// sets LangGraph's recursion_limit (cap * 2 + 5), so a low cap bounds the blast
+// radius of any future model that does loop: 15 graph steps instead of 45.
+const HIGH_LIMIT = "5";
 
 // Id-scoped cleanup for every flow this spec's page creates (#1108's shared
 // tracker, never a delete-all sweep — #553). This spec had NO cleanup at all: the
@@ -161,34 +192,22 @@ for (const { label, options, skipReason } of targets) {
   const provider = options.provider ?? (Object.keys(providerConfigMap)[0] as Provider);
 
   test.describe(`Agent Max Iterations [${label}]`, () => {
-    // QUARANTINED — the product no longer enforces the cap (#1264, still open).
-    // The agent answers the task normally instead of stopping: the assertion below
-    // reads a real, rendered message (`34 × locator resolved`), so this is a
-    // content failure, not a timeout. Received on three independent runs of the
-    // three different Anthropic models tried:
+    // Quarantine LIFTED (#1264): the cap IS enforced on 1.12.0.dev23 — measured
+    // `Model call limits exceeded: run limit (1/1)` in 3.3s on
+    // google/gemini-3.5-flash once the fetch target became reachable. The
+    // quarantine's premise ("the product no longer enforces the cap") was this
+    // spec's own SSRF-blocked target, which never let the run reach a second model
+    // call the middleware could stop: with max_iterations=1 the recursion budget is
+    // 1 * 2 + 5 = 7 graph steps, and the tool-error path spends them on retries, so
+    // the received strings the quarantine recorded ("I'll fetch that URL for you.")
+    // were the model's pre-tool text, not the cap failing to fire.
     //
-    //   "I'll fetch that URL for you."
-    //   "I'll fetch that URL for you and retrieve the version value."
-    //   "I'll fetch that URL for you and get the version value."   (daily #1258)
-    //
-    // Reproduced on 1.12.0.dev18 LOCALLY, off CI load, on claude-haiku-4-5,
-    // claude-opus-5 and claude-opus-4-5 — which is what rules out the mid-run
-    // backend wedge #1264's triage left open as a possible cover.
-    //
-    // `test.fixme` rather than leaving it red, for the reason the same quarantine
-    // is used in mcp-server.spec.ts (#1266) and openai-compatible-provider-setup:
-    // this test is `@regression` and never `@stable`, so the daily does not run it
-    // and the only thing a red here does is fail the PR lane of any diff that
-    // touches this file — while the file is SERIAL, so its failure also skipped
-    // the `@stable` causal control below, the half that still works.
-    //
-    // Lifting the quarantine (remove `test.fixme`) is #1264's call, once the cap is
-    // enforced again on `langflowai/langflow-nightly:latest`. The causal control
-    // below is deliberately NOT quarantined: on its own it proves only that a high
-    // limit finishes, and it is what will show the pair working again.
-    test.fixme(
+    // Now @stable: with the reachable target this is the cheap half of the pair
+    // (~3s, ~1k tokens), so the daily gains the enforcement assertion it never ran
+    // — the pair being what separates "not enforced" from "wording changed".
+    test(
       "agent stops when max iterations is reached",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
@@ -238,11 +257,15 @@ for (const { label, options, skipReason } of targets) {
           const bubble = await runAndGetBubble(page);
           const reply = (await bubble.innerText()).trim();
           // Same task as Test 1, but with headroom to iterate: the agent finishes
-          // (a few attempts, well under the high limit) WITHOUT the limit message.
-          // Only max_iterations differs between the two tests — so the stop in
-          // Test 1 is attributable to the cap, not an unrelated failure.
+          // its two calls WITHOUT the limit message. Only max_iterations differs
+          // between the two tests — so the stop in Test 1 is attributable to the
+          // cap, not an unrelated failure.
           expect(reply.length).toBeGreaterThan(0);
           expect(reply).not.toMatch(LIMIT_MESSAGE);
+          // Positive half: the fetched UUID. A negative assertion alone passes on a
+          // refusal ("I cannot fetch URLs") or a blank run — both of which also
+          // carry no limit message, and neither of which exercises the cap.
+          expect(reply).toMatch(UUID_SHAPE);
         });
       },
     );
