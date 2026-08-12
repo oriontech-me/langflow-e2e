@@ -73,13 +73,19 @@ test.describe("Global Variable Edit (Settings page)", () => {
     },
   );
 
-  // Quarantined for #1235 — recurrent flake (dailies 2026-07-27, 2026-08-03):
-  // clicking the variable's ag-grid row does not open the Update Variable modal,
-  // so `getByRole('heading', { name: 'Update Variable' })` never becomes visible.
-  // Lifting the quarantine and restoring @stable is a deliverable of #1235.
-  test.fixme(
+  // Quarantine lifted (#1235). This test was `test.fixme` against LE-2123
+  // (https://datastax.jira.com/browse/LE-2123): the RBAC gate introduced by
+  // langflow#14215 made `canMutateVariable()` return false while
+  // `POST /api/v1/authz/me/permissions` was loading, so the row click was
+  // silently dropped and the Update Variable modal never opened — a window that a
+  // single failed permissions call stretched to ~31 s through the request
+  // wrapper's retry ladder. Upstream langflow#14404 (*show Global Variables
+  // permission loading state*, merged into `release-1.12.0` on 2026-08-05) hides
+  // the table behind a loading state instead of rendering rows that only look
+  // interactive; re-validated on `1.12.0.dev23`.
+  test(
     "edit existing global variable by clicking its row",
-    { tag: ["@release", "@workspace", "@regression"] },
+    { tag: ["@stable", "@release", "@workspace", "@regression"] },
     async ({ page }) => {
       createdVarName = `test_edit_var_${Date.now()}`;
 

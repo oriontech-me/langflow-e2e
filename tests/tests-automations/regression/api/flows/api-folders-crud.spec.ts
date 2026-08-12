@@ -86,17 +86,19 @@ test.describe("Folder (Projects) CRUD via API", () => {
     },
   );
 
-  // Quarantined for #965 — recurrent flake (2026-07-22 / 07-27): the DELETE
-  // answers HTTP 500 (`sqlite3.OperationalError: database is locked`) where the
-  // contract expects 204 No Content, and the folder survives. Product defect,
-  // filed upstream as LE-2020 (https://datastax.jira.com/browse/LE-2020); the
-  // 204 assertion below stays bare and this stays `test.fixme` without @stable
-  // until the fix reaches `langflowai/langflow-nightly:latest`. Evidence and the
-  // reproduction scripts: docs/api/flows/api-folders-crud.md §"Known product
-  // defect" and docs/upstream-bugs/.
-  test.fixme(
+  // Quarantine lifted (#965). This test was `test.fixme` against LE-2020
+  // (https://datastax.jira.com/browse/LE-2020): the DELETE answered HTTP 500
+  // (`sqlite3.OperationalError: database is locked`) instead of the contracted
+  // 204, and the folder survived — measured at 11/24 and 12/24 with 2 concurrent
+  // clients. Upstream shipped `services/database/lock_retry.py` and wrapped this
+  // endpoint in `run_with_lock_retry` (langflow#14308, forward-ported to
+  // `release-1.12.0`); the module and the call site are both present in
+  // `1.12.0.dev23`, and the repro script now measures 24/24 at P=2 and 32/32 at
+  // P=4 (`docs/upstream-bugs/scripts/scout-965-scope.py`). The 204 assertion
+  // deliberately stays bare — it is what surfaced the defect.
+  test(
     "DELETE removes folder and it no longer appears in listing",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
       const folderName = `Delete Folder ${Date.now()}`;
@@ -127,10 +129,17 @@ test.describe("Folder (Projects) CRUD via API", () => {
     },
   );
 
-  // quarantined for #932 — recurrent flaky association assertion (dailies 2026-07-15, 2026-07-24)
-  test.fixme(
+  // Quarantine lifted (#932). Same root cause and same upstream ticket as the
+  // DELETE above (LE-2020), on a second endpoint: `PATCH /api/v1/flows/{id}`
+  // answered 500 on `UPDATE flow SET folder_id` with two concurrent writers
+  // (14/24 at P=2, 0/30 serial), which Playwright rendered as an "Object.is
+  // equality" mismatch and made this read as a stale association. `flows.py` now
+  // wraps its update path in `run_with_lock_retry` on `release-1.12.0`, present
+  // in `1.12.0.dev23`; the probe measures 32/32 PATCH 200 with the association
+  // persisted at P=4 (`docs/upstream-bugs/scripts/scout-932-probe.py`).
+  test(
     "moving flow between folders via PATCH folder_id updates association",
-    { tag: ["@release", "@api", "@regression"] },
+    { tag: ["@stable", "@release", "@api", "@regression"] },
     async ({ request }) => {
       const authToken = await getAuthToken(request);
 
