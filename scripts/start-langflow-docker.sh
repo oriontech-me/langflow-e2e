@@ -77,6 +77,7 @@ docker run -d \
   -e LANGFLOW_DEACTIVATE_TRACING=true \
   -e LANGFLOW_ALLOW_CUSTOM_COMPONENTS="${LANGFLOW_ALLOW_CUSTOM_COMPONENTS:-true}" \
   -e LANGFLOW_A2A_ENABLED="${LANGFLOW_A2A_ENABLED:-true}" \
+  -e LANGFLOW_SSRF_ALLOWED_HOSTS="${LANGFLOW_SSRF_ALLOWED_HOSTS:-172.16.0.0/12,10.0.0.0/8,192.168.0.0/16}" \
   -e LANGFLOW_WORKERS="${LANGFLOW_WORKERS:-1}" \
   "${IMAGE}"
 
@@ -87,6 +88,20 @@ docker run -d \
 # server is indistinguishable from an unmounted one — a spec written against it
 # passes while testing nothing (#1240; surface scoped in #1195). Set
 # LANGFLOW_A2A_ENABLED=false to reproduce the disabled state on purpose.
+
+# LANGFLOW_SSRF_ALLOWED_HOSTS carries the SAME value all four CI lanes set
+# (pr-validation, daily-stable, nightly, manual — the daily/nightly/manual also
+# allow the `ollama` service name). Without it a local instance behaves
+# differently from every lane: Langflow's SSRF guard blocks private addresses, so
+# a self-hosted go-httpbin (ECHO_BASE_URL) or a private-network service is
+# refused locally while working in CI. The divergence is silent — the spec that
+# needs it skips, or fails on a message that names no cause — which is the same
+# trap LANGFLOW_ALLOW_CUSTOM_COMPONENTS (#668) and LANGFLOW_A2A_ENABLED (#1240)
+# were set here to avoid. Loopback is deliberately NOT allow-listed: several
+# specs use an SSRF-blocked loopback fetch as a deterministic error generator
+# (core-functionality/llm-agents/agent-tool-error-handling.spec.ts), and
+# security/ssrf-url-validation.spec.ts asserts that refusal. Override to
+# reproduce another configuration: LANGFLOW_SSRF_ALLOWED_HOSTS="" ./scripts/...
 
 # LANGFLOW_WORKERS defaults to 1 here on purpose. Langflow's own default is
 # (2 * cpu_count) + 1 gunicorn workers, each inheriting the full in-memory

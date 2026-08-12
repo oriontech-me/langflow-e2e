@@ -843,15 +843,22 @@
 
 #### 17.1 URL Validation and SSRF
 
-- [ ] A component that fetches a URL (API Request) rejects a loopback address when it is not
-      in `LANGFLOW_SSRF_ALLOWED_HOSTS`, and accepts it when it is — the round trip of the
+- [x] A component that fetches a URL (API Request) rejects a loopback address when it is not
+      in `LANGFLOW_SSRF_ALLOWED_HOSTS`, and accepts an address that is — the round trip of the
       guard, not just the rejection (upstream regression: `ensure_url` ignoring the allow-list
-      for loopback, `langflow-ai/langflow#14264`)
-- [ ] A private RFC-1918 address is rejected by the same guard unless allow-listed
-- [ ] The rejection surfaces to the user as an error in the UI, not as a silent empty result
-- [ ] `LANGFLOW_SSRF_ALLOWED_HOSTS` with a CIDR entry admits the whole range
-      (the mechanism `.github/actions/resolve-echo-endpoint` already depends on, currently
-      asserted nowhere)
+      for loopback, `langflow-ai/langflow#14264`). The *accepted* half is asserted on a private
+      address rather than on loopback: allow-listing `127.0.0.1` on the shared instance would
+      disarm `core-functionality/llm-agents/agent-tool-error-handling.spec.ts`, whose error
+      generator is an SSRF-blocked loopback fetch → security/ssrf-url-validation.spec.ts
+- [x] A private RFC-1918 address is rejected by the same guard unless allow-listed — asserted
+      through the cloud-metadata address (`169.254.169.254`), the blocked-range address no lane
+      allow-lists, since all three RFC-1918 ranges are allow-listed on every lane
+      → security/ssrf-url-validation.spec.ts
+- [x] The rejection surfaces to the user as an error in the UI, not as a silent empty result
+      → security/ssrf-url-validation.spec.ts
+- [x] `LANGFLOW_SSRF_ALLOWED_HOSTS` with a CIDR entry admits the whole range
+      (the mechanism `.github/actions/resolve-echo-endpoint` already depends on, previously
+      asserted nowhere) → security/ssrf-url-validation.spec.ts
 
 #### 17.2 Code Execution Endpoints
 

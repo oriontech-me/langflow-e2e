@@ -158,6 +158,27 @@ test("the superuser and worker defaults are passed to the container", () => {
   assert.match(runCall, /LANGFLOW_AUTO_LOGIN=true/);
 });
 
+test("the SSRF allow-list matches the CI lanes, and keeps loopback OUT", () => {
+  // #1391: without this a local instance behaves differently from all four CI
+  // lanes — the guard refuses a self-hosted echo endpoint on a private IP, so
+  // ECHO_BASE_URL-dependent specs fail (or skip) locally while passing in CI.
+  // The value is the lanes' own; loopback is deliberately absent, because
+  // agent-tool-error-handling.spec.ts uses an SSRF-blocked loopback fetch as its
+  // deterministic error generator and ssrf-url-validation.spec.ts asserts that
+  // refusal — allow-listing 127.0.0.1 here would silently disarm both.
+  const r = runScript();
+  const runCall = r.calls.find((c) => c.startsWith("run "));
+  assert.match(runCall, /LANGFLOW_SSRF_ALLOWED_HOSTS=172\.16\.0\.0\/12,10\.0\.0\.0\/8,192\.168\.0\.0\/16/);
+  assert.doesNotMatch(runCall, /LANGFLOW_SSRF_ALLOWED_HOSTS=[^ ]*127\.0\.0\.1/);
+  assert.doesNotMatch(runCall, /LANGFLOW_SSRF_ALLOWED_HOSTS=[^ ]*localhost/);
+});
+
+test("the SSRF allow-list is a default, so another configuration is reproducible", () => {
+  const r = runScript({ env: { LANGFLOW_SSRF_ALLOWED_HOSTS: "127.0.0.1" } });
+  const runCall = r.calls.find((c) => c.startsWith("run "));
+  assert.match(runCall, /LANGFLOW_SSRF_ALLOWED_HOSTS=127\.0\.0\.1/);
+});
+
 test("LANGFLOW_A2A_ENABLED can be forced off to reproduce the disabled surface", () => {
   // The disabled state is a real thing to reproduce by hand (the Agent tab's
   // serverDisabled copy, the 404 on all three routes), so the default must be a
