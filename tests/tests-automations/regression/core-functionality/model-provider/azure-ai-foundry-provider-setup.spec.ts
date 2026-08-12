@@ -9,6 +9,18 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { createFlowFromStarter } from "../../../../helpers/flows/create-flow-from-starter";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 import { waitForFlowSaveSettled } from "../../../../helpers/flows/wait-for-flow-save-settled";
+import {
+  awaitProviderPanelSettled,
+  collectCredentialWrites,
+  PROVIDER_SAVE_BUTTON,
+  waitForCredentialPersist,
+} from "../../../../helpers/provider-setup/provider-panel-save";
+import {
+  classifyVariableWriteRefusal,
+  describeVariableWrite,
+  isEnvironmentalRefusal,
+  type VariableWrite,
+} from "../../../../helpers/provider-setup/variable-write-refusal";
 
 /**
  * Azure AI Foundry in the unified provider setup (QA-CHECKLIST §7.8, Langflow
@@ -471,17 +483,20 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
     },
   );
 
-  // Quarantined at triage (daily run 31581590030): recurrent flake, and the same
-  // cause as #1424 — the second `POST /api/v1/variables/` of the pair is answered
-  // 400 while validate-provider succeeds, so only AZURE_AI_FOUNDRY_ENDPOINT is
-  // stored and the poll below times out on a pair that will never complete. The
-  // 30 s poll is not the problem: the write was refused, not delayed. Same
-  // signature on the 2026-08-10 and 08-12 dailies, with the 400 recorded in both
-  // runs' logs. Lifting the quarantine (remove test.fixme + restore @stable) is a
-  // deliverable of #1424.
-  test.fixme(
+  // Quarantined at triage of daily run 31581590030 (PR #1433) and restored here
+  // by #1424, where the cause was measured: the KEY write is validated LIVE
+  // (`create_variable` → `validate_model_provider_key` →
+  // `request_azure_ai_foundry_model_entries`, 10 s read timeout) and ANY failure
+  // becomes `400 {"detail":"Could not validate Azure AI Foundry credentials: …"}`.
+  // Both the 08-10 and 08-12 dailies carry that body with `Read timed out.
+  // (read timeout=10.0)`: the resource answered this host's probe and then took
+  // longer than 10 s to answer Langflow. The ENDPOINT write is not validated at
+  // all (only AZURE_AI_FOUNDRY_API_KEY is the provider's primary variable), so the
+  // pair is left half-configured with no rollback — which is what the pair-poll
+  // then timed out on. The poll was never the problem, and it is kept.
+  test(
     "real credentials configure the provider and enable a portal deployment through the UI",
-    { tag: ["@model-provider", "@settings"] },
+    { tag: ["@stable", "@model-provider", "@settings"] },
     async ({ page, request }) => {
       const probe = await probeFoundry(request);
       test.skip(!probe.usable, `Azure AI Foundry not usable: ${probe.reason}`);
@@ -501,41 +516,120 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
         await awaitBootstrapTest(page, { skipModal: true });
         await openProviderPanel(page, PROVIDER_ITEM);
 
+        /**
+         * One save attempt through the panel: fill both variables, click the
+         * submit control, and resolve once the account state is decided — either
+         * the PAIR is stored or a write was refused.
+         *
+         * It watches EVERY variables write, not just the first (#1424). A
+         * two-variable provider issues two, and on both failing dailies the first
+         * was the endpoint's `201` while the refusal was the key's `400` — so the
+         * old single waiter passed and the pair-poll then timed out 30 s later
+         * with the cause nowhere in the assertion.
+         */
+        const attemptSave = async (
+          attempt: "first" | "retry",
+        ): Promise<{ refused: VariableWrite | null }> => {
+          const writes = collectCredentialWrites(page);
+          try {
+            // The submit control reads `Save` here (the ownership gate above
+            // established that nothing is stored) and `Retry Save` after a refused
+            // write. Settling on it first is what keeps the frontend from taking
+            // the CREATE branch for a name it does not yet know about (#1431).
+            if (attempt === "first") {
+              await awaitProviderPanelSettled(page, { expectConfigured: false });
+            }
+            await page.getByTestId(KEY_INPUT).fill(FOUNDRY_KEY);
+            await page.getByTestId(ENDPOINT_INPUT).fill(FOUNDRY_ENDPOINT);
+
+            // Armed BEFORE the click so the pass is caused by THIS save, never by a
+            // pre-existing configured state.
+            const validatePromise = page.waitForResponse(
+              (r) =>
+                r.url().includes("/api/v1/models/validate-provider") &&
+                r.request().method() === "POST",
+              { timeout: 60000 },
+            );
+            // Create (POST /variables/) on a fresh instance, update (PATCH
+            // /variables/{id}) when a value already exists — the frontend branches
+            // on existence (#636), so match both.
+            const persistPromise = waitForCredentialPersist(page, 60000);
+
+            await page.getByTestId(PROVIDER_SAVE_BUTTON).click();
+
+            const [validateResp] = await Promise.all([validatePromise, persistPromise]);
+            expect(validateResp.status()).toBe(200);
+            const validateBody = (await validateResp.json()) as {
+              valid?: boolean;
+              error?: string;
+            };
+            expect(
+              validateBody.valid,
+              `validate-provider rejected the credentials: ${validateBody.error ?? "(no error)"}`,
+            ).toBe(true);
+
+            // Resolve the account state, naming what is missing while it waits —
+            // "partial: AZURE_AI_FOUNDRY_ENDPOINT" is the half-configured state a
+            // refused key write leaves behind (the backend validates the KEY write
+            // live and does not roll back the endpoint it already stored).
+            let refused: VariableWrite | null = null;
+            await expect
+              .poll(
+                async () => {
+                  const collected = await writes.settled();
+                  refused = collected.find((w) => w.status >= 400) ?? null;
+                  if (refused) return "refused";
+                  const names = (await foundryVariables(request))
+                    .map((v) => v.name)
+                    .sort();
+                  return names.join(",") === [KEY_VAR, ENDPOINT_VAR].sort().join(",")
+                    ? "configured"
+                    : `partial: ${names.join(",") || "none stored"}`;
+                },
+                { timeout: 30000 },
+              )
+              .toMatch(/^(configured|refused)$/);
+            return { refused };
+          } finally {
+            writes.stop();
+          }
+        };
+
         await test.step("save the endpoint and key — assert the save requests succeed", async () => {
-          await page.getByTestId(KEY_INPUT).fill(FOUNDRY_KEY);
-          await page.getByTestId(ENDPOINT_INPUT).fill(FOUNDRY_ENDPOINT);
+          let { refused } = await attemptSave("first");
 
-          // Armed BEFORE the click so the pass is caused by THIS save, never by a
-          // pre-existing configured state.
-          const validatePromise = page.waitForResponse(
-            (r) =>
-              r.url().includes("/api/v1/models/validate-provider") &&
-              r.request().method() === "POST",
-            { timeout: 60000 },
-          );
-          // Create (POST /variables/) on a fresh instance, update (PATCH
-          // /variables/{id}) when a value already exists — the frontend branches
-          // on existence (#636), so match both.
-          const persistPromise = page.waitForResponse(
-            (r) =>
-              r.url().includes("/api/v1/variables/") &&
-              (r.request().method() === "POST" || r.request().method() === "PATCH"),
-            { timeout: 60000 },
-          );
+          if (refused) {
+            const refusal = classifyVariableWriteRefusal(refused.body);
+            const described = describeVariableWrite(refused);
+            // Ours stays RED: a duplicate-name create, an empty submitted value or
+            // a body we could not read all say something about the panel or this
+            // test, and muting them is how a test-side defect rots (#1424).
+            expect(
+              isEnvironmentalRefusal(refusal.kind),
+              `the credential write was refused for a reason that IS ours (${refusal.kind}): ${described}`,
+            ).toBe(true);
 
-          await page.getByRole("button", { name: /^Save$|^Replace$/ }).first().click();
-
-          const [validateResp, persistResp] = await Promise.all([
-            validatePromise,
-            persistPromise,
-          ]);
-          expect(validateResp.status()).toBe(200);
-          const validateBody = (await validateResp.json()) as { valid?: boolean; error?: string };
-          expect(
-            validateBody.valid,
-            `validate-provider rejected the credentials: ${validateBody.error ?? "(no error)"}`,
-          ).toBe(true);
-          expect(persistResp.ok()).toBe(true);
+            // Not ours: the provider rejected the credential, or Langflow could not
+            // reach it inside its 10 s validation budget — the measured cause of
+            // both the 2026-08-10 and 2026-08-12 dailies. Retry once through the
+            // panel's own `Retry Save`, then skip quoting the backend (#980/#1012).
+            console.log(`[azure-ai-foundry] first save refused (${refusal.kind}): ${described}`);
+            await purgeFoundryCredentials(request);
+            ({ refused } = await attemptSave("retry"));
+            if (refused) {
+              const retryRefusal = classifyVariableWriteRefusal(refused.body);
+              const retryDescribed = describeVariableWrite(refused);
+              const reason =
+                `Langflow refused the ${PROVIDER_NAME} credential write twice for a reason ` +
+                `outside its own behaviour (${retryRefusal.kind}): ${retryDescribed}`;
+              console.log(`[azure-ai-foundry] ${reason}`);
+              test.skip(isEnvironmentalRefusal(retryRefusal.kind), reason);
+              expect(
+                isEnvironmentalRefusal(retryRefusal.kind),
+                `the retry was refused for a reason that IS ours (${retryRefusal.kind}): ${retryDescribed}`,
+              ).toBe(true);
+            }
+          }
         });
 
         await test.step("the provider is now configured: both variables stored, toggles render", async () => {
