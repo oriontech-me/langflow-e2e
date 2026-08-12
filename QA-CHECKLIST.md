@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-11
+> **Last updated:** 2026-08-12
 
 ---
 
@@ -987,10 +987,10 @@
 
 | Module | Total | Validated `[x]` | Needs validation `[-]` | Partial `[~]`/`[!]` | Not automated `[ ]` |
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
-| `api/flows/` — REST API | 28 | 27 | 0 | 1 | 0 |
+| `api/flows/` — REST API | 28 | 28 | 0 | 0 | 0 |
 | `core-components/` — Component Config | 27 | 24 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 91 | 87 | 3 | 0 | 1 |
-| `core-functionality/auth/` | 21 | 7 | 13 | 1 | 0 |
+| `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 39 | 30 | 3 | 3 | 3 |
 | `core-functionality/model-provider/` | 34 | 31 | 2 | 1 | 0 |
@@ -999,7 +999,7 @@
 | `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
 | `core-functionality/templates/` | 34 | 2 | 0 | 4 | 28 |
 | `core-functionality/a2a/` | 18 | 11 | 0 | 1 | 6 |
-| `flow-functionality/` | 32 | 24 | 1 | 3 | 4 |
+| `flow-functionality/` | 32 | 26 | 1 | 1 | 4 |
 | `mcp/client/` | 13 | 9 | 2 | 0 | 2 |
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
@@ -1007,7 +1007,7 @@
 | `security/` — Validation, SSRF, Secrets | 11 | 0 | 0 | 0 | 11 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
-| **TOTAL** | **532** | **405 (76%)** | **37 (7%)** | **21 (4%)** | **69 (13%)** |
+| **TOTAL** | **532** | **409 (77%)** | **37 (7%)** | **17 (3%)** | **69 (13%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1023,7 +1023,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 484 `test()` calls carrying the `@stable` tag, distributed across 190 spec
+> 488 `test()` calls carrying the `@stable` tag, distributed across 191 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1051,6 +1051,8 @@
 - [x] deleted flow does not appear in flows listing → `api-flows-crud.spec.ts`
 - [x] POST creates folder and returns ID and name → `api-folders-crud.spec.ts`
 - [x] GET lists folders and includes the created one → `api-folders-crud.spec.ts`
+- [x] DELETE removes folder and it no longer appears in listing → `api-folders-crud.spec.ts`
+- [x] moving flow between folders via PATCH folder_id updates association → `api-folders-crud.spec.ts`
 - [x] GET /health_check returns 200 with status ok → `api-health-check.spec.ts`
 - [x] GET /health_check returns db ok → `api-health-check.spec.ts`
 - [x] GET /health_check responds within 5 seconds → `api-health-check.spec.ts`
@@ -1468,6 +1470,7 @@
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
+- [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
@@ -1511,6 +1514,7 @@
 - [x] executing flow with server error shows error feedback → `execution-error-notification.spec.ts`
 - [x] user must see on handle click the possibility connections → `filterSidebar.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
+- [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
