@@ -3,7 +3,55 @@
 **Upstream:** [LE-2156](https://datastax.jira.com/browse/LE-2156)
 **Found:** 2026-08-07 · **Measured on:** `1.12.0.dev19` (`langflowai/langflow-nightly`)
 **Detected by:** `#1334` spec validation (PR #1369) → dedicated issue `#1372`
-**Status:** Open
+**Status:** **Fixed** — [langflow#14465](https://github.com/langflow-ai/langflow/pull/14465), merged 2026-08-07 · re-measured on `1.12.0.dev23`
+
+---
+
+## Fix and re-measurement (2026-08-12)
+
+Upstream [langflow#14465](https://github.com/langflow-ai/langflow/pull/14465) —
+*"keep explicitly cleared model selection empty instead of filling cross-provider
+`options[0]`"* — merged into `release-1.11.3` on **2026-08-07**, the same day this
+report was written, and the guard is present on `release-1.12.0` **and** `main`.
+`build_config.py` now carries both halves of it, with a comment naming this exact
+mechanism: an `explicit_model_clear` short-circuit before the initial-load default,
+and an `elif not field_value: value = []` branch where the old code wrote
+`[options[0]]`.
+
+Re-running the reproduction below on `1.12.0.dev23`, against the same endpoint:
+
+| `field_value` sent | `1.12.0.dev19` | `1.12.0.dev23` |
+|---|---|---|
+| `[]` (explicitly cleared) | `claude-opus-5` / **Anthropic** | **`[]`** — not substituted |
+| `[gpt-4o-mini @ OpenAI Compatible]` | preserved | preserved |
+| `[definitely-not-a-model @ Nope]` | preserved | preserved |
+| `[gpt-4o-mini @ OpenAI]` | preserved | preserved |
+
+The control that makes the first row a verdict rather than an artefact of an empty
+catalog: the **same response** carried `model.options` with **10 entries across two
+providers**, `options[0] = gpt-5.6-sol / OpenAI`. There was a model to substitute
+and it was not substituted.
+
+**That control is not optional, and it is easy to lose.** On a re-run an hour later
+the same probe printed `options=0` — a concurrent session on the shared instance had
+removed the provider credentials — and an empty catalog returns `[]` for the empty
+case no matter what the code does. `scripts/probe-2156-model-input-fill.py` therefore
+prints the control line beside the verdict: **a run whose control reads `options=0`
+measures nothing.** Configure at least one provider before trusting it.
+
+Corroboration from the suite, weaker by construction and stated as such:
+`openai-compatible-provider-setup.spec.ts` ran 4 full-file rounds on `1.12.0.dev23`
+at `--workers=1 --retries=0` with **0 failures**; the flow-running test executed in
+3 of them and skipped in the fourth on an unreachable endpoint (a local-network
+condition, not a product one). Against a 2-in-12 base rate, 3 clean executions
+would occur ~58 % of the time by chance — the API measurement above is the
+evidence, the runs only fail to contradict it.
+
+**What this does NOT close.** What *empties* the field on a node that had a
+selection is still not established (see *What is NOT the cause* below). The
+consequence changed rather than vanished: with the fill gone, an emptied field
+reaches `get_llm`, which raises *"A model selection is required"* — a loud failure
+instead of a silent run on a provider nobody selected.
 
 ---
 
