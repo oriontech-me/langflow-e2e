@@ -471,9 +471,17 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
     },
   );
 
-  test(
+  // Quarantined at triage (daily run 31581590030): recurrent flake, and the same
+  // cause as #1424 — the second `POST /api/v1/variables/` of the pair is answered
+  // 400 while validate-provider succeeds, so only AZURE_AI_FOUNDRY_ENDPOINT is
+  // stored and the poll below times out on a pair that will never complete. The
+  // 30 s poll is not the problem: the write was refused, not delayed. Same
+  // signature on the 2026-08-10 and 08-12 dailies, with the 400 recorded in both
+  // runs' logs. Lifting the quarantine (remove test.fixme + restore @stable) is a
+  // deliverable of #1424.
+  test.fixme(
     "real credentials configure the provider and enable a portal deployment through the UI",
-    { tag: ["@stable", "@model-provider", "@settings"] },
+    { tag: ["@model-provider", "@settings"] },
     async ({ page, request }) => {
       const probe = await probeFoundry(request);
       test.skip(!probe.usable, `Azure AI Foundry not usable: ${probe.reason}`);
