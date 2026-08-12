@@ -16,8 +16,8 @@ import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 //  - the Save+validation path is proven by the invalid-key negative control
 //    in model-provider-modal-actions.spec.ts (Save performs a real 1-token
 //    inference and rejects bad keys), and
-//  - the configured-provider edit surface (masked key + Replace → input →
-//    Cancel) is proven here with zero writes.
+//  - the configured-provider edit surface (masked key + the `Replace`-labelled
+//    submit arming only once a value is typed) is proven here with zero writes.
 
 async function openModelProviders(page: any): Promise<void> {
   await awaitBootstrapTest(page, { skipModal: true });
@@ -80,7 +80,18 @@ test.describe("Model Provider API Key Management", () => {
       await openModelProviders(page);
       await page.getByTestId("provider-item-OpenAI").click();
 
-      const replaceButton = page.getByRole("button", { name: "Replace", exact: true });
+      // There is no distinct "Replace" button (#1431). The panel has ONE submit
+      // control, `provider-save-button`, whose label is picked at render time:
+      // `Retry save` after a failed validation, `Replace` when the panel
+      // considers the provider already configured, `Save` otherwise. That last
+      // state is not hypothetical — `isAlreadyConfigured` is derived from the
+      // credential variables, so the label reads `Save` until
+      // `GET /api/v1/variables/` resolves, while the models badge and the key
+      // input are ALREADY rendered. Locating by role+name matched nothing for
+      // the full 10 s in that window and reported `element(s) not found`
+      // instead of the label it actually found (daily 2026-08-12; reproduced
+      // locally by delaying that request: `Save` for 9 s, then `Replace`).
+      const saveButton = page.getByTestId("provider-save-button");
       const keyInput = page.getByTestId("provider-variable-input-OPENAI_API_KEY");
 
       await test.step("configured state: models badge, key input, Replace disabled", async () => {
@@ -89,9 +100,28 @@ test.describe("Model Provider API Key Management", () => {
           { timeout: 10000 },
         );
         await expect(keyInput).toBeVisible({ timeout: 10000 });
+        await expect(saveButton).toBeVisible({ timeout: 10000 });
+
+        // Settle the panel first: while `loading`, the button keeps its
+        // accessible name but renders it twice (a width-reserving copy plus an
+        // `sr-only` one) and is blocked via `aria-disabled`, not `disabled`.
+        await expect(saveButton).not.toHaveAttribute("aria-busy", "true", {
+          timeout: 15000,
+        });
+        // The premise of this test: a configured provider offers REPLACEMENT of
+        // the stored key, not raw editing. Asserted as a property of the
+        // located button, so `Save` (variables not loaded) and `Retry save`
+        // (previous validation failed) fail HERE, naming what was found.
+        await expect(saveButton).toHaveAccessibleName("Replace", {
+          timeout: 15000,
+        });
+
         // Replace is the SUBMIT of a key replacement — with nothing typed it
-        // must be disabled (nothing to replace with).
-        await expect(replaceButton).toBeDisabled({ timeout: 10000 });
+        // must be disabled (nothing to replace with). Assert the NATIVE
+        // mechanism: `toBeDisabled()` alone is also satisfied by the
+        // `aria-disabled` a mid-request button carries, which would let a
+        // permanently-busy panel read as a correctly-guarded one.
+        await expect(saveButton).toHaveJSProperty("disabled", true);
       });
 
       await test.step("typing a value arms Replace; clearing it disarms again", async () => {
@@ -99,10 +129,14 @@ test.describe("Model Provider API Key Management", () => {
         // this test never does (a destructive re-add poisons the backend's
         // credential cache; see the header comment).
         await keyInput.fill("sk-draft-never-submitted");
-        await expect(replaceButton).toBeEnabled({ timeout: 10000 });
+        await expect(saveButton).toHaveJSProperty("disabled", false);
+        await expect(saveButton).toBeEnabled({ timeout: 10000 });
+        // Still the replacement surface — arming it must not have flipped the
+        // panel into the unconfigured (`Save`) or failed (`Retry save`) state.
+        await expect(saveButton).toHaveAccessibleName("Replace");
 
         await keyInput.fill("");
-        await expect(replaceButton).toBeDisabled({ timeout: 10000 });
+        await expect(saveButton).toHaveJSProperty("disabled", true);
       });
     },
   );

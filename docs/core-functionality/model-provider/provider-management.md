@@ -81,7 +81,27 @@ does not render); the page, not the API, is the contract here.
 `model-provider-selection`, `model-search-input`, `llm-toggle-<model>`,
 `embeddings-toggle-<model>`; Save/Cancel/Confirm buttons (by role+name);
 configured providers show a **"N models"** suffix in their list item and a
-**Replace** button in their detail. LM node: `add-component-button-language-model`,
+**Replace** button in their detail.
+
+> **There is no distinct "Replace" button** (issue #1431, re-scouted on
+> 1.12.0.dev24). The provider detail has exactly **one** submit control,
+> `provider-save-button`, and its label is chosen at render time in
+> `ProviderConfigurationForm.tsx`: `Retry save` after a failed validation,
+> `Replace` when `isAlreadyConfigured`, `Save` otherwise. `isAlreadyConfigured`
+> is derived from the credential variables, so the label reads **`Save` until
+> `GET /api/v1/variables/` resolves** — a window in which the "N models" badge
+> and `provider-variable-input-*` are already rendered. A role+name locator
+> therefore matches *nothing* in that window instead of failing on what it
+> found, which is how the daily lost this test on 2026-08-12. Locate the
+> control by testid; assert the label as a property of it.
+>
+> **Disabled has two mechanisms** (`components/ui/button.tsx`): `disabled`
+> (native) when the form cannot be submitted, and `aria-disabled` +
+> `aria-busy`, with focus retained and no native `disabled`, while the button
+> is `loading`. An assertion must say which one it means — `toBeDisabled()`
+> is satisfied by both, so it cannot tell "correctly disabled" from
+> "mid-request". Measured live: the settled configured state is native
+> `disabled=true`, no `aria-busy`. LM node: `add-component-button-language-model`,
 `model_model` / `value-dropdown-model_model`, dropdown options `<model>-option`.
 
 **`modelProviderModal.spec.ts`**
@@ -128,10 +148,23 @@ configured providers show a **"N models"** suffix in their list item and a
 2. *Anthropic listed* — `provider-item-Anthropic` visible.
 3. *Configured provider exposes the key edit surface* (skip with a reason if
    the instance has no stored `OPENAI_API_KEY`) — the OpenAI item shows the
-   `N models` badge and its detail shows **Replace** (masked key, no raw
-   input); Replace opens `provider-variable-input-OPENAI_API_KEY`; Cancel
-   restores the masked state. **Zero writes** — see the cache-poisoning note
+   `N models` badge, `provider-variable-input-OPENAI_API_KEY` is visible, and
+   `provider-save-button` — located **by testid**, never by its label —
+   settles out of `aria-busy` and reads **Replace**, proving the panel treats
+   the provider as already configured. In that state the button is disabled
+   by the **native** mechanism (`disabled === true`, no `aria-busy`): with
+   nothing typed there is nothing to replace with. Typing into the key input
+   arms it (`disabled === false`); clearing the input disarms it again.
+   **Zero writes** — nothing is ever submitted; see the cache-poisoning note
    below for why a real add cycle is not exercised.
+
+   **Validation criterion:** the label read off `provider-save-button` is
+   exactly `Replace` (not `Save`, not `Retry save`) while the button is not
+   busy, and the native `disabled` property tracks the input: `true` empty,
+   `false` with a value, `true` again once cleared. Asserting the label as a
+   *property of the located button* is what distinguishes the three panel
+   states from each other; the previous role+name locator collapsed all of
+   them, plus the loading window, into `element(s) not found` (#1431).
 
 **`remove-provider-api-key.spec.ts`**
 1. *UI removal* — create a uniquely-named credential variable via
