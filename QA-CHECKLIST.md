@@ -1003,8 +1003,8 @@
 | `core-components/` — Core Components | 91 | 87 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 39 | 30 | 3 | 3 | 3 |
-| `core-functionality/model-provider/` | 34 | 31 | 2 | 1 | 0 |
+| `core-functionality/llm-agents/` | 39 | 32 | 3 | 1 | 3 |
+| `core-functionality/model-provider/` | 34 | 32 | 2 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
 | `core-functionality/project-management/` | 12 | 6 | 6 | 0 | 0 |
@@ -1018,7 +1018,7 @@
 | `security/` — Validation, SSRF, Secrets | 11 | 8 | 0 | 0 | 3 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
-| **TOTAL** | **532** | **417 (78%)** | **37 (7%)** | **17 (3%)** | **61 (11%)** |
+| **TOTAL** | **532** | **420 (79%)** | **37 (7%)** | **14 (3%)** | **61 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1034,7 +1034,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 496 `test()` calls carrying the `@stable` tag, distributed across 193 spec
+> 497 `test()` calls carrying the `@stable` tag, distributed across 193 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1279,6 +1279,7 @@
 - [x] empty response does not crash the component → `agent-empty-refusal-response.spec.ts`
 - [x] input via ChatInput handle drives the agent response → `agent-input-sources.spec.ts`
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
+- [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
 - [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
