@@ -561,7 +561,14 @@ jobs:
           # the lane's own verdict instead of inventing a second one, and the
           # cost is a traced boot on a class of PR that is already paying for a
           # full Langflow + `Collect models` sweep.
-          LANGFLOW_DEACTIVATE_TRACING: ${{ (contains(needs.detect-specs.outputs.specs, 'observability-monitoring') || needs.detect-specs.outputs.needs_models == 'true') && 'false' || 'true' }}
+          #
+          # `credential-secret-exposure` is the one spec outside
+          # observability-monitoring that READS a trace: it proves a Credential
+          # global variable is masked in the trace detail (#1393,
+          # langflow-ai/langflow#7313). With tracing off the instance writes no
+          # trace at all, so its first test would fail on a precondition rather
+          # than on the masking it exists to watch.
+          LANGFLOW_DEACTIVATE_TRACING: ${{ (contains(needs.detect-specs.outputs.specs, 'observability-monitoring') || contains(needs.detect-specs.outputs.specs, 'credential-secret-exposure') || needs.detect-specs.outputs.needs_models == 'true') && 'false' || 'true' }}
           # Let Langflow reach the sibling go-httpbin service below (#1128). Its
           # SSRF layer blocks private addresses unless pre-authorized, and the
           # API Request component's validators.url() rejects a single-label host
