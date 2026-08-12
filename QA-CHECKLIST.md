@@ -1015,10 +1015,10 @@
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 11 | 4 | 0 | 0 | 7 |
+| `security/` — Validation, SSRF, Secrets | 11 | 8 | 0 | 0 | 3 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
-| **TOTAL** | **532** | **413 (78%)** | **37 (7%)** | **17 (3%)** | **65 (12%)** |
+| **TOTAL** | **532** | **417 (78%)** | **37 (7%)** | **17 (3%)** | **61 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1034,7 +1034,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 492 `test()` calls carrying the `@stable` tag, distributed across 192 spec
+> 496 `test()` calls carrying the `@stable` tag, distributed across 193 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1514,6 +1514,10 @@
 - [x] the trace detail masks the credential whatever the secret field is called → `credential-secret-exposure.spec.ts`
 - [x] the exported flow carries the credential binding, never the secret → `credential-secret-exposure.spec.ts`
 - [x] the run resolves the credential without echoing it → `credential-secret-exposure.spec.ts`
+- [x] a loopback address is refused, and the refusal names the allow-list → `ssrf-url-validation.spec.ts`
+- [x] a blocked address the allow-list does not cover is refused the same way → `ssrf-url-validation.spec.ts`
+- [x] an address inside a blocked range is admitted when a CIDR entry covers it → `ssrf-url-validation.spec.ts`
+- [x] the refusal surfaces in the editor as an error, not a silent empty result → `ssrf-url-validation.spec.ts`
 - [x] a code tweak cannot replace a component's implementation → `tweaks-injection.spec.ts`
 - [x] the refusal is field-scoped: an unprotected field on the same node still applies → `tweaks-injection.spec.ts`
 - [x] an executable field on a code-execution component is refused while the same request's benign tweak lands → `tweaks-injection.spec.ts`
