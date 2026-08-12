@@ -10,6 +10,17 @@ import {
   missingProviderEnvKeys,
 } from "../../../../helpers/provider-setup";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
+import {
+  awaitProviderPanelSettled,
+  PROVIDER_SAVE_BUTTON,
+  readResponseBodySafely,
+  waitForCredentialPersist,
+} from "../../../../helpers/provider-setup/provider-panel-save";
+import {
+  classifyVariableWriteRefusal,
+  describeVariableWrite,
+  isEnvironmentalRefusal,
+} from "../../../../helpers/provider-setup/variable-write-refusal";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { resolveGptModel } from "../../../../helpers/provider-setup/resolve-gpt-model";
@@ -26,10 +37,12 @@ import { resolveGptModel } from "../../../../helpers/provider-setup/resolve-gpt-
  * owns the "configure → select GPT → execute" contract.
  *
  * False-positive guards: Test 1 asserts the save *requests* succeed
- * (validate-provider + PATCH /variables, both 2xx) rather than a "Replace" button
- * that pre-exists when an earlier test already set the global key — so a no-op
- * save cannot pass. Test 2 asserts a GPT model is selected and echoes a per-run
- * sentinel, so the response can't be stale or from another provider.
+ * (validate-provider 200 with `valid: true`, plus a 2xx `POST`/`PATCH /variables`
+ * whose VERB matches the instance state read over the API) and that the key is
+ * readable back afterwards — rather than a "Replace" button that pre-exists when
+ * an earlier test already set the global key, so neither a no-op save nor a 2xx
+ * that stored nothing can pass. Test 2 asserts a GPT model is selected and echoes
+ * a per-run sentinel, so the response can't be stale or from another provider.
  */
 
 if (!process.env.CI) {
@@ -37,6 +50,8 @@ if (!process.env.CI) {
 }
 
 const PROVIDER = "openai";
+/** The global provider variable the Settings panel writes (Test 1's subject). */
+const KEY_VAR = "OPENAI_API_KEY";
 
 // SimpleAgentTemplatePage.load() does NO cleanup (post-#553 contract) and the
 // canvas URL id is transient on 1.11 — track every flow the load actually
@@ -135,21 +150,29 @@ async function expectReplyContainsToken(
 test.describe.configure({ mode: "serial" });
 
 test.describe("OpenAI Provider", () => {
-  // Quarantined at triage (daily #1417): recurrent flake — the POST/PATCH
-  // /api/v1/variables/ persist call is answered non-2xx while
-  // validate-provider succeeds, so the key authenticates but does not
-  // persist. Same signature on the 2026-07-13 and 08-11 dailies; that match
-  // needs settling, because both `ok()` assertions below emit it and the
-  // 07-13 daily fell in the quota-drained window (see #1424). Lifting the
-  // quarantine (remove test.fixme + restore @stable) is a deliverable of #1424.
-  test.fixme(
+  test(
     "OpenAI API key is configured via Settings → Model Providers",
-    { tag: ["@model-provider", "@settings"] },
-    async ({ page }) => {
+    { tag: ["@stable", "@model-provider", "@settings"] },
+    async ({ page, request }) => {
       test.skip(
         !hasProviderEnvKeys(PROVIDER),
         `Missing env vars for provider "${PROVIDER}": ${missingProviderEnvKeys(PROVIDER).join(", ")}`,
       );
+
+      // The create-vs-update branch, read from the backend BEFORE the browser
+      // touches the panel (#1424). It is both the settle target below and the
+      // expected verb of the persist call: the panel must UPDATE a credential the
+      // instance already stores, never re-CREATE it.
+      const bearer = await getAuthToken(request);
+      const storedNames = async (): Promise<string[]> => {
+        const res = await request.get("/api/v1/variables/", {
+          headers: { Authorization: bearer },
+        });
+        expect(res.ok(), `GET /api/v1/variables/ answered ${res.status()}`).toBe(true);
+        const body = (await res.json()) as Array<{ name?: string }>;
+        return (Array.isArray(body) ? body : []).map((v) => v.name ?? "");
+      };
+      const alreadyStored = (await storedNames()).includes(KEY_VAR);
 
       await awaitBootstrapTest(page, { skipModal: true });
 
@@ -164,8 +187,16 @@ test.describe("OpenAI Provider", () => {
       });
 
       await test.step("enter the key and save — assert the save requests succeed", async () => {
-        const keyInput = page.getByTestId("provider-variable-input-OPENAI_API_KEY");
+        const keyInput = page.getByTestId(`provider-variable-input-${KEY_VAR}`);
         await expect(keyInput).toBeVisible({ timeout: 10000 });
+        // Settle the panel BEFORE typing or clicking. `isAlreadyConfigured` is
+        // derived from the credential variables, so the submit control reads
+        // `Save` until GET /api/v1/variables/ resolves while this input is
+        // already rendered (#1431) — and a click inside that window makes the
+        // frontend CREATE a name that already exists, which the backend refuses
+        // with 400 "Variable name already exists" (twice on the 2026-08-11
+        // daily; reproduced on demand by delaying that one request — #1424).
+        await awaitProviderPanelSettled(page, { expectConfigured: alreadyStored });
         await keyInput.fill(process.env.OPENAI_API_KEY ?? "");
 
         // Arm both waiters BEFORE clicking so the pass is caused by THIS save,
@@ -181,27 +212,102 @@ test.describe("OpenAI Provider", () => {
         // — the frontend branches on existence (#636). Match BOTH: a fresh
         // instance, or a run where no earlier test configured the provider
         // first, takes the POST path, so a PATCH-only predicate waits forever
-        // on a request that never fires — the confirmed flake (POST 201
-        // observed live on a deleted-var repro; validate-provider itself
-        // returns 200, so the backend is healthy — a test defect, not a
-        // product hang).
-        const persistPromise = page.waitForResponse(
-          (r) =>
-            r.url().includes("/api/v1/variables/") &&
-            (r.request().method() === "POST" || r.request().method() === "PATCH"),
-          { timeout: 30000 },
-        );
+        // on a request that never fires — the flake that preceded this one on
+        // this very step (POST 201 observed live on a deleted-var repro).
+        const persistPromise = waitForCredentialPersist(page);
 
-        await page.getByRole("button", { name: /Save|Replace/i }).first().click();
+        // By testid: ONE control, three labels (#1431).
+        await page.getByTestId(PROVIDER_SAVE_BUTTON).click();
 
         const [validateResp, persistResp] = await Promise.all([
           validatePromise,
           persistPromise,
         ]);
-        // validate-provider 2xx = the key authenticates against OpenAI live;
-        // POST/PATCH /variables 2xx = the key is persisted globally.
-        expect(validateResp.ok()).toBe(true);
-        expect(persistResp.ok()).toBe(true);
+        // validate-provider answers 200 with `{"valid": false, "error": …}` for a
+        // credential it rejected, so the status alone proves nothing — read the
+        // body (same trap as the azure/ollama specs).
+        expect(validateResp.status()).toBe(200);
+        const validateBody = (await validateResp.json()) as {
+          valid?: boolean;
+          error?: string;
+        };
+        expect(
+          validateBody.valid,
+          `validate-provider rejected the key: ${validateBody.error ?? "(no error)"}`,
+        ).toBe(true);
+
+        // THE contract #1424 turned into an assert: the verb must match the state
+        // read over the API above. A `POST` on a configured instance is the defect
+        // that produced the flake, and it fails here by name instead of arriving
+        // as a bare `expected true, received false`.
+        expect(
+          persistResp.request().method(),
+          alreadyStored
+            ? `${KEY_VAR} is already stored, so saving must PATCH it — a POST re-creates an ` +
+                `existing name and the backend refuses it (400 "Variable name already exists")`
+            : `${KEY_VAR} is not stored, so saving must POST it`,
+        ).toBe(alreadyStored ? "PATCH" : "POST");
+
+        if (!persistResp.ok()) {
+          // The write validates the credential LIVE (llm.invoke("test") inside
+          // api/v1/variable.py), so its body is the only thing that explains the
+          // status. Two of the causes are about the account or the network to it
+          // and cannot produce a verdict about Langflow: retry once through the
+          // panel's own `Retry Save`, then skip QUOTING the backend (#980/#1012).
+          // Everything else — our timing, an empty submit, an unreadable body —
+          // stays a hard failure.
+          const first = await readResponseBodySafely(persistResp);
+          const refusal = classifyVariableWriteRefusal(first);
+          if (isEnvironmentalRefusal(refusal.kind)) {
+            const retryPromise = waitForCredentialPersist(page);
+            await keyInput.fill(process.env.OPENAI_API_KEY ?? "");
+            await page.getByTestId(PROVIDER_SAVE_BUTTON).click();
+            const retryResp = await retryPromise;
+            if (!retryResp.ok()) {
+              const second = await readResponseBodySafely(retryResp);
+              const retryRefusal = classifyVariableWriteRefusal(second);
+              const reason =
+                `Langflow refused the ${KEY_VAR} write twice for a reason outside its own ` +
+                `behaviour (${retryRefusal.kind}): ` +
+                describeVariableWrite({
+                  method: retryResp.request().method(),
+                  url: retryResp.url(),
+                  status: retryResp.status(),
+                  body: second,
+                });
+              console.log(`[openai] ${reason}`);
+              test.skip(isEnvironmentalRefusal(retryRefusal.kind), reason);
+              expect(
+                retryResp.ok(),
+                describeVariableWrite({
+                  method: retryResp.request().method(),
+                  url: retryResp.url(),
+                  status: retryResp.status(),
+                  body: second,
+                }),
+              ).toBe(true);
+            }
+          } else {
+            expect(
+              persistResp.ok(),
+              `the credential write was refused for a reason that IS ours (${refusal.kind}): ` +
+                describeVariableWrite({
+                  method: persistResp.request().method(),
+                  url: persistResp.url(),
+                  status: persistResp.status(),
+                  body: first,
+                }),
+            ).toBe(true);
+          }
+        }
+      });
+
+      await test.step("the key is readable back — the write landed, not just answered", async () => {
+        // What the step is really about. A 2xx that stored nothing would still
+        // satisfy the asserts above; this is the durable observable.
+        await expect
+          .poll(async () => await storedNames(), { timeout: 15000 })
+          .toContain(KEY_VAR);
       });
     },
   );

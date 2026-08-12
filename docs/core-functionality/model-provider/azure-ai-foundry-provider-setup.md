@@ -70,6 +70,13 @@ validating.
 phase (3 clean `--retries=0 --workers=1` runs) plus the force-fail proof per
 test, per `CONTRIBUTING.md`.
 
+**Test 5** was quarantined at triage of the 2026-08-12 daily (PR #1433 —
+`@stable` removed **and** `test.fixme` added) and **restored in #1424**, where
+the `400` on the credential write was traced to the write-time live validation
+of the Foundry endpoint (see step 3). The other five tests kept `@stable`
+throughout: they cover the unconfigured panel and a deployment path that does
+not depend on that write.
+
 **Why `@stable` on the credential-gated tests too.** Issue #1194 assumed the
 whole spec needed Azure credentials and therefore shipped untagged. The surface
 triage disproved the premise for tests 1–4, and the credentials turned out to
@@ -256,13 +263,40 @@ Live-scouted testids (1.12.0.dev14, re-checked on dev15 where the run is green, 
 1. Probe `GET <AZURE_AI_FOUNDRY_ENDPOINT>/models` with the `api-key` header
    straight from the test host; skip with the concrete reason when the key or
    endpoint is missing, the probe is non-200, or the payload has no `data` list.
-2. Open the Foundry panel, fill both variables, arm waiters on
-   `POST /api/v1/models/validate-provider` **and** on the variables write
-   (`POST /api/v1/variables/` or `PATCH /api/v1/variables/{id}` — the frontend
-   branches on existence, #636), click Save.
+2. Open the Foundry panel, **settle it** (`awaitProviderPanelSettled` with
+   `expectConfigured: false` — the ownership gate in step 0 already established
+   that nothing is stored, so `provider-save-button` must read `Save`, not be
+   `aria-busy`; clicking before `GET /api/v1/variables/` resolves is what makes
+   the openai sibling create over an existing name, #1431/#1424), fill both
+   variables, arm waiters on `POST /api/v1/models/validate-provider` **and** on
+   the variables write (`POST /api/v1/variables/` or `PATCH
+   /api/v1/variables/{id}` — the frontend branches on existence, #636), click
+   `provider-save-button`.
 3. **Assert (configure):** validate-provider body `valid === true` and the
    variables write is 2xx — armed before the click, so a pre-existing configured
    state cannot pass the test.
+
+   > **The `400` this step used to die on, and why it is now classified (#1424).**
+   > The KEY write is validated **live**: `create_variable` calls
+   > `validate_model_provider_key`, which for Foundry issues
+   > `request_azure_ai_foundry_model_entries(endpoint, key)` with a **10 s read
+   > timeout** and turns **any** exception into `400 {"detail": "Could not
+   > validate Azure AI Foundry credentials: …"}`. Both the 2026-08-10 and
+   > 2026-08-12 dailies carry exactly that, with `HTTPSConnectionPool(…): Read
+   > timed out. (read timeout=10.0)` — the resource answered the test host's probe
+   > and then took longer than 10 s to answer Langflow. The write is refused, the
+   > key is **not** stored, and because the ENDPOINT write is not validated at all
+   > (`get_model_provider_variable_mapping()` names only
+   > `AZURE_AI_FOUNDRY_API_KEY` as the provider's primary variable — measured on
+   > 1.12.0.dev24, where writing the KEY *first* is accepted in 0.86 s with no
+   > validation because the endpoint is not yet stored), the pair is left
+   > **half-configured with no rollback** — which is what the poll in step 4 then
+   > times out on. So the poll was never the problem. A refusal whose body says
+   > the provider could not be reached, or that the credential did not
+   > authenticate, is retried **once** through the panel's own `Retry Save` and
+   > then ends the test as a `test.skip` quoting the backend's exact `detail`
+   > (#980's trade, #1012's rule). Any other refusal — including `Variable name
+   > already exists` — stays a hard failure.
 4. **Assert (provider state):** poll `GET /api/v1/variables/` until **both**
    `AZURE_AI_FOUNDRY_API_KEY` and `AZURE_AI_FOUNDRY_ENDPOINT` are stored, then
    assert the panel renders `llm-toggle-*` controls.

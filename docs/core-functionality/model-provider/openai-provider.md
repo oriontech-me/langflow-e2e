@@ -38,6 +38,11 @@ PR #775 — the key had no quota, not the test — and **restored in #992** once
 the quota was confirmed back (live HTTP 200 completion on `gpt-4o-mini`) and
 the test ran clean at `--retries=0`.
 
+**Test 1** was quarantined at triage of daily #1417 (PR #1425 — `@stable`
+removed **and** `test.fixme` added) for the recurrent 400 on the persist call,
+and **restored in #1424** once both causes behind that one assert were measured
+and the create-over-existing race was fixed (see Notes).
+
 It was auto-removed a **second** time on the 2026-08-06 daily (commit `cb3082d`,
 run 31093877484) for the same underlying reason — the account had no credits —
 and **restored in #1333**, again on a live HTTP 200 completion plus 5 clean
@@ -67,23 +72,58 @@ like a product regression and costs the tag every time the account drains.
 
 **Test 1 — configure the OpenAI API key in Settings → Model Providers** (§7.2.1)
 
-1. `SettingsPage.navigate()` → click `sidebar-nav-Model Providers`; wait for
-   `settings_menu_header` to read "Model Providers".
-2. Click `provider-item-OpenAI` to open its config panel.
-3. Fill `provider-variable-input-OPENAI_API_KEY` with `OPENAI_API_KEY`.
-4. Arm two response waiters, then click the save button (`Save` when
-   unconfigured, `Replace` when a key is already stored — match `/Save|Replace/`).
+0. **No provider-health pre-gate, on purpose** — see the note below. The write
+   *does* authenticate the key live (step 5), but a **credit-less** key still
+   saves (the quota error carries no `401`/`authentication`/`api key` token, so
+   `validate_model_provider_key` falls through its lenient branch), so pre-gating
+   on `providers.json` would skip a test that passes. What #1424 needs is handled
+   at the moment of the refusal instead (step 6).
+1. Read the instance's current global variables over the API and record whether
+   `OPENAI_API_KEY` is **already stored**. This is the expected create-vs-update
+   branch for step 5, established before the browser touches the panel.
+2. `SettingsPage.navigate()` → click `sidebar-nav-Model Providers`; wait for
+   `settings_menu_header` to read "Model Providers"; click `provider-item-OpenAI`.
+3. **Settle the panel before typing anything** (`awaitProviderPanelSettled`).
+   The panel has ONE submit control, `provider-save-button`, whose label is
+   picked at render time from `isAlreadyConfigured` — which is derived from the
+   credential variables, so it reads **`Save` until `GET /api/v1/variables/`
+   resolves** while the key input is already rendered (#1431). Clicking inside
+   that window makes the frontend take the **create** branch for a name that
+   already exists, and the backend answers **400
+   `{"detail":"Variable name already exists"}`** — measured twice on the
+   2026-08-11 daily and reproduced on demand by delaying that one request
+   (#1424). The gate is therefore: button visible, **not** `aria-busy`, and its
+   accessible name equal to `Replace` when step 1 found the key stored, `Save`
+   when it did not.
+4. Fill `provider-variable-input-OPENAI_API_KEY` with `OPENAI_API_KEY`, arm the
+   two response waiters, then click `provider-save-button` (**by testid** — the
+   label is state-dependent, so role+name matched nothing during that window).
 5. **Validation (causal — no pre-existing-state false positive):** the save click
-   must produce **both** a `POST /api/v1/models/validate-provider` → **2xx** (the
-   key authenticates against OpenAI live) **and** a persist to
-   `/api/v1/variables/` → **2xx**. The persist is a **`POST` (create, 201)** when
-   the `OPENAI_API_KEY` global variable does not yet exist and a **`PATCH`
-   (update, 200)** when it does — the frontend branches on existence — so the
-   waiter matches **either method** (#636). Asserting the request outcomes — not
-   the "Replace" button, which is already present when the global key was
-   configured by an earlier test — ties the pass to *this* save action.
-   Idempotent across states: the first save on a fresh instance creates, later
-   saves update.
+   must produce **both** a `POST /api/v1/models/validate-provider` → **200 with
+   `valid: true` in the body** (the endpoint answers 200 for a credential it
+   rejected, so the status alone proves nothing) **and** a persist to
+   `/api/v1/variables/` → **2xx**. Three asserts hang off that persist:
+   - **the verb matches the branch step 1 established** — `PATCH` when the global
+     key exists, `POST` when it does not. This is the contract the #1424 flake
+     violated, so it is asserted rather than tolerated: a panel that creates over
+     an existing credential fails here, naming both verbs.
+   - **the response is 2xx**, with the failure message carrying the method, URL,
+     status and **body** — the write validates the credential live
+     (`api/v1/variable.py` → `validate_model_provider_key`, a real
+     `llm.invoke("test")`), so its refusal reason is the only thing that explains
+     the status, and a future occurrence must not need artifact archaeology.
+   - **the key is readable back** — `GET /api/v1/variables/` lists
+     `OPENAI_API_KEY` afterwards. This is what the step is really there to prove;
+     the response status alone would still pass if a 2xx wrote nothing.
+6. **Refusals that are not Langflow's fault are skipped, loudly, never
+   tolerated silently.** A 400 whose body says the credential did not
+   authenticate (`Invalid API key for OpenAI`) or that the provider could not be
+   reached is retried **once** through the panel's own `Retry Save` and, if
+   refused again, ends the test as a `test.skip` **quoting the backend's exact
+   `detail`** (#980's trade — a drained key must not cost a scheduled day, and
+   #1012's rule — the reason is printed, never swallowed). Everything else,
+   including `Variable name already exists`, stays a **hard failure**: that one is
+   ours, and muting it is how the timing bug this test now guards would rot.
 
 ---
 
@@ -128,19 +168,28 @@ like a product regression and costs the tag every time the account drains.
 
 ## Validation criterion *(required)*
 
-- **Configure:** clicking Save on the OpenAI key produces a 2xx
-  `validate-provider` (key authenticates against OpenAI) and a 2xx persist to
-  `/variables/` (key persisted) — `POST` create or `PATCH` update depending on
-  whether the global key already exists (#636) — the pass is caused by this save,
-  not a pre-existing configured state.
+- **Configure:** clicking Save on the OpenAI key produces a
+  `validate-provider` **200 with `valid: true`** and a **2xx** persist to
+  `/variables/` whose **verb matches the instance's state** — `PATCH` when the
+  global key already exists, `POST` when it does not (#636/#1424) — and
+  `OPENAI_API_KEY` is **readable back** from `GET /api/v1/variables/` afterwards.
+  The pass is caused by this save, not by a pre-existing configured state.
 - **Select + execute:** the Agent's model dropdown shows a GPT model, and running
   the flow returns the per-run sentinel in the AI response.
 
 ## Guarding against false positives *(how)*
 
-- **Test 1** asserts the *save requests succeed* (`validate-provider` +
-  `POST`/`PATCH /variables` both 2xx), not a UI state that pre-exists from an
-  earlier test's global key — so a no-op save cannot pass.
+- **Test 1** asserts the *save requests succeed* (`validate-provider` 200 with
+  `valid: true` + `POST`/`PATCH /variables` 2xx) **and** the key is readable back,
+  not a UI state that pre-exists from an earlier test's global key — so a no-op
+  save cannot pass. The **verb** assert closes the remaining hole: a 2xx obtained
+  by creating a second credential for a name that already exists is not a
+  successful save, and a `POST` on a configured instance now fails by name.
+- **Test 1's skip path cannot hide a Langflow defect:** only two refusal shapes
+  skip — the backend saying the credential did not authenticate, and the backend
+  saying it could not reach the provider — and both are printed with the exact
+  `detail`. `Variable name already exists`, `Variable value cannot be empty` and
+  anything unrecognised stay hard failures.
 - **Test 2** asserts a **GPT** model is selected (`value-dropdown-model_model`
   ~ `/gpt/i`) and round-trips a **per-run sentinel**, so the response can't be
   stale, cached, or produced by a different provider.
@@ -225,7 +274,39 @@ like a product regression and costs the tag every time the account drains.
   one before the suite, fail loud when every candidate is dead) is tracked at
   **#976**; this gate only stops the outage from being reported as a product
   regression in the meantime. The same gap exists in `anthropic-provider.spec.ts`
-  and `google-provider.spec.ts`, tracked at **#1415**.
+  and `google-provider.spec.ts`, tracked at **#1415**. **#1424 did not change
+  that decision, and the measurement is why:** the credential write *does*
+  authenticate live, but only an error whose text carries `401`,
+  `authentication` or `api key` becomes a 400 — a quota/credit failure falls
+  through `validate_model_provider_key`'s lenient branch and the variable is
+  stored normally (measured on 1.12.0.dev24: `PATCH` with the funded key → 200
+  after a 3.7 s live call; with a garbage key → 400 `Invalid API key for
+  OpenAI`). Pre-gating Test 1 on `providers.json` would therefore skip it on
+  exactly the drained-account days it still passes, so the refusal is classified
+  **when it happens** instead (step 6).
+- **#1424 — the persist call answered 400 while `validate-provider` succeeded
+  (recurrent: dailies 2026-07-13 and 2026-08-11).** Both `ok()` asserts emit the
+  same generic signature, so the first job was telling them apart. Settled from
+  the 07-13 JSON artifact: attempts 1-2 were the (already fixed) #636 PATCH-only
+  waiter timeout, and attempt 3 failed on **`persistResp`** —
+  `PATCH … → 400 {"detail":"Invalid API key for OpenAI"}`. On 08-11 the shard log
+  carries **two** `POST /api/v1/variables/ → 400
+  {"detail":"Variable name already exists"}` with `OPENAI_API_KEY` already in the
+  preflight's configured list. So one issue, **two** causes behind one assert:
+  - **the create-over-existing race (ours).** The write endpoint refuses a
+    duplicate name instantly (0.07 s, no live call), and the panel only knows the
+    name exists after `GET /api/v1/variables/` resolves — the #1431 window.
+    Reproduced on demand by delaying that single request: label `Save`,
+    `POST → 400`, toast *"Error Saving Configuration — Variable name already
+    exists"*, button relabelled `Retry Save`. Fixed by settling the panel and now
+    **asserted as a contract** (verb must match the state), so it stays visible.
+  - **the credential the backend rejected (not ours).** Retried once through
+    `Retry Save`, then skipped quoting the backend `detail`.
+- **Why `provider-save-button` by testid (#1431):** there is no distinct
+  "Replace" button — one control, three labels (`Save`, `Replace`, `Retry Save`),
+  chosen at render time. A `role=button, name=/Save|Replace/` locator matched
+  nothing during the pre-load window and reported "element(s) not found" instead
+  of the label it did find.
 - **#636 flake (fixed 2026-07-14):** the persist waiter matched `PATCH` only, but
   the frontend fires `POST /variables/` (create, 201) when the key does not yet
   exist and `PATCH /variables/{id}` (update, 200) when it does. On a fresh CI
