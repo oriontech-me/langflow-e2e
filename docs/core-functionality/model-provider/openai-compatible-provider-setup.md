@@ -232,7 +232,18 @@ instant — after the Playground modal opened, immediately before `button-send` 
 re-selection repair loop was written, measured against exactly that, and **removed**:
 re-selecting cannot fix a state that is already correct.
 
-The mechanism is upstream (`LE-2156`, full report in
+**Fixed upstream on 2026-08-07 by [langflow#14465](https://github.com/langflow-ai/langflow/pull/14465)**
+(*keep explicitly cleared model selection empty instead of filling cross-provider
+`options[0]`*), on `release-1.12.0` and `main`, and re-measured on `1.12.0.dev23`: an
+explicitly cleared `model` value comes back `[]` while the response still carries 10
+options across two providers with `options[0] = gpt-5.6-sol / OpenAI` — so there was
+something to substitute and it did not. **The paragraph below is why the pre-send read
+must stay attribution-only regardless**: the run still builds the canvas rather than the
+row, so the persisted binding remains the wrong object even with the fill gone. What
+changed is the consequence of an emptied field — `get_llm` now raises *"A model selection
+is required"* instead of running another provider's model silently.
+
+The mechanism was upstream (`LE-2156`, full report in
 `docs/upstream-bugs/UPSTREAM-BUG-model-input-cross-provider-default-fill.md`): an **empty**
 `ModelInput` value is filled with `options[0]`, and `options` is a **flat list across every
 enabled provider**, so the fill need not even be this provider — an OpenAI-Compatible node
