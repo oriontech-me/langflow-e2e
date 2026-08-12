@@ -1008,10 +1008,10 @@
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 11 | 1 | 0 | 0 | 10 |
+| `security/` — Validation, SSRF, Secrets | 11 | 4 | 0 | 0 | 7 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
-| **TOTAL** | **532** | **410 (77%)** | **37 (7%)** | **17 (3%)** | **68 (13%)** |
+| **TOTAL** | **532** | **413 (78%)** | **37 (7%)** | **17 (3%)** | **65 (12%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1027,7 +1027,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 489 `test()` calls carrying the `@stable` tag, distributed across 191 spec
+> 492 `test()` calls carrying the `@stable` tag, distributed across 192 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1504,6 +1504,9 @@
 - [x] PATCH updates a registered server, merges at the top level, and refuses to rename it → `mcp-server.spec.ts`
 
 #### security/
+- [x] the trace detail masks the credential whatever the secret field is called → `credential-secret-exposure.spec.ts`
+- [x] the exported flow carries the credential binding, never the secret → `credential-secret-exposure.spec.ts`
+- [x] the run resolves the credential without echoing it → `credential-secret-exposure.spec.ts`
 - [x] a code tweak cannot replace a component's implementation → `tweaks-injection.spec.ts`
 - [x] the refusal is field-scoped: an unprotected field on the same node still applies → `tweaks-injection.spec.ts`
 - [x] an executable field on a code-execution component is refused while the same request's benign tweak lands → `tweaks-injection.spec.ts`
