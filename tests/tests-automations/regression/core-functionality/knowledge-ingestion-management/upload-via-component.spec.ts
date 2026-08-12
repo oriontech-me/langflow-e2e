@@ -61,9 +61,17 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-test(
+// Quarantined at triage (daily run 31581590030): recurrent flake — after the
+// file-management modal confirms and closes, the file chip on the NODE never
+// renders inside 15 s, so the attach is unobservable. The modal-side assertions
+// pass on the same attempt, which is what places the failure after the attach
+// PATCH rather than in the selection. Same signature on the 2026-07-23, 07-30
+// and 08-12 dailies; only the 08-12 call log has been read, so whether all three
+// share this wait point is the first thing #1430 settles. Lifting the quarantine
+// (remove test.fixme + restore @stable) is a deliverable of #1430.
+test.fixme(
   "upload a file through the Read File component and read its content",
-  { tag: ["@stable", "@release", "@files", "@components"] },
+  { tag: ["@release", "@files", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     // The asset's bytes under a per-run unique name: the name is what the
