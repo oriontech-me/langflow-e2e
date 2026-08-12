@@ -865,10 +865,13 @@
 
 #### 17.3 Secret Exposure
 
-- [ ] A flow run using a Credential-type global variable does **not** render the secret value
+- [x] A flow run using a Credential-type global variable does **not** render the secret value
       in the trace detail (`langflow-ai/langflow#7313` — TracingService exposing secrets)
-- [ ] The same secret is absent from the exported flow JSON
-- [ ] The same secret is absent from the API response of a run
+      → security/credential-secret-exposure.spec.ts
+- [x] The same secret is absent from the exported flow JSON
+      → security/credential-secret-exposure.spec.ts
+- [x] The same secret is absent from the API response of a run
+      → security/credential-secret-exposure.spec.ts
 
 #### 17.4 Tweaks Injection
 

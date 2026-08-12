@@ -170,7 +170,10 @@ jobs:
           # observability/traces specs are impacted — they need the SUT to emit
           # traces + spans, and without it their setup times out. Mirrors
           # daily-stable.yml, which keeps tracing ON for exactly these specs.
-          LANGFLOW_DEACTIVATE_TRACING: ${{ (needs.compute-impact.outputs.run_full == 'true' || contains(needs.compute-impact.outputs.specs, 'observability-monitoring')) && 'false' || 'true' }}
+          # `credential-secret-exposure` reads a trace too, from outside that
+          # directory: it proves a Credential global variable is masked in the
+          # trace detail (#1393). With tracing off there is no trace to read.
+          LANGFLOW_DEACTIVATE_TRACING: ${{ (needs.compute-impact.outputs.run_full == 'true' || contains(needs.compute-impact.outputs.specs, 'observability-monitoring') || contains(needs.compute-impact.outputs.specs, 'credential-secret-exposure')) && 'false' || 'true' }}
         options: >-
           --health-cmd "curl -f http://localhost:7860/health_check || exit 1"
           --health-interval 15s
