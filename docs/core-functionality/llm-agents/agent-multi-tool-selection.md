@@ -96,11 +96,11 @@ review, which is why the promotion is recorded here with its evidence rather
 than as a tag flip. Validated on `1.12.0.dev25`, `--workers=1 --retries=0`,
 `gpt-4o-mini`, with `ECHO_BASE_URL` on a local go-httpbin:
 
-- **4 clean runs of the whole file, 12/12 tests**, 46–55 s per run — the first
+- **6 clean runs of the whole file, 18/18 tests**, 45–55 s per run — the first
   local validation of test 1 in this file's history, since `httpbin.org` was
   answering `503` that day (the #631 mode) and the serial describe had always
   skipped its siblings behind it.
-- Test 3 alone, measured the day before on the same image: **7/7** at
+- Test 3 alone, measured earlier the same day on the same image: **7/7** at
   `max_iterations=8` and **4/4** at the default 15.
 - Force-fail executed per test — see **Force-failure checks** below.
 
