@@ -53,7 +53,8 @@ read path fails a specific step — the output text is the end-to-end proof.
 (`@files`: file upload/ingestion surface. `@components`: canvas-component
 configuration. Created `@stable` by #671 after deterministic validation;
 quarantined (`test.fixme`) at the triage of daily #1121 and restored by #1125
-together with the determinism fix below.)
+together with the determinism fix below; quarantined again at the triage of
+daily #1430 and restored with the settle gate of step 6.)
 
 ---
 
@@ -81,13 +82,18 @@ together with the determinism fix below.)
    load-bearing gate (#1125): the rendered row and the modal's internal
    selection are keyed on the file **path**, so a checked box is the only proof
    that the optimistic upload entry has been replaced by the server's record and
-   that confirming will attach _this_ file. Then confirm with
-   `select-files-modal-button`.
-6. Assert the file attached to the component (`file-item-<stem>` renders on the
+   that confirming will attach _this_ file.
+6. Confirm only once the file list has **settled** — no `GET /api/v2/files` still
+   in flight — and re-assert `checkbox-<stem>` after that wait. Both halves are
+   needed and neither is a timeout in disguise: the node chip is a projection of
+   the `useGetFilesV2` cache, so a list response that lands late without this
+   file wipes the attachment outright (see _The node chip is a cache
+   projection_ below). Then confirm with `select-files-modal-button`.
+7. Assert the file attached to the component (`file-item-<stem>` renders on the
    node, after the modal-only `select-files-modal-button` disappears).
-7. Run the component (`button_run_read file`); assert `node_duration_read file`
+8. Run the component (`button_run_read file`); assert `node_duration_read file`
    (successful build).
-8. Open the output inspector (`output-inspection-raw content-file`); assert the
+9. Open the output inspector (`output-inspection-raw content-file`); assert the
    output modal `textarea` value equals the sentinel file content.
 
 ---
@@ -186,3 +192,44 @@ Two independent guards keep the spec deterministic:
 The daily's 2026-07-23 failure on this spec was a **different** signature
 (`sidebar-search-input` never visible, during setup) and belongs to #1063 — this
 spec is not a same-signature repeat offender.
+
+---
+
+## The node chip is a cache projection — the #1430 defect
+
+The node chip is **not** downstream of a request. Measured on 1.12.0.dev25: it
+renders 43–241 ms after the modal closes, and it still renders when
+`POST /api/v1/custom_component/update` — the only call in that window — is
+stalled 25 s or aborted outright. The spec used to claim the chip "renders only
+after the attach PATCH settles"; there is no PATCH on that path, and treating
+the absent chip as latency is what made a 15 s timeout look like the right knob.
+
+What the chip actually is, in `InputFileComponent`:
+
+```tsx
+files.filter((file) => selectedFiles.includes(file.path))   // files = useGetFilesV2 cache
+```
+
+and a reconcile effect in the same component rewrites the node's `value` /
+`file_path` from that same cache whenever the modal is closed. So **one**
+`GET /api/v2/files` response that does not carry the just-uploaded file destroys
+the attachment: reproduced 5/5 by intercepting a single list response and
+removing that entry — the chip renders, disappears, the node's `file_path` is
+emptied and **saved empty**, with no error and no toast. That is silent data
+loss for a user, not only a flaky assertion. Filed upstream as
+[LE-2208](https://datastax.jira.com/browse/LE-2208) and carried in
+`REGRESSIONS.md` → Ledger (Open).
+
+The daily of 2026-08-12 (run 31581590030) failed with that shape: the modal
+assertions passed on the failing attempt, the modal closed, and the chip was
+never found in 15 s. Which list response arrived without the file cannot be
+proven for that run — its blobs and trace had expired by the time the issue was
+worked, only the JSON report survived.
+
+The spec's step-6 gate closes the window the **test** creates — it confirms at
+~200 ms after the upload, while a list refetch fired by the upload's
+invalidation is still in flight (`GET /api/v2/files` lands ~20 ms after the
+`POST` on a quiet instance; on the daily's 8-worker lane it does not). It is
+deliberately not a repair: the gate cannot stop a list response that arrives
+after the confirm, so if the product race fires the chip assertion still fails —
+which is the behaviour we want from a regression suite.
