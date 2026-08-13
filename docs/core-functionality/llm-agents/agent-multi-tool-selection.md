@@ -274,10 +274,24 @@ describe with two tests:
 > turns. **Re-measure before changing the number — do not re-derive it on
 > paper.**
 >
-> **Why this test is still `[-]` and still not `@stable`.** No longer because
-> of #14469 — that gate is closed. The bullet's original gate is the clean
-> baseline (#818, per #827), which predates #1378 and has not moved. Promotion
-> is a separate decision on that baseline, not a side effect of this fix.
+> **Why this test is still `[-]` and still not `@stable` — and why neither of
+> the two reasons on record still applies.** #827 gated promotion on "the clean
+> non-guarded baseline"; **#818 closed on 2026-07-30 declaring that baseline
+> achieved, twice**. #1378 then recorded #14469 as the gate; **#14489 closed
+> that one on 2026-08-10**. Both stated justifications expired without anyone
+> noticing, which is the exact failure this note was rewritten to fix — and the
+> first version of the rewrite restated the #818 gate as live, so the trap is
+> not hypothetical.
+>
+> The live reason is narrower and is worth stating as such: **the failure
+> #1378 recorded is provider-specific** (OpenAI's 200k TPM on `gpt-4o-mini`),
+> and there is no post-#14489 measurement on that provider. The 7/7 and 4/4
+> above are a local box; CI's run on 2026-08-13 covered google and anthropic
+> and **skipped every OpenAI target** — `provider "openai" probed "inactive"`,
+> `You have no credits remaining`. Promotion therefore waits on one clean
+> `--retries=0` measurement of test 3 on `gpt-4o-mini` against `≥ 1.12.0.dev25`,
+> not on a baseline or an upstream ticket. Tracked separately; not a side
+> effect of this fix.
 
 ---
 
