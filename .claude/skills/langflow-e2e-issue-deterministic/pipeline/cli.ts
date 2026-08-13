@@ -453,9 +453,12 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
           isWave: s.issueData?.milestone != null,
           labels: s.issueData?.labels ?? [],
         }))
+        // `evidence` is the payload being recorded by THIS call; `rec.evidence`
+        // is what a previous attempt left behind. Reading the stale one meant a
+        // declaration could never be accepted on the attempt that made it.
         problems.push(...checkBranchPurity(
           gitChangedVsBase(), allowedBranchFiles(s),
-          rec?.evidence as { extraFiles?: unknown; extraFilesReason?: unknown }))
+          evidence as { extraFiles?: unknown; extraFilesReason?: unknown }))
         problems.push(...checkCiVerdict(evidence, commentUrls))
         // A symptom another issue owns must be visible to the reviewer, or the
         // PR reads as if it closed a cause it never touched.
