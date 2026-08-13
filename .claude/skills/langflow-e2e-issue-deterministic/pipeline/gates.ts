@@ -236,13 +236,43 @@ export const BRANCH_RE = /^(test|fix|docs|chore|feat|refactor)\/issue-\d+-[a-z0-
  * absorbs that session's commit into the PR (#1060 — caught by hand).
  * `changed === null` means the base ref could not be resolved: fail closed.
  */
-export function checkBranchPurity(changed: string[] | null, allowed: string[]): string[] {
+export function checkBranchPurity(
+  changed: string[] | null,
+  allowed: string[],
+  declared?: { extraFiles?: unknown; extraFilesReason?: unknown },
+): string[] {
   if (changed === null) {
     return ['could not diff against the base ref (git fetch origin?) — branch purity unverified']
   }
   const ok = new Set(allowed)
-  return changed.filter(f => !ok.has(f))
-    .map(f => `branch carries a file the pipeline never touched: ${f} (another session's commit? rebase with --onto)`)
+  // A PR legitimately grows after IMPLEMENT: VALIDATE and FORCE_FAIL run the
+  // whole touched file and surface defects in surfaces the plan had not named
+  // (#1422 grew a sidebar-click repair and two pipeline fixes that way, both on
+  // the user's explicit decision). The list frozen at IMPLEMENT cannot be
+  // re-declared — the step is complete — so the PR step declares the additions
+  // WITH a written reason. Unreasoned additions still fail, which is the whole
+  // point of #1060's guard: the danger is a file nobody can account for, not a
+  // file the author accounts for in writing.
+  const extra = Array.isArray(declared?.extraFiles)
+    ? declared!.extraFiles.filter((f): f is string => typeof f === 'string')
+    : []
+  const reason = typeof declared?.extraFilesReason === 'string'
+    ? declared.extraFilesReason.trim()
+    : ''
+  const problems: string[] = []
+  if (extra.length > 0 && reason === '') {
+    problems.push('evidence.extraFiles needs evidence.extraFilesReason — say why each file belongs to THIS issue')
+  }
+  const excused = reason === '' ? new Set<string>() : new Set(extra)
+  problems.push(...changed
+    .filter(f => !ok.has(f) && !excused.has(f))
+    .map(f => `branch carries a file the pipeline never touched: ${f} (another session's commit? rebase with --onto — or declare it in evidence.extraFiles with a reason)`))
+  // A declaration that names files the branch does not carry is stale, and a
+  // stale exemption is the failure mode #1084 was raised about.
+  problems.push(...extra
+    .filter(f => !changed.includes(f))
+    .map(f => `evidence.extraFiles names ${f}, which this branch does not change — drop it`))
+  return problems
 }
 
 /**

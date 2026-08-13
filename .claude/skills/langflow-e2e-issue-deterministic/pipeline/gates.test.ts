@@ -303,3 +303,41 @@ test('checkCiVerdict makes ambient-red carry a justification comment that exists
   assert.match(checkCiVerdict({ ciVerdict: 'ambient-red', justificationCommentUrl: url }, [])[0], /not a comment/)
   assert.deepEqual(checkCiVerdict({ ciVerdict: 'ambient-red', justificationCommentUrl: url }, [url]), [])
 })
+
+// ---------- branch purity: reasoned additions (#1422) ----------
+
+test('checkBranchPurity excuses declared extra files when a reason is given', () => {
+  // A PR grows after IMPLEMENT: the whole-file burst and the force-fails surface
+  // defects in surfaces the plan never named, and the IMPLEMENT list cannot be
+  // re-declared once the step is complete. #1422 grew a sidebar-click repair and
+  // two pipeline fixes that way, both on the user's explicit decision.
+  const problems = checkBranchPurity(
+    ['tests/a.spec.ts', 'tests/helpers/b.ts'],
+    ['tests/a.spec.ts'],
+    { extraFiles: ['tests/helpers/b.ts'], extraFilesReason: 'repair surfaced by the burst' },
+  )
+  assert.deepEqual(problems, [])
+})
+
+test('checkBranchPurity still fails an UNDECLARED foreign file', () => {
+  // #1060's guard intact: the danger is a file nobody accounts for.
+  const problems = checkBranchPurity(
+    ['tests/a.spec.ts', 'scripts/someone-elses.mjs'],
+    ['tests/a.spec.ts'],
+    { extraFiles: ['tests/helpers/b.ts'], extraFilesReason: 'unrelated' },
+  )
+  assert.equal(problems.length, 2)
+  assert.ok(problems.some(p => /someone-elses\.mjs/.test(p)))
+  // …and the stale half of the declaration is reported too.
+  assert.ok(problems.some(p => /does not change — drop it/.test(p)))
+})
+
+test('checkBranchPurity refuses extraFiles with no reason', () => {
+  const problems = checkBranchPurity(
+    ['tests/a.spec.ts', 'tests/helpers/b.ts'],
+    ['tests/a.spec.ts'],
+    { extraFiles: ['tests/helpers/b.ts'] },
+  )
+  assert.ok(problems.some(p => /needs evidence\.extraFilesReason/.test(p)))
+  assert.ok(problems.some(p => /never touched: tests\/helpers\/b\.ts/.test(p)))
+})
