@@ -174,13 +174,24 @@ async function setSystemPrompt(page: Page, prompt: string): Promise<void> {
 // condition"), and a run that stops that way persists no AI message at all -- so
 // the sequence assert fails on absent data rather than wrong data.
 //
-// The residual flake is NOT fixable from here, because ONE search call is
-// already unbounded. Measured, same day, three queries: 15,857 / 53,714 / 78,848
-// tokens for a single perform_search -- a 5x spread, and the query is the
-// agent's choice, not ours. Two calls at the top of that range exceed 128k on
-// their own, so no iteration cap can guarantee this test. Real stabilisation
-// needs the payload bounded upstream (langflow-ai/langflow#14469); until that
-// lands this test stays out of @stable and its checklist bullet stays [-].
+// UPSTREAM CAP LANDED (2026-08-13) -- langflow-ai/langflow#14489 bounded the
+// component (max_results=5, max_content_length=2000). It reached the nightly in
+// 1.12.0.dev25, NOT dev24: that image was cut before the merge-back, so reading
+// the fix on release-1.12.0 says nothing about the image you are running --
+// grep max_results in the INSTALLED wheel instead. Measured on dev25, same
+// query: 5 results / 10,000 chars ~= 2.5k tokens, a 17.9x reduction. That kills
+// the argument this comment used to make (that ONE search call was itself
+// unbounded -- 15,857 / 53,714 / 78,848 tokens across three queries -- so no
+// iteration cap could ever guarantee the test): a call now has a hard ceiling,
+// and 15 iterations accumulate ~37k tokens of search payload, inside both the
+// 128k window and CI's 200k TPM.
+//
+// The cap still stays at 8. Measured on dev25 / gpt-4o-mini, --retries=0:
+// 7/7 at 8 and 4/4 at 15, which is NOT evidence that it is dispensable -- the
+// same day, 10/10 passed on dev24 with the component still unbounded, so this
+// environment (a 4M TPM org) did not reproduce the failure and the two arms
+// cannot discriminate. It costs nothing and it is still what stops a
+// non-converging agent from running 15 turns.
 // Re-measure before changing this number -- do not re-derive it on paper.
 //
 // max_iterations is an advanced field: expose it on the node body via the

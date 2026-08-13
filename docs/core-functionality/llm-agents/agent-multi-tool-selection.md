@@ -185,9 +185,10 @@ describe with two tests:
 > tests 1–2, this test's instruction *permits* a multi-tool sequence, and the
 > agent does not reliably converge on it. When it doesn't, it keeps calling
 > `perform_search`, and each call injects the Web Search component's full
-> result set into the conversation. That component caps nothing:
-> `perform_web_search()` iterates every `div.result` DuckDuckGo returns and
-> scrapes each linked page's **entire** text (upstream
+> result set into the conversation. That component capped nothing — until
+> `langflow-ai/langflow#14489`, see the update at the end of this note:
+> `perform_web_search()` iterated every `div.result` DuckDuckGo returns and
+> scraped each linked page's **entire** text (upstream
 > `langflow-ai/langflow#14469`). Measured on `1.12.0.dev20`, query
 > `"Sample Slide Show"`: **10 results, 182,316 chars ≈ 45.6k tokens in one
 > call** (largest single page: 40,755 chars). The conversation is re-sent
@@ -222,15 +223,61 @@ describe with two tests:
 > the sequence assert fails on *absent* data rather than wrong data, and the
 > cap meant to fix the test breaks it a second way.
 >
-> **The residual flake cannot be fixed from this repo, and that is the honest
-> bottom line.** A *single* `perform_search` call is already unbounded —
-> measured the same day across three queries: **15,857 / 53,714 / 78,848**
-> tokens for one call, a 5× spread, with the query chosen by the agent and
-> not by us. Two calls at the top of that range exceed 128k on their own, so
-> **no iteration cap can guarantee this test.** Real stabilisation needs the
-> payload bounded upstream (`langflow-ai/langflow#14469`). Until that lands,
-> this test stays out of `@stable` and its checklist bullet stays `[-]`.
-> **Re-measure before changing the number — do not re-derive it on paper.**
+> **The upstream cap landed, and it retires this note's central argument
+> (measured 2026-08-13).** `langflow-ai/langflow#14489` bounded the component
+> with two advanced inputs: `max_results` (default 5) and
+> `max_content_length` (default 2,000 chars, truncation marked
+> `... [truncated]`). It merged on 2026-08-10 and reached the nightly in
+> **`1.12.0.dev25`** — *not* `dev24`, whose image was cut before the
+> merge-back landed on `release-1.12.0`. **Reading the fix on the branch does
+> not say the running image has it**, and that mistake costs a whole
+> measurement: the check is `grep max_results` in the INSTALLED wheel
+> (`/app/.venv/lib/python*/site-packages/lfx/components/data_source/web_search.py`),
+> never the ref. Measured on `1.12.0.dev25`, same query as above: **5 results,
+> 10,000 chars ≈ 2.5k tokens**, all five truncated at 2,000 — a **17.9×**
+> reduction against the 178,830 chars the identical call returned on `dev24`.
+> The bound reaches this test and not merely the library: Langflow freezes
+> component code into the saved flow, and the `Simple Agent` starter in
+> `dev25` ships both the new fields and the new embedded code (verified on the
+> instantiated flow, not assumed from the package).
+>
+> **What that retires.** The previous version of this note argued that no
+> iteration cap could ever guarantee this test, because a *single*
+> `perform_search` was itself unbounded — measured across three queries:
+> **15,857 / 53,714 / 78,848** tokens for one call, a 5× spread, with the query
+> chosen by the agent and not by us. That premise is gone: one call now has a
+> hard ceiling of 5 × 2,000 chars ≈ 2.5k tokens, so even the worst case of 15
+> iterations accumulates ~37k tokens of search payload — inside
+> `gpt-4o-mini`'s 128k window and inside CI's 200k TPM.
+>
+> **What it does not retire: the cap.** Measured on `1.12.0.dev25` /
+> `gpt-4o-mini`, `--retries=0 --workers=1`:
+>
+> | `max_iterations` | Pass rate | Note |
+> |---|---|---|
+> | 15 (default) | 4/4 | 27–51 s |
+> | **8** (this spec) | **7/7** | 21–48 s, on a warm backend |
+>
+> One further run at 8 failed and is excluded on purpose: it was the first run
+> after the container came up, and it failed `read-failed` with **0** successful
+> reads of the persisted flow — a state the credential guard itself reports as
+> saying nothing about the binding (#1077). Counting a cold-start wedge as a
+> failure of this test is how an infra number becomes a product number.
+>
+> Both arms green is **not** evidence that the cap is dispensable, and reading
+> it that way is the trap this table exists to close: on `dev24` — the still
+> *unbounded* image — 10 of 10 runs passed the same day, so this environment
+> did not reproduce the failure at all and the two arms cannot discriminate
+> between them. A 4M-TPM local org is the least sensitive place there is to
+> measure a volume problem. The cap stays at **8**: it costs nothing, and it is
+> still the only thing stopping an agent that does not converge from running 15
+> turns. **Re-measure before changing the number — do not re-derive it on
+> paper.**
+>
+> **Why this test is still `[-]` and still not `@stable`.** No longer because
+> of #14469 — that gate is closed. The bullet's original gate is the clean
+> baseline (#818, per #827), which predates #1378 and has not moved. Promotion
+> is a separate decision on that baseline, not a side effect of this fix.
 
 ---
 
@@ -325,11 +372,13 @@ tools in the wrong order, fails).
   up to 8 model calls; the heaviest measured run sent **129,150** tokens in a
   single request (see the note in Step by step). It was unbounded before the
   cap, at up to 15 calls and requests of millions of tokens.
-- **Web Search → DuckDuckGo + every linked page** (tests 2 and 3): the
-  component scrapes each result's full page text, so this test's token cost is
-  set by whatever pages DuckDuckGo returns that day. Unbounded upstream
-  (`langflow-ai/langflow#14469`); the `max_iterations` cap is what keeps the
-  total finite on our side.
+- **Web Search → DuckDuckGo + the linked pages** (tests 2 and 3): the component
+  scrapes each result's page text, so this test's token cost is set by whatever
+  pages DuckDuckGo returns that day. It was **unbounded** upstream
+  (`langflow-ai/langflow#14469`) and is bounded from `1.12.0.dev25` on
+  (`#14489`: 5 results × 2,000 chars ≈ 2.5k tokens per call, measured). Against
+  an image older than `dev25` the `max_iterations` cap is the only thing keeping
+  the total finite on our side.
 - **URL-tool fetch endpoint** (test 1) — `${ECHO_BASE_URL}/json`, defaulting to
   `https://httpbin.org/json` (fixed `Sample Slide Show` payload). httpbin.org is
   chronically unreliable (sustained 503s/timeouts hard-failed this test on the
