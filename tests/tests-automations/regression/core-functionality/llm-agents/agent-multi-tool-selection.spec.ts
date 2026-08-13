@@ -548,8 +548,23 @@ for (const { label, options, skipReason } of targets) {
         // and the spec doc never specified a bubble assert for it. The code
         // carried one anyway and it was the line that failed on every context
         // blow-up, reporting "element(s) not found" instead of the real cause.
-        // A crashed run is still caught -- by the fixture, which owns that
-        // verdict (no allowFlowErrors above), not by a proxy on the bubble.
+        //
+        // Know what removing it costs, because the obvious reading is wrong: the
+        // fixture does NOT fail this test on a crashed run. The Playground runs
+        // through POST /api/v2/workflows, where the flow-error verdict is
+        // ADVISORY by design -- the fixture itself prints "this does NOT fail the
+        // test yet" (#1165) -- and #1378's own evidence carries that exact line
+        // for this spec. `allowFlowErrors` is absent here, and on this surface
+        // that buys nothing.
+        //
+        // So the ordered tool_use assert below is now the ONLY gate, and it reads
+        // data persisted BEFORE an overflow: a run that calls both tools and then
+        // dies could satisfy it. That is unmeasured rather than disproven -- an
+        // attempt to force the overflow on 1.12.0.dev20 did not reproduce it --
+        // and with #14489 bounding the payload from dev25 the scenario is much
+        // harder to reach, which is why it is a follow-up and not a blocker here.
+        // If it needs a gate, the honest one is a fixture accessor for the
+        // advisory verdict, not a proxy assert on the bubble.
         await test.step("sequence: fetch_content is called before perform_search", async () => {
           await expectToolSequencePersisted(request, nonce, [URL_TOOL, SEARCH_TOOL]);
         });

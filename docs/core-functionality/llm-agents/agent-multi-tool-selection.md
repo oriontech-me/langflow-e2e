@@ -346,12 +346,21 @@ tools in the wrong order, fails).
   spec doc never specified a bubble assert for it. The code carried one
   anyway — never documented here — and it was the line that failed on every
   context blow-up, reporting `element(s) not found` instead of the real cause.
-  It is removed rather than relaxed: the run still executes with no
-  `allowFlowErrors`, so a crashed run is caught by the fixture (the gate that
-  owns that verdict), not by a proxy assert on the reply bubble. Note the v2
-  run path is ADVISORY-only today (#1165) — when it flips to failing, a
-  context blow-up will fail this test at the fixture, which is the correct
-  attribution and the reason the cap above is the actual fix.
+  It is removed rather than relaxed — and the cost of that has to be stated
+  plainly, because the natural phrasing ("no `allowFlowErrors`, so the fixture
+  catches a crashed run") is **false on this surface today**. The Playground
+  runs through `POST /api/v2/workflows`, where the flow-error verdict is
+  ADVISORY by design (#1165) — the fixture prints *"this does NOT fail the test
+  yet"*, and #1378's own evidence carries that exact line for this spec. So the
+  ordered `tool_use` assert is now the **only** gate, and it reads data
+  persisted *before* an overflow: a run that calls both tools and then dies
+  could satisfy it. That is unmeasured rather than disproven — an attempt to
+  force the overflow on `1.12.0.dev20` did not reproduce it — and #14489 makes
+  the scenario much harder to reach from `dev25` on, which is why it is a
+  follow-up rather than a blocker. When the v2 verdict flips to failing, the
+  fixture becomes the gate this paragraph used to claim it already was; until
+  then the honest gate would be a fixture accessor for the advisory verdict,
+  never a proxy assert on the reply bubble.
 - **Force-failure checks** (CONTRIBUTING §2): M1 — expect the sibling tool
   as first call in test 1 ⇒ selection assert must fail; M2 — assert an
   impossible title (e.g. `Sample Slide Show XYZ`) ⇒ the `fetch_content`
