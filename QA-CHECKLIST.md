@@ -369,7 +369,7 @@
 
 #### 6.4 Tools and Integrations
 - [ ] Agent with integrated external MCP tool executes action and returns result
-- [-] Agent executes multiple tools in sequence → `llm-agents/agent-multi-tool-selection.spec.ts` (Test 3 — chained fetch→search, ordered `tool_use` assert; `@stable` gated on the clean baseline #818, per #827)
+- [-] Agent executes multiple tools in sequence → `llm-agents/agent-multi-tool-selection.spec.ts` (Test 3 — chained fetch→search, ordered `tool_use` assert. Both gates on record have since closed: the clean baseline of #818/#827 on 2026-07-30, and `langflow-ai/langflow#14469` — the unbounded Web Search payload that blew the context up in #1378 — by `#14489` on 2026-08-10, 17.9× smaller per call from `1.12.0.dev25`. Still `[-]` for a narrower reason: #1378's failure is OpenAI-specific (200k TPM on `gpt-4o-mini`) and there is no post-fix measurement on that provider — CI skips every OpenAI target on a drained key)
 - [x] Tool returns error — agent handles it and continues execution → `core-functionality/llm-agents/agent-tool-error-handling.spec.ts`
 - [x] Multiple connected tools — agent selects the correct one for each prompt → `agent-multi-tool-selection.spec.ts`
 - [x] Tool with invalid name — validation prevents execution with clear message → `core-functionality/llm-agents/agent-tool-name-validation.spec.ts`
