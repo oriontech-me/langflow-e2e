@@ -89,11 +89,26 @@ export function checkQuarantineLifted(
 ): string[] {
   if (!QUARANTINE_RE.test(issueBody)) return []
   const problems: string[] = []
+  // A touched spec can carry a `test.fixme` that belongs to ANOTHER issue, and
+  // demanding its lift here is asking one PR to close someone else's
+  // investigation. #1422 hit exactly that: its body arms this gate through the
+  // template's "Quarantine lifted" deliverable while quarantining nothing
+  // itself (the workflow only auto-removed `@stable`), and the surviving
+  // `.fixme` in the same file is #1266's — a transport-level flake its body
+  // explicitly excludes as a different cause. So the flag is scoped to the
+  // tests the issue actually NAMES, the same attribution the `@stable` half
+  // below already uses.
+  //
+  // Fallback, deliberately strict: if the body arms the gate but names none of
+  // the touched titles, every `.fixme` is flagged as before — an issue we
+  // cannot attribute must not be the one that slips a muted test through.
+  const named = (e: TestEntry) => issueBody.includes(e.title)
+  const anyNamed = files.some(f => f.entries.some(named))
   for (const { file, entries } of files) {
     for (const e of entries) {
-      if (e.modifier === '.fixme') {
-        problems.push(`quarantine not lifted: test.fixme still on "${e.title}" in ${file}`)
-      }
+      if (e.modifier !== '.fixme') continue
+      if (anyNamed && !named(e)) continue
+      problems.push(`quarantine not lifted: test.fixme still on "${e.title}" in ${file}`)
     }
   }
   if (RESTORE_STABLE_RE.test(issueBody)) {

@@ -143,6 +143,34 @@ test('checkQuarantineLifted flags a surviving test.fixme', () => {
   assert.match(problems[0], /test\.fixme still on/)
 })
 
+test('checkQuarantineLifted ignores a test.fixme the issue does not name (#1422)', () => {
+  // The touched file carries two quarantines: the one this issue owns and one
+  // another issue is still investigating. Demanding both would make this PR
+  // close someone else's flake — and #1422's body arms the gate only through
+  // the template's "Quarantine lifted" line, having quarantined nothing.
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [
+      { title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@stable'] },
+      { title: 'user must be able to change mode of MCP tools', modifier: '.fixme', tags: ['@release'] },
+    ],
+  }]
+  assert.deepEqual(checkQuarantineLifted(QUARANTINE_BODY, files), [])
+})
+
+test('checkQuarantineLifted stays strict when the body names no touched test', () => {
+  // Cannot attribute ⇒ cannot excuse: an issue whose body arms the gate but
+  // names none of the touched titles still gets every surviving `.fixme`
+  // flagged, so the precise path above can never become a way through.
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [{ title: 'some other muted test', modifier: '.fixme', tags: [] }],
+  }]
+  const problems = checkQuarantineLifted(QUARANTINE_BODY, files)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /test\.fixme still on "some other muted test"/)
+})
+
 test('checkQuarantineLifted flags a missing @stable when the issue asks for it', () => {
   const files = [{
     file: 'a.spec.ts',
