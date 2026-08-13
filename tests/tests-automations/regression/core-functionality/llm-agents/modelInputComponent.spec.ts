@@ -138,28 +138,44 @@ test.describe("ModelInputComponent", () => {
   );
 
   test(
-    "the trigger shows the selected model name",
-    // Quarantine lifted in #1304 after the mechanism was found, and it is not in
-    // this test — nor in this file. The 2026-08-05 hard failure (run 30997773754,
-    // all 3 attempts) was the SHARED sidebar add dropping its click: Langflow
-    // accepts the click on `add-component-button-language-model`, never registers
-    // the add, and no node reaches the canvas. Measured 4/20 by an instrumented
-    // scout on 1.12.0.dev17, with an identical second click repairing all 4 —
-    // which is why `addComponentFromSidebar` now verifies the node landed and
-    // re-issues once, and why nothing here needed a longer timeout (this test
-    // already waited 15 s and lost 3/3).
+    "the trigger shows the model the user selects",
+    // Renamed in #1445 because the old title ("the trigger shows the SELECTED
+    // model name") promised a selection this test never made: it read the
+    // trigger of a freshly added node and asserted only that the text was not a
+    // "Select…" placeholder. That passed on a pre-fill nobody asked for, and it
+    // is now a selection the test performs itself.
     //
-    // Provider-credential churn was the standing hypothesis and is REFUTED: the
-    // drop reproduces solo with no neighbour at all (2 of 11 runs pre-fix), and
-    // the same class hit `core-components/edit-name-description-node.spec.ts:42`
-    // on that daily with no provider-mutating spec running. What the daily added
-    // was a degraded window — `stop-building.spec.ts:24` and
-    // `langflowShortcuts.spec.ts:47` failed on the same shard within 100 s with
-    // the same mechanism under different messages — which raised the per-add drop
-    // probability enough to cost all three attempts. #1265 stays separate: its
-    // observable is the sidebar never opening, upstream of any add.
+    // The premise it used to encode — "the catalog pre-selects a default model"
+    // — EXPIRED with upstream langflow#14505 ("fix: stop pre-selecting an
+    // unconfigured model", merged 2026-08-12 into release-1.12.0), which removed
+    // the empty-field fallback to `options[0]` on both sides: the frontend
+    // (`useAutoSelectModel.ts` now replaces only a STALE selection;
+    // `derive-selected-model.ts` renders the placeholder instead of
+    // `flatOptions[0]`) and the backend (`unified_models/build_config.py` gates
+    // that fallback behind `user_triggered = field_name is not None`, citing
+    // LE-2168). The reason is that a provider counts as enabled purely because a
+    // credential exists, so an env-harvested key made the node advertise a
+    // provider the user never set up. That PR's own verification says a freshly
+    // added Language Model node now shows "Select a model" — and it inverted
+    // four of its own assertions for the same reason while stating the Playwright
+    // E2E suite was not run, which is why this file reddened the next morning
+    // (daily run 31685261355, 3/3 attempts; reproduced 5/5 locally on
+    // 1.12.0.dev25). NOT langflow#14465, the lead the issue carried: that one
+    // only stopped substituting an EXPLICITLY CLEARED selection and left the
+    // initial-load default intact.
+    //
+    // Neither the failing daily nor the local repro was a provider artefact —
+    // the catalog offered 89 models across three providers and `options[0]` was
+    // `claude-opus-5` from the ACTIVE Anthropic, so there was a healthy model to
+    // pre-select and it was still not pre-selected (OpenAI's key was drained on
+    // both, see #1442/#1443).
+    //
+    // The earlier quarantine (#1304) was a different mechanism and is not in this
+    // test nor in this file: the SHARED sidebar add dropped its click (4/20 on
+    // 1.12.0.dev17), which `addComponentFromSidebar` now verifies and repairs.
     {
       tag: [
+        "@stable",
         "@release",
         "@components",
         "@workspace",
@@ -168,15 +184,32 @@ test.describe("ModelInputComponent", () => {
     },
     async ({ page }) => {
       await addLanguageModelNode(page);
+      const trigger = page.getByTestId("model_model");
 
-      // The catalog pre-selects a default model, so the trigger must show a
-      // concrete model name, not a "Select…" placeholder. NOT key-independent,
-      // as this comment used to claim: with no provider credential at all the
-      // trigger is a "Setup Provider" CTA and `model_model` is absent — see the
-      // provider prerequisite at the top of the file (#1265).
-      const text = (await page.getByTestId("model_model").textContent())?.trim() ?? "";
-      expect(text.length).toBeGreaterThan(0);
-      expect(text).not.toMatch(/select a model/i);
+      // Post-#14505 initial state. Asserted, not tolerated: a silent return of
+      // the auto-fill is exactly the regression LE-2168 fixed, and only this
+      // half of the test can catch it.
+      await expect(trigger).toHaveText(/^select a model$/i, { timeout: 10000 });
+
+      await trigger.click();
+
+      // Each option carries `data-testid="{Provider}-{model}-option"` (frontend
+      // `ModelList.getModelOptionTestId`) and its inner text is the bare model
+      // name. The expected label is read FROM THE DOM rather than hardcoded, so
+      // a catalog reorder or a retired model id cannot make this test wrong —
+      // whichever model the instance offers first is the one selected.
+      const firstOption = page.locator('[data-testid$="-option"]').first();
+      await expect(firstOption).toBeVisible({ timeout: 15000 });
+      const modelLabel = (await firstOption.innerText()).trim();
+      expect(modelLabel.length).toBeGreaterThan(0);
+      expect(modelLabel).not.toMatch(/select a model/i);
+
+      await firstOption.click();
+
+      // Exact equality, which subsumes "the placeholder is gone" — the old
+      // assertion only demanded the text differ from the placeholder and would
+      // have accepted any value the picker happened to hold.
+      await expect(trigger).toHaveText(modelLabel, { timeout: 10000 });
     },
   );
 });
