@@ -160,7 +160,6 @@ test.describe("ModelInputComponent", () => {
     // observable is the sidebar never opening, upstream of any add.
     {
       tag: [
-        "@stable",
         "@release",
         "@components",
         "@workspace",

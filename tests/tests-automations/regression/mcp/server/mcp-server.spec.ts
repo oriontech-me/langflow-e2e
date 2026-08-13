@@ -586,7 +586,7 @@ test("STDIO MCP server fields should persist after saving and editing",
 );
 
 test("HTTP/SSE MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 

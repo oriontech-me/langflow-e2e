@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-12
+> **Last updated:** 2026-08-13
 
 ---
 
@@ -1034,7 +1034,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 499 `test()` calls carrying the `@stable` tag, distributed across 193 spec
+> 496 `test()` calls carrying the `@stable` tag, distributed across 193 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1279,7 +1279,6 @@
 - [x] empty response does not crash the component → `agent-empty-refusal-response.spec.ts`
 - [x] input via ChatInput handle drives the agent response → `agent-input-sources.spec.ts`
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
-- [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
 - [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
@@ -1318,7 +1317,6 @@
 - [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
 - [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
-- [x] the trigger shows the selected model name → `modelInputComponent.spec.ts`
 - [x] provider list renders with the known providers → `modelProviderModal.spec.ts`
 - [x] selecting a provider opens its API key configuration detail → `modelProviderModal.spec.ts`
 - [x] a configured provider shows its model selection panel → `modelProviderModal.spec.ts`
@@ -1508,7 +1506,6 @@
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
 - [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
-- [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] stdio command with an embedded argument is refused, and command plus args is accepted → `mcp-server.spec.ts`
 - [x] a registered MCP server is read back individually with the fields it was created with → `mcp-server.spec.ts`
 - [x] PATCH updates a registered server, merges at the top level, and refuses to rename it → `mcp-server.spec.ts`

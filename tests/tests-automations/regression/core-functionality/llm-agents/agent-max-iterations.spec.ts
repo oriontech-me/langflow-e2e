@@ -207,7 +207,7 @@ for (const { label, options, skipReason } of targets) {
     // — the pair being what separates "not enforced" from "wording changed".
     test(
       "agent stops when max iterations is reached",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
