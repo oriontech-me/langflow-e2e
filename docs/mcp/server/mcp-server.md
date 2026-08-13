@@ -132,9 +132,10 @@ round-tripped; then deletes it.
    postcondition gate kept from #1053/#997.
 2. Register server **A**: `command: npx`,
    `args[0]: @modelcontextprotocol/server-sequential-thinking`.
-3. Assert `dropdown_str_tool` enables and exposes `sequentialthinking-0-option`;
-   select it and assert the tool's own inputs render on the node
-   (`anchor-popover-anchor-input-thought` and `int_int_thoughtnumber`).
+3. Assert the node's tool dropdown exposes `sequentialthinking-0-option`
+   (through `waitForMcpToolOption`, see below); select it and assert the tool's
+   own inputs render on the node (`anchor-popover-anchor-input-thought` and
+   `int_int_thoughtnumber`).
 4. Settings → MCP Servers → Edit: assert `command` is `npx` and `args[0]` is the
    sequential-thinking package, then **edit `args[0]`** to
    `@modelcontextprotocol/server-everything` (server **B**) and save.
@@ -147,6 +148,29 @@ round-tripped; then deletes it.
 
 Both re-opens address the flow by **id**, never by the card whose name contains
 "New Flow" (#1340) — see the note below.
+
+All three tool-list waits in this test go through
+`helpers/mcp/wait-for-mcp-tool-option.ts` (#1422). It first requires the **node
+to be bound to the expected server** (`mcp-server-dropdown` carrying
+`testName`) — the readiness signal this surface actually has, since the tool
+control is interactive ~140 ms after the modal closes while the component can
+still be pointing at the previously selected server. Measured on
+`1.12.0.dev25`: a run that skipped that check refreshed the list of
+`lf-starter_project`, which resolved happily with that project's flows
+(`new_flow`, `basic_prompting`) and no error at all. It then waits for the
+**tool option itself** under `MCP_TOOL_LIST_TIMEOUT_MS` (120 s), and when the node
+reports `Error loading server: …` it re-queries through the dropdown's own
+`refresh-dropdown-list-tool` affordance, at most `MCP_TOOL_LIST_MAX_REFRESHES`
+(3) times and no closer together than
+`MCP_TOOL_LIST_REFRESH_INTERVAL_MS` (10 s) — unspaced, the three attempts were
+measured spending themselves inside the first ~2 s of a 120 s budget, which is
+the worst placement for a start that failed transiently — before failing with
+the node's error text in the message. What it
+replaced — `dropdown_str_tool:not([disabled])` under the 120 s budget, followed
+by a 10 s wait for the option — put the whole budget on a control that is
+enabled **113–145 ms** after the modal closes (measured, 1.12.0.dev24) and is
+enabled in the error state too, leaving the tool list a 10 s wait and the
+failure unattributed. See the note below.
 
 ### 6 — `Streamable HTTP MCP server with server-everything should load tools correctly`
 
@@ -225,7 +249,10 @@ and nothing is fetched from the npm registry.
   + 2 env pairs; HTTP name/URL + 2 headers + 2 env pairs.
 - **The tool list refreshes on edit**: after changing `args[0]` from
   sequential-thinking to server-everything, the node exposes `echo-0-option`;
-  after reverting, `sequentialthinking-0-option`.
+  after reverting, `sequentialthinking-0-option`. Each of those three waits is
+  satisfied only by the option's own testid appearing — never by the tool
+  control merely becoming enabled, which happens before any list exists and
+  happens in the error state as well (#1422).
 - **The single-server read returns what was stored, and only that.**
   `GET /api/v2/mcp/servers/{name}` answers 200 with a body deep-equal to the
   posted config — including the `env` pair, decrypted — with no `name` key and no
@@ -241,6 +268,15 @@ and nothing is fetched from the npm registry.
 
 - **Per-run random server names** (`test_server_<5-digit>`) — no test can pass
   on a server a previous run left behind.
+- **The Settings list is asserted through the row's own `mcp_server_name_<n>`
+  span**, never `getByText(name)` (#1422). The page renders an extra `sr-only`
+  span reading `"<name> error: …"` whenever the server carries an error, so the
+  bare text locator resolves to two elements and dies as a strict-mode
+  violation — twice in one full-file run on 1.12.0.dev25, and once on the
+  2026-08-11 daily at `:588`. The scoped locator also makes the assertion mean
+  "the row is listed" instead of "the string appears somewhere", and the
+  post-delete check is `toHaveCount(0)`, which cannot pass on an ambiguous
+  match the way `not.toBeVisible()` could.
 - **Tool-name-specific option testids**, never `[data-testid*="-option"]` on the
   stdio path: a server that starts but serves the *wrong* tool set fails. This
   is exactly what the tool-refresh test turns into its assertion.
@@ -332,7 +368,8 @@ and nothing is fetched from the npm registry.
   `helpers/other/await-bootstrap-test.ts`, `helpers/ui/adjust-screen-view.ts`,
   `helpers/ui/zoom-out.ts`, `helpers/flows/delete-flow.ts`,
   `helpers/flows/add-component-from-sidebar.ts`
-  (`addComponentFromSidebarWithoutSearch`).
+  (`addComponentFromSidebarWithoutSearch`),
+  `helpers/mcp/wait-for-mcp-tool-option.ts` (`waitForMcpToolOption`).
 
 ---
 
@@ -346,6 +383,13 @@ and nothing is fetched from the npm registry.
 - If the MCPTools node's tool-input testid derivation changes (integers are
   lowercased into `int_int_<name>`; strings keep their case in
   `popover-anchor-input-<name>`).
+- If the dropdown stops rendering `refresh-dropdown-list-tool`, or the node's
+  failure label stops matching `/Error loading (server|tools)/` — the first is
+  the only way `waitForMcpToolOption` can re-query, the second is the only way
+  it can tell a dead server from a wrong tool set (#1422).
+- If Langflow starts re-querying a failed MCP tool list on its own: the bounded
+  refresh loop would then be redundant, and the spec should say so rather than
+  keep paying for it.
 - If `MCPServerConfig` gains or drops a field, or the single read starts
   returning a wrapper (a `name`, a transport label) instead of the bare config —
   test 8's deep equality is the assertion that will say so.
@@ -356,6 +400,33 @@ and nothing is fetched from the npm registry.
 
 ## Notes *(optional)*
 
+- **#1422 — the 120 s tool-list budget was hanging on a control that is ready in
+  140 ms, and the failure blamed the UI for a dead subprocess.** Test 5 waited
+  for `dropdown_str_tool:not([disabled])` under `TOOL_LIST_TIMEOUT` (120 s) and
+  then gave the tool option 10 s. Measured on nightly `1.12.0.dev24`: that
+  control becomes enabled **113–145 ms** after the add-server modal closes,
+  while the option itself lands at ~2 s on a cold npm cache — so the enabled
+  state never said anything about the list, the 120 s was never spent, and the
+  real budget for a `npx`-fetched stdio server was 10 s. Worse, the control is
+  enabled in the **error** state too: with a package that cannot be installed
+  the node shows `Error loading server: Connection closed`, the dropdown shows
+  `No options found`, and the option never appears — reproduced deterministically
+  (error visible at 1.2–1.6 s, 3 runs). That is exactly the state the
+  2026-08-11 daily died in on all three attempts (`error-context` snapshot, run
+  31475108157): `POST /api/v1/custom_component/update` answered **200 in 3.9 s
+  carrying the error**, so the stdio child had died — not the 30 s
+  `_create_stdio_session` budget running out, which would have read
+  `Timeout waiting for STDIO session … to initialize`. Slow-cold-`npx` is
+  therefore ruled out as the mechanism, and so is cross-suite interference: the
+  MCP suites added in #1395/#1396 ran on shards 3 and 4, each shard being a job
+  with its own Langflow service container and its own database, and neither
+  deletes servers it did not create. What remains is a runner-side stdio start
+  that failed and a UI that never retries it. The wait now goes through
+  `waitForMcpToolOption`, which spends the 120 s on the option, re-queries via
+  `refresh-dropdown-list-tool` up to 3 times when the node reports an error
+  (measured to recover), and fails carrying that error text. The bounded refresh
+  is not a mute: a server that never starts still fails the test, and now says
+  why.
 - **#1340 — test 5 re-opened a flow by NAME, and it opened the wrong one.** Both
   re-opens clicked the first `list-card` whose name contained "New Flow".
   Langflow names every blank flow "New Flow"/"New Flow (N)", so under

@@ -143,6 +143,34 @@ test('checkQuarantineLifted flags a surviving test.fixme', () => {
   assert.match(problems[0], /test\.fixme still on/)
 })
 
+test('checkQuarantineLifted ignores a test.fixme the issue does not name (#1422)', () => {
+  // The touched file carries two quarantines: the one this issue owns and one
+  // another issue is still investigating. Demanding both would make this PR
+  // close someone else's flake — and #1422's body arms the gate only through
+  // the template's "Quarantine lifted" line, having quarantined nothing.
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [
+      { title: "switching the agent's context_id re-tags new turns", modifier: '', tags: ['@stable'] },
+      { title: 'user must be able to change mode of MCP tools', modifier: '.fixme', tags: ['@release'] },
+    ],
+  }]
+  assert.deepEqual(checkQuarantineLifted(QUARANTINE_BODY, files), [])
+})
+
+test('checkQuarantineLifted stays strict when the body names no touched test', () => {
+  // Cannot attribute ⇒ cannot excuse: an issue whose body arms the gate but
+  // names none of the touched titles still gets every surviving `.fixme`
+  // flagged, so the precise path above can never become a way through.
+  const files = [{
+    file: 'a.spec.ts',
+    entries: [{ title: 'some other muted test', modifier: '.fixme', tags: [] }],
+  }]
+  const problems = checkQuarantineLifted(QUARANTINE_BODY, files)
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /test\.fixme still on "some other muted test"/)
+})
+
 test('checkQuarantineLifted flags a missing @stable when the issue asks for it', () => {
   const files = [{
     file: 'a.spec.ts',
@@ -274,4 +302,42 @@ test('checkCiVerdict makes ambient-red carry a justification comment that exists
   const url = 'https://github.com/o/r/pull/1080#issuecomment-1'
   assert.match(checkCiVerdict({ ciVerdict: 'ambient-red', justificationCommentUrl: url }, [])[0], /not a comment/)
   assert.deepEqual(checkCiVerdict({ ciVerdict: 'ambient-red', justificationCommentUrl: url }, [url]), [])
+})
+
+// ---------- branch purity: reasoned additions (#1422) ----------
+
+test('checkBranchPurity excuses declared extra files when a reason is given', () => {
+  // A PR grows after IMPLEMENT: the whole-file burst and the force-fails surface
+  // defects in surfaces the plan never named, and the IMPLEMENT list cannot be
+  // re-declared once the step is complete. #1422 grew a sidebar-click repair and
+  // two pipeline fixes that way, both on the user's explicit decision.
+  const problems = checkBranchPurity(
+    ['tests/a.spec.ts', 'tests/helpers/b.ts'],
+    ['tests/a.spec.ts'],
+    { extraFiles: ['tests/helpers/b.ts'], extraFilesReason: 'repair surfaced by the burst' },
+  )
+  assert.deepEqual(problems, [])
+})
+
+test('checkBranchPurity still fails an UNDECLARED foreign file', () => {
+  // #1060's guard intact: the danger is a file nobody accounts for.
+  const problems = checkBranchPurity(
+    ['tests/a.spec.ts', 'scripts/someone-elses.mjs'],
+    ['tests/a.spec.ts'],
+    { extraFiles: ['tests/helpers/b.ts'], extraFilesReason: 'unrelated' },
+  )
+  assert.equal(problems.length, 2)
+  assert.ok(problems.some(p => /someone-elses\.mjs/.test(p)))
+  // …and the stale half of the declaration is reported too.
+  assert.ok(problems.some(p => /does not change — drop it/.test(p)))
+})
+
+test('checkBranchPurity refuses extraFiles with no reason', () => {
+  const problems = checkBranchPurity(
+    ['tests/a.spec.ts', 'tests/helpers/b.ts'],
+    ['tests/a.spec.ts'],
+    { extraFiles: ['tests/helpers/b.ts'] },
+  )
+  assert.ok(problems.some(p => /needs evidence\.extraFilesReason/.test(p)))
+  assert.ok(problems.some(p => /never touched: tests\/helpers\/b\.ts/.test(p)))
 })

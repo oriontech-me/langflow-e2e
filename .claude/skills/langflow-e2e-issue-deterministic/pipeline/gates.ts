@@ -89,11 +89,26 @@ export function checkQuarantineLifted(
 ): string[] {
   if (!QUARANTINE_RE.test(issueBody)) return []
   const problems: string[] = []
+  // A touched spec can carry a `test.fixme` that belongs to ANOTHER issue, and
+  // demanding its lift here is asking one PR to close someone else's
+  // investigation. #1422 hit exactly that: its body arms this gate through the
+  // template's "Quarantine lifted" deliverable while quarantining nothing
+  // itself (the workflow only auto-removed `@stable`), and the surviving
+  // `.fixme` in the same file is #1266's — a transport-level flake its body
+  // explicitly excludes as a different cause. So the flag is scoped to the
+  // tests the issue actually NAMES, the same attribution the `@stable` half
+  // below already uses.
+  //
+  // Fallback, deliberately strict: if the body arms the gate but names none of
+  // the touched titles, every `.fixme` is flagged as before — an issue we
+  // cannot attribute must not be the one that slips a muted test through.
+  const named = (e: TestEntry) => issueBody.includes(e.title)
+  const anyNamed = files.some(f => f.entries.some(named))
   for (const { file, entries } of files) {
     for (const e of entries) {
-      if (e.modifier === '.fixme') {
-        problems.push(`quarantine not lifted: test.fixme still on "${e.title}" in ${file}`)
-      }
+      if (e.modifier !== '.fixme') continue
+      if (anyNamed && !named(e)) continue
+      problems.push(`quarantine not lifted: test.fixme still on "${e.title}" in ${file}`)
     }
   }
   if (RESTORE_STABLE_RE.test(issueBody)) {
@@ -221,13 +236,43 @@ export const BRANCH_RE = /^(test|fix|docs|chore|feat|refactor)\/issue-\d+-[a-z0-
  * absorbs that session's commit into the PR (#1060 — caught by hand).
  * `changed === null` means the base ref could not be resolved: fail closed.
  */
-export function checkBranchPurity(changed: string[] | null, allowed: string[]): string[] {
+export function checkBranchPurity(
+  changed: string[] | null,
+  allowed: string[],
+  declared?: { extraFiles?: unknown; extraFilesReason?: unknown },
+): string[] {
   if (changed === null) {
     return ['could not diff against the base ref (git fetch origin?) — branch purity unverified']
   }
   const ok = new Set(allowed)
-  return changed.filter(f => !ok.has(f))
-    .map(f => `branch carries a file the pipeline never touched: ${f} (another session's commit? rebase with --onto)`)
+  // A PR legitimately grows after IMPLEMENT: VALIDATE and FORCE_FAIL run the
+  // whole touched file and surface defects in surfaces the plan had not named
+  // (#1422 grew a sidebar-click repair and two pipeline fixes that way, both on
+  // the user's explicit decision). The list frozen at IMPLEMENT cannot be
+  // re-declared — the step is complete — so the PR step declares the additions
+  // WITH a written reason. Unreasoned additions still fail, which is the whole
+  // point of #1060's guard: the danger is a file nobody can account for, not a
+  // file the author accounts for in writing.
+  const extra = Array.isArray(declared?.extraFiles)
+    ? declared!.extraFiles.filter((f): f is string => typeof f === 'string')
+    : []
+  const reason = typeof declared?.extraFilesReason === 'string'
+    ? declared.extraFilesReason.trim()
+    : ''
+  const problems: string[] = []
+  if (extra.length > 0 && reason === '') {
+    problems.push('evidence.extraFiles needs evidence.extraFilesReason — say why each file belongs to THIS issue')
+  }
+  const excused = reason === '' ? new Set<string>() : new Set(extra)
+  problems.push(...changed
+    .filter(f => !ok.has(f) && !excused.has(f))
+    .map(f => `branch carries a file the pipeline never touched: ${f} (another session's commit? rebase with --onto — or declare it in evidence.extraFiles with a reason)`))
+  // A declaration that names files the branch does not carry is stale, and a
+  // stale exemption is the failure mode #1084 was raised about.
+  problems.push(...extra
+    .filter(f => !changed.includes(f))
+    .map(f => `evidence.extraFiles names ${f}, which this branch does not change — drop it`))
+  return problems
 }
 
 /**

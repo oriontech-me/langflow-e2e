@@ -2,7 +2,8 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import type {
-  FFEntry, Phase, PipelineState, PwStats, ReproRate, RunClass, RunRecord,
+  BackendAmbient, FFEntry, Phase, PipelineState, PwStats, ReproRate, RunClass,
+  RunRecord,
 } from './types.ts'
 import {
   initState, loadState, saveState, ensureStep, completeStep, escalateToDebug,
@@ -89,6 +90,12 @@ function classOf(r: RunRecord): RunClass {
     : 'real-failure')
 }
 
+/** A run counts toward the burst when the spec answered green. */
+function countsAsClean(r: RunRecord): boolean {
+  const c = classOf(r)
+  return c === 'clean' || c === 'clean-ambient'
+}
+
 /**
  * Run a spec, classifying infra aborts as void and retrying them, so a wedged
  * backend never masquerades as a spec verdict. Returns the classified runs;
@@ -96,17 +103,23 @@ function classOf(r: RunRecord): RunClass {
  */
 function runUntilClean(
   args: string[], target: string, needed: number, existing: RunRecord[], notes: string[],
+  ambient?: BackendAmbient,
 ): { records: RunRecord[]; voids: number; realFailure: boolean } {
   const records: RunRecord[] = []
   let voids = existing.filter(r => r.target === target && classOf(r) === 'infra-void').length
-  let clean = existing.filter(r => r.target === target && classOf(r) === 'clean').length
+  let clean = existing.filter(r => r.target === target && countsAsClean(r)).length
   while (clean < needed) {
     const run = runPlaywright(args)
     if (!run.stats) throw new Error(`could not parse playwright JSON for ${target}`)
-    const cls = classifyRun(run.stats)
+    const cls = classifyRun(run.stats, ambient)
     records.push({ target, stats: run.stats, class: cls })
     notes.push(`run ${clean + 1}/${needed} ${target}: ${cls} expected=${run.stats.expected} unexpected=${run.stats.unexpected} flaky=${run.stats.flaky} backendErrors=${run.stats.backendErrors}`)
     if (cls === 'clean') { clean++; continue }
+    if (cls === 'clean-ambient') {
+      clean++
+      notes.push(`  ↳ counted clean: every backend error matched a declared ambient pattern — ${ambient?.reason ?? ''}`)
+      continue
+    }
     if (cls === 'infra-void') {
       voids++
       notes.push(`  ↳ voided: every failure carries an environment signature (auto_login/socket hang up/connection) — not counted, re-running`)
@@ -223,6 +236,7 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
       runs?: RunRecord[]
       typecheck?: number; lint?: number; nightly?: Record<string, string | null>
       qaDiff?: string[]
+      backendAmbient?: BackendAmbient
     }
     ev.runs ??= []
     const instance = await getInstanceVersion(process.env.PLAYWRIGHT_BASE_URL ?? 'http://localhost:7860')
@@ -233,6 +247,17 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
     } else {
       notes.push(`nightly: instance=${instance} latest=${latest}`)
     }
+    // A declared-ambient backend error, with its written reason (#1422). The
+    // pair is stored in the evidence so the PR can quote what was excused, and
+    // a pattern without a reason is refused rather than obeyed.
+    if (flags['ambient-backend'] !== undefined) {
+      const patterns = flags['ambient-backend'].split('|').map(x => x.trim()).filter(Boolean)
+      const reason = (flags['ambient-reason'] ?? '').trim()
+      if (patterns.length === 0) fail('--ambient-backend needs at least one non-empty pattern')
+      if (reason === '') fail('--ambient-backend requires --ambient-reason "<why this is not the issue\'s defect>"')
+      ev.backendAmbient = { patterns, reason }
+    }
+    const ambient = ev.backendAmbient
     const targets = flags.spec ? [flags.spec]
       : flags.grep ? [`--grep:${flags.grep}`]
       : touchedSpecFiles()
@@ -242,7 +267,7 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
         : [t, '--retries=0', '--workers=1']
       let outcome
       try {
-        outcome = runUntilClean(args, t, BURST, ev.runs, notes)
+        outcome = runUntilClean(args, t, BURST, ev.runs, notes, ambient)
       } catch (e) {
         saveState(s)
         fail(e instanceof Error ? e.message : String(e))
@@ -276,11 +301,17 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
       touchedSpecFiles().map(f => ({ file: f, diff: gitDiffOf(f) })))
     notes.push(`FF coverage: ${missing.length === 0 ? 'complete' : missing.join('; ')}`)
     notes.push(dirty.length ? dirty.join('; ') : 'no FF-MUTATION markers in diff ✓')
+    // The ambient declaration VALIDATE ran under applies here too (#1422): the
+    // final green run is the same spec on the same instance, so honouring it in
+    // one phase and not the other leaves FORCE_FAIL unclosable for a reason
+    // VALIDATE already examined and wrote down.
+    const ffAmbient = (s.steps.VALIDATE?.evidence as { backendAmbient?: BackendAmbient })
+      ?.backendAmbient
     if (missing.length === 0 && dirty.length === 0 && !ev.finalGreen) {
       for (const { file } of required) {
         let outcome
         try {
-          outcome = runUntilClean([file, '--retries=0', '--workers=1'], file, 1, [], notes)
+          outcome = runUntilClean([file, '--retries=0', '--workers=1'], file, 1, [], notes, ffAmbient)
         } catch (e) {
           saveState(s)
           fail(e instanceof Error ? e.message : String(e))
@@ -367,7 +398,11 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
     }
     const runs = ev.runs ?? []
     for (const target of touchedSpecFiles()) {
-      const greens = runs.filter(r => r.target === target && classOf(r) === 'clean')
+      // Same predicate the burst counts with (#1422): a run whose only backend
+      // error was declared ambient, with a written reason, is a clean run here
+      // too — counting it in one place and not the other is how the phase could
+      // never close on evidence it had already accepted.
+      const greens = runs.filter(r => r.target === target && countsAsClean(r))
       const voids = runs.filter(r => r.target === target && classOf(r) === 'infra-void')
       if (greens.length < BURST) {
         const voidNote = voids.length ? ` (${voids.length} run(s) voided on environment signatures)` : ''
@@ -418,7 +453,12 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
           isWave: s.issueData?.milestone != null,
           labels: s.issueData?.labels ?? [],
         }))
-        problems.push(...checkBranchPurity(gitChangedVsBase(), allowedBranchFiles(s)))
+        // `evidence` is the payload being recorded by THIS call; `rec.evidence`
+        // is what a previous attempt left behind. Reading the stale one meant a
+        // declaration could never be accepted on the attempt that made it.
+        problems.push(...checkBranchPurity(
+          gitChangedVsBase(), allowedBranchFiles(s),
+          evidence as { extraFiles?: unknown; extraFilesReason?: unknown }))
         problems.push(...checkCiVerdict(evidence, commentUrls))
         // A symptom another issue owns must be visible to the reviewer, or the
         // PR reads as if it closed a cause it never touched.

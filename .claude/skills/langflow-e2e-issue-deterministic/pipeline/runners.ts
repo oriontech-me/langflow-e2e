@@ -66,6 +66,10 @@ export function parsePwJson(raw: string): PwStats | null {
     skipped: s.skipped ?? 0,
     durationMs: Math.round(s.duration ?? 0),
     backendErrors: raw.includes('🚨 Backend Error'),
+    backendErrorLines: raw
+      .split('\n')
+      .filter(l => l.includes('🚨 Backend Error'))
+      .map(l => l.trim()),
     failureMessages,
   }
 }
@@ -79,8 +83,19 @@ export function parsePwJson(raw: string): PwStats | null {
  * backend-error log — stays a real failure, so the classification can never
  * silence a genuine red.
  */
-export function classifyRun(stats: PwStats): RunClass {
+export function classifyRun(stats: PwStats, ambient?: BackendAmbient): RunClass {
   if (stats.unexpected === 0 && stats.flaky === 0 && !stats.backendErrors) return 'clean'
+  // A declared ambient backend error counts as clean ONLY when the run is
+  // otherwise green AND every logged line matches a declared pattern: one
+  // unmatched line keeps the run a real failure, so a declaration can never
+  // blanket-silence the monitor the way `allowHttpErrors()` on the spec would
+  // (#1084's lesson, applied to the pipeline instead of the fixture).
+  if (
+    stats.unexpected === 0 && stats.flaky === 0 &&
+    ambient && ambient.patterns.length > 0 && ambient.reason.trim() !== '' &&
+    stats.backendErrorLines.length > 0 &&
+    stats.backendErrorLines.every(l => ambient.patterns.some(p => l.includes(p)))
+  ) return 'clean-ambient'
   const msgs = stats.failureMessages
   if (msgs.length > 0 && msgs.every(isInfraFailure)) return 'infra-void'
   return 'real-failure'

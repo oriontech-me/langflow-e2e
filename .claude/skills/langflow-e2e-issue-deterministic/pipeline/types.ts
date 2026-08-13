@@ -42,6 +42,17 @@ export interface PwStats {
   skipped: number
   durationMs: number
   backendErrors: boolean
+  /**
+   * Every `🚨 Backend Error: …` line the run printed.
+   *
+   * The boolean above cannot be justified, only obeyed: it says a 4xx/5xx was
+   * logged, not which one, so a run that is green except for a backend error
+   * the repo already treats as ambient had no way through the burst (#1422 —
+   * `500 /api/v1/flows/`, `OperationalError: database is locked` on the bulk
+   * delete the UI issues, 8 of 8 tests passing). Keeping the lines lets a
+   * declaration be matched against what actually fired.
+   */
+  backendErrorLines: string[]
   /** Error messages of every non-passing result — the input to classifyRun. */
   failureMessages: string[]
 }
@@ -51,7 +62,17 @@ export interface PwStats {
  * dropping /api/v1/auto_login, a socket hang up) says nothing about the spec.
  * It is voided and re-run, never counted as a failure or as a clean run.
  */
-export type RunClass = 'clean' | 'infra-void' | 'real-failure'
+export type RunClass = 'clean' | 'clean-ambient' | 'infra-void' | 'real-failure'
+
+/**
+ * A declared-ambient backend error: substrings that may appear in a run's
+ * `🚨 Backend Error` lines, plus the written reason they are not this issue's
+ * defect. Both halves are required — a pattern with no reason is a mute.
+ */
+export interface BackendAmbient {
+  patterns: string[]
+  reason: string
+}
 
 export interface RunRecord {
   target: string

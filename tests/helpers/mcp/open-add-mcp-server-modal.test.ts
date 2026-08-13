@@ -16,7 +16,10 @@ import assert from "node:assert/strict";
 import { classifyInfraError } from "../../../scripts/lib/infra-signatures";
 import {
   MCP_SERVER_ENTRY_TIMEOUT_MS,
+  SIDEBAR_MODAL_ATTEMPTS,
+  SIDEBAR_MODAL_ATTEMPT_MS,
   missingMcpServerEntryMessage,
+  sidebarModalNeverOpenedMessage,
 } from "./open-add-mcp-server-modal";
 
 test("an empty canvas is reported as a swallowed add, not as a slow widget", () => {
@@ -69,4 +72,38 @@ test("neither verdict is classifiable as an infra failure", () => {
       null,
     );
   }
+});
+
+// ---- sidebar entry point (#1422) ----
+
+test("a sidebar modal that never opens is reported as a dropped click, not a slow modal", () => {
+  // The assertion this replaced said `element(s) not found` for
+  // `add-mcp-server-button` after 15 s — indistinguishable from a late modal,
+  // which is what sent the reader at the budget. The repo has measured the real
+  // class four times over (#1304: 14 of 14 dropped adds repaired by an
+  // identical second click), so the message has to name the retries as spent.
+  const msg = sidebarModalNeverOpenedMessage({
+    trigger: "sidebar-add-mcp-server-button",
+    attempts: SIDEBAR_MODAL_ATTEMPTS,
+    perAttemptMs: SIDEBAR_MODAL_ATTEMPT_MS,
+  });
+
+  assert.match(msg, /sidebar-add-mcp-server-button/);
+  assert.match(msg, /dropped sidebar click/i);
+  assert.match(msg, /not as a slow modal/i);
+  assert.match(msg, new RegExp(`${SIDEBAR_MODAL_ATTEMPTS} click\\(s\\)`));
+});
+
+test("the message names WHICH of the two triggers was clicked", () => {
+  // The two variants render on mutually exclusive states (no server registered
+  // vs one or more), so a failure that does not say which one it used leaves
+  // the reader unable to reproduce the state that produced it.
+  const msg = sidebarModalNeverOpenedMessage({
+    trigger: "add-mcp-server-button-sidebar",
+    attempts: 3,
+    perAttemptMs: 8000,
+  });
+
+  assert.match(msg, /add-mcp-server-button-sidebar/);
+  assert.doesNotMatch(msg, /sidebar-add-mcp-server-button"/);
 });

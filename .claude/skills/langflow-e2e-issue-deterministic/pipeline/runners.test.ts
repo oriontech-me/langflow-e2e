@@ -167,3 +167,74 @@ test('enumerateRunnableTests drops fixme/skip — a muted test cannot be force-f
     ['quarantined one', 'promoted one', 'untagged one'],
   )
 })
+
+// ---------- declared-ambient backend errors (#1422) ----------
+
+const greenWithBackendError = (lines: string[]): PwStats => ({
+  expected: 8, unexpected: 0, flaky: 0, skipped: 0, durationMs: 100_000,
+  backendErrors: lines.length > 0, backendErrorLines: lines, failureMessages: [],
+})
+
+const FLOWS_500 = '🚨 Backend Error: 500 Internal Server Error - http://localhost:7860/api/v1/flows/'
+
+test('a green run whose only backend error is declared ambient counts as clean', () => {
+  // #1422: 8 of 8 tests passed on 1.12.0.dev25 while the UI's bulk
+  // DELETE /api/v1/flows/ answered 500 (`OperationalError: database is locked`,
+  // flows.py:993). Without this the burst could never close on this file, and
+  // the alternatives were worse: `allowHttpErrors()` on the spec blinds the
+  // monitor #1084 exists for, and a mute with no written reason is how an
+  // exemption outlives its justification.
+  const cls = classifyRun(greenWithBackendError([FLOWS_500]), {
+    patterns: ['500 Internal Server Error - http://localhost:7860/api/v1/flows/'],
+    reason: 'SQLite lock on the UI bulk delete; 8/8 tests pass',
+  })
+  assert.equal(cls, 'clean-ambient')
+})
+
+test('one UNDECLARED backend error keeps the run a real failure', () => {
+  // The load-bearing half: a declaration excuses what it names and nothing
+  // else, so it cannot become a blanket `allowHttpErrors()` for the burst.
+  const cls = classifyRun(
+    greenWithBackendError([FLOWS_500, '🚨 Backend Error: 500 - http://localhost:7860/api/v2/mcp/servers/x']),
+    { patterns: ['/api/v1/flows/'], reason: 'ambient SQLite lock' },
+  )
+  assert.equal(cls, 'real-failure')
+})
+
+test('a declaration without a reason is not honoured', () => {
+  // The CLI refuses this pair up front; the classifier refuses it too, so the
+  // guarantee does not depend on which entry point wrote the evidence.
+  const cls = classifyRun(greenWithBackendError([FLOWS_500]), {
+    patterns: ['/api/v1/flows/'], reason: '   ',
+  })
+  assert.equal(cls, 'real-failure')
+})
+
+test('a declaration cannot excuse a FAILING test', () => {
+  // Only the backend-error half is excusable: an actual red stays red, however
+  // ambient the accompanying HTTP noise is.
+  const stats: PwStats = {
+    expected: 7, unexpected: 1, flaky: 0, skipped: 0, durationMs: 100_000,
+    backendErrors: true, backendErrorLines: [FLOWS_500],
+    failureMessages: ['Error: expect(locator).toBeVisible() failed'],
+  }
+  assert.equal(
+    classifyRun(stats, { patterns: ['/api/v1/flows/'], reason: 'ambient' }),
+    'real-failure',
+  )
+})
+
+test('parsePwJson keeps every backend-error line, not just a boolean', () => {
+  // The boolean can only be obeyed; the lines are what a declaration is matched
+  // against, and what the PR body has to quote.
+  const raw = [
+    FLOWS_500,
+    '🚨 Backend Error: 422 Unprocessable Content - http://localhost:7860/api/v2/mcp/servers/x',
+    '{"stats":{"expected":8,"unexpected":0,"flaky":0,"skipped":0,"duration":1000}}',
+  ].join('\n')
+  const stats = parsePwJson(raw)
+  assert.ok(stats)
+  assert.equal(stats!.backendErrors, true)
+  assert.equal(stats!.backendErrorLines.length, 2)
+  assert.match(stats!.backendErrorLines[0], /api\/v1\/flows/)
+})

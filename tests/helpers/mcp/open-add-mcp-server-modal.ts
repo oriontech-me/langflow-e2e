@@ -48,6 +48,97 @@ export function missingMcpServerEntryMessage(d: {
   );
 }
 
+/** Attempts the sidebar entry point makes before it reports a swallowed click. */
+export const SIDEBAR_MODAL_ATTEMPTS = 3;
+
+/** Per-attempt budget for the modal to paint after the sidebar click. */
+export const SIDEBAR_MODAL_ATTEMPT_MS = 8000;
+
+/**
+ * Names the cause when the sidebar's "Add MCP Server" never opens the modal —
+ * issue #1422, same defect class as #1304/#1335.
+ *
+ * The assertion this replaced read `element(s) not found` for
+ * `add-mcp-server-button` after a 15 s wait, which says the modal is late. It is
+ * not late: the sidebar click is DROPPED, and the repo has measured that class
+ * on four other surfaces (14 of 14 repaired by an identical second click,
+ * #1304). A budget cannot repair a click that never landed, so the caller
+ * retries instead — and when even the retries fail, the message has to say
+ * which of the two triggers it clicked, or the next reader re-derives it.
+ */
+export function sidebarModalNeverOpenedMessage(d: {
+  trigger: string;
+  attempts: number;
+  perAttemptMs: number;
+}): string {
+  return (
+    `[openAddMcpServerModalFromSidebar] the modal never opened after ` +
+    `${d.attempts} click(s) on "${d.trigger}" (${d.perAttemptMs}ms each). ` +
+    `A dropped sidebar click is the #1304/#1335 class and is repaired by a ` +
+    `second click, so ${d.attempts} failed attempts mean the trigger no longer ` +
+    `opens this modal at all — treat it as a Langflow change to the sidebar ` +
+    `entry point, not as a slow modal.`
+  );
+}
+
+/**
+ * Opens the "Add MCP Server" modal from the **sidebar's** MCP tab, repairing a
+ * swallowed click.
+ *
+ * Two triggers exist depending on whether any server is registered
+ * (`sidebar-add-mcp-server-button` / `add-mcp-server-button-sidebar`), and they
+ * cannot be told apart by a snap read: `isVisible({ timeout })` IGNORES the
+ * timeout (Playwright deprecates the option), so the inline version of this in
+ * `mcp-server.spec.ts` decided the branch in ~1 ms and could pick the fallback
+ * before either had painted. Waiting for `.or()` first removes that.
+ */
+export async function openAddMcpServerModalFromSidebar(page: Page) {
+  const primary = page.getByTestId("sidebar-add-mcp-server-button");
+  const fallback = page.getByTestId("add-mcp-server-button-sidebar");
+
+  await expect(primary.or(fallback)).toBeVisible({
+    timeout: MCP_SERVER_ENTRY_TIMEOUT_MS,
+  });
+
+  const usePrimary = await primary.isVisible();
+  const trigger = usePrimary ? primary : fallback;
+  const triggerName = usePrimary
+    ? "sidebar-add-mcp-server-button"
+    : "add-mcp-server-button-sidebar";
+  const modal = page.getByTestId("add-mcp-server-button");
+
+  for (let attempt = 1; attempt <= SIDEBAR_MODAL_ATTEMPTS; attempt++) {
+    // `evaluate(el => el.click())` on the primary keeps the gesture the spec
+    // used before this helper existed: the sidebar item intercepts pointer
+    // events on the row, and a plain click lands on the wrapper.
+    if (usePrimary) {
+      await trigger.evaluate((el) => (el as HTMLElement).click());
+    } else {
+      await trigger.click({ timeout: SIDEBAR_MODAL_ATTEMPT_MS });
+    }
+
+    const opened = await modal
+      .waitFor({ state: "visible", timeout: SIDEBAR_MODAL_ATTEMPT_MS })
+      .then(() => true)
+      .catch(() => false);
+    if (opened) return;
+
+    // eslint-disable-next-line no-console
+    console.warn(
+      `⚠️  sidebar "Add MCP Server" click swallowed — retrying ` +
+        `(${attempt}/${SIDEBAR_MODAL_ATTEMPTS}, #1422/#1304 class)`,
+    );
+  }
+
+  throw new Error(
+    sidebarModalNeverOpenedMessage({
+      trigger: triggerName,
+      attempts: SIDEBAR_MODAL_ATTEMPTS,
+      perAttemptMs: SIDEBAR_MODAL_ATTEMPT_MS,
+    }),
+  );
+}
+
 /**
  * Opens the "Add MCP Server" modal from an MCP component on the canvas.
  *

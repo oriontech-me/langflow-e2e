@@ -3,12 +3,16 @@ import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { openAddMcpServerModal } from "../../../../helpers/mcp/open-add-mcp-server-modal";
+import {
+  openAddMcpServerModal,
+  openAddMcpServerModalFromSidebar,
+} from "../../../../helpers/mcp/open-add-mcp-server-modal";
 import { addComponentFromSidebarWithoutSearch } from "../../../../helpers/flows/add-component-from-sidebar";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
+import { waitForMcpToolOption } from "../../../../helpers/mcp/wait-for-mcp-tool-option";
 
 /**
  * Add-MCP-Server modal: stdio / HTTP registration, field persistence and tool
@@ -67,6 +71,41 @@ async function listMcpServerNames(page: Page): Promise<string[]> {
   }
   const servers: Array<{ name: string }> = await resp.json();
   return servers.map((s) => s.name);
+}
+
+/**
+ * The server's row in **Settings → MCP Servers**, addressed by the row's own
+ * name span (#1422).
+ *
+ * A bare `getByText(name)` is AMBIGUOUS on that page: when the server carries an
+ * error the row also renders an `sr-only` span reading "<name> error: …", so the
+ * locator resolves to two elements and every visibility assertion dies as a
+ * strict-mode violation — the flake the 2026-08-11 daily recorded on this file
+ * at `:588`, reproduced twice in a single full-file run on 1.12.0.dev25
+ * (`test_stdio_server_… error: Error loading serv…`,
+ * `test_http_server_… error: Configuration error…`). Anchoring on
+ * `mcp_server_name_<n>` also makes the assertion mean "the row is listed"
+ * rather than "this string appears somewhere on the page".
+ */
+function mcpServerRow(page: Page, name: string) {
+  return page
+    .locator('[data-testid^="mcp_server_name_"]')
+    .filter({ hasText: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`) });
+}
+
+/**
+ * Selects `name` as the MCP server on the component currently open in the
+ * inspector — the gesture this file already performed inline after each re-open
+ * ("Re-select the server after returning to flow"), now shared so the
+ * precondition reads the same in all three places (#1422).
+ */
+async function selectMcpServerOnNode(page: Page, name: string) {
+  await page.waitForSelector('[data-testid="mcp-server-dropdown"]', {
+    timeout: 30000,
+    state: "visible",
+  });
+  await page.getByTestId("mcp-server-dropdown").click();
+  await page.getByTestId(`list_item_${name}`).click({ timeout: 10000 });
 }
 
 test.beforeEach(async ({ page }) => {
@@ -260,7 +299,7 @@ test.fixme("user must be able to change mode of MCP tools without any issues",
       timeout: 3000,
     });
 
-    await expect(page.getByText(testName)).toBeVisible({
+    await expect(mcpServerRow(page, testName)).toBeVisible({
       timeout: 3000,
     });
 
@@ -329,7 +368,7 @@ test.fixme("user must be able to change mode of MCP tools without any issues",
       timeout: 3000,
     });
 
-    await expect(page.getByText(testName)).not.toBeVisible({
+    await expect(mcpServerRow(page, testName)).toHaveCount(0, {
       timeout: 10000,
     });
   },
@@ -401,7 +440,7 @@ test("user must be able to add and delete MCP server from sidebar",
     await page.waitForSelector('[data-testid="add-mcp-server-button-page"]', {
       timeout: 10000,
     });
-    await expect(page.getByText(testName)).toBeVisible({ timeout: 5000 });
+    await expect(mcpServerRow(page, testName)).toBeVisible({ timeout: 5000 });
 
     // Delete the server from Settings
     await page
@@ -415,7 +454,9 @@ test("user must be able to add and delete MCP server from sidebar",
     await page
       .getByTestId("btn_delete_delete_confirmation_modal")
       .click({ timeout: 3000 });
-    await expect(page.getByText(testName)).not.toBeVisible({ timeout: 10000 });
+    await expect(mcpServerRow(page, testName)).toHaveCount(0, {
+      timeout: 10000,
+    });
     await page.goto("/");
   },
 );
@@ -515,7 +556,7 @@ test("STDIO MCP server fields should persist after saving and editing",
     });
 
     // Find and edit the server
-    await expect(page.getByText(testName)).toBeVisible({
+    await expect(mcpServerRow(page, testName)).toBeVisible({
       timeout: 3000,
     });
 
@@ -586,7 +627,7 @@ test("STDIO MCP server fields should persist after saving and editing",
 );
 
 test("HTTP/SSE MCP server fields should persist after saving and editing",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
 
@@ -683,7 +724,7 @@ test("HTTP/SSE MCP server fields should persist after saving and editing",
     });
 
     // Find and edit the server
-    await expect(page.getByText(testName)).toBeVisible({
+    await expect(mcpServerRow(page, testName)).toBeVisible({
       timeout: 10000,
     });
 
@@ -778,7 +819,7 @@ test("HTTP/SSE MCP server fields should persist after saving and editing",
 );
 
 test("mcp server tools should be refreshed when editing a server",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@stable", "@release", "@workspace", "@components", "@mcp"] },
   async ({ page }) => {
     // Three `TOOL_LIST_TIMEOUT` waits (register A, edit to B, re-register A)
     // plus the settings round-trips do not fit the suite's 5-minute per-test
@@ -885,19 +926,28 @@ test("mcp server tools should be refreshed when editing a server",
       timeout: 30000,
     });
 
-    await page.waitForSelector(
-      '[data-testid="dropdown_str_tool"]:not([disabled])',
-      {
-        timeout: TOOL_LIST_TIMEOUT,
-        state: "visible",
-      },
-    );
+    // Select server A on the node explicitly, exactly as the two re-opens
+    // further down already do. Whether the modal's own creation ALSO leaves the
+    // node bound to it is a separate behaviour, and an unreliable one: in a
+    // full-file run on 1.12.0.dev25 the component was measured back on
+    // `lf-starter_project` after creating `test_server_26480` (1 of 4 full-file
+    // runs; 0 of 6 with this test run alone), which made the tool list resolve
+    // — correctly — for the wrong server. That is filed on its own; this test's
+    // subject is the REFRESH on edit, so it states its precondition instead of
+    // inheriting it. The helper still fails naming the binding if it is ever
+    // wrong from here on, so this is a precondition, not a mute.
+    await selectMcpServerOnNode(page, testName);
 
-    await page.getByTestId("dropdown_str_tool").click();
-
-    await page.waitForSelector('[data-testid="sequentialthinking-0-option"]', {
-      state: "visible",
-      timeout: 10000,
+    // Server A's tool list, waited for on the option itself — never on
+    // `dropdown_str_tool:not([disabled])`, which is satisfied 113-145 ms after
+    // the modal closes AND in the error state (#1422). The helper spends
+    // TOOL_LIST_TIMEOUT here, where a cold `npx` fetch actually costs it, and
+    // re-queries through the dropdown's own refresh when the node reports
+    // "Error loading server: …" — the state all three attempts of the
+    // 2026-08-11 daily died in, which no wait can clear.
+    await waitForMcpToolOption(page, "sequentialthinking-0-option", {
+      timeout: TOOL_LIST_TIMEOUT,
+      serverName: testName,
     });
 
     const sequentialOptionCount = await page
@@ -947,7 +997,7 @@ test("mcp server tools should be refreshed when editing a server",
       timeout: 30000,
     });
 
-    await expect(page.getByText(testName)).toBeVisible({
+    await expect(mcpServerRow(page, testName)).toBeVisible({
       timeout: 10000,
     });
 
@@ -1022,28 +1072,14 @@ test("mcp server tools should be refreshed when editing a server",
     await page.getByText("MCP Tools", { exact: true }).last().click();
     await adjustScreenView(page);
     // Re-select the server after returning to flow (server reference may be lost after editing)
-    await page.waitForSelector('[data-testid="mcp-server-dropdown"]', {
-      timeout: 30000,
-      state: "visible",
-    });
-    await page.getByTestId("mcp-server-dropdown").click();
-    await page.getByTestId(`list_item_${testName}`).click({ timeout: 10000 });
-
-    await page.waitForSelector(
-      '[data-testid="dropdown_str_tool"]:not([disabled])',
-      {
-        timeout: TOOL_LIST_TIMEOUT,
-        state: "visible",
-      },
-    );
-
-    await page.getByTestId("dropdown_str_tool").click();
+    await selectMcpServerOnNode(page, testName);
 
     // The refresh under test: the node must serve server B's tools, not the
-    // sequential-thinking list it cached before the edit.
-    await page.waitForSelector('[data-testid="echo-0-option"]', {
-      state: "visible",
-      timeout: 10000,
+    // sequential-thinking list it cached before the edit. Same wait strategy as
+    // above (#1422) — the option, not the enabled control.
+    await waitForMcpToolOption(page, "echo-0-option", {
+      timeout: TOOL_LIST_TIMEOUT,
+      serverName: testName,
     });
 
     const echoOptionCount = await page.getByTestId("echo-0-option").count();
@@ -1091,7 +1127,7 @@ test("mcp server tools should be refreshed when editing a server",
       timeout: 10000,
     });
 
-    await expect(page.getByText(testName)).not.toBeVisible({
+    await expect(mcpServerRow(page, testName)).toHaveCount(0, {
       timeout: 10000,
     });
 
@@ -1117,7 +1153,7 @@ test("mcp server tools should be refreshed when editing a server",
 
     await page.getByTestId("add-mcp-server-button").click();
 
-    await expect(page.getByText(testName)).toBeVisible({
+    await expect(mcpServerRow(page, testName)).toBeVisible({
       timeout: 10000,
     });
 
@@ -1134,26 +1170,12 @@ test("mcp server tools should be refreshed when editing a server",
     await page.getByText("MCP Tools", { exact: true }).last().click();
 
     // Re-select the server after returning to flow (server reference may be lost after editing)
-    await page.waitForSelector('[data-testid="mcp-server-dropdown"]', {
-      timeout: 30000,
-      state: "visible",
-    });
-    await page.getByTestId("mcp-server-dropdown").click();
-    await page.getByTestId(`list_item_${testName}`).click({ timeout: 10000 });
+    await selectMcpServerOnNode(page, testName);
 
-    await page.waitForSelector(
-      '[data-testid="dropdown_str_tool"]:not([disabled])',
-      {
-        timeout: TOOL_LIST_TIMEOUT,
-        state: "visible",
-      },
-    );
-
-    await page.getByTestId("dropdown_str_tool").click();
-
-    await page.waitForSelector('[data-testid="sequentialthinking-0-option"]', {
-      state: "visible",
-      timeout: 10000,
+    // Back to server A's tool list — same wait strategy (#1422).
+    await waitForMcpToolOption(page, "sequentialthinking-0-option", {
+      timeout: TOOL_LIST_TIMEOUT,
+      serverName: testName,
     });
 
     const sequentialOptionCount2 = await page
@@ -1165,7 +1187,7 @@ test("mcp server tools should be refreshed when editing a server",
 );
 
 test("Streamable HTTP MCP server with server-everything should load tools correctly",
-  { tag: ["@release", "@workspace", "@components", "@mcp"] },
+  { tag: ["@release", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
     (page as any).allowFlowErrors();
     await awaitBootstrapTest(page);
@@ -1195,19 +1217,13 @@ test("Streamable HTTP MCP server with server-everything should load tools correc
     await page.getByTestId("blank-flow").click();
     await page.getByTestId("sidebar-nav-mcp").click();
 
-    // Sidebar trigger has two testid variants depending on whether MCP servers already
-    // exist — match the fallback pattern used by other tests in this file (lines 211-218).
-    const sidebarButton = page.getByTestId("sidebar-add-mcp-server-button");
-    const fallbackButton = page.getByTestId("add-mcp-server-button-sidebar");
-    if (await sidebarButton.isVisible({ timeout: 15000 }).catch(() => false)) {
-      await sidebarButton.evaluate((el) => (el as HTMLElement).click());
-    } else {
-      await fallbackButton.click();
-    }
-
-    await expect(page.getByTestId("add-mcp-server-button")).toBeVisible({
-      timeout: 15000,
-    });
+    // Both sidebar trigger variants, plus the swallowed-click repair (#1422).
+    // The inline branch this replaced read `isVisible({ timeout: 15000 })`,
+    // whose timeout Playwright IGNORES, so it committed to a branch in ~1 ms;
+    // and when the click was dropped — the #1304/#1335 class, measured on four
+    // other surfaces — the 15 s wait below reported `element(s) not found` for
+    // the modal, which reads as a slow modal rather than a lost click.
+    await openAddMcpServerModalFromSidebar(page);
 
     // Switch to HTTP tab for Streamable HTTP
     await page.getByTestId("http-tab").click();
@@ -1270,10 +1286,15 @@ test("Streamable HTTP MCP server with server-everything should load tools correc
 test("stdio command with an embedded argument is refused, and command plus args is accepted",
   { tag: ["@regression", "@workspace", "@components", "@mcp", "@stable"] },
   async ({ page }) => {
-    // The refused registration is a deliberate 422. The fixture only FAILS a
-    // test on flow errors, but this keeps the intent explicit — and the run log
-    // will carry one expected `🚨 Backend Error: 422 /api/v2/mcp/servers/...`.
+    // The refused registration is a deliberate 422, so the HTTP hatch is the
+    // one that belongs here (#1422): without it the run logs
+    // `🚨 Backend Error: 422 /api/v2/mcp/servers/…` on every green pass, which
+    // is the exact string checklist step 4 asks a human to read as a problem —
+    // and the noise is what makes that step stop being read at all (#1084).
+    // `allowFlowErrors` stays because it states the same intent for the other
+    // monitor, but it never covered this: the two hatches are separate.
     (page as any).allowFlowErrors();
+    (page as any).allowHttpErrors();
 
     await awaitBootstrapTest(page);
 
