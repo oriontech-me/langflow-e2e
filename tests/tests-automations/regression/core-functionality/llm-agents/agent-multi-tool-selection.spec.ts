@@ -509,7 +509,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "agent runs the URL then Web Search tools in sequence for a chained prompt",
-      { tag: ["@regression", "@agents", "@playground"] },
+      { tag: ["@stable", "@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
