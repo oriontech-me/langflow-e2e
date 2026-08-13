@@ -61,17 +61,9 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-// Quarantined at triage (daily run 31581590030): recurrent flake — after the
-// file-management modal confirms and closes, the file chip on the NODE never
-// renders inside 15 s, so the attach is unobservable. The modal-side assertions
-// pass on the same attempt, which is what places the failure after the attach
-// PATCH rather than in the selection. Same signature on the 2026-07-23, 07-30
-// and 08-12 dailies; only the 08-12 call log has been read, so whether all three
-// share this wait point is the first thing #1430 settles. Lifting the quarantine
-// (remove test.fixme + restore @stable) is a deliverable of #1430.
-test.fixme(
+test(
   "upload a file through the Read File component and read its content",
-  { tag: ["@release", "@files", "@components"] },
+  { tag: ["@stable", "@release", "@files", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
     // The asset's bytes under a per-run unique name: the name is what the
@@ -81,6 +73,21 @@ test.fixme(
     // Filled from the upload response — the server is the authority on the
     // stored name, so the testids are built from it and not from `stem`.
     let uploadedName = "";
+
+    // In-flight `GET /api/v2/files` requests. The list is the only input to the
+    // node chip, so "no list request pending" is the observable that the cache
+    // the chip reads from will not be overwritten under the confirm (#1430).
+    let inFlightFileLists = 0;
+    const isFileList = (method: string, url: string): boolean =>
+      `${method} ${new URL(url).pathname}` === "GET /api/v2/files";
+    page.on("request", (req) => {
+      inFlightFileLists += Number(isFileList(req.method(), req.url()));
+    });
+    const settle = (req: { method(): string; url(): string }): void => {
+      inFlightFileLists -= Number(isFileList(req.method(), req.url()));
+    };
+    page.on("requestfinished", settle);
+    page.on("requestfailed", settle);
 
     await awaitBootstrapTest(page);
 
@@ -170,6 +177,29 @@ test.fixme(
       await expect(
         page.getByTestId(`checkbox-${uploadedName}`),
       ).toHaveAttribute("data-state", "checked", { timeout: 15000 });
+
+      // Confirm only once the file list has settled. The node chip is a
+      // projection of the `useGetFilesV2` cache — `files.filter(f =>
+      // selectedFiles.includes(f.path))` — and a reconcile effect rewrites the
+      // node's value/file_path from that same cache, so ONE list response that
+      // lands without this file wipes the attachment outright (#1430, measured
+      // 5/5 by stripping a single response). The upload's invalidation refetch
+      // is still in flight ~20 ms after the POST here, and confirming into that
+      // window is exposure the test creates, not exposure it is testing. This is
+      // not a repair: a list response arriving after the confirm still wipes the
+      // attach, and the node-chip assertion below still fails when it does.
+      await expect
+        .poll(() => inFlightFileLists, {
+          timeout: 15000,
+          message:
+            "a GET /api/v2/files was still in flight when the selection was confirmed (#1430)",
+        })
+        .toBe(0);
+      await expect(
+        page.getByTestId(`checkbox-${uploadedName}`),
+        "the settled file list must still hold the uploaded file — a list response that drops it wipes the attachment (#1430)",
+      ).toHaveAttribute("data-state", "checked");
+
       await page.getByTestId("select-files-modal-button").click();
     });
 
@@ -177,9 +207,12 @@ test.fixme(
       // Wait for the file-management modal to close (its confirm button is
       // modal-only, so its disappearance is the close signal — unlike
       // drag-files-component, which also exists on the node) before asserting
-      // the node chip, which renders only after the attach PATCH settles.
-      // The remove button is hover-revealed, so the persistent chip is the
-      // stable attachment signal.
+      // the node chip. The chip is client state, not the tail of a request:
+      // measured at 43–241 ms after the close over 13 clean cycles, and it
+      // still renders with `custom_component/update` stalled 25 s or aborted
+      // (#1430). So an absent chip here is a dropped attachment, never a slow
+      // one — do not answer it with a longer timeout. The remove button is
+      // hover-revealed, so the persistent chip is the stable signal.
       await expect(
         page.getByTestId("select-files-modal-button"),
       ).toBeHidden({ timeout: 15000 });
