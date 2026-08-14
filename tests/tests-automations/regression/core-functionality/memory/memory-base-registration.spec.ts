@@ -230,7 +230,7 @@ test.describe("core-functionality/memory — registering a memory base", () => {
   });
 
   test("registering a memory base from the Create Memory modal persists it",
-    { tag: ["@stable", "@release", "@workspace", "@ui-ux", "@model-provider"] },
+    { tag: ["@release", "@workspace", "@ui-ux", "@model-provider"] },
     async ({ page, request }) => {
       const choice = await findEmbeddingModel(request, token);
       test.skip(

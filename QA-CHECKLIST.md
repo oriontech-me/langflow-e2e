@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-13
+> **Last updated:** 2026-08-14
 
 ---
 
@@ -1034,7 +1034,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 501 `test()` calls carrying the `@stable` tag, distributed across 194 spec
+> 497 `test()` calls carrying the `@stable` tag, distributed across 194 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1299,13 +1299,11 @@
 - [x] causal control — a valid custom tool name executes normally → `agent-tool-name-validation.spec.ts`
 - [x] user must be able to send images in the playground with the agent component → `general-bugs-agent-images-playground.spec.ts`
 - [x] language model must respond with OpenAI provider → `language-model-regression.spec.ts`
-- [x] language model must respond with Google provider → `language-model-regression.spec.ts`
 - [x] language model provider switch from OpenAI to Google must persist → `language-model-regression.spec.ts`
 - [x] model provider dialog opens from the Language Model node → `language-model-regression.spec.ts`
 - [x] playground shows error when LLM run endpoint returns 500 (mocked invalid API key) → `llm-invalid-api-key-ui.spec.ts`
 - [x] playground input remains usable after API error (mocked) → `llm-invalid-api-key-ui.spec.ts`
 - [x] memory chatbot template loads with correct node structure → `memory-history-regression.spec.ts`
-- [x] message history context retention suite → `memory-history-regression.spec.ts`
 - [x] session isolation: new session has no context from previous session → `memory-history-regression.spec.ts`
 - [x] OpenAI provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
 - [x] Anthropic provider is listed in Model Providers settings → `model-provider-api-key.spec.ts`
@@ -1318,7 +1316,6 @@
 - [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
 - [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
-- [x] the trigger shows the model the user selects → `modelInputComponent.spec.ts`
 - [x] provider list renders with the known providers → `modelProviderModal.spec.ts`
 - [x] selecting a provider opens its API key configuration detail → `modelProviderModal.spec.ts`
 - [x] a configured provider shows its model selection panel → `modelProviderModal.spec.ts`
@@ -1335,7 +1332,6 @@
 - [x] the Embedding Model control is absent when no provider offers embeddings → `memory-base-panel.spec.ts`
 - [x] Create Memory stays disabled with an empty form and with only the Name filled → `memory-base-panel.spec.ts`
 - [x] cancelling the Create Memory modal creates no memory base → `memory-base-panel.spec.ts`
-- [x] registering a memory base from the Create Memory modal persists it → `memory-base-registration.spec.ts`
 - [x] a registered memory base is exposed through the Memory Base API, never through the knowledge-base list → `memory-base-registration.spec.ts`
 
 #### core-functionality/model-provider/

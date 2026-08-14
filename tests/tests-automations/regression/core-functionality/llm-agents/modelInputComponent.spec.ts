@@ -175,7 +175,6 @@ test.describe("ModelInputComponent", () => {
     // 1.12.0.dev17), which `addComponentFromSidebar` now verifies and repairs.
     {
       tag: [
-        "@stable",
         "@release",
         "@components",
         "@workspace",

@@ -260,7 +260,7 @@ test.describe("Memory Chatbot Regression", () => {
 
   test(
     "message history context retention suite",
-    { tag: ["@stable", "@release", "@agents", "@playground"] },
+    { tag: ["@release", "@agents", "@playground"] },
     async ({ page }) => {
       // Real OpenAI completions drive the whole suite, so gate on provider
       // HEALTH, not on the env var alone — a drained key would block the backend
