@@ -39,9 +39,22 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-test(
+// Quarantined at the triage of #1458 as prevention: recurrent flake, 3× under the
+// same signature (dailies 2026-07-15, 2026-08-12, 2026-08-14). `code-button-modal`
+// is ABSENT — `element(s) not found`, not late-and-invisible — at the 10 s mark
+// after the custom component is added, and it recovered on the next attempt every
+// time. Same locator and same area as `full-custom-component.spec.ts:66`, so it is
+// tracked there rather than as its own cause.
+//
+// `test.fixme` accompanies the tag removal on purpose: dropping `@stable` alone
+// only stops the daily, while the PR impacted-specs gate selects by file diff and
+// would keep running this red (#871).
+//
+// Lifting this — remove `test.fixme` AND restore `@stable`, re-validated per
+// CONTRIBUTING.md — is a deliverable of #1365.
+test.fixme(
   "custom component code button should be pink when adding custom component",
-  { tag: ["@release", "@components", "@stable"] },
+  { tag: ["@release", "@components"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);
