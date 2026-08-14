@@ -1034,7 +1034,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 497 `test()` calls carrying the `@stable` tag, distributed across 194 spec
+> 496 `test()` calls carrying the `@stable` tag, distributed across 193 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1131,7 +1131,6 @@
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
-- [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
 - [x] Data Operations Text mode returns the Case Conversion result as a Message → `data-operations-component.spec.ts`
 - [x] Data Operations Word Count switches the Text-mode output to JSON and counts the text → `data-operations-component.spec.ts`
 - [x] Data Operations JSON mode selects a single key from an upstream JSON output → `data-operations-component.spec.ts`
