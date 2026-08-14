@@ -1,5 +1,11 @@
 import type { Page } from "@playwright/test";
 import { hideInspectorPanel } from "../ui/hide-inspector-panel";
+import {
+  clickModelOption,
+  enumerateEnabledModels,
+  enumerateModelOptions,
+  selectPinnedModelOption,
+} from "./model-option";
 import { providerAlreadyConfigured } from "./provider-config-state";
 
 export async function setupGoogle(
@@ -111,6 +117,11 @@ export async function setupGoogle(
     }
   }
 
+  // Read the panel's toggles BEFORE closing it: they are the second, independent
+  // source for "this model exists and is enabled", and a picker miss that this
+  // list contradicts is not an absence (#1461).
+  const enabledModels = await enumerateEnabledModels(page);
+
   // Step 6: Close the provider management panel
   await page.getByRole("button", { name: "Close" }).click();
 
@@ -118,15 +129,27 @@ export async function setupGoogle(
   await hideInspectorPanel(page);
   await page.getByTestId("model_model").click();
   if (modelTestId) {
-    const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${modelTestId}$`) });
-    const isAvailable = await modelOption.isVisible({ timeout: 10000 }).catch(() => false);
-    if (!isAvailable) {
-      await page.keyboard.press("Escape");
-      throw new Error(`MODEL_NOT_AVAILABLE: "${modelTestId}" not found in dropdown — model may not be supported.`);
-    }
-    await modelOption.click();
+    // Resolved by option IDENTITY (data-value / data-testid), never by the option's
+    // text: 1.12.0.dev26 renders a `sr-only` "N of M" counter inside each option, so
+    // the anchored `^model$` text matcher this used to run matched nothing — the
+    // hard failure of `language-model-regression.spec.ts` on the 2026-08-14 daily,
+    // whose trace shows the model present at option 22 of 90 (#1459).
+    await selectPinnedModelOption(page, {
+      requested: modelTestId,
+      enabledModels,
+      providerLabel: "Google Generative AI",
+    });
   } else {
-    await page.locator('[data-testid$="-option"]', { hasText: "gemini" }).first().waitFor({ state: "visible", timeout: 10000 });
-    await page.locator('[data-testid$="-option"]', { hasText: "gemini" }).first().click();
+    const options = await enumerateModelOptions(page);
+    const gemini = options.find((option) => (option.model ?? "").includes("gemini"));
+    if (!gemini) {
+      await page.keyboard.press("Escape");
+      throw new Error(
+        `MODEL_NOT_AVAILABLE: the model picker offers no Google model — ` +
+          `${options.length} option(s) enumerated: ` +
+          `${options.map((option) => option.model ?? option.visibleLabel).join(", ") || "(none)"}.`,
+      );
+    }
+    await clickModelOption(page, gemini);
   }
 }

@@ -257,6 +257,22 @@ for (const { label, options, skipReason } of targets) {
 }
 ```
 
+**Skip on that prefix and on nothing else.** `MODEL_NOT_AVAILABLE` is raised only
+for an absence the helper **established** — it enumerated the open picker, the
+model was not among the options, and the provider panel's `llm-toggle-*` list did
+not carry it either — and the message reports what it saw (option count,
+per-provider breakdown, nearest offered ids). Two sibling prefixes must never be
+caught: a model the picker IS offering that the suite cannot select, and an empty
+picker, both raise `MODEL_PICKER_DEFECT` and must fail the test.
+
+That split is the fix for #1461: the old guard inferred "model may not be
+supported" from one anchored text matcher returning nothing, so when 1.12.0.dev26
+added a `sr-only` "N of M" counter inside every option (#1459), ~30 `@stable`
+tests skipped green in a single daily and the only trace was the run's skip total
+(35 against a 4–15 baseline). Resolve a model through
+`tests/helpers/provider-setup/model-option.ts`, which matches the option's
+identity (`data-value` / `data-testid`) — never its rendered text.
+
 ### Running agent tests
 
 This is the most important step — and the most overlooked.

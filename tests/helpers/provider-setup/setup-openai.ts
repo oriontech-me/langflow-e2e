@@ -1,5 +1,11 @@
 import type { Page } from "@playwright/test";
 import { hideInspectorPanel } from "../ui/hide-inspector-panel";
+import {
+  clickModelOption,
+  enumerateEnabledModels,
+  enumerateModelOptions,
+  selectPinnedModelOption,
+} from "./model-option";
 
 export async function setupOpenAI(
   page: Page,
@@ -89,6 +95,11 @@ export async function setupOpenAI(
     }
   }
 
+  // Read the panel's toggles BEFORE closing it: they are the second, independent
+  // source for "this model exists and is enabled", and a picker miss that this
+  // list contradicts is not an absence (#1461).
+  const enabledModels = await enumerateEnabledModels(page);
+
   // Step 6: Close the provider management panel
   await page.getByRole("button", { name: "Close" }).click();
 
@@ -104,18 +115,30 @@ export async function setupOpenAI(
   await modelTrigger.click();
   let pickByRanking = !modelTestId;
   if (modelTestId) {
-    const modelOption = page.locator('[data-testid$="-option"]', { hasText: new RegExp(`^${modelTestId}$`) });
-    const isAvailable = await modelOption.isVisible({ timeout: 10000 }).catch(() => false);
-    if (isAvailable) {
-      await modelOption.click();
-    } else if (opts?.fallbackToRanking) {
+    // Resolved by option IDENTITY (data-value / data-testid), never by the option's
+    // text: 1.12.0.dev26 renders a `sr-only` "N of M" counter inside each option, so
+    // the anchored `^model$` text matcher this used to run matched nothing (#1459).
+    //
+    // `fallbackToRanking` degrades on an ESTABLISHED absence only — a stale pin from
+    // models.json is what #606 asked it to survive. A picker that is empty, or that
+    // offers the model without letting the suite select it, throws through this call:
+    // degrading there would hide a suite defect behind a healthy-looking run (#1461).
+    const selection = await selectPinnedModelOption(page, {
+      requested: modelTestId,
+      enabledModels,
+      providerLabel: "OpenAI",
+      absentBehavior: opts?.fallbackToRanking ? "return" : "throw",
+    });
+    if (selection.status === "absent") {
       console.log(
-        `pinned model "${modelTestId}" not in the live dropdown — falling back to UI preference-ranking (#606)`,
+        `pinned model "${modelTestId}" is not offered by the live dropdown — falling back to ` +
+          `UI preference-ranking (#606). ${selection.message}`,
       );
       pickByRanking = true;
-    } else {
-      await page.keyboard.press("Escape");
-      throw new Error(`MODEL_NOT_AVAILABLE: "${modelTestId}" not found in dropdown — model may not be supported.`);
+      // The Escape that reported the absence closed the dropdown; reopen it for the
+      // ranking pass below.
+      await modelTrigger.waitFor({ state: "visible", timeout: 15000 });
+      await modelTrigger.click();
     }
   }
   if (pickByRanking) {
@@ -127,15 +150,22 @@ export async function setupOpenAI(
     // vision-capable — callers like the agent image test rely on that — while
     // surviving model-family churn and skipping the slow/expensive
     // "pro"/reasoning models that tend to top the dropdown.
-    const options = page.locator('[data-testid$="-option"]');
-    await options.first().waitFor({ state: "visible", timeout: 10000 });
-    const count = await options.count();
-    // Lower-case each label so matching is case-insensitive: textContent may
-    // carry display casing (e.g. "GPT-4o Mini") that plain includes() would miss.
-    const labels: string[] = [];
-    for (let i = 0; i < count; i++) {
-      labels.push(((await options.nth(i).textContent()) ?? "").trim().toLowerCase());
+    // Ranked over the option IDENTITY, not its rendered text: since dev26 the text
+    // carries a `sr-only` "N of M" counter, so `textContent` is no longer the model
+    // name (#1459). Lower-cased so matching survives display casing.
+    const optionEntries = await enumerateModelOptions(page);
+    if (optionEntries.length === 0) {
+      await page.keyboard.press("Escape");
+      throw new Error(
+        "MODEL_PICKER_DEFECT: the model picker rendered ZERO options after configuring " +
+          "OpenAI, so no model could be ranked. An empty picker means the credential was " +
+          "not saved (a rejected or drained key) or the list never loaded — reported as a " +
+          "FAILURE, not a silent default (#1461).",
+      );
     }
+    const labels = optionEntries.map((option) =>
+      (option.model ?? option.visibleLabel).trim().toLowerCase(),
+    );
 
     // Reject families that are NOT general-purpose vision chat models: reasoning
     // (o1/o3/o4…), audio/realtime/tts/transcribe, search-preview and nano
@@ -164,6 +194,6 @@ export async function setupOpenAI(
     }
     if (chosenIndex === -1) chosenIndex = 0; // no preferred match — first available
 
-    await options.nth(chosenIndex).click();
+    await clickModelOption(page, optionEntries[chosenIndex]);
   }
 }

@@ -1,4 +1,5 @@
 import { type Locator, type Page, expect } from "@playwright/test";
+import { enumerateModelOptions } from "./model-option";
 
 // Cheap, fast chat models in priority order. `gpt-4o-mini` is kept first so older
 // Langflow builds still match; the `gpt-5.x` entries cover newer builds (1.11.0+)
@@ -27,10 +28,6 @@ const NON_CHAT_MODEL = /image|embedding|audio|tts|realtime|whisper|dall-?e|moder
 // slow/empty reasoning response reintroduces the 120s timeout and masks assertions.
 const AVOID_MODEL = /(^|[-\s])(pro|o1|o3|o4)([-\s]|$)|codex|deep-research|search-preview/i;
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 // Selects a usable OpenAI chat model from the already-open `model_model` dropdown.
 // Resolution order: MODEL_TEST_ID env override → first available preferred model →
 // first option that is neither a non-chat nor an avoided (pro/reasoning) model.
@@ -38,11 +35,14 @@ function escapeRegExp(value: string): string {
 // actually reflects the choice — a silently-intercepted click (the api_key popover can
 // steal the click) would otherwise leave the node on its default (`gpt-5.5-pro`).
 async function selectPreferredChatModel(page: Page): Promise<void> {
-  const options = page.locator('[data-testid$="-option"]');
-  await options.first().waitFor({ state: "visible", timeout: 15000 });
-
-  const labels = (await options.allInnerTexts())
-    .map((label) => label.trim())
+  // Read the options by IDENTITY (data-value / data-testid), not by their rendered
+  // text: since 1.12.0.dev26 each option carries a `sr-only` "N of M" counter, so
+  // `allInnerTexts()` returned "claude-opus-5\n1 of 69" and the anchored click below
+  // could never resolve — the 20s timeout of `memory-history-regression.spec.ts` on
+  // the 2026-08-14 daily (#1459).
+  const entries = await enumerateModelOptions(page, 15000);
+  const labels = entries
+    .map((option) => (option.model ?? option.visibleLabel).trim())
     .filter(Boolean);
 
   const envModel = process.env.MODEL_TEST_ID?.trim();
@@ -55,14 +55,13 @@ async function selectPreferredChatModel(page: Page): Promise<void> {
     // that fallback used to hand back a non-OpenAI model from a helper named
     // `...OpenAI` whenever PREFERRED_CHAT_MODELS drifted behind the build's
     // curated list (issue #961).
-    // A multi-line label carries a badge rendered inside the option (e.g.
-    // "Deprecated"): skip it. Unlike the exact-match PREFERRED lookup above,
-    // this pattern-based branch would otherwise put the badge text into
-    // `chosen` and break the trigger assertion below — and a deprecated model
-    // is not what a regression run wants either.
+    // A deprecated model is not what a regression run wants: it used to be excluded
+    // by rejecting a multi-line label (the badge renders inside the option), a test
+    // that dev26's counter made true for EVERY option. The badge is now read from
+    // the DOM instead, so the exclusion states what it means.
     labels.find(
-      (label) =>
-        !label.includes("\n") &&
+      (label, index) =>
+        !entries[index].deprecated &&
         /^gpt-/i.test(label) &&
         !NON_CHAT_MODEL.test(label) &&
         !AVOID_MODEL.test(label),
@@ -72,14 +71,23 @@ async function selectPreferredChatModel(page: Page): Promise<void> {
   if (!chosen) {
     await page.keyboard.press("Escape");
     throw new Error(
-      `No usable OpenAI chat model found in the model dropdown. Options: ${labels.join(", ")}`,
+      `No usable OpenAI chat model found in the model dropdown. ` +
+        `${entries.length} option(s) enumerated: ${labels.join(", ") || "(none)"}`,
     );
   }
 
-  await options
-    .filter({ hasText: new RegExp(`^${escapeRegExp(chosen)}$`) })
-    .first()
-    .click();
+  const chosenEntry = entries.find(
+    (option, index) => labels[index] === chosen && Boolean(option.testId),
+  );
+  if (!chosenEntry) {
+    await page.keyboard.press("Escape");
+    throw new Error(
+      `MODEL_PICKER_DEFECT: "${chosen}" was ranked from the picker's own options but no ` +
+        `option carries a usable testid to click. Reported as a FAILURE so a picker the ` +
+        `suite cannot drive never resolves into a silent default (#1461).`,
+    );
+  }
+  await page.getByTestId(chosenEntry.testId).click();
 
   await expect(page.getByTestId("model_model")).toContainText(chosen, { timeout: 10000 });
 }
@@ -244,19 +252,13 @@ async function optionAppeared(option: Locator): Promise<boolean> {
 // list: a saturated runner that takes >5s to populate it must be waited out, not
 // mistaken for "OpenAI is missing" (which would trigger a pointless panel detour).
 async function isOpenAIOffered(page: Page): Promise<boolean> {
-  const options = page.locator('[data-testid$="-option"]');
-  await options
-    .first()
-    .waitFor({ state: "visible", timeout: 15000 })
-    .catch(() => {});
+  const entries = await enumerateModelOptions(page, 15000);
+  if (entries.some((option) => /^openai$/i.test(option.provider ?? ""))) return true;
+  if (entries.some((option) => /^openai-/i.test(option.testId))) return true;
 
-  const testIds = await options.evaluateAll((els) =>
-    els.map((el) => el.getAttribute("data-testid") ?? ""),
-  );
-  if (testIds.some((id) => /^openai-/i.test(id))) return true;
-
-  const labels = await options.allInnerTexts();
-  return labels.some((label) => /^gpt-/i.test(label.trim()));
+  // Label fallback, read from the option's identity rather than its text: the
+  // rendered text carries the dev26 position counter (#1459).
+  return entries.some((option) => /^gpt-/i.test((option.model ?? option.visibleLabel).trim()));
 }
 
 // Opens the model dropdown's "Manage Model Providers" panel, configures the

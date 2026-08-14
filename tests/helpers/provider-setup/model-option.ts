@@ -1,0 +1,335 @@
+import type { Locator, Page } from "@playwright/test";
+
+/**
+ * One entry of the unified ModelInput picker, read straight from the DOM.
+ *
+ * The frontend renders each option as
+ *
+ *   <div data-testid="${provider}-${model}-option" data-value="${provider}::${model}">
+ *     <svg/>                                     <- provider icon
+ *     <div class="truncate text-[13px]">${model}</div>
+ *     <span class="sr-only">${index} of ${total}</span>   <- 1.12.0.dev26+
+ *     <span data-testid="${model}-deprecated-badge">Deprecated</span>  <- optional
+ *     <svg/>                                     <- selected check
+ *   </div>
+ *
+ * so the option's *text* carries more than the model name, while `data-value`
+ * and `data-testid` carry the identity. Everything below reads the identity and
+ * treats the text as evidence only — the inverse of what the helpers did until
+ * #1459, where the `sr-only` position counter (added on dev26) silently defeated
+ * every `^model$` matcher.
+ */
+export type RawModelOption = {
+  /** `${provider}-${model}-option`, or "" when the attribute is gone. */
+  testId: string;
+  /** cmdk value, `${provider}::${model}` — the unambiguous identity. */
+  value: string;
+  /** Option text with `sr-only` and badge nodes removed: what a user reads. */
+  visibleLabel: string;
+  /** Full `textContent`, counter included — reported as evidence, never matched. */
+  rawText: string;
+  deprecated: boolean;
+};
+
+export type ModelOption = RawModelOption & {
+  /** Provider as the picker groups it ("Anthropic", "Google Generative AI"). */
+  provider: string | null;
+  /** Model id as the backend knows it ("claude-haiku-4-5"). */
+  model: string | null;
+};
+
+/**
+ * The verdict of looking for a pinned model in an open picker.
+ *
+ * `absent` is the ONLY outcome that may become a `test.skip`, and it is reached
+ * only when the picker was populated and neither it nor the provider panel
+ * knows the model. Every other outcome is loud: #1461 was filed because a single
+ * negative observation (one anchored matcher returning nothing) was reported as
+ * "model may not be supported" and skipped ~30 `@stable` tests in one daily.
+ */
+export type ModelOptionVerdict =
+  | { kind: "match"; option: ModelOption }
+  | { kind: "unmatchable"; message: string; evidence: string[] }
+  | { kind: "empty"; message: string }
+  | { kind: "absent"; message: string };
+
+export type ResolveContext = {
+  /**
+   * Model ids observed as `llm-toggle-<model>` in the provider panel, when the
+   * caller enabled them. The second independent source the picker can be
+   * contradicted by: a model enabled there but missing here is not an absence.
+   * `undefined` means "not observed" and is reported as such — an unobserved
+   * source must never read as a negative one (#1012).
+   */
+  enabledModels?: string[];
+  /** Provider the caller is configuring, for the message only. */
+  providerLabel?: string;
+};
+
+const MODEL_NOT_AVAILABLE = "MODEL_NOT_AVAILABLE";
+/**
+ * Deliberately NOT prefixed `MODEL_NOT_AVAILABLE`: every caller turns that
+ * prefix into `test.skip`, so a suite-side defect carrying it would be silent.
+ */
+const MODEL_PICKER_DEFECT = "MODEL_PICKER_DEFECT";
+
+/** Derives the model identity from the attributes, text last. */
+export function toModelOption(raw: RawModelOption): ModelOption {
+  const [valueProvider, ...valueRest] = raw.value.split("::");
+  if (raw.value.includes("::") && valueRest.join("::").trim()) {
+    return { ...raw, provider: valueProvider, model: valueRest.join("::") };
+  }
+
+  // No `data-value`: fall back to the testid. Both provider and model may carry
+  // "-", so the split is anchored on the "-option" suffix and the *first*
+  // separator only — good enough for evidence, and never used when data-value
+  // is present.
+  const withoutSuffix = raw.testId.replace(/-option$/, "");
+  const firstDash = withoutSuffix.indexOf("-");
+  if (raw.testId.endsWith("-option") && firstDash > 0) {
+    return {
+      ...raw,
+      provider: withoutSuffix.slice(0, firstDash),
+      model: withoutSuffix.slice(firstDash + 1),
+    };
+  }
+
+  // Neither attribute is usable — the visible label is all that is left, and it
+  // is reported as such rather than trusted as an identity.
+  return { ...raw, provider: null, model: raw.visibleLabel || null };
+}
+
+function providerCounts(options: ModelOption[]): string {
+  const counts = new Map<string, number>();
+  for (const option of options) {
+    const key = option.provider ?? "(unknown provider)";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([provider, n]) => `${provider}: ${n}`).join(", ");
+}
+
+/**
+ * Models whose id is close enough that a human reading the failure can tell a
+ * rename from a retirement — the picker's own answer to "did you mean…".
+ */
+export function nearestModels(requested: string, options: ModelOption[], limit = 5): string[] {
+  const wanted = requested.toLowerCase();
+  const stem = wanted.split(/[-.:]/)[0] ?? wanted;
+  const scored = options
+    .map((option) => option.model ?? option.visibleLabel)
+    .filter((model): model is string => Boolean(model))
+    .map((model) => {
+      const lower = model.toLowerCase();
+      let score = 0;
+      if (lower === wanted) score = 100;
+      else if (lower.includes(wanted) || wanted.includes(lower)) score = 90;
+      else if (stem && lower.startsWith(stem)) score = 50 + sharedPrefix(lower, wanted);
+      else score = sharedPrefix(lower, wanted);
+      return { model, score };
+    })
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || a.model.localeCompare(b.model));
+
+  return scored.slice(0, limit).map((entry) => entry.model);
+}
+
+function sharedPrefix(a: string, b: string): number {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return i;
+}
+
+/**
+ * Decides what an open picker actually proves about a pinned model.
+ *
+ * Pure on purpose: the branch that must never regress is "a model the picker
+ * offers can only ever resolve to a LOUD failure", and a unit test can pin that
+ * where a live spec cannot reproduce a markup change on demand.
+ */
+export function resolveModelOption(
+  requested: string,
+  options: ModelOption[],
+  context: ResolveContext = {},
+): ModelOptionVerdict {
+  const provider = context.providerLabel ? ` for ${context.providerLabel}` : "";
+
+  if (options.length === 0) {
+    return {
+      kind: "empty",
+      message:
+        `${MODEL_PICKER_DEFECT}: the model picker rendered ZERO options${provider}, so it ` +
+        `proves nothing about "${requested}". An empty picker means no provider is ` +
+        `configured (a rejected or drained API key leaves the credential unsaved) or the ` +
+        `list never loaded — not that the model is unsupported. Reported as a FAILURE, ` +
+        `not a skip: an unevaluated test is unknown, not clean (#1012/#1461).`,
+    };
+  }
+
+  const exact = options.find((option) => option.model === requested);
+  if (exact) return { kind: "match", option: exact };
+
+  // The model is in the picker but its identity did not parse — the exact shape
+  // of the #1459 break, one markup change later. Absence is contradicted by the
+  // picker itself, so this can never be a skip.
+  const evidence: string[] = [];
+  for (const option of options) {
+    if (option.visibleLabel === requested) {
+      evidence.push(`visible label "${option.visibleLabel}" (testid "${option.testId}")`);
+    } else if (option.testId.endsWith(`-${requested}-option`)) {
+      evidence.push(`testid "${option.testId}"`);
+    } else if (option.rawText.split("\n")[0]?.trim() === requested) {
+      evidence.push(`option text "${option.rawText.replace(/\n/g, "\\n")}"`);
+    }
+  }
+
+  if (evidence.length > 0) {
+    return {
+      kind: "unmatchable",
+      evidence,
+      message:
+        `${MODEL_PICKER_DEFECT}: "${requested}" IS offered by the model picker${provider} ` +
+        `but this suite could not select it — ${evidence.join("; ")}. ` +
+        `The model identity (data-value / data-testid) no longer resolves to the id the ` +
+        `test pinned, which is a suite defect, not a missing model. Reported as a FAILURE ` +
+        `so it cannot become a silent skip (#1461).`,
+    };
+  }
+
+  const enabled = context.enabledModels;
+  if (enabled?.includes(requested)) {
+    return {
+      kind: "unmatchable",
+      evidence: [`llm-toggle-${requested} in the provider panel`],
+      message:
+        `${MODEL_PICKER_DEFECT}: "${requested}" is ENABLED in the provider panel ` +
+        `(llm-toggle-${requested})${provider} but the model picker does not offer it — ` +
+        `${options.length} option(s) enumerated (${providerCounts(options)}). ` +
+        `The two sources disagree, so the model is not absent: either the picker did not ` +
+        `refresh after the panel closed, or the option list is filtered. Reported as a ` +
+        `FAILURE, not a skip (#1461).`,
+    };
+  }
+
+  const nearest = nearestModels(requested, options);
+  const toggleEvidence =
+    enabled === undefined
+      ? "provider toggles were not observed on this path"
+      : `${enabled.length} provider toggle(s) observed, none of them "${requested}"`;
+
+  return {
+    kind: "absent",
+    message:
+      `${MODEL_NOT_AVAILABLE}: "${requested}" is not offered${provider} — established from ` +
+      `${options.length} enumerated option(s) (${providerCounts(options)}) and ` +
+      `${toggleEvidence}. ` +
+      (nearest.length > 0 ? `Nearest offered: ${nearest.join(", ")}. ` : "") +
+      `The model was retired from the catalog or is not enabled for this account.`,
+  };
+}
+
+/**
+ * Reads every option of the OPEN model picker.
+ *
+ * `sr-only` and badge nodes are stripped inside the page so `visibleLabel` is
+ * what a user reads, while `rawText` keeps the polluted string for the failure
+ * message — the picker's own answer to "what did you actually see".
+ */
+export async function enumerateModelOptions(
+  page: Page,
+  timeout = 10000,
+): Promise<ModelOption[]> {
+  const options = page.locator('[data-testid$="-option"]');
+  await options.first().waitFor({ state: "visible", timeout }).catch(() => {});
+  return readModelOptions(options);
+}
+
+/**
+ * The same read over a caller-scoped locator — for pickers that are filtered to
+ * one provider (`setup-ollama`) and must not wait on the shared selector.
+ */
+export async function readModelOptions(options: Locator): Promise<ModelOption[]> {
+  const raw = await options.evaluateAll((els) =>
+    els.map((el) => {
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone
+        .querySelectorAll('.sr-only, [data-testid$="-deprecated-badge"]')
+        .forEach((node) => node.remove());
+      return {
+        testId: el.getAttribute("data-testid") ?? "",
+        value: el.getAttribute("data-value") ?? "",
+        visibleLabel: (clone.textContent ?? "").trim(),
+        rawText: (el.textContent ?? "").trim(),
+        deprecated: el.querySelector('[data-testid$="-deprecated-badge"]') !== null,
+      };
+    }),
+  );
+
+  return raw.map(toModelOption);
+}
+
+/** Model ids of the provider panel's toggles — the second source of truth. */
+export async function enumerateEnabledModels(page: Page): Promise<string[]> {
+  const ids = await page
+    .locator('[data-testid^="llm-toggle-"]')
+    .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid") ?? ""));
+  return ids.map((id) => id.replace(/^llm-toggle-/, "")).filter(Boolean);
+}
+
+/**
+ * Clicks an enumerated option by identity.
+ *
+ * Prefers the testid and falls back to the cmdk value, so a build that drops one
+ * attribute is still selectable instead of degrading into a false absence.
+ */
+export async function clickModelOption(page: Page, option: ModelOption): Promise<void> {
+  const locator = option.testId
+    ? page.getByTestId(option.testId)
+    : page.locator(`[data-testid$="-option"][data-value="${option.value.replace(/"/g, '\\"')}"]`);
+  await locator.first().click();
+}
+
+export type PinnedSelection =
+  | { status: "selected"; model: string }
+  | { status: "absent"; message: string };
+
+/**
+ * Selects a pinned model in the OPEN picker, or reports what the picker proved.
+ *
+ * Loud verdicts (`empty`, `unmatchable`) always throw: they are the suite's own
+ * defects and must never reach a caller that would skip on them. Only an
+ * *established* absence is handed back, and even then the caller decides —
+ * `absentBehavior: "return"` exists for `setup-openai`'s `fallbackToRanking`
+ * consumers (#606), which must degrade rather than fail on a stale pin.
+ */
+export async function selectPinnedModelOption(
+  page: Page,
+  opts: {
+    requested: string;
+    enabledModels?: string[];
+    providerLabel?: string;
+    absentBehavior?: "throw" | "return";
+    timeout?: number;
+  },
+): Promise<PinnedSelection> {
+  const options = await enumerateModelOptions(page, opts.timeout ?? 10000);
+  const verdict = resolveModelOption(opts.requested, options, {
+    enabledModels: opts.enabledModels,
+    providerLabel: opts.providerLabel,
+  });
+
+  if (verdict.kind === "match") {
+    await clickModelOption(page, verdict.option);
+    return { status: "selected", model: verdict.option.model ?? opts.requested };
+  }
+
+  await page.keyboard.press("Escape");
+
+  if (verdict.kind === "absent") {
+    if ((opts.absentBehavior ?? "throw") === "return") {
+      return { status: "absent", message: verdict.message };
+    }
+    throw new Error(verdict.message);
+  }
+
+  throw new Error(verdict.message);
+}

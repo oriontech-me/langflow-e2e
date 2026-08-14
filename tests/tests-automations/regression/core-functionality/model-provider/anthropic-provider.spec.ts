@@ -13,6 +13,7 @@ import {
   hasProviderEnvKeys,
   missingProviderEnvKeys,
 } from "../../../../helpers/provider-setup";
+import { selectPinnedModelOption } from "../../../../helpers/provider-setup/model-option";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
 
 /**
@@ -163,11 +164,12 @@ async function runPlaygroundSentinel(page: Page, token: string): Promise<void> {
 async function switchModel(page: Page, model: string): Promise<void> {
   await hideInspectorPanel(page);
   await page.getByTestId("model_model").click();
-  const option = page.locator('[data-testid$="-option"]', {
-    hasText: new RegExp(`^${model}$`),
-  });
-  await option.waitFor({ state: "visible", timeout: 10000 });
-  await option.click();
+  // Matched on the option's IDENTITY, not its text: since 1.12.0.dev26 every option
+  // carries a `sr-only` "N of M" counter, so the anchored `^model$` text match this
+  // used to run resolved nothing and timed out on a model the picker was showing
+  // (#1459). The shared resolver also fails loudly when the model IS offered but
+  // cannot be selected, instead of reporting it as unsupported (#1461).
+  await selectPinnedModelOption(page, { requested: model, providerLabel: "Anthropic" });
   await expect(page.getByTestId("value-dropdown-model_model")).toContainText(
     model,
     { timeout: 10000 },
