@@ -201,6 +201,20 @@ nightly. `@model-provider` (area) · `@settings` (Test 1 navigates Settings) ·
   need configure + select + switch. A dedicated `anthropic-provider.spec.ts`
   under `model-provider/` follows the family precedent (§7.2/§7.4/§7.6 all
   chose dedicated specs) and gives §7.3 a provider-centric home.
+- **How a model option is matched (#1459/#1461, 1.12.0.dev26):** Test 3's switch
+  and the shared `provider-setup` helpers resolve a model by the option's
+  **identity** — `data-value` (`${provider}::${model}`), falling back to
+  `data-testid` (`${provider}-${model}-option`) — through
+  `tests/helpers/provider-setup/model-option.ts`. Never by the option's text:
+  dev26 added a `sr-only` position counter inside every option
+  (`modelInput.optionPosition` → `"9 of 90"`), so `textContent` is
+  `"claude-haiku-4-5\n9 of 90"` and an anchored `^model$` matcher resolves
+  nothing. When it does not resolve, the failure mode is now split: an absence
+  the helper **established** (picker enumerated, model in neither the options
+  nor the provider panel's `llm-toggle-*` list) raises `MODEL_NOT_AVAILABLE`
+  and skips, carrying the option count, the per-provider breakdown and the
+  nearest offered ids; a model the picker IS offering, or an empty picker,
+  raises `MODEL_PICKER_DEFECT` and **fails** — no spec may skip on it.
 - **Model resolution from `models.json`:** Haiku/Sonnet/Opus are resolved by
   family regex from the collected catalog (preferring current, non-deprecated
   names, e.g. `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-4-8`), so

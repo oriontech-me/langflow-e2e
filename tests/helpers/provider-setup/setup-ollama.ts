@@ -1,9 +1,26 @@
 import type { Page } from "@playwright/test";
 import { hideInspectorPanel } from "../ui/hide-inspector-panel";
 import { providerConfigMap } from "./provider-config";
+import { readModelOptions } from "./model-option";
 import { ollamaBaseUrlFromLangflow } from "./ollama-endpoint";
 
 const OLLAMA = providerConfigMap.ollama;
+
+/**
+ * The Ollama tags the picker currently offers, read from each option's identity.
+ *
+ * This list is EVIDENCE in the failure messages below, and reading it as text was
+ * wrong for the same reason the keyed helpers' matchers were (#1459): since
+ * 1.12.0.dev26 every option's text ends with a `sr-only` "N of M" counter, so the
+ * message would have offered `llama3.2:1b\n3 of 4` as the tag to pull. The
+ * selection itself was never affected — it has always matched by testid.
+ */
+async function readOfferedOllamaModels(page: Page): Promise<string[]> {
+  const options = await readModelOptions(
+    page.locator('[data-testid^="Ollama-"][data-testid$="-option"]'),
+  ).catch(() => []);
+  return options.map((option) => option.model ?? option.visibleLabel).filter(Boolean);
+}
 
 /**
  * Point the Agent node at a model served by the LOCAL Ollama instance (#1187).
@@ -218,10 +235,7 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
   let isAvailable = await option.isVisible({ timeout: 10000 }).catch(() => false);
   let offered = isAvailable
     ? []
-    : await page
-        .locator('[data-testid^="Ollama-"][data-testid$="-option"]')
-        .allTextContents()
-        .catch(() => [] as string[]);
+    : await readOfferedOllamaModels(page);
 
   // One re-read before deciding, and ONLY when the list came back empty. The
   // dropdown's options are fetched, so "no options yet" and "no options at all"
@@ -238,12 +252,7 @@ export async function setupOllama(page: Page, modelTestId?: string): Promise<voi
     await hideInspectorPanel(page);
     await page.getByTestId("model_model").click().catch(() => {});
     isAvailable = await option.isVisible({ timeout: 15000 }).catch(() => false);
-    offered = isAvailable
-      ? []
-      : await page
-          .locator('[data-testid^="Ollama-"][data-testid$="-option"]')
-          .allTextContents()
-          .catch(() => [] as string[]);
+    offered = isAvailable ? [] : await readOfferedOllamaModels(page);
   }
 
   if (!isAvailable) {

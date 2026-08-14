@@ -71,6 +71,24 @@ try {
 }
 ```
 
+**Catch that prefix and nothing else.** `MODEL_NOT_AVAILABLE` now means an
+absence the helper *established*: it enumerated the picker, the model was not
+among the options, and the provider panel did not list it either — the message
+carries the option count, the per-provider breakdown and the nearest offered
+ids. A model the picker IS offering but the suite cannot select raises
+`MODEL_PICKER_DEFECT` instead, which no spec may skip on: that is our defect,
+and it must fail. An **empty** picker raises it too — zero options prove nothing
+about a model, so they can never justify a skip (#1461).
+
+Why the split exists: until #1459 the three provider helpers resolved a pinned
+model with `hasText: /^model$/`, and 1.12.0.dev26 added a `sr-only` "N of M"
+counter inside every option. The matcher stopped matching, the guard reported
+"model may not be supported", and one daily lost ~30 `@stable` tests to
+`test.skip` — with the run's skip total (35 against a 4–15 baseline) as the only
+trace. Resolve a model through
+`tests/helpers/provider-setup/model-option.ts` (identity from `data-value` /
+`data-testid`), never through the option's rendered text.
+
 ### 5. Run with --workers=1
 
 ```bash
