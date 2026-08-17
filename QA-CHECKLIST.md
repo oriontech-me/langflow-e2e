@@ -1034,7 +1034,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 494 `test()` calls carrying the `@stable` tag, distributed across 193 spec
+> 496 `test()` calls carrying the `@stable` tag, distributed across 195 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1130,6 +1130,7 @@
 - [x] Should delete a single component via the node options menu → `componentDelete.spec.ts`
 - [x] Should delete multiple selected components with a marquee selection → `componentDelete.spec.ts`
 - [x] user can add components by hovering and clicking the plus icon → `componentHoverAdd.spec.ts`
+- [x] custom component code button should be pink when adding custom component → `customComponentAdd.spec.ts`
 - [x] Data Operations Text mode returns the Case Conversion result as a Message → `data-operations-component.spec.ts`
 - [x] Data Operations Word Count switches the Text-mode output to JSON and counts the text → `data-operations-component.spec.ts`
 - [x] Data Operations JSON mode selects a single key from an upstream JSON output → `data-operations-component.spec.ts`
@@ -1142,6 +1143,7 @@
 - [x] two Agent nodes expose the same field without duplicating its DOM id → `duplicate-dom-ids-regression.spec.ts`
 - [x] user should be able to edit name and description of a node → `edit-name-description-node.spec.ts`
 - [x] user can edit a URL tool action in Tool Mode and the edits persist → `edit-tools.spec.ts`
+- [x] a full custom component built from code exposes its declared interface → `full-custom-component.spec.ts`
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
