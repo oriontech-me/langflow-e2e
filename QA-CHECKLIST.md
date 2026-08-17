@@ -863,13 +863,18 @@
 
 #### 17.2 Code Execution Endpoints
 
-- [ ] `POST /api/v1/validate/code` rejects a payload crafted to execute on validation
+- [-] `POST /api/v1/validate/code` rejects a payload crafted to execute on validation
       (**recurring upstream defect — reported in 2023 as #696 and again in 2026 as #13336,
       three years apart on the same endpoint**, which is the strongest recurrence signal in
-      the whole bug corpus)
-- [ ] The custom-component endpoint rejects the same class of payload
-      (`langflow-ai/langflow#7900`)
-- [ ] A rejected payload leaves no partial component created
+      the whole bug corpus). "Rejects" means *refuses to execute*: a fixed instance answers
+      `200` with empty error lists, so the assertion is the absence of the side effect, never
+      a status code → security/code-execution-endpoints.spec.ts
+- [-] The custom-component endpoint rejects the same class of payload
+      (`langflow-ai/langflow#7900` — the boundary restored there is authentication; the
+      authenticated build still executes posted code by design)
+      → security/code-execution-endpoints.spec.ts
+- [-] A rejected payload leaves no partial component created
+      → security/code-execution-endpoints.spec.ts
 
 #### 17.3 Secret Exposure
 
