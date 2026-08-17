@@ -218,7 +218,29 @@ removing that entry — the chip renders, disappears, the node's `file_path` is
 emptied and **saved empty**, with no error and no toast. That is silent data
 loss for a user, not only a flaky assertion. Filed upstream as
 [LE-2208](https://datastax.jira.com/browse/LE-2208) and carried in
-`REGRESSIONS.md` → Ledger (Open).
+`REGRESSIONS.md` → Ledger.
+
+**Fixed upstream** by
+[langflow#14541](https://github.com/langflow-ai/langflow/pull/14541) (merged into
+`release-1.12.0` on 2026-08-13). The reconcile no longer reads "this list does
+not mention the file" as "the user has no file selected": a path it cannot find
+first forces a fresh read, and is dropped only when a list fetched *after* that
+still omits it. Re-validated on 2026-08-17 with
+`docs/upstream-bugs/scripts/repro-2208-stale-file-list.spec.ts`, which strips
+exactly one `GET /api/v2/files` response and reads both the chip and the
+persisted `template.path`:
+
+| Build | chip after the stale response | `template.path` persisted |
+|---|---|---|
+| `1.12.0.dev25` (pre-fix) | gone, 2/2 | `value: []`, `file_path: []` |
+| `1.12.0.dev26` | intact | keeps the file |
+| `1.12.0.dev30` (the daily's) | intact | keeps the file |
+
+The boundary matches the merge: the `dev26` image was built 2026-08-13 23:01 -03,
+the fix merged 20:03 -03 the same day. The repro asserts on the per-run random
+file **stem**, not the file id — neither `template.path.value` (the name) nor
+`.file_path` (`<user>/<name>.txt`) carries the uuid, so anchoring on the id
+reports a wipe on every build, fixed or not.
 
 The daily of 2026-08-12 (run 31581590030) failed with that shape: the modal
 assertions passed on the failing attempt, the modal closed, and the chip was
@@ -229,7 +251,12 @@ worked, only the JSON report survived.
 The spec's step-6 gate closes the window the **test** creates — it confirms at
 ~200 ms after the upload, while a list refetch fired by the upload's
 invalidation is still in flight (`GET /api/v2/files` lands ~20 ms after the
-`POST` on a quiet instance; on the daily's 8-worker lane it does not). It is
-deliberately not a repair: the gate cannot stop a list response that arrives
-after the confirm, so if the product race fires the chip assertion still fails —
-which is the behaviour we want from a regression suite.
+`POST` on a quiet instance; on the daily's 8-worker lane it does not). The gate
+is kept after the fix for that reason alone, not as a guard.
+
+One sentence that used to sit here is now wrong and is called out rather than
+quietly deleted: *"the gate cannot stop a list response that arrives after the
+confirm, so if the product race fires the chip assertion still fails."* Post-fix
+a late list response does not fire anything — it costs one extra `GET`. The chip
+assertion in step 7 remains the guard for a **re-regression**: on `dev25` the
+chip renders and then disappears, which fails there and not on a timeout.
