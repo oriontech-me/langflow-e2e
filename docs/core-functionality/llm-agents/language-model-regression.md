@@ -1,6 +1,6 @@
 # Language Model Component Regression
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x (dev30)
 
 ---
 
@@ -16,7 +16,7 @@ management dialog opens from the node.
 | `language model must respond with OpenAI provider` | Component configured with OpenAI builds (`built successfully`) and the Playground answers `2+2` with `4` |
 | `language model must respond with Google provider` | Same journey with Google: build completes and the Playground returns a non-empty reply |
 | `language model provider switch from OpenAI to Google must persist` | After OpenAI → Google setup, the node's `model_model` trigger shows a Gemini model |
-| `model provider dialog opens from the Language Model node` | The node's model dropdown opens `manage-model-providers` and lists `provider-item-OpenAI` |
+| `model provider dialog opens from the Language Model node` | Selecting the **Language Model component node** (the `genericNode` carrying `title-Language Model`, never the README sticky note) opens `manage-model-providers` from its model dropdown, and the dialog lists `provider-item-OpenAI` |
 
 ---
 
@@ -36,6 +36,13 @@ see Notes).
 PR #775 — the key had no quota, not the test — and **restored in #992** once
 the quota was confirmed back (live HTTP 200 completion on `gpt-4o-mini`) and
 the test ran clean at `--retries=0`.
+
+`@stable` was removed from the **dialog** test by the 2026-08-17 daily's
+auto-removal (run 32011412906, commit `14a77eb`) and is **restored by the
+#1469 fix**. The removal was collateral of a backend the shard could not
+reach, but `page.waitForSelector: Timeout` is deliberately not an exempting
+signature — which is the whole reason the fix is an *attribution* one (see
+Notes, #1469).
 
 `@stable` was removed from the **Google** test again by the 2026-08-04 daily's
 auto-removal (run 30901311395) and is **restored by the #1262 fix**. The
@@ -71,6 +78,13 @@ timeout it probes `GET /api/v1/version` and says whether the backend answered,
 so an unreachable backend can no longer be reported as "`mainpage_title` never
 rendered".
 
+`openBasicPrompting()` no longer returns on `page.waitForURL` alone (#1469):
+after the flow URL is reached it holds a **canvas-mount barrier** — the canvas
+controls bar, then at least one rendered `.react-flow__node` — through
+`waitForAttributedSelector` with the `flow-canvas` surface. A canvas that never
+mounts therefore fails at a named seam that says whether Langflow answered,
+instead of inside whichever assertion each test happens to run first.
+
 **OpenAI test:** `initialGPTsetup` — which pins a deterministic GPT model
 from `models.json` via `resolveGptModel()` (#606; UI preference-ranking is
 the fallback when `models.json` is absent or the pinned model left the
@@ -96,9 +110,13 @@ output` badge (60s, #750 — replaces the transient `built successfully` toast)
 **Switch test:** `initialGPTsetup` + `setupGoogle` → save settle → the
 page-level `model_model` trigger shows `/gemini/i`.
 
-**Dialog test:** select the Language Model node → `hideInspectorPanel` →
-open `model_model` → `manage-model-providers` → `provider-item-OpenAI`
-visible → Escape.
+**Dialog test:** select the Language Model **component** node —
+`.react-flow__node:has([data-testid="title-Language Model"])`, the only node
+carrying that title testid — → `hideInspectorPanel` → open `model_model` →
+`manage-model-providers` → `provider-item-OpenAI` visible → Escape. The node
+is NOT resolved by `.filter({ hasText: "Language Model" })`: the template's
+README sticky note contains "Large **Language Model** (LLM)", so that filter
+matches two nodes and `.first()` picks the note (#1469).
 
 ---
 
@@ -108,6 +126,18 @@ visible → Escape.
   `node_duration_` badge within 60s (OpenAI test still uses the `built
   successfully` toast — #750 hardened only the flaking Google test); the
   Playground reply is the end-to-end proof the selected provider executed.
+- **Dialog test:** the node the test selects is the Language Model
+  **component** — proven by the node it clicks carrying
+  `data-testid="title-Language Model"`, which the README sticky note does not —
+  and the dialog reached from its `model_model` trigger lists
+  `provider-item-OpenAI`.
+- **Fix #1469 exit criterion:** (a) `openBasicPrompting()` fails at a named,
+  attributed canvas seam when the canvas does not mount — the message says
+  whether Langflow answered `GET /api/v1/version`, so this collateral is
+  classifiable instead of reading as a bare `page.waitForSelector: Timeout`;
+  (b) the dialog test resolves the component node unambiguously (one match,
+  never the sticky note); (c) the test proves N clean `--retries=0` runs on the
+  current nightly before `@stable` is restored on the `test()` call.
 - **Fix #1262 exit criterion:** the recorded page-entry signature is
   attributed (backend-reachability probed at the barrier), the Google test's
   own recurrent observable is addressed at its cause (the provider-panel
@@ -123,8 +153,11 @@ visible → Escape.
 
 ## External dependencies *(required)*
 
-- Basic Prompting starter template (Language Model node, `model_model`
-  trigger, `button_run_chat output`).
+- Basic Prompting starter template (Language Model node — `genericNode`
+  carrying `title-Language Model` — `model_model` trigger,
+  `button_run_chat output`, `canvas_controls_dropdown`). The template also
+  ships two sticky notes; the README one contains the words "Language Model"
+  and must not be mistaken for the component (#1469).
 - `setup-google.ts` / `initialGPTsetup` helpers — **model choice happens
   here**: `setupGoogle(page)` with no argument selects the FIRST Gemini
   option in the dropdown, so the Google catalog's ordering directly affects
@@ -218,6 +251,42 @@ visible → Escape.
     signals to a 5s deadline and treats a **non-empty (masked) key field** as
     configured on its own — a masked value can never be one this helper typed,
     so it cannot skip a setup that was genuinely needed.
+- **#1469 root cause (2026-08-17):** the dialog test hard-failed on all three
+  attempts of run 32011412906 (shard 2) before reaching anything it is about,
+  each attempt dying on a different canvas observable. Findings:
+  - **The gunicorn wedge is ruled OUT for the attempt window.** The shard's
+    Langflow logged exactly two `WORKER TIMEOUT` — `(pid:31)` at 08:46:09 and
+    `(pid:341)` at 08:51:27, both SIGKILLed — and **both precede attempt 0**
+    (08:55:08). Nothing in 08:55:08→09:01:45.
+  - **The backend was nevertheless unreachable, by event-loop blocking rather
+    than by a worker restart.** Shard 2's `backend-liveness.jsonl` fails 5/43
+    (12 %), 16/46 (35 %) and 33/57 (58 %) of probes across the three attempts,
+    in contiguous runs of 45 s, 66 s and 60 s — long enough to burn a 30 s
+    budget, short enough never to reach gunicorn's 300 s timeout. Concurrent on
+    the same single-worker backend: `memory-history-regression`'s "session
+    isolation" test, itself failing, running 08:55:21→09:00:26 and again
+    09:00:27→09:01:21. Verdict for all three attempts: **environment**
+    (#1077's lever), not a product regression.
+  - **Attempt 0 needs no product regression either.** Its shape — canvas
+    controls rendered, zero nodes — is reproducible on demand on 1.12.0.dev30
+    by failing the canvas's backend GETs (`page.route` abort: controls visible,
+    `.react-flow__node` count 0). On a quiet instance the same sequence renders
+    the controls in 64–824 ms and the Language Model node in 353–826 ms, 5 runs
+    of 5, so the 15 s budget was never tight. The template's node also still
+    carries `display_name: "Language Model"` on dev30 (`GET
+    /api/v1/flows/basic_examples/`), so the absence is not a rename.
+  - **Two real test defects surfaced by the investigation, and they are what
+    the fix addresses.** (1) `.react-flow__node` filtered on `hasText:
+    "Language Model"` matches **two** nodes, because the template's README
+    sticky note reads "Large Language Model (LLM)"; the note precedes the
+    component in DOM order, so `.first()` selected the note — the test named
+    after selecting the node never selected it (it still passed, because the
+    following `model_model` locator is page-level). (2) `openBasicPrompting()`
+    returned on `waitForURL` alone, so a canvas that never mounts failed at
+    whichever observable each test happens to wait on first, with no
+    attribution — which is how a `@release` test lost `@stable` to a backend
+    outage. Both fixed here; the second reuses `waitForAttributedSelector`
+    (#1265) rather than a new mechanism.
 - **Page-entry attribution (#1262, suite-wide):** the shared barrier now lives
   in `helpers/other/page-entry-barrier.ts` and is used by `awaitBootstrapTest`,
   `MainPage.waitForLoad`, `loadTemplateByName` and
