@@ -181,13 +181,21 @@ test(
       // Confirm only once the file list has settled. The node chip is a
       // projection of the `useGetFilesV2` cache — `files.filter(f =>
       // selectedFiles.includes(f.path))` — and a reconcile effect rewrites the
-      // node's value/file_path from that same cache, so ONE list response that
-      // lands without this file wipes the attachment outright (#1430, measured
-      // 5/5 by stripping a single response). The upload's invalidation refetch
-      // is still in flight ~20 ms after the POST here, and confirming into that
-      // window is exposure the test creates, not exposure it is testing. This is
-      // not a repair: a list response arriving after the confirm still wipes the
-      // attach, and the node-chip assertion below still fails when it does.
+      // node's value/file_path from that same cache. Until langflow#14541 ONE
+      // list response that landed without this file wiped the attachment
+      // outright (#1430 / LE-2208, measured 5/5 by stripping a single response).
+      // The upload's invalidation refetch is still in flight ~20 ms after the
+      // POST here, and confirming into that window is exposure the test creates,
+      // not exposure it is testing — which is why the gate stays now that the
+      // product no longer wipes.
+      //
+      // What is NO LONGER true, and was the reason to re-read this comment: a
+      // list response arriving after the confirm does not wipe the attach any
+      // more. The reconcile now forces a fresh read before dropping a path it
+      // cannot find, so a lagging response costs one extra GET and nothing else.
+      // Measured with `docs/upstream-bugs/scripts/repro-2208-stale-file-list.spec.ts`
+      // — one stripped list response destroys the attachment on 1.12.0.dev25
+      // (2/2) and leaves it intact on dev26 and dev30.
       await expect
         .poll(() => inFlightFileLists, {
           timeout: 15000,
@@ -213,6 +221,10 @@ test(
       // (#1430). So an absent chip here is a dropped attachment, never a slow
       // one — do not answer it with a longer timeout. The remove button is
       // hover-revealed, so the persistent chip is the stable signal.
+      //
+      // This assertion is what the LE-2208 wipe fired on, and it stays the
+      // guard for a re-regression of it: on 1.12.0.dev25 the chip renders and
+      // then disappears, which is a failure here and not a timeout.
       await expect(
         page.getByTestId("select-files-modal-button"),
       ).toBeHidden({ timeout: 15000 });
