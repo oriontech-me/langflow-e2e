@@ -87,6 +87,32 @@ here). Validated on `1.11.0.dev38`: clean `--retries=0` runs via go-httpbin on
 `gpt-4o-mini` + force-fail M2. Then `@stable` restored. The search test was
 unaffected (never depended on httpbin).
 
+**Test 3 promoted to `@stable` (#1449).** It shipped without the tag under two
+gates, and by the time it was promoted **both had closed** — #827's clean
+non-guarded baseline (closed by #818 on 2026-07-30) and the unbounded Web Search
+payload (`langflow-ai/langflow#14469`, closed by `#14489` on 2026-08-10, in the
+nightly from `1.12.0.dev25`). Neither expiry was noticed until #1381 went to
+review, which is why the promotion is recorded here with its evidence rather
+than as a tag flip. Validated on `1.12.0.dev25`, `--workers=1 --retries=0`,
+`gpt-4o-mini`, with `ECHO_BASE_URL` on a local go-httpbin:
+
+- **6 clean runs of the whole file, 18/18 tests**, 45–55 s per run — the first
+  local validation of test 1 in this file's history, since `httpbin.org` was
+  answering `503` that day (the #631 mode) and the serial describe had always
+  skipped its siblings behind it.
+- Test 3 alone, measured earlier the same day on the same image: **7/7** at
+  `max_iterations=8` and **4/4** at the default 15.
+- Force-fail executed per test — see **Force-failure checks** below.
+
+Two limits of that evidence, stated because the daily rotates providers by
+weekday (#1185) and will not always run this on OpenAI. **anthropic could not be
+measured locally** — `collect-models` reports its key `inactive` for a billing
+reason, so its targets skip. What exists for the other two is CI: #1381's lane on
+2026-08-13 ran the file on **google** and **anthropic** and passed both (its
+OpenAI targets skipped on a drained CI key, #1450) — so every provider the daily
+can pick has at least one green run of test 3 behind it, none of them on the same
+box as the others.
+
 ---
 
 ## Preconditions *(optional)*
@@ -274,24 +300,19 @@ describe with two tests:
 > turns. **Re-measure before changing the number — do not re-derive it on
 > paper.**
 >
-> **Why this test is still `[-]` and still not `@stable` — and why neither of
-> the two reasons on record still applies.** #827 gated promotion on "the clean
-> non-guarded baseline"; **#818 closed on 2026-07-30 declaring that baseline
-> achieved, twice**. #1378 then recorded #14469 as the gate; **#14489 closed
-> that one on 2026-08-10**. Both stated justifications expired without anyone
-> noticing, which is the exact failure this note was rewritten to fix — and the
-> first version of the rewrite restated the #818 gate as live, so the trap is
-> not hypothetical.
+> **Promoted to `@stable` in #1449, after the gate that outlived two others.**
+> #827 gated promotion on "the clean non-guarded baseline"; **#818 closed on
+> 2026-07-30 declaring that baseline achieved, twice**. #1378 then recorded
+> #14469 as the gate; **#14489 closed that one on 2026-08-10**. Both expired
+> without anyone noticing — and the first attempt to correct that record
+> restated the #818 gate as live, so the trap is not hypothetical. The third
+> reason was the real one and it is now measured: #1378's failure is
+> **provider-specific** (OpenAI's 200k TPM on `gpt-4o-mini`), and the missing
+> evidence was a post-#14489 run on that provider. It exists — see the Tags
+> section for the full validation set, providers included.
 >
-> The live reason is narrower and is worth stating as such: **the failure
-> #1378 recorded is provider-specific** (OpenAI's 200k TPM on `gpt-4o-mini`),
-> and there is no post-#14489 measurement on that provider. The 7/7 and 4/4
-> above are a local box; CI's run on 2026-08-13 covered google and anthropic
-> and **skipped every OpenAI target** — `provider "openai" probed "inactive"`,
-> `You have no credits remaining`. Promotion therefore waits on one clean
-> `--retries=0` measurement of test 3 on `gpt-4o-mini` against `≥ 1.12.0.dev25`,
-> not on a baseline or an upstream ticket. Tracked separately; not a side
-> effect of this fix.
+> The cap stays at 8 after promotion. Nothing above argues it is unnecessary;
+> it argues that the failure it bounds became far rarer.
 
 ---
 
@@ -374,6 +395,17 @@ tools in the wrong order, fails).
   (a cap that quietly does not apply is exactly the #1378 failure, and a
   passing run would not reveal it).
 
+  **Re-executed for the #1449 promotion** on `1.12.0.dev25`, each isolated with
+  `--grep` because the describe is `mode: "serial"` and the first failure would
+  otherwise skip its siblings: **M1** failed with *first tool called was
+  "fetch_content", expected "perform_search"*; **M3** with the mirror image;
+  **M4** with *tools out of order: ["fetch_content","perform_search"] (indices
+  [1,0])*; **M5** with `TimeoutError` on
+  `inspector-add-max_iterations_FF_MUTATION`. M4 failed on its **first**
+  attempt, against the two #1381 needed on `dev20` — where the first attempt
+  died on the context blow-up instead of on the mutation, which is the same
+  difference `#14489` makes everywhere else in this note.
+
 ---
 
 ## What this test does not cover *(optional)*
@@ -384,6 +416,20 @@ tools in the wrong order, fails).
   tools are covered by other §6.4 bullets).
 - The transient "Executed …" streaming headers — assertions target persisted
   monitor data and the final reply only.
+
+**Expected noise in the log, so a reviewer does not re-diagnose it (#1449).**
+Most runs of this file print one `🚨 Backend Error: 500 … DELETE /api/v1/flows/`
+per test, body `{"detail":"An internal error occurred while deleting flows."}`.
+That is **#1225** — `cascade_delete_flow` losing a `SQLITE_BUSY` race
+(`OperationalError: database is locked`), measured at 10–22× per `daily-stable`
+run across the whole suite and closed by decision rather than by a fix. It is
+not caused by this spec and predates the promotion; it is left as an advisory
+log entry on purpose. `page.expectKnownHttpError()` would be the natural
+mechanism and is **wrong here**: it is verified in both directions, so a
+declared defect that does not fire fails the test — and this one is
+intermittent (5 of 6 runs in one local batch, 1 of 4 in another). Declaring it
+would trade a known-noisy log for a test that goes red whenever the delete
+happens to win the race.
 
 ---
 
