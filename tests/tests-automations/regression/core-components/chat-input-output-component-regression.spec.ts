@@ -1,7 +1,10 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
+import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
+import { fillSidebarSearch } from "../../../helpers/flows/fill-sidebar-search";
+import { openBlankFlowFromModal } from "../../../helpers/flows/open-blank-flow-from-modal";
 import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
 import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
 import { trackCreatedFlows } from "../../../helpers/flows/track-created-flows";
@@ -42,19 +45,16 @@ test.afterEach(async ({ request }) => {
 // in expanded (non-minimized) state.
 async function addChatInputComponent(page: Page) {
   await awaitBootstrapTest(page);
-  await page.getByTestId("blank-flow").click();
-  // Wait for the sidebar to settle before typing — filling the search input
-  // immediately after the blank-flow transition can time out while the canvas
-  // is still mounting (same guard as if-else-component-regression).
-  await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
-    timeout: 15000,
-  });
-  await page.getByTestId("sidebar-search-input").fill("chat input");
-  await expect(page.getByTestId("input_outputChat Input")).toBeVisible({
-    timeout: 30000,
-  });
+  // Both of these replace an inline step that #1468 measured as unsafe. The
+  // click must be confirmed to have CLOSED the modal (a refused flow creation
+  // leaves it open over the editor), and the typed term must be confirmed to
+  // have STAYED in the sidebar input — waiting for that input to be merely
+  // visible, which is what stood here, is satisfied before the remount that
+  // discards the term, which is why this test's own guard never helped.
+  await openBlankFlowFromModal(page);
+  await fillSidebarSearch(page, "chat input", "input_outputChat Input");
   await page.getByTestId("input_outputChat Input").hover();
-  await page.getByTestId("add-component-button-chat-input").click();
+  await addComponentFromSidebar(page, "chat input", "add-component-button-chat-input");
   await adjustScreenView(page);
   await expect(page.getByTestId("title-Chat Input")).toBeVisible({
     timeout: 15000,
@@ -69,10 +69,11 @@ async function addChatInputComponent(page: Page) {
 async function addChatOutputToCanvas(page: Page) {
   // Zoom out so the drag target does not overlap the existing node
   await zoomOut(page, 2);
-  await page.getByTestId("sidebar-search-input").fill("chat output");
-  await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
-    timeout: 30000,
-  });
+  // Same barrier as the other two adds (#1468). The drag itself keeps its
+  // explicit `targetPosition` rather than moving to `dragComponentFromSidebar`:
+  // that helper drops on the pane's centre, and this add exists to land clear of
+  // the node already on the canvas.
+  await fillSidebarSearch(page, "chat output", "input_outputChat Output");
   await page
     .getByTestId("input_outputChat Output")
     .dragTo(page.locator('//*[@id="react-flow-id"]'), {
@@ -170,13 +171,14 @@ test(
   { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await awaitBootstrapTest(page);
-    await page.getByTestId("blank-flow").click();
-    await page.getByTestId("sidebar-search-input").fill("chat output");
-    await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
-      timeout: 30000,
-    });
+    await openBlankFlowFromModal(page);
+    await fillSidebarSearch(page, "chat output", "input_outputChat Output");
     await page.getByTestId("input_outputChat Output").hover();
-    await page.getByTestId("add-component-button-chat-output").click();
+    await addComponentFromSidebar(
+      page,
+      "chat output",
+      "add-component-button-chat-output",
+    );
     await adjustScreenView(page);
 
     await expect(page.getByTestId("title-Chat Output")).toBeVisible({
@@ -320,7 +322,7 @@ test(
 
 test(
   "Chat Input/Output — default sender_name is 'User' on input and 'AI' on output",
-  { tag: ["@regression", "@components"] },
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     // The defaults are constants in lfx/utils/constants.py:
     //   MESSAGE_SENDER_NAME_USER = "User"

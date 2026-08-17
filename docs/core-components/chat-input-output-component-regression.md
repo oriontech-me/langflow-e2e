@@ -1,6 +1,6 @@
 # Chat Input / Chat Output Components — Regression
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev7`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev30`)
 
 ---
 
@@ -25,7 +25,9 @@ If any of these tests fails, one of the two endpoints of the Playground is broke
 
 `@stable` `@regression` `@components`
 
-All 6 tests carry `@stable` per the project rule "spec is born 100% @stable; tag is removed per-test only during weekly triage".
+5 of the 6 tests carry `@stable` per the project rule "spec is born 100% @stable; tag is removed per-test only during weekly triage".
+
+Test 1 is the exception: it is `test.fixme` and untagged, quarantined at the triage of daily #1417 for the swallowed sidebar **click** (the click lands and no node is placed). Lifting it is a deliverable of **#1423**, not of this spec's own work. Test 6's `@stable` was auto-removed by the daily workflow for #1468 and is restored here, re-validated on `1.12.0.dev30`.
 
 ---
 
@@ -142,4 +144,8 @@ All 6 tests carry `@stable` per the project rule "spec is born 100% @stable; tag
 
 - Test 5 deliberately validates the override through the **Playground** rather than the canvas-side output-inspection dialog, because the dialog renders a Message as plain text (no metadata fields exposed in `textContent`). The Playground's `chat-message-{sender_name}-{text}` testid is the user-visible surface where the override actually shows up.
 - Test 6 validates the defaults at the **inspector level** (the field value) rather than running the flow. The field value is the upstream of any runtime behavior — this avoids the same dialog-rendering limitation as test 5 while still catching a regression in the constants.
+- **The sidebar add is guarded on two axes, and both guards exist because a measurement demanded them (#1468).** Every add here goes through `openBlankFlowFromModal` and `fillSidebarSearch` instead of clicking `blank-flow` and filling `sidebar-search-input` inline. Measured on nightly `1.12.0.dev30` with four harnesses driving one backend — **31 failures in 348 adds (8.9 %)**, and **0 in 30** on a quiet instance, which is why none of this reproduces locally. The failures split into two modes with distinct observables:
+  - **The templates modal never closes** (9 of 21 tabulated; `role="dialog"` present, absent in all 16 measured successes; `400 POST /api/v1/flows/` in 6 of the 9 — the "flow must be unique" collision, which `mode: "serial"` cannot prevent because it is across the daily's shards, not within this file). The sidebar is then covered and the fill times out. This mode hits the guarded and unguarded fills alike, which is why it — not the remount — is the likeliest cause of test 6's hard failure on the 2026-08-17 daily.
+  - **The sidebar remounts and discards the typed term** (12 of 21, **all** of them on a fill issued with no prior wait for the input to be visible, **0** on a guarded fill). An in-page probe sampling every animation frame recorded the input node ABSENT at ~102 ms and a NEW empty one at ~156 ms. Since 1.12 a component row only exists in the DOM under a filter, so `input_output<Display Name>` never appears and the wait ends as `element(s) not found` with no add attempted.
+  Neither mode is slowness: re-typing into the remounted input recovered 0 of 4, a reload 4 of 4, and a raised timeout reaches neither. After the two guards: **0 failures in 200 adds** under the same load, including two paired rounds run in the same window as the unguarded harness (0/80 against 3/80). The reload repair inside `fillSidebarSearch` never fired in those 200 — the barrier is what carries the fix, and the repair is a fallback covered by unit tests only.
 - The original issue (#184) framed test 6 as "default sender uses authenticated username when `sender_name` is empty"; the actual upstream behavior (verified against `lfx/components/input_output/chat.py` and the upstream integration test `test_chat_input.test_default`) is that the default is the literal string `"User"`, with no username fallback. The test was reframed to match real behavior.
