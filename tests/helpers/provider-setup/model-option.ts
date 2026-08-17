@@ -267,7 +267,83 @@ export async function readModelOptions(options: Locator): Promise<ModelOption[]>
   return raw.map(toModelOption);
 }
 
-/** Model ids of the provider panel's toggles — the second source of truth. */
+/**
+ * Whether an option can be matched against at all.
+ *
+ * A target carrying neither attribute matches NOTHING, so every "it is no longer
+ * offered" verdict about it is vacuous. That state is not hypothetical: reviewing
+ * #1464 reproduced it by blanking both attributes on a target whose model HAD been
+ * disabled, and the removal step passed — the run only reddened 25 s later, at the
+ * re-enable, blaming the product for what was a suite defect.
+ */
+export function hasOptionIdentity(
+  option: Pick<ModelOption, "testId" | "value">,
+): boolean {
+  return option.value !== "" || option.testId !== "";
+}
+
+/** What one read of the picker establishes about a single target option. */
+export type PickerCensus = {
+  /** Options offered, every provider included. */
+  total: number;
+  /** Options whose IDENTITY is the target's — 0 or 1 in a healthy picker. */
+  target: number;
+  /** OTHER models of the caller's provider that still resolve by identity. */
+  providerOthers: number;
+  /** What a user would read, for the failure message. */
+  labels: string[];
+};
+
+/**
+ * Counts what an enumerated picker establishes about one target option.
+ *
+ * Pure for the same reason `resolveModelOption` is: the property that must never
+ * regress is that a NEGATIVE verdict about one option can only be reached from a
+ * picker that was populated and is still parsable — and a unit test can pin that
+ * where a live spec cannot reproduce a markup change on demand. `target: 0` alone
+ * is also exactly what an empty list and a renamed attribute produce, so a caller
+ * asserting it without `total` and `providerOthers` is asserting nothing
+ * (#1012/#1461). Matching is on `data-value` then `data-testid`; the option's text
+ * is never consulted, because the `sr-only` position counter added on
+ * 1.12.0.dev26 renders inside it with no separator ("claude-opus-5" + "1 of 69").
+ *
+ * `providerOthers` keys on the model ID rather than the provider label on purpose:
+ * it answers "does this provider's catalog still resolve at all", which is the
+ * question that separates a model the product removed from a reader we broke.
+ */
+export function censusForTarget(
+  options: ModelOption[],
+  target: Pick<ModelOption, "testId" | "value">,
+  providerModels: ReadonlySet<string>,
+): PickerCensus {
+  const isTarget = (option: ModelOption): boolean =>
+    (target.value !== "" && option.value === target.value) ||
+    (target.testId !== "" && option.testId === target.testId);
+
+  return {
+    total: options.length,
+    target: options.filter(isTarget).length,
+    providerOthers: options.filter(
+      (option) =>
+        !isTarget(option) &&
+        option.model !== null &&
+        providerModels.has(option.model),
+    ).length,
+    labels: options.map((option) => option.visibleLabel),
+  };
+}
+
+/**
+ * Model ids of the provider panel's toggles — the second source of truth.
+ *
+ * The name is narrower than the behavior and callers must not over-trust it: this
+ * returns EVERY rendered `llm-toggle-*` id regardless of `aria-checked`, including
+ * the rows inside the collapsed `llm-deprecated-disclosure` (measured on
+ * 1.12.0.dev30: 49 ids for OpenAI, 41 checked and 8 not, the 8 being exactly the
+ * deprecated ones). So it answers "which models does this provider LIST", not
+ * "which are enabled" — which is what its callers want, and why the behavior is
+ * left alone; a count taken from it is never a count of enabled models.
+ */
 export async function enumerateEnabledModels(page: Page): Promise<string[]> {
   const ids = await page
     .locator('[data-testid^="llm-toggle-"]')
