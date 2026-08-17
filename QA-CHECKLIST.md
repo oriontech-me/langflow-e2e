@@ -1004,7 +1004,7 @@
 | `core-components/` — Core Components | 91 | 87 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 21 | 8 | 13 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
-| `core-functionality/llm-agents/` | 39 | 32 | 3 | 1 | 3 |
+| `core-functionality/llm-agents/` | 40 | 32 | 4 | 1 | 3 |
 | `core-functionality/model-provider/` | 34 | 32 | 2 | 0 | 0 |
 | `core-functionality/observability-monitoring/` | 24 | 24 | 0 | 0 | 0 |
 | `core-functionality/playground/` | 52 | 47 | 3 | 1 | 1 |
@@ -1019,7 +1019,7 @@
 | `security/` — Validation, SSRF, Secrets | 11 | 8 | 0 | 0 | 3 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
-| **TOTAL** | **532** | **420 (79%)** | **37 (7%)** | **14 (3%)** | **61 (11%)** |
+| **TOTAL** | **533** | **420 (79%)** | **38 (7%)** | **14 (3%)** | **61 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1581,7 +1581,7 @@
 | `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
 | `core-functionality/auth/` | 13 | 0 |
-| `core-functionality/llm-agents/` | 3 | 3 |
+| `core-functionality/llm-agents/` | 4 | 3 |
 | `core-functionality/model-provider/` | 2 | 0 |
 | `core-functionality/playground/` | 3 | 1 |
 | `mcp/client/` | 2 | 2 |
