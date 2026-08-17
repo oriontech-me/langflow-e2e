@@ -320,7 +320,7 @@ test(
 
 test(
   "Chat Input/Output — default sender_name is 'User' on input and 'AI' on output",
-  { tag: ["@stable", "@regression", "@components"] },
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     // The defaults are constants in lfx/utils/constants.py:
     //   MESSAGE_SENDER_NAME_USER = "User"

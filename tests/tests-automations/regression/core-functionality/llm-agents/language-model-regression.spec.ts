@@ -239,7 +239,7 @@ test.describe("Language Model Component Regression", () => {
 
   test(
     "model provider dialog opens from the Language Model node",
-    { tag: ["@stable", "@release", "@components", "@workspace", "@model-provider"] },
+    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
     async ({ page }) => {
       await openBasicPrompting(page);
 
