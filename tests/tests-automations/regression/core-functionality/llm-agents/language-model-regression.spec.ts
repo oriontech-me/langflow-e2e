@@ -3,6 +3,7 @@ import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { waitForAttributedSelector } from "../../../../helpers/other/page-entry-barrier";
 import { initialGPTsetup } from "../../../../helpers/other/initialGPTsetup";
 import { setupGoogle } from "../../../../helpers/provider-setup/setup-google";
 import { resolveGeminiModel } from "../../../../helpers/provider-setup/resolve-gemini-model";
@@ -58,6 +59,35 @@ test.describe("Language Model Component Regression", () => {
     await page.waitForURL(/\/flow\/[^/?#]+/, { timeout: 30000 });
     const flowId = await flowCreated;
     if (flowId) createdFlowIds.push(flowId);
+
+    // The canvas-mount barrier (#1469). `waitForURL` only proves the route
+    // changed — the canvas fetches and renders AFTER it, so returning here left
+    // every test to trip over whichever canvas observable it happened to wait on
+    // first, with no attribution. On the 2026-08-17 daily (run 32011412906,
+    // shard 2) that cost this file's `@release` dialog test its `@stable`: its
+    // three attempts died on `.react-flow__node` filtered on Language Model,
+    // then twice on `canvas_controls_dropdown`, while shard 2's own
+    // backend-liveness lost 12% / 35% / 58% of its probes in contiguous 45-66s
+    // stretches. Both shapes are reproducible on demand by failing the canvas's
+    // backend GETs (measured on 1.12.0.dev30), so they say "the backend was
+    // gone", not "the canvas regressed" — but `page.waitForSelector: Timeout`
+    // cannot say which, and it is deliberately NOT an exempting infra signature.
+    //
+    // So wait here, once, through the attributed barrier (#1262/#1265): on
+    // timeout it probes `GET /api/v1/version` and reports whether Langflow
+    // answered, which is what makes this class of collateral classifiable.
+    // Budgets are exactly the ones the dialog test already spent (30s + 15s) —
+    // nothing is inflated, and on a healthy instance both resolve in under a
+    // second (64-824ms and 353-826ms over 5 runs of 5 on 1.12.0.dev30).
+    await waitForAttributedSelector(
+      page,
+      '[data-testid="canvas_controls_dropdown"]',
+      30000,
+      { surface: "flow-canvas" },
+    );
+    await waitForAttributedSelector(page, ".react-flow__node", 15000, {
+      surface: "flow-canvas-nodes",
+    });
   };
 
   test.afterEach(async ({ request }) => {
@@ -239,18 +269,34 @@ test.describe("Language Model Component Regression", () => {
 
   test(
     "model provider dialog opens from the Language Model node",
-    { tag: ["@release", "@components", "@workspace", "@model-provider"] },
+    {
+      tag: [
+        "@stable",
+        "@release",
+        "@components",
+        "@workspace",
+        "@model-provider",
+      ],
+    },
     async ({ page }) => {
+      // openBasicPrompting now holds the canvas-mount barrier itself, so the
+      // canvas_controls_dropdown wait that used to open this test is gone —
+      // it was the same wait, one caller up (#1469).
       await openBasicPrompting(page);
 
-      await page.waitForSelector('[data-testid="canvas_controls_dropdown"]', {
-        timeout: 30000,
-      });
-
-      const languageModelNode = page
-        .locator(".react-flow__node")
-        .filter({ hasText: "Language Model" })
-        .first();
+      // Resolve the node by the title testid the COMPONENT carries, never by
+      // text (#1469). `.filter({ hasText: "Language Model" })` matched TWO
+      // nodes: the template's README sticky note reads "Large Language Model
+      // (LLM)", and it precedes the component in DOM order — so `.first()`
+      // selected the note and this test never touched the node it is named
+      // after. It still passed, because the `model_model` locator below is
+      // page-level; a false negative that no green run could reveal. The count
+      // assert pins the disambiguation: if a future template adds a second node
+      // carrying this title, the test says so instead of silently picking one.
+      const languageModelNode = page.locator(
+        '.react-flow__node:has([data-testid="title-Language Model"])',
+      );
+      await expect(languageModelNode).toHaveCount(1, { timeout: 15000 });
       await expect(languageModelNode).toBeVisible({ timeout: 15000 });
       await languageModelNode.click();
 
