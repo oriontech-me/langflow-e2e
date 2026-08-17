@@ -63,11 +63,17 @@ class CustomComponent(Component):
     def build_output(self) -> Message:
         return Message(text=self.input_value)`;
 
-// Quarantined at triage (daily #1361): recurrent flake — `code-button-modal`
-// never becomes visible after the custom component is added — see #1365.
-test.fixme(
+// Quarantine lifted (#1365). The flake was the add being discarded while the
+// RBAC permission query was in flight — the click was accepted on an enabled
+// button and dropped, so `code-button-modal` never had a node to belong to
+// (LE-2176). Fixed upstream by langflow#14523, which gates the affordance:
+// measured on 2026-08-17, the button reads `disabled=false` through the whole
+// permission window on 1.12.0.dev25 and `disabled=true` on 1.12.0.dev30. See
+// the fuller note on `customComponentAdd.spec.ts`, the sibling that shared this
+// cause and this locator.
+test(
   "a full custom component built from code exposes its declared interface",
-  { tag: ["@release", "@components"] },
+  { tag: ["@stable", "@release", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 

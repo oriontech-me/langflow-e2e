@@ -39,22 +39,24 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-// Quarantined at the triage of #1458 as prevention: recurrent flake, 3× under the
-// same signature (dailies 2026-07-15, 2026-08-12, 2026-08-14). `code-button-modal`
-// is ABSENT — `element(s) not found`, not late-and-invisible — at the 10 s mark
-// after the custom component is added, and it recovered on the next attempt every
-// time. Same locator and same area as `full-custom-component.spec.ts:66`, so it is
-// tracked there rather than as its own cause.
+// Quarantine lifted (#1365 / #1423). The recurrent flake — `code-button-modal`
+// ABSENT at the 10 s mark after the custom component is added — was the add
+// itself being discarded, not the modal being late: the flow editor accepted the
+// click on `sidebar-custom-component-button` and dropped it while the RBAC
+// permission query was in flight (LE-2176). Fixed upstream by langflow#14523,
+// which gates the affordance instead of only the mutation path.
 //
-// `test.fixme` accompanies the tag removal on purpose: dropping `@stable` alone
-// only stops the daily, while the PR impacted-specs gate selects by file diff and
-// would keep running this red (#871).
-//
-// Lifting this — remove `test.fixme` AND restore `@stable`, re-validated per
-// CONTRIBUTING.md — is a deliverable of #1365.
-test.fixme(
+// Measured on 2026-08-17, sampling the button every 500 ms with
+// `POST /api/v1/authz/me/permissions` delayed 3 s: on 1.12.0.dev25 it reads
+// `disabled=false` for the whole window (enabled, and swallowing), on
+// 1.12.0.dev30 `disabled=true` for the whole window. That is why the bare click
+// below is safe again and was not rewired onto `addCustomComponent()` — a
+// click now waits out the window through Playwright's own actionability check
+// rather than being dropped. If this flakes again, the retry helper is the fix,
+// and the first thing to re-measure is that `disabled` sample.
+test(
   "custom component code button should be pink when adding custom component",
-  { tag: ["@release", "@components"] },
+  { tag: ["@release", "@components", "@stable"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);

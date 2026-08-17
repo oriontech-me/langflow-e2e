@@ -2,9 +2,10 @@
 
 | | |
 |---|---|
-| **Filed upstream** | **LE-2176** — https://datastax.jira.com/browse/LE-2176 |
+| **Status** | **FIXED** — [langflow#14523](https://github.com/langflow-ai/langflow/pull/14523) *"gate the add component affordance on the pending permission check"*, merged into `release-1.12.0` on 2026-08-14. Verified on `1.12.0.dev30`, see §9 |
+| **Filed upstream** | **LE-2176** — https://datastax.jira.com/browse/LE-2176 (Done) |
 | **Sibling ticket** | **LE-2123** — same permission gate, different consumer (Global Variables grid). See `UPSTREAM-BUG-global-variables-permission-gate-dead-window.md` |
-| **Tracked in** | `oriontech-me/langflow-e2e#1301` (from daily triage `#1296`), repaired suite-side by PR `#1427`. Earlier surfaces of the same class: `#1304`, `#1335`; still-quarantined caller: `#1365` |
+| **Tracked in** | `oriontech-me/langflow-e2e#1301` (from daily triage `#1296`), repaired suite-side by PR `#1427`. Earlier surfaces of the same class: `#1304`, `#1335`; quarantined callers `#1365` / `#1423`, lifted 2026-08-17 (§9) |
 | **Component** | Langflow — frontend, flow editor / RBAC permissions |
 | **Surfaces** | `sidebar-custom-component-button`; `add-component-button-<x>` (Components and MCP tabs); drag-and-drop onto the canvas pane |
 | **Observed on** | `langflowai/langflow-nightly:latest` — `1.12.0.dev23`; the same class was measured on `dev17`, `dev18` and `dev19` |
@@ -194,3 +195,53 @@ rm tests/tests-automations/regression/core-components/repro-permission-gate-*.sp
 
 Expected: 10 passed on the first (5 arms with `added=0` and `inFlightAtClick=1`, 5 with
 `added=1` and `inFlightAtClick=0`); 1 passed on the second, printing the ladder.
+
+---
+
+## 9. Fixed — verification on 1.12.0.dev30 (2026-08-17)
+
+[langflow#14523](https://github.com/langflow-ai/langflow/pull/14523) merged into
+`release-1.12.0` on 2026-08-14 21:20 UTC and takes the route this report asked
+for: it leaves the fail-closed gate alone and **gates the affordance**.
+`sidebarFooterButtons.tsx` now derives one flag for every reason the add is
+refused — `isUnavailable = isLoading || isFlowReadOnly || !customComponent` —
+and `sidebarDraggableComponent.tsx` carries the same for `add-component-button-<x>`,
+with `sidebar.permissionsPending` / `sidebar.permissionDenied` as the tooltips.
+
+**The fix is in the image the daily runs, proven in the image and not by version
+arithmetic.** `grep -rl "Checking permissions" …/langflow/frontend` hits
+`index-*.js` on `1.12.0.dev30` and finds nothing on `dev25` or `dev26`.
+
+**Arm A — the reproducer of §8, unchanged, with the permissions endpoint delayed
+3 s and exactly one click:**
+
+| Build | `inFlightAtClick` | nodes added |
+|---|---|---|
+| `1.12.0.dev25` | 1 | **0** — the add is discarded |
+| `1.12.0.dev30` | 1 | **1** — the click waits out the window and lands |
+
+So `repro-permission-gate-add.spec.ts` now **fails** its `IN-WINDOW` prediction
+on a fixed build, which is the expected outcome and the reason it is a reproducer
+rather than a spec.
+
+**Arm B — the affordance itself, sampled every 500 ms under the same 3 s delay.**
+This is the half that decides what our helpers must do, so it was measured rather
+than inferred from arm A:
+
+| Build | during the window (`inFlight=1`) | after |
+|---|---|---|
+| `1.12.0.dev25` | `disabled=false` from 500 ms on — enabled, and swallowing | `disabled=false` |
+| `1.12.0.dev30` | `disabled=true` for the whole window | `disabled=false` at 3000 ms |
+
+(Both read `disabled=true` at 0 ms, which is the component-types load, not the
+permission gate — that is why the sample has to run past it.)
+
+**Consequence for the suite.** A bare `click()` on the add button is safe again:
+Playwright's actionability check waits for `disabled` to clear, so the window
+costs latency instead of a dropped add. The four bare call sites named in #1423
+(`customComponentAdd`, `full-custom-component`, `stop-button-playground:55`,
+`tool-mode:194`) were therefore **not** rewired onto `addCustomComponent()`; the
+hardened helper stays where it already is. If this class returns, that decision
+is the first thing to revisit, and the `disabled` sample above is the measurement
+that settles it — a swallow with `disabled=true` would be a different defect from
+this one.
