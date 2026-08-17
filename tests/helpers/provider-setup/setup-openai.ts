@@ -6,6 +6,7 @@ import {
   enumerateModelOptions,
   selectPinnedModelOption,
 } from "./model-option";
+import { openProviderPanel } from "./provider-panel-entry";
 
 export async function setupOpenAI(
   page: Page,
@@ -20,31 +21,11 @@ export async function setupOpenAI(
     fallbackToRanking?: boolean;
   },
 ): Promise<void> {
-  // Step 1: Find the entry point into the provider management panel.
-  // "model_model" exists only when a provider is already configured.
-  // When no provider is configured yet, the field renders a plain "Setup Provider"
-  // button (no data-testid) that opens the management modal directly.
-  const modelDropdown = page.getByTestId("model_model");
-  const setupProviderBtn = page.getByRole("button", { name: "Setup Provider" });
-
-  const hasModelDropdown = (await modelDropdown.count()) > 0;
-  const hasSetupButton = (await setupProviderBtn.count()) > 0;
-
-  if (!hasModelDropdown && !hasSetupButton) {
-    console.log("No Agent node found on canvas — skipping OpenAI setup.");
-    return;
-  }
-
-  // Step 2: Open the model provider management panel
-  if (hasModelDropdown) {
-    // A selected node opens a right-side Inspector Panel that overlaps the
-    // model dropdown on 1.11.x+ — close it so the click is not intercepted.
-    await hideInspectorPanel(page);
-    await modelDropdown.click();
-    await page.getByTestId("manage-model-providers").click();
-  } else {
-    await setupProviderBtn.click();
-  }
+  // Steps 1-2: Reach the Model Providers panel from the Agent node.
+  // Which control the node renders depends on whether a provider is already
+  // configured, and on 1.12.0.dev26 the not-configured one is no longer
+  // addressable by role+name — see provider-panel-entry.ts (#1465).
+  if ((await openProviderPanel(page, "OpenAI")) === "no-agent") return;
 
   // Step 3: Select the OpenAI provider
   await page.getByTestId("provider-item-OpenAI").click();

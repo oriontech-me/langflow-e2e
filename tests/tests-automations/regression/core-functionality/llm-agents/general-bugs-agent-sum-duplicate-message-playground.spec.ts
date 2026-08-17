@@ -1,9 +1,46 @@
 import dotenv from "dotenv";
+import fs from "fs";
 import path from "path";
 import { expect, test } from "../../../../fixtures/fixtures";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { setupAnthropic } from "../../../../helpers/provider-setup/setup-anthropic";
+import { SimpleAgentTemplatePage } from "../../../../pages";
 import { providerSkipGate } from "../../../../helpers/provider-setup/provider-health";
+import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+
+// A current, non-dated Claude model from the collected catalog. Pinning one is
+// what makes the template load a GUARDED one: SimpleAgentTemplatePage blocks
+// until the Agent's persisted binding carries this model, and it warns that a
+// load with no pin observes no transition at all (#751/#1274). Without that
+// barrier the Playground opens while the node still holds its mount-time state,
+// and the run reaches the backend with no model bound (#1465).
+function resolveClaudeModel(): string | undefined {
+  const jsonPath = path.resolve(
+    __dirname,
+    "../../../../helpers/provider-setup/data/models.json",
+  );
+  if (!fs.existsSync(jsonPath)) return undefined;
+  const models = JSON.parse(fs.readFileSync(jsonPath, "utf-8")) as Array<{
+    provider: string;
+    model: string;
+  }>;
+  const claude = models
+    .filter((m) => m.provider === "anthropic")
+    .map((m) => m.model);
+  return claude.find((m) => !/\d{8}/.test(m)) ?? claude[0];
+}
+
+// Id of the flow the template load created; teardown deletes only this one via
+// the API (scoped) — never a global cleanAllFlows, which wipes flows other
+// workers are building mid-run (#515). This spec created one flow per run and
+// deleted none until #1465.
+let createdFlowId: string | undefined;
+
+test.afterEach(async ({ request }) => {
+  if (!createdFlowId) return;
+  const bearer = await getAuthToken(request);
+  await deleteFlow(request, createdFlowId, { headers: { Authorization: bearer } });
+  createdFlowId = undefined;
+});
 
 test(
   "user must not experience message duplication in mathematical expressions with agent component",
@@ -18,12 +55,20 @@ test(
     // and kill the shard's Langflow worker (#1029).
     const gate = providerSkipGate("anthropic");
     test.skip(gate.skip, gate.reason);
-    await awaitBootstrapTest(page);
 
-    await page.getByTestId("side_nav_options_all-templates").click();
-    await page.getByRole("heading", { name: "Simple Agent" }).first().click();
+    // Loaded through the Page Object, not by clicking the template and calling a
+    // provider helper directly: the POM performs the same setup AND then blocks
+    // until the Agent's PERSISTED binding carries the requested provider+model.
+    // The hand-rolled version this replaced opened the Playground as soon as the
+    // helper returned, so the run left with no model bound and the backend
+    // answered `ComponentBuildError: … No model selected.` — which surfaced 30 s
+    // later as the completion gate below timing out (#1465).
+    await new SimpleAgentTemplatePage(page).load({
+      provider: "anthropic",
+      model: resolveClaudeModel(),
+    });
 
-    await setupAnthropic(page);
+    createdFlowId = page.url().split("/flow/")[1]?.split(/[/?#]/)[0];
 
     await page.getByTestId("playground-btn-flow-io").click();
 
@@ -32,47 +77,47 @@ test(
     });
 
     // Test simple math expression
-    await page.getByTestId("input-chat-playground").fill("2+2");
+    await page.getByTestId("input-chat-playground").last().fill("2+2");
 
     await page.waitForSelector('[data-testid="button-send"]', {
       timeout: 100000,
     });
 
-    await page.getByTestId("button-send").click();
-    // Wait for response completion
-    await page.waitForSelector(
-      '[data-testid="header-icon"] svg[data-testid="icon-Check"]',
-      {
-        timeout: 30000,
-      },
-    );
+    await page.getByTestId("button-send").last().click();
 
-    // Click on the execution section to expand and reveal the JSON blocks
-    await page.locator('[data-testid="header-icon"]').first().click();
-
-    // Wait for the JSON code blocks to appear after clicking
-    await page.waitForSelector('[data-testid="chat-code-tab"]', {
-      timeout: 10000,
+    // The chat message testid embeds the message text
+    // (`chat-message-<sender>-<text>`), so the duplication signature is readable
+    // straight off the DOM without expanding anything. That matters: until 1.12
+    // this spec expanded the message's execution header (`header-icon` →
+    // `icon-Check`) and read the tool's JSON payload from `chat-code-tab`, and on
+    // 1.12.0.dev26 BOTH count 0 — the same change that removed the expandable
+    // tool accordion (#827). Reading the payload off the run stream instead was
+    // rejected: for `2+2` the Agent answers directly, so a tool-anchored assert
+    // would depend on the model choosing to call one (#1187).
+    // Wait for the FINISHED run, not for the bubble: `div-chat-message` mounts
+    // empty while the answer streams, so gating on it read a spinner as a reply.
+    // The assistant's testid embeds the text, so it only exists once there IS
+    // text, and the token-usage row is written when the run completes.
+    const assistantMessage = page.getByTestId(/^chat-message-AI-/);
+    await expect(assistantMessage).toBeVisible({ timeout: 120000 });
+    await expect(page.getByTestId("chat-message-token-usage")).toBeVisible({
+      timeout: 30000,
     });
 
-    // Get all the JSON code content to check both input and output
-    const codeBlocks = await page
-      .locator('[data-testid="chat-code-tab"] code.language-json')
-      .allTextContents();
+    // The typed input reached the run exactly once. A duplicated input renders
+    // the user's own message as "2+22+2" (or "22+2"), so this fails on the very
+    // bug the spec exists for.
+    await expect(page.getByTestId("chat-message-User-2+2")).toBeVisible({
+      timeout: 10000,
+    });
+    await expect(page.getByTestId("chat-message-User-2+22+2")).toHaveCount(0);
+    await expect(page.getByTestId("chat-message-User-22+2")).toHaveCount(0);
 
-    // First code block should contain the input expression
-    const inputJson = codeBlocks[0];
-    expect(inputJson).toContain('"expression": "2+2"');
-
-    // Verify the input is NOT duplicated (should not contain "2+22+2")
-    expect(inputJson).not.toContain('"expression": "2+22+2"');
-    expect(inputJson).not.toContain('"expression": "22+2"');
-
-    // Second code block should contain the output result
-    const outputJson = codeBlocks[1];
-    expect(outputJson).toContain('"result": "4"');
-
-    // Ensure the result is not 26 (which would be 2+22+2)
-    expect(outputJson).not.toContain('"result": "26"');
+    // And the answer is the arithmetic of the CLEAN expression. 26 is what
+    // "2+22+2" evaluates to — asserted by name so a duplicated run cannot pass by
+    // producing a plausible-looking number.
+    const answer = (await assistantMessage.innerText()).trim();
+    expect(answer).toContain("4");
+    expect(answer).not.toContain("26");
   },
 );

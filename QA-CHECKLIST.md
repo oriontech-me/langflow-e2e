@@ -385,6 +385,7 @@
 - [~] handle_parsing_errors=False fails explicitly vs True auto-corrects → `agent-parse-error-behavior.spec.ts` (**partially covered on 1.11**: the field is present and togglable, but True/False are behaviorally identical — the field now only toggles `ToolRetryMiddleware`, and component-tool failures are converted to content by the hardcoded `handle_tool_error=True` before the middleware can observe them; the only live trigger (LLM-emitted malformed args) is non-deterministic, so the semantic difference is not deterministically testable — re-scope tracked in #496)
 - [x] Image passed via input handle is processed correctly → `core-functionality/llm-agents/agent-multimodal-image-input.spec.ts`
 - [x] Image attached in the Playground is processed by the Agent — the attachment renders in the user message and the reply describes it → `core-functionality/llm-agents/general-bugs-agent-images-playground.spec.ts` (`@stable` restored in #992 — the OpenAI quota that caused the #772 quarantine is back)
+- [-] A math prompt typed in the Playground reaches the Agent run exactly once — the user message reads `2+2` (never `2+22+2`) and the answer is `4`, never `26` → `core-functionality/llm-agents/general-bugs-agent-sum-duplicate-message-playground.spec.ts` (not `@stable`: #1465 repaired it after it sat broken on `main` unnoticed, so promotion waits for green dailies)
 
 ---
 
