@@ -199,9 +199,17 @@ test.describe("Playground Output – Structured Data", () => {
     },
   );
 
-  test(
+  // Quarantined at triage (daily #1477): recurrent flake — the Chat Output
+  // sidebar row (`input_outputChat Output`) never enters the DOM after the
+  // search box is filled, inside setupMockDataFlow(), so the DataFrame
+  // assertion this test exists for is never reached. Same signature on the
+  // 2026-08-17 and 2026-08-18 dailies. Same observable as #1468, on a call
+  // site its barrier helpers do not cover.
+  // Lifting the quarantine (remove test.fixme + restore @stable) is a
+  // deliverable of #1479.
+  test.fixme(
     "playground must render DataFrame output as a markdown table",
-    { tag: ["@stable", "@release", "@regression", "@playground"] },
+    { tag: ["@release", "@regression", "@playground"] },
     async ({ page }) => {
       await test.step(
         "Set up Mock Data (dataframe_output) → Chat Output flow and open playground",
