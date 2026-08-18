@@ -1,9 +1,9 @@
-import { readFileSync } from "fs";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { loadFixtureFlow } from "../../../../helpers/flows/load-fixture-flow";
 import {
   assertEmbeddingCredentialConfigured,
   createKnowledgeBase,
@@ -110,16 +110,21 @@ async function openRagFlow(page: Page): Promise<void> {
   );
   createdKbNames.push(kbName);
 
-  const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf-8"));
+  // The fixture stores a frozen copy of each component's source; hydrate it from
+  // the running image before creating the flow, or an upstream refactor of a
+  // module that copy imports breaks the run at graph build (#1478).
+  const fixture = await loadFixtureFlow(page.request, FIXTURE_PATH, { headers });
   // Point both Knowledge nodes at the freshly-created KB. The DropdownInput only
   // treats a value as a valid selection when it is also present in `options`, so
   // set both — value alone leaves the node showing "Select an option" and it
   // will not run.
   for (const node of fixture.data.nodes) {
     if (node.data?.type === "Knowledge") {
-      const kb = node.data.node.template.knowledge_base;
-      kb.value = kbName;
-      kb.options = [kbName];
+      const kb = node.data.node?.template?.knowledge_base;
+      if (kb) {
+        kb.value = kbName;
+        kb.options = [kbName];
+      }
     }
     // Point the answer Language Model at ANSWER_MODEL (an alias). The fixture was
     // captured pinned to a dated model that Google is retiring — pinned ids 404
@@ -128,14 +133,27 @@ async function openRagFlow(page: Page): Promise<void> {
     // of false-failing on a retirement. Set the structured `model` selection
     // (from the node's own options) AND the `model_name` string override.
     if (node.data?.type === "LanguageModelComponent") {
-      const tmpl = node.data.node.template;
-      const modelOption = (tmpl.model?.options ?? []).find(
-        (o: { name?: string }) => o?.name === ANSWER_MODEL,
-      );
-      if (modelOption) tmpl.model.value = [modelOption];
-      if (tmpl.model_name) {
-        tmpl.model_name.value = ANSWER_MODEL;
-        tmpl.model_name.options = [ANSWER_MODEL];
+      const tmpl = node.data.node?.template;
+      // `model`'s `value`/`options` hold structured model-selection objects, not
+      // the string shape `TemplateField` declares for the generic `code`/`kb`
+      // fields — reached through the index signature via a computed key so no
+      // cast is needed to read or write the actual runtime shape.
+      const optionsKey: string = "options";
+      const valueKey: string = "value";
+      const modelOptions = tmpl?.model?.[optionsKey];
+      const modelOption = Array.isArray(modelOptions)
+        ? modelOptions.find(
+            (o) =>
+              typeof o === "object" &&
+              o !== null &&
+              "name" in o &&
+              o.name === ANSWER_MODEL,
+          )
+        : undefined;
+      if (tmpl?.model && modelOption) tmpl.model[valueKey] = [modelOption];
+      if (tmpl?.model_name) {
+        tmpl.model_name[valueKey] = ANSWER_MODEL;
+        tmpl.model_name[optionsKey] = [ANSWER_MODEL];
       }
     }
   }
@@ -240,7 +258,7 @@ test.afterEach(async ({ page }) => {
 
 test(
   "Full RAG pipeline grounds the model answer on the retrieved chunk",
-  { tag: ["@release", "@components", "@files"] },
+  { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired RAG pipeline fixture flow", async () => {
       await openRagFlow(page);
