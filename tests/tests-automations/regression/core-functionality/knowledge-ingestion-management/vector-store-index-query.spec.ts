@@ -111,9 +111,7 @@ async function openVectorStoreFlow(page: Page): Promise<void> {
   // will not run.
   for (const node of fixture.data.nodes) {
     if (node.data?.type === "Knowledge") {
-      const kb = node.data.node?.template?.knowledge_base as
-        | { value?: string; options?: string[] }
-        | undefined;
+      const kb = node.data.node?.template?.knowledge_base;
       if (kb) {
         kb.value = kbName;
         kb.options = [kbName];

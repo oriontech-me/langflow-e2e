@@ -26,11 +26,17 @@
 
 export type CodeIndex = Record<string, string>;
 
+export interface TemplateField {
+  value?: string;
+  options?: string[];
+  [key: string]: unknown;
+}
+
 interface FixtureNode {
   id: string;
   data?: {
     type?: string;
-    node?: { template?: Record<string, { value?: string } | undefined> };
+    node?: { template?: Record<string, TemplateField | undefined> };
   };
 }
 
