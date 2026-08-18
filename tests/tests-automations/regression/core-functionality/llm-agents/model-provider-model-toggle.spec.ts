@@ -97,30 +97,48 @@ let disabledModel: string | null = null;
 // model-provider/openai-compatible-provider-setup.spec.ts.
 test.afterEach(async ({ request }) => {
   const model = disabledModel;
-  disabledModel = null;
-  if (!model || !provider) return;
-
-  const bearer = await getAuthToken(request);
-  const res = await request.post(ENABLED_MODELS_ENDPOINT, {
-    headers: { Authorization: bearer, "Content-Type": "application/json" },
-    data: [
-      {
-        provider: providerLabel,
-        model_id: model,
-        enabled: true,
-        model_type: "llm",
-      },
-    ],
-  });
-  // Loud, never swallowed: a silent failure here hands every later spec a disabled
-  // model with nothing in the log naming why (#1012).
-  if (res.status() !== 200) {
-    console.log(
-      `⚠️  could not restore "${model}" for ${providerLabel} — POST ` +
-        `${ENABLED_MODELS_ENDPOINT} -> ${res.status()} ` +
-        `${(await res.text()).slice(0, 200)}. Later specs pinning it may skip or fail.`,
-    );
+  if (!model || !provider) {
+    disabledModel = null;
+    return;
   }
+
+  // Retried HERE rather than deferred to a later test's hook. Test 2 is the only
+  // test that arms this flag and it is the LAST test in a serial file, so "the next
+  // afterEach will retry" describes a hook that never runs — the transient 5xx or
+  // transport throw has to be survived on the spot or not at all.
+  let lastOutcome = "";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const bearer = await getAuthToken(request);
+      const res = await request.post(ENABLED_MODELS_ENDPOINT, {
+        headers: { Authorization: bearer, "Content-Type": "application/json" },
+        data: [
+          {
+            provider: providerLabel,
+            model_id: model,
+            enabled: true,
+            model_type: "llm",
+          },
+        ],
+      });
+      if (res.status() === 200) {
+        disabledModel = null;
+        return;
+      }
+      lastOutcome = `${res.status()} ${(await res.text()).slice(0, 200)}`;
+    } catch (error) {
+      lastOutcome = `threw: ${(error as Error)?.message ?? String(error)}`;
+    }
+  }
+
+  // Left ARMED deliberately. Nothing in this file will act on it today, but a test
+  // added after Test 2 would restore it in its own teardown, and an armed flag costs
+  // nothing when nothing follows. Loud, never swallowed: a silent failure hands every
+  // later spec a disabled model with nothing in the log naming why (#1012).
+  console.log(
+    `⚠️  could not restore "${model}" for ${providerLabel} after 3 attempts — POST ` +
+      `${ENABLED_MODELS_ENDPOINT} -> ${lastOutcome}. Later specs pinning it may skip or fail.`,
+  );
 });
 
 // Load the Simple Agent template with the configured provider. This configures
