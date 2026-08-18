@@ -24,7 +24,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  enumerateModelOptions,
+  censusForTarget,
+  hasOptionIdentity,
   nearestModels,
   resolveModelOption,
   toModelOption,
@@ -198,6 +199,98 @@ test("nearestModels surfaces the rename candidates first", () => {
   const nearest = nearestModels("claude-haiku-3-5", DEV26_PICKER);
   assert.equal(nearest[0], "claude-haiku-4-5");
   assert.ok(!nearest.includes("gpt-4o-mini-search-preview"));
+});
+
+// ─── censusForTarget / hasOptionIdentity (#1464) ──────────────────────────────
+//
+// These pin the OTHER direction of the same property: not "can a model the picker
+// offers resolve to a skip", but "can a model the picker still offers be reported
+// as GONE". `model-provider-model-toggle.spec.ts` asserted a removal by matching the
+// option's TEXT with `hasText: /^model$/`, which the dev26 counter had already
+// defeated — so `toHaveCount(0)` passed whether or not the model was removed, for
+// as long as the spec existed. It never noticed because a second defect (the model
+// name derived from a provider-prefixed testid) skipped the test before it ran.
+//
+// So the property is: a `target: 0` verdict is trustworthy ONLY together with
+// `total > 0` and `providerOthers > 0`. Both zero-states below were reached by
+// executed mutation during review, not imagined.
+
+const OPENAI_MODELS = new Set(["gpt-4o-mini", "gpt-4o-mini-search-preview"]);
+
+test("censusForTarget finds the target by data-value and counts the provider's others", () => {
+  const target = option("OpenAI", "gpt-4o-mini", "40 of 90");
+  const census = censusForTarget(DEV26_PICKER, target, OPENAI_MODELS);
+  assert.equal(census.total, 5);
+  assert.equal(census.target, 1);
+  assert.equal(census.providerOthers, 1);
+  assert.deepEqual(census.labels[0], "claude-opus-5");
+});
+
+test("censusForTarget reports removal as target 0 while the provider's others survive", () => {
+  const target = option("OpenAI", "gpt-4o-mini", "40 of 90");
+  const remaining = DEV26_PICKER.filter((o) => o.model !== "gpt-4o-mini");
+  const census = censusForTarget(remaining, target, OPENAI_MODELS);
+  assert.equal(census.target, 0);
+  assert.equal(census.total, 4);
+  // The half that makes the zero mean anything.
+  assert.equal(census.providerOthers, 1);
+});
+
+test("an EMPTY picker yields target 0 — indistinguishable from removal without total", () => {
+  const census = censusForTarget([], option("OpenAI", "gpt-4o-mini"), OPENAI_MODELS);
+  assert.equal(census.target, 0);
+  assert.equal(census.total, 0);
+  assert.equal(census.providerOthers, 0);
+});
+
+test("a picker whose identities stopped parsing yields target 0 with providerOthers 0", () => {
+  // Exactly the review mutation: the options are still rendered and still readable
+  // by a human, but neither attribute resolves any more.
+  const unparsable = DEV26_PICKER.map((o) => ({
+    ...o,
+    testId: "",
+    value: "",
+    model: null,
+  }));
+  const census = censusForTarget(
+    unparsable,
+    option("OpenAI", "gpt-4o-mini"),
+    OPENAI_MODELS,
+  );
+  assert.equal(census.target, 0);
+  assert.ok(census.total > 0, "the list is populated — only the identity broke");
+  assert.equal(census.providerOthers, 0, "so the zero is not attributable to a toggle");
+});
+
+test("censusForTarget falls back to the testid when data-value is gone", () => {
+  const withoutValue = DEV26_PICKER.map((o) => ({ ...o, value: "" }));
+  const target = { testId: "OpenAI-gpt-4o-mini-option", value: "" };
+  assert.equal(censusForTarget(withoutValue, target, OPENAI_MODELS).target, 1);
+});
+
+test("censusForTarget does not confuse two providers sharing a model id", () => {
+  // The #597 collision the spec's target selection has to exclude: a sibling spec
+  // enables `OpenAI Compatible::gpt-4o-mini`, whose bare id is also in the OpenAI
+  // panel's toggle list. Identity keeps them apart.
+  const mixed = [...DEV26_PICKER, option("OpenAI Compatible", "gpt-4o-mini", "91 of 91")];
+  const target = option("OpenAI", "gpt-4o-mini", "40 of 90");
+  assert.equal(censusForTarget(mixed, target, OPENAI_MODELS).target, 1);
+});
+
+test("a target with NEITHER attribute matches nothing, so its census is vacuous", () => {
+  const blank = { testId: "", value: "" };
+  assert.equal(hasOptionIdentity(blank), false);
+  const census = censusForTarget(DEV26_PICKER, blank, OPENAI_MODELS);
+  // Zero targets over a healthy, populated, parsable picker — the trap a caller
+  // must refuse BEFORE polling, since both guards pass here.
+  assert.equal(census.target, 0);
+  assert.ok(census.total > 0);
+  assert.ok(census.providerOthers > 0);
+});
+
+test("hasOptionIdentity accepts an option carrying either attribute alone", () => {
+  assert.equal(hasOptionIdentity({ testId: "OpenAI-gpt-4o-option", value: "" }), true);
+  assert.equal(hasOptionIdentity({ testId: "", value: "OpenAI::gpt-4o" }), true);
 });
 
 // The `sr-only`-stripping half runs INSIDE the page (`Locator.evaluateAll`), so it
