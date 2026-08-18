@@ -438,11 +438,30 @@ test("playwright.config.ts still excludes @destructive from every non-destructiv
   // The second half: even a mis-tagged test would be kept out of `--grep @stable
   // --list` by grepInvert, which a CLI --grep cannot override. Without this the guard
   // above is the only thing standing between the partition and an unmeasurable file.
+  //
+  // Lane resolution moved into `tests/fixtures/lane.ts` when `@enterprise` became a
+  // second selector, so this checks the two halves that live in reachable source:
+  // the config DELEGATES (it must not compute a grepInvert of its own, which would
+  // silently win over the module), and the module's DEFAULT lane still excludes
+  // `@destructive`. Neither is the real proof — `tests/fixtures/lane.test.ts` owns
+  // that, asserting every lane by SELECTION against representative tag strings,
+  // which is what a spelling match cannot do (#1226). This node lane cannot import
+  // the TypeScript module, so it pins the wiring and points at the behaviour.
   const config = fs.readFileSync(path.join(import.meta.dirname, "..", "playwright.config.ts"), "utf8");
   assert.match(
     config,
-    /grepInvert:\s*DESTRUCTIVE_LANE\s*\?\s*undefined\s*:\s*\/@destructive\//,
-    "the partition input assumes @destructive specs are never listed (#1326)",
+    /grepInvert:\s*LANE\.grepInvert\s*,/,
+    "the config must take grepInvert from the lane module, not compute its own (#1326)",
+  );
+
+  const lane = fs.readFileSync(
+    path.join(import.meta.dirname, "..", "tests", "fixtures", "lane.ts"),
+    "utf8",
+  );
+  assert.match(
+    lane,
+    /grepInvert:\s*\/@destructive\|@enterprise\/,/,
+    "the default lane must still exclude @destructive — the partition input assumes it (#1326)",
   );
 });
 
