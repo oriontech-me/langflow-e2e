@@ -10,6 +10,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  AUTHORED_CODE_TYPES,
   formatHydrationReport,
   hydrateFixtureCode,
   type CodeIndex,
@@ -146,4 +147,31 @@ test("the report names what happened, and says so even when nothing changed", ()
 
 test("a payload with no nodes array is refused as malformed", () => {
   assert.throws(() => hydrateFixtureCode({}, {}), /nodes/);
+});
+
+test("a component type inherited from Object.prototype is never treated as present", () => {
+  // `type in index` reads true for "toString"/"constructor" on a plain object
+  // even when the index never declared them, and would assign a function to
+  // code.value. Object.hasOwn must be used instead.
+  const data = flow([node("Weird-1", "toString", "OLD")]);
+
+  const r = hydrateFixtureCode(data, {});
+
+  assert.deepEqual(r.missing, ["toString"]);
+  assert.deepEqual(r.hydrated, []);
+});
+
+test("a CustomComponent node's authored code is refused, not hydrated", () => {
+  // Its stored code is the spec's subject; silently replacing it with the
+  // catalog's empty template would make the spec pass having verified
+  // nothing.
+  assert.ok(AUTHORED_CODE_TYPES.has("CustomComponent"));
+  const data = flow([
+    node("Custom-1", "CustomComponent", "def build(self): ..."),
+  ]);
+
+  assert.throws(
+    () => hydrateFixtureCode(data, { CustomComponent: "OTHER" }),
+    /authored/,
+  );
 });

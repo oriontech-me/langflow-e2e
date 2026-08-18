@@ -121,10 +121,16 @@ async function openRagFlow(page: Page): Promise<void> {
   for (const node of fixture.data.nodes) {
     if (node.data?.type === "Knowledge") {
       const kb = node.data.node?.template?.knowledge_base;
-      if (kb) {
-        kb.value = kbName;
-        kb.options = [kbName];
+      if (!kb) {
+        throw new Error(
+          `${FIXTURE_PATH}: node ${node.id} (type Knowledge) has no ` +
+            `template.knowledge_base field — cannot pin it to the freshly-created ` +
+            `KB. If upstream renamed/removed this field, the pin must target the ` +
+            `new field instead of silently leaving the node unset.`,
+        );
       }
+      kb.value = kbName;
+      kb.options = [kbName];
     }
     // Point the answer Language Model at ANSWER_MODEL (an alias). The fixture was
     // captured pinned to a dated model that Google is retiring — pinned ids 404
@@ -134,27 +140,41 @@ async function openRagFlow(page: Page): Promise<void> {
     // (from the node's own options) AND the `model_name` string override.
     if (node.data?.type === "LanguageModelComponent") {
       const tmpl = node.data.node?.template;
-      // `model`'s `value`/`options` hold structured model-selection objects, not
-      // the string shape `TemplateField` declares for the generic `code`/`kb`
-      // fields — reached through the index signature via a computed key so no
-      // cast is needed to read or write the actual runtime shape.
-      const optionsKey: string = "options";
-      const valueKey: string = "value";
-      const modelOptions = tmpl?.model?.[optionsKey];
+      // `model`'s `value`/`options` hold structured model-selection objects —
+      // `TemplateField.options`/`value` are `unknown[]`/`unknown` precisely to
+      // accommodate this, so no computed-key index-signature workaround is
+      // needed. Cast each entry once, at the point it is actually shaped.
+      if (!tmpl?.model) {
+        throw new Error(
+          `${FIXTURE_PATH}: node ${node.id} (type LanguageModelComponent) has ` +
+            `no template.model field — cannot pin the answer model.`,
+        );
+      }
+      const modelOptions = tmpl.model.options;
       const modelOption = Array.isArray(modelOptions)
-        ? modelOptions.find(
+        ? (modelOptions as Array<Record<string, unknown>>).find(
             (o) =>
-              typeof o === "object" &&
-              o !== null &&
-              "name" in o &&
-              o.name === ANSWER_MODEL,
+              typeof o === "object" && o !== null && o.name === ANSWER_MODEL,
           )
         : undefined;
-      if (tmpl?.model && modelOption) tmpl.model[valueKey] = [modelOption];
-      if (tmpl?.model_name) {
-        tmpl.model_name[valueKey] = ANSWER_MODEL;
-        tmpl.model_name[optionsKey] = [ANSWER_MODEL];
+      if (!modelOption) {
+        throw new Error(
+          `${FIXTURE_PATH}: node ${node.id}'s template.model.options has no ` +
+            `entry named "${ANSWER_MODEL}" — cannot pin the answer model. If ` +
+            `Google's catalog dropped this alias, the pin target must be ` +
+            `updated instead of silently falling back to the fixture's dated ` +
+            `model id.`,
+        );
       }
+      tmpl.model.value = [modelOption];
+      if (!tmpl.model_name) {
+        throw new Error(
+          `${FIXTURE_PATH}: node ${node.id} (type LanguageModelComponent) has ` +
+            `no template.model_name field — cannot set the string override.`,
+        );
+      }
+      tmpl.model_name.value = ANSWER_MODEL;
+      tmpl.model_name.options = [ANSWER_MODEL];
     }
   }
 

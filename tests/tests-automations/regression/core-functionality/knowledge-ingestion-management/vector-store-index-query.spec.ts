@@ -112,10 +112,16 @@ async function openVectorStoreFlow(page: Page): Promise<void> {
   for (const node of fixture.data.nodes) {
     if (node.data?.type === "Knowledge") {
       const kb = node.data.node?.template?.knowledge_base;
-      if (kb) {
-        kb.value = kbName;
-        kb.options = [kbName];
+      if (!kb) {
+        throw new Error(
+          `${FIXTURE_PATH}: node ${node.id} (type Knowledge) has no ` +
+            `template.knowledge_base field — cannot pin it to the freshly-created ` +
+            `KB. If upstream renamed/removed this field, the pin must target the ` +
+            `new field instead of silently leaving the node unset.`,
+        );
       }
+      kb.value = kbName;
+      kb.options = [kbName];
     }
   }
 

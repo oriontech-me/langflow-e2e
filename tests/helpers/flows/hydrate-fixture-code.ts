@@ -23,12 +23,31 @@
 // replaced plus a report of what it did. It performs no I/O and never decides
 // policy — an absent component type is REPORTED, and the caller
 // (`load-fixture-flow.ts`) is what turns that into a thrown error.
+//
+// It replaces the stored source of EVERY node in the fixture, not just the
+// one the spec exercises. That is safe for a stock catalog component: its
+// code is an installed artifact identical across every flow using that type,
+// so hydrating it only re-syncs a frozen copy with the image it will actually
+// run on. It is NOT safe for a component whose stored code is the thing under
+// test — a `CustomComponent` node's `code` IS the spec's subject, and
+// hydrating it would silently replace that authored behaviour with the empty
+// template, making the spec pass having verified nothing. `AUTHORED_CODE_TYPES`
+// below is the refusal for that case.
 
 export type CodeIndex = Record<string, string>;
 
+/** Component types whose stored code is authored by the test, not installed
+ * by the image. Hydrating one of these would replace the behaviour under
+ * test — this module refuses instead. Extending this set (e.g. to cover a
+ * fixture with a `CustomComponent` node) is the migration follow-up's
+ * decision, not something this helper works around on its own. */
+export const AUTHORED_CODE_TYPES: ReadonlySet<string> = new Set([
+  "CustomComponent",
+]);
+
 export interface TemplateField {
-  value?: string;
-  options?: string[];
+  value?: unknown;
+  options?: unknown[];
   [key: string]: unknown;
 }
 
@@ -90,7 +109,15 @@ export function hydrateFixtureCode(
       continue;
     }
     const type = node.data?.type;
-    if (!type || !(type in index)) {
+    if (type && AUTHORED_CODE_TYPES.has(type)) {
+      throw new Error(
+        `hydrateFixtureCode: node ${node.id} is a ${type} — its stored code is ` +
+          `authored by the test, not installed by the image, and hydrating it ` +
+          `would silently replace the behaviour under test. This helper cannot ` +
+          `hydrate authored code; the migration must decide how to handle it.`,
+      );
+    }
+    if (!type || !Object.hasOwn(index, type)) {
       missing.add(type ?? `<node ${node.id} has no data.type>`);
       continue;
     }
