@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/vector-store-index-query.spec.ts`
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.0.dev31
 
 ---
 
@@ -168,7 +168,10 @@ local `providers.json`.
   Knowledge (`mode = Ingest`); plus a standalone Knowledge (`mode = Retrieve`,
   `top_k = 1`, `search_query` = the embedding-topic query). Both Knowledge nodes'
   `knowledge_base` is a placeholder (`__KB_NAME__`) the spec replaces per run.
-  Built live on the canvas and exported on 1.11.0.dev38.
+  Built live on the canvas and exported on 1.11.0.dev38. Before the flow is
+  created, `loadFixtureFlow` rehydrates every node's component `code` field from
+  the running image's current catalog, since the stored source can drift from
+  the image and a stale copy can fail to build the graph at all (#1478).
 - `GOOGLE_API_KEY` — required (the KB embeds each chunk with
   `models/gemini-embedding-001`), **and** Google recorded `active` in
   `providers.json` by `collect-models` (#1029).

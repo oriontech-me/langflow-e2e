@@ -1,9 +1,9 @@
-import { readFileSync } from "fs";
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
+import { loadFixtureFlow } from "../../../../helpers/flows/load-fixture-flow";
 import {
   assertEmbeddingCredentialConfigured,
   createKnowledgeBase,
@@ -101,14 +101,25 @@ async function openVectorStoreFlow(page: Page): Promise<void> {
   );
   createdKbNames.push(kbName);
 
-  const fixture = JSON.parse(readFileSync(FIXTURE_PATH, "utf-8"));
+  // The fixture stores a frozen copy of each component's source; hydrate it from
+  // the running image before creating the flow, or an upstream refactor of a
+  // module that copy imports breaks the run at graph build (#1478).
+  const fixture = await loadFixtureFlow(page.request, FIXTURE_PATH, { headers });
   // Point both Knowledge nodes at the freshly-created KB. The DropdownInput only
   // treats a value as a valid selection when it is also present in `options`, so
   // set both — value alone leaves the node showing "Select an option" and it
   // will not run.
   for (const node of fixture.data.nodes) {
     if (node.data?.type === "Knowledge") {
-      const kb = node.data.node.template.knowledge_base;
+      const kb = node.data.node?.template?.knowledge_base;
+      if (!kb) {
+        throw new Error(
+          `${FIXTURE_PATH}: node ${node.id} (type Knowledge) has no ` +
+            `template.knowledge_base field — cannot pin it to the freshly-created ` +
+            `KB. If upstream renamed/removed this field, the pin must target the ` +
+            `new field instead of silently leaving the node unset.`,
+        );
+      }
       kb.value = kbName;
       kb.options = [kbName];
     }
@@ -205,7 +216,7 @@ test.afterEach(async ({ page }) => {
 
 test(
   "Knowledge Base indexes the ingested document chunks (available for query)",
-  { tag: ["@release", "@components", "@files"] },
+  { tag: ["@stable", "@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired vector-store fixture flow", async () => {
       await openVectorStoreFlow(page);

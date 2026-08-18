@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-functionality/knowledge-ingestion-management/rag-pipeline.spec.ts`
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.0.dev31
 
 ---
 
@@ -191,7 +191,10 @@ provider recorded `inactive` in `providers.json` (`providerSkipGate("google")`, 
   `temperature = 0`, `api_key` from the `GOOGLE_API_KEY` global variable) → Chat
   Output. Both Knowledge nodes' `knowledge_base` is a placeholder (`__KB_NAME__`)
   the spec replaces per run. Built + configured live on the canvas and validated
-  end-to-end on 1.11.0.dev38.
+  end-to-end on 1.11.0.dev38. Before the flow is created, `loadFixtureFlow`
+  rehydrates every node's component `code` field from the running image's
+  current catalog, since the stored source can drift from the image and a
+  stale copy can fail to build the graph at all (#1478).
 - `GOOGLE_API_KEY` — required (embeds each chunk with `models/gemini-embedding-001` and
   answers with `gemini-flash-latest`), **and** Google recorded `active` in
   `providers.json` by `collect-models` (#1029).
