@@ -166,6 +166,7 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 | `@database` | Tests with persistent saved state |
 | `@mainpage` | Home/dashboard UI tests |
 | `@destructive` | Test mutates account-wide state (e.g. deletes every project of the shared superuser). **Lane selector, not a severity:** `playwright.config.ts` excludes it from every normal run via `grepInvert` and CI runs it alone afterwards with `PW_DESTRUCTIVE=1` (workers pinned to 1). Run it locally with `PW_DESTRUCTIVE=1 npx playwright test --grep @destructive`. Do **not** combine with `@stable` — `daily-stable.yml` has no destructive lane, so such a test would silently never run there (#1010) |
+| `@enterprise` | Test targets a Langflow **Enterprise** instance, whose surface the OSS nightly does not serve. **Lane selector, not a severity**, resolved together with `@destructive` in `tests/fixtures/lane.ts`: the three lanes are mutually exclusive, and the enterprise one also pins `workers: 1` because an Enterprise instance runs password-first — there is no `auto_login` — and Langflow rate-limits `/api/v1/login` per IP, so parallel workers exhaust the budget and report product assertions as `429`s. Point `PLAYWRIGHT_BASE_URL` at the instance and run `PW_ENTERPRISE=1 npx playwright test --grep @enterprise`. Do **not** combine with `@stable` — there is no scheduled Enterprise lane, so such a test would silently never run (#1010) |
 
 **Functional** (product area — use alongside cross-cutting tags)
 
