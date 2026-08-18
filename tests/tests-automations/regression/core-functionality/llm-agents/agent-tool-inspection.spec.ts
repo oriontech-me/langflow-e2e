@@ -48,8 +48,8 @@ if (!process.env.CI) {
 }
 
 const HTTPBIN_BASE = (
-  process.env.ECHO_BASE_URL ??
-  process.env.HTTPBIN_BASE_URL ??
+  process.env.ECHO_BASE_URL ||
+  process.env.HTTPBIN_BASE_URL ||
   "https://httpbin.org"
 ).replace(/\/$/, "");
 const FETCH_URL = `${HTTPBIN_BASE}/json`;

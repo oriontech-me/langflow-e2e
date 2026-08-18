@@ -28,8 +28,8 @@ import {
 // well as the daily. Retiring this legacy spec into the consolidated one is still
 // tracked separately.
 const ECHO_BASE = (
-  process.env.ECHO_BASE_URL ??
-  process.env.HTTPBIN_BASE_URL ??
+  process.env.ECHO_BASE_URL ||
+  process.env.HTTPBIN_BASE_URL ||
   "https://postman-echo.com"
 ).replace(/\/$/, "");
 
