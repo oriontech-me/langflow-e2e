@@ -205,7 +205,7 @@ test.afterEach(async ({ page }) => {
 
 test(
   "Knowledge Base indexes the ingested document chunks (available for query)",
-  { tag: ["@stable", "@release", "@components", "@files"] },
+  { tag: ["@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired vector-store fixture flow", async () => {
       await openVectorStoreFlow(page);

@@ -240,7 +240,7 @@ test.afterEach(async ({ page }) => {
 
 test(
   "Full RAG pipeline grounds the model answer on the retrieved chunk",
-  { tag: ["@stable", "@release", "@components", "@files"] },
+  { tag: ["@release", "@components", "@files"] },
   async ({ page }) => {
     await test.step("open the pre-wired RAG pipeline fixture flow", async () => {
       await openRagFlow(page);

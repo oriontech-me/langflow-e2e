@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-17
+> **Last updated:** 2026-08-18
 
 ---
 
@@ -1040,7 +1040,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 499 `test()` calls carrying the `@stable` tag, distributed across 195 spec
+> 497 `test()` calls carrying the `@stable` tag, distributed across 194 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1267,10 +1267,8 @@
 - [x] should search uploaded files → `files-page.spec.ts`
 - [x] should handle bulk actions for multiple files → `files-page.spec.ts`
 - [x] user should not be able to upload a file larger than the limit → `limit-file-size-upload.spec.ts`
-- [x] Full RAG pipeline grounds the model answer on the retrieved chunk → `rag-pipeline.spec.ts`
 - [x] Split Text splits an ingested document into the expected number of chunks → `split-text-chunking.spec.ts`
 - [x] upload a file through the Read File component and read its content → `upload-via-component.spec.ts`
-- [x] Knowledge Base indexes the ingested document chunks (available for query) → `vector-store-index-query.spec.ts`
 - [x] Knowledge Base query returns the relevant chunk for the prompt → `vector-store-index-query.spec.ts`
 
 #### core-functionality/llm-agents/
