@@ -1,6 +1,6 @@
 # Playground Output — Structured Data
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
@@ -23,16 +23,32 @@ Both tests run without user input and without an API key or LLM — the Mock Dat
 
 ## Step by step *(required)*
 
+Both tests share `setupMockDataFlow()`, which builds the canvas the same way for
+each and differs only in which Mock Data output is selected.
+
+**Shared setup — `setupMockDataFlow()`**
+
+1. Create an **empty flow through the REST API under a per-run unique name**
+   (`createFlow`), then enter the editor by id (`openFlowById`). The flow is
+   never created through `New Flow → Blank Flow`, and that is load-bearing —
+   see the #1479 note below
+2. Add Chat Output from the component sidebar (`fillSidebarSearch`, which
+   confirms the sidebar kept the typed term before waiting for its row — #1468)
+3. Add Mock Data by dragging its sidebar row onto the canvas, and — for the JSON
+   test only — switch the node's output from Table (DataFrame) to JSON
+4. Connect Mock Data's selected output to Chat Output's input, and assert the
+   canvas holds 2 nodes and 1 edge before the run
+
 **Test 1 — JSON Data output as code block**
 
-1. Create a flow with the Mock Data component connected to ChatOutput (its flow id is captured for scoped teardown)
+1. Set up the flow with `selectDataOutput: true` and open the Playground
 2. Run the flow without user input via `runNoInputFlow`, which waits directly on the rendered output content
 3. Assert the chat message contains a `<code>` element with text including `"records"` (root key of the serialized JSON)
 4. In `afterEach`, delete only this test's flow by id (never a global `cleanAllFlows`)
 
 **Test 2 — DataFrame output as Markdown table**
 
-1. Create a flow with the Mock Data component (dataframe output) connected to ChatOutput (its flow id is captured for scoped teardown)
+1. Set up the flow with the default (dataframe) output and open the Playground
 2. Run the flow without user input via `runNoInputFlow`, which waits directly on the rendered output content
 3. Assert the chat message contains a `<table>` element rendered by react-markdown with remarkGfm
 4. In `afterEach`, delete only this test's flow by id (never a global `cleanAllFlows`)
@@ -50,6 +66,7 @@ Both tests run without user input and without an API key or LLM — the Mock Dat
 
 - `src/lfx/src/lfx/components/data_source/` — Mock Data component; changes to serialization logic (`_serialize_data` or `df.to_markdown`) would alter the rendered output format
 - `src/frontend/src/components/core/chatComponents/` — Markdown and code block rendering in the Playground chat; changes to react-markdown plugins or code block CSS classes would break the assertions
+- `src/backend/base/langflow/api/v1/flows.py` and `api/v1/flows_helpers.py` — flow creation and its name deduplication; the setup enters the editor by id after creating through this endpoint, so a change to the create contract (status codes, name handling) changes how the setup fails
 
 ---
 
@@ -65,4 +82,45 @@ Both tests run without user input and without an API key or LLM — the Mock Dat
 - Re-validated after PR #120: `runNoInputFlow` now waits for the first message instead of an exact count of 2; `cleanAllFlows` was replaced with REST API-based flow deletion.
 - Re-validated after #279: `runNoInputFlow` no longer asserts `button-stop` becomes visible — on instant Mock Data flows the Send→Stop→Hidden transition completed in <100 ms, faster than Playwright's auto-wait could observe. At that point `toBeHidden` alone was used as the build-finished signal (later superseded by #465 below, which waits on the rendered output content instead); `setupMockDataFlow` also gained an explicit `toBeVisible` wait on `sidebar-search-input` (same race pattern as #278).
 - Fixed after #465: the recurring flake (4×+ across weekly + daily) was a **concurrent flow-deletion race**, not the run-completion wait. The `afterEach` called the global `cleanAllFlows(page)`, which deletes *every* flow of the single shared `auto_login` user. Under `fullyParallel`, the JSON and DataFrame tests run in separate workers; whichever finished first deleted the sibling's flow **mid-build**, so the output never rendered ("run does not settle"), then passed on retry. Confirmed empirically: serial (`--workers=1`) passed 3/3, parallel failed with the bare home empty-state snapshot, and the failing run logged `Flow not found` 404s on `/api/v1/flows/<id>` (a page loading a flow a sibling had just deleted). The `afterEach` now deletes **only the flow the test created** (its id captured from the `/flow/<id>` URL in `setupMockDataFlow`) — collision-free, and it also stops this spec from deleting other specs' flows. `@stable` restored on the DataFrame test. The broader suite-wide hazard (other validated specs still calling the global `cleanAllFlows`) is tracked in #515.
+- **Fixed after #1479 — the setup no longer competes for the flow name `New Flow`.**
+  The DataFrame test flaked on the 2026-08-17 and 2026-08-18 dailies with the same
+  signature, and was quarantined at triage (`test.fixme` + `@stable` removed, PR #1481).
+  The failure was recorded as "the Chat Output sidebar row never enters the DOM", but
+  the `error-context` of both dailies is **byte-identical** and shows something else:
+  banner + `main` holding `Loading...`, which is the **home** (`MainPage/pages/main-page.tsx`,
+  the branch taken while `flows && examples && folders` are still pending), not the flow
+  editor. The browser was never in the editor, so the row it waited for could not exist.
+
+  **Mechanism, measured on nightly `1.12.0.dev30`.** `POST /api/v1/flows/` deduplicates
+  the requested name (`_deduplicate_flow_name` in `api/v1/flows_helpers.py`: `SELECT`,
+  then append `(N)`) and only afterwards inserts, with no transaction covering the two
+  steps, against `UniqueConstraint("user_id", "name")`. Two creations that arrive
+  together therefore both read the same name as free and the second violates the
+  constraint; `_handle_unique_constraint_error` (`api/v1/flows.py`) turns that into
+  **400 `{"detail":"Name must be unique"}`**. Measured directly against the API:
+  **10 of 20 requests fail at 2 concurrent creations of the same name (one per round,
+  10/10 rounds) and 30 of 40 at 4** — the dedup does not survive any concurrency at all.
+  On the client, `hooks/flows/use-add-flow.ts` handles that 400 with a toast and a
+  `reject`, with no retry under another name, so the app never navigates and stays on
+  the home screen. Reproduced end-to-end at **6 %** (6 of 100 adds) under four parallel
+  harnesses, and once in 32 runs of this very file — in the **JSON** test, which was the
+  one still running, which is why quarantining only the DataFrame test removed coverage
+  without removing exposure.
+
+  **Why the fix is a unique name and not a repair.** This is the same upstream race
+  #588 filed and closed in July ("the unique-name suffixing is not transaction-safe
+  upstream […] we cannot fix the backend here"), whose answer was `helpers/flows/create-flow.ts`
+  — explicit unique names plus a retry for the transient 5xx — adopted by 22 files.
+  This spec had simply never been migrated: it still created its flow through
+  `New Flow → Blank Flow`, i.e. it asked for the name `New Flow` that every other
+  worker asks for at the same moment. Creating through `createFlow` under a per-run
+  unique name removes the collision at its source, so there is nothing to repair and
+  nothing to mask — preferred over a repair barrier for exactly that reason. The
+  product defect is real but is **not** a regression and has no single-user path
+  (batch import in `use-upload-flow.ts` is sequential, so the backend dedups it
+  normally); it is reported upstream separately and deliberately does not gate this
+  spec's coverage.
+
+  Quarantine lifted in the same change: `test.fixme` removed and `@stable` restored on
+  the DataFrame test.
 - Also hardened in the same change: `runNoInputFlow` no longer gates completion on the `button-stop` → hidden transition. It takes the expected output locator (the chat message that actually contains the `<table>` / `<code>`) and waits directly on that (90 s timeout) — the rendered content only appears once the build has produced its result, whereas the bare `div-chat-message` mounts early as a loading placeholder (`bot-message.tsx`) and is not a build-complete signal. `button-stop` → hidden is demoted to a best-effort idle wait that never fails the run.

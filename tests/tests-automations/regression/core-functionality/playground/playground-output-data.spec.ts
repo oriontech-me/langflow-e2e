@@ -1,30 +1,79 @@
-import type { Locator, Page } from "@playwright/test";
+import type { APIRequestContext, Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { adjustScreenView } from "../../../../helpers/ui/adjust-screen-view";
-import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
+import { createFlow } from "../../../../helpers/flows/create-flow";
+import { fillSidebarSearch } from "../../../../helpers/flows/fill-sidebar-search";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
 type SetupOptions = { selectDataOutput?: boolean };
 
+/**
+ * Creates the empty canvas this spec builds on, through the REST API and under a
+ * per-run unique name (#1479).
+ *
+ * NOT `New Flow -> Blank Flow`, which is how this spec used to start and is what
+ * made it flake: that path asks the backend for the name `New Flow`, the same one
+ * every other parallel worker asks for at the same moment.
+ * `POST /api/v1/flows/` deduplicates a taken name with a `SELECT` and only then
+ * inserts, with no transaction across the two, so two simultaneous creations both
+ * read the name as free and the loser violates `UNIQUE(user_id, name)` and comes
+ * back `400 {"detail":"Name must be unique"}`. Measured on 1.12.0.dev30 straight
+ * against the API: 10 of 20 requests fail at 2 concurrent creations of one name,
+ * 30 of 40 at 4 — the dedup survives no concurrency at all. `use-add-flow.ts` then
+ * shows a toast and never retries under another name, so the app stays on the home
+ * screen; the spec waited 30 s for an editor that was never opened, which is the
+ * `Loading...` home both failing dailies captured.
+ *
+ * A unique name removes the collision at its source, so there is nothing to repair
+ * here and nothing that could mask a real create failure. This is the answer #588
+ * already reached for the same upstream race ("we cannot fix the backend here") and
+ * shipped as `createFlow`; this spec had simply never been migrated to it.
+ *
+ * Not `setupBlankFlow`, which wraps the same create: that helper enters the editor
+ * by clicking the flow's card on the home grid, a step it took because
+ * `page.goto('/flow/{id}')` right after an API create was observed redirecting back
+ * to the list on `release-1.10.0`. `openFlowById` (#1214) goes by URL — a full
+ * document load, so there is no SPA hop for a stale router cache to lose (#1005) —
+ * and it also waits for the canvas AND for the header to report writable, which the
+ * card click does not. The home grid is the more exposed of the two under parallel
+ * workers: it is where other workers' residual cards intercept the open button
+ * (#580/#588). Same create, fewer shared surfaces, and it matches what the two most
+ * recent specs of this shape do (`ui-ux/sidebar-add-component`, `sidebar-search-and-filter`).
+ */
+async function createEmptyFlow(
+  request: APIRequestContext,
+  token: string,
+): Promise<string> {
+  return createFlow(
+    request,
+    {
+      name: `playground-output-data-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      description: "Empty canvas for the Playground structured-output tests",
+      data: { nodes: [], edges: [], viewport: { x: 0, y: 0, zoom: 1 } },
+      is_component: false,
+    },
+    { headers: { Authorization: token } },
+  );
+}
+
 async function setupMockDataFlow(
   page: Page,
+  request: APIRequestContext,
   { selectDataOutput = false }: SetupOptions = {},
 ): Promise<string> {
-  await awaitBootstrapTest(page);
-  await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-  await page.getByTestId("blank-flow").click();
+  const token = await getAuthToken(request);
+  const flowId = await createEmptyFlow(request, token);
+  await openFlowById(page, flowId);
 
-  // Add Chat Output
-  // Sidebar mounts after blank-flow.click() navigates — wait before filling
-  // to avoid the same race as #278 (in setup-playground.ts).
-  await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
-    timeout: 30000,
-  });
-  await page.getByTestId("sidebar-search-input").fill("chat output");
-  await expect(page.getByTestId("input_outputChat Output")).toBeVisible({
-    timeout: 30000,
-  });
+  // Add Chat Output. `fillSidebarSearch` confirms the sidebar actually kept the
+  // typed term before waiting for its row: the sidebar can remount ~100-215 ms
+  // after the fill and take the term with it, and since 1.12 a row only exists in
+  // the DOM under a filter, so the row wait would die as `element(s) not found`
+  // with nothing in flight to wait for (#1468).
+  await fillSidebarSearch(page, "chat output", "input_outputChat Output");
   await page
     .getByTestId("input_outputChat Output")
     .hover()
@@ -36,10 +85,7 @@ async function setupMockDataFlow(
   await zoomOut(page, 2);
 
   // Add Mock Data (section: data_source → testid prefix "data_source")
-  await page.getByTestId("sidebar-search-input").fill("mock data");
-  await expect(page.getByTestId("data_sourceMock Data")).toBeVisible({
-    timeout: 30000,
-  });
+  await fillSidebarSearch(page, "mock data", "data_sourceMock Data");
   await page
     .getByTestId("data_sourceMock Data")
     .dragTo(page.locator('//*[@id="react-flow-id"]'), {
@@ -85,11 +131,9 @@ async function setupMockDataFlow(
 
   // Return this flow's id so the test can delete ONLY its own flow on teardown
   // (see the afterEach note on why a global cleanAllFlows races sibling tests).
-  // Creating the blank flow navigates to /flow/<id>; the id is stable by now.
-  const flowId = page.url().match(/\/flow\/([0-9a-f-]+)/i)?.[1];
-  if (!flowId) {
-    throw new Error(`Could not extract flow id from URL: ${page.url()}`);
-  }
+  // The id comes from the create call, not from the URL: it is known before the
+  // editor is ever opened, so a setup that fails midway still has an id to clean
+  // up (the afterEach keeps its URL fallback for the same reason).
   return flowId;
 }
 
@@ -166,11 +210,11 @@ test.describe("Playground Output – Structured Data", () => {
   test(
     "playground must render JSON Data output as a code block",
     { tag: ["@stable", "@release", "@regression", "@playground"] },
-    async ({ page }) => {
+    async ({ page, request }) => {
       await test.step(
         "Set up Mock Data (data_output) → Chat Output flow and open playground",
         async () => {
-          createdFlowId = await setupMockDataFlow(page, {
+          createdFlowId = await setupMockDataFlow(page, request, {
             selectDataOutput: true,
           });
           await page.getByTestId("playground-btn-flow-io").click();
@@ -199,22 +243,22 @@ test.describe("Playground Output – Structured Data", () => {
     },
   );
 
-  // Quarantined at triage (daily #1477): recurrent flake — the Chat Output
-  // sidebar row (`input_outputChat Output`) never enters the DOM after the
-  // search box is filled, inside setupMockDataFlow(), so the DataFrame
-  // assertion this test exists for is never reached. Same signature on the
-  // 2026-08-17 and 2026-08-18 dailies. Same observable as #1468, on a call
-  // site its barrier helpers do not cover.
-  // Lifting the quarantine (remove test.fixme + restore @stable) is a
-  // deliverable of #1479.
-  test.fixme(
+  // Quarantined at triage on the 2026-08-17/18 dailies (PR #1481) and restored
+  // here (#1479). The triage read the failure as "the Chat Output sidebar row
+  // never enters the DOM"; both dailies' `error-context` are byte-identical and
+  // show the HOME screen with `Loading...`, so the browser was never in the
+  // editor and no row could exist. The cause is the flow-create name race
+  // documented on `createEmptyFlow` above, and it hit whichever test ran — it was
+  // the JSON one in 1 of 32 measured runs of this file, so quarantining only this
+  // test never removed the exposure.
+  test(
     "playground must render DataFrame output as a markdown table",
-    { tag: ["@release", "@regression", "@playground"] },
-    async ({ page }) => {
+    { tag: ["@stable", "@release", "@regression", "@playground"] },
+    async ({ page, request }) => {
       await test.step(
         "Set up Mock Data (dataframe_output) → Chat Output flow and open playground",
         async () => {
-          createdFlowId = await setupMockDataFlow(page);
+          createdFlowId = await setupMockDataFlow(page, request);
           await page.getByTestId("playground-btn-flow-io").click();
           await expect(page.getByTestId("button-send")).toBeVisible({
             timeout: 15000,
