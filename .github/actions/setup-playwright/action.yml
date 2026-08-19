@@ -31,13 +31,37 @@ runs:
         key: ${{ runner.os }}-playwright-${{ steps.pw.outputs.version }}
 
     # System (apt) dependencies are never part of the cached browser directory,
-    # so install them on every run. Run WITHOUT a timeout on purpose: apt is
-    # local and interrupting it mid-transaction can leave dpkg half-configured,
-    # which would break every subsequent attempt. The observed stall is the
-    # browser download (below), not apt.
+    # so install them on every run.
+    #
+    # This step used to run WITHOUT any timeout, on the reasoning that apt is
+    # local and that interrupting it mid-transaction can leave dpkg
+    # half-configured. The first half of that stopped being true: on #1506 this
+    # action hung for 25 and 26 minutes across two runs, well past the ~15 min
+    # the download guard below can account for, so the time was being spent here
+    # or in the cache restore — not in the download the guard was written for.
+    #
+    # The second half still holds, which is why the bound does NOT abort the job.
+    # A ceiling generous enough that only a genuine stall reaches it, and a
+    # warning instead of a failure: a system dependency that really is missing
+    # surfaces a few steps later as a browser-launch error, which is loud and
+    # attributable. An unbounded hang surfaces as a job burning its entire
+    # budget, which is neither (#1507).
     - name: Install Playwright system dependencies
       shell: bash
-      run: npx playwright install-deps chromium
+      run: |
+        # Status captured from `timeout` itself: after `if cmd; then …; fi` with
+        # no else branch, `$?` is the status of the IF statement (0), not of the
+        # command — so reading it there would report "exit 0" on every stall and
+        # throw away the one diagnostic this warning carries. 124 means the
+        # ceiling was hit; anything else is apt's own failure.
+        set +e
+        timeout --kill-after=30s 8m npx playwright install-deps chromium
+        status=$?
+        set -e
+        if [ "$status" -eq 0 ]; then
+          exit 0
+        fi
+        echo "::warning::playwright install-deps exited ${status} (124 = hit the 8m ceiling). Continuing: a genuinely missing dependency surfaces as a browser launch failure, which is attributable, while hanging here is not (#1507)."
 
     # Download the browser binary with a per-attempt timeout + retries so a
     # stalled download is killed and retried instead of hanging. Run on BOTH

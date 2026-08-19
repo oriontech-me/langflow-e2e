@@ -1,0 +1,52 @@
+# Seed the Playwright browser cache on the DEFAULT BRANCH (#1507).
+#
+# Actions caches are scoped per ref: a pull request can read its own caches and
+# the default branch's, never another pull request's. `pr-validation.yml` runs
+# only on `pull_request`, so before this workflow existed the browser cache was
+# only ever written under `refs/pull/N/merge` — five such entries were created in
+# a single day, 249 MiB each, and not one of them was readable by the next PR.
+# Every pull request therefore paid a cold download, and one of those downloads
+# stalling is what hung #1506 twice.
+#
+# This job exists to write that cache once per relevant change on `main`, so PR
+# branches inherit it. It runs no tests and gates nothing.
+name: Cache Playwright browsers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "package-lock.json"
+      - "package.json"
+      - ".github/actions/setup-playwright/action.yml"
+      - ".github/workflows/cache-playwright.yml"
+  # Manual runs matter after a cache eviction: GitHub evicts by LRU once the
+  # repository passes its size limit, and the browser entry is the largest one
+  # here, so it is the first to go on a quiet week.
+  workflow_dispatch:
+
+concurrency:
+  group: cache-playwright
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  warm:
+    name: Warm the browser cache
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          # Pinned to match every job in pr-validation.yml: the cache this warms
+          # is only useful if it was built by the same toolchain that will read it.
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      # The same composite action the PR lane uses, so what lands in the cache is
+      # exactly what that lane will look for — a second implementation here would
+      # be free to drift into caching the wrong path under the right key.
+      - uses: ./.github/actions/setup-playwright
