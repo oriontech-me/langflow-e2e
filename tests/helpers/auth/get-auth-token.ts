@@ -23,7 +23,24 @@ export const DEFAULT_RETRY_DELAYS_MS = [2000, 8000, 20000];
 export interface GetAuthTokenOptions {
   /** Override the backoff. Tests pass `[]` or short delays; callers should not set it. */
   retryDelaysMs?: number[];
+  /**
+   * Override how the backoff waits. **Unit tests only** — a spec must not pass it.
+   *
+   * The wait is a real `setTimeout`, and the only way to assert it *happened*
+   * from the outside was to sleep and compare `Date.now()` against the delay.
+   * Node may fire a timer a fraction of a millisecond before `Date.now()` shows
+   * the full interval elapsed, so that assertion sat exactly on the boundary and
+   * failed on a runner whose clock granularity landed the wrong way (#1454 —
+   * twice in a row on PR #1496, green locally). Injecting the sleep lets the test
+   * assert what the helper *asked for*, which is the actual contract, with no
+   * clock in the loop.
+   */
+  sleep?: (ms: number) => Promise<void>;
 }
+
+/** The real backoff wait, kept out of the loop so tests can replace it. */
+const realSleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Retrieves a Langflow authentication token.
@@ -45,7 +62,10 @@ export interface GetAuthTokenOptions {
  */
 export async function getAuthToken(
   request: APIRequestContext,
-  { retryDelaysMs = DEFAULT_RETRY_DELAYS_MS }: GetAuthTokenOptions = {},
+  {
+    retryDelaysMs = DEFAULT_RETRY_DELAYS_MS,
+    sleep = realSleep,
+  }: GetAuthTokenOptions = {},
 ): Promise<string> {
   for (let attempt = 0; ; attempt++) {
     try {
@@ -66,7 +86,7 @@ export async function getAuthToken(
       console.warn(
         `⚠️  auth: /api/v1/auto_login did not answer (${(error as Error)?.message?.split("\n")[0] ?? error}) — retry ${attempt + 1}/${retryDelaysMs.length} in ${delay}ms. The backend is wedged or recycling (see #1077).`,
       );
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await sleep(delay);
     }
   }
 }
