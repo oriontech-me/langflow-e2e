@@ -182,6 +182,7 @@ Tags are split into two groups: **cross-cutting** (severity/layer) and **functio
 | `@settings` | Navigation and configuration on the Settings page |
 | `@ui-ux` | General interface, shortcuts, appearance |
 | `@a2a` | Agent-to-Agent protocol — publishing a flow as an A2A agent (card, discovery, JSON-RPC) and consuming remote agents via the `A2AAgent` component. **Needs `LANGFLOW_A2A_ENABLED=true`** (set on every lane and both start scripts since #1240); with it off the whole surface answers 404 and these specs would pass while testing nothing, so they call `requireA2aEnabled()` first |
+| `@governance` | Catalog and model-provider policy — the operator-facing surface Langflow 1.12 ships in **OSS**, not only in Enterprise: `catalog-policy/*`, `model-provider-policy`, `policy-bundle{,/history,/rollback}`. Measured on `1.12.0.dev32` against an EE build of `release-1.12.0` — 25 of EE's 55 governance routes are in the nightly and the blocks are *enforced*; `sso/*`, `authz/status|check|admin/*`, `enterprise-admin/*`, the admin UI and env-declared policy are the EE-only remainder. Always combined with `@destructive`: the policy is instance-global, so a blocked component is blocked for every worker sharing that Langflow. **RBAC is out of scope** — the OSS authorization service is pass-through (`enforce()` returns True and says so in the log), so a role-restriction assert would assert nothing |
 
 ## CI/CD
 

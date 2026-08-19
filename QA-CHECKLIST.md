@@ -995,6 +995,64 @@
 
 ---
 
+## governance/ — Catalog and Provider Policy (1.12)
+
+> **New area (2026-08-19).** Catalog governance shipped in the **OSS** build, not
+> only in Enterprise. Measured on `langflowai/langflow-nightly:latest`
+> (`1.12.0.dev32`) against an Enterprise image built from
+> `IBM-Langflow@release-1.12.0`: of the EE build's 55 governance routes, **25 are
+> in OSS** — `catalog-policy/{components,templates,usage,usage/flows}`,
+> `model-provider-policy`, `policy-bundle{,/history,/rollback}` and the `authz`
+> CRUD — and the block is **enforced**, not merely stored.
+>
+> **What Enterprise still owns** (all `404` on the nightly, so out of scope here):
+> `sso/*`, `authz/status`, `authz/check`, `authz/admin/*`, `authz/share-targets`,
+> `authz/shared-with-me`, `enterprise-admin/catalog`, plus the admin **UI** (the
+> OSS frontend bundle references none of these endpoints) and the ability to
+> declare a policy from the environment — OSS `Settings` exposes no
+> `LANGFLOW_CATALOG_COMPONENT_BLOCKLIST`, and an instance started with one reports
+> `source: "migration"` with nothing blocked.
+>
+> **RBAC is present but pass-through in OSS**, so it is deliberately uncovered
+> here: with `LANGFLOW_AUTHZ_ENABLED=true` the nightly logs *"the OSS pass-through
+> authorization service is registered (no enforcement plugin found). Every
+> enforce() call will return True"*. Asserting a role restriction there would
+> assert nothing.
+>
+> **Every bullet below is `@destructive`.** The policy is instance-global — no
+> per-user or per-project scope — so a blocked component is blocked for every
+> worker sharing the Langflow. `daily-stable.yml` has no destructive lane, so none
+> of these can be `@stable` (#1010); they run in `pr-validation.yml`'s destructive
+> step when the import graph selects them.
+
+#### 21.1 Component Blocklist
+
+- [-] A blocked component leaves `GET /api/v1/all` while an unblocked control stays, and `GET /api/v1/config` flips `catalog_governance_enabled` — the derived flag is the cheapest proof the policy was adopted rather than merely persisted → `governance/catalog-policy/component-blocklist-enforcement.spec.ts`
+- [-] Saving a flow that carries the blocked component is refused `400` with the component **named** (`Flow build blocked: catalog policy blocks components: …`), and a flow saved **before** the block stays readable with its nodes unmodified — the read/write pairing is the point, since a component hidden from the palette that still saves is the LE-1933 defect class → `governance/catalog-policy/component-blocklist-enforcement.spec.ts`
+- [-] The blocked component is not findable in the flow-editor sidebar, asserted against a control search that still matches. Target is `DynamicCreateData` because it is `legacy: false` — `CombineText`, the obvious pick, is `legacy: true` and already absent from the sidebar, so that assertion would have passed with the policy doing nothing → `governance/catalog-policy/component-blocklist-enforcement.spec.ts`
+- [-] Clearing the policy restores the catalog and the config flag — verified, not assumed: a failed restore leaves the shared instance short a component for the rest of the lane → `governance/catalog-policy/component-blocklist-enforcement.spec.ts`
+
+#### 21.2 Template Blocklist
+
+- [-] A template blocked by its `name_key` leaves **both** listings that serve templates — `GET /api/v1/flows/basic_examples/` (26 items, what the New Flow modal reads) and `GET /api/v1/starter-projects/` (5) — the key being read from the listing itself rather than hardcoded → `governance/catalog-policy/template-blocklist-enforcement.spec.ts`
+- [-] Blocking by **display name** is accepted `200`, persists into the bundle and enforces **nothing** — an operator using the name they see in the UI gets no enforcement and no error (measured on `1.12.0.dev32`: `"Basic Prompting"` inert, `"basic_prompting"` effective) → `governance/catalog-policy/template-blocklist-enforcement.spec.ts`
+- [-] `GET /api/v1/starter-projects/?include_blocked=true` returns the blocked template for a superuser, which is what separates *filtered* from *absent from the image* → `governance/catalog-policy/template-blocklist-enforcement.spec.ts`
+
+#### 21.3 Model Provider Allowlist
+
+- [-] An allowlist narrows `GET /api/v1/models/providers` to exactly the approved provider **and** removes the excluded provider's `ext:<id>:` components from `/api/v1/all`, while `registered_providers` still lists it — the last clause is the control that separates policy from packaging (`docs/component-distribution-policy.md`) → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
+- [-] Clearing the allowlist restores the provider list and the catalog size → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
+- [ ] The `get_llm` / `get_embeddings` runtime gate (LE-1955) — the bypass-proof half: a non-approved provider must be refused at execution, not only hidden. Needs a real provider key and a run, so it belongs with the credential-bearing specs, not the keyless policy file
+
+#### 21.4 Policy Bundle Revisioning
+
+- [-] Every accepted policy write mints a new revision with `source: "api"` and `GET /api/v1/policy-bundle/history` lists them newest-first (a fresh instance starts at revision 1, `source: "migration"`) → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
+- [-] `POST /api/v1/policy-bundle/rollback/{revision}` is optimistically concurrent: a stale `expected_revision` is refused `409` with a body naming both `expected_revision` and `active_revision` → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
+- [-] An accepted rollback **appends** rather than rewinds — new higher revision, `source: "rollback"`, `rollback_of_revision` pointing at the target, `reason` echoed — and the restored content is enforced, not just recorded → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
+- [ ] `GET /api/v1/catalog-policy/usage` and `usage/flows` report the blast radius of a block (which flows use the component) before an operator applies it
+
+---
+
 ---
 
 ## Coverage Summary — Test Automation Coverage
