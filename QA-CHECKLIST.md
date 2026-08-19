@@ -1082,7 +1082,21 @@
 - [-] Rotating refuses a wrong current password and a new password below the minimum, and accepts the correct pair → `enterprise/auth/credential-lifecycle.spec.ts`
 - [-] After rotating, `account/password-status` stops reporting a pending rotation, a refused surface answers, and the token that performed the rotation is rejected (`401`) → `enterprise/auth/credential-lifecycle.spec.ts`
 - [ ] Whether a **self-service** password reset should also invalidate previously minted tokens — measured today that it does not, unlike the forced path; asserted in neither direction until the product answers
-- [ ] `auth/methods`, break-glass defaults and the CLI login approval flow (issue #1501)
+#### 22.3 CLI Sign-in (authorization code + PKCE)
+
+- [-] A correct exchange issues a token that **authenticates** a subsequent call — not merely a token-shaped payload → `enterprise/auth/cli-login-pkce.spec.ts`
+- [-] The code is bound to its `code_verifier`, its `state` and its `redirect_uri`; each is refused on its **own** authorization, because a failed exchange consumes the code and reusing one would make later assertions pass for the wrong reason → `enterprise/auth/cli-login-pkce.spec.ts`
+- [-] An authorization code cannot be spent twice → `enterprise/auth/cli-login-pkce.spec.ts`
+- [-] The consent step confines its form (`form-action` restricted to the requested redirect, `frame-ancestors 'none'`, `no-store`) and refuses a bad CSRF token or a foreign origin → `enterprise/auth/cli-login-pkce.spec.ts`
+- [ ] Authorization code expiry — the refusal message names expiry, but no spec advances a clock past it
+
+#### 22.4 Login Surface and Break-glass
+
+- [-] Password login survives SSO being switched on but unusable: `auth/methods` still offers the local form, and the advertised form actually works — the invariant that an SSO mistake must never lock an organisation out → `enterprise/auth/login-surface.spec.ts`
+- [-] Break-glass ships disabled and unused, while still naming its account → `enterprise/auth/login-surface.spec.ts`
+- [-] Enabling break-glass is explicit and reflected, and arming it does **not** stamp `break_glass_last_used_at` → `enterprise/auth/login-surface.spec.ts`
+- [ ] Actually using break-glass records the use — needs an SSO-only state, which needs a connection, which is entitlement-gated
+- [ ] A created SSO connection is disabled by default, plan limits are enforced server-side, and the client secret is masked on read — all blocked without a licence (issue #1501)
 
 ---
 
