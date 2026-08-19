@@ -98,10 +98,42 @@ test("the budget is bounded — it gives up instead of looping forever", async (
 });
 
 test("waits between attempts so a booting worker is not hammered", async () => {
+  // Asserted on what the helper ASKS FOR, not on the clock. The previous shape
+  // slept 50 ms and compared `Date.now()`, which sits exactly on a timer
+  // boundary: Node may fire a `setTimeout(50)` a fraction of a millisecond
+  // before `Date.now()` reports 50 elapsed, so the `>=` failed on a runner whose
+  // granularity landed the wrong way — twice in a row on PR #1496 while green
+  // locally (#1454). Widening the margin would only move the boundary; removing
+  // the clock removes the class.
+  const { request, calls } = fakeRequest([timeout(), timeout(), okResponse("slow")]);
+  const slept: number[] = [];
+  const token = await getAuthToken(request, {
+    retryDelaysMs: [50, 250],
+    sleep: async (ms) => {
+      slept.push(ms);
+    },
+  });
+
+  assert.equal(token, "Bearer slow");
+  assert.equal(calls(), 3);
+  // One wait per retry, in order, with the configured backoff — the property
+  // that keeps a wedged backend from being hammered.
+  assert.deepEqual(slept, [50, 250]);
+});
+
+test("the wait is a real one — the default sleep is awaited, not skipped", async () => {
+  // Guards the injection itself: with `sleep` defaulted away or the `await`
+  // dropped, the test above would still pass while the helper spun. Tolerant by
+  // a wide margin (20 ms asked, 10 ms asserted) because this one does touch the
+  // clock, and its job is to separate "waited" from "did not wait at all" —
+  // never to measure the delay.
   const { request } = fakeRequest([timeout(), okResponse("slow")]);
   const started = Date.now();
-  assert.equal(await getAuthToken(request, { retryDelaysMs: [50] }), "Bearer slow");
-  assert.ok(Date.now() - started >= 50, "expected the helper to wait before retrying");
+  assert.equal(await getAuthToken(request, { retryDelaysMs: [20] }), "Bearer slow");
+  assert.ok(
+    Date.now() - started >= 10,
+    "expected the default backoff to actually suspend the retry loop",
+  );
 });
 
 test("the default budget spans the observed ~1-minute outage", async () => {
