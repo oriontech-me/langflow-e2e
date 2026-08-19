@@ -75,6 +75,46 @@ async function expectLeftEditor(page: Page): Promise<void> {
 }
 
 /**
+ * The third exit's assertion: the editor must leave WITHOUT raising the
+ * unsaved-changes dialog, because the manual save that precedes it is awaited to
+ * completion.
+ *
+ * Polling both outcomes is what buys the attribution, and that is the whole
+ * lesson of #1489: a bare `waitForURL` reports 30 s of nothing while the cause —
+ * a modal nobody dismissed — sits on screen the entire time. Naming it in the
+ * failure is the difference between "the save never navigated" (the triage's
+ * reading, and wrong) and "the flow was still dirty when we left".
+ */
+async function expectCleanExit(page: Page): Promise<void> {
+  const dialog = page
+    .locator('[role="dialog"]')
+    .getByText("Unsaved changes will be permanently lost.");
+  const deadline = Date.now() + 30000;
+
+  for (;;) {
+    if (!new URL(page.url()).pathname.startsWith("/flow/")) return;
+    // A no-argument `isVisible()` is exactly right INSIDE a poll — the immediate
+    // check is what the loop wants. Handing it a timeout is what broke the guard
+    // this replaced: Playwright ignores that option and answers in ~2 ms.
+    if (await dialog.isVisible().catch(() => false)) {
+      throw new Error(
+        `[auto-save-off] the unsaved-changes dialog appeared after a manual ` +
+          `save that had already answered PATCH /api/v1/flows/{id} 200 — the ` +
+          `editor still considers the flow dirty (#1489).`,
+      );
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(
+        `[auto-save-off] the editor did not leave /flow/ within 30000ms and no ` +
+          `unsaved-changes dialog is on screen — the back-click did not ` +
+          `navigate (the swallowed-click class, #420 / LE-2019).`,
+      );
+    }
+    await page.waitForTimeout(200);
+  }
+}
+
+/**
  * Re-open THIS test's flow by id and wait until its graph has been applied to
  * the canvas.
  *
@@ -131,11 +171,9 @@ async function reopenFlow(page: Page, flowId: string): Promise<void> {
   await flowLoaded;
 }
 
-// Quarantined for #1489 — manual save never navigates to the new flow URL
-// (recurrent 2×: dailies 2026-08-18 and 2026-08-19).
-test.fixme(
+test(
   "user should be able to manually save a flow when the auto_save is off",
-  { tag: ["@release", "@api", "@database", "@components"] },
+  { tag: ["@stable", "@release", "@api", "@database", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 
@@ -306,22 +344,50 @@ test.fixme(
 
     await adjustScreenView(page);
 
-    // Exercise the on-canvas manual save button, then exit. The exit guard is
-    // timing-dependent here: if the manual save settled, the exit is clean;
-    // otherwise the unsaved-changes dialog appears and "Save And Exit" persists.
-    // Either path is fine — the node count === 2 below is the gate that proves
-    // both nodes persisted server-side, regardless of which path ran.
+    // Exercise the on-canvas manual save — and prove it landed BEFORE leaving.
+    //
+    // What this replaced was
+    // `if (await saveAndExit.isVisible({ timeout: 5000 })) { … }`, and the
+    // timeout in it never existed: Playwright ignores that option, because
+    // `locator.isVisible()` "does not wait for the element to become visible and
+    // returns immediately" (`types.d.ts`, 1.58.2). Measured on 1.12.0.dev30 with
+    // the save held in flight, the probe answered `false` in **2–5 ms** while
+    // the dialog painted at **35–37 ms** — so whenever the save had not settled
+    // by the back-click, nothing dismissed the modal, the route change was
+    // blocked, and the exit burned its 30 s. That is #1489, recurrent on the
+    // 2026-08-18 and 2026-08-19 dailies and reproduced here 7/10 at
+    // `--retries=0 --workers=1`.
+    //
+    // Awaiting the save's own response removes the branch instead of widening
+    // it, and makes the manual save falsifiable: under the old design a broken
+    // `save-flow-button` still passed, because the optional "Save And Exit"
+    // persisted the same graph and the final count === 2 could not tell the two
+    // paths apart.
+    const manualSave = page.waitForResponse(
+      (resp) =>
+        new URL(resp.url()).pathname === `/api/v1/flows/${flowUnderTest}` &&
+        resp.request().method() === "PATCH",
+      { timeout: 60000 },
+    );
     // Explicit timeout above the 20s default: the manual-save click was the
     // signature that blew the default action timeout under CI saturation (#790).
     await page.getByTestId("save-flow-button").click({ timeout: 45000 });
+    // Asserted rather than filtered into the predicate: a save that answers 500
+    // fails here naming the status, instead of waiting out 60 s for a 200 that
+    // is never coming. The fixture would not catch it either — an `http_error`
+    // is advisory and never fails a test.
+    expect((await manualSave).status()).toBe(200);
+
+    // The 200 is the server's word. What upstream's exit blocker reads is the
+    // store's `changesNotSaved`, and this button's disabled state is that same
+    // flag — so this is the store-side half of the fact, and a positive signal
+    // rather than a silence probe. Measured true once the save settles.
+    await expect(page.getByTestId("save-flow-button")).toBeDisabled({
+      timeout: 10000,
+    });
+
     await page.getByTestId("icon-ChevronLeft").last().click();
-    const saveAndExit2 = page.getByText("Save And Exit", { exact: true }).last();
-    if (
-      await saveAndExit2.isVisible({ timeout: 5000 }).catch(() => false)
-    ) {
-      await saveAndExit2.click();
-    }
-    await expectLeftEditor(page);
+    await expectCleanExit(page);
 
     await reopenFlow(page, flowUnderTest);
 

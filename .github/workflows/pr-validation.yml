@@ -227,6 +227,9 @@ jobs:
       # True when no spec imports the diff but this lane runs what changed, so the
       # lane runs a fixed canary set instead of skipping (#1159).
       canary: ${{ steps.diff.outputs.canary }}
+      # True when EVERY selected spec is `@destructive`, so the normal run below
+      # would match nothing and exit 1 while the destructive lane runs them fine.
+      destructive_only: ${{ steps.diff.outputs.destructive_only }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -427,11 +430,33 @@ jobs:
           # pass (#1012).
           HAS_SPECS=false
           if [ -n "$SPECS" ]; then HAS_SPECS=true; fi
+
+          # Would the NORMAL lane match anything? `playwright.config.ts` grep-inverts
+          # `@destructive` out of it (#1010), so a selection where every spec is
+          # destructive makes `npx playwright test` exit 1 with "No tests found" —
+          # a red job whose destructive step then reports those same specs passing
+          # (measured on PR #1494: `13 passed` under a `fail` verdict). Skipping the
+          # normal run in that one case is not `--pass-with-no-tests`: a selection of
+          # paths that no longer exist must keep failing here, which is why the
+          # verdict reads the specs' tags instead of tolerating an empty match.
+          # Logic and its conservative defaults live in the script, covered by
+          # `npm run test:scripts`; a verdict it cannot produce exits 2 and fails this
+          # step rather than guessing (#1216).
+          DESTRUCTIVE_ONLY=false
+          if [ "$HAS_SPECS" = "true" ]; then
+            DESTRUCTIVE_ONLY=$(node scripts/destructive-only-selection.mjs --specs "$SPECS") \
+              || { echo "::error::destructive-only classification failed — a spec in the selection could not be read"; exit 1; }
+          fi
+          if [ "$DESTRUCTIVE_ONLY" = "true" ]; then
+            echo "::warning::Every impacted spec is @destructive, so the normal lane is skipped for this PR — the destructive lane below is what runs them (workers=1). Read its result, not the normal run's absence (#1010)."
+          fi
+
           {
             echo "has_specs=$HAS_SPECS"
             echo "specs=$SPECS"
             echo "needs_models=$NEEDS_MODELS"
             echo "canary=$CANARY"
+            echo "destructive_only=$DESTRUCTIVE_ONLY"
           } >> "$GITHUB_OUTPUT"
 
   e2e:
@@ -865,6 +890,12 @@ jobs:
           TOKENS_MAX_SECONDS: "3300"
 
       - name: Run impacted specs
+        # Skipped only when the selection is 100% `@destructive`, in which case
+        # this run would match nothing and exit 1 while the destructive lane below
+        # runs those very specs. The verdict comes from `detect-specs` (tag-based,
+        # conservative: any ambiguity keeps this step), and the skip is announced
+        # there as a `::warning::` so it can never read as coverage (#1012).
+        if: needs.detect-specs.outputs.destructive_only != 'true'
         env:
           CI: "true"
           # When "Collect models" is skipped (needs_models == false) the provider
