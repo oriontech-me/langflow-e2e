@@ -611,8 +611,10 @@ test("API Request component — query parameters embedded in URL are sent and ec
 // Headers / Body / cURL tests
 // =============================================================================
 
-test("API Request component — inspector headers table accepts key + value cell entries",
-  { tag: ["@stable", "@regression", "@components"] },
+// Quarantined for #1488 — same `Open table` trigger as
+// parameters-panel-field-types.spec.ts:415.
+test.fixme("API Request component — inspector headers table accepts key + value cell entries",
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
