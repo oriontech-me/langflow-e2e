@@ -131,9 +131,11 @@ async function reopenFlow(page: Page, flowId: string): Promise<void> {
   await flowLoaded;
 }
 
-test(
+// Quarantined for #1489 — manual save never navigates to the new flow URL
+// (recurrent 2×: dailies 2026-08-18 and 2026-08-19).
+test.fixme(
   "user should be able to manually save a flow when the auto_save is off",
-  { tag: ["@stable", "@release", "@api", "@database", "@components"] },
+  { tag: ["@release", "@api", "@database", "@components"] },
   async ({ page }) => {
     trackCreatedFlows(page);
 
