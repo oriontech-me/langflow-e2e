@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
  * Decides whether an impacted-spec selection contains ANYTHING the normal PR
- * lane can run — i.e. whether every selected spec is `@destructive`.
+ * lane can run — i.e. whether every selected spec carries a LANE SELECTOR that
+ * `playwright.config.ts` grep-inverts out of a normal run: `@destructive`, or
+ * `@enterprise` since #1483.
  *
  * Why this exists. `playwright.config.ts` `grepInvert`s `/@destructive/` out of
  * every normal run (#1010), and `pr-validation.yml` runs the impacted set twice:
@@ -16,6 +18,12 @@
  * (`core-functionality/project-management/folder-deletion-integrity.spec.ts`)
  * carries non-destructive tests in the same file, so the selection always held
  * something the normal lane could run.
+ *
+ * The two selectors share the symptom and differ in the remedy, so the verdict
+ * reports them separately. A destructive-only selection IS executed — by the
+ * `PW_DESTRUCTIVE=1` step that follows. An enterprise-only selection is executed
+ * by nobody: those specs need a Langflow Enterprise instance the runner does not
+ * have, so skipping the normal lane is right and calling the PR covered is not.
  *
  * The fix is NOT a blanket `--pass-with-no-tests` on the normal run: that would
  * also swallow a selection of paths that no longer exist, which is a real defect
@@ -49,6 +57,16 @@ import { readFileSync } from "node:fs";
  */
 const TAG_ARRAY_RE = /tag:\s*\[[^\]]*\]/g;
 const DESTRUCTIVE = "@destructive";
+/**
+ * The second lane selector (#1483). `@enterprise` is grep-inverted out of the
+ * normal run for the same reason `@destructive` is, so it produces the same
+ * "No tests found" red — but the two are NOT interchangeable downstream: the
+ * workflow runs the destructive specs in a following step, while an Enterprise
+ * spec needs an instance this runner does not have and is therefore executed by
+ * NOBODY. Skipping the normal lane for it is still correct; reporting it as
+ * covered would not be, which is why the two lists stay separate.
+ */
+const ENTERPRISE = "@enterprise";
 
 /**
  * True when this source declares at least one tag array and EVERY one of them
@@ -65,9 +83,18 @@ const DESTRUCTIVE = "@destructive";
  * does today. That direction is safe; the reverse would not be.
  */
 export function isDestructiveOnlySource(source) {
+  return everyTagArrayCarries(source, DESTRUCTIVE);
+}
+
+/** The `@enterprise` counterpart — same rule, same conservative defaults. */
+export function isEnterpriseOnlySource(source) {
+  return everyTagArrayCarries(source, ENTERPRISE);
+}
+
+function everyTagArrayCarries(source, tag) {
   const arrays = source.match(TAG_ARRAY_RE);
   if (!arrays || arrays.length === 0) return false;
-  return arrays.every((array) => array.includes(DESTRUCTIVE));
+  return arrays.every((array) => array.includes(tag));
 }
 
 /**
@@ -76,10 +103,11 @@ export function isDestructiveOnlySource(source) {
  * @param specs     spec paths, as the workflow's `$SPECS` splits them
  * @param readSpec  reads a spec's source; throws when it cannot (injected so the
  *                  unit tests never touch the filesystem)
- * @returns `{ destructiveOnly, destructive, runnable }`
+ * @returns `{ destructiveOnly, excludedOnly, destructive, enterprise, runnable }`
  */
 export function classifySelection(specs, readSpec) {
   const destructive = [];
+  const enterprise = [];
   const runnable = [];
 
   for (const spec of specs) {
@@ -92,6 +120,7 @@ export function classifySelection(specs, readSpec) {
       );
     }
     if (isDestructiveOnlySource(source)) destructive.push(spec);
+    else if (isEnterpriseOnlySource(source)) enterprise.push(spec);
     else runnable.push(spec);
   }
 
@@ -99,8 +128,13 @@ export function classifySelection(specs, readSpec) {
     // An EMPTY selection is not destructive-only. The job's own `has_specs`
     // gate already skips the E2E job in that case, and answering `true` here
     // would skip the normal lane for a reason that has nothing to do with tags.
-    destructiveOnly: specs.length > 0 && runnable.length === 0,
+    // Kept as it was: "the destructive step covers everything selected".
+    destructiveOnly: specs.length > 0 && runnable.length === 0 && enterprise.length === 0,
+    // The gate the normal run gets skipped on — true whenever NOTHING selected
+    // can run there, whichever lane took it.
+    excludedOnly: specs.length > 0 && runnable.length === 0,
     destructive,
+    enterprise,
     runnable,
   };
 }
@@ -134,7 +168,7 @@ function main() {
   if (format === "json") {
     process.stdout.write(`${JSON.stringify(verdict)}\n`);
   } else {
-    process.stdout.write(`${verdict.destructiveOnly}\n`);
+    process.stdout.write(`${verdict.excludedOnly}\n`);
   }
 }
 

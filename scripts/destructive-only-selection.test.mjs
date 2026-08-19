@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   classifySelection,
   isDestructiveOnlySource,
+  isEnterpriseOnlySource,
 } from "./destructive-only-selection.mjs";
 
 const DESTRUCTIVE_SPEC = `
@@ -14,6 +15,10 @@ const DESTRUCTIVE_SPEC = `
 const MIXED_SPEC = `
   test("lists folders", { tag: ["@stable", "@api"] }, async () => {});
   test("deletes every project", { tag: ["@destructive", "@release", "@api"] }, async () => {});
+`;
+
+const ENTERPRISE_SPEC = `
+  test("the deployment's policy is authoritative", { tag: ["@enterprise", "@api", "@governance"] }, async () => {});
 `;
 
 const NORMAL_SPEC = `
@@ -147,14 +152,27 @@ describe("pr-validation.yml wiring", () => {
 
   it("detect-specs exports the verdict and the run step is gated on it", () => {
     assert.match(workflow, /destructive_only: \$\{\{ steps\.diff\.outputs\.destructive_only \}\}/);
+    assert.match(workflow, /excluded_only: \$\{\{ steps\.diff\.outputs\.excluded_only \}\}/);
+    // The gate is `excluded_only`, NOT `destructive_only` (#1483). Gating on the
+    // latter would leave the normal run selecting nothing whenever the selection
+    // is enterprise-only, which is the red this whole mechanism exists to avoid.
     assert.match(
       workflow,
+      /if: needs\.detect-specs\.outputs\.excluded_only != 'true'/,
+    );
+    assert.doesNotMatch(
+      workflow,
       /if: needs\.detect-specs\.outputs\.destructive_only != 'true'/,
+      "the run step must gate on excluded_only, which covers both lane selectors",
     );
   });
 
   it("the skip is announced, so it cannot read as coverage", () => {
     assert.match(workflow, /::warning::Every impacted spec is @destructive/);
+    // The enterprise case needs its OWN line: no step in this workflow runs
+    // those specs, so the destructive wording would claim a coverage that does
+    // not exist.
+    assert.match(workflow, /::warning::@enterprise specs in this PR are NOT executed by CI/);
   });
 
   it("the normal run still fails on an empty match it did not predict", () => {
@@ -165,5 +183,51 @@ describe("pr-validation.yml wiring", () => {
     );
     assert.ok(normalRun.includes("npx playwright test $SPECS --reporter=github"));
     assert.ok(!normalRun.includes("--pass-with-no-tests"));
+  });
+});
+
+describe("the @enterprise lane (#1483)", () => {
+  it("is excluded from the normal run, exactly like @destructive", () => {
+    assert.equal(isEnterpriseOnlySource(ENTERPRISE_SPEC), true);
+    assert.equal(isEnterpriseOnlySource(NORMAL_SPEC), false);
+    // The two selectors must not be conflated by the per-source predicates.
+    assert.equal(isDestructiveOnlySource(ENTERPRISE_SPEC), false);
+    assert.equal(isEnterpriseOnlySource(DESTRUCTIVE_SPEC), false);
+  });
+
+  it("skips the normal lane but is NOT reported as destructive-only", () => {
+    // The distinction that matters: a destructive-only selection is executed by
+    // the step that follows, an enterprise-only one is executed by nobody. A
+    // `destructive_only=true` here would announce coverage that never happened.
+    const verdict = classifySelection(
+      ["ee.spec.ts"],
+      sources({ "ee.spec.ts": ENTERPRISE_SPEC }),
+    );
+    assert.equal(verdict.excludedOnly, true, "the normal run would match nothing");
+    assert.equal(verdict.destructiveOnly, false, "nothing runs these — do not claim the destructive step does");
+    assert.deepEqual(verdict.enterprise, ["ee.spec.ts"]);
+    assert.deepEqual(verdict.runnable, []);
+  });
+
+  it("a mixed destructive + enterprise selection is not destructive-only either", () => {
+    const verdict = classifySelection(
+      ["d.spec.ts", "ee.spec.ts"],
+      sources({ "d.spec.ts": DESTRUCTIVE_SPEC, "ee.spec.ts": ENTERPRISE_SPEC }),
+    );
+    assert.equal(verdict.excludedOnly, true);
+    assert.equal(
+      verdict.destructiveOnly,
+      false,
+      "the destructive step covers d.spec.ts and not ee.spec.ts, so the pair is not covered",
+    );
+  });
+
+  it("one runnable spec keeps the normal lane running", () => {
+    const verdict = classifySelection(
+      ["ee.spec.ts", "n.spec.ts"],
+      sources({ "ee.spec.ts": ENTERPRISE_SPEC, "n.spec.ts": NORMAL_SPEC }),
+    );
+    assert.equal(verdict.excludedOnly, false);
+    assert.deepEqual(verdict.runnable, ["n.spec.ts"]);
   });
 });
