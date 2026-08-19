@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-18
+> **Last updated:** 2026-08-19
 
 ---
 
@@ -1040,7 +1040,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 498 `test()` calls carrying the `@stable` tag, distributed across 195 spec
+> 493 `test()` calls carrying the `@stable` tag, distributed across 194 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1115,11 +1115,8 @@
 - [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — non-2xx HTTP response propagates status_code without crashing → `api-request-component-regression.spec.ts`
 - [x] API Request component — query parameters embedded in URL are sent and echoed → `api-request-component-regression.spec.ts`
-- [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200 → `api-request-component-regression.spec.ts`
-- [x] API Request component — body table accepts key + value cell entries when method is POST → `api-request-component-regression.spec.ts`
-- [x] API Request component — flow state persists in database after autosave (URL, method, headers) → `api-request-component-regression.spec.ts`
 - [x] Show Beta Components toggle controls visibility of beta components in the sidebar → `beta-components-toggle-regression.spec.ts`
 - [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
@@ -1184,7 +1181,6 @@
 - [x] float field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] slider field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] code field edit persists → `parameters-panel-field-types.spec.ts`
-- [x] table field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] key-pair field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] input list field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] Prompt Template component — renders on canvas with output handle → `prompt-template-component-regression.spec.ts`
@@ -1446,7 +1442,6 @@
 - [x] API access modal switches the displayed snippet when changing language tabs → `api-access-modal-regression.spec.ts`
 - [x] API access modal embeds the current flow ID in the generated run endpoint URL → `api-access-modal-regression.spec.ts`
 - [x] API access modal closes cleanly via Escape and via the close button → `api-access-modal-regression.spec.ts`
-- [x] user should be able to manually save a flow when the auto_save is off → `auto-save-off.spec.ts`
 - [x] connecting two compatible components creates exactly one edge → `canvas-connect-components.spec.ts`
 - [x] connecting the same compatible pair twice does not duplicate the edge → `canvas-connect-components.spec.ts`
 - [x] a type-incompatible pair does not connect → `canvas-connect-components.spec.ts`
