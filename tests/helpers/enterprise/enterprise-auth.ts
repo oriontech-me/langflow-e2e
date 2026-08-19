@@ -183,3 +183,54 @@ async function loginOnce(request: APIRequestContext): Promise<string> {
   writeCachedToken(body.access_token);
   return `Bearer ${body.access_token}`;
 }
+
+/**
+ * Put the browser in an authenticated session WITHOUT a form login.
+ *
+ * The obvious implementation — fill the login form — costs one unit of the
+ * per-IP login budget per test, and this lane's budget is 5 per minute for the
+ * whole machine. That budget is why the token cache above exists at all; paying
+ * it again through the UI would reintroduce the 429s it was written to stop, on
+ * a lane where a re-run a minute later is the normal working rhythm.
+ *
+ * So the page is handed the same cached token the API tests use, as the cookie
+ * the frontend reads. Measured on 1.12.0: `access_token_lf` (httpOnly) plus
+ * `auto_login_lf` are sufficient — the admin screen renders its full bundle list
+ * with no login request at all. `refresh_token_lf` is deliberately not seeded:
+ * nothing here runs long enough to need a refresh, and seeding a token this
+ * helper never minted would make an expiry bug look like a rendering one.
+ *
+ * This does NOT test the login form. `enterprise/auth/login-surface.spec.ts`
+ * owns that, and a UI spec asserting on an admin screen should not fail because
+ * a placeholder changed.
+ */
+export async function seedEnterpriseUiSession(
+  page: import("@playwright/test").Page,
+  request: APIRequestContext,
+): Promise<void> {
+  const auth = await getEnterpriseAuthToken(request);
+  const token = auth.replace(/^Bearer\s+/i, "");
+  const baseUrl = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:7890";
+  const { hostname, protocol } = new URL(baseUrl);
+
+  await page.context().addCookies([
+    {
+      name: "access_token_lf",
+      value: token,
+      domain: hostname,
+      path: "/",
+      httpOnly: true,
+      secure: protocol === "https:",
+      sameSite: "Lax",
+    },
+    {
+      name: "auto_login_lf",
+      value: "login",
+      domain: hostname,
+      path: "/",
+      httpOnly: false,
+      secure: protocol === "https:",
+      sameSite: "Lax",
+    },
+  ]);
+}
