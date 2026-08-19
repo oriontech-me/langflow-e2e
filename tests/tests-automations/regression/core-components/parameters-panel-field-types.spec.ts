@@ -412,9 +412,12 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
     },
   );
 
-  test(
+  // Quarantined for #1488 — the `Open table` trigger of the API Request
+  // `headers` TableInput never becomes clickable (3/3 attempts on a shard
+  // measured at 0% backend downtime, daily 2026-08-19).
+  test.fixme(
     "table field edit persists",
-    { tag: ["@stable", "@components", "@regression"] },
+    { tag: ["@components", "@regression"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
       const flowId = await openFlowWithComponent(

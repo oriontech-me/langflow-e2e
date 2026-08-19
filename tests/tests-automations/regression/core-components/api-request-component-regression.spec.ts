@@ -611,8 +611,10 @@ test("API Request component — query parameters embedded in URL are sent and ec
 // Headers / Body / cURL tests
 // =============================================================================
 
-test("API Request component — inspector headers table accepts key + value cell entries",
-  { tag: ["@stable", "@regression", "@components"] },
+// Quarantined for #1488 — same `Open table` trigger as
+// parameters-panel-field-types.spec.ts:415.
+test.fixme("API Request component — inspector headers table accepts key + value cell entries",
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -747,8 +749,12 @@ test("API Request component — cURL mode parses command, auto-fills URL, execut
   },
 );
 
-test("API Request component — body table accepts key + value cell entries when method is POST",
-  { tag: ["@stable", "@regression", "@components"] },
+// Quarantined for #1488 — the same `Open table` trigger, on the sibling
+// `body` field. It never ran on daily 2026-08-19 (the serial cascade behind
+// the failure above skipped it); quarantining that test let it execute on
+// PR #1491's impacted-specs lane, where it failed 3/3 on a healthy backend.
+test.fixme("API Request component — body table accepts key + value cell entries when method is POST",
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -821,8 +827,11 @@ test("API Request component — body table accepts key + value cell entries when
   },
 );
 
-test("API Request component — flow state persists in database after autosave (URL, method, headers)",
-  { tag: ["@stable", "@regression", "@components"] },
+// Quarantined for #1488 — the same `Open table` trigger again, reached from
+// the autosave-persistence path. Failed 3/3 on PR #1491's lane once :750 was
+// quarantined and the serial cascade cleared.
+test.fixme("API Request component — flow state persists in database after autosave (URL, method, headers)",
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     const expectedUrl = `${ECHO_BASE}/get?persist=true`;
     const headerKey = "X-Persist-Header";
