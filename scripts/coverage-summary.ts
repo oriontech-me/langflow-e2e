@@ -48,6 +48,7 @@ const MODULES: ModuleConfig[] = [
   { label: "`security/` — Validation, SSRF, Secrets",        sectionStart: "## security/" },
   { label: "`i18n/` — Language and Localization",            sectionStart: "## i18n/" },
   { label: "`memory/` — Memory Base Registration",           sectionStart: "## memory/" },
+  { label: "`governance/` — Catalog and Provider Policy",    sectionStart: "## governance/" },
 ];
 
 const PART_II_HEADER = "# PART II — TEST AUTOMATION COVERAGE";
