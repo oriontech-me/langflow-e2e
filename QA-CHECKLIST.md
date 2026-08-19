@@ -1082,7 +1082,8 @@
 | `security/` — Validation, SSRF, Secrets | 11 | 8 | 3 | 0 | 0 |
 | `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
-| **TOTAL** | **533** | **421 (79%)** | **40 (8%)** | **14 (3%)** | **58 (11%)** |
+| `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
+| **TOTAL** | **547** | **421 (77%)** | **52 (10%)** | **14 (3%)** | **60 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
