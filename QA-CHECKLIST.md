@@ -1051,7 +1051,7 @@
 - [-] An accepted rollback **appends** rather than rewinds — new higher revision, `source: "rollback"`, `rollback_of_revision` pointing at the target, `reason` echoed — and the restored content is enforced, not just recorded → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
 - [ ] `GET /api/v1/catalog-policy/usage` and `usage/flows` report the blast radius of a block (which flows use the component) before an operator applies it
 
-## enterprise/ — Environment-Declared Policy (EE)
+## enterprise/ — Enterprise-only Surfaces (EE)
 
 > **New area (2026-08-19).** The remainder § 21 names as Enterprise-owned: a
 > policy the **operator** declares in the deployment, which EE reads at boot
@@ -1074,6 +1074,14 @@
 - [ ] The same authority question for the other three knobs: template blocklist, provider allowlist, model blocklist
 - [ ] `enterprise-admin/catalog/components` reflects the operator-declared policy
 - [ ] Readiness stays unhealthy rather than serving permissively when the declared policy cannot be loaded (fail-closed)
+
+#### 22.2 Credential Lifecycle
+
+- [-] The forced-rotation gate is an **allowlist**: identity and discovery stay reachable (`users/whoami`, `account/password-status`, `auth/methods`, `config`) while product and admin surfaces are refused `403 must_change_password` — **`api_key/` among them**, so an account under a pending rotation cannot mint a key and walk around the gate → `enterprise/auth/credential-lifecycle.spec.ts`
+- [-] Rotating refuses a wrong current password and a new password below the minimum, and accepts the correct pair → `enterprise/auth/credential-lifecycle.spec.ts`
+- [-] After rotating, `account/password-status` stops reporting a pending rotation, a refused surface answers, and the token that performed the rotation is rejected (`401`) → `enterprise/auth/credential-lifecycle.spec.ts`
+- [ ] Whether a **self-service** password reset should also invalidate previously minted tokens — measured today that it does not, unlike the forced path; asserted in neither direction until the product answers
+- [ ] `auth/methods`, break-glass defaults and the CLI login approval flow (issue #1501)
 
 ---
 
