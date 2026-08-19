@@ -1051,6 +1051,30 @@
 - [-] An accepted rollback **appends** rather than rewinds — new higher revision, `source: "rollback"`, `rollback_of_revision` pointing at the target, `reason` echoed — and the restored content is enforced, not just recorded → `governance/model-provider-policy/provider-allowlist-and-bundle-revisioning.spec.ts`
 - [ ] `GET /api/v1/catalog-policy/usage` and `usage/flows` report the blast radius of a block (which flows use the component) before an operator applies it
 
+## enterprise/ — Environment-Declared Policy (EE)
+
+> **New area (2026-08-19).** The remainder § 21 names as Enterprise-owned: a
+> policy the **operator** declares in the deployment, which EE reads at boot
+> through `EnvironmentCatalogPolicyService`. OSS has no setting for it — an OSS
+> instance started with `LANGFLOW_CATALOG_COMPONENT_BLOCKLIST` reports
+> `source: "migration"` with nothing blocked — so this cannot live in § 21.
+>
+> Runs only in the `@enterprise` lane, against an instance started by
+> `scripts/start-langflow-enterprise.sh`. Enforcement itself is **not** re-tested
+> here; § 21 proves it. What is tested is **authority**: whether a runtime write
+> can undo what the deployment declared.
+>
+> **No `@stable`** while no scheduled Enterprise lane exists (#1010).
+>
+> Spec docs: `docs/enterprise/`.
+
+#### 22.1 Environment-Declared Policy
+
+- [!] A policy whose source is the deployment is reported as externally managed, and a runtime write can neither clear it nor survive into the palette — **expected red on current Enterprise builds**, tracked outside this repo; needs a fresh container per run → `enterprise/governance/environment-policy-authority.spec.ts`
+- [ ] The same authority question for the other three knobs: template blocklist, provider allowlist, model blocklist
+- [ ] `enterprise-admin/catalog/components` reflects the operator-declared policy
+- [ ] Readiness stays unhealthy rather than serving permissively when the declared policy cannot be loaded (fail-closed)
+
 ---
 
 ---

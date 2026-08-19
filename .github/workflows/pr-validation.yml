@@ -230,6 +230,8 @@ jobs:
       # True when EVERY selected spec is `@destructive`, so the normal run below
       # would match nothing and exit 1 while the destructive lane runs them fine.
       destructive_only: ${{ steps.diff.outputs.destructive_only }}
+      excluded_only: ${{ steps.diff.outputs.excluded_only }}
+      enterprise_specs: ${{ steps.diff.outputs.enterprise_specs }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -442,13 +444,25 @@ jobs:
           # Logic and its conservative defaults live in the script, covered by
           # `npm run test:scripts`; a verdict it cannot produce exits 2 and fails this
           # step rather than guessing (#1216).
+          EXCLUDED_ONLY=false
           DESTRUCTIVE_ONLY=false
+          ENTERPRISE_SPECS=""
           if [ "$HAS_SPECS" = "true" ]; then
-            DESTRUCTIVE_ONLY=$(node scripts/destructive-only-selection.mjs --specs "$SPECS") \
-              || { echo "::error::destructive-only classification failed — a spec in the selection could not be read"; exit 1; }
+            VERDICT=$(node scripts/destructive-only-selection.mjs --specs "$SPECS" --format=json) \
+              || { echo "::error::lane classification failed — a spec in the selection could not be read"; exit 1; }
+            EXCLUDED_ONLY=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["excludedOnly"]).lower())')
+            DESTRUCTIVE_ONLY=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(str(json.load(sys.stdin)["destructiveOnly"]).lower())')
+            ENTERPRISE_SPECS=$(printf '%s' "$VERDICT" | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin)["enterprise"]))')
           fi
           if [ "$DESTRUCTIVE_ONLY" = "true" ]; then
             echo "::warning::Every impacted spec is @destructive, so the normal lane is skipped for this PR — the destructive lane below is what runs them (workers=1). Read its result, not the normal run's absence (#1010)."
+          fi
+          # `@enterprise` shares the symptom and not the remedy: those specs need a
+          # Langflow Enterprise instance this runner does not have, so no step here
+          # runs them. Saying so is the whole point — a skipped normal lane plus
+          # silence reads as coverage (#1012).
+          if [ -n "$ENTERPRISE_SPECS" ]; then
+            echo "::warning::@enterprise specs in this PR are NOT executed by CI (no Enterprise instance on the runner): $ENTERPRISE_SPECS — run them locally with PW_ENTERPRISE=1 against one, and record the result in the PR."
           fi
 
           {
@@ -457,6 +471,8 @@ jobs:
             echo "needs_models=$NEEDS_MODELS"
             echo "canary=$CANARY"
             echo "destructive_only=$DESTRUCTIVE_ONLY"
+            echo "excluded_only=$EXCLUDED_ONLY"
+            echo "enterprise_specs=$ENTERPRISE_SPECS"
           } >> "$GITHUB_OUTPUT"
 
   e2e:
@@ -895,7 +911,7 @@ jobs:
         # runs those very specs. The verdict comes from `detect-specs` (tag-based,
         # conservative: any ambiguity keeps this step), and the skip is announced
         # there as a `::warning::` so it can never read as coverage (#1012).
-        if: needs.detect-specs.outputs.destructive_only != 'true'
+        if: needs.detect-specs.outputs.excluded_only != 'true'
         env:
           CI: "true"
           # When "Collect models" is skipped (needs_models == false) the provider
