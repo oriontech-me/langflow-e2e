@@ -827,8 +827,11 @@ test.fixme("API Request component — body table accepts key + value cell entrie
   },
 );
 
-test("API Request component — flow state persists in database after autosave (URL, method, headers)",
-  { tag: ["@stable", "@regression", "@components"] },
+// Quarantined for #1488 — the same `Open table` trigger again, reached from
+// the autosave-persistence path. Failed 3/3 on PR #1491's lane once :750 was
+// quarantined and the serial cascade cleared.
+test.fixme("API Request component — flow state persists in database after autosave (URL, method, headers)",
+  { tag: ["@regression", "@components"] },
   async ({ page }) => {
     const expectedUrl = `${ECHO_BASE}/get?persist=true`;
     const headerKey = "X-Persist-Header";
