@@ -11,26 +11,74 @@ import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 type SetupOptions = { selectDataOutput?: boolean };
 
 /**
+ * Id of the flow the current test created, recorded by `setupMockDataFlow` the
+ * moment `POST /api/v1/flows/` returns — BEFORE the editor is opened and before
+ * any of the canvas steps that can throw. That ordering is the whole point: while
+ * this lived in the `describe` and was assigned from the helper's return value, a
+ * setup that failed anywhere after the create left it unset and the teardown had
+ * nothing to delete but whatever the URL happened to hold — which on the very
+ * redirect-to-the-list this file's `createEmptyFlow` note describes is not the
+ * flow at all, so the run orphaned it. Measured on 1.12.0.dev30 with a throw
+ * injected between the create and `openFlowById`: the account goes 27 -> 28 flows
+ * with the id recorded on return, and 27 -> 27 with it recorded here.
+ *
+ * Module scope rather than `describe` scope only because the helper lives here.
+ * Each Playwright worker is its own process, so this is per-worker state — the two
+ * tests below never share it even when they run in parallel.
+ */
+let createdFlowId: string | undefined;
+
+/**
  * Creates the empty canvas this spec builds on, through the REST API and under a
  * per-run unique name (#1479).
  *
- * NOT `New Flow -> Blank Flow`, which is how this spec used to start and is what
- * made it flake: that path asks the backend for the name `New Flow`, the same one
- * every other parallel worker asks for at the same moment.
- * `POST /api/v1/flows/` deduplicates a taken name with a `SELECT` and only then
- * inserts, with no transaction across the two, so two simultaneous creations both
- * read the name as free and the loser violates `UNIQUE(user_id, name)` and comes
- * back `400 {"detail":"Name must be unique"}`. Measured on 1.12.0.dev30 straight
- * against the API: 10 of 20 requests fail at 2 concurrent creations of one name,
- * 30 of 40 at 4 — the dedup survives no concurrency at all. `use-add-flow.ts` then
- * shows a toast and never retries under another name, so the app stays on the home
- * screen; the spec waited 30 s for an editor that was never opened, which is the
- * `Loading...` home both failing dailies captured.
+ * NOT `New Flow -> Blank Flow`, which is how this spec used to start: that path
+ * asks the backend for the name `New Flow`, the same one every other parallel
+ * worker asks for at the same moment. `POST /api/v1/flows/` deduplicates a taken
+ * name with a `SELECT` and only then inserts, with no transaction across the two,
+ * so two simultaneous creations both read the name as free and the loser violates
+ * `UNIQUE(user_id, name)` and comes back `400 {"detail":"Name must be unique"}`.
+ * Measured on 1.12.0.dev30 straight against the API: 10 of 20 requests fail at 2
+ * concurrent creations of one name, 30 of 40 at 4 — the dedup survives no
+ * concurrency at all. `use-add-flow.ts` then shows a toast and never retries under
+ * another name, so the app never leaves the home screen. On this file, 4 lanes x 4
+ * repeats produced 7 `Name must be unique` backend errors and 1 failed test on the
+ * old path, and 0 of each on this one.
  *
- * A unique name removes the collision at its source, so there is nothing to repair
- * here and nothing that could mask a real create failure. This is the answer #588
- * already reached for the same upstream race ("we cannot fix the backend here") and
- * shipped as `createFlow`; this spec had simply never been migrated to it.
+ * **That is exposure removed, NOT the diagnosis of the two dailies #1479 was filed
+ * for.** The first version of this change claimed the name race was what those
+ * dailies hit; the claim is withdrawn, and the reasoning behind it is recorded here
+ * because it is the kind that gets reused. It rested on the failing attempts'
+ * `error-context` — the home screen with `Loading...`, byte-identical on both days
+ * — read as "the editor never opened". Playwright writes that snapshot from
+ * `didFinishTest`, i.e. AFTER the `afterEach`, and this spec's `afterEach` calls
+ * `page.goto("/")`: the home snapshot is therefore what teardown produces for ANY
+ * failure of this file, and byte-identical is what a deterministic teardown
+ * navigation looks like, not corroboration. Measured twice on the repo's own
+ * Playwright 1.58.2, the second time on THIS spec: a test failing on
+ * `data:text/html,<h1>DURING</h1>` with an `afterEach` that navigates to
+ * `<h1>TEARDOWN</h1>` writes TEARDOWN into `error-context.md`; and a throw injected
+ * here between the create and `openFlowById` — with the browser still on
+ * `about:blank`, having never loaded a Langflow page at all — produced an
+ * `error-context` showing the home screen with `Loading...`, i.e. the dailies'
+ * snapshot, from a failure that provably never reached any screen. The
+ * failure-time artefacts are `test-failed-1.png` (taken from
+ * `didFinishTestFunction`, before the hooks) and the first-retry trace.
+ *
+ * The stack says the opposite of that snapshot: both dailies failed at the Chat
+ * Output ROW wait, which is only reachable after `sidebar-search-input` was visible
+ * AND filled inside the 20 s `actionTimeout` — and that testid exists upstream in
+ * exactly one place: `pages/FlowPage/components/flowSidebarComponent/components/searchInput.tsx`,
+ * i.e. the editor. The browser WAS in the editor, so #1468's
+ * sidebar remount remains the open explanation for those two days; that is what
+ * `fillSidebarSearch` below is the measured barrier for, and why it is adopted here
+ * rather than incidentally.
+ *
+ * A unique name is still how this flow should be created: it removes the collision
+ * at its source, so there is nothing to repair and nothing that could mask a real
+ * create failure. It is the answer #588 already reached for the same upstream race
+ * ("we cannot fix the backend here"), shipped as `createFlow` and imported by 27
+ * other files; this spec had simply never been migrated to it.
  *
  * Not `setupBlankFlow`, which wraps the same create: that helper enters the editor
  * by clicking the flow's card on the home grid, a step it took because
@@ -63,9 +111,12 @@ async function setupMockDataFlow(
   page: Page,
   request: APIRequestContext,
   { selectDataOutput = false }: SetupOptions = {},
-): Promise<string> {
+): Promise<void> {
   const token = await getAuthToken(request);
+  // Record the id on the line that produces it — see `createdFlowId` above for why
+  // handing it back at the end of this function was not good enough.
   const flowId = await createEmptyFlow(request, token);
+  createdFlowId = flowId;
   await openFlowById(page, flowId);
 
   // Add Chat Output. `fillSidebarSearch` confirms the sidebar actually kept the
@@ -129,12 +180,9 @@ async function setupMockDataFlow(
     timeout: 8000,
   });
 
-  // Return this flow's id so the test can delete ONLY its own flow on teardown
-  // (see the afterEach note on why a global cleanAllFlows races sibling tests).
-  // The id comes from the create call, not from the URL: it is known before the
-  // editor is ever opened, so a setup that fails midway still has an id to clean
-  // up (the afterEach keeps its URL fallback for the same reason).
-  return flowId;
+  // Nothing is returned: the id the teardown needs was recorded at create time
+  // (`createdFlowId`), not here, so that a setup failing at any of the steps above
+  // still leaves the `afterEach` a flow to delete.
 }
 
 async function runNoInputFlow(
@@ -168,11 +216,6 @@ async function runNoInputFlow(
 }
 
 test.describe("Playground Output – Structured Data", () => {
-  // Id of the flow the current test created, set by setupMockDataFlow. Each
-  // Playwright worker is its own process, so this is per-worker state — the two
-  // tests below never share it even when they run in parallel.
-  let createdFlowId: string | undefined;
-
   test.afterEach(async ({ page }) => {
     // Delete ONLY the flow this test created — never a global cleanAllFlows().
     // The suite runs fullyParallel against a single shared auto_login user, so a
@@ -181,10 +224,14 @@ test.describe("Playground Output – Structured Data", () => {
     // Scoped deletion by id is collision-free. (The broader suite-wide hazard —
     // other specs still calling the global cleanAllFlows — is tracked in #515.)
     //
-    // Fall back to the id in the current URL when setup threw before returning
-    // it: the flow was already created (we navigated to /flow/<id>) but the
-    // fragile drag/connect steps failed, so createdFlowId is still unset. Without
-    // this, a partial setup failure would orphan the flow it created.
+    // The URL fallback is belt-and-braces, and it is worth saying which: since the
+    // id is recorded the moment the create returns (`createdFlowId` above), a
+    // partial setup failure no longer depends on it — that is what the fallback
+    // used to be for, and it could not do the job, because the one failure mode it
+    // was written against (a create that succeeded, then a redirect back to the
+    // list) leaves no `/flow/<id>` in the URL either. It is kept because it costs a
+    // regex and it can only ever name a flow this worker itself opened, so a future
+    // edit that reintroduces a UI-side create still cleans up after itself.
     const flowId =
       createdFlowId ?? page.url().match(/\/flow\/([0-9a-f-]+)/i)?.[1];
     createdFlowId = undefined;
@@ -214,9 +261,7 @@ test.describe("Playground Output – Structured Data", () => {
       await test.step(
         "Set up Mock Data (data_output) → Chat Output flow and open playground",
         async () => {
-          createdFlowId = await setupMockDataFlow(page, request, {
-            selectDataOutput: true,
-          });
+          await setupMockDataFlow(page, request, { selectDataOutput: true });
           await page.getByTestId("playground-btn-flow-io").click();
           await expect(page.getByTestId("button-send")).toBeVisible({
             timeout: 15000,
@@ -244,13 +289,16 @@ test.describe("Playground Output – Structured Data", () => {
   );
 
   // Quarantined at triage on the 2026-08-17/18 dailies (PR #1481) and restored
-  // here (#1479). The triage read the failure as "the Chat Output sidebar row
-  // never enters the DOM"; both dailies' `error-context` are byte-identical and
-  // show the HOME screen with `Loading...`, so the browser was never in the
-  // editor and no row could exist. The cause is the flow-create name race
-  // documented on `createEmptyFlow` above, and it hit whichever test ran — it was
-  // the JSON one in 1 of 32 measured runs of this file, so quarantining only this
-  // test never removed the exposure.
+  // here (#1479). The triage's reading — "the Chat Output sidebar row never enters
+  // the DOM" — stands: the failure is at the row wait, which is reachable only from
+  // inside the editor, and the home screen in the `error-context` does not say
+  // otherwise (that snapshot is taken after this file's `afterEach` navigates; see
+  // `createEmptyFlow` above). What the quarantine did not do is remove the
+  // exposure: both tests share `setupMockDataFlow`, and the sibling JSON test —
+  // never quarantined — failed once in 32 runs of this file measured on the old
+  // setup. Restored because that setup now goes through `fillSidebarSearch`,
+  // #1468's measured barrier for the sidebar remount, and creates the flow under a
+  // unique name; re-validated per CONTRIBUTING.md.
   test(
     "playground must render DataFrame output as a markdown table",
     { tag: ["@stable", "@release", "@regression", "@playground"] },
@@ -258,7 +306,7 @@ test.describe("Playground Output – Structured Data", () => {
       await test.step(
         "Set up Mock Data (dataframe_output) → Chat Output flow and open playground",
         async () => {
-          createdFlowId = await setupMockDataFlow(page, request);
+          await setupMockDataFlow(page, request);
           await page.getByTestId("playground-btn-flow-io").click();
           await expect(page.getByTestId("button-send")).toBeVisible({
             timeout: 15000,

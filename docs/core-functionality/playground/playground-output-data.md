@@ -82,44 +82,87 @@ each and differs only in which Mock Data output is selected.
 - Re-validated after PR #120: `runNoInputFlow` now waits for the first message instead of an exact count of 2; `cleanAllFlows` was replaced with REST API-based flow deletion.
 - Re-validated after #279: `runNoInputFlow` no longer asserts `button-stop` becomes visible — on instant Mock Data flows the Send→Stop→Hidden transition completed in <100 ms, faster than Playwright's auto-wait could observe. At that point `toBeHidden` alone was used as the build-finished signal (later superseded by #465 below, which waits on the rendered output content instead); `setupMockDataFlow` also gained an explicit `toBeVisible` wait on `sidebar-search-input` (same race pattern as #278).
 - Fixed after #465: the recurring flake (4×+ across weekly + daily) was a **concurrent flow-deletion race**, not the run-completion wait. The `afterEach` called the global `cleanAllFlows(page)`, which deletes *every* flow of the single shared `auto_login` user. Under `fullyParallel`, the JSON and DataFrame tests run in separate workers; whichever finished first deleted the sibling's flow **mid-build**, so the output never rendered ("run does not settle"), then passed on retry. Confirmed empirically: serial (`--workers=1`) passed 3/3, parallel failed with the bare home empty-state snapshot, and the failing run logged `Flow not found` 404s on `/api/v1/flows/<id>` (a page loading a flow a sibling had just deleted). The `afterEach` now deletes **only the flow the test created** (its id captured from the `/flow/<id>` URL in `setupMockDataFlow`) — collision-free, and it also stops this spec from deleting other specs' flows. `@stable` restored on the DataFrame test. The broader suite-wide hazard (other validated specs still calling the global `cleanAllFlows`) is tracked in #515.
-- **Fixed after #1479 — the setup no longer competes for the flow name `New Flow`.**
+- **Fixed after #1479 — the setup no longer competes for the flow name `New Flow`,
+  and the sidebar fills now go through #1468's barrier.**
   The DataFrame test flaked on the 2026-08-17 and 2026-08-18 dailies with the same
-  signature, and was quarantined at triage (`test.fixme` + `@stable` removed, PR #1481).
-  The failure was recorded as "the Chat Output sidebar row never enters the DOM", but
-  the `error-context` of both dailies is **byte-identical** and shows something else:
-  banner + `main` holding `Loading...`, which is the **home** (`MainPage/pages/main-page.tsx`,
-  the branch taken while `flows && examples && folders` are still pending), not the flow
-  editor. The browser was never in the editor, so the row it waited for could not exist.
+  signature and was quarantined at triage (`test.fixme` + `@stable` removed, PR #1481).
 
-  **Mechanism, measured on nightly `1.12.0.dev30`.** `POST /api/v1/flows/` deduplicates
-  the requested name (`_deduplicate_flow_name` in `api/v1/flows_helpers.py`: `SELECT`,
-  then append `(N)`) and only afterwards inserts, with no transaction covering the two
-  steps, against `UniqueConstraint("user_id", "name")`. Two creations that arrive
-  together therefore both read the same name as free and the second violates the
-  constraint; `_handle_unique_constraint_error` (`api/v1/flows.py`) turns that into
-  **400 `{"detail":"Name must be unique"}`**. Measured directly against the API:
-  **10 of 20 requests fail at 2 concurrent creations of the same name (one per round,
-  10/10 rounds) and 30 of 40 at 4** — the dedup does not survive any concurrency at all.
-  On the client, `hooks/flows/use-add-flow.ts` handles that 400 with a toast and a
-  `reject`, with no retry under another name, so the app never navigates and stays on
-  the home screen. Reproduced end-to-end at **6 %** (6 of 100 adds) under four parallel
-  harnesses, and once in 32 runs of this very file — in the **JSON** test, which was the
-  one still running, which is why quarantining only the DataFrame test removed coverage
-  without removing exposure.
+  **What the two dailies actually show.** The failure is at the Chat Output **row**
+  wait inside `setupMockDataFlow`, which the triage recorded correctly. Reaching that
+  line requires `sidebar-search-input` to have been visible **and** filled inside the
+  20 s `actionTimeout`, and that testid exists upstream in exactly one place —
+  `src/frontend/src/pages/FlowPage/components/flowSidebarComponent/components/searchInput.tsx`
+  — so the browser was in the flow editor when it failed. The `error-context` snapshot
+  of both attempts (the home screen with `Loading...`, byte-identical across the two
+  days) does **not** contradict that, and reading it as "the editor never opened" is a
+  mistake this note records rather than repeats: Playwright writes that snapshot from
+  `didFinishTest`, i.e. **after** `afterEach`, and this spec's `afterEach` calls
+  `page.goto("/")`. The home screen is therefore what teardown produces for *any*
+  failure of this file, and byte-identical is what a deterministic teardown navigation
+  looks like, not corroboration. Measured twice on the repo's own Playwright 1.58.2,
+  the second time on this spec: a test failing on `data:text/html,<h1>DURING</h1>` with
+  an `afterEach` that navigates to `<h1>TEARDOWN</h1>` writes TEARDOWN into
+  `error-context.md`; and a throw injected into `setupMockDataFlow` between the create
+  and `openFlowById` — browser still on `about:blank`, no Langflow page ever loaded —
+  produced an `error-context` showing the home screen with `Loading...`, i.e. the
+  dailies' snapshot, from a failure that provably never reached any screen. The
+  failure-time artefacts are `test-failed-1.png` (captured from
+  `didFinishTestFunction`, before the hooks) and the first-retry trace. So the remaining explanation for those two days is
+  #1468's sidebar remount on a call site its barriers did not cover, which is what the
+  issue suspected, and `fillSidebarSearch` — adopted here on **both** fills — is its
+  measured barrier (23 failures in 220 adds before, 0 in 200 after, on the call site
+  #1468 measured).
 
-  **Why the fix is a unique name and not a repair.** This is the same upstream race
-  #588 filed and closed in July ("the unique-name suffixing is not transaction-safe
-  upstream […] we cannot fix the backend here"), whose answer was `helpers/flows/create-flow.ts`
-  — explicit unique names plus a retry for the transient 5xx — adopted by 22 files.
-  This spec had simply never been migrated: it still created its flow through
-  `New Flow → Blank Flow`, i.e. it asked for the name `New Flow` that every other
-  worker asks for at the same moment. Creating through `createFlow` under a per-run
-  unique name removes the collision at its source, so there is nothing to repair and
-  nothing to mask — preferred over a repair barrier for exactly that reason. The
-  product defect is real but is **not** a regression and has no single-user path
-  (batch import in `use-upload-flow.ts` is sequential, so the backend dedups it
-  normally); it is reported upstream separately and deliberately does not gate this
-  spec's coverage.
+  **Second change, with its own justification: the flow is created through the REST
+  API under a per-run unique name.** `POST /api/v1/flows/` deduplicates the requested
+  name (`_deduplicate_flow_name` in `api/v1/flows_helpers.py`: `SELECT`, then append
+  `(N)`) and only afterwards inserts, with no transaction covering the two steps,
+  against `UniqueConstraint("user_id", "name")`. Two creations that arrive together
+  both read the name as free and the second violates the constraint;
+  `_handle_unique_constraint_error` (`api/v1/flows.py`) turns that into
+  **400 `{"detail":"Name must be unique"}`**. Measured on nightly `1.12.0.dev30`
+  directly against the API: **10 of 20 requests fail at 2 concurrent creations of one
+  name and 30 of 40 at 4** — the dedup survives no concurrency at all. On the client,
+  `hooks/flows/use-add-flow.ts` answers that 400 with a toast and a `reject` and never
+  retries under another name, so the app stays on the home screen. This spec created
+  its flow through `New Flow → Blank Flow`, i.e. it asked for the name `New Flow` that
+  every other parallel worker asks for at the same moment. Measured on this file, 4
+  lanes × 4 repeats: **7 `Name must be unique` backend errors and 1 failed test**
+  before, **0 of each** after — the failed one being the **JSON** sibling that was
+  never quarantined, which is why quarantining only the DataFrame test removed
+  coverage without removing exposure. Creating under a unique name removes the
+  collision at its source, so — unlike a repair barrier — there is nothing here that
+  can mask a real create failure. It is the answer #588 already reached for this same
+  upstream race ("the unique-name suffixing is not transaction-safe upstream […] we
+  cannot fix the backend here"), shipped as `helpers/flows/create-flow.ts` and
+  imported by **27** other files; this spec had simply never been migrated to it.
+  The editor is then entered by id (`openFlowById`, #1214) rather than by clicking the
+  flow's card on the home grid, which is where other workers' residual cards intercept
+  the open button (#580/#588).
+
+  **Upstream defect: deliberately not filed.** The race is real, but it is not a
+  regression and has no single-user path — batch import (`use-upload-flow.ts`) is
+  sequential, so the backend dedups it normally; it needs two simultaneous creations
+  on one account, which is what parallel test workers produce and a user practically
+  does not. Recorded here and on #1479 rather than reported, and it is not a
+  `REGRESSIONS.md` row for the same reason.
+
+  **Not extended to the shared sidebar helper.** `helpers/flows/add-component-from-sidebar.ts`
+  fills `sidebar-search-input` raw and is reached by dozens of specs, so it carries the
+  same #1468 exposure. It is left alone here on purpose: `fillSidebarSearch`'s only
+  measured repair is a `page.reload()` (4 of 4, against 0 of 4 for re-typing), and that
+  helper is called *after* nodes are placed, where a reload would discard the canvas
+  the caller has already built. Adopting it there is a separate change with its own
+  blast radius, not a quiet widening of this one.
+
+  **Teardown hardened alongside it.** The flow id is recorded the moment
+  `POST /api/v1/flows/` returns rather than handed back at the end of
+  `setupMockDataFlow`, so a setup that fails at any of the canvas steps still leaves
+  the `afterEach` a flow to delete. Measured on `1.12.0.dev30` with a throw injected
+  between the create and `openFlowById`: the account goes **27 → 28** flows with the id
+  recorded on return, **27 → 27** with it recorded at create time. The `afterEach`'s
+  URL fallback could not cover that case — the failure it was written against leaves no
+  `/flow/<id>` in the URL either — and is kept only as belt-and-braces.
 
   Quarantine lifted in the same change: `test.fixme` removed and `@stable` restored on
   the DataFrame test.
