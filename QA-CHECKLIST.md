@@ -1072,8 +1072,11 @@
 #### 22.1 Environment-Declared Policy
 
 - [!] A policy whose source is the deployment is reported as externally managed, and a runtime write can neither clear it nor survive into the palette — **expected red on current Enterprise builds**, tracked outside this repo; needs a fresh container per run → `enterprise/governance/environment-policy-authority.spec.ts`
-- [ ] The same authority question for the other three knobs: template blocklist, provider allowlist, model blocklist
-- [ ] `enterprise-admin/catalog/components` reflects the operator-declared policy
+- [!] The same authority question for the other three knobs, each on the surface a user would notice — template blocklist on the template listing, provider allowlist on the provider listing, model blocklist on the bundle — **expected red on current Enterprise builds**, tracked outside this repo → `enterprise/governance/environment-policy-authority.spec.ts`
+- [-] The admin inventory is the palette **plus exactly** what policy blocks: a blocked component stays listed there (or it could not be unblocked from the screen that blocked it), every placeable component is governable, and nothing is hidden that the declared policy does not account for → `enterprise/governance/admin-catalog-inventory.spec.ts`
+- [-] Every declared blocklist key resolves through `policy_candidates` to a component the inventory lists — a key that resolves to nothing is accepted at boot, echoed by the bundle and enforces nothing → `enterprise/governance/admin-catalog-inventory.spec.ts`
+- [ ] Whether the model blocklist should also filter `GET /api/v1/models` — measured today that it does not, there or through a runtime write, because that listing filters by provider only; the per-model predicate is consumed solely by the component dropdown's option builder
+- [ ] Provenance survives a restart: environment and API policy cannot silently disagree (needs a second container or an orchestrated restart)
 - [ ] Readiness stays unhealthy rather than serving permissively when the declared policy cannot be loaded (fail-closed)
 
 #### 22.2 Credential Lifecycle

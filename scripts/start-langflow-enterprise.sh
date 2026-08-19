@@ -93,13 +93,39 @@ for _ in $(seq 1 60); do
     # (sso_auth_service.py, reason="bootstrap_superuser"): every authenticated
     # endpoint answers 403 must_change_password until it is done. Doing it here
     # keeps the instance usable by the suite the moment this script returns.
-    if ! curl -sf -X POST "http://localhost:${PORT}/api/v1/login" \
-         -H 'Content-Type: application/x-www-form-urlencoded' \
-         -d "username=${LANGFLOW_SUPERUSER:-langflow}&password=${EE_PASSWORD}" > /dev/null 2>&1; then
+    #
+    # The probe is an AUTHENTICATED route, never `login`. Login is not gated by
+    # must_change_password — it mints a token for a user who may not use it — so
+    # a login probe answers "the password works", which is a different question.
+    # With LANGFLOW_EE_PASSWORD set to the bootstrap password (the
+    # credential-lifecycle spec needs exactly that, so the rotation is still
+    # pending when it runs) the login succeeds, the script concludes the
+    # rotation already happened, and returns an instance answering 403 on every
+    # authenticated route.
+    ROTATION_TOKEN="$(curl -sf -X POST "http://localhost:${PORT}/api/v1/login" \
+      -H 'Content-Type: application/x-www-form-urlencoded' \
+      -d "username=${LANGFLOW_SUPERUSER:-langflow}&password=${EE_PASSWORD}" \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))' 2>/dev/null || true)"
+    ROTATION_PENDING=1
+    if [ -n "${ROTATION_TOKEN}" ] && curl -sf \
+         -H "Authorization: Bearer ${ROTATION_TOKEN}" \
+         "http://localhost:${PORT}/api/v1/users/whoami" > /dev/null 2>&1; then
+      ROTATION_PENDING=0
+    fi
+    # Rotating to the password the container was seeded with is not a rotation,
+    # and asking for it is how the credential-lifecycle spec asks for an
+    # instance that has NOT rotated yet. Say so rather than attempting a change
+    # whose acceptance would silently consume the state that spec needs.
+    if [ "${EE_PASSWORD}" = "${BOOTSTRAP_PASSWORD}" ]; then
+      ROTATION_PENDING=0
+      echo "Forced rotation left PENDING: LANGFLOW_EE_PASSWORD equals the bootstrap password."
+      echo "Every authenticated route will answer 403 must_change_password until something rotates it."
+    fi
+    if [ "${ROTATION_PENDING}" -eq 1 ]; then
       BOOTSTRAP_TOKEN="$(curl -sf -X POST "http://localhost:${PORT}/api/v1/login" \
         -H 'Content-Type: application/x-www-form-urlencoded' \
         -d "username=${LANGFLOW_SUPERUSER:-langflow}&password=${BOOTSTRAP_PASSWORD}" \
-        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))')"
+        | python3 -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))' || true)"
       if [ -n "${BOOTSTRAP_TOKEN}" ]; then
         curl -sf -X POST "http://localhost:${PORT}/api/v1/account/force-password-change" \
           -H "Authorization: Bearer ${BOOTSTRAP_TOKEN}" \
