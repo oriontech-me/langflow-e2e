@@ -69,10 +69,11 @@ before anything else runs.
 7. Re-open the flow; assert **`title-Chat Input`** is visible — the edit persisted
 8. Add a **Chat Output** component (hover the sidebar entry →
    `add-component-button-chat-output`), click **`save-flow-button`** (the
-   on-canvas manual save), leave via the back button. The exit-guard dialog is
-   timing-dependent here — if the manual save settled, the exit is clean;
-   otherwise **Save And Exit** appears and is clicked. Either path persists, and
-   either way the editor must be left
+   on-canvas manual save) and **wait for that save to complete** — its
+   `PATCH /api/v1/flows/<id>` must answer **200**. Only then leave via the back
+   button. With the save confirmed the flow is no longer dirty, so the exit is
+   clean: the unsaved-changes dialog must **not** appear, and the editor must be
+   left. Nothing here is conditional (see the #1489 note)
 9. Re-open the flow; assert both `title-Chat Input` and `title-Chat Output` are
    visible and `div-generic-node` count = **2**
 
@@ -83,15 +84,21 @@ before anything else runs.
 - After **Exit Anyway** on an unsaved change: the re-opened flow's
   `div-generic-node` count is **0** (discard worked).
 - After a **save**: the re-opened flow shows `title-Chat Input`.
+- The **on-canvas manual save** answers for itself: the `save-flow-button` click
+  produces a `PATCH /api/v1/flows/<id>` → **200**, and the exit that follows it
+  raises **no** unsaved-changes dialog.
 - After the second save: both `title-Chat Input` and `title-Chat Output` are
   visible and `div-generic-node` count is exactly **2** (both edits persisted
   server-side).
 
 Each observable is a hard count/visibility on the re-opened flow — a mutated
-assertion (wrong count, wrong discard) fails deterministically. The only
-conditional (the third exit's dialog) handles a genuinely timing-optional
-confirmation and is gated by the `div-generic-node` count === 2 assert, which
-fails if either save did not persist (see Notes on the hardening).
+assertion (wrong count, wrong discard) fails deterministically. No step is
+conditional: the third exit waits on the manual save's own response before
+leaving, so the dialog either does not appear or the test fails (#1489). That
+also makes the manual save falsifiable on its own — under the previous design a
+broken `save-flow-button` still passed, because the optional **Save And Exit**
+fallback persisted the same graph and the final `div-generic-node` count === 2
+could not tell the two paths apart.
 
 ---
 
@@ -102,7 +109,10 @@ fails if either save did not persist (see Notes on the hardening).
   auto-save is off).
 - `data-testid="icon-ChevronLeft"` — back-to-list navigation.
 - Exit dialog: **"Exit Anyway"** (discard) / **"Save And Exit"** (persist; its
-  primary button carries `data-testid="replace-button"`).
+  primary button carries `data-testid="replace-button"`). Only the first two
+  exits reach it — the third confirms its save first and must exit without it.
+- `PATCH /api/v1/flows/{id}` — the save request behind both the on-canvas
+  **Save** button and the dialog's **Save And Exit**.
 - `data-testid="input_outputChat Input"` / `add-component-button-chat-input` /
   `input_outputChat Output` / `add-component-button-chat-output` /
   `sidebar-search-input` — Chat Input / Chat Output sidebar entries, add buttons,
@@ -157,6 +167,32 @@ fails if either save did not persist (see Notes on the hardening).
   again, from the other side). The re-open is therefore by URL, and each exit now
   asserts the editor was left — verified by forcing the save PATCH to 500, which
   now fails at the exit step instead of 45 s later on an unrelated locator.
+- **#1489 (the third exit hung on a dialog the spec never waited for).**
+  Recurrent on the 2026-08-18 and 2026-08-19 dailies:
+  `page.waitForURL: Timeout 30000ms exceeded` inside `expectLeftEditor`, reached
+  from the **third** exit — not from the initial navigation the issue title
+  describes. Not a product regression, and not the mid-run backend wedge the
+  triage recorded either: the 2026-08-19 occurrence ran on shard 4, measured at
+  0 outages, and the 2026-08-18 one comes from a daily the mass-failure guard
+  never tripped. The daily's own `error-context` names the cause — at the moment
+  of the timeout the unsaved-changes dialog was **open and untouched**, so the
+  editor could not leave `/flow/…` because a modal was blocking it. The guard
+  meant to dismiss it read
+  `if (await saveAndExit.isVisible({ timeout: 5000 }))`, and Playwright
+  **ignores that timeout**: `locator.isVisible()` "does not wait for the element
+  to become visible and returns immediately" (`types.d.ts`, 1.58.2). The probe
+  therefore fired ~1 ms after the back-click and committed to the "no dialog"
+  branch before the modal had painted — the same class already recorded in
+  `mcp/server/mcp-server.spec.ts` (#1422). The fix removes the conditional
+  rather than widening it: the spec now waits for the manual save's own
+  `PATCH /api/v1/flows/{id}` → 200 before leaving, which makes the exit
+  deterministic **and** closes the coverage hole described under Validation
+  criterion.
+  One further observation from the same artifact is a **product** finding and is
+  filed separately as **LE-2255**: the dialog reported "Last saved: **Never**"
+  for a flow whose graph was already persisted — the same attempt had just
+  asserted `title-Chat Input` after a full reload. It is not what this spec
+  asserts and does not block it.
 - **#1342 (the re-open uses the repo's by-id entry, not a local `goto`).** #1336's
   fix hand-rolled `page.goto('/flow/{id}')` + a canvas wait, which was the fourth
   copy of the block `helpers/flows/open-flow-by-id.ts` (#1214) was extracted to
