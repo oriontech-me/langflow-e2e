@@ -1,5 +1,6 @@
 import { defineConfig, devices } from "@playwright/test";
 import * as dotenv from "dotenv";
+import { resolveLane } from "./tests/fixtures/lane";
 import { resolveRunLocale } from "./tests/fixtures/locale";
 
 dotenv.config();
@@ -32,9 +33,20 @@ const BASE_URL = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:7860";
  *    on the command line, so a caller cannot forget and let two destructive tests
  *    wipe each other.
  */
-const DESTRUCTIVE_LANE = !!process.env.PW_DESTRUCTIVE;
+/**
+ * The lane this run selects (`tests/fixtures/lane.ts`). `@destructive` is one
+ * selector; `@enterprise` — specs that need a Langflow ENTERPRISE instance, whose
+ * endpoints the OSS nightly does not serve — is the second. Resolution and the
+ * "never a silent cap" notices live in that module so they are unit-testable by
+ * SELECTION rather than by comparing regex source (`lane.test.ts`).
+ */
+const LANE = resolveLane();
+// Both opt-in lanes serialise, for different causes — see `lane.ts`. The name
+// is the property, not the tag: reading it as "destructive" again would make
+// the enterprise lane look accidentally pinned.
+const SERIAL_LANE = LANE.serial;
 
-if (!DESTRUCTIVE_LANE) {
+for (const notice of LANE.notices) {
   // Never let the exclusion become a silent cap: say it on every run, with the
   // exact command that runs what was left out.
   //
@@ -45,9 +57,7 @@ if (!DESTRUCTIVE_LANE) {
   // file unparseable, the partitioner exited 1, and the daily died before a
   // single test ran. stderr keeps the line just as visible in the Actions log —
   // and `playwright-config.test.ts` now asserts stdout stays clean.
-  console.error(
-    "[lane] @destructive tests are excluded from this run — run them with: PW_DESTRUCTIVE=1 npx playwright test --grep @destructive",
-  );
+  console.error(notice);
 }
 
 /**
@@ -64,8 +74,9 @@ if (RUN_LOCALE.notice) {
 export default defineConfig({
   testDir: "./tests",
   // The destructive lane runs account-wide wipers, so it must never schedule two
-  // tests at once (see DESTRUCTIVE_LANE above).
-  grepInvert: DESTRUCTIVE_LANE ? undefined : /@destructive/,
+  // tests at once, and the enterprise lane must not exhaust the login rate
+  // limit with parallel workers (see SERIAL_LANE above).
+  grepInvert: LANE.grepInvert,
   // Playwright's default testMatch is `**/*.@(spec|test).?(c|m)[jt]s`, which also
   // collects the `*.test.ts` unit tests living next to the helpers they cover
   // (issue #1017) — those run under `node --test` (`npm run test:units`), need no
@@ -80,7 +91,7 @@ export default defineConfig({
   // file in one shard (so @database state-sharing holds). The sharded job sets
   // PW_SHARD_FILE_LEVEL=1; local dev / nightly / manual keep test-level parallelism.
   fullyParallel:
-    DESTRUCTIVE_LANE || process.env.PW_SHARD_FILE_LEVEL ? false : true,
+    SERIAL_LANE || process.env.PW_SHARD_FILE_LEVEL ? false : true,
   forbidOnly: !!process.env.CI,
   // PLAYWRIGHT_RETRIES overrides the retry count when set (e.g. a manual
   // validation dispatch passing 0 for a fast, unamplified signal); empty/unset
@@ -97,7 +108,7 @@ export default defineConfig({
   // per shard (~90 tests each) the 2nd worker is a net win — benchmarked at ~28min
   // (workers=2) vs ~39min (workers=1) at N=4, correctness identical. See
   // ISSUE-833-SHARDING-DESIGN.md §"workers per shard".
-  workers: DESTRUCTIVE_LANE ? 1 : process.env.CI ? 2 : undefined,
+  workers: SERIAL_LANE ? 1 : process.env.CI ? 2 : undefined,
   timeout: 5 * 60 * 1000, // 5 minutes per test
   // Reporters run side by side. The Flakiness.io reporter MUST live here, not on
   // the CLI `--reporter` flag, because its `flakinessProject` option (required for
