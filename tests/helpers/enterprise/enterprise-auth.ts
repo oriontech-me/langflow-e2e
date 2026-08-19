@@ -120,6 +120,39 @@ async function tokenStillValid(request: APIRequestContext, token: string): Promi
   }
 }
 
+/**
+ * A single, UNCACHED password login.
+ *
+ * Exported because the credential-lifecycle spec has to authenticate as a
+ * password the cache knows nothing about — the bootstrap one, before the forced
+ * rotation — and has to observe what happens to that exact token afterwards.
+ * Caching it would defeat both halves.
+ *
+ * Every caller spends one unit of the per-IP login budget, so callers state how
+ * many they spend in their spec doc rather than discovering it as a 429.
+ */
+export async function loginWithPassword(
+  request: APIRequestContext,
+  password: string,
+): Promise<string> {
+  const response = await request.post("/api/v1/login", {
+    form: { username: EE_USERNAME, password },
+  });
+
+  if (!response.ok()) {
+    const body = await response.text();
+    throw new Error(
+      `Enterprise login failed for '${EE_USERNAME}' (${response.status()}): ${body.slice(0, 200)}`,
+    );
+  }
+
+  const body = (await response.json()) as { access_token?: string };
+  if (!body.access_token) {
+    throw new Error("Enterprise login returned no access_token");
+  }
+  return `Bearer ${body.access_token}`;
+}
+
 async function loginOnce(request: APIRequestContext): Promise<string> {
   const cached = readCachedToken();
   if (cached && (await tokenStillValid(request, cached))) {
