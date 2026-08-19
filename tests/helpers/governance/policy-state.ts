@@ -30,6 +30,9 @@ export interface PolicyBundleResponse {
   blocked_component_keys?: string[];
   blocked_template_keys?: string[];
   approved_provider_ids?: string[];
+  // Carried by the bundle and writable through it, but with no dedicated
+  // per-resource endpoint of its own — unlike the three above.
+  blocked_model_keys?: string[];
   rollback_of_revision?: number | null;
   reason?: string | null;
   managed_externally?: boolean;
@@ -143,12 +146,19 @@ export async function restorePolicy(
 }
 
 /**
- * The component types the palette would render, as a set.
+ * The keys of every top-level map in `/api/v1/all`, as a set.
  *
  * `/api/v1/all` is `category -> { type -> template }`; the specs assert over the
  * flattened type set because a blocked component is removed from its category,
  * and a category-level count would miss it (the same reason
  * `component-catalog-drift.ts` snapshots types rather than categories).
+ *
+ * It folds in `component_display_names`, which is a **metadata map and not a
+ * category**, so the result is roughly twice the number of real types. That is
+ * harmless for the membership and relative-size assertions the governance specs
+ * make — its keys are lowercased display names, which collide with nothing —
+ * and wrong for anything that compares this set against another catalog. Use
+ * {@link readPaletteComponentTypes} for that.
  */
 export async function readCatalogTypes(
   request: APIRequestContext,
@@ -157,6 +167,41 @@ export async function readCatalogTypes(
   const catalog = await okJson(request, "get", "/api/v1/all", auth);
   const types = new Set<string>();
   for (const category of Object.values(catalog)) {
+    if (category && typeof category === "object") {
+      for (const type of Object.keys(category as Record<string, unknown>)) {
+        types.add(type);
+      }
+    }
+  }
+  return types;
+}
+
+/** The one top-level key of `/api/v1/all` that is not a component category. */
+const CATALOG_METADATA_KEY = "component_display_names";
+
+/**
+ * The component types the palette would render — and only those.
+ *
+ * The difference from {@link readCatalogTypes} is one excluded key and it
+ * decides whether set algebra over this catalog means anything: on the
+ * reference Enterprise instance the raw flatten yields 320 entries against 160
+ * real types, because `component_display_names` maps every type again by its
+ * lowercased display name. Comparing that against another catalog reports 160
+ * phantom absences.
+ *
+ * Kept as a second function rather than a flag on the first: the existing
+ * callers assert membership and relative size, where the metadata map costs
+ * nothing, and silently changing what their baseline counts would be a change
+ * to their meaning, not a fix to their helper.
+ */
+export async function readPaletteComponentTypes(
+  request: APIRequestContext,
+  auth: string,
+): Promise<Set<string>> {
+  const catalog = await okJson(request, "get", "/api/v1/all", auth);
+  const types = new Set<string>();
+  for (const [name, category] of Object.entries(catalog)) {
+    if (name === CATALOG_METADATA_KEY) continue;
     if (category && typeof category === "object") {
       for (const type of Object.keys(category as Record<string, unknown>)) {
         types.add(type);
