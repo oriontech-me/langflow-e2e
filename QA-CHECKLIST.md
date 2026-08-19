@@ -294,6 +294,7 @@
 - [-] Auto-login disabled — should display login screen
 - [-] Expired session — should redirect to login
 - [x] Session cleanup after logout — after logging out, navigating to `/` and reloading both stay on the login screen → `core-functionality/auth/logout-flow.spec.ts`
+- [-] `POST /api/v1/login` is rate-limited: repeated attempts are refused `429` with a `retry_after` body field and a matching `retry-after` header, a **successful** login does not reset the counter (the check runs before authentication, so brute force cannot be made free by interleaving a good login), and the limiter reopens after the window it advertised. **`@destructive`**: the budget is keyed on the client address and is instance-global, so exhausting it would hand a `429` to the eight specs that authenticate through this endpoint — which also means it does not run in the daily → `core-functionality/auth/login-rate-limit.spec.ts`
 
 #### 4.2 User Management (Admin)
 - [-] Admin creates new user
