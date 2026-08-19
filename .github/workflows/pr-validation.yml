@@ -231,6 +231,7 @@ jobs:
       # would match nothing and exit 1 while the destructive lane runs them fine.
       destructive_only: ${{ steps.diff.outputs.destructive_only }}
       excluded_only: ${{ steps.diff.outputs.excluded_only }}
+      browser_required: ${{ steps.diff.outputs.browser_required }}
       enterprise_specs: ${{ steps.diff.outputs.enterprise_specs }}
     steps:
       - uses: actions/checkout@v7
@@ -461,6 +462,22 @@ jobs:
           # Langflow Enterprise instance this runner does not have, so no step here
           # runs them. Saying so is the whole point — a skipped normal lane plus
           # silence reads as coverage (#1012).
+          # Whether anything selected actually opens a browser (#1507). Installing
+          # Chromium is the slowest step in this lane and it is unconditional, so a
+          # selection of request-only specs pays ~250 MiB and several minutes for a
+          # binary it never launches. Forced ON whenever `Collect models` runs (that
+          # spec drives a browser) or on a canary run, whose specs come from the CI
+          # classifier rather than from $SPECS. Every ambiguity inside the script
+          # resolves to "install": a wrong skip fails the run with a launch error
+          # that names nothing.
+          BROWSER_REQUIRED=true
+          if [ "$HAS_SPECS" = "true" ] && [ "$CANARY" != "true" ] && [ "$NEEDS_MODELS" != "true" ]; then
+            BROWSER_REQUIRED=$(node scripts/browser-required-selection.mjs --specs "$SPECS")
+          fi
+          if [ "$BROWSER_REQUIRED" = "false" ]; then
+            echo "::notice::No selected spec uses the page/context/browser fixtures, so the browser install is skipped for this PR (#1507)."
+          fi
+
           if [ -n "$ENTERPRISE_SPECS" ]; then
             echo "::warning::@enterprise specs in this PR are NOT executed by CI (no Enterprise instance on the runner): $ENTERPRISE_SPECS — run them locally with PW_ENTERPRISE=1 against one, and record the result in the PR."
           fi
@@ -473,6 +490,7 @@ jobs:
             echo "destructive_only=$DESTRUCTIVE_ONLY"
             echo "excluded_only=$EXCLUDED_ONLY"
             echo "enterprise_specs=$ENTERPRISE_SPECS"
+            echo "browser_required=$BROWSER_REQUIRED"
           } >> "$GITHUB_OUTPUT"
 
   e2e:
@@ -683,6 +701,9 @@ jobs:
       - run: npm ci
 
       - name: Install Playwright browsers
+        # Skipped when nothing selected opens a browser (#1507). The verdict is
+        # conservative by construction — see scripts/browser-required-selection.mjs.
+        if: needs.detect-specs.outputs.browser_required != 'false'
         uses: ./.github/actions/setup-playwright
 
       # Before ANY spec runs, including collect-models: point the echo-dependent
