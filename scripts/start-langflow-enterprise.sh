@@ -20,6 +20,15 @@
 # the database as much as of the process — the bootstrap writes role assignments
 # at startup and there is no way back to an unenforced instance.
 #
+# LANGFLOW_EE_BYPASS=1 starts a THIRD variant, identical to the RBAC one in every
+# knob but LANGFLOW_AUTHZ_SUPERUSER_BYPASS, which is true. It exists so the flag
+# the whole @authz area gates on can be measured instead of assumed: with it on
+# the superuser stops being subject to resource policy, and nothing else changes
+# — a role-less peer on the same instance is still refused by every guard.
+# Differing in exactly one variable is the point; a variant that also dropped the
+# RBAC bootstrap would confound "the flag exempted the superuser" with "nothing
+# granted it anything".
+#
 # Two corrections to what the design notes assumed, both measured on 1.12.0:
 # Redis is NOT required (policy invalidation resolves to None and stays active
 # without it; only multi-replica convergence needs one), and three variables the
@@ -34,16 +43,32 @@
 #   ./scripts/start-langflow-enterprise.sh --rebuild          # force a rebuild
 #   LANGFLOW_CATALOG_COMPONENT_BLOCKLIST=CombineText ./scripts/start-langflow-enterprise.sh
 #   LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh # RBAC variant, port 7891
+#   LANGFLOW_EE_BYPASS=1 ./scripts/start-langflow-enterprise.sh # bypass variant, port 7892
 set -euo pipefail
 
 EE_REPO="${LANGFLOW_EE_REPO:-$HOME/langflow-project/IBM-Langflow}"
 IMAGE="${LANGFLOW_EE_IMAGE:-langflow-enterprise:local}"
 RBAC="${LANGFLOW_EE_RBAC:-0}"
-if [ "${RBAC}" = "1" ]; then
+BYPASS="${LANGFLOW_EE_BYPASS:-0}"
+# The bypass variant IS an authorization instance, so it takes the whole RBAC
+# path and flips one knob. Resolved here rather than at the docker run, so the
+# container, port and database it gets cannot drift from the ones the spec's skip
+# message names.
+SUPERUSER_BYPASS=false
+if [ "${BYPASS}" = "1" ]; then
+  RBAC=1
+  SUPERUSER_BYPASS=true
+  CONTAINER_NAME="${LANGFLOW_EE_CONTAINER:-langflow-ee-bypass}"
+  PORT="${LANGFLOW_EE_PORT:-7892}"
+  PG_CONTAINER="${LANGFLOW_EE_PG_CONTAINER:-pg-ee-bypass}"
+  PG_PORT="${LANGFLOW_EE_PG_PORT:-5448}"
+  PG_DB=langflow_bypass
+elif [ "${RBAC}" = "1" ]; then
   CONTAINER_NAME="${LANGFLOW_EE_CONTAINER:-langflow-ee-rbac}"
   PORT="${LANGFLOW_EE_PORT:-7891}"
   PG_CONTAINER="${LANGFLOW_EE_PG_CONTAINER:-pg-ee-rbac}"
   PG_PORT="${LANGFLOW_EE_PG_PORT:-5447}"
+  PG_DB=langflow_rbac
 else
   CONTAINER_NAME="${LANGFLOW_EE_CONTAINER:-langflow-ee-runner}"
   # 7860/7861 belong to the OSS runner and 7870 is often taken by a parallel
@@ -90,6 +115,23 @@ fi
 
 docker rm -f "${CONTAINER_NAME}" > /dev/null 2>&1 || true
 
+# One Enterprise container at a time, on a small Docker VM. Starting the bypass
+# variant beside the RBAC one had the kernel SIGKILL the RBAC container — it
+# reads as `Exited (137)` on a container nobody touched, and the specs pointed at
+# it fail with connection refused, attributed to whatever step was running. Warn
+# rather than refuse: the ceiling is the VM's, not this script's, and a bigger
+# host runs both fine.
+SIBLINGS="$(docker ps --filter 'name=langflow-ee-' --format '{{.Names}}' \
+  | grep -v "^${CONTAINER_NAME}$" || true)"
+if [ -n "${SIBLINGS}" ]; then
+  echo "WARNING: another Enterprise container is already running:"
+  echo "${SIBLINGS}" | sed 's/^/  /'
+  echo "  On an 8 GB Docker VM two EE instances plus the OSS runners do not fit, and"
+  echo "  the kernel picks one to SIGKILL (Exited 137). Stop the sibling first if the"
+  echo "  instance you are starting is the one you need:"
+  echo "${SIBLINGS}" | sed 's/^/    docker stop /'
+fi
+
 # RBAC needs Postgres. Not a preference: the bootstrap writes role assignments
 # and policy rules at startup, and the enforcement path reads them back on every
 # request, so the database is part of the fixture rather than storage under it.
@@ -105,7 +147,7 @@ if [ "${RBAC}" = "1" ]; then
   docker rm -f "${PG_CONTAINER}" > /dev/null 2>&1 || true
   docker run -d --name "${PG_CONTAINER}" -p "${PG_PORT}:5432" \
     -e POSTGRES_USER=langflow -e POSTGRES_PASSWORD=langflow \
-    -e POSTGRES_DB=langflow_rbac postgres:16-alpine > /dev/null
+    -e "POSTGRES_DB=${PG_DB}" postgres:16-alpine > /dev/null
   PG_READY=0
   for _ in $(seq 1 30); do
     if docker exec "${PG_CONTAINER}" pg_isready -U langflow > /dev/null 2>&1; then
@@ -126,12 +168,15 @@ if [ "${RBAC}" = "1" ]; then
     exit 3
   fi
   AUTHZ_ARGS=(
-    -e "LANGFLOW_DATABASE_URL=postgresql://langflow:langflow@${PG_IP}:5432/langflow_rbac"
+    -e "LANGFLOW_DATABASE_URL=postgresql://langflow:langflow@${PG_IP}:5432/${PG_DB}"
     -e LANGFLOW_AUTHZ_ENABLED=true
-    # Without this the superuser is exempt from every check and the instance
-    # reports itself as enforcing while enforcing nothing for the only account
-    # the lane has.
-    -e LANGFLOW_AUTHZ_SUPERUSER_BYPASS=false
+    # false on the RBAC variant: with it true the superuser is exempt from
+    # resource policy and the instance reports itself as enforcing while
+    # enforcing nothing for the only account the lane has. true on the bypass
+    # variant, which exists to measure exactly that difference — measured, it is
+    # one cell: the superuser's resource-policy answer. Every non-superuser
+    # answer is unchanged.
+    -e "LANGFLOW_AUTHZ_SUPERUSER_BYPASS=${SUPERUSER_BYPASS}"
     -e LANGFLOW_AUTHZ_AUDIT_ENABLED=true
     # The bootstrap is what gives ANY account a role, superuser included. With
     # it off the instance enforces against an empty assignment table and every
@@ -224,7 +269,12 @@ for _ in $(seq 1 60); do
     fi
 
     echo "Sign in with ${LANGFLOW_SUPERUSER:-langflow} / ${EE_PASSWORD}"
-    if [ "${RBAC}" = "1" ]; then
+    if [ "${BYPASS}" = "1" ]; then
+      echo "BYPASS variant: authorization ENFORCED, superuser bypass ON, audit ON."
+      echo "  database : postgres ${PG_CONTAINER} (host port ${PG_PORT})"
+      echo "  verify   : GET /api/v1/authz/status -> authz_enabled true, superuser_bypass true"
+      echo "  note     : the @authz specs that need an ENFORCING superuser skip here, by design."
+    elif [ "${RBAC}" = "1" ]; then
       echo "RBAC variant: authorization ENFORCED, superuser bypass OFF, audit ON."
       echo "  database : postgres ${PG_CONTAINER} (host port ${PG_PORT})"
       echo "  verify   : GET /api/v1/authz/status -> authz_enabled true, superuser_bypass false"

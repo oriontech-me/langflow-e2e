@@ -74,6 +74,92 @@ export async function requireRbacInstance(
   return status;
 }
 
+/**
+ * Skip unless this instance is the BYPASS variant.
+ *
+ * The mirror of `requireRbacInstance`, and the two are deliberately exclusive:
+ * no instance can satisfy both, so the A/B they form is two runs rather than one
+ * parameterised test. `LANGFLOW_EE_BYPASS=1` differs from the RBAC variant in
+ * exactly one knob, which is what lets a difference in the answers be attributed
+ * to the knob.
+ *
+ * Skips rather than fails for the same reason the sibling gate does: "you
+ * pointed me at the other container" is a statement about the environment.
+ */
+export async function requireBypassInstance(
+  request: APIRequestContext,
+  auth: string,
+): Promise<AuthzStatus> {
+  const status = await readAuthzStatus(request, auth);
+
+  test.skip(
+    status.authz_enabled !== true || status.superuser_bypass !== true,
+    `This instance reports authz_enabled=${status.authz_enabled}, ` +
+      `superuser_bypass=${status.superuser_bypass} — this test measures what the ` +
+      `bypass switches, which only an instance that HAS it on can answer. Start ` +
+      `the bypass variant with: LANGFLOW_EE_BYPASS=1 ` +
+      `./scripts/start-langflow-enterprise.sh (then point PLAYWRIGHT_BASE_URL at ` +
+      `it, default http://localhost:7892). Note it does not fit beside the RBAC ` +
+      `container on a small Docker VM — stop that one first.`,
+  );
+
+  return status;
+}
+
+export interface RoleAssignment {
+  id: string;
+  user_id: string;
+  role_id: string;
+  domain_type: string;
+  domain_id?: string | null;
+}
+
+/** Every role assignment the instance holds. */
+export async function readRoleAssignments(
+  request: APIRequestContext,
+  auth: string,
+): Promise<RoleAssignment[]> {
+  const response = await request.get("/api/v1/authz/role-assignments", {
+    headers: { Authorization: auth },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  return (await response.json()) as RoleAssignment[];
+}
+
+/**
+ * Re-create assignments that were deleted, and prove the restore landed.
+ *
+ * Only one spec strips the lane's own principal, and only because "is the
+ * superuser subject to policy" cannot be asked of a superuser that holds the
+ * global `admin` role. Restoring is therefore not cleanup, it is the difference
+ * between one test and every test after it — so it is asserted, not attempted,
+ * and it lives here so a second caller cannot re-derive it more loosely.
+ */
+export async function restoreRoleAssignments(
+  request: APIRequestContext,
+  auth: string,
+  assignments: RoleAssignment[],
+): Promise<void> {
+  for (const assignment of assignments) {
+    const response = await request.post("/api/v1/authz/role-assignments", {
+      headers: { Authorization: auth },
+      data: {
+        user_id: assignment.user_id,
+        role_id: assignment.role_id,
+        domain_type: assignment.domain_type,
+        domain_id: assignment.domain_id ?? null,
+      },
+    });
+    expect(
+      response.status(),
+      `Restoring role assignment ${assignment.role_id} for ${assignment.user_id} ` +
+        `answered ${response.status()}: ${await response.text()}. The instance is ` +
+        `now left with a principal that has fewer grants than it started with, ` +
+        `which will fail every later authorization test for the wrong reason.`,
+    ).toBe(201);
+  }
+}
+
 /** The built-in roles, by name. Measured: viewer, developer, admin. */
 export async function builtinRoleIds(
   request: APIRequestContext,
