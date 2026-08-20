@@ -9,6 +9,10 @@ import {
 } from "../../../../helpers/mcp/open-add-mcp-server-modal";
 import { addComponentFromSidebarWithoutSearch } from "../../../../helpers/flows/add-component-from-sidebar";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
+import {
+  createApiKey,
+  deleteApiKey,
+} from "../../../../helpers/auth/create-api-key";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
@@ -54,6 +58,10 @@ const TOOL_LIST_TIMEOUT = 120_000;
 // transient id 404s harmlessly — `deleteFlow` treats 404 as done.
 const createdFlowIds: string[] = [];
 const registeredServers: string[] = [];
+// API keys minted by a test, deleted id-scoped in `afterEach` — a key outlives
+// the test that created it and would otherwise accumulate on the shared
+// superuser account (#1522).
+const createdApiKeyIds: string[] = [];
 
 /** Server names currently registered on the instance. */
 async function listMcpServerNames(page: Page): Promise<string[]> {
@@ -111,6 +119,7 @@ async function selectMcpServerOnNode(page: Page, name: string) {
 test.beforeEach(async ({ page }) => {
   createdFlowIds.length = 0;
   registeredServers.length = 0;
+  createdApiKeyIds.length = 0;
   page.on("response", (resp) => {
     if (
       resp.url().includes("/api/v1/flows") &&
@@ -133,7 +142,8 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(async ({ request }) => {
   const names = registeredServers.splice(0);
   const ids = createdFlowIds.splice(0);
-  if (names.length === 0 && ids.length === 0) return;
+  const keyIds = createdApiKeyIds.splice(0);
+  if (names.length === 0 && ids.length === 0 && keyIds.length === 0) return;
 
   const bearer = await getAuthToken(request);
   const options = bearer ? { headers: { Authorization: bearer } } : undefined;
@@ -167,6 +177,13 @@ test.afterEach(async ({ request }) => {
   // 404s, which it treats as done, so this only fires on a real failure.
   for (const id of ids) {
     await deleteFlow(request, id, options);
+  }
+
+  // `deleteApiKey` tolerates a 404 and throws on anything else, for the same
+  // reason as the flows above: a swallowed failure is how keys pile up on the
+  // shared superuser account.
+  for (const keyId of keyIds) {
+    await deleteApiKey(request, keyId, { Authorization: bearer });
   }
 });
 
@@ -1239,6 +1256,27 @@ test("Streamable HTTP MCP server with server-everything should load tools correc
 
     await page.getByTestId("http-name-input").fill(testName);
     await page.getByTestId("http-url-input").fill(server);
+
+    // The credential Langflow needs to call ITSELF (#1522). This registration is
+    // the one case where the server under test and the client are the same
+    // instance: Langflow connects out to `server` to enumerate its tools, and the
+    // transport takes an API key as `x-api-key` and nothing else. Without the
+    // header the poll below can only ever see `toolsCount: null` — reported as
+    // `rejected the request with HTTP 403: the configured credential was refused`
+    // — which is indistinguishable from the endpoint failing to serve its
+    // project's flows, the regression this test exists to catch.
+    const apiKey = await createApiKey(
+      page.request,
+      { Authorization: await getAuthToken(page.request) },
+      { namePrefix: "e2e-mcp-streamable" },
+    );
+    createdApiKeyIds.push(apiKey.id);
+    await page.getByTestId("http-headers-key-0").fill("x-api-key");
+    await page
+      .getByTestId("popover-anchor-http-headers-value-0")
+      .first()
+      .fill(apiKey.key);
+
     await page.getByTestId("add-mcp-server-button").click();
 
     await expect(

@@ -1,5 +1,9 @@
 import type { Page, Response } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  createApiKey,
+  deleteApiKey,
+} from "../../../../helpers/auth/create-api-key";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { mcpHandshake } from "../../../../helpers/mcp/mcp-streamable-client";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
@@ -283,12 +287,27 @@ test.describe("MCP Server — connect a project to a client", () => {
       await test.step("the copied URL is a live MCP endpoint for THIS project", async () => {
         // Asserted against the protocol, on the string a user would actually
         // paste. Reachable by construction: its origin is the page's own.
-        const info = await mcpHandshake(
-          page.request,
-          copied.toString(),
-          authorization,
-        );
-        expect(info.serverInfo.name).toBe(`langflow-mcp-project-${projectId}`);
+        //
+        // The credential is an API key, which is what the JSON this tab copies
+        // names (`"x-api-key": "YOUR_API_KEY"`) — so this resolves the URL the
+        // way the user's own client will. The alternative unblock for #1522,
+        // `LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true` on the lanes, would satisfy this
+        // step for a caller presenting NOTHING, i.e. it would keep passing on an
+        // instance where the copied URL is refused for every real client. The key
+        // is deleted before the step returns, whether the assertion holds or not.
+        const key = await createApiKey(page.request, { Authorization: authorization }, {
+          namePrefix: "e2e-mcp-install",
+        });
+        try {
+          const info = await mcpHandshake(page.request, copied.toString(), {
+            apiKey: key.key,
+          });
+          expect(info.serverInfo.name).toBe(`langflow-mcp-project-${projectId}`);
+        } finally {
+          await deleteApiKey(page.request, key.id, {
+            Authorization: authorization,
+          }).catch(() => {});
+        }
       });
     },
   );

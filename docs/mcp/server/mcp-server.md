@@ -70,6 +70,15 @@ read-back/update tests)
 
 - Langflow running at `PLAYWRIGHT_BASE_URL`; auto-login superuser.
 - The default MCP starter project exists (`lf-starter_project`).
+- **An API key is the transport credential.** The specs mint one with
+  `createApiKey` (`tests/helpers/auth/create-api-key.ts`) and send it as
+  `x-api-key`; the `auto_login` session JWT is refused with `403` by
+  `/api/v1/mcp/project/{id}/streamable` (measured on 1.12.0.dev33 — the table in
+  `tests/tests-automations/regression/mcp/CLAUDE.md` → *Authenticating against the
+  MCP transport*). The key is deleted in teardown. No lane sets
+  `LANGFLOW_SKIP_AUTH_AUTO_LOGIN`, on purpose. Test 6 is the one that needs it: it registers Langflow's **own**
+  transport endpoint, so the stored server config must carry the header for
+  Langflow to connect to itself.
 - **Network egress to the npm registry** — the stdio tests run real MCP servers
   via `npx`. A cold container downloads the package on first use; see the
   timeout budgets below. **Tests 8 and 9 are exempt**: registration is
@@ -175,8 +184,17 @@ failure unattributed. See the note below.
 ### 6 — `Streamable HTTP MCP server with server-everything should load tools correctly`
 
 Unchanged by #1091 (no stdio surface). Derives the project's own
-`/api/v1/mcp/project/{id}/streamable` URL, registers it via the HTTP tab, polls
-`toolsCount`, and asserts ≥1 tool option; cleans up via the API.
+`/api/v1/mcp/project/{id}/streamable` URL, registers it via the HTTP tab **with an
+`x-api-key` header** (`http-headers-key-0` / `popover-anchor-http-headers-value-0`),
+polls `toolsCount`, and asserts ≥1 tool option; cleans up the server and the key via
+the API.
+
+The header is what makes the poll meaningful rather than a wait on a value that can
+never arrive: Langflow connects out to that URL itself, so with no credential stored
+`GET /api/v2/mcp/servers?action_count=true` answers `toolsCount: null` with
+`rejected the request with HTTP 403: the configured credential was refused`
+(measured, #1522). The failure this test is here to catch — the endpoint not serving
+its project's flows — and a missing credential both used to read as the same null.
 
 ### 7 — `stdio command with an embedded argument is refused, and command plus args is accepted` *(new)*
 

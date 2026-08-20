@@ -739,7 +739,7 @@
 - [x] MCP Server tab in flow → `mcp/server/mcp-server-tab.spec.ts`
 - [x] Add MCP server via modal → `mcp/server/mcp-server-tab.spec.ts`
 - [x] Starter project with MCP → `mcp/server/mcp-server-starter-projects.spec.ts`
-- [x] Flow exposed as MCP server — verify generated endpoint → `mcp/server/mcp-server-protocol.spec.ts`
+- [x] Flow exposed as MCP server — verify generated endpoint, and that the transport takes an API key: the same `initialize` with no credential is refused `403` (#1522) → `mcp/server/mcp-server-protocol.spec.ts`
 - [x] Execute MCP server tool via MCP protocol → `mcp/server/mcp-server-protocol.spec.ts`
 - [x] Register an external MCP server through the stdio form — `command` + `args` resolves the server's real tools into the MCPTools node → `mcp/server/mcp-server.spec.ts`
 - [x] Add-server modal fields persist across save → reopen-for-edit — stdio (name, command, 4 args, 2 env pairs) and HTTP/SSE (name, URL, 2 headers, 2 env pairs) → `mcp/server/mcp-server.spec.ts`

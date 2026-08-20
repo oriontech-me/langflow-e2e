@@ -1,4 +1,9 @@
 import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  createApiKey,
+  deleteApiKey,
+} from "../../../../helpers/auth/create-api-key";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { setupPlayground } from "../../../../helpers/flows/setup-playground";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 
@@ -76,26 +81,44 @@ test.describe("MCP Server – Flow Exposed as MCP Tool", () => {
           : (projectsRaw.folders ?? []);
         expect(projects.length).toBeGreaterThan(0);
 
-        const initResp = await page.request.post(
-          `/api/v1/mcp/project/${projects[0].id}/streamable`,
-          {
-            headers: {
-              "Content-Type": "application/json",
-              Accept: "application/json, text/event-stream",
-            },
-            data: {
-              jsonrpc: "2.0",
-              id: 1,
-              method: "initialize",
-              params: {
-                protocolVersion: "2024-11-05",
-                capabilities: {},
-                clientInfo: { name: "langflow-e2e-test", version: "1" },
+        // The transport takes an API key as `x-api-key` and nothing else (#1522):
+        // this POST used to carry no credential at all and assert 200, which
+        // 1.12.0.dev31 answered — that build served the transport to anyone, so
+        // the assertion passed without exercising auth. On 1.12.0.dev33 a keyless
+        // caller is refused with 403.
+        const authorization = await getAuthToken(page.request);
+        const apiKey = await createApiKey(
+          page.request,
+          { Authorization: authorization },
+          { namePrefix: "e2e-mcp-regression" },
+        );
+        try {
+          const initResp = await page.request.post(
+            `/api/v1/mcp/project/${projects[0].id}/streamable`,
+            {
+              headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json, text/event-stream",
+                "x-api-key": apiKey.key,
+              },
+              data: {
+                jsonrpc: "2.0",
+                id: 1,
+                method: "initialize",
+                params: {
+                  protocolVersion: "2024-11-05",
+                  capabilities: {},
+                  clientInfo: { name: "langflow-e2e-test", version: "1" },
+                },
               },
             },
-          },
-        );
-        expect(initResp.status()).toBe(200);
+          );
+          expect(initResp.status()).toBe(200);
+        } finally {
+          await deleteApiKey(page.request, apiKey.id, {
+            Authorization: authorization,
+          }).catch(() => {});
+        }
       });
     },
   );

@@ -1,11 +1,19 @@
 import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  createApiKey,
+  deleteApiKey,
+} from "../../../../helpers/auth/create-api-key";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
   createRunnableChatFlowViaApi,
   type RunnableChatFlow,
 } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
-import { mcpCall, mcpHandshake } from "../../../../helpers/mcp/mcp-streamable-client";
+import {
+  type McpTransportCredential,
+  mcpCall,
+  mcpHandshake,
+} from "../../../../helpers/mcp/mcp-streamable-client";
 
 /**
  * MCP Server — flow-file resources over the MCP protocol (QA-CHECKLIST §14.1
@@ -57,6 +65,10 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("MCP Server — flow-file resources protocol", () => {
   let authorization: string;
+  // The MCP transport takes an API key and nothing else; `authorization` still
+  // authenticates every other API call here (#1522).
+  let credential: McpTransportCredential;
+  let apiKeyId: string;
   let projectId: string;
   let streamableUrl: string;
   let flow: RunnableChatFlow;
@@ -68,6 +80,12 @@ test.describe("MCP Server — flow-file resources protocol", () => {
   test.beforeAll(async ({ request }) => {
     authorization = await getAuthToken(request);
     const headers = { Authorization: authorization };
+
+    const created = await createApiKey(request, headers, {
+      namePrefix: "e2e-mcp-resources",
+    });
+    credential = { apiKey: created.key };
+    apiKeyId = created.id;
 
     // Create the flow first, then scope to the project it actually lives in
     // (its folder_id), so resources/list on that project is guaranteed to
@@ -121,13 +139,18 @@ test.describe("MCP Server — flow-file resources protocol", () => {
         headers: { Authorization: authorization },
       }).catch(() => {});
     }
+    if (apiKeyId) {
+      await deleteApiKey(request, apiKeyId, {
+        Authorization: authorization,
+      }).catch(() => {});
+    }
   });
 
   test(
     "resources/list surfaces the uploaded flow file as a resource",
     { tag: ["@stable", "@regression", "@api", "@mcp"] },
     async ({ request }) => {
-      await mcpHandshake(request, streamableUrl, authorization);
+      await mcpHandshake(request, streamableUrl, credential);
 
       // resources/list can lag a moment behind the upload — poll until this
       // flow's file appears, matching on its exact URI path (the project list
@@ -139,7 +162,7 @@ test.describe("MCP Server — flow-file resources protocol", () => {
             const resp = await mcpCall(
               request,
               streamableUrl,
-              authorization,
+              credential,
               "resources/list",
               {},
               2,
@@ -171,12 +194,12 @@ test.describe("MCP Server — flow-file resources protocol", () => {
     "resources/read returns the uploaded file content by URI",
     { tag: ["@regression", "@api", "@mcp"] },
     async ({ request }) => {
-      await mcpHandshake(request, streamableUrl, authorization);
+      await mcpHandshake(request, streamableUrl, credential);
 
       const resp = await mcpCall(
         request,
         streamableUrl,
-        authorization,
+        credential,
         "resources/read",
         { uri: resourceUri },
         3,
