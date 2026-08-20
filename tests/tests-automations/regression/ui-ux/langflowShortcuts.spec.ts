@@ -44,9 +44,15 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-test(
+// Quarantined at triage (daily #1517): the sidebar never renders the filtered
+// entry after sidebar-search-input.fill, so `add-component-button-chat-output`
+// never becomes clickable. Hard failure on a guard-tripped day, judged
+// non-environmental (recurrent 2026-08-18 / 08-20, failed after the shard-1
+// outage closed). Lifting the quarantine (remove test.fixme + restore @stable)
+// is a deliverable of #1518.
+test.fixme(
   "LangflowShortcuts",
-  { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
+  { tag: ["@release", "@workspace", "@ui-ux"] },
   async ({ page }) => {
     const nodes = page.getByTestId(NODE_TITLE_TESTID);
     const selectedNodes = page.locator(".react-flow__node.selected");

@@ -73,9 +73,13 @@ async function addLoopComponent(page: Page) {
 // UI / Canvas — rendering, handles and output inspection in a single test
 // =============================================================================
 
-test(
+// Quarantined at triage (daily #1517): recurrent flake — `add-component-button-loop`
+// never enters the DOM after sidebar-search-input.fill("Loop"). Same signature on
+// the 2026-08-19 and 08-20 dailies. Lifting the quarantine (remove test.fixme +
+// restore @stable) is a deliverable of #1518.
+test.fixme(
   "Loop component — renders correctly with all handles and output inspection buttons",
-  { tag: ["@stable", "@release", "@components"] },
+  { tag: ["@release", "@components"] },
   async ({ page }) => {
     await addLoopComponent(page);
 

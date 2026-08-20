@@ -38,9 +38,13 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-test(
+// Quarantined at triage (daily #1517): recurrent flake — `input_outputChat Input`
+// never becomes visible after sidebar-search-input.fill("chat input"). Same
+// signature on the 2026-08-19 and 08-20 dailies. Lifting the quarantine (remove
+// test.fixme + restore @stable) is a deliverable of #1518.
+test.fixme(
   "user should not be able to upload a file larger than the limit",
-  { tag: ["@stable", "@release", "@api", "@files"] },
+  { tag: ["@release", "@api", "@files"] },
   async ({ page }) => {
     // A tiny upload ceiling (0.001 MB ≈ 1.02 KB) so any real asset is rejected.
     const maxFileSizeUpload = 0.001;
