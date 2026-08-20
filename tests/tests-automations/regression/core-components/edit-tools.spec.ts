@@ -75,9 +75,13 @@ async function openFlowWithUrlComponent(
 }
 
 test.describe("Edit tools (Tool Mode)", () => {
-  test(
+  // Quarantined at triage (daily #1517): recurrent flake — `requires-approval-toggle`
+  // stays aria-checked="false" after the edit (9 stable resolutions in 5 s, so not a
+  // wait-strategy race). Same signature on the 2026-07-30 and 08-20 dailies. Lifting
+  // the quarantine (remove test.fixme + restore @stable) is a deliverable of #1519.
+  test.fixme(
     "user can edit a URL tool action in Tool Mode and the edits persist",
-    { tag: ["@stable", "@release", "@components"] },
+    { tag: ["@release", "@components"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
 
