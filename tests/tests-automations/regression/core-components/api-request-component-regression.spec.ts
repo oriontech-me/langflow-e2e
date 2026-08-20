@@ -8,6 +8,8 @@ import {
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
+import { tableFieldTrigger } from "../../../helpers/ui/table-field-trigger";
+import { watchNodeRefresh } from "../../../helpers/ui/watch-node-refresh";
 
 // Run tests serially to avoid "flow must be unique" 400 errors from parallel autosaves
 test.describe.configure({ mode: "serial" });
@@ -75,10 +77,17 @@ const ECHO_HOST = new URL(ECHO_BASE).host;
 // on the node body. `body` only appears in the inspector once the method is a
 // verb that carries a payload (e.g. POST), so switch the method first for it.
 async function addTableFieldToBody(page: Page, field: "headers" | "body") {
+  // Watch from the FIRST line: adding the field re-renders the node, and so does
+  // any `real_time_refresh` edit made just before this call (the `method`
+  // switch), whose second round-trip may still be in flight here. A refresh
+  // landing after the caller opens the table modal drops the row it adds — see
+  // watchNodeRefresh for the measurements.
+  const refresh = watchNodeRefresh(page);
   await page.getByTestId("title-API Request").click();
   await openAdvancedOptions(page);
   await page.getByTestId(`inspector-add-${field}`).click();
   await closeAdvancedOptions(page);
+  await refresh.untilQuiet();
 }
 
 // Helper: create a blank flow and add the API Request component to the canvas.
@@ -611,10 +620,8 @@ test("API Request component — query parameters embedded in URL are sent and ec
 // Headers / Body / cURL tests
 // =============================================================================
 
-// Quarantined for #1488 — same `Open table` trigger as
-// parameters-panel-field-types.spec.ts:415.
-test.fixme("API Request component — inspector headers table accepts key + value cell entries",
-  { tag: ["@regression", "@components"] },
+test("API Request component — inspector headers table accepts key + value cell entries",
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -622,7 +629,7 @@ test.fixme("API Request component — inspector headers table accepts key + valu
 
     const headersDiv = page.getByTestId("div-table_headers");
     await expect(headersDiv).toBeVisible({ timeout: 10000 });
-    await headersDiv.getByRole("button", { name: "Open table" }).click();
+    await tableFieldTrigger(headersDiv).click();
 
     const headersDialog = tableDialog(page, "Headers");
     await expect(headersDialog).toBeVisible({ timeout: 10000 });
@@ -749,12 +756,8 @@ test("API Request component — cURL mode parses command, auto-fills URL, execut
   },
 );
 
-// Quarantined for #1488 — the same `Open table` trigger, on the sibling
-// `body` field. It never ran on daily 2026-08-19 (the serial cascade behind
-// the failure above skipped it); quarantining that test let it execute on
-// PR #1491's impacted-specs lane, where it failed 3/3 on a healthy backend.
-test.fixme("API Request component — body table accepts key + value cell entries when method is POST",
-  { tag: ["@regression", "@components"] },
+test("API Request component — body table accepts key + value cell entries when method is POST",
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     await addApiRequestComponent(page);
 
@@ -786,7 +789,7 @@ test.fixme("API Request component — body table accepts key + value cell entrie
 
     const bodyDiv = page.getByTestId("div-table_body");
     await expect(bodyDiv).toBeVisible({ timeout: 10000 });
-    await bodyDiv.getByRole("button", { name: "Open table" }).click();
+    await tableFieldTrigger(bodyDiv).click();
 
     const bodyDialog = tableDialog(page, "Body");
     await expect(bodyDialog).toBeVisible({ timeout: 10000 });
@@ -827,11 +830,8 @@ test.fixme("API Request component — body table accepts key + value cell entrie
   },
 );
 
-// Quarantined for #1488 — the same `Open table` trigger again, reached from
-// the autosave-persistence path. Failed 3/3 on PR #1491's lane once :750 was
-// quarantined and the serial cascade cleared.
-test.fixme("API Request component — flow state persists in database after autosave (URL, method, headers)",
-  { tag: ["@regression", "@components"] },
+test("API Request component — flow state persists in database after autosave (URL, method, headers)",
+  { tag: ["@stable", "@regression", "@components"] },
   async ({ page }) => {
     const expectedUrl = `${ECHO_BASE}/get?persist=true`;
     const headerKey = "X-Persist-Header";
@@ -880,7 +880,7 @@ test.fixme("API Request component — flow state persists in database after auto
 
       const headersDiv = page.getByTestId("div-table_headers");
       await expect(headersDiv).toBeVisible({ timeout: 10000 });
-      await headersDiv.getByRole("button", { name: "Open table" }).click();
+      await tableFieldTrigger(headersDiv).click();
 
       const headersDialog = tableDialog(page, "Headers");
       await expect(headersDialog).toBeVisible({ timeout: 10000 });
@@ -903,11 +903,22 @@ test.fixme("API Request component — flow state persists in database after auto
         lastRow.locator('[col-id="key"]'),
         headerKey,
       );
+
+      // Re-anchor on the key just written rather than reusing `.last()`, which
+      // is a live locator: if a late component refresh drops the added row
+      // between the two cell edits, `.last()` resolves to the DEFAULT row and
+      // both edits land there — leaving the persistence assertion below
+      // satisfied by an overwritten default row instead of the added one. That
+      // silent-green path was measured on the sibling table test in #1488.
+      const editedRow = headersDataRows.filter({ hasText: headerKey });
+      await expect(editedRow).toHaveCount(1, { timeout: 5000 });
       await fillViewTextCell(
         page,
-        lastRow.locator('[col-id="value"]'),
+        editedRow.locator('[col-id="value"]'),
         headerValue,
       );
+      // The added row must sit ALONGSIDE the default header row.
+      await expect(headersDataRows).toHaveCount(2, { timeout: 5000 });
       // Click the dialog-level Save button — Cancel discards `tempValue`
       // (see `handleCancel` in TableNodeComponent). The persistence test must
       // commit the row so autosave can write it to the database.
@@ -1000,7 +1011,7 @@ test.fixme("API Request component — flow state persists in database after auto
         // the row survived the reload via the UI, not just the API.
         const headersDiv = page.getByTestId("div-table_headers");
         await expect(headersDiv).toBeVisible({ timeout: 10000 });
-        await headersDiv.getByRole("button", { name: "Open table" }).click();
+        await tableFieldTrigger(headersDiv).click();
         const headersDialog = tableDialog(page, "Headers");
         await expect(headersDialog).toBeVisible({ timeout: 10000 });
         await expect(

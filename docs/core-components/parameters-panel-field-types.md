@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/parameters-panel-field-types.spec.ts`
 
-**Last validated:** Langflow 1.12.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev32`, #1488)
 
 ---
 
@@ -69,7 +69,7 @@ matches what a reload would load.
 | 6 | Edit toggle field | `BoolInput` | Save File | `append_mode` | click `toggle_bool_append_mode` | phase 1 ✓ |
 | 7 | Edit slider | `SliderInput` | Language Model | `temperature` | click `slider_thumb` + `ArrowRight` | **phase 2 (this PR)** |
 | 8 | Edit code field | `CodeInput` | Python Function *(legacy)* | `function_code` | open `codearea_code_function_code` → set ACE value → `checkAndSaveBtn` | **phase 3 (this PR)** |
-| 9 | Edit table input | `TableInput` | API Request | `headers` *(advanced)* | show-or-reveal `div-table_headers` → settle (method→POST refresh) → Open table → `add-row-button` (retried until the row lands) → fill key/value cells | **phase 3**; flake-hardened #868 |
+| 9 | Edit table input | `TableInput` | API Request | `headers` *(advanced)* | show-or-reveal `div-table_headers` → settle (method→POST refresh, then `watchNodeRefresh` → `untilQuiet`) → `tableFieldTrigger` → `add-row-button` (retried until the row lands) → fill key cell → **re-anchor the row by that key** → fill value cell | **phase 3**; flake-hardened #868, #1488 |
 | 10 | Edit key-pair list | `NestedDictInput` | Alter Metadata *(legacy)* | `metadata` | `dict_nesteddict_metadata` → Edit Dictionary (text mode) → fill JSON → Save | **phase 3 (this PR)** |
 | 11 | Edit input list | `SortableListInput` | Read File | `storage_location` *(advanced)* | show-or-reveal the field → remove the `Local` chip (build-robust) → `button_open_list_selection_…` → `list_item_aws` | **phase 4 (#806)** |
 | 12 | Edit float field | `FloatInput` | Semantic Text Splitter | `breakpoint_threshold_amount` | fill `float_float_breakpoint_threshold_amount` | **phase 2 (this PR)** |
@@ -118,6 +118,14 @@ the panel's handling of that specific field type.
 
 - `tests/helpers/flows/create-flow.ts`, `delete-flow.ts`, `auth/get-auth-token.ts`,
   `add-component-from-sidebar.ts`.
+- `tests/helpers/ui/table-field-trigger.ts`, `tests/helpers/ui/watch-node-refresh.ts`
+  — the table row's trigger locator and the component-refresh settle (#1488).
+- `src/frontend/src/components/core/parameterRenderComponent/components/TableNodeComponent/index.tsx`
+  — upstream source the table row is written against: the trigger button and the
+  `[value]` → `setTempValue` effect (#1488).
+- `src/frontend/src/CustomNodes/GenericNode/components/NodeInputField/index.tsx`
+  — supplies the `labelId` passed to that button as `ariaLabelledBy`, which is
+  what took over its accessible name.
 - `tests/helpers/flows/add-legacy-components.ts` — phase 3's code and key-pair
   tests add `legacy` components (Python Function, Alter Metadata), hidden from the
   sidebar unless the **Legacy** feature toggle is on; this helper flips it.
@@ -164,3 +172,42 @@ phase 3 (`codearea_code_function_code` + `checkAndSaveBtn`, `div-table_headers` 
   (per field type), each observed failing then reverted — documented in the PR
   Validation block.
 - Every test creates exactly one flow and deletes it id-scoped in `afterEach`.
+- **`Open table` trigger: anchored on the field container, never on the accessible
+  name (#1488).** Upstream a11y PR langflow#14461 (`13bb21ce26`, `release-1.12.0`,
+  2026-08-18, first shipped in nightly `1.12.0.dev32`) added
+  `aria-labelledby={ariaLabelledBy}` to `TableNodeComponent`'s trigger button,
+  pointing at the field's visible label. `aria-labelledby` outranks an element's
+  own contents in the accessible-name computation, so the button's name flipped
+  from the backend `trigger_text` (`Open table`) to the field's display name
+  (`Headers`) while its visible text, behaviour and `type` were unchanged — and
+  every spec clicking it by name stopped matching on the same day. The button
+  carries no `data-testid`, so `tableFieldTrigger` (`tests/helpers/ui/`) resolves
+  it from the field container's testid plus the role, with no name match at all.
+  Not a product regression: the widget works.
+- **The `[value]` re-sync is not settled by ONE refresh response (#1488).** This
+  test's `method → POST` step exists to settle `TableNodeComponent`'s `[value]`
+  effect before the grid is touched (see #868). It waited for the first
+  `POST /api/v1/custom_component/update` response — but a single interaction is
+  answered by more than one (two ~300 ms apart on 1.12.0.dev32), and the second
+  lands while the table modal is open, re-syncing `tempValue` and dropping the row
+  just added. Measured locally at `--retries=0`: 2 failures in 5 runs, matching
+  this test's `flaky` entries in the daily on 2026-07-20, 07-21, 07-27 and 08-04.
+  The underlying behaviour — `TableNodeComponent`'s unconditional
+  `useEffect(… , [value])` resetting `tempValue` while the modal is open, which
+  discards unsaved rows — is a product one; it is raised on #1488 rather than
+  filed, see the same note in `api-request-component-regression.md`.
+  `watchNodeRefresh` waits for the refresh traffic to go quiet instead of
+  counting responses, so a build emitting a third cannot reopen the race: 5/5
+  green after the change. Precise timing on `1.12.0.dev32`: request at +228 ms
+  after the POST click, answered +286 ms; a second request at +565 ms, answered
+  +610 ms, with no interaction in between. It is a *watcher* attached before the
+  interaction, not a wait called after it, because a wait that attaches on call
+  cannot see a refresh already issued and still in flight — the window would
+  elapse right over it.
+- **The value cell is filled on a row re-anchored by its key, not on `.last()`.**
+  `dataRows.last()` is a live locator: when the added row is dropped between the
+  two cell edits it resolves to the DEFAULT `User-Agent` row, so the value lands
+  there and the key edit is lost — and the final `some()` assertion could still be
+  satisfied by a row that was overwritten rather than added. One such run passed
+  green on a corrupted grid during the #1488 investigation. Anchoring on the key
+  plus a `toHaveCount(2)` check before Save turns that accident into a failure.

@@ -5,6 +5,8 @@ import { createFlow } from "../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { addLegacyComponents } from "../../../helpers/flows/add-legacy-components";
+import { tableFieldTrigger } from "../../../helpers/ui/table-field-trigger";
+import { watchNodeRefresh } from "../../../helpers/ui/watch-node-refresh";
 
 // §2.1 Parameters Panel — field-type edit matrix. For each input type, a
 // representative component is added, the field is edited in the panel, and the
@@ -412,12 +414,9 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
     },
   );
 
-  // Quarantined for #1488 — the `Open table` trigger of the API Request
-  // `headers` TableInput never becomes clickable (3/3 attempts on a shard
-  // measured at 0% backend downtime, daily 2026-08-19).
-  test.fixme(
+  test(
     "table field edit persists",
-    { tag: ["@components", "@regression"] },
+    { tag: ["@stable", "@components", "@regression"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
       const flowId = await openFlowWithComponent(
@@ -436,6 +435,9 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
       // the grid: switch method to POST and wait for the component-refresh POST.
       // Without this, the grid drops the add-row click / fails to commit cells
       // (mirrors the settle in api-request-component-regression).
+      // Watch before the interaction, so a refresh already issued and not yet
+      // answered cannot slip through the quiet window (see watchNodeRefresh).
+      const nodeRefresh = watchNodeRefresh(page);
       await page.getByTestId("dropdown_str_method").click();
       const refresh = page.waitForResponse(
         (r) =>
@@ -444,11 +446,14 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
         { timeout: 15000 },
       );
       await page.getByTestId("POST-1-option").click();
+      // Awaiting the first response proves the switch registered at all; the
+      // watcher then waits out every refresh that follows it.
       await refresh;
+      await nodeRefresh.untilQuiet();
 
       const headersDiv = page.getByTestId("div-table_headers");
       await expect(headersDiv).toBeVisible({ timeout: 15000 });
-      await headersDiv.getByRole("button", { name: "Open table" }).click();
+      await tableFieldTrigger(headersDiv).click();
 
       const dialog = dialogByHeading(page, "Headers");
       await expect(dialog).toBeVisible({ timeout: 10000 });
@@ -471,11 +476,25 @@ test.describe("Parameters Panel — field-type edit matrix", () => {
         newRow.locator('[col-id="key"]'),
         "X-E2E-Header",
       );
+
+      // Re-anchor on the key that was just written instead of reusing
+      // `dataRows.last()`. That locator is live: if a late re-render drops the
+      // added row between the two cell edits, `.last()` silently resolves to the
+      // DEFAULT row and the value lands there — overwriting `User-Agent`'s value
+      // and, when the key edit is lost the same way, still satisfying the final
+      // `some()` assertion. That is a green run over a corrupted grid, measured
+      // on 1.12.0.dev32 (#1488). Anchored, the same accident fails here instead.
+      const editedRow = dataRows.filter({ hasText: "X-E2E-Header" });
+      await expect(editedRow).toHaveCount(1, { timeout: 5000 });
       await fillTableTextCell(
         page,
-        newRow.locator('[col-id="value"]'),
+        editedRow.locator('[col-id="value"]'),
         "e2e-header-value",
       );
+
+      // The added row must sit ALONGSIDE the component's default header row —
+      // two rows, not one edited in place.
+      await expect(dataRows).toHaveCount(2, { timeout: 5000 });
       // Save (not Cancel) commits the edited rows so autosave persists them.
       await dialog.getByRole("button", { name: "Save", exact: true }).click();
       await expect(dialog).not.toBeVisible({ timeout: 5000 });

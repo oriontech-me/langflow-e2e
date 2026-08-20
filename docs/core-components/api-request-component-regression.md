@@ -1,6 +1,6 @@
 # API Request Component — Rendering, Inspector, HTTP Methods, cURL Mode and Error Paths
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev10`; the cURL test re-validated on `1.11.1` as well, which already carries langflow#14312)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev32`, #1488; the cURL test re-validated on `1.11.1` as well, which already carries langflow#14312)
 
 ---
 
@@ -66,7 +66,7 @@ For each of GET, POST, PUT, PATCH, DELETE:
   via the inspector (`addTableFieldToBody(page, "headers")`: select node →
   `parameters-button` → `inspector-add-headers` → `inspection-panel-close`). The
   `div-table_headers` widget then renders on the node body.
-- Opens `div-table_headers` → `Open table` button → table dialog opens.
+- Opens `div-table_headers` → its trigger button (`tableFieldTrigger`, role-only inside the field container — **not** matched by accessible name, see Notes) → table dialog opens.
 - Adds a row, then fills BOTH the `[col-id="key"]` cell with `X-E2E-Header` and the `[col-id="value"]` cell with `test-header-value` via the `fillViewTextCell` helper. The helper asserts each cell value renders as a button inside the table dialog after Save (this is the in-session validation; the test does not assert table-modal-level persistence — see "What this test does not cover").
 - Closes the dialog with `btn-cancel-modal` and asserts canvas integrity.
 
@@ -81,13 +81,15 @@ For each of GET, POST, PUT, PATCH, DELETE:
 
 ### 14. `body table accepts key + value cell entries when method is POST`
 - The body field is marked `advanced=True` AND is hidden whenever `method.value === "GET"`. The test switches the method dropdown to `POST` first so `body` becomes available in the inspector. dev46: `body` is then added to the node body via `addTableFieldToBody(page, "body")` (select node → `parameters-button` → `inspector-add-body` → `inspection-panel-close`), which makes the `div-table_body` widget render on the node body.
-- The method switch triggers a `real_time_refresh` round-trip (`POST /api/v1/custom_component/update`). The test waits for that response BEFORE opening the body table so the `[value]` useEffect in `TableNodeComponent` finishes resetting `tempValue`. Without this wait, a click on `add-row-button` can land during the reset window and the new row is immediately wiped.
-- Finds `div-table_body`, clicks `Open table`, adds a row, then fills BOTH the `[col-id="key"]` cell with `payload` and the `[col-id="value"]` cell with `e2e-body-value` via the `fillViewTextCell` helper. The helper asserts each cell value renders as a button INSIDE that specific cell after Save (cell-scoped — not dialog-wide).
+- The method switch triggers a `real_time_refresh` round-trip (`POST /api/v1/custom_component/update`). The test waits for that response BEFORE opening the body table so the `[value]` useEffect in `TableNodeComponent` finishes resetting `tempValue`. Without this wait, a click on `add-row-button` can land during the reset window and the new row is immediately wiped. **One response is not enough** — one method switch is answered by TWO round-trips on 1.12.0.dev32 (request +228 ms after the click, answered +286 ms; a second at +565 ms, answered +610 ms, with no interaction in between), so `addTableFieldToBody` watches that traffic from its first line and waits for it to go QUIET (`watchNodeRefresh(page)` → `refresh.untilQuiet()`) before the caller opens the modal (#1488).
+- Finds `div-table_body`, clicks its trigger via `tableFieldTrigger` (role-only inside the field container — see Notes), adds a row, then fills BOTH the `[col-id="key"]` cell with `payload` and the `[col-id="value"]` cell with `e2e-body-value` via the `fillViewTextCell` helper. The helper asserts each cell value renders as a button INSIDE that specific cell after Save (cell-scoped — not dialog-wide).
+- Unlike tests 11 and 15, this one keeps `.last()` for both cell edits with no re-anchor and no row-count guard, and that is deliberate: `body` ships with **zero** default rows (`body value = []` in the catalog), so a dropped row leaves `.last()` resolving to nothing and the fill fails loudly. The re-anchor exists to stop a dropped row from silently redirecting an edit onto a surviving DEFAULT row — a state `body` does not have.
 - Closes the dialog with `btn-cancel-modal` — this test asserts in-session edit behavior only. End-to-end body persistence through reload is intentionally NOT covered (see "What this test does not cover").
 
 ### 15. `flow state persists in database after autosave (URL, method, headers)`
 - Configures URL (`https://postman-echo.com/get?persist=true`), method (`POST`) and a headers row (`X-Persist-Header` / `persisted-value`) on a freshly created flow; the `flowId` is the one `setupBlankFlow` returned (it created the flow), and the test asserts the editor URL carries that same id before polling it.
-- Like test 14, waits for the `POST /api/v1/custom_component/update` response after the method switch so the headers `[value]` useEffect settles before adding a new row.
+- Like test 14, waits for the `POST /api/v1/custom_component/update` response after the method switch, and then for the refresh traffic to go quiet (`watchNodeRefresh`, inside `addTableFieldToBody`), so the headers `[value]` useEffect settles before adding a new row.
+- The value cell is filled on the row **re-anchored by the key just written**, not on `.last()`: that locator is live, and a refresh landing between the two edits makes it resolve to the DEFAULT header row, so both edits would land there and the persistence assertion below would still pass — on an overwritten default row. A `toHaveCount(2)` check right before Save asserts the added row sits alongside the default one (#1488).
 - Clicks the dialog-level **Save** button (not Cancel, which discards `tempValue` via `handleCancel` in `TableNodeComponent`) so the row commits before autosave fires.
 - Polls `GET /api/v1/flows/{id}` (using `page.request` which inherits the session cookie) until the autosave has written the URL, method and matching header row into the saved flow JSON. Polling the API directly proves the autosave reached the database — not just in-memory React state. The match key is `node.data.type === "APIRequest"` (Python class name, not the `"API Request"` display name).
 - Reloads the page and re-asserts: URL field still holds the saved URL, method dropdown still reads `POST`, and reopening the headers table still shows the saved key/value buttons. dev46: the headers field added to the node body in step 1 persists across the reload, so `div-table_headers` renders directly (no inspector re-open needed); the test just clicks the canvas node to focus it. The reload check covers UI rehydration end-to-end.
@@ -222,3 +224,56 @@ The suite must:
 - **Default endpoint moved to postman-echo.com (issue #407).** The retry above only survives a transient blip *within* a single test window. `httpbin.org` returned `503` (AWS ELB) on **all** retry attempts in the weekly runs of 2026-06-08, 2026-06-15 (#383) and 2026-06-22 (#407) — a sustained outage the retry cannot absorb. After the third recurrence the default echo endpoint moved from `httpbin.org` to `postman-echo.com`, empirically verified as a near drop-in: `/get`, `/post`, `/put`, `/patch`, `/delete` each 200 only for the matching verb, `/status/{code}` is a deliberate status endpoint, query params echo in `args`, and the response body echoes `host`/`url`. The one difference — a wrong verb returns `404` instead of httpbin's `405` — is immaterial to the verb tests, which assert the output contains `200` (and `404` is just as much "not 200"). The env knob was renamed `ECHO_BASE_URL` (the old `HTTPBIN_BASE_URL` is still honored as a fallback) and the constants are now `ECHO_BASE` / `ECHO_HOST`.
 - **cURL pre-fill anti-pattern (fixed).** The previous version of test 13 pre-populated `url_input` before switching to the cURL tab. The run would then succeed via the URL-tab path even if the cURL parser was broken. The current test switches to the cURL tab first and waits for the parser to auto-populate `url_input` — the run is genuinely driven by the cURL command.
 - **Headers table value-cell gap (fixed).** The previous version of test 11 only filled the key cell and closed the dialog with Cancel. It would have passed even if the value column was non-functional. The current version fills both key and value cells via `fillViewTextCell`, which asserts each cell renders as a button after Save inside the table dialog — closing the gap.
+- **`Open table` trigger: accessible name flipped (upstream a11y, #1488).** All four
+  tests in the repo that open a node `TableInput` (tests 11, 14, 15 here and
+  `parameters-panel-field-types.spec.ts`'s table row) broke on the same day —
+  `getByRole("button", { name: "Open table" })` stopped matching. Upstream PR
+  langflow#14461 (`13bb21ce26`, `release-1.12.0`, 2026-08-18, first shipped in
+  nightly `1.12.0.dev32`) added `aria-labelledby={ariaLabelledBy}` to that button
+  in `TableNodeComponent/index.tsx`, pointing at the field's visible label
+  (`node-<id>-field-<name>-label`). `aria-labelledby` outranks an element's own
+  contents in the accessible-name computation, so the name became **`Headers`** /
+  **`Body`** while the visible text stayed `Open table` and the button, its
+  behaviour and its `type` were unchanged. Not a product regression — the widget
+  works; the locator described a name the product no longer exposes. The trigger
+  carries no `data-testid` of its own, so the replacement (`tableFieldTrigger`)
+  anchors on the field container's testid plus the role, with no name match at
+  all; the container holds exactly one button, so a second one appearing there
+  fails strict mode loudly rather than clicking the wrong control.
+- **Refresh traffic must go quiet, not arrive once (#1488).** Root-causing the
+  trigger break surfaced the mechanism behind this file's oldest table flake
+  (#868). Two properties of the `real_time_refresh` traffic were measured on
+  `1.12.0.dev32`, and either one alone reopens the race:
+  - **one interaction, two round-trips** — switching `method` to POST issues the
+    request at +228 ms after the click (answered +286 ms) and a SECOND at
+    +565 ms (answered +610 ms), with no interaction in between. A test that
+    awaits the first response resumes ~280 ms before the node re-renders again.
+  - **the round-trip is deferred and unbounded** — the refresh for the
+    `inspector-add-<field>` click starts ~336 ms AFTER the click, so a call site
+    that waits for nothing has an open gap, and ~100 ms on an idle box says
+    nothing about a shared CI container.
+
+  A refresh landing after the modal opens makes `TableNodeComponent`'s `[value]`
+  effect re-sync `tempValue` and drop the row just added. Measured here: with the
+  row re-anchored by its key and a `toHaveCount(2)` guard added, test 15 failed
+  once in three runs on a healthy local nightly — the same accident that
+  previously produced a GREEN run over a corrupted grid, because both cell edits
+  had landed on the default row and the persistence assertion could not tell the
+  two apart. `watchNodeRefresh` closes it: quiet means nothing in flight AND no
+  refresh activity for the window, and the watch is attached at the FIRST line of
+  `addTableFieldToBody` rather than after the click — a wait that only attaches
+  when called cannot see a request already issued, so a slow refresh in flight is
+  invisible to it and the window elapses right over it. 3 × 15 green at
+  `--retries=0` afterwards.
+- **Unsaved table rows are discarded by a node refresh — reported, not just
+  worked around (#1488).** The mechanism above is a product behaviour, not a test
+  race: `TableNodeComponent/index.tsx` runs
+  `useEffect(() => { setTempValue(cloneDeep(value)); }, [value])` unconditionally,
+  *including while the modal is open*, and a component refresh replaces the
+  template object so `value` always changes identity. Any row typed and not yet
+  saved is lost. Why this is recorded here rather than filed as a regression: the
+  modal is blocking, so a user cannot trigger a refresh from another field while
+  it is open — reaching the loss requires opening the table inside the ~300 ms
+  window after editing a `real_time_refresh` field, which is real but narrow, and
+  `REGRESSIONS.md` admits a row only on adversarial validation plus an upstream
+  ticket. Neither exists yet; it is raised on #1488 for the team to decide.
