@@ -107,6 +107,11 @@ One test walks a single **Chat Output** node through seven documented shortcuts:
 
 No provider API key needed.
 
+## Notes
+
+- **#1518 — the search term was wiped, and the flow-id capture raced its own cleanup (test-defect).** This test failed 3 of 3 attempts on the 2026-08-20 daily (run 32349515682) and again on 08-18, with `locator.click` timing out after 20 s on `add-component-button-chat-output`; it was quarantined at triage of daily #1517. Root-caused on nightly `1.12.0.dev33` with an instrumented scout: the fill inside `addComponentFromSidebar` races the flow page mount and loses, the mount resets `sidebar-search-input` to `""`, and no filter is ever re-applied — the term is already gone the instant `fill()` returns and the sidebar still lists ZERO entries after 25 s of polling, so nothing arrives late and no longer timeout could have helped. This spec is the one of the four with NO gate at all before the fill, which is why it is the one that reproduces bare: **1 of 5 local runs (20 %) with the byte-identical CI signature**, against 4 of 22 (~18 %) for the ungated shape on the shared surface and 0 of 25 with a `waitForURL` + visible gate. An identical re-fill repairs it in ~320 ms. Refuted by measurement rather than argument: `GET /api/v1/all` on dev33 still lists Chat Output under `input_output` (no reparenting), and the catalog request completes before the fill in every run, hit or miss. Fixed at the source — `addComponentFromSidebar` now reads the term back and re-types it when the input was cleared, so all four call sites of the cluster inherit the repair.
+- **Flow-id capture is awaited.** The id used to be collected by a fire-and-forget `page.on("response")` + `resp.json()` handler, which races `afterEach`: on the failure path the test threw before the body resolved, `createdFlowIds` was still empty, and the run leaked a `New Flow` on the shared instance (one observed and purged on 2026-08-20 while cleaning up after this issue's own repro runs). It is now an awaited `waitForResponse`, as the other three specs of the cluster already did.
+
 ## Last validated
 
-1.12.x (nightly `1.12.0.dev15`)
+1.12.x (nightly `1.12.0.dev33`)

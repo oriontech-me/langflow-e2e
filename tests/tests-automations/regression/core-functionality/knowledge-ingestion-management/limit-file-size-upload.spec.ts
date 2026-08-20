@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
+import { addComponentFromSidebar } from "../../../../helpers/flows/add-component-from-sidebar";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 import { resolveAssetPath } from "../../../../helpers/filesystem/resolve-asset-path";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
@@ -38,13 +39,9 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-// Quarantined at triage (daily #1517): recurrent flake — `input_outputChat Input`
-// never becomes visible after sidebar-search-input.fill("chat input"). Same
-// signature on the 2026-08-19 and 08-20 dailies. Lifting the quarantine (remove
-// test.fixme + restore @stable) is a deliverable of #1518.
-test.fixme(
+test(
   "user should not be able to upload a file larger than the limit",
-  { tag: ["@release", "@api", "@files"] },
+  { tag: ["@stable", "@release", "@api", "@files"] },
   async ({ page }) => {
     // A tiny upload ceiling (0.001 MB ≈ 1.02 KB) so any real asset is rejected.
     const maxFileSizeUpload = 0.001;
@@ -71,23 +68,18 @@ test.fixme(
       });
       await page.getByTestId("blank-flow").click();
 
-      await expect(page.getByTestId("sidebar-search-input")).toBeVisible({
-        timeout: 30000,
-      });
-      await page.getByTestId("sidebar-search-input").fill("chat input");
-      await expect(
-        page.getByTestId("input_outputChat Input"),
-      ).toBeVisible({ timeout: 30000 });
-
-      // The Chat Input row briefly toggles pointer-events-none; hover its
-      // draggable wrapper (which always takes pointer events) and add via the
-      // button (chained so the hover holds).
-      await page
-        .getByTestId("input_output_chat input_draggable")
-        .hover()
-        .then(async () => {
-          await page.getByTestId("add-component-button-chat-input").click();
-        });
+      // Routed through the shared primitive for #1518. The hand-rolled sequence
+      // this replaces gated on `sidebar-search-input` being VISIBLE before
+      // filling, which is the wrong observable: the input is visible throughout
+      // the flow page mount, and it is the mount that clears the term — so the
+      // gate narrowed the window without closing it and the wait for
+      // `input_outputChat Input` still timed out on the daily. The helper reads
+      // the term back and re-types it when it was wiped.
+      await addComponentFromSidebar(
+        page,
+        "chat input",
+        "add-component-button-chat-input",
+      );
     });
 
     await test.step("open the playground", async () => {

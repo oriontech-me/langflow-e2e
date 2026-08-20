@@ -64,6 +64,94 @@ import { type Page } from "@playwright/test";
  */
 export const ADD_LANDED_TIMEOUT_MS = 12000;
 
+/**
+ * Per-fill budget for the filtered sidebar entry to render (#1518).
+ *
+ * Generous on purpose, and the number is measured, not guessed: on nightly
+ * 1.12.0.dev33 a fill that survives resolves its entry in 324-4191 ms over 25
+ * runs (median ~335 ms). The budget is only ever paid in full by a term that
+ * held for the whole window with nothing matching it — which is a different
+ * failure, reported by a different message.
+ */
+export const SEARCH_ENTRY_TIMEOUT_MS = 10000;
+
+/**
+ * How many times the search term is typed before giving up. A reset is detected
+ * in ~150-300 ms and re-filling repairs it in ~320 ms, so three fills cost about
+ * a second on the failure path and nothing at all on the healthy one.
+ */
+export const SEARCH_FILL_ATTEMPTS = 3;
+
+/**
+ * What the sidebar looked like a moment after the search term was typed.
+ *
+ * - `entry-visible` — the filtered entry rendered. Done, whatever the input now
+ *   reads: the entry is the observable the caller needs, and an input the app
+ *   normalised is not a problem to report.
+ * - `term-lost` — the input no longer holds the term (or is gone entirely). This
+ *   is #1518: the fill raced the flow page mount and lost, the mount reset
+ *   `sidebar-search-input` to `""`, and nothing will re-apply the filter. Re-fill.
+ * - `term-held-no-entry` — the term survived and still nothing matched. NOT this
+ *   race: the component is absent, renamed or reparented, and re-filling it would
+ *   be a mute.
+ */
+export type SearchFillState =
+  | "entry-visible"
+  | "term-lost"
+  | "term-held-no-entry";
+
+export function classifySearchFill(o: {
+  entryPresent: boolean;
+  /** `null` when the input itself is no longer in the DOM. */
+  inputValue: string | null;
+  term: string;
+}): SearchFillState {
+  if (o.entryPresent) return "entry-visible";
+  return o.inputValue === o.term ? "term-held-no-entry" : "term-lost";
+}
+
+type SearchFillFailure = {
+  searchTerm: string;
+  addButtonTestId: string;
+  attempts: number;
+  perAttemptMs: number;
+  /** `null` when the input was gone when the failure was captured. */
+  lastSearchValue: string | null;
+  /** How many `add-component-button-*` the sidebar was showing. */
+  sidebarEntryCount: number;
+};
+
+const readBack = (v: string | null) =>
+  v === null ? `read back: <gone>` : `read back: "${v}"`;
+
+export function searchResetMessage(d: SearchFillFailure): string {
+  return (
+    `the sidebar search was reset before the filtered entry could render: ` +
+    `"${d.searchTerm}" was typed ${d.attempts} fill(s) of ${d.perAttemptMs}ms ` +
+    `each and getByTestId("${d.addButtonTestId}") never entered the DOM. ` +
+    `Observed: sidebar search input ${readBack(d.lastSearchValue)}; ` +
+    `${d.sidebarEntryCount} component entries listed. ` +
+    `This is issue #1518 — the fill races the flow page mount and the mount ` +
+    `clears the input, so no filter is ever applied. Measured on nightly ` +
+    `1.12.0.dev33: 4 of 22 ungated fills lost the term, the sidebar still held ` +
+    `zero entries after 25s, and an identical re-fill repaired it in ~320ms. ` +
+    `A longer caller timeout cannot fix it — nothing is in flight to wait for.`
+  );
+}
+
+export function noMatchingEntryMessage(d: SearchFillFailure): string {
+  return (
+    `the sidebar held "${d.searchTerm}" for the whole ${d.perAttemptMs}ms budget ` +
+    `and no sidebar entry matched it: getByTestId("${d.addButtonTestId}") never ` +
+    `entered the DOM while the search input kept the term. ` +
+    `Observed: ${d.sidebarEntryCount} component entries listed. ` +
+    `So this is NOT the #1518 fill race — the term survived — and re-typing it ` +
+    `would change nothing. Check whether the component is still shipped by this ` +
+    `image, and whether it kept its display name and its category: the testid is ` +
+    `category-prefixed, so a reparented component silently changes it (#1040).`
+  );
+}
+
 // Every canvas node carries this testid, and its value is the node's own id — so
 // one read gives both the count and the identity. Both this and the `data-id`
 // fallback are established in-repo (`rf__node-` in the agent specs, `data-id` in
@@ -203,6 +291,75 @@ const nodeIds = async (page: Page): Promise<string[]> =>
 /** Default drop target — the ReactFlow pane, addressed the way the specs do. */
 const CANVAS_SELECTOR = '//*[@id="react-flow-id"]';
 
+/** How many component entries the sidebar is listing right now. */
+const sidebarEntryCount = (page: Page) =>
+  page.locator('[data-testid^="add-component-button-"]').count();
+
+/**
+ * Types the search term and does not return until the target entry is in the DOM
+ * — re-typing the term whenever the input turns out to have been cleared (#1518).
+ *
+ * The bare `fill` this replaces was the whole of #1518: it lands, the flow page
+ * finishes mounting, the mount resets the input to `""`, and the entry the caller
+ * is about to click never renders. The caller then burns its entire budget on it
+ * (10 s / 20 s / 20 s / 30 s in the four affected specs) and reports the wait it
+ * happened to spell rather than the term that was wiped.
+ *
+ * A reset is detected by READING THE TERM BACK, not by waiting longer, because a
+ * longer wait provably cannot help: the sidebar still held zero entries 25 s
+ * after a lost fill on nightly 1.12.0.dev33. The two exits are kept apart on
+ * purpose — a wiped term is repaired, while a term that survived its whole budget
+ * with nothing matching it is a component that is absent, renamed or reparented,
+ * and re-typing that would be a mute.
+ */
+const fillSearchUntilEntryRenders = async (
+  page: Page,
+  term: string,
+  targetTestId: string,
+) => {
+  const input = page.getByTestId("sidebar-search-input");
+  const target = page.getByTestId(targetTestId);
+  let lastValue: string | null = null;
+  let attempts = 0;
+
+  while (attempts < SEARCH_FILL_ATTEMPTS) {
+    await input.fill(term);
+    attempts += 1;
+
+    const deadline = Date.now() + SEARCH_ENTRY_TIMEOUT_MS;
+    let state: SearchFillState = "term-held-no-entry";
+    while (Date.now() < deadline) {
+      lastValue = await input.inputValue().catch(() => null);
+      state = classifySearchFill({
+        entryPresent: (await target.count()) > 0,
+        inputValue: lastValue,
+        term,
+      });
+      // Only a term that is still held is worth waiting on: the entry has either
+      // rendered, or the input was cleared and nothing will ever re-apply it.
+      if (state !== "term-held-no-entry") break;
+      await page.waitForTimeout(POLL_INTERVAL_MS);
+    }
+
+    if (state === "entry-visible") return;
+
+    const detail = {
+      searchTerm: term,
+      addButtonTestId: targetTestId,
+      attempts,
+      perAttemptMs: SEARCH_ENTRY_TIMEOUT_MS,
+      lastSearchValue: lastValue,
+      sidebarEntryCount: await sidebarEntryCount(page),
+    };
+    if (state === "term-held-no-entry") {
+      throw new Error(noMatchingEntryMessage(detail));
+    }
+    if (attempts === SEARCH_FILL_ATTEMPTS) {
+      throw new Error(searchResetMessage(detail));
+    }
+  }
+};
+
 const issueAdd = async (
   page: Page,
   searchTerm: string | null,
@@ -211,7 +368,7 @@ const issueAdd = async (
   canvasSelector: string,
 ) => {
   if (searchTerm !== null) {
-    await page.getByTestId("sidebar-search-input").fill(searchTerm);
+    await fillSearchUntilEntryRenders(page, searchTerm, addButtonTestId);
   }
   if (gesture === "drag") {
     await page

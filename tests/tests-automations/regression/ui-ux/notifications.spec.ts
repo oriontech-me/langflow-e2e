@@ -1,4 +1,5 @@
 import { expect, test } from "../../../fixtures/fixtures";
+import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { expandFocusedNode } from "../../../helpers/ui/expand-focused-node";
@@ -26,13 +27,9 @@ test.describe("Notifications tab", () => {
     }
   });
 
-  // Quarantined at triage (daily #1517): recurrent flake — `input_outputChat Input`
-  // never becomes hoverable after sidebar-search-input.fill("chat input"). Same
-  // signature on the 2026-08-18 and 08-20 dailies. Lifting the quarantine (remove
-  // test.fixme + restore @stable) is a deliverable of #1518.
-  test.fixme(
+  test(
     "User should be able to interact notifications tab",
-    { tag: ["@release", "@ui-ux"] },
+    { tag: ["@stable", "@release", "@ui-ux"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
@@ -51,13 +48,16 @@ test.describe("Notifications tab", () => {
       // Add a Chat Input and run it to produce a "Flow built successfully"
       // notification. Text Input (the original trigger) is `legacy` on 1.10.0 and
       // hidden from the sidebar — Chat Input is the durable equivalent.
-      await page.getByTestId("sidebar-search-input").fill("chat input");
-      await page
-        .getByTestId("input_outputChat Input")
-        .hover()
-        .then(async () => {
-          await page.getByTestId("add-component-button-chat-input").click();
-        });
+      // Routed through the shared primitive for #1518. The hand-rolled sequence
+      // this replaces filled the sidebar search straight after the blank-flow
+      // click and hovered the row, so a term cleared by the flow page mount left
+      // `input_outputChat Input` waiting out its whole budget. The helper reads
+      // the term back and re-types it when it was wiped.
+      await addComponentFromSidebar(
+        page,
+        "chat input",
+        "add-component-button-chat-input",
+      );
       await expect(page.locator(".react-flow__node")).toHaveCount(1, {
         timeout: 10000,
       });
