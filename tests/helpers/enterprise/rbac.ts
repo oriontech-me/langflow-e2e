@@ -114,16 +114,31 @@ export async function createRbacUser(
   // clothing this lane is most exposed to. Measured: 5 logins per minute for the
   // whole machine, which is why this spec creates ONE user rather than one per
   // test.
-  if (login.status() === 429) {
+  if (!login.ok()) {
+    // Atomic or nothing. The user exists by now, and throwing here would leak
+    // it — which is exactly what happened: a 429 on this line left an account
+    // behind on every affected run, because the caller's try/finally has not
+    // been entered yet. Delete before reporting, so a failure to build the
+    // fixture leaves the instance as it was found.
+    await request
+      .delete(`/api/v1/users/${id}`, { headers: { Authorization: auth } })
+      .catch(() => undefined);
+
+    if (login.status() === 429) {
+      throw new Error(
+        `Login for '${username}' was rate-limited (429). EE allows 5 logins per ` +
+          `minute per IP for the whole machine, and it counts EVERY attempt, ` +
+          `failed ones included. This lane's cached superuser token plus each ` +
+          `created user share that budget. Wait out the window (~60s) and ` +
+          `re-run; if it persists, another process is authenticating against ` +
+          `the same instance.`,
+      );
+    }
     throw new Error(
-      `Login for '${username}' was rate-limited (429). EE allows 5 logins per ` +
-        `minute per IP for the whole machine, and this lane's cached superuser ` +
-        `token plus each created user share that budget. Wait out the window ` +
-        `(~60s) and re-run; if it persists, another process is authenticating ` +
-        `against the same instance.`,
+      `Login for the newly created '${username}' answered ${login.status()}: ` +
+        `${(await login.text()).slice(0, 200)}`,
     );
   }
-  expect(login.status(), await login.text()).toBe(200);
   const { access_token } = (await login.json()) as { access_token: string };
 
   return { id, username, password: TEST_USER_PASSWORD, auth: `Bearer ${access_token}` };
@@ -185,4 +200,90 @@ export async function cleanupRbacUser(
       .catch(() => undefined);
   }
   await request.delete(`/api/v1/users/${user.id}`, { headers }).catch(() => undefined);
+}
+
+export interface ShareGrant {
+  id: string;
+}
+
+/**
+ * Share `resourceId` with one user, at `permissionLevel`.
+ *
+ * `scope: "user"` targets a single principal; the enum also carries `private`,
+ * `team` and `public`. Returns the grant so the caller can revoke it — a grant
+ * that cannot be taken back is not a grant, and revocation is half of what the
+ * matrix spec measures.
+ */
+export async function shareWithUser(
+  request: APIRequestContext,
+  auth: string,
+  resourceType: string,
+  resourceId: string,
+  targetUserId: string,
+  permissionLevel: "read" | "write" | "execute" | "admin",
+): Promise<ShareGrant> {
+  const response = await request.post("/api/v1/authz/shares", {
+    headers: { Authorization: auth },
+    data: {
+      resource_type: resourceType,
+      resource_id: resourceId,
+      scope: "user",
+      target_id: targetUserId,
+      permission_level: permissionLevel,
+    },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+  return { id: ((await response.json()) as { id: string }).id };
+}
+
+export interface AuthzDecision {
+  allowed?: boolean;
+  matched_policy?: string[];
+}
+
+/**
+ * Ask the decision API about one (subject, object, action).
+ *
+ * `obj` is a casbin OBJECT PATTERN, not a resource type, and which pattern is
+ * passed decides which question is asked: `flow:*` is "may you read flows in
+ * general", answered from role policy alone, while `flow:<id>` is "may you read
+ * THIS flow", which also accounts for shares. Passing the first where the second
+ * was meant produces a confident wrong answer that looks exactly like a product
+ * defect — it did, twice, while this area was being measured.
+ *
+ * An unknown pattern is DENIED rather than rejected: `200` with
+ * `allowed: false` and an empty `matched_policy`. That empty array is the only
+ * signal separating a mis-encoded question from a real refusal.
+ */
+export async function authzCheck(
+  request: APIRequestContext,
+  auth: string,
+  userId: string,
+  obj: string,
+  act: string,
+): Promise<AuthzDecision> {
+  const response = await request.post("/api/v1/authz/check", {
+    headers: { Authorization: auth },
+    data: { user_id: userId, obj, act },
+  });
+  expect(response.status()).toBe(200);
+  return (await response.json()) as AuthzDecision;
+}
+
+/** Effective permissions for one resource, as the subject sees them. */
+export async function effectivePermissions(
+  request: APIRequestContext,
+  subjectAuth: string,
+  resourceType: string,
+  resourceId: string,
+): Promise<string[]> {
+  const response = await request.post("/api/v1/authz/me/permissions", {
+    headers: { Authorization: subjectAuth },
+    data: { resource_type: resourceType, resource_ids: [resourceId] },
+  });
+  expect(response.status()).toBe(200);
+  const body = (await response.json()) as {
+    permissions?: Record<string, string[]>;
+  };
+  return body.permissions?.[resourceId] ?? [];
 }
