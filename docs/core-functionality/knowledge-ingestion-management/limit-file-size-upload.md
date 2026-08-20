@@ -1,6 +1,6 @@
 # File Size Limit on Playground Upload — §5.1 File Upload
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev33`)
 
 ---
 
@@ -98,3 +98,4 @@ A mutated assertion (wrong ceiling, or expecting success) fails deterministicall
 - **No inspect-panel toggling.** The prior spec disabled/enabled the inspect
   panel around advanced-options clicks that are irrelevant to the size check;
   the redesign drops them.
+- **#1518 — the visible-input gate was the wrong observable (test-defect).** This test failed on the 2026-08-19 and 08-20 dailies with `expect(getByTestId("input_outputChat Input")).toBeVisible()` timing out after `sidebar-search-input.fill("chat input")`, and was quarantined at triage of daily #1517. Root-caused on nightly `1.12.0.dev33`: the fill races the flow page mount, and the mount resets the search input to `""` — measured as an empty readback the instant `fill()` returns, with ZERO sidebar entries still listed 25 s later. Gating on the input being VISIBLE (what this spec did) cannot help: the input is visible throughout the mount, which is exactly when it is still resettable. Rate 4 of 22 ungated fills (~18 %), repaired by an identical re-fill in ~320 ms. Fix: the hand-rolled fill + row hover + click is replaced by `addComponentFromSidebar`, which reads the term back and re-types it when it was wiped. The `input_output_chat input_draggable` hover it dropped is not needed — the `+` button measured visible with no hover on 25 of 25 entries. `@stable` restored

@@ -2,6 +2,7 @@ import type { APIRequestContext, Page } from "@playwright/test";
 import { readFileSync } from "fs";
 import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { createFlow } from "../../../helpers/flows/create-flow";
@@ -56,13 +57,13 @@ async function addLoopComponent(page: Page) {
   }
   createdFlowIds.push(created.id);
   await page.waitForURL(/\/flow\//, { timeout: 30000 });
-  await page.getByTestId("sidebar-search-input").fill("Loop");
-  await page.waitForSelector('[data-testid="add-component-button-loop"]', {
-    timeout: 10000,
-    state: "attached",
-  });
-  await page.getByTestId("flow_controlsLoop").hover();
-  await page.getByTestId("add-component-button-loop").click();
+  // Routed through the shared primitive for #1518: the hand-rolled sequence this
+  // replaces filled the sidebar search and then waited 10 s for
+  // `add-component-button-loop` to attach, which is exactly the wait that fails
+  // when the flow page mount clears the input — the term is gone, no filter is
+  // ever applied, and the entry never arrives. The helper reads the term back and
+  // re-types it, and also covers the swallowed click one layer later (#1304).
+  await addComponentFromSidebar(page, "Loop", "add-component-button-loop");
   await adjustScreenView(page);
   await page.waitForSelector('[data-testid="title-Loop"]', {
     timeout: 15000,
@@ -73,13 +74,9 @@ async function addLoopComponent(page: Page) {
 // UI / Canvas — rendering, handles and output inspection in a single test
 // =============================================================================
 
-// Quarantined at triage (daily #1517): recurrent flake — `add-component-button-loop`
-// never enters the DOM after sidebar-search-input.fill("Loop"). Same signature on
-// the 2026-08-19 and 08-20 dailies. Lifting the quarantine (remove test.fixme +
-// restore @stable) is a deliverable of #1518.
-test.fixme(
+test(
   "Loop component — renders correctly with all handles and output inspection buttons",
-  { tag: ["@release", "@components"] },
+  { tag: ["@stable", "@release", "@components"] },
   async ({ page }) => {
     await addLoopComponent(page);
 

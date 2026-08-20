@@ -1,6 +1,6 @@
 # Notifications — Build-Success Entry in the Notifications Tab
 
-**Last validated:** Langflow 1.10.x
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev33`)
 
 ---
 
@@ -77,3 +77,4 @@ center either fails to open or does not record successful builds.
   (same migration approach as #366).
 - Chat Input defaults to `minimized = True`; `expandFocusedNode` expands it so the
   on-node run button is present in the DOM before the run click.
+- **#1518 — the search term was wiped, not the sidebar slow (test-defect).** This test failed on the 2026-08-18 and 08-20 dailies with `locator.hover` timing out on `input_outputChat Input` after `sidebar-search-input.fill("chat input")`, and was quarantined at triage of daily #1517. Root-caused on nightly `1.12.0.dev33`: the fill races the flow page mount and the mount resets the search input to `""` — the term is gone the instant `fill()` returns and the sidebar still lists ZERO entries after 25 s, so no wait could have recovered it. Waiting for the flow-creation `POST 201` (what this spec did) is a network event, not a mount, so it did not close the window. Rate 4 of 22 ungated fills (~18 %); an identical re-fill repairs it in ~320 ms — which is what the daily's passing RETRY was doing, at the price of a whole test. Fix: the hand-rolled fill + hover + click is replaced by `addComponentFromSidebar`, which reads the term back and re-types it. `@stable` restored

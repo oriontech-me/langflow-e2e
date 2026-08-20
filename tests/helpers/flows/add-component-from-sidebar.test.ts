@@ -33,8 +33,12 @@ import assert from "node:assert/strict";
 import { classifyInfraError } from "../../../scripts/lib/infra-signatures";
 import {
   ADD_LANDED_TIMEOUT_MS,
+  SEARCH_ENTRY_TIMEOUT_MS,
   classifyAddOutcome,
+  classifySearchFill,
   newNodeIds,
+  noMatchingEntryMessage,
+  searchResetMessage,
   swallowedAddMessage,
 } from "./add-component-from-sidebar";
 
@@ -269,4 +273,112 @@ test("the swallowed-click message is NOT classifiable as an infra failure", () =
   // Same rule as the page-entry barrier (#1262): claiming infra here would exempt
   // the failure from @stable auto-removal and hide a genuine add regression.
   assert.equal(classifyInfraError(swallowedAddMessage(DETAIL)), null);
+});
+
+// ---------------------------------------------------------------------------
+// The sidebar search RESET (#1518) — a layer EARLIER than the swallowed click.
+//
+// The four @stable specs of #1518 never reached a click at all: they died waiting
+// for the filtered entry, over budgets of 10 s / 20 s / 20 s / 30 s, on four
+// different components. Measured on nightly 1.12.0.dev33 with an instrumented
+// scout (fill -> poll -> capture -> re-fill), the cause is not a slow sidebar and
+// not a catalog still streaming (#537): the FILL RACES THE FLOW PAGE MOUNT and
+// loses, and the mount resets `sidebar-search-input` to "". The term is already
+// gone the instant `fill()` returns — `readbackAfterFill=""` — nothing ever
+// re-applies the filter, and the sidebar still holds ZERO entries after 12 s AND
+// after 25 s of polling. So nothing arrives late and no caller timeout could have
+// helped. An identical re-fill repairs it in ~320 ms (2 of 2).
+//
+// Rate: 4 of 22 runs (~18 %) in the helper's own shape — fill straight after the
+// `blank-flow` click — against 0 of 25 with a `waitForURL` + input-visible gate
+// before the fill. That direction is why the repair is a READBACK, not another
+// gate: `loop-component-regression.spec.ts` already has the strictest of the four
+// gates and still failed on daily run 32349515682, where a loaded mount outruns
+// it. Corroborating: the three rows that failed once and passed on the next
+// attempt of that run were repaired by the retry re-filling from scratch — the
+// same repair, paid at the price of a whole test.
+//
+// The two failure messages are kept apart because they route the reader
+// differently: a wiped term is this race, while a term that SURVIVED its whole
+// budget with no entry is a component that is absent, renamed or reparented — and
+// re-filling that three times would be a mute.
+
+test("an entry that appeared settles the fill, whatever the input now reads", () => {
+  // The entry is the observable that matters; if it rendered, a differing input
+  // value is not a problem to report.
+  assert.equal(
+    classifySearchFill({ entryPresent: true, inputValue: "", term: "chat output" }),
+    "entry-visible",
+  );
+});
+
+test("an input that no longer holds the term is a reset, not a slow list", () => {
+  assert.equal(
+    classifySearchFill({ entryPresent: false, inputValue: "", term: "chat output" }),
+    "term-lost",
+  );
+});
+
+test("an input that is gone entirely counts as a reset", () => {
+  // The mount can take the input with it; a re-fill re-waits for it, which is the
+  // right move — and `null` must never read as "the term is held".
+  assert.equal(
+    classifySearchFill({ entryPresent: false, inputValue: null, term: "chat output" }),
+    "term-lost",
+  );
+});
+
+test("the term still held with no entry is NOT this race", () => {
+  assert.equal(
+    classifySearchFill({
+      entryPresent: false,
+      inputValue: "chat output",
+      term: "chat output",
+    }),
+    "term-held-no-entry",
+  );
+});
+
+const FILL_DETAIL = {
+  searchTerm: "chat output",
+  addButtonTestId: "add-component-button-chat-output",
+  attempts: 3,
+  perAttemptMs: SEARCH_ENTRY_TIMEOUT_MS,
+  lastSearchValue: "",
+  sidebarEntryCount: 0,
+};
+
+test("the reset message names the wipe, the term, the target and the attempts", () => {
+  const msg = searchResetMessage(FILL_DETAIL);
+  assert.match(msg, /sidebar search was reset/i);
+  assert.match(msg, /"chat output"/);
+  assert.match(msg, /add-component-button-chat-output/);
+  assert.match(msg, /3 fill\(s\)/);
+  assert.match(msg, /#1518/);
+});
+
+test("the reset message reports the value it read back, and an empty one is not a missing one", () => {
+  assert.match(searchResetMessage(FILL_DETAIL), /read back: ""/);
+  assert.match(
+    searchResetMessage({ ...FILL_DETAIL, lastSearchValue: null }),
+    /read back: <gone>/,
+  );
+});
+
+test("the no-entry message says the term SURVIVED, so a renamed component is not re-filled blindly", () => {
+  const msg = noMatchingEntryMessage({ ...FILL_DETAIL, lastSearchValue: "chat output" });
+  assert.match(msg, /held "chat output"/);
+  assert.match(msg, /no sidebar entry/i);
+  // It must NOT send the reader after the reset race — that is the other message.
+  assert.doesNotMatch(msg, /was reset/i);
+  // The entry count is the evidence that separates "this term matches nothing"
+  // from "the sidebar rendered nothing at all".
+  assert.match(msg, /0 component entr/);
+});
+
+test("neither search-fill message is classifiable as an infra failure", () => {
+  // #1262's rule: an infra-classified failure is exempt from @stable
+  // auto-removal, so a real regression in the sidebar must not claim it.
+  assert.equal(classifyInfraError(searchResetMessage(FILL_DETAIL)), null);
+  assert.equal(classifyInfraError(noMatchingEntryMessage(FILL_DETAIL)), null);
 });

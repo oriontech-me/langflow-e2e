@@ -44,15 +44,9 @@ test.afterEach(async ({ request }) => {
   }
 });
 
-// Quarantined at triage (daily #1517): the sidebar never renders the filtered
-// entry after sidebar-search-input.fill, so `add-component-button-chat-output`
-// never becomes clickable. Hard failure on a guard-tripped day, judged
-// non-environmental (recurrent 2026-08-18 / 08-20, failed after the shard-1
-// outage closed). Lifting the quarantine (remove test.fixme + restore @stable)
-// is a deliverable of #1518.
-test.fixme(
+test(
   "LangflowShortcuts",
-  { tag: ["@release", "@workspace", "@ui-ux"] },
+  { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
   async ({ page }) => {
     const nodes = page.getByTestId(NODE_TITLE_TESTID);
     const selectedNodes = page.locator(".react-flow__node.selected");
@@ -74,27 +68,28 @@ test.fixme(
       ).toHaveCount(1, { timeout: 10000 });
     };
 
-    page.on("response", (resp) => {
-      if (
-        resp.url().includes("/api/v1/flows") &&
-        resp.request().method() === "POST" &&
-        resp.status() === 201
-      ) {
-        resp
-          .json()
-          .then((body: { id?: string }) => {
-            if (body?.id) createdFlowIds.push(body.id);
-          })
-          .catch(() => {}); // non-JSON / batch payloads
-      }
-    });
-
     await awaitBootstrapTest(page);
 
     await page.waitForSelector('[data-testid="blank-flow"]', {
       timeout: 30000,
     });
+
+    // The id is AWAITED, not collected by a fire-and-forget `page.on("response")`
+    // + `resp.json()` handler. That handler raced `afterEach`: on the failure path
+    // the test threw before the body resolved, `createdFlowIds` was still empty,
+    // and the run leaked a "New Flow" on the shared instance (observed 2026-08-20
+    // while purging orphans left by #1518's own repro runs). The other three specs
+    // of this cluster already await it.
+    const flowCreation = page.waitForResponse(
+      (resp) =>
+        resp.url().includes("/api/v1/flows") &&
+        resp.request().method() === "POST" &&
+        resp.status() === 201,
+      { timeout: 30000 },
+    );
     await page.getByTestId("blank-flow").click();
+    const created = (await (await flowCreation).json()) as { id?: string };
+    if (created.id) createdFlowIds.push(created.id);
 
     await addComponentFromSidebar(
       page,
