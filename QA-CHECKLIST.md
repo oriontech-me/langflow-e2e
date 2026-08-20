@@ -1103,6 +1103,14 @@
 - [ ] Actually using break-glass records the use — needs an SSO-only state, which needs a connection, which is entitlement-gated
 - [ ] A created SSO connection is disabled by default, plan limits are enforced server-side, and the client secret is masked on read — all blocked without a licence (issue #1501)
 
+#### 22.5 Entitlement Fail-Closed (no licence)
+
+- [-] The gated read and the gated write both answer `503` with **one** message, asserted exactly and carrying a `detail` and nothing else — a licence failure is where a stack trace, an internal host or a key identifier would escape, and no other test here would notice → `enterprise/auth/entitlement-fail-closed.spec.ts`
+- [-] The refusal is **total**: creation is refused, so no connection comes into existence and none is left half-created for a later request to find — this is the assertion that separates "unavailable" from "open" → `enterprise/auth/entitlement-fail-closed.spec.ts`
+- [-] Authentication is answered **before** entitlement: an anonymous caller gets `403`, never the `503`, so the licence gate cannot be used to enumerate which Enterprise surfaces a deployment has → `enterprise/auth/entitlement-fail-closed.spec.ts`
+- [-] The blast radius is bounded — flows, the component catalog, projects and identity all answer `200`. An unlicensed Enterprise is missing its entitled features, not broken → `enterprise/auth/entitlement-fail-closed.spec.ts`
+- [ ] The entitled behaviour itself (a valid licence unlocks exactly the entitled surfaces and nothing else; an invalid, expired or wrong-signature licence is refused, naming which of the three) — blocked on a licence key
+
 ---
 
 ---
