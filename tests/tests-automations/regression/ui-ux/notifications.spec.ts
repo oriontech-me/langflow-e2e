@@ -26,9 +26,13 @@ test.describe("Notifications tab", () => {
     }
   });
 
-  test(
+  // Quarantined at triage (daily #1517): recurrent flake — `input_outputChat Input`
+  // never becomes hoverable after sidebar-search-input.fill("chat input"). Same
+  // signature on the 2026-08-18 and 08-20 dailies. Lifting the quarantine (remove
+  // test.fixme + restore @stable) is a deliverable of #1518.
+  test.fixme(
     "User should be able to interact notifications tab",
-    { tag: ["@stable", "@release", "@ui-ux"] },
+    { tag: ["@release", "@ui-ux"] },
     async ({ page }) => {
       await awaitBootstrapTest(page);
 
