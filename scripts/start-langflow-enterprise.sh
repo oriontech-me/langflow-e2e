@@ -50,9 +50,21 @@ else
   # session; the EE lane gets its own port so both can run side by side.
   PORT="${LANGFLOW_EE_PORT:-7890}"
 fi
-# Stable base64 key: a rotating one invalidates stored credentials between
-# restarts, which surfaces as a generic 400 on API key creation.
-SECRET_KEY="${LANGFLOW_SECRET_KEY:-ZTJlLWVudGVycHJpc2UtbG9jYWwtc2VjcmV0LWtleS0wMDE=}"
+# Stable key, and a VALID Fernet one. Stable because a rotating key invalidates
+# stored credentials between restarts; valid because Langflow encrypts API keys
+# with Fernet, which requires exactly 32 url-safe base64-encoded bytes and
+# rejects anything else.
+#
+# The previous value was a base64-encoded sentence — 35 bytes decoded — so every
+# API key creation on this lane answered `400 Fernet key must be 32 url-safe
+# base64-encoded bytes`, on both the default and the RBAC container. It read as
+# a per-request failure rather than as a container that could not mint a key at
+# all, which is why it survived: nothing here created one until the authorization
+# matrix needed a scoped key as a subject.
+#
+# Derived deterministically (sha256 of a fixed string) so it stays stable without
+# being a magic literal nobody can regenerate.
+SECRET_KEY="${LANGFLOW_SECRET_KEY:-viJDyKIlkdxWMbwIICjJdRMUKUf80sGJafyWKoWbMU4=}"
 # Two passwords, because EE uses two. BOOTSTRAP_PASSWORD is what the container
 # is seeded with; EE_PASSWORD is what the suite logs in with after the forced
 # rotation below. The EE minimum is 8 characters.

@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test, type APIRequestContext } from "@playwright/test";
 
 /**
@@ -286,4 +290,202 @@ export async function effectivePermissions(
     permissions?: Record<string, string[]>;
   };
   return body.permissions?.[resourceId] ?? [];
+}
+
+/**
+ * Share a resource with a whole team.
+ *
+ * The sibling of {@link shareWithUser}, and worth its own entry point because
+ * the revocation surface differs: a team grant can be taken away by deleting
+ * the share OR by removing the subject's membership, and an operator has both
+ * levers.
+ */
+export async function shareWithTeam(
+  request: APIRequestContext,
+  auth: string,
+  resourceType: string,
+  resourceId: string,
+  teamId: string,
+  permissionLevel: "read" | "write" | "execute" | "admin",
+): Promise<ShareGrant> {
+  const response = await request.post("/api/v1/authz/shares", {
+    headers: { Authorization: auth },
+    data: {
+      resource_type: resourceType,
+      resource_id: resourceId,
+      scope: "team",
+      target_id: teamId,
+      permission_level: permissionLevel,
+    },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+  return { id: ((await response.json()) as { id: string }).id };
+}
+
+/** Create a team. `adom_name` is the administrative domain it lives in. */
+export async function createTeam(
+  request: APIRequestContext,
+  auth: string,
+  prefix: string,
+  adomName = "default",
+): Promise<{ id: string; name: string }> {
+  const name = `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+  const response = await request.post("/api/v1/authz/teams", {
+    headers: { Authorization: auth },
+    data: { team_name: name, adom_name: adomName },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+  return { id: ((await response.json()) as { id: string }).id, name };
+}
+
+export async function addTeamMember(
+  request: APIRequestContext,
+  auth: string,
+  teamId: string,
+  userId: string,
+): Promise<void> {
+  const response = await request.post(`/api/v1/authz/teams/${teamId}/members`, {
+    headers: { Authorization: auth },
+    data: { user_id: userId },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+}
+
+export async function removeTeamMember(
+  request: APIRequestContext,
+  auth: string,
+  teamId: string,
+  userId: string,
+): Promise<void> {
+  const response = await request.delete(
+    `/api/v1/authz/teams/${teamId}/members/${userId}`,
+    { headers: { Authorization: auth } },
+  );
+  expect(response.ok(), await response.text()).toBe(true);
+}
+
+/**
+ * Mint an API key for whoever `subjectAuth` belongs to.
+ *
+ * Returns the secret, which the API reveals exactly once. Creating one requires
+ * a container whose `LANGFLOW_SECRET_KEY` is a valid Fernet key — 32 url-safe
+ * base64 bytes — and answers `400` naming Fernet otherwise, which is what the
+ * lane's containers did until the start script was fixed.
+ */
+export async function createApiKey(
+  request: APIRequestContext,
+  subjectAuth: string,
+  name: string,
+): Promise<{ id: string; secret: string }> {
+  const response = await request.post("/api/v1/api_key/", {
+    headers: { Authorization: subjectAuth },
+    data: { name },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  const body = (await response.json()) as { id: string; api_key: string };
+  expect(
+    body.api_key,
+    "the API responded without a key — a later request would then be anonymous " +
+      "rather than key-authenticated, and every 'denied' assertion would pass " +
+      "for the wrong reason",
+  ).toBeTruthy();
+  return { id: body.id, secret: body.api_key };
+}
+
+/**
+ * A subject shared by every spec in the `authz/` directory, cached across
+ * processes.
+ *
+ * Each spec file creating its own subject costs one login per file, and the
+ * directory grew to three — so a single run spent three of the five logins EE
+ * allows per minute per IP for the whole machine, and a re-run inside that
+ * minute failed on the limiter rather than on anything about Langflow. The cap
+ * is on the whole lane, so the cost scales with the number of FILES, which is
+ * exactly the wrong thing for it to scale with.
+ *
+ * So the subject is minted once and reused, the same shape the superuser token
+ * already uses. Callers must still reset its grants between tests: what is
+ * shared is an identity, and no assertion may depend on what it was last
+ * granted.
+ *
+ * It is deliberately NOT deleted at the end of a run. Deleting it would mean
+ * re-creating and re-logging it on the next one, which is the cost this exists
+ * to avoid; the RBAC container is recreated per session and holds nothing else.
+ */
+const SUBJECT_CACHE_DIR = join(tmpdir(), "langflow-e2e-enterprise");
+
+function subjectCachePath(): string {
+  const baseUrl = process.env.PLAYWRIGHT_BASE_URL || "http://localhost:7891";
+  const key = createHash("sha256").update(baseUrl).digest("hex").slice(0, 16);
+  return join(SUBJECT_CACHE_DIR, `rbac-subject-${key}.json`);
+}
+
+function readCachedSubject(): RbacUser | undefined {
+  try {
+    const raw = readFileSync(subjectCachePath(), "utf-8");
+    const cached = JSON.parse(raw) as RbacUser;
+    return cached.id && cached.auth && cached.username ? cached : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCachedSubject(subject: RbacUser): void {
+  try {
+    mkdirSync(SUBJECT_CACHE_DIR, { recursive: true });
+    writeFileSync(subjectCachePath(), JSON.stringify(subject), "utf-8");
+  } catch {
+    // A cache that cannot be written costs a login, not a run.
+  }
+}
+
+/**
+ * Get the shared subject, minting it only if the cached one is unusable.
+ *
+ * "Unusable" is checked against the instance, not against the clock: the token
+ * has to authenticate AND the account has to still exist. A container recreated
+ * between runs keeps the same base URL and invalidates every cached token
+ * silently, so trusting the file without probing would turn a fresh container
+ * into a wall of 401s attributed to the specs.
+ */
+export async function getSharedRbacSubject(
+  request: APIRequestContext,
+  auth: string,
+): Promise<RbacUser> {
+  const cached = readCachedSubject();
+  if (cached) {
+    const whoami = await request
+      .get("/api/v1/users/whoami", { headers: { Authorization: cached.auth } })
+      .catch(() => undefined);
+    if (whoami?.ok()) {
+      const body = (await whoami.json()) as { id?: string };
+      if (body.id === cached.id) return cached;
+    }
+  }
+
+  const subject = await createRbacUser(request, auth, "authz-shared");
+  writeCachedSubject(subject);
+  return subject;
+}
+
+/**
+ * Return the shared subject to the state every test in this directory assumes:
+ * no roles, no shares. Uses the superuser, so it costs no login.
+ */
+export async function resetSubjectGrants(
+  request: APIRequestContext,
+  auth: string,
+  granted: { assignments: string[]; shares: string[] },
+): Promise<void> {
+  const headers = { Authorization: auth };
+  for (const id of granted.shares.splice(0)) {
+    await request
+      .delete(`/api/v1/authz/shares/${id}`, { headers })
+      .catch(() => undefined);
+  }
+  for (const id of granted.assignments.splice(0)) {
+    await request
+      .delete(`/api/v1/authz/role-assignments/${id}`, { headers })
+      .catch(() => undefined);
+  }
 }

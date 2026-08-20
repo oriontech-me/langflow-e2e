@@ -3,8 +3,8 @@ import { getEnterpriseAuthToken } from "../../../../helpers/enterprise/enterpris
 import {
   assignRole,
   builtinRoleIds,
-  cleanupRbacUser,
-  createRbacUser,
+  resetSubjectGrants,
+  getSharedRbacSubject,
   readAuditLog,
   requireRbacInstance,
 } from "../../../../helpers/enterprise/rbac";
@@ -75,7 +75,7 @@ test.describe("Enterprise — the RBAC instance enforces, and a role changes the
       const auth = await getEnterpriseAuthToken(request);
       await requireRbacInstance(request, auth);
 
-      const user = await createRbacUser(request, auth, "rbac-lifecycle");
+      const user = await getSharedRbacSubject(request, auth);
       const roles = await builtinRoleIds(request, auth);
       const deniedName = `rbac-denied-${Date.now()}`;
       const allowedName = `rbac-allowed-${Date.now()}`;
@@ -145,7 +145,10 @@ test.describe("Enterprise — the RBAC instance enforces, and a role changes the
             .delete(`/api/v1/flows/${flowId}`, { headers: { Authorization: auth } })
             .catch(() => undefined);
         }
-        await cleanupRbacUser(request, auth, user, assignments);
+        // Reset, never delete: the subject is shared across this directory and
+        // cached between runs, so deleting it would cost a fresh login on the
+        // next one — the cost sharing it exists to avoid.
+        await resetSubjectGrants(request, auth, { assignments, shares: [] });
       }
     },
   );

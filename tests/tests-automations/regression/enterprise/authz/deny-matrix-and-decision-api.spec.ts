@@ -5,8 +5,8 @@ import {
   assignRole,
   authzCheck,
   builtinRoleIds,
-  cleanupRbacUser,
-  createRbacUser,
+  resetSubjectGrants,
+  getSharedRbacSubject,
   effectivePermissions,
   requireRbacInstance,
   shareWithUser,
@@ -104,25 +104,20 @@ test.describe("Enterprise — the deny matrix and the decision API", () => {
 
   test.beforeAll(async ({ request }) => {
     const auth = await getEnterpriseAuthToken(request);
-    subject = await createRbacUser(request, auth, "authz-subject");
+    subject = await getSharedRbacSubject(request, auth);
   });
 
   test.beforeEach(async ({ request }) => {
     const auth = await getEnterpriseAuthToken(request);
-    const headers = { Authorization: auth };
-    for (const id of granted.shares.splice(0)) {
-      await request.delete(`/api/v1/authz/shares/${id}`, { headers }).catch(() => undefined);
-    }
-    for (const id of granted.assignments.splice(0)) {
-      await request
-        .delete(`/api/v1/authz/role-assignments/${id}`, { headers })
-        .catch(() => undefined);
-    }
+    await resetSubjectGrants(request, auth, granted);
   });
 
   test.afterAll(async ({ request }) => {
+    // Reset, never delete. The subject is shared across this directory and
+    // cached between runs; deleting it would cost a fresh login next time,
+    // which is the whole reason it is shared.
     const auth = await getEnterpriseAuthToken(request);
-    await cleanupRbacUser(request, auth, subject, granted.assignments);
+    await resetSubjectGrants(request, auth, granted);
   });
 
   test(
