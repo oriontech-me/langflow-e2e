@@ -14,18 +14,42 @@
 #      so a policy state is a CONTAINER, not an API call: the admin write APIs
 #      answer "managed externally" here.
 #
+# LANGFLOW_EE_RBAC=1 starts the RBAC variant instead: authorization enforced,
+# superuser bypass OFF, audit on, and its own Postgres. It is a second container
+# on its own port, not a mode switch on the first, because RBAC is a property of
+# the database as much as of the process — the bootstrap writes role assignments
+# at startup and there is no way back to an unenforced instance.
+#
+# Two corrections to what the design notes assumed, both measured on 1.12.0:
+# Redis is NOT required (policy invalidation resolves to None and stays active
+# without it; only multi-replica convergence needs one), and three variables the
+# notes omitted are load-bearing — LANGFLOW_AUTHZ_AUDIT_ENABLED, plus
+# LANGFLOW_RBAC_BOOTSTRAP_ENABLED and _ADMIN_USERNAME, without which the
+# instance comes up enforcing with no roles assigned to anybody, including the
+# superuser. The set below is the product's own recipe, taken from its air-gap
+# certification harness rather than guessed.
+#
 # Usage:
 #   ./scripts/start-langflow-enterprise.sh                    # build if needed, then run
 #   ./scripts/start-langflow-enterprise.sh --rebuild          # force a rebuild
 #   LANGFLOW_CATALOG_COMPONENT_BLOCKLIST=CombineText ./scripts/start-langflow-enterprise.sh
+#   LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh # RBAC variant, port 7891
 set -euo pipefail
 
 EE_REPO="${LANGFLOW_EE_REPO:-$HOME/langflow-project/IBM-Langflow}"
 IMAGE="${LANGFLOW_EE_IMAGE:-langflow-enterprise:local}"
-CONTAINER_NAME="${LANGFLOW_EE_CONTAINER:-langflow-ee-runner}"
-# 7860/7861 belong to the OSS runner and 7870 is often taken by a parallel
-# session; the EE lane gets its own port so both can run side by side.
-PORT="${LANGFLOW_EE_PORT:-7890}"
+RBAC="${LANGFLOW_EE_RBAC:-0}"
+if [ "${RBAC}" = "1" ]; then
+  CONTAINER_NAME="${LANGFLOW_EE_CONTAINER:-langflow-ee-rbac}"
+  PORT="${LANGFLOW_EE_PORT:-7891}"
+  PG_CONTAINER="${LANGFLOW_EE_PG_CONTAINER:-pg-ee-rbac}"
+  PG_PORT="${LANGFLOW_EE_PG_PORT:-5447}"
+else
+  CONTAINER_NAME="${LANGFLOW_EE_CONTAINER:-langflow-ee-runner}"
+  # 7860/7861 belong to the OSS runner and 7870 is often taken by a parallel
+  # session; the EE lane gets its own port so both can run side by side.
+  PORT="${LANGFLOW_EE_PORT:-7890}"
+fi
 # Stable base64 key: a rotating one invalidates stored credentials between
 # restarts, which surfaces as a generic 400 on API key creation.
 SECRET_KEY="${LANGFLOW_SECRET_KEY:-ZTJlLWVudGVycHJpc2UtbG9jYWwtc2VjcmV0LWtleS0wMDE=}"
@@ -54,6 +78,57 @@ fi
 
 docker rm -f "${CONTAINER_NAME}" > /dev/null 2>&1 || true
 
+# RBAC needs Postgres. Not a preference: the bootstrap writes role assignments
+# and policy rules at startup, and the enforcement path reads them back on every
+# request, so the database is part of the fixture rather than storage under it.
+# A fresh one per start, because an instance that already carries assignments
+# cannot answer "what can a user with no role do".
+# Expanded below as ${AUTHZ_ARGS[@]+"${AUTHZ_ARGS[@]}"}, not "${AUTHZ_ARGS[@]}".
+# macOS ships bash 3.2, where `set -u` treats an empty array's expansion as an
+# unbound variable and aborts — so the plain form would break the NON-RBAC path,
+# which every existing @enterprise spec depends on.
+AUTHZ_ARGS=()
+if [ "${RBAC}" = "1" ]; then
+  echo "Starting Postgres for the RBAC variant (${PG_CONTAINER} on ${PG_PORT})..."
+  docker rm -f "${PG_CONTAINER}" > /dev/null 2>&1 || true
+  docker run -d --name "${PG_CONTAINER}" -p "${PG_PORT}:5432" \
+    -e POSTGRES_USER=langflow -e POSTGRES_PASSWORD=langflow \
+    -e POSTGRES_DB=langflow_rbac postgres:16-alpine > /dev/null
+  PG_READY=0
+  for _ in $(seq 1 30); do
+    if docker exec "${PG_CONTAINER}" pg_isready -U langflow > /dev/null 2>&1; then
+      PG_READY=1
+      break
+    fi
+    sleep 2
+  done
+  if [ "${PG_READY}" -ne 1 ]; then
+    echo "ERROR: ${PG_CONTAINER} never became ready; the RBAC instance would come up on SQLite" >&2
+    exit 3
+  fi
+  # The container-network address, not localhost: Langflow reaches Postgres from
+  # inside Docker, where the published host port does not exist.
+  PG_IP="$(docker inspect "${PG_CONTAINER}" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')"
+  if [ -z "${PG_IP}" ]; then
+    echo "ERROR: could not resolve ${PG_CONTAINER}'s container IP" >&2
+    exit 3
+  fi
+  AUTHZ_ARGS=(
+    -e "LANGFLOW_DATABASE_URL=postgresql://langflow:langflow@${PG_IP}:5432/langflow_rbac"
+    -e LANGFLOW_AUTHZ_ENABLED=true
+    # Without this the superuser is exempt from every check and the instance
+    # reports itself as enforcing while enforcing nothing for the only account
+    # the lane has.
+    -e LANGFLOW_AUTHZ_SUPERUSER_BYPASS=false
+    -e LANGFLOW_AUTHZ_AUDIT_ENABLED=true
+    # The bootstrap is what gives ANY account a role, superuser included. With
+    # it off the instance enforces against an empty assignment table and every
+    # request is denied, which reads as a broken image rather than a missing flag.
+    -e LANGFLOW_RBAC_BOOTSTRAP_ENABLED=true
+    -e "LANGFLOW_RBAC_BOOTSTRAP_ADMIN_USERNAME=${LANGFLOW_SUPERUSER:-langflow}"
+  )
+fi
+
 echo "Starting Langflow Enterprise: ${IMAGE} on port ${PORT}..."
 
 # LANGFLOW_ACCESS_SECURE / _REFRESH_SECURE default to true in the EE image. Over
@@ -81,6 +156,7 @@ docker run -d \
   -e LANGFLOW_CATALOG_COMPONENT_BLOCKLIST="${LANGFLOW_CATALOG_COMPONENT_BLOCKLIST:-}" \
   -e LANGFLOW_CATALOG_TEMPLATE_BLOCKLIST="${LANGFLOW_CATALOG_TEMPLATE_BLOCKLIST:-}" \
   -e LANGFLOW_MODEL_BLOCKLIST="${LANGFLOW_MODEL_BLOCKLIST:-}" \
+  ${AUTHZ_ARGS[@]+"${AUTHZ_ARGS[@]}"} \
   "${IMAGE}" > /dev/null
 
 echo "Waiting for Langflow Enterprise to become healthy..."
@@ -136,6 +212,11 @@ for _ in $(seq 1 60); do
     fi
 
     echo "Sign in with ${LANGFLOW_SUPERUSER:-langflow} / ${EE_PASSWORD}"
+    if [ "${RBAC}" = "1" ]; then
+      echo "RBAC variant: authorization ENFORCED, superuser bypass OFF, audit ON."
+      echo "  database : postgres ${PG_CONTAINER} (host port ${PG_PORT})"
+      echo "  verify   : GET /api/v1/authz/status -> authz_enabled true, superuser_bypass false"
+    fi
     echo "Policy in force:"
     echo "  components blocked : ${LANGFLOW_CATALOG_COMPONENT_BLOCKLIST:-<none>}"
     echo "  templates blocked  : ${LANGFLOW_CATALOG_TEMPLATE_BLOCKLIST:-<none>}"
