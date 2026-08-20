@@ -60,6 +60,13 @@ Test 1: `@stable` `@api` `@mcp` · Test 2: `@stable` `@regression` `@api` `@mcp`
 ## Preconditions *(optional)*
 
 - Langflow running at `PLAYWRIGHT_BASE_URL`; auto-login superuser.
+- **An API key is the transport credential.** The specs mint one with
+  `createApiKey` (`tests/helpers/auth/create-api-key.ts`) and send it as
+  `x-api-key`; the `auto_login` session JWT is refused with `403` by
+  `/api/v1/mcp/project/{id}/streamable` (measured on 1.12.0.dev33 — the table in
+  `tests/tests-automations/regression/mcp/CLAUDE.md` → *Authenticating against the
+  MCP transport*). The key is deleted in teardown. No lane sets
+  `LANGFLOW_SKIP_AUTH_AUTO_LOGIN`, on purpose.
 - No provider key, no npm registry, no external MCP server: the flow under test is a
   Chat Input → Chat Output passthrough created from
   `tests/assets/flows/chat-io-ok-trace-fixture.json`.

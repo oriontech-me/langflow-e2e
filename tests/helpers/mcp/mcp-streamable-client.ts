@@ -15,7 +15,39 @@ import type { APIRequestContext } from "@playwright/test";
  * required between calls), so each request is independent. We send
  * `Accept: application/json, text/event-stream` (the transport requires the SSE
  * media type) and parse the `data:` line back into the JSON-RPC object.
+ *
+ * **The credential is an API key, sent as `x-api-key` — never a session token**
+ * (#1522). Langflow's gate (`langflow/api/v1/mcp_projects.py`) reads the key from
+ * the `x-api-key` header or a query param of the same name, and resolves a caller
+ * that presented nothing to the superuser only under
+ * `LANGFLOW_SKIP_AUTH_AUTO_LOGIN`; its own comment states the intent — *"AUTO_LOGIN
+ * alone is not a credential"*. Measured on the same endpoint, same project:
+ *
+ * | Credential on `initialize` | 1.12.0.dev31 | 1.12.0.dev33 |
+ * |---|---|---|
+ * | `Authorization: Bearer <auto_login JWT>` | 200 | **403** |
+ * | `x-api-key: <API key>` | 200 | **200** |
+ * | `Authorization: Bearer <API key>` | 200 | **403** |
+ * | no credential at all | 200 | **403** |
+ *
+ * dev31 answering 200 to a request carrying *nothing* is why this went unnoticed:
+ * the specs asserted the protocol without exercising auth at all. An API key works
+ * on both builds, so keying on it needs no lane change — and no lane sets the
+ * bypass, on purpose (it would turn off the control these specs exercise).
+ *
+ * The credential is an object rather than a header string so a bearer token cannot
+ * be passed by accident: it would compile and then 403 at run time, which is the
+ * failure this signature exists to make impossible.
  */
+
+/**
+ * The transport's credential: a plaintext Langflow API key. Mint one with
+ * `createApiKey` (`tests/helpers/auth/create-api-key.ts`) and delete it in
+ * teardown — a key outlives the test that created it.
+ */
+export interface McpTransportCredential {
+  apiKey: string;
+}
 
 export interface JsonRpcResponse {
   jsonrpc: string;
@@ -42,18 +74,18 @@ function parseSseData(body: string): JsonRpcResponse {
 
 /**
  * Send one JSON-RPC request to a streamable MCP endpoint and return the parsed
- * response. `authorization` is the full header value (e.g. `Bearer <token>`).
+ * response. `credential` carries the API key the transport requires (see header).
  */
 export async function mcpCall(
   request: APIRequestContext,
   url: string,
-  authorization: string,
+  credential: McpTransportCredential,
   method: string,
   params?: Record<string, unknown>,
   id = 1,
 ): Promise<JsonRpcResponse> {
   const res = await request.post(url, {
-    headers: { ...MCP_HEADERS, Authorization: authorization },
+    headers: { ...MCP_HEADERS, "x-api-key": credential.apiKey },
     data: { jsonrpc: "2.0", id, method, ...(params ? { params } : {}) },
   });
   if (!res.ok()) {
@@ -70,9 +102,9 @@ export async function mcpCall(
 export async function mcpHandshake(
   request: APIRequestContext,
   url: string,
-  authorization: string,
+  credential: McpTransportCredential,
 ): Promise<any> {
-  const init = await mcpCall(request, url, authorization, "initialize", {
+  const init = await mcpCall(request, url, credential, "initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
     clientInfo: { name: "langflow-e2e", version: "0.1" },
@@ -81,7 +113,7 @@ export async function mcpHandshake(
   // an (empty) SSE frame or 202 — fire it and ignore the body.
   await request
     .post(url, {
-      headers: { ...MCP_HEADERS, Authorization: authorization },
+      headers: { ...MCP_HEADERS, "x-api-key": credential.apiKey },
       data: { jsonrpc: "2.0", method: "notifications/initialized" },
     })
     .catch(() => {});

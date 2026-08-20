@@ -1,11 +1,16 @@
 import { readFileSync } from "fs";
 import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  createApiKey,
+  deleteApiKey,
+} from "../../../../helpers/auth/create-api-key";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../../helpers/flows/create-flow";
 import { createProjectViaApi } from "../../../../helpers/flows/create-project-via-api";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import {
+  type McpTransportCredential,
   mcpCall,
   mcpHandshake,
 } from "../../../../helpers/mcp/mcp-streamable-client";
@@ -86,6 +91,10 @@ async function createChatFlowInProject(
 test.describe("MCP Server — per-project tool exposure", () => {
   let authorization: string;
   let headers: Record<string, string>;
+  // The MCP transport takes an API key and nothing else; `headers` still
+  // authenticates the REST calls in this spec (#1522).
+  let credential: McpTransportCredential;
+  let apiKeyId: string;
   let projectId: string;
   let deleteProjectFn: (req?: APIRequestContext) => Promise<void>;
   let flowId: string;
@@ -117,6 +126,12 @@ test.describe("MCP Server — per-project tool exposure", () => {
         "reason rather than for the contract",
     ).toBeTruthy();
     headers = { Authorization: authorization };
+
+    const created = await createApiKey(request, headers, {
+      namePrefix: "e2e-mcp-project-config",
+    });
+    credential = { apiKey: created.key };
+    apiKeyId = created.id;
 
     // Fixture guard, not product coverage: the assertions below compare the
     // served tool name to `actionName` for equality, which holds only while the
@@ -184,6 +199,11 @@ test.describe("MCP Server — per-project tool exposure", () => {
     if (deleteProjectFn) {
       await deleteProjectFn(request).catch((e) =>
         failures.push(`project ${projectId}: ${e}`),
+      );
+    }
+    if (apiKeyId) {
+      await deleteApiKey(request, apiKeyId, headers).catch((e) =>
+        failures.push(`api key ${apiKeyId}: ${e}`),
       );
     }
     expect(
@@ -261,7 +281,7 @@ test.describe("MCP Server — per-project tool exposure", () => {
       await test.step("the handshake identifies THIS project's MCP server", async () => {
         // Asserted first: a misdirected endpoint would otherwise produce an
         // empty tools/list that reads exactly like correct de-selection.
-        const info = await mcpHandshake(request, streamableUrl, authorization);
+        const info = await mcpHandshake(request, streamableUrl, credential);
         expect(info.serverInfo.name).toBe(`langflow-mcp-project-${projectId}`);
       });
 
@@ -269,7 +289,7 @@ test.describe("MCP Server — per-project tool exposure", () => {
         const resp = await mcpCall(
           request,
           streamableUrl,
-          authorization,
+          credential,
           "tools/list",
           undefined,
           2,
@@ -303,7 +323,7 @@ test.describe("MCP Server — per-project tool exposure", () => {
         const resp = await mcpCall(
           request,
           streamableUrl,
-          authorization,
+          credential,
           "tools/call",
           { name: actionName, arguments: { input_value: sentinel } },
           3,
@@ -335,7 +355,7 @@ test.describe("MCP Server — per-project tool exposure", () => {
         const resp = await mcpCall(
           request,
           streamableUrl,
-          authorization,
+          credential,
           "tools/list",
           undefined,
           4,
@@ -364,7 +384,7 @@ test.describe("MCP Server — per-project tool exposure", () => {
         const resp = await mcpCall(
           request,
           streamableUrl,
-          authorization,
+          credential,
           "tools/call",
           { name: actionName, arguments: { input_value: sentinel } },
           5,

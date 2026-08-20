@@ -71,6 +71,13 @@ one property from each side: the UI's origin rule, and agreement on the path.
   works — the spec deliberately does not require it to match the backend's configured
   `host:port` (see *The mechanism*); verified green against both
   `http://localhost:7860/` and `http://127.0.0.1:7860/`.
+- **An API key is the transport credential.** The specs mint one with
+  `createApiKey` (`tests/helpers/auth/create-api-key.ts`) and send it as
+  `x-api-key`; the `auto_login` session JWT is refused with `403` by
+  `/api/v1/mcp/project/{id}/streamable` (measured on 1.12.0.dev33 — the table in
+  `tests/tests-automations/regression/mcp/CLAUDE.md` → *Authenticating against the
+  MCP transport*). The key is deleted in teardown. No lane sets
+  `LANGFLOW_SKIP_AUTH_AUTO_LOGIN`, on purpose.
 - At least one project exists (the default `Starter Project` satisfies this).
 - Clipboard read/write permission — already granted to every context by
   `playwright.config.ts`.
@@ -108,9 +115,12 @@ selects by default.
    rule, and the property that makes the URL usable by whoever copied it.
 5. Assert the copied URL's **path** equals the path the API published: the two
    independent derivations agree on where the project is served.
-6. **Resolve it:** run the MCP handshake **against the copied URL** and assert
+6. **Resolve it:** run the MCP handshake **against the copied URL**, carrying the
+   minted API key as `x-api-key`, and assert
    `serverInfo.name === langflow-mcp-project-{id}`. Reachable by construction, since
-   its origin is the page's own.
+   its origin is the page's own; the credential is the one the JSON the tab copies
+   names (`"x-api-key": "YOUR_API_KEY"`), so this resolves the URL the way the user's
+   own client will.
 
 ### 2 — `the auto-install list reflects the install state the page was given`
 
@@ -177,6 +187,11 @@ The button is only asserted to be offered. It is never clicked — that would
   developer box full of leftovers and failed all three tests in CI, where the home page
   renders the empty state. Every change here is now validated against a disposable
   container as well as the local one.
+- **The URL is resolved with a real credential, never with the check turned off.**
+  `LANGFLOW_SKIP_AUTH_AUTO_LOGIN=true` would make step 6 pass on an instance where a
+  keyed client is refused — it resolves the URL for a caller presenting nothing,
+  which is exactly the user this test speaks for. That is why #1522 was fixed by
+  keying the handshake on an API key rather than by setting the bypass on the lanes.
 - **Force-failure check** (CONTRIBUTING §2) executed per assertion during VERIFY.
 
 ---

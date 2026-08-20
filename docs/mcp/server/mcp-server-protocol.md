@@ -58,6 +58,13 @@ server area; `@regression` — guards a server-exposure/execution regression.
 ## Preconditions *(optional)*
 
 - Langflow running at `PLAYWRIGHT_BASE_URL`; auto-login superuser.
+- **An API key is the transport credential.** The specs mint one with
+  `createApiKey` (`tests/helpers/auth/create-api-key.ts`) and send it as
+  `x-api-key`; the `auto_login` session JWT is refused with `403` by
+  `/api/v1/mcp/project/{id}/streamable` (measured on 1.12.0.dev33 — the table in
+  `tests/tests-automations/regression/mcp/CLAUDE.md` → *Authenticating against the
+  MCP transport*). The key is deleted in teardown. No lane sets
+  `LANGFLOW_SKIP_AUTH_AUTO_LOGIN`, on purpose.
 - A default project exists (`GET /api/v1/projects/` → the "Starter Project"); its
   id is the MCP project id.
 - Passthrough fixture `tests/assets/flows/chat-io-ok-trace-fixture.json`
@@ -73,9 +80,11 @@ server area; `@regression` — guards a server-exposure/execution regression.
 **Setup (API only)**
 
 1. Resolve the default project id (`GET /api/v1/projects/`).
-2. Create a passthrough runnable flow via `createRunnableChatFlowViaApi(request, headers)`
+2. Mint an API key (`createApiKey`) — every call to the streamable transport below
+   carries it as `x-api-key`, and it is deleted in `afterAll`.
+3. Create a passthrough runnable flow via `createRunnableChatFlowViaApi(request, headers)`
    — ChatInput → ChatOutput, echoes `input_value`.
-3. Expose it as an MCP tool: `PATCH /api/v1/mcp/project/{projectId}` with
+4. Expose it as an MCP tool: `PATCH /api/v1/mcp/project/{projectId}` with
    `{ settings: [{ id: <flowId>, mcp_enabled: true, action_name: <unique>, action_description }] }`.
    The action name is unique per run (`e2e_echo_<suffix>`) to avoid colliding with
    other tools in the shared project.
@@ -91,6 +100,12 @@ server area; `@regression` — guards a server-exposure/execution regression.
      endpoint is generated for this project).
    - MCP `initialize` on the streamable endpoint returns
      `serverInfo.name === "langflow-mcp-project-{projectId}"`.
+   - The **same `initialize` carrying no credential is refused with `403`**, and
+     the body names the API-key gate. The negative half of the credential
+     assertion: 1.12.0.dev31 answered `200` to a keyless caller, so every other
+     assertion here passed on a transport that authenticated nobody. On a build
+     that predates the gate this step fails — that is the finding it exists to
+     report, not a false positive.
    - `tools/list` includes a tool whose `name` equals the unique `action_name`
      just enabled — the flow is exposed by the generated server.
 
@@ -128,6 +143,10 @@ server area; `@regression` — guards a server-exposure/execution regression.
   satisfy it.
 - **Deterministic tool (no LLM):** the passthrough flow removes model
   non-determinism entirely, so a failure is a real protocol/exposure regression.
+- **The credential is asserted in both directions.** The positive assertions
+  key on an API key sent as `x-api-key`; the paired keyless `initialize` must be
+  `403`. Either half alone is passable by an endpoint that asks for nothing —
+  which is exactly what the transport did until 1.12.0.dev33 (#1522).
 - **Force-failure check** (CONTRIBUTING §2) is run during VERIFY on each hard
   assertion.
 
@@ -152,7 +171,12 @@ server area; `@regression` — guards a server-exposure/execution regression.
   (`/api/v1/mcp/project/{id}`, `/composer-url`, `/streamable`, `/sse`) and the
   protocol handlers.
 - `src/backend/base/langflow/api/v1/mcp_projects.py` — the per-project generated
-  endpoint this spec calls.
+  endpoint this spec calls, **and its credential gate**: the transport takes an
+  API key (`x-api-key` header or query param) and resolves a keyless caller to the
+  superuser only under `LANGFLOW_SKIP_AUTH_AUTO_LOGIN`. A change here is what
+  turned these specs red in #1522.
+- `src/backend/base/langflow/services/auth/constants.py` — carries the
+  `AUTO_LOGIN_ERROR` body that refusal answers with.
 - `src/backend/base/langflow/api/v1/mcp_utils.py` — the shared request/response
   plumbing both routers use.
 - `src/lfx/src/lfx/services/mcp_composer/` (or equivalent) — the MCP server

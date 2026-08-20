@@ -1,11 +1,19 @@
 import { expect, test } from "../../../../fixtures/fixtures";
+import {
+  createApiKey,
+  deleteApiKey,
+} from "../../../../helpers/auth/create-api-key";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import {
   createRunnableChatFlowViaApi,
   type RunnableChatFlow,
 } from "../../../../helpers/flows/create-runnable-chat-flow-via-api";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
-import { mcpCall, mcpHandshake } from "../../../../helpers/mcp/mcp-streamable-client";
+import {
+  type McpTransportCredential,
+  mcpCall,
+  mcpHandshake,
+} from "../../../../helpers/mcp/mcp-streamable-client";
 
 /**
  * MCP Server — flow-as-server endpoint & tool execution over the MCP protocol
@@ -34,6 +42,10 @@ test.describe.configure({ mode: "serial" });
 
 test.describe("MCP Server — flow-as-server protocol", () => {
   let authorization: string;
+  // The transport takes an API key and nothing else — the `authorization` bearer
+  // above still authenticates every other API call here (#1522).
+  let credential: McpTransportCredential;
+  let apiKeyId: string;
   let projectId: string;
   let streamableUrl: string;
   let flow: RunnableChatFlow;
@@ -42,6 +54,12 @@ test.describe("MCP Server — flow-as-server protocol", () => {
   test.beforeAll(async ({ request }) => {
     authorization = await getAuthToken(request);
     const headers = { Authorization: authorization };
+
+    const created = await createApiKey(request, headers, {
+      namePrefix: "e2e-mcp-protocol",
+    });
+    credential = { apiKey: created.key };
+    apiKeyId = created.id;
 
     // Default project ("Starter Project") — its id is the MCP project id.
     const projectsRes = await request.get("/api/v1/projects/", { headers });
@@ -81,6 +99,11 @@ test.describe("MCP Server — flow-as-server protocol", () => {
         headers: { Authorization: authorization },
       }).catch(() => {});
     }
+    if (apiKeyId) {
+      await deleteApiKey(request, apiKeyId, {
+        Authorization: authorization,
+      }).catch(() => {});
+    }
   });
 
   test(
@@ -103,15 +126,49 @@ test.describe("MCP Server — flow-as-server protocol", () => {
       });
 
       await test.step("initialize identifies this project's MCP server", async () => {
-        const info = await mcpHandshake(request, streamableUrl, authorization);
+        const info = await mcpHandshake(request, streamableUrl, credential);
         expect(info.serverInfo.name).toBe(`langflow-mcp-project-${projectId}`);
+      });
+
+      await test.step("the same initialize with no credential is refused", async () => {
+        // The negative half of the credential assertion, and the reason it is
+        // here at all: 1.12.0.dev31 answered 200 to a request carrying NO
+        // credential, so every assertion above passed on a transport that
+        // authenticated nobody (#1522). Without this step the spec cannot tell a
+        // working key from an endpoint that never asks for one.
+        const res = await request.post(streamableUrl, {
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+          },
+          data: {
+            jsonrpc: "2.0",
+            id: 99,
+            method: "initialize",
+            params: {
+              protocolVersion: "2024-11-05",
+              capabilities: {},
+              clientInfo: { name: "langflow-e2e-no-credential", version: "0.1" },
+            },
+          },
+        });
+        expect(
+          res.status(),
+          "a keyless caller must be refused: the transport takes an API key, and " +
+            "resolves nobody to the superuser unless LANGFLOW_SKIP_AUTH_AUTO_LOGIN " +
+            "is set — which no lane sets, on purpose",
+        ).toBe(403);
+        expect(
+          (await res.text()).toLowerCase(),
+          "the refusal must be the API-key gate, not an unrelated 403",
+        ).toContain("api key");
       });
 
       await test.step("tools/list exposes the enabled flow", async () => {
         const resp = await mcpCall(
           request,
           streamableUrl,
-          authorization,
+          credential,
           "tools/list",
           undefined,
           2,
@@ -132,12 +189,12 @@ test.describe("MCP Server — flow-as-server protocol", () => {
       // string, so a pass proves the call round-tripped through the flow.
       const sentinel = `mcp-echo-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      await mcpHandshake(request, streamableUrl, authorization);
+      await mcpHandshake(request, streamableUrl, credential);
 
       const resp = await mcpCall(
         request,
         streamableUrl,
-        authorization,
+        credential,
         "tools/call",
         { name: actionName, arguments: { input_value: sentinel } },
         3,
