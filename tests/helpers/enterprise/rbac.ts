@@ -234,19 +234,152 @@ export async function createRbacUser(
   return { id, username, password: TEST_USER_PASSWORD, auth: `Bearer ${access_token}` };
 }
 
-/** Grant `roleId` to `userId` globally. Returns the assignment id, for cleanup. */
+/**
+ * Where an assignment applies. `global` is the whole instance; `project` grants
+ * inside one project and is INHERITED by the flows in it, which is a grant path
+ * of its own rather than a weaker global one.
+ */
+export interface AssignmentScope {
+  domain_type: "global" | "project" | "workspace";
+  /** Required for anything but `global`; the API takes `null` there. */
+  domain_id?: string | null;
+}
+
+/**
+ * Grant `roleId` to `userId`, globally by default. Returns the assignment id, for
+ * cleanup.
+ *
+ * The scope defaults to global so the callers written before project scope
+ * existed read unchanged — and because a scoped grant a caller forgot to scope
+ * would silently become instance-wide, which is the wrong direction to fail in.
+ */
 export async function assignRole(
   request: APIRequestContext,
   auth: string,
   userId: string,
   roleId: string,
+  scope: AssignmentScope = { domain_type: "global" },
 ): Promise<string> {
   const response = await request.post("/api/v1/authz/role-assignments", {
     headers: { Authorization: auth },
-    data: { user_id: userId, role_id: roleId, domain_type: "global" },
+    data: {
+      user_id: userId,
+      role_id: roleId,
+      domain_type: scope.domain_type,
+      domain_id: scope.domain_id ?? null,
+    },
   });
   expect(response.status(), await response.text()).toBe(201);
   return ((await response.json()) as { id: string }).id;
+}
+
+/** One assignment that reaches a resource, as `inherited-access` reports it. */
+export interface InheritedGrant {
+  assignment_id: string;
+  user_id: string;
+  username: string;
+  role_name: string;
+  domain_type: string;
+  domain_id?: string | null;
+  actions: string[];
+}
+
+/**
+ * Every assignment that reaches `flowId`, whatever scope it came from.
+ *
+ * Superuser-scoped: asked by the subject it describes, the endpoint answers
+ * `404`, so callers pass the superuser's auth. Read by MEMBERSHIP, never by
+ * length — the superuser's own global admin grant is always in this list, and so
+ * is whatever else the container carries.
+ */
+export async function readInheritedAccess(
+  request: APIRequestContext,
+  auth: string,
+  flowId: string,
+): Promise<InheritedGrant[]> {
+  const response = await request.get(
+    `/api/v1/authz/flows/${flowId}/inherited-access`,
+    { headers: { Authorization: auth } },
+  );
+  expect(response.status(), await response.text()).toBe(200);
+  return ((await response.json()) as { items: InheritedGrant[] }).items;
+}
+
+/** The verdict `policy/reconcile` returns. Counts are per call, not cumulative. */
+export interface ReconcileVerdict {
+  outcome?: "clean" | "drift" | "repaired";
+  repair?: boolean;
+  scope?: string;
+  revision?: string;
+  expected_count?: number;
+  actual_count?: number;
+  missing_count?: number;
+  extra_count?: number;
+  inserted_count?: number;
+  deleted_count?: number;
+  changed_count?: number;
+}
+
+/**
+ * Diff the derived policy against `casbin_rule`, optionally repairing it.
+ *
+ * `repair` is a QUERY parameter, and this is the whole reason this helper exists
+ * rather than an inline `request.post`. Sent in the BODY it is silently ignored:
+ * the response echoes `repair: false`, both write counters stay `0`, and the same
+ * drift is reported call after call — which reads exactly like a repair knob that
+ * does not work. The first measurement of this endpoint concluded precisely that.
+ */
+export async function reconcilePolicy(
+  request: APIRequestContext,
+  auth: string,
+  { repair = false }: { repair?: boolean } = {},
+): Promise<ReconcileVerdict> {
+  const response = await request.post(
+    `/api/v1/authz/policy/reconcile${repair ? "?repair=true" : ""}`,
+    { headers: { Authorization: auth }, data: {} },
+  );
+  expect(response.status(), await response.text()).toBe(200);
+  return (await response.json()) as ReconcileVerdict;
+}
+
+/** Clear and rewrite `casbin_rule` from the derived policy. */
+export async function syncPolicy(
+  request: APIRequestContext,
+  auth: string,
+): Promise<{ cleared?: boolean; counts?: Record<string, number> }> {
+  const response = await request.post("/api/v1/authz/policy/sync", {
+    headers: { Authorization: auth },
+    data: {},
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  return (await response.json()) as {
+    cleared?: boolean;
+    counts?: Record<string, number>;
+  };
+}
+
+/**
+ * What the caller may do with each of `resourceIds`, as the product's own
+ * resource-scoped decision API answers it.
+ *
+ * Unlike `check`, this takes NO casbin pattern — a resource type and a list of
+ * ids, which is how a client asks. So an empty answer here cannot be dismissed as
+ * a mis-encoded question, which is what makes it usable as ground truth for
+ * whether the decision API agrees with enforcement.
+ */
+export async function mePermissions(
+  request: APIRequestContext,
+  auth: string,
+  resourceType: string,
+  resourceIds: string[],
+): Promise<Record<string, string[]>> {
+  const response = await request.post("/api/v1/authz/me/permissions", {
+    headers: { Authorization: auth },
+    data: { resource_type: resourceType, resource_ids: resourceIds },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  return ((await response.json()) as { permissions: Record<string, string[]> })
+    .permissions;
 }
 
 export interface AuditEntry {
