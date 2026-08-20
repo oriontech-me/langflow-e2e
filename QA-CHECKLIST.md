@@ -1111,6 +1111,23 @@
 - [-] The blast radius is bounded — flows, the component catalog, projects and identity all answer `200`. An unlicensed Enterprise is missing its entitled features, not broken → `enterprise/auth/entitlement-fail-closed.spec.ts`
 - [ ] The entitled behaviour itself (a valid licence unlocks exactly the entitled surfaces and nothing else; an invalid, expired or wrong-signature licence is refused, naming which of the three) — blocked on a licence key
 
+#### 22.6 RBAC / Authorization (`@authz`)
+
+> Needs the RBAC container variant: `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`
+> — a second container with its own Postgres on port 7891, because RBAC is a property of the
+> database as much as of the process. Two corrections to the original design notes, both
+> measured: **Redis is not required** (only multi-replica convergence needs one), and three
+> variables the notes omitted are load-bearing (`LANGFLOW_AUTHZ_AUDIT_ENABLED`,
+> `LANGFLOW_RBAC_BOOTSTRAP_ENABLED`, `LANGFLOW_RBAC_BOOTSTRAP_ADMIN_USERNAME`).
+
+- [-] The instance is configured to enforce — `authz_enabled` true, **`superuser_bypass` false**, a non-zero policy rule count and the three built-in roles. Bypass is the half that gets forgotten: with it on, the only account this lane has is exempt and a whole deny matrix would pass against an instance that never denied anything → `enterprise/authz/rbac-instance-baseline.spec.ts`
+- [-] A role-less user is denied a write **and the refusal leaves nothing behind** — a `403` that still created the resource is not an authorization control, and the caller sees the same status either way → `enterprise/authz/rbac-instance-baseline.spec.ts`
+- [-] Granting `developer` flips the identical call to allowed — the load-bearing pair, since a lone `403` is equally consistent with "authorization works" and "this instance is broken" → `enterprise/authz/rbac-instance-baseline.spec.ts`
+- [-] The audit log carries both the deny and the allow, attributed to the actor → `enterprise/authz/rbac-instance-baseline.spec.ts`
+- [ ] The full deny matrix per subject (viewer / developer / admin / owner / direct share / team share / scoped API key / revoked access) across the route families. Measured and left to it: `viewer` and no-role are indistinguishable for flow and project creation, and the three refusal messages differ by guard (`Permission denied`, `RBAC administrator role required`, `Superuser required to administer roles.` — that last meaning role administration is gated on superuser, not on the admin role)
+- [ ] `POST /authz/check` agrees with what the endpoints actually enforce — a decision API that drifts from enforcement is worse than none
+- [ ] Inherited access, idempotent policy rebuild/repair, `flow:deploy` admin-only, and cross-replica convergence
+
 ---
 
 ---
