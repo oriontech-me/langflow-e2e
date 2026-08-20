@@ -28,12 +28,16 @@ import {
  *  - **The positive case is anchored with a `tools/call`.** A build that listed
  *    a tool it could not run would pass a containment-only test.
  *
- * NOT asserted, and #1408 is why: `tools/call` on a **de-selected** flow still
- * runs it (measured on 1.12.0.dev20 — `isError: false`, and not a cache: a tool
- * never called while enabled behaves the same, while an unknown name answers
- * `Flow with name '…' not found`). `handle_call_tool` resolves by action name and
- * never reads `mcp_enabled`, so the selection is a discovery control only.
- * Asserting the corrected behaviour would ship a durably red `@stable` test.
+ *  - **De-selection is asserted at BOTH layers** — absent from `tools/list` and
+ *    refused by `tools/call`. The second half is the #1408 regression guard: on
+ *    1.12.0.dev20 a de-selected flow was unlisted and still ran (`isError: false`,
+ *    and not a cache — a tool never called while enabled behaved the same), because
+ *    `handle_call_tool` resolved by action name and never read `mcp_enabled`. Fixed
+ *    upstream by langflow#14522 (LE-2175), which pushes `project_id` and
+ *    `mcp_enabled_only` into the query instead of post-filtering; re-measured on
+ *    1.12.0.dev32 and green on dev33. `get_flow_snake_case`'s `mcp_enabled_only` still defaults to
+ *    `False` (the global server needs that), so a caller that stops passing it
+ *    re-opens the hole silently — which is what this assertion watches.
  *
  * Everything runs against a project this spec creates, so it cannot race
  * `mcp-server-protocol.spec.ts` — which mutates the DEFAULT project's MCP
@@ -249,7 +253,10 @@ test.describe("MCP Server — per-project tool exposure", () => {
     },
   );
 
-  test("an exposed flow is served over the protocol, and de-selecting withdraws it", { tag: ["@stable", "@api", "@mcp"] },
+  // `@regression` on this test only: its last two steps are the guard for #1408,
+  // a real defect fixed upstream (langflow#14522). Test 1 has no bug history and
+  // stays without the tag.
+  test("an exposed flow is served over the protocol, and de-selecting withdraws it", { tag: ["@stable", "@regression", "@api", "@mcp"] },
     async ({ request }) => {
       await test.step("the handshake identifies THIS project's MCP server", async () => {
         // Asserted first: a misdirected endpoint would otherwise produce an
@@ -347,6 +354,40 @@ test.describe("MCP Server — per-project tool exposure", () => {
           names,
           "a de-selected flow must be gone from tools/list over the protocol",
         ).not.toContain(actionName);
+      });
+
+      await test.step("tools/call refuses it — the withdrawal reaches invocation", async () => {
+        // The #1408 guard. Meaningful only because step 3 ran this exact action
+        // successfully: an unknown name produces the SAME message, so on a fresh
+        // name this assertion would prove nothing.
+        const sentinel = `mcp-cfg-off-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const resp = await mcpCall(
+          request,
+          streamableUrl,
+          authorization,
+          "tools/call",
+          { name: actionName, arguments: { input_value: sentinel } },
+          5,
+        );
+        expect(resp.error, JSON.stringify(resp.error)).toBeUndefined();
+        expect(
+          resp.result?.isError,
+          `a de-selected flow must not be callable; got ${JSON.stringify(resp.result)}`,
+        ).toBe(true);
+        const text: string = resp.result?.content?.[0]?.text ?? "";
+        // Pinned to the RESOLUTION failure, not to "any error": a permission or
+        // transport failure would otherwise read as a correct withdrawal.
+        expect(
+          text,
+          "the refusal must be the resolution failure naming the action",
+        ).toContain(`Flow with name '${actionName}' not found`);
+        // `isError: true` alone would also be satisfied by a build that ran the
+        // flow and then failed downstream. The absence of the echo is what proves
+        // it did not execute.
+        expect(
+          text,
+          "the flow must not have run — its input must not be echoed back",
+        ).not.toContain(sentinel);
       });
 
       await test.step("GET agrees, and ?mcp_enabled=false still finds the flow", async () => {

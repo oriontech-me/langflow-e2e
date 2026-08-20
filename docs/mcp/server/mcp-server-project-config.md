@@ -1,6 +1,6 @@
 # MCP Server — per-project tool exposure (`GET`/`PATCH /{project_id}`) and what the protocol serves
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev20`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev33`)
 
 ---
 
@@ -19,11 +19,16 @@ selection.
    `tools/list` on the project's own streamable endpoint under its `action_name`,
    described by its `action_description`, and `tools/call` actually runs it — so the
    listing is backed by a working capability, not just a string.
-3. **De-selecting withdraws it from the protocol.** After `mcp_enabled: false`, the
-   action is gone from `tools/list` — the assertion is made over the MCP protocol, not
-   against the REST listing the UI renders, because those are two different code paths
-   (`handle_list_project_tools` passes `mcp_enabled_only=True`; the REST endpoint
-   filters in its own query).
+3. **De-selecting withdraws it from the protocol — from discovery *and* from
+   invocation.** After `mcp_enabled: false`, the action is gone from `tools/list`, and
+   `tools/call` on that same action name is refused with
+   `isError: true, "Flow with name '…' not found"` without running the flow. Both
+   assertions are made over the MCP protocol, not against the REST listing the UI
+   renders, because those are three different code paths: the REST endpoint filters in
+   its own query, `handle_list_project_tools` passes `mcp_enabled_only=True`, and
+   `handle_call_tool` resolves through `get_flow_snake_case(..., mcp_enabled_only=…)`.
+   The invocation half is the **regression guard** for #1408, where the selection was
+   a discovery control only — see *Notes*.
 4. **Exposure is scoped to the project that owns the flow.** Everything runs against a
    project this test creates, so a pass cannot be produced by another project's flows.
 
@@ -35,15 +40,20 @@ disagrees with them.
 
 ## Tags *(required)*
 
-`@stable` `@api` `@mcp`
+Test 1: `@stable` `@api` `@mcp` · Test 2: `@stable` `@regression` `@api` `@mcp`
 
 - `@stable` — pure API and protocol, no browser navigation, no LLM key and no external
   network; validated per `CONTRIBUTING.md` before the PR.
 - `@api` — drives `GET`/`PATCH /api/v1/mcp/project/{id}` and the JSON-RPC endpoint
   directly; there is no UI step.
 - `@mcp` — the MCP server area (`tests/.../mcp/`, area-local `CLAUDE.md`).
-- **No `@regression`** — that tag means "test for a previously fixed bug"
-  (`CLAUDE.md`), and this is new coverage of a path with no bug history.
+- `@regression` on **test 2 only**, and it was deliberately absent until #1408 closed.
+  The tag means "test for a previously fixed bug" (`CLAUDE.md`); when this spec was
+  written the post-de-selection `tools/call` succeeded, so the file covered a path with
+  no bug history. Test 2 now carries the assertion that fails if
+  [langflow#14522](https://github.com/langflow-ai/langflow/pull/14522) is reverted,
+  which is exactly what the tag is for. Test 1 is untouched selection coverage and
+  stays without it.
 
 ---
 
@@ -88,7 +98,14 @@ project). Teardown deletes the flow and then the project.
    text is the sentinel — the listing is backed by a real capability.
 4. `PATCH` the same flow to `mcp_enabled: false`; assert 200.
 5. `tools/list` again: assert the `action_name` is **gone**.
-6. `GET /api/v1/mcp/project/{project}`: assert `tools: []`, and that
+6. `tools/call` on that same `action_name`, with a **second** unique sentinel: assert
+   `isError: true`, that the message is the resolution failure
+   `Flow with name '<action_name>' not found` — the same shape a name that never
+   existed gets — and that the response does **not** echo the sentinel, which is what
+   proves the flow did not run. Step 3 having passed on the same name in the same test
+   is what makes this an assertion about the *withdrawal* rather than about a name the
+   server never resolved.
+7. `GET /api/v1/mcp/project/{project}`: assert `tools: []`, and that
    `?mcp_enabled=false` returns the flow with `mcp_enabled: false`. That parameter
    **removes** the `WHERE mcp_enabled = true` clause rather than inverting it
    (`mcp_projects.py:301`), so on a project holding one flow the two readings are
@@ -101,9 +118,13 @@ project). Teardown deletes the flow and then the project.
 - A newly created project exposes no tools, and after one `PATCH` it exposes exactly
   the flow named in that `PATCH`, with the action name and description that were sent.
 - The MCP protocol agrees with the REST selection **in both directions**: the enabled
-  action is listed and callable; after de-selection it is absent from `tools/list`.
+  action is listed and callable; after de-selection it is absent from `tools/list`
+  **and** refused by `tools/call`.
 - `tools/call` on the enabled action returns the exact sentinel that was sent, so the
   exposure is a working tool rather than an advertised name.
+- `tools/call` on the **de-selected** action answers `isError: true` with
+  `Flow with name '<action_name>' not found` and does not echo its sentinel, so the
+  selection governs invocation and not only discovery (#1408).
 - The unfiltered listing (`?mcp_enabled=false`) still returns the flow, now with
   `mcp_enabled: false` — proving it was withdrawn from exposure rather than deleted or
   detached from the project.
@@ -120,6 +141,15 @@ project). Teardown deletes the flow and then the project.
   client sees — which is the whole point of the bullet.
 - **`tools/call` before de-selection** anchors the positive case in behaviour: a build
   that listed the tool but could not run it would pass a containment-only test.
+- **The post-de-selection `tools/call` asserts the refusal *and* the absence of the
+  echo.** `isError: true` alone would also be satisfied by a build that ran the flow
+  and then failed for an unrelated reason, so the second sentinel must not appear in
+  the response — that is what proves the flow did not execute. The refusal message is
+  pinned to the resolution failure (`Flow with name '…' not found`) rather than to any
+  error, because a permission or transport failure would otherwise read as a correct
+  withdrawal. And an unknown name produces that same message, which is why the
+  assertion is only meaningful on an action **this test already called successfully**
+  three steps earlier.
 - **The handshake asserts the project identity**, so a misdirected endpoint fails at
   step 1 instead of producing an empty `tools/list` that looks like correct
   de-selection. That single assertion is byte-identical to one in
@@ -139,18 +169,6 @@ project). Teardown deletes the flow and then the project.
 
 ## What this test does not cover *(optional)*
 
-- **`tools/call` after de-selection — because it currently succeeds.** Measured on
-  `1.12.0.dev20`: a flow whose `mcp_enabled` is `false` is absent from `tools/list`
-  yet still executes over `tools/call` under its `action_name`, returning
-  `isError: false`. It is not a cache — a tool that was **never** called while enabled
-  behaves the same, while a genuinely unknown name answers
-  `isError: true, "Flow with name '…' not found"`. Source-confirmed: the list handler
-  passes `mcp_enabled_only=True` (`api/v1/mcp_projects.py`), while
-  `handle_call_tool` (`api/v1/mcp_utils.py`) resolves by action name, checks the
-  project and enforces `FlowAction.EXECUTE`, and never reads `mcp_enabled`. So the
-  per-project selection is a **discovery** control, not an invocation control.
-  Filed as its own product-finding issue (#1408); asserting the corrected behaviour
-  here would ship a durably red `@stable` test, which triage strips within a day.
 - **Auth settings** (`auth_settings` on the same `PATCH`) — a separate surface; the
   API-key variant is exercised by the A2A/project-auth specs.
 - **The MCP Server tab UI** that drives this API — `mcp-server-tab.spec.ts`.
@@ -177,7 +195,15 @@ project). Teardown deletes the flow and then the project.
   the `ProjectMCPServer` handlers that register `handle_list_project_tools`
   (`mcp_enabled_only=True`) and `handle_call_project_tool`.
 - `src/backend/base/langflow/api/v1/mcp_utils.py` — `handle_call_tool`, which resolves
-  a tool by action name and is where the missing `mcp_enabled` check lives (#1408).
+  a tool by action name through
+  `get_flow_snake_case(..., project_id=…, mcp_enabled_only=project_id is not None)`.
+  That second argument is the fix for #1408 and the subject of step 6; before
+  [langflow#14522](https://github.com/langflow-ai/langflow/pull/14522) the handler
+  never read `mcp_enabled`, so a de-selected flow stayed callable.
+- `src/lfx/src/lfx/base/mcp/util.py` — `get_flow_snake_case`, where the
+  `mcp_enabled_only` filter is applied to the query (post-filtering there was the
+  defect); its default preserves the historical behaviour for the global MCP server,
+  so a caller that stops passing the flag re-opens #1408 without changing this file.
 - `tests/helpers/mcp/mcp-streamable-client.ts` — `mcpHandshake` / `mcpCall`, the
   repo's minimal streamable-HTTP JSON-RPC client (reused rather than hand-rolled, as
   #1396 requires).
@@ -200,8 +226,12 @@ project). Teardown deletes the flow and then the project.
   what step 6 means without failing it on a single-flow project.
 - If the streamable endpoint's `serverInfo.name` stops being
   `langflow-mcp-project-{id}`.
-- If #1408 is fixed: add the post-de-selection `tools/call` assertion here and move
-  the paragraph out of *What this test does not cover*.
+- If step 6 goes red: read it as a **product** regression before touching the test.
+  Two shapes to tell apart — `isError: false` with the sentinel echoed means the
+  `mcp_enabled_only` filter stopped reaching the call path (#1408 reopened,
+  `get_flow_snake_case`'s default is permissive, so dropping the argument is enough);
+  `isError: true` with a *different* message means the refusal moved to another layer
+  (permission, transport) and the assertion needs to follow it, not be loosened.
 
 ---
 
@@ -264,3 +294,20 @@ project). Teardown deletes the flow and then the project.
   flows and touches only those named in `settings`, so this test cannot disable
   anything it did not create — worth knowing before reusing this pattern against a
   project that is not disposable.
+- **Step 6 exists because the selection used to be a discovery control only (#1408).**
+  Measured on `1.12.0.dev20` while writing this spec: a flow whose `mcp_enabled` was
+  `false` was absent from `tools/list` and still **executed** over `tools/call` under
+  its `action_name`, `isError: false`, echoing the input. Not a cache — a tool never
+  called while enabled behaved the same. The assertion was deliberately left out then,
+  because a durably red `@stable` test is stripped by triage within a day; the gap was
+  recorded here and filed as #1408. Fixed upstream by
+  [langflow#14522](https://github.com/langflow-ai/langflow/pull/14522)
+  (LE-2175, merged into `release-1.12.0` on 2026-08-17): `handle_call_tool` now pushes
+  `project_id` and `mcp_enabled_only` **into the query** instead of post-filtering, and
+  the commit's own comment names the defect — *"post-filtering let an unexposed flow
+  run by name"*. Re-measured by hand on `1.12.0.dev32`: `isError: true`,
+  `Flow with name '…' not found`, sentinel not echoed; the assertion below then ran
+  green on `1.12.0.dev33`. What the assertion buys is the
+  guard the fix does not carry itself: `get_flow_snake_case`'s `mcp_enabled_only`
+  defaults to `False` for the global server, so any caller that stops passing it
+  re-opens the hole silently.
