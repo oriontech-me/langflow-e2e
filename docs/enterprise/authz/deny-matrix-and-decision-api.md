@@ -119,15 +119,14 @@ genuine refusal.
 - The Enterprise RBAC variant:
   `LANGFLOW_EE_RBAC=1 ./scripts/start-langflow-enterprise.sh`, with
   `PLAYWRIGHT_BASE_URL` pointed at `http://localhost:7891`.
-- **One** login per run for this file — a single subject created in `beforeAll` and reset
-  between tests through the superuser, which needs no login. The matrix rows are states of
-  the same principal rather than different principals, so walking one subject costs one
-  login instead of six; sharing it across both tests costs one instead of two.
+- **Zero or one** login per run for the whole `authz/` directory. The matrix rows are states
+  of the same principal rather than different principals, so walking one subject costs one
+  login instead of six — and that subject is shared across every spec in the directory and
+  cached between processes, so the cost no longer scales with the number of files.
 
-  The budget is five logins per minute **per IP for the whole machine**, and it counts
-  every attempt including failed ones — a detail that matters while debugging, since a
-  polling loop that probes with bad credentials consumes it just as fast as real work.
-  Together with `rbac-instance-baseline`, the directory spends two per run.
+  The budget is five logins per minute **per IP for the whole machine**, and it counts every
+  attempt including failed ones — a detail that matters while debugging, since a polling loop
+  probing with bad credentials consumes it just as fast as real work.
 - No LLM provider and no network egress.
 
 ## Notes
