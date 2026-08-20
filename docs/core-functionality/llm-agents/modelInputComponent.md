@@ -1,6 +1,6 @@
 # Model Input component — the Language Model node's model picker
 
-**Last validated:** Langflow 1.12.x (measured on `1.12.0.dev25`)
+**Last validated:** Langflow 1.12.x (measured on `1.12.0.dev33`)
 
 ---
 
@@ -225,3 +225,4 @@ first** or the failures look like a model-selector regression.
 | Date | Langflow | Change |
 |---|---|---|
 | 2026-08-13 | `1.12.0.dev25` | Spec doc created (the file had none). Behaviour 4 rewritten: the pre-selected-default premise expired with upstream [#14505](https://github.com/langflow-ai/langflow/pull/14505); the test now asserts placeholder → pick → exact model name. Issue #1445, from daily triage #1444. |
+| 2026-08-20 | `1.12.0.dev33` | **Behaviour 4 read the option's own `innerText()` and broke on the `sr-only` position counter (#1460).** Since 1.12.0.dev26 every option renders `<span class="sr-only">N of M</span>` inside itself, so the raw read returned `claude-opus-5\n1 of 59` and the assertion failed with a polluted EXPECTED value while the trigger — the product side — was correct. The label now comes from `enumerateModelOptions().visibleLabel`, which strips `sr-only` and badge nodes inside the page, and the click goes through `clickModelOption` (identity from `data-value` / `data-testid`) — the rule this folder's `CLAUDE.md` already stated: never resolve a model through the option's rendered text. Reproduced 1 of 1 before the change on `1.12.0.dev33` (expected `claude-opus-5\n1 of 5` against a 5-model local catalog), 4 of 4 tests green after it on 3 consecutive runs, force-fail verified by swapping `visibleLabel` for `rawText`. `@stable` restored (auto-removed by `f6f4c39` for daily 31786538844). Fixed inside PR #1538; #1460 stays open for its second row, `memory-base-registration.spec.ts:232`. |

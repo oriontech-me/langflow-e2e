@@ -5,6 +5,10 @@ import {
   trackCreatedFlows,
   type FlowTracker,
 } from "../../../../helpers/flows/track-created-flows";
+import {
+  clickModelOption,
+  enumerateModelOptions,
+} from "../../../../helpers/provider-setup/model-option";
 import { waitForAttributedSelector } from "../../../../helpers/other/page-entry-barrier";
 
 // The Model Input selector on the canonical Language Model component
@@ -175,6 +179,7 @@ test.describe("ModelInputComponent", () => {
     // 1.12.0.dev17), which `addComponentFromSidebar` now verifies and repairs.
     {
       tag: [
+        "@stable",
         "@release",
         "@components",
         "@workspace",
@@ -192,18 +197,37 @@ test.describe("ModelInputComponent", () => {
 
       await trigger.click();
 
-      // Each option carries `data-testid="{Provider}-{model}-option"` (frontend
-      // `ModelList.getModelOptionTestId`) and its inner text is the bare model
-      // name. The expected label is read FROM THE DOM rather than hardcoded, so
-      // a catalog reorder or a retired model id cannot make this test wrong —
+      // The expected label is read FROM THE DOM rather than hardcoded, so a
+      // catalog reorder or a retired model id cannot make this test wrong —
       // whichever model the instance offers first is the one selected.
-      const firstOption = page.locator('[data-testid$="-option"]').first();
-      await expect(firstOption).toBeVisible({ timeout: 15000 });
-      const modelLabel = (await firstOption.innerText()).trim();
+      //
+      // It is read through `enumerateModelOptions`, NOT with the option's own
+      // `innerText()`, and that is #1460: since 1.12.0.dev26 every option
+      // renders its position inside itself —
+      //
+      //     <div data-testid="Anthropic-claude-opus-5-option" role="option">
+      //       <div class="truncate text-[13px]">claude-opus-5</div>
+      //       <span class="sr-only">1 of 59</span>
+      //     </div>
+      //
+      // The span is invisible to a user but part of `textContent`, so the raw
+      // read returned "claude-opus-5\n1 of 59" and this assertion failed with a
+      // polluted EXPECTED value while the trigger — the product side — was
+      // correct all along. The helper strips `sr-only` and badge nodes inside
+      // the page and hands back `visibleLabel`: what a user actually reads.
+      // Reproduced on 1.12.0.dev33 before this change (expected
+      // "claude-opus-5\n1 of 5" against a 5-model local catalog, 1 of 1 runs) and
+      // green after it.
+      const options = await enumerateModelOptions(page, 15000);
+      expect(
+        options.length,
+        "the open picker must offer at least one model option",
+      ).toBeGreaterThan(0);
+      const modelLabel = options[0].visibleLabel;
       expect(modelLabel.length).toBeGreaterThan(0);
       expect(modelLabel).not.toMatch(/select a model/i);
 
-      await firstOption.click();
+      await clickModelOption(page, options[0]);
 
       // Exact equality, which subsumes "the placeholder is gone" — the old
       // assertion only demanded the text differ from the placeholder and would
