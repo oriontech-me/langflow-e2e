@@ -1195,7 +1195,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 491 `test()` calls carrying the `@stable` tag, distributed across 192 spec
+> 496 `test()` calls carrying the `@stable` tag, distributed across 195 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1320,6 +1320,7 @@
 - [x] If-Else operator=less than or equal routes an equal-operands match (5 <= 5) through the True branch → `if-else-component-regression.spec.ts`
 - [x] If-Else operator=greater than or equal routes an equal-operands match (5 >= 5) through the True branch → `if-else-component-regression.spec.ts`
 - [x] Show Legacy Components toggle controls visibility of legacy components in the sidebar → `legacy-components-toggle-regression.spec.ts`
+- [x] Loop component — renders correctly with all handles and output inspection buttons → `loop-component-regression.spec.ts`
 - [x] Loop component — run without connections shows build failed notification → `loop-component-regression.spec.ts`
 - [x] Loop component — stops after exhausting input DataFrame and emits aggregated done → `loop-component-regression.spec.ts`
 - [x] box-selecting two connected non-IO components and clicking Group collapses them into a single Group node → `nested-grouping-regression.spec.ts`
@@ -1416,6 +1417,7 @@
 - [x] should upload multiple files with different types → `files-page.spec.ts`
 - [x] should search uploaded files → `files-page.spec.ts`
 - [x] should handle bulk actions for multiple files → `files-page.spec.ts`
+- [x] user should not be able to upload a file larger than the limit → `limit-file-size-upload.spec.ts`
 - [x] Full RAG pipeline grounds the model answer on the retrieved chunk → `rag-pipeline.spec.ts`
 - [x] Split Text splits an ingested document into the expected number of chunks → `split-text-chunking.spec.ts`
 - [x] upload a file through the Read File component and read its content → `upload-via-component.spec.ts`
@@ -1473,6 +1475,7 @@
 - [x] the Language Model node renders its model selector → `modelInputComponent.spec.ts`
 - [x] opening the model dropdown lists model options → `modelInputComponent.spec.ts`
 - [x] the model dropdown exposes the Manage Model Providers entry → `modelInputComponent.spec.ts`
+- [x] the trigger shows the model the user selects → `modelInputComponent.spec.ts`
 - [x] provider list renders with the known providers → `modelProviderModal.spec.ts`
 - [x] selecting a provider opens its API key configuration detail → `modelProviderModal.spec.ts`
 - [x] a configured provider shows its model selection panel → `modelProviderModal.spec.ts`
@@ -1698,9 +1701,11 @@
 - [x] delete a global variable removes it from the list → `global-variables-crud.spec.ts`
 - [x] Credential variable value is hidden from the variable list → `global-variables-crud.spec.ts`
 - [x] user can search and add components using keyboard shortcuts → `keyboardComponentSearch.spec.ts`
+- [x] LangflowShortcuts → `langflowShortcuts.spec.ts`
 - [x] the main menu lists every item, reports the running version and links out → `main-menu-actions.spec.ts`
 - [x] the main menu's Settings action navigates to the Settings page → `main-menu-actions.spec.ts`
 - [x] user must be able to minimize and expand a component → `minimize.spec.ts`
+- [x] User should be able to interact notifications tab → `notifications.spec.ts`
 - [x] right-clicking a component selects it and opens its options menu → `right-click-dropdown.spec.ts`
 - [x] an item picked from the right-click menu acts on that component → `right-click-dropdown.spec.ts`
 - [x] right-clicking the canvas background opens no menu and dismisses an open one → `right-click-dropdown.spec.ts`
