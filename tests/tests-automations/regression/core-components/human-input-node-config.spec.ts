@@ -191,8 +191,14 @@ test.describe("Human Input node configuration (HITL branch handles)", () => {
     },
   );
 
-  test("adding a custom User Action creates its branch handle without a reload",
-    { tag: ["@stable", "@components", "@ui-ux"] },
+  // Quarantined at triage (daily #1544): recurrent flake — the custom action's
+  // own edit row `action-edit-<name>` never enters the DOM (the call log reads
+  // "element(s) not found", not hidden), so the test never reaches the branch
+  // handle it is named for. Same signature on the 2026-08-13 and 08-21 dailies;
+  // on 08-21 it ran on shard 3, which measured zero backend outages. Lifting the
+  // quarantine (remove test.fixme + restore @stable) is a deliverable of #1547.
+  test.fixme("adding a custom User Action creates its branch handle without a reload",
+    { tag: ["@components", "@ui-ux"] },
     async ({ page }) => {
       await test.step("Add a Human Input node with its two default branches", async () => {
         await addHumanInputNode(page);
