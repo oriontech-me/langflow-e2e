@@ -1192,12 +1192,12 @@
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 11 | 8 | 3 | 0 | 0 |
+| `security/` — Validation, SSRF, Secrets | 11 | 7 | 3 | 1 | 0 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces | 53 | 0 | 39 | 5 | 9 |
-| **TOTAL** | **602** | **439 (73%)** | **80 (13%)** | **19 (3%)** | **64 (11%)** |
+| **TOTAL** | **602** | **438 (73%)** | **80 (13%)** | **20 (3%)** | **64 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1213,7 +1213,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 516 `test()` calls carrying the `@stable` tag, distributed across 203 spec
+> 515 `test()` calls carrying the `@stable` tag, distributed across 203 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1713,7 +1713,6 @@
 
 #### security/
 - [x] the trace detail masks the credential whatever the secret field is called → `credential-secret-exposure.spec.ts`
-- [x] the exported flow carries the credential binding, never the secret → `credential-secret-exposure.spec.ts`
 - [x] the run resolves the credential without echoing it → `credential-secret-exposure.spec.ts`
 - [x] a loopback address is refused, and the refusal names the allow-list → `ssrf-url-validation.spec.ts`
 - [x] a blocked address the allow-list does not cover is refused the same way → `ssrf-url-validation.spec.ts`
