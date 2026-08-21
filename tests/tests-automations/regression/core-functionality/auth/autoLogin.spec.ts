@@ -9,7 +9,7 @@ test.describe(
   () => {
     test(
       "auto_login sign in",
-      { tag: ["@release", "@api", "@database", "@auth"] },
+      { tag: ["@stable", "@release", "@api", "@database", "@auth"] },
       async ({ page }) => {
         await awaitBootstrapTest(page, {
           skipModal: true,
@@ -20,7 +20,7 @@ test.describe(
 
     test(
       "auto_login block_admin",
-      { tag: ["@release", "@api", "@database", "@auth"] },
+      { tag: ["@stable", "@release", "@api", "@database", "@auth"] },
       async ({ page }) => {
         await awaitBootstrapTest(page, {
           skipModal: true,

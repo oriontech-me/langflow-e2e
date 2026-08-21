@@ -1,5 +1,7 @@
 import { expect, test } from "../../../../fixtures/fixtures";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { postLogin } from "../../../../helpers/auth/login-request";
+import { signInThroughForm } from "../../../../helpers/auth/sign-in-through-form";
 
 // NOTE: When login fails with 401 (wrong credentials), the Langflow frontend re-calls
 // /api/v1/auto_login. With the auto_login mock returning 500, the page resets before
@@ -23,7 +25,7 @@ async function enableLoginScreen(page: any) {
 
 test(
   "admin changes user password — user can log in with new password",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
   async ({ page, request }) => {
     const username = `pwdtest_${Math.random().toString(36).substring(5)}`;
     const originalPassword = `pass_${Math.random().toString(36).substring(5)}`;
@@ -59,17 +61,11 @@ test(
       expect(patchRes.status()).toBe(200);
 
       // Assert: old password must be rejected by the login endpoint
-      const oldLoginRes = await request.post("/api/v1/login", {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        data: `username=${username}&password=${originalPassword}`,
-      });
+      const oldLoginRes = await postLogin(request, username, originalPassword);
       expect(oldLoginRes.status()).toBe(401);
 
       // Assert: new password must be accepted by the login endpoint
-      const newLoginRes = await request.post("/api/v1/login", {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        data: `username=${username}&password=${newPassword}`,
-      });
+      const newLoginRes = await postLogin(request, username, newPassword);
       expect(newLoginRes.status()).toBe(200);
       const loginBody = await newLoginRes.json();
       expect(loginBody).toHaveProperty("access_token");
@@ -82,10 +78,12 @@ test(
         timeout: 30000,
       });
 
-      await page.getByPlaceholder("Username").fill(username);
-      await page.getByPlaceholder("Password").fill(newPassword);
-      await page.evaluate(() => sessionStorage.removeItem("testMockAutoLogin"));
-      await page.getByRole("button", { name: "Sign In" }).click();
+      // 429-absorbing: by this point the test has already spent four login
+      // calls, so the UI attempt is the one most likely to meet a hot window.
+      const uiStatus = await signInThroughForm(page, username, newPassword);
+      expect(uiStatus, "the new password should sign in through the form").toBe(
+        200,
+      );
 
       await page.waitForSelector('[id="new-project-btn"]', { timeout: 30000 });
       await expect(page.locator('[id="new-project-btn"]')).toBeVisible();
@@ -104,7 +102,7 @@ test(
 
 test(
   "admin changes user password — old password no longer works after change",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
   async ({ page, request }) => {
     const username = `pwdold_${Math.random().toString(36).substring(5)}`;
     const originalPassword = `orig_${Math.random().toString(36).substring(5)}`;
@@ -129,10 +127,7 @@ test(
       expect(activateRes.status()).toBe(200);
 
       // Verify old password works BEFORE the change (control assertion)
-      const beforeChangeRes = await request.post("/api/v1/login", {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        data: `username=${username}&password=${originalPassword}`,
-      });
+      const beforeChangeRes = await postLogin(request, username, originalPassword);
       expect(beforeChangeRes.status()).toBe(200);
 
       // Change password via API
@@ -143,10 +138,7 @@ test(
       expect(patchRes.status()).toBe(200);
 
       // Assert: old password must NOW be rejected
-      const afterChangeRes = await request.post("/api/v1/login", {
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        data: `username=${username}&password=${originalPassword}`,
-      });
+      const afterChangeRes = await postLogin(request, username, originalPassword);
       expect(afterChangeRes.status()).toBe(401);
     } finally {
       // Cleanup via API

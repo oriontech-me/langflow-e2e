@@ -287,23 +287,31 @@
 ### core-functionality/auth/ — Authentication and User Management
 
 #### 4.1 Login / Logout
-- [-] Login with valid credentials
-- [-] Login with invalid credentials — should display error message
+- [x] Login with valid credentials — through the form with auto-login mocked off; every form login rides `helpers/auth/sign-in-through-form.ts`, which absorbs the endpoint's per-IP 5/min budget → `core-functionality/auth/auto-login-off.spec.ts`
+- [x] Login with invalid credentials — should display error message → `core-functionality/auth/login-invalid-credentials.spec.ts`
 - [x] Logout — should redirect to login screen → `core-functionality/auth/logout-flow.spec.ts`
-- [-] Auto-login enabled — should skip login screen
-- [-] Auto-login disabled — should display login screen
-- [-] Expired session — should redirect to login
+- [x] Auto-login enabled — should skip login screen (and `/login`, `/admin`, `/admin/login` do not break the auto-logged app) → `core-functionality/auth/autoLogin.spec.ts`
+- [x] Auto-login disabled — should display login screen → `core-functionality/auth/auto-login-off.spec.ts`
+- [x] Expired session — should redirect to login: invalid/absent token refused at the API plus the UI falling back to the form, with a valid-token control → `core-functionality/auth/session-expired.spec.ts`
 - [x] Session cleanup after logout — after logging out, navigating to `/` and reloading both stay on the login screen → `core-functionality/auth/logout-flow.spec.ts`
 - [-] `POST /api/v1/login` is rate-limited: repeated attempts are refused `429` with a `retry_after` body field and a matching `retry-after` header, a **successful** login does not reset the counter (the check runs before authentication, so brute force cannot be made free by interleaving a good login), and the limiter reopens after the window it advertised. **`@destructive`**: the budget is keyed on the client address and is instance-global, so exhausting it would hand a `429` to the eight specs that authenticate through this endpoint — which also means it does not run in the daily → `core-functionality/auth/login-rate-limit.spec.ts`
 
 #### 4.2 User Management (Admin)
-- [-] Admin creates new user
-- [-] Admin deactivates user
-- [-] Admin activates inactive user
-- [-] Admin renames user
-- [-] Admin changes user password
-- [-] Admin changes password — old password does not work after change
-- [-] Isolation flow: user A cannot see user B's flows
+
+> **The OSS Admin Page is gone** (`langflow-ai/langflow#14276`, 2026-08-05) — user
+> management in OSS is the API, `/api/v1/users/`, and the specs below drive it
+> there. `admin-user-management.spec.ts` also pins the removal itself (no menu
+> item, no admin route), so an Enterprise admin UI leaking back into the OSS
+> bundle is a named failure.
+
+- [x] Admin creates new user — `201`, inactive by default, and the pending user's login is refused `400 "Waiting for approval"` → `core-functionality/auth/admin-user-management.spec.ts`
+- [x] Admin deactivates user — the identical credentials flip back to refused, `401 "Inactive user"` (the deactivated-after-use branch, distinct from the pending one) → `core-functionality/auth/admin-user-management.spec.ts`
+- [x] Admin activates inactive user — the identical login flips to `200` with an `access_token` → `core-functionality/auth/admin-user-management.spec.ts`
+- [x] Admin renames user — the new username logs in with the unchanged password and the old one is refused → `core-functionality/auth/admin-user-management.spec.ts`
+- [x] Admin changes user password → `core-functionality/auth/admin-password-change.spec.ts`
+- [x] Admin changes password — old password does not work after change (with a works-before control) → `core-functionality/auth/admin-password-change.spec.ts`
+- [x] Isolation flow: user A cannot see user B's flows — both directions, exact random names → `core-functionality/auth/auto-login-off.spec.ts`
+- [x] The OSS build offers no Admin Page — menu and `/admin` route both, pinning `langflow-ai/langflow#14276` → `core-functionality/auth/admin-user-management.spec.ts`
 
 #### 4.3 Global Variables (API Keys)
 - [x] Create global variable

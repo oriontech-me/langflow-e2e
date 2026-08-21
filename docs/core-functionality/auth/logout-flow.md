@@ -1,6 +1,6 @@
 # Logout flow
 
-**Last validated:** Langflow 1.11.x (nightly `1.11.0.dev29`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev33`)
 
 ---
 
@@ -60,6 +60,11 @@ credentials.
 
 - `src/frontend/src/pages/LoginPage/**` — the login form (Username/Password
   fields, **Sign In** button). A markup change breaks the credential fill.
+- `tests/helpers/auth/sign-in-through-form.ts` — every form login here goes
+  through the 429-absorbing helper: `POST /api/v1/login` is limited to 5/min
+  per client IP (fixed window, counted before authentication), and this
+  file's three logins used to be the ones that met a window exhausted by
+  the auth specs running before it.
 - `src/frontend/src/pages/MainPage/components/header/**` — renders
   `data-testid="mainpage_title"`, the post-login landing assertion.
 - `src/backend/base/langflow/api/v1/login.py` — `/api/v1/login` and
