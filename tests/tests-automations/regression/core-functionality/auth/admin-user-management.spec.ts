@@ -1,284 +1,208 @@
+import type { APIRequestContext } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
+import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
+import { postLogin } from "../../../../helpers/auth/login-request";
+import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
 
-// Helper: mock auto_login to show the login screen
-async function enableLoginScreen(page: any) {
-  await page.route("**/api/v1/auto_login", (route: any) => {
-    route.fulfill({
-      status: 500,
-      contentType: "application/json",
-      body: JSON.stringify({ detail: { auto_login: false } }),
-    });
-  });
+// Auth — admin user management (QA-CHECKLIST §4.2).
+// Spec doc: docs/core-functionality/auth/admin-user-management.md
+//
+// API-driven on purpose. Upstream removed the OSS Admin Page in
+// langflow-ai/langflow#14276 (2026-08-05, "SSO foundations, login seams, and
+// remove OSS Admin Page"): on 1.12.0.dev33 the user menu renders no Admin Page
+// item (the slot between Settings and Docs compiles to a null stub) and the SPA
+// router registers no admin path. User management in OSS is /api/v1/users/ —
+// the same surface the previous UI drove, asserted at the same observable that
+// matters: whether the managed user can log in. The last test pins the removal
+// itself, so an admin UI leaking back into OSS is caught here and not by a
+// human diffing menus.
+//
+// This rewrite also buries a second, older defect the removal was masking: the
+// old spec logged in with the hardcoded legacy password "langflow", refused
+// since nightly 1.11.0.dev29 (#510) — helpers/auth/credentials.ts existed for
+// exactly that and was never imported here.
+//
+// Every login verdict goes through postLogin, which absorbs the endpoint's
+// per-IP rate-limit window (5/min, fixed, every attempt counts) — see
+// helpers/auth/login-request.ts. A 401 is always a credential verdict, never
+// budget.
 
-  await page.addInitScript(() => {
-    sessionStorage.setItem("testMockAutoLogin", "true");
+/** Creates a user via the admin API and registers its cleanup. */
+async function createUser(
+  request: APIRequestContext,
+  token: string,
+  username: string,
+  password: string,
+): Promise<string> {
+  const res = await request.post("/api/v1/users/", {
+    headers: { Authorization: token },
+    data: { username, password },
   });
+  expect(res.status(), "user creation should answer 201").toBe(201);
+  const user = await res.json();
+  // POST /api/v1/users/ creates users INACTIVE by default — asserted here so
+  // the "inactive cannot log in" test below cannot pass by accident on an API
+  // that started activating on create.
+  expect(user.is_active, "a freshly created user ships inactive").toBe(false);
+  return user.id as string;
 }
 
-async function loginAs(page: any, username: string, password: string) {
-  await page.evaluate(() => {
-    sessionStorage.removeItem("testMockAutoLogin");
+async function patchUser(
+  request: APIRequestContext,
+  token: string,
+  userId: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  const res = await request.patch(`/api/v1/users/${userId}`, {
+    headers: { Authorization: token },
+    data,
   });
-  await page.getByPlaceholder("Username").fill(username);
-  await page.getByPlaceholder("Password").fill(password);
-  await page.getByRole("button", { name: "Sign In" }).click();
+  expect(res.status(), `PATCH ${JSON.stringify(data)} should answer 200`).toBe(
+    200,
+  );
 }
 
-async function logoutAndShowLogin(page: any) {
-  await page.evaluate(() => {
-    sessionStorage.setItem("testMockAutoLogin", "true");
+async function deleteUser(
+  request: APIRequestContext,
+  token: string,
+  userId: string | null,
+): Promise<void> {
+  if (!userId) return;
+  await request
+    .delete(`/api/v1/users/${userId}`, { headers: { Authorization: token } })
+    .catch(() => {});
+}
+
+test.describe("Auth — admin user management over /api/v1/users/", () => {
+  let token: string;
+  let userId: string | null = null;
+
+  test.beforeEach(async ({ request }) => {
+    token = await getAuthToken(request);
+    userId = null;
   });
-  await page.getByTestId("user-profile-settings").click();
-  await page.getByText("Logout", { exact: true }).click();
-  await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
-}
 
-// Filter the admin user list by username — resolves pagination issues
-async function searchForUser(page: any, username: string) {
-  const searchInput = page.getByPlaceholder("Search Username");
-  await expect(searchInput).toBeVisible({ timeout: 5000 });
-  await searchInput.fill(username);
-  await page.waitForTimeout(500);
-  await expect(page.getByText(username, { exact: true })).toBeVisible({
-    timeout: 5000,
+  test.afterEach(async ({ request }) => {
+    await deleteUser(request, token, userId);
   });
-}
 
-// Cleanup: navigate to admin page and delete user by username.
-// Called in finally blocks to guarantee cleanup even on test failure.
-async function deleteUserIfExists(page: any, username: string) {
-  try {
-    // Ensure we're on a page with navigation (not login screen)
-    const isLoginPage = await page
-      .getByRole("button", { name: "Sign In" })
-      .isVisible({ timeout: 2000 })
-      .catch(() => false);
+  test(
+    "admin creates a user inactive by default — the inactive user cannot log in",
+    { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
+    async ({ request }) => {
+      const username = `user_${Math.random().toString(36).substring(5)}`;
+      const password = `pw_${Math.random().toString(36).substring(5)}`;
 
-    if (isLoginPage) {
-      await loginAs(page, "langflow", "langflow");
-      await page.waitForSelector('[data-testid="mainpage_title"]', {
-        timeout: 30000,
-      });
-    }
-
-    // Navigate to Admin Page if not already there
-    const isAdminPage = await page
-      .getByPlaceholder("Search Username")
-      .isVisible({ timeout: 2000 })
-      .catch(() => false);
-
-    if (!isAdminPage) {
-      await page.getByTestId("user-profile-settings").click();
-      await page.getByText("Admin Page", { exact: true }).click();
-    }
-
-    // Search and delete if found
-    const searchInput = page.getByPlaceholder("Search Username");
-    await searchInput.fill(username);
-    await page.waitForTimeout(500);
-
-    const userVisible = await page
-      .getByText(username, { exact: true })
-      .isVisible({ timeout: 3000 })
-      .catch(() => false);
-
-    if (userVisible) {
-      await page.getByTestId("icon-Trash2").last().click();
-      await page.getByText("Delete", { exact: true }).last().click();
-      await page.waitForSelector("text=user deleted", { timeout: 10000 });
-    }
-  } catch {
-    // Cleanup best-effort — do not fail the test report on cleanup errors
-  }
-}
-
-test(
-  "admin creates inactive user — inactive user cannot log in",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
-  async ({ page }) => {
-    const randomName = `user_${Math.random().toString(36).substring(5)}`;
-    const randomPassword = Math.random().toString(36).substring(5);
-
-    try {
-      await enableLoginScreen(page);
-      await page.goto("/");
-      await page.waitForSelector("text=sign in to langflow", {
-        timeout: 30000,
+      await test.step("create the user, without activating", async () => {
+        userId = await createUser(request, token, username, password);
       });
 
-      // Log in as admin
-      await loginAs(page, "langflow", "langflow");
-      await page.waitForSelector('[data-testid="mainpage_title"]', {
-        timeout: 30000,
+      await test.step("the inactive user's correct credentials are refused as pending approval", async () => {
+        // The login endpoint is the observable, not the user record: is_active
+        // false is what the admin WROTE, the refused login is what it MEANS.
+        // A never-logged-in inactive user is its own branch in the product
+        // (authenticate_user: last_login_at unset -> 400 "Waiting for
+        // approval"); the deactivated-after-use branch (401 "Inactive user")
+        // is the sibling test's subject.
+        const res = await postLogin(request, username, password);
+        expect(res.status(), "a pending user must not authenticate").toBe(400);
+        expect((await res.json()).detail).toBe("Waiting for approval");
+      });
+    },
+  );
+
+  test(
+    "activation and deactivation flip the same credentials between refused and accepted",
+    { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
+    async ({ request }) => {
+      const username = `user_${Math.random().toString(36).substring(5)}`;
+      const password = `pw_${Math.random().toString(36).substring(5)}`;
+      userId = await createUser(request, token, username, password);
+
+      await test.step("activating the user makes the identical login succeed", async () => {
+        await patchUser(request, token, userId as string, { is_active: true });
+        const res = await postLogin(request, username, password);
+        expect(res.status(), "an activated user must authenticate").toBe(200);
+        expect(await res.json()).toHaveProperty("access_token");
       });
 
-      // Navigate to Admin Page
-      await page.getByTestId("user-profile-settings").click();
-      await page.getByText("Admin Page", { exact: true }).click();
-
-      // Create new user WITHOUT activating (default is inactive)
-      await page.getByText("New User", { exact: true }).click();
-      await page.getByPlaceholder("Username").last().fill(randomName);
-      await page.locator('input[name="password"]').fill(randomPassword);
-      await page.locator('input[name="confirmpassword"]').fill(randomPassword);
-      // Note: NOT clicking #is_active — user remains inactive
-
-      await page.getByText("Save", { exact: true }).click();
-      await page.waitForSelector("text=new user added", { timeout: 30000 });
-
-      // Search for the user to handle pagination
-      await searchForUser(page, randomName);
-
-      // Log out as admin
-      await page.getByTestId("icon-ChevronLeft").first().click();
-      await page.waitForSelector('[data-testid="user-profile-settings"]', {
-        timeout: 30000,
+      await test.step("deactivating the user refuses the identical login again", async () => {
+        // The pair is the assertion: without this half, a login endpoint that
+        // ignores is_active entirely would pass the activation step (#1010's
+        // "a lone success is equivocal" reasoning, applied to auth).
+        await patchUser(request, token, userId as string, { is_active: false });
+        const res = await postLogin(request, username, password);
+        // 401 "Inactive user", not 400: this user HAS logged in, so it takes
+        // the deactivated branch rather than the pending-approval one.
+        expect(res.status(), "a deactivated user must be refused").toBe(401);
+        expect((await res.json()).detail).toBe("Inactive user");
       });
-      await logoutAndShowLogin(page);
+    },
+  );
 
-      // Try to log in as inactive user — should fail
-      await page.getByPlaceholder("Username").fill(randomName);
-      await page.getByPlaceholder("Password").fill(randomPassword);
-      await page.evaluate(() => {
-        sessionStorage.removeItem("testMockAutoLogin");
-      });
-      await page.getByRole("button", { name: "Sign In" }).click();
+  test(
+    "renaming a user moves the login to the new username",
+    { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
+    async ({ request }) => {
+      const username = `user_${Math.random().toString(36).substring(5)}`;
+      const renamed = `renamed_${Math.random().toString(36).substring(5)}`;
+      const password = `pw_${Math.random().toString(36).substring(5)}`;
+      userId = await createUser(request, token, username, password);
+      await patchUser(request, token, userId, { is_active: true });
 
-      await page.waitForSelector("text=Error signing in", { timeout: 10000 });
-      await expect(page.getByText("Error signing in")).toBeVisible();
-
-      // Navigate back to admin to prepare cleanup
-      await loginAs(page, "langflow", "langflow");
-      await page.waitForSelector('[data-testid="mainpage_title"]', {
-        timeout: 30000,
-      });
-      await page.getByTestId("user-profile-settings").click();
-      await page.getByText("Admin Page", { exact: true }).click();
-    } finally {
-      // Always delete the created user — even if the test fails midway
-      await deleteUserIfExists(page, randomName);
-    }
-  },
-);
-
-test(
-  "admin activates previously inactive user — user can log in after activation",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
-  async ({ page }) => {
-    const randomName = `user_${Math.random().toString(36).substring(5)}`;
-    const randomPassword = Math.random().toString(36).substring(5);
-
-    try {
-      await enableLoginScreen(page);
-      await page.goto("/");
-      await page.waitForSelector("text=sign in to langflow", {
-        timeout: 30000,
+      await test.step("rename via PATCH", async () => {
+        await patchUser(request, token, userId as string, {
+          username: renamed,
+        });
       });
 
-      // Log in as admin
-      await loginAs(page, "langflow", "langflow");
-      await page.waitForSelector('[data-testid="mainpage_title"]', {
-        timeout: 30000,
+      await test.step("the new username logs in with the unchanged password", async () => {
+        const res = await postLogin(request, renamed, password);
+        expect(res.status(), "the renamed user must authenticate").toBe(200);
       });
 
-      // Go to Admin Page and create inactive user
-      await page.getByTestId("user-profile-settings").click();
-      await page.getByText("Admin Page", { exact: true }).click();
-
-      await page.getByText("New User", { exact: true }).click();
-      await page.getByPlaceholder("Username").last().fill(randomName);
-      await page.locator('input[name="password"]').fill(randomPassword);
-      await page.locator('input[name="confirmpassword"]').fill(randomPassword);
-      await page.getByText("Save", { exact: true }).click();
-      await page.waitForSelector("text=new user added", { timeout: 30000 });
-
-      // Search to find the user regardless of pagination, then activate via Pencil
-      await searchForUser(page, randomName);
-      await page.getByTestId("icon-Pencil").last().click();
-      await page.waitForSelector("#is_active", { timeout: 5000 });
-      await page.locator("#is_active").click();
-      await page.getByText("Save", { exact: true }).click();
-      await page.waitForSelector("text=user edited", { timeout: 30000 });
-
-      // Log out as admin
-      await page.getByTestId("icon-ChevronLeft").first().click();
-      await page.waitForSelector('[data-testid="user-profile-settings"]', {
-        timeout: 30000,
+      await test.step("the old username no longer authenticates", async () => {
+        const res = await postLogin(request, username, password);
+        expect(
+          res.status(),
+          "the pre-rename username must be gone, not aliased",
+        ).toBe(401);
       });
-      await logoutAndShowLogin(page);
+    },
+  );
 
-      // Try to log in as now-active user — should succeed
-      await page.getByPlaceholder("Username").fill(randomName);
-      await page.getByPlaceholder("Password").fill(randomPassword);
-      await page.evaluate(() => {
-        sessionStorage.removeItem("testMockAutoLogin");
-      });
-      await page.getByRole("button", { name: "Sign In" }).click();
+  test(
+    "the OSS build offers no Admin Page — menu and route both",
+    { tag: ["@stable", "@regression", "@auth", "@ui-ux"] },
+    async ({ page }) => {
+      // Pins langflow-ai/langflow#14276. If an admin UI ever ships back into
+      // the OSS bundle — an EE surface leaking across the build split — this is
+      // the test that names it, instead of a human noticing a new menu item.
+      await awaitBootstrapTest(page, { skipModal: true });
 
-      await page.waitForSelector('[id="new-project-btn"]', { timeout: 30000 });
-      await expect(page.locator('[id="new-project-btn"]')).toBeVisible();
-
-      // Log out the activated user and re-enter as admin for cleanup
-      await logoutAndShowLogin(page);
-      await loginAs(page, "langflow", "langflow");
-      await page.waitForSelector('[data-testid="mainpage_title"]', {
-        timeout: 30000,
-      });
-      await page.getByTestId("user-profile-settings").click();
-      await page.getByText("Admin Page", { exact: true }).click();
-    } finally {
-      await deleteUserIfExists(page, randomName);
-    }
-  },
-);
-
-test(
-  "admin renames user — renamed user can log in with new username",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
-  async ({ page }) => {
-    const randomName = `user_${Math.random().toString(36).substring(5)}`;
-    const updatedName = `renamed_${Math.random().toString(36).substring(5)}`;
-    const randomPassword = Math.random().toString(36).substring(5);
-
-    try {
-      await enableLoginScreen(page);
-      await page.goto("/");
-      await page.waitForSelector("text=sign in to langflow", {
-        timeout: 30000,
+      await test.step("the user menu renders, without an Admin Page item", async () => {
+        await page.getByTestId("user-profile-settings").click();
+        // The menu itself must be open before the absence means anything — an
+        // unopened menu also contains no Admin Page.
+        await expect(page.getByTestId("menu_settings_button")).toBeVisible({
+          timeout: 15000,
+        });
+        await expect(page.getByText("Admin Page", { exact: true })).toHaveCount(
+          0,
+        );
+        await page.keyboard.press("Escape");
       });
 
-      // Log in as admin
-      await loginAs(page, "langflow", "langflow");
-      await page.waitForSelector('[data-testid="mainpage_title"]', {
-        timeout: 30000,
+      await test.step("/admin does not land on an admin UI", async () => {
+        await page.goto("/admin");
+        // The router registers no admin path, so the SPA falls through to the
+        // workspace. The old page's own marker (the user-search field) is the
+        // absence asserted — a redirect target rename would not fake a pass.
+        await page.waitForSelector('[data-testid="mainpage_title"]', {
+          timeout: 30000,
+        });
+        await expect(page.getByPlaceholder("Search Username")).toHaveCount(0);
       });
-
-      // Create and activate user
-      await page.getByTestId("user-profile-settings").click();
-      await page.getByText("Admin Page", { exact: true }).click();
-
-      await page.getByText("New User", { exact: true }).click();
-      await page.getByPlaceholder("Username").last().fill(randomName);
-      await page.locator('input[name="password"]').fill(randomPassword);
-      await page.locator('input[name="confirmpassword"]').fill(randomPassword);
-      await page.waitForSelector("#is_active", { timeout: 1500 });
-      await page.locator("#is_active").click(); // activate
-      await page.getByText("Save", { exact: true }).click();
-      await page.waitForSelector("text=new user added", { timeout: 30000 });
-
-      // Search to find the user before editing
-      await searchForUser(page, randomName);
-      await page.getByTestId("icon-Pencil").last().click();
-      await page.getByPlaceholder("Username").last().fill(updatedName);
-      await page.getByText("Save", { exact: true }).click();
-      await page.waitForSelector("text=user edited", { timeout: 30000 });
-
-      // Search for the renamed user to confirm rename succeeded
-      await searchForUser(page, updatedName);
-    } finally {
-      // Try to delete by updated name first, then original name as fallback
-      await deleteUserIfExists(page, updatedName);
-      await deleteUserIfExists(page, randomName);
-    }
-  },
-);
+    },
+  );
+});

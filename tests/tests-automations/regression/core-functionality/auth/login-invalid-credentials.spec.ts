@@ -1,8 +1,9 @@
 import { expect, test } from "../../../../fixtures/fixtures";
+import { signInThroughForm } from "../../../../helpers/auth/sign-in-through-form";
 
 test(
   "login with invalid credentials must show error and stay on login page",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     // Mock auto_login to force login screen
     await page.route("**/api/v1/auto_login", (route) => {
@@ -30,15 +31,14 @@ test(
 
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    // Fill with invalid credentials
-    await page.getByPlaceholder("Username").fill("wronguser");
-    await page.getByPlaceholder("Password").fill("wrongpassword");
-
-    await page.evaluate(() => {
-      sessionStorage.removeItem("testMockAutoLogin");
-    });
-
-    await page.getByRole("button", { name: "Sign In" }).click();
+    // Invalid credentials, with the shared-budget 429 absorbed first: under a
+    // hot window the app shows the SAME "Error signing in" toast for a 429,
+    // which would make a title-only assertion pass for the wrong reason. The
+    // helper returns the final status, so the credential verdict is pinned.
+    const status = await signInThroughForm(page, "wronguser", "wrongpassword");
+    expect(status, "wrong credentials must be refused as credentials").toBe(
+      401,
+    );
 
     // Error alert must appear — title is "Error signing in"
     await page.waitForSelector("text=Error signing in", { timeout: 10000 });
@@ -65,7 +65,7 @@ test(
 
 test(
   "login with empty credentials must not redirect to main page",
-  { tag: ["@release", "@api", "@regression", "@auth"] },
+  { tag: ["@stable", "@release", "@api", "@regression", "@auth"] },
   async ({ page }) => {
     await page.route("**/api/v1/auto_login", (route) => {
       route.fulfill({

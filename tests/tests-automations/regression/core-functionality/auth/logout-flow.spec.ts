@@ -3,6 +3,7 @@ import {
   SUPERUSER_PASSWORD,
   SUPERUSER_USERNAME,
 } from "../../../../helpers/auth/credentials";
+import { signInThroughForm } from "../../../../helpers/auth/sign-in-through-form";
 
 function setupAutoLoginMock(page: any) {
   return Promise.all([
@@ -37,15 +38,9 @@ test(
     await page.goto("/");
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    // Login with valid credentials
-    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
-    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
-
-    await page.evaluate(() => {
-      sessionStorage.removeItem("testMockAutoLogin");
-    });
-
-    await page.getByRole("button", { name: "Sign In" }).click();
+    // Login with valid credentials (429-absorbing — the endpoint budget is
+    // shared with every other auth spec in the run)
+    await signInThroughForm(page, SUPERUSER_USERNAME, SUPERUSER_PASSWORD);
 
     await page.waitForSelector('[data-testid="mainpage_title"]', {
       timeout: 30000,
@@ -88,14 +83,8 @@ test(
     await page.goto("/");
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
-    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
-
-    await page.evaluate(() => {
-      sessionStorage.removeItem("testMockAutoLogin");
-    });
-
-    await page.getByRole("button", { name: "Sign In" }).click();
+    // 429-absorbing — the login budget is shared with every auth spec
+    await signInThroughForm(page, SUPERUSER_USERNAME, SUPERUSER_PASSWORD);
 
     await page.waitForSelector('[data-testid="mainpage_title"]', {
       timeout: 30000,
@@ -132,14 +121,8 @@ test(
     await page.goto("/");
     await page.waitForSelector("text=sign in to langflow", { timeout: 30000 });
 
-    await page.getByPlaceholder("Username").fill(SUPERUSER_USERNAME);
-    await page.getByPlaceholder("Password").fill(SUPERUSER_PASSWORD);
-
-    await page.evaluate(() => {
-      sessionStorage.removeItem("testMockAutoLogin");
-    });
-
-    await page.getByRole("button", { name: "Sign In" }).click();
+    // 429-absorbing — the login budget is shared with every auth spec
+    await signInThroughForm(page, SUPERUSER_USERNAME, SUPERUSER_PASSWORD);
 
     await page.waitForSelector('[data-testid="mainpage_title"]', {
       timeout: 30000,
