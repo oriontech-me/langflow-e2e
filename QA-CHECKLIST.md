@@ -1213,7 +1213,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 514 `test()` calls carrying the `@stable` tag, distributed across 202 spec
+> 518 `test()` calls carrying the `@stable` tag, distributed across 202 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1288,8 +1288,11 @@
 - [x] API Request component — DELETE method executes DELETE verb and returns 200 → `api-request-component-regression.spec.ts`
 - [x] API Request component — non-2xx HTTP response propagates status_code without crashing → `api-request-component-regression.spec.ts`
 - [x] API Request component — query parameters embedded in URL are sent and echoed → `api-request-component-regression.spec.ts`
+- [x] API Request component — inspector headers table accepts key + value cell entries → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL tab switches mode and field accepts a cURL command → `api-request-component-regression.spec.ts`
 - [x] API Request component — cURL mode parses command, auto-fills URL, executes GET and returns 200 → `api-request-component-regression.spec.ts`
+- [x] API Request component — body table accepts key + value cell entries when method is POST → `api-request-component-regression.spec.ts`
+- [x] API Request component — flow state persists in database after autosave (URL, method, headers) → `api-request-component-regression.spec.ts`
 - [x] Show Beta Components toggle controls visibility of beta components in the sidebar → `beta-components-toggle-regression.spec.ts`
 - [x] Chat Input — toggling `showfiles` exposes the Files inspector field → `chat-input-files-field-regression.spec.ts`
 - [x] Chat Input — uploading via the inspector populates the Files field → `chat-input-files-field-regression.spec.ts`
@@ -1353,6 +1356,7 @@
 - [x] float field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] slider field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] code field edit persists → `parameters-panel-field-types.spec.ts`
+- [x] table field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] key-pair field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] input list field edit persists → `parameters-panel-field-types.spec.ts`
 - [x] Prompt Template component — renders on canvas with output handle → `prompt-template-component-regression.spec.ts`
