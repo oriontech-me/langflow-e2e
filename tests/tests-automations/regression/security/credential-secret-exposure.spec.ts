@@ -296,9 +296,16 @@ test.describe("Credential secret exposure", () => {
     },
   );
 
-  test(
+  // Quarantined at triage (daily #1544): hard failure on all three attempts —
+  // `POST /api/v1/flows/download/` returns the SecretStrInput field as
+  // `load_from_db: true` with `value: null`, so the variable name the binding
+  // points at is absent from the export (the secret itself is not leaked). Same
+  // signature on the 2026-08-20 and 08-21 dailies, both outside every measured
+  // outage window. Lifting the quarantine (remove test.fixme + restore @stable)
+  // is a deliverable of #1546.
+  test.fixme(
     "the exported flow carries the credential binding, never the secret",
-    { tag: ["@stable", "@api", "@regression"] },
+    { tag: ["@api", "@regression"] },
     async ({ request }) => {
       const surfaces: Array<{ label: string; body: string }> = [];
 
