@@ -27,6 +27,8 @@ No **functional** tag applies: the tag table has no security area, and the sibli
 
 `@stable` ships with the first delivery, mirroring the sibling security spec: the file is pure API (no browser, no LLM, no provider key, ~10 s for all three tests), so it costs the daily almost nothing and cannot fail for a provider-outage reason. It is **not** `@destructive` — it creates and deletes only its own flow, its own two global variables and its own API key.
 
+**Test 2 currently runs without `@stable`** — quarantined via `test.fixme` against the upstream export regression tracked by issue #1546 (see the note on Test 2 below). Tests 1 and 3 keep `@stable`.
+
 The three `QA-CHECKLIST.md` §17.3 bullets therefore become `[x]`.
 
 ---
@@ -63,6 +65,21 @@ The spec runs **3 tests** in a serial describe via Playwright's `request` fixtur
 6. Assert the same on `GET /api/v1/monitor/transactions?flow_id={flowId}` — the per-vertex record the same Traces panel renders alongside the spans. Neither sentinel appears there either. The masking on that path is name-based and therefore *different* (`secret_token` reads `***R...D***`; `gateway_pin` shows the unresolved variable **name**), so the assertion is on the sentinel's absence, not on a mask shape that would drift.
 
 **Test 2 — the export carries the binding, never the secret** *(`@api @regression`)*
+
+> **Quarantined (`test.fixme`, `@stable` removed) — upstream regression, tracked by issue #1546.**
+> Since upstream PR `langflow-ai/langflow#14639` (merged 2026-08-19 into `release-1.12.0`),
+> `POST /api/v1/flows/download/` nulls **every** `password=True` field — including a
+> `load_from_db` binding, whose `value` is the global-variable *name*, not the secret.
+> The exported flow comes back `{"load_from_db": true, "value": null}` and the variable
+> name is absent from the whole payload, so step 2 below fails deterministically
+> (5/5 on `1.12.0.dev33`) while `GET /api/v1/flows/{id}` keeps the binding.
+> This spec's expectation is **unchanged**: the export contract this doc pins is the
+> round-trippable one (binding preserved), and the scrubber itself has a
+> binding-preserving mode (`variable_references`, used by deployment packaging) that
+> the export call site does not use. Full analysis and reproduction:
+> `docs/upstream-bugs/UPSTREAM-BUG-flow-export-drops-credential-binding.md`.
+> Lifting the quarantine (remove `test.fixme`, restore `@stable`) is a deliverable of
+> #1546, due when the upstream fix lands in `langflowai/langflow-nightly:latest`.
 
 1. `POST /api/v1/flows/download/` with `[flowId]` — the endpoint behind the UI's Export/Download action — and assert `200`.
 2. Assert the exported payload contains **both variable names**. The export must keep the *binding* — a flow exported without it would import as a broken flow, so this is the control that step 3 is not passing because the field vanished. The check is textual here because a multi-id export answers with an archive rather than a flow object, and the variable name is the binding's observable in both shapes.

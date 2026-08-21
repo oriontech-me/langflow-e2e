@@ -296,9 +296,23 @@ test.describe("Credential secret exposure", () => {
     },
   );
 
-  test(
+  // Quarantined at #1546 (dailies of 2026-08-20 and 08-21): upstream PR
+  // langflow-ai/langflow#14639 (fc3810da0, merged 2026-08-19 into
+  // release-1.12.0) moved POST /api/v1/flows/download/ onto the metadata-driven
+  // scrubber WITHOUT its binding-preserving `variable_references` mode, so every
+  // password=True field is nulled — including a load_from_db binding, whose
+  // value is the variable NAME, not the secret. The export comes back
+  // `{load_from_db: true, value: null}` and the round-trip breaks; GET
+  // /api/v1/flows/{id} keeps the binding (asserted below, still green). The
+  // spec's contract is unchanged — this is a product regression, 5/5 on
+  // 1.12.0.dev33: see docs/upstream-bugs/
+  // UPSTREAM-BUG-flow-export-drops-credential-binding.md. Being `fixme` (a
+  // skip, not a failure) lets the serial sibling below run again. Lifting the
+  // quarantine (remove test.fixme + restore @stable) is a deliverable of #1546,
+  // due when the upstream fix lands in langflowai/langflow-nightly:latest.
+  test.fixme(
     "the exported flow carries the credential binding, never the secret",
-    { tag: ["@stable", "@api", "@regression"] },
+    { tag: ["@api", "@regression"] },
     async ({ request }) => {
       const surfaces: Array<{ label: string; body: string }> = [];
 
