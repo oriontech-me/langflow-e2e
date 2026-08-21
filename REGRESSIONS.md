@@ -107,8 +107,9 @@ moment a ticket is filed. Not counted in the indicator.
 
 | Found | Area / Test | Regression | Severity | Report |
 |-------|-------------|------------|----------|--------|
+| 2026-08-21 | security · credential-secret-exposure.spec.ts | `POST /api/v1/flows/download/` nulls `load_from_db` bindings alongside literal secrets (upstream PR #14639): exported `SecretStrInput` comes back `value: null` with the variable name absent, so export→import silently unbinds every credential. `GET /api/v1/flows/{id}` keeps the binding. | Medium | [#1546](https://github.com/oriontech-me/langflow-e2e/issues/1546) · `docs/upstream-bugs/UPSTREAM-BUG-flow-export-drops-credential-binding.md` |
 
-*(none — the file-attachment wipe was promoted to the Ledger on 2026-08-13 when
+*(the file-attachment wipe was promoted to the Ledger on 2026-08-13 when
 LE-2208 was filed; the project-delete 500 on 2026-07-28 when LE-2020 was.)*
 
 ## Not listed — validated non-regression
