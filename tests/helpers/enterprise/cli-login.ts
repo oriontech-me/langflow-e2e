@@ -102,17 +102,26 @@ export function approveCliLogin(
   });
 }
 
-/** Exchange an authorization for tokens. Overrides drive the negative cases. */
+/**
+ * Exchange an authorization for tokens. Overrides drive the negative cases.
+ *
+ * `code` is overridable so a caller can send a value that was never issued —
+ * needed to assert that an unknown code and an EXPIRED one are refused
+ * identically, which is the property that keeps this endpoint from being an
+ * oracle.
+ */
 export function exchangeCliCode(
   request: APIRequestContext,
   auth: string,
   authorization: CliAuthorization,
-  overrides: Partial<Pick<CliAuthorization, "state" | "redirectUri" | "codeVerifier">> = {},
+  overrides: Partial<
+    Pick<CliAuthorization, "code" | "state" | "redirectUri" | "codeVerifier">
+  > = {},
 ): Promise<APIResponse> {
   return request.post("/api/v1/auth/cli-login/token", {
     headers: { Authorization: auth },
     data: {
-      code: authorization.code,
+      code: overrides.code ?? authorization.code,
       state: overrides.state ?? authorization.state,
       redirect_uri: overrides.redirectUri ?? authorization.redirectUri,
       code_verifier: overrides.codeVerifier ?? authorization.codeVerifier,
