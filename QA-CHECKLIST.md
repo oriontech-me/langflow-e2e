@@ -1213,7 +1213,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 515 `test()` calls carrying the `@stable` tag, distributed across 203 spec
+> 514 `test()` calls carrying the `@stable` tag, distributed across 202 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1670,7 +1670,6 @@
 - [x] user can publish a flow and access it via shareable URL, then unpublish to revoke access → `publish-flow.spec.ts`
 - [x] publish flow via API toggles access_type between PUBLIC and PRIVATE → `publish-flow.spec.ts`
 - [x] user can copy a valid Python requests snippet from the API access modal → `pythonApiGeneration.spec.ts`
-- [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
 
