@@ -706,7 +706,7 @@
 - [x] Save flow components as template → `core-components/saveComponents.spec.ts`
 
 #### 12.6 Flow Execution
-- [x] Run Flow component executes another flow — `@stable` restored 2026-08-11 (#966). The upstream `New Flow` dead-click defect ([LE-2019](https://datastax.jira.com/browse/LE-2019)) is fixed by langflow#14349, present on the nightly line; the shared helper still gates on the flows list having rendered, and the spec was re-validated on `1.12.0.dev23` → `flow-functionality/run-flow.spec.ts`
+- [x] Run Flow component executes another flow — `@stable` restored 2026-08-11 (#966). The upstream `New Flow` dead-click defect ([LE-2019](https://datastax.jira.com/browse/LE-2019)) is fixed by langflow#14349, present on the nightly line; the shared helper still gates on the flows list having rendered. Hardened for #1548 (daily 2026-08-21 flow-selector click intercepted by two overlays): the spec now seeds the assistant-onboarding suppression (#1220) and drags the Run Flow node to the upper-right canvas region so the flow-name popup stays clear of the canvas-controls band; re-validated on `1.12.0.dev33` → `flow-functionality/run-flow.spec.ts`
 - [x] Run a flow from the canvas — terminal-node run builds the whole graph; all nodes reach build success and output is produced → `flow-functionality/flow-execution-canvas.spec.ts`
 - [x] Stop building flow → `flow-functionality/stop-building.spec.ts`
 - [ ] A cyclic graph is refused with a cycle-specific error, and the flow stays editable afterwards (the engine's own contract; a total engine failure is caught indirectly by the 63 `@stable` specs that trigger a run, a subtle one by nothing)

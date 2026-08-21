@@ -9,6 +9,16 @@ import { zoomOut } from "../../../helpers/ui/zoom-out";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
 import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-templates-modal";
+import { seedAssistantDiscovered } from "../../../helpers/ui/assistant-onboarding";
+
+// Before the first document load — the only moment it can work (#1220): upstream
+// snapshots the flag at canvas-controls mount and arms a 10 s timer, so a fresh
+// context meets the assistant-onboarding tooltip on EVERY editor entry, and this
+// spec enters twice. Its popper intercepted the flow-selector click in the
+// 2026-08-21 daily (#1548).
+test.beforeEach(async ({ page }) => {
+  await seedAssistantDiscovered(page);
+});
 
 // `test.fixme` lifted in #966 — the spec runs again. The recurrent flake (dailies
 // 2026-07-16 / 07-27) was the mid-test `openNewFlowTemplatesModal` call below: after
@@ -152,11 +162,16 @@ test(
         timeout: 30000,
       });
 
+      // Drag to the upper-right canvas region instead of the one-click add,
+      // which drops the node where the flow-name popup's refresh row lands in
+      // the canvas-controls band (x 668–892, y 665–705 at 1280×720) once the
+      // instance's flow list is long enough — the bar then intercepts the
+      // click (#1548, the #576 overlay class). Anchored up here, every popup
+      // hit point stays clear of that band regardless of list size.
       await page
         .getByTestId("flow_controlsRun Flow")
-        .hover()
-        .then(async () => {
-          await page.getByTestId("add-component-button-run-flow").click();
+        .dragTo(page.locator('//*[@id="react-flow-id"]'), {
+          targetPosition: { x: 550, y: 60 },
         });
 
       await page

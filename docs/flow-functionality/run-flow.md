@@ -47,6 +47,13 @@ If this breaks, users cannot compose flows via the Run Flow component — a core
 - Step 5 (return to the main page, then open the templates modal again) reaches the
   templates modal — the flake fixed in #966 died here, before the second flow was
   ever created
+- The flow-name dropdown interaction (step 7: open → refresh → "Loading" →
+  "Select an option") completes with no overlay interception: the spec seeds
+  `langflow-assistant-discovered` before its first load (#1220 mechanism), so the
+  assistant-onboarding tooltip never arms on either editor entry, and the refresh
+  click lands on a hit point clear of the `main_canvas_controls` band even when
+  the instance's flow list is long enough to reposition the dropdown popup
+  (see the #1548 section below)
 
 ---
 
@@ -144,6 +151,52 @@ The recovery-by-page-load that helper also offers is deliberately
 **not** enabled here: everything the rest of this spec asserts lives in the flow
 built on the canvas, so discarding it would trade a clean failure at the exit for
 an inscrutable one at the Run Flow dropdown.
+
+---
+
+## Flake history — #1548 (daily 2026-08-21): flow-selector click intercepted by two overlays
+
+Hard-failed all three attempts on shard 1 — the shard that run's own liveness
+recorder measured **clean** (0 outages, 0 gunicorn `WORKER TIMEOUT`), so this is
+not the day's backend wedge. The click on
+`refresh-dropdown-list-flow_name_selected` (step 7) retried for the full 20 s
+actionability window; every retry was refused by an overlay Playwright named in
+the call log. Two distinct interceptors appeared, and per the issue they are
+attributed **separately**:
+
+**(A) `main_canvas_controls` / `canvas_controls_dropdown` — popup geometry, not
+the tooltip.** The dropdown popup is anchored to the Run Flow node and grows
+downward as the flow list populates; the refresh row rides it. Measured on
+`1.12.0.dev33` (fresh profile, the spec's own entry path): with the list not yet
+loaded the refresh row sits at y≈424, well clear of the controls bar (y 665–705);
+once the instance's list populated (56 flows) the same row landed at y≈741 —
+*past* the 720-viewport, i.e. the row crosses the controls-bar band on its way
+out as the list grows. On an instance holding a mid-size list the row parks
+inside the bar's band and the bar intercepts the click. This is the #576 overlay
+class, independent of the onboarding tooltip, and it explains why the failure is
+rare: it needs the shared CI instance's flow count to put the row in that band at
+the moment of the click.
+
+**(B) `assistant-onboarding-tooltip` — a known, already-solved suite hazard this
+spec never opted into.** NOT new upstream behaviour: the mechanism was measured
+to the millisecond in #1220 on `1.12.0.dev15` and re-confirmed identical on
+`1.12.0.dev33` for this issue (282×32 px, z-40, anchored over the controls bar
+at the bar's mount position + 10 000 ms whenever
+`localStorage["langflow-assistant-discovered"]` is unset — a fresh Playwright
+context always meets it; dismissal persists the flag per user). The suite's
+standing answer is `seedAssistantDiscovered` (`helpers/ui/assistant-onboarding.ts`,
+PR #1282) seeded **before the first navigation** — a post-load dismissal cannot
+disarm the timer (measured in #1220). This spec predates the helper and never
+adopted it, and it enters the editor **twice**, arming the 10 s timer twice per
+run. The issue's premise that the testid "is referenced nowhere in this
+repository" was stale on arrival: seven specs plus `openFlowById` already seed,
+and `expandFocusedNode` hard-fails unseeded callers.
+
+Fix shape: adopt the seed (kills B on both entries), and keep the step-7 hit
+point clear of the controls-bar band regardless of instance flow count (kills A).
+Blast radius of B beyond this spec is any fresh-context spec that mounts the
+canvas-controls bar and still interacts ≥10 s later without seeding — recorded on
+issue #1548 rather than widened here.
 
 ---
 
