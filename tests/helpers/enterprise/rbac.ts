@@ -106,6 +106,83 @@ export async function requireBypassInstance(
   return status;
 }
 
+/**
+ * Skip unless this instance can serve the Access Control screen.
+ *
+ * Deliberately WEAKER than `requireRbacInstance`, and the difference is the
+ * point: that gate also demands `superuser_bypass: false`, because a deny matrix
+ * measured through an exempt account measures nothing. This screen is an
+ * operator surface, not an enforcement one — what it needs is authorization
+ * turned on (so roles and assignments exist at all) and a caller the instance
+ * considers an RBAC administrator, which is the flag the frontend itself gates
+ * the page on (`GET /authz/me/rbac-admin`). Demanding the bypass be off as well
+ * would skip the spec on instances that render the screen perfectly well.
+ *
+ * Reads the flag through the same endpoint the page does, rather than inferring
+ * it from `assignment_count` or from the account being a superuser: those agree
+ * today and are not the contract.
+ */
+export async function requireAuthzAdminUi(
+  request: APIRequestContext,
+  auth: string,
+): Promise<AuthzStatus> {
+  const status = await readAuthzStatus(request, auth);
+
+  test.skip(
+    status.authz_enabled !== true,
+    `This instance reports authz_enabled=${status.authz_enabled} — with ` +
+      `authorization off there are no roles or assignments for the screen to ` +
+      `show, so every assertion here would pass or fail for a reason unrelated ` +
+      `to the product. Start the RBAC variant with: LANGFLOW_EE_RBAC=1 ` +
+      `./scripts/start-langflow-enterprise.sh (then point PLAYWRIGHT_BASE_URL at ` +
+      `it, default http://localhost:7891)`,
+  );
+
+  const admin = await isRbacAdmin(request, auth);
+  test.skip(
+    !admin,
+    `GET /authz/me/rbac-admin reports is_rbac_admin=false for this lane's ` +
+      `account. The Access Control screen is gated on that flag, so it would ` +
+      `render nothing to assert on. Grant the account the global admin role, or ` +
+      `use an instance whose bootstrap does.`,
+  );
+
+  return status;
+}
+
+/**
+ * Run one API call, re-dialling ONCE if the request fails at the transport layer.
+ *
+ * `socket hang up` / `ECONNRESET` is the class this repo's own tooling treats as
+ * an environment abort rather than as a verdict (the pipeline records such runs
+ * `infra-void` and re-runs them). Observed on this lane against a container that
+ * never restarted, never OOM-killed anything (`oom_kill 0` in its cgroup, no
+ * memory limit) and logged nothing — so the cause sits below the application and
+ * outside what a spec can assert about. It is load-dependent: 10 consecutive
+ * local runs never reproduced it while a loaded machine hit it on the first.
+ *
+ * It matters because `expect.poll` PROPAGATES a throw from its poller. A poll
+ * written to tolerate timing cannot tolerate the one error that actually shows
+ * up, so the run dies on a dropped connection instead of re-reading a moment
+ * later.
+ *
+ * Deliberately narrow, so nothing here softens an assertion: only a THROWN
+ * request is retried, and only once. A response that arrived carrying a non-2xx
+ * is a statement about the product and is passed straight through.
+ */
+export async function retryOnDroppedConnection<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!/socket hang up|ECONNRESET|ECONNREFUSED|EPIPE|socket disconnected/i.test(message)) {
+      throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    return await call();
+  }
+}
+
 export interface RoleAssignment {
   id: string;
   user_id: string;
@@ -145,9 +222,15 @@ export async function readAllRoleAssignments(
   request: APIRequestContext,
   auth: string,
 ): Promise<RoleAssignment[]> {
-  const response = await request.get("/api/v1/authz/admin/role-assignments", {
-    headers: { Authorization: auth },
-  });
+  // Wrapped rather than left bare because this read is what the UI spec polls
+  // after driving the screen, and a dropped connection there aborted the poll.
+  // The wrapper retries only a THROWN request — the status assertion below is
+  // untouched, so a real refusal still fails here as it always did.
+  const response = await retryOnDroppedConnection(() =>
+    request.get("/api/v1/authz/admin/role-assignments", {
+      headers: { Authorization: auth },
+    }),
+  );
   expect(response.status(), await response.text()).toBe(200);
   return (await response.json()) as RoleAssignment[];
 }
@@ -197,6 +280,100 @@ export async function builtinRoleIds(
   expect(response.status()).toBe(200);
   const roles = (await response.json()) as { id: string; name: string }[];
   return Object.fromEntries(roles.map((role) => [role.name, role.id]));
+}
+
+/** A custom role, as this file creates them. */
+export interface CustomRole {
+  id: string;
+  name: string;
+}
+
+/**
+ * Create a custom role and return it.
+ *
+ * `permissions` defaults to empty: the callers here need a row of the CUSTOM
+ * kind, not a role that grants anything, and an empty permission set keeps the
+ * role inert if a failed cleanup ever leaves it behind. A caller that needs
+ * grants passes them.
+ */
+export async function createCustomRole(
+  request: APIRequestContext,
+  auth: string,
+  name: string,
+  permissions: string[] = [],
+): Promise<CustomRole> {
+  const response = await request.post("/api/v1/authz/roles", {
+    headers: { Authorization: auth },
+    data: { name, description: "Created by the E2E suite.", permissions },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+  const body = (await response.json()) as CustomRole;
+  return { id: body.id, name: body.name };
+}
+
+/**
+ * `PATCH /authz/roles/{id}`, returned RAW.
+ *
+ * Half of what this route is worth asserting on is its refusal — a system role
+ * answers `400 {"detail":"System roles cannot be modified"}` — and a helper that
+ * expected 200 could not express that.
+ */
+export function patchRole(
+  request: APIRequestContext,
+  auth: string,
+  roleId: string,
+  data: Record<string, unknown>,
+) {
+  return request.patch(`/api/v1/authz/roles/${roleId}`, {
+    headers: { Authorization: auth },
+    data,
+  });
+}
+
+/** `DELETE /authz/roles/{id}`, returned RAW, for the same reason as `patchRole`. */
+export function deleteRoleRaw(request: APIRequestContext, auth: string, roleId: string) {
+  return request.delete(`/api/v1/authz/roles/${roleId}`, {
+    headers: { Authorization: auth },
+  });
+}
+
+/** Best-effort role removal for cleanup — a role already gone is not a failure. */
+export async function deleteRole(
+  request: APIRequestContext,
+  auth: string,
+  roleId: string,
+): Promise<void> {
+  await deleteRoleRaw(request, auth, roleId).catch(() => undefined);
+}
+
+/**
+ * Revoke every assignment `userId` holds, read from the ADMIN listing.
+ *
+ * The listing matters: the caller-scoped one returns the caller's own grants, so
+ * a sweep built on it silently revokes nothing for anybody else — measured, that
+ * is how an assignment for a test subject was leaked onto a shared instance.
+ *
+ * Reading rather than tracking ids is what makes this usable for cleanup after a
+ * grant the SCREEN created: the test never learns that id unless it succeeds at
+ * reading it back, and the run that dies before then is exactly the one that
+ * needs the sweep. Never point it at the lane's own superuser — it holds the
+ * global admin role every later test depends on.
+ */
+export async function revokeAssignmentsFor(
+  request: APIRequestContext,
+  auth: string,
+  userId: string,
+): Promise<number> {
+  const assignments = await readAllRoleAssignments(request, auth);
+  const mine = assignments.filter((assignment) => assignment.user_id === userId);
+  for (const assignment of mine) {
+    await request
+      .delete(`/api/v1/authz/role-assignments/${assignment.id}`, {
+        headers: { Authorization: auth },
+      })
+      .catch(() => undefined);
+  }
+  return mine.length;
 }
 
 /**
@@ -826,6 +1003,47 @@ export async function getSharedRbacSubject(
       const body = (await whoami.json()) as { id?: string };
       if (body.id === cached.id) return cached;
     }
+
+    // The token died; the ACCOUNT usually has not. Minting a replacement here
+    // was the first implementation, and it leaks: measured on this instance, an
+    // expired cache left the previous account behind together with the Starter
+    // Project Langflow seeds for every new user — one orphan pair per token
+    // lifetime, forever, on a shared instance. Re-logging in costs the same
+    // single unit of the 5-per-minute budget as minting would and leaves
+    // nothing behind, so it is tried first.
+    const revived = await request
+      .post("/api/v1/login", {
+        form: { username: cached.username, password: cached.password },
+      })
+      .catch(() => undefined);
+
+    if (revived?.ok()) {
+      const body = (await revived.json()) as { access_token?: string };
+      if (body.access_token) {
+        const subject = { ...cached, auth: `Bearer ${body.access_token}` };
+        writeCachedSubject(subject);
+        return subject;
+      }
+    }
+
+    // A 429 says the machine is over its login budget, not that the account is
+    // gone. Minting here would spend another login on a limiter that is already
+    // refusing, and leave a second account behind for a problem that clears by
+    // itself in a minute.
+    if (revived?.status() === 429) {
+      throw new Error(
+        `Re-authenticating the cached RBAC subject '${cached.username}' was ` +
+          `rate-limited (429). EE allows 5 logins per minute per IP for the ` +
+          `whole machine and counts failed attempts too. Wait out the window ` +
+          `(~60s) and re-run; if it persists, another process is ` +
+          `authenticating against the same instance.`,
+      );
+    }
+
+    // Anything else means the cached account is unusable — deleted, deactivated,
+    // or its password rotated. Remove it before replacing it, so the instance
+    // ends this call with one subject account rather than two.
+    await cleanupRbacUser(request, auth, cached).catch(() => undefined);
   }
 
   const subject = await createRbacUser(request, auth, "authz-shared");

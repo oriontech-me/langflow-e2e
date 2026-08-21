@@ -36,6 +36,14 @@ import { deleteProject } from "./delete-project";
 export interface CreatedProject {
   /** The id of the created project, usable as a flow's `folder_id`. */
   projectId: string;
+  /**
+   * The generated, unique project name.
+   *
+   * Returned because the name is the only handle a UI caller has: a screen that
+   * lists projects offers their names, not their ids, and re-reading it with a
+   * `GET` would ask the API for something this helper already knows.
+   */
+  name: string;
   /** Deletes the project created by this helper. Safe to call in `finally`. */
   deleteProject: (reqOverride?: APIRequestContext) => Promise<void>;
 }
@@ -85,6 +93,7 @@ export async function createProjectViaApi(
 
   return {
     projectId,
+    name,
     deleteProject: async (reqOverride?: APIRequestContext) => {
       const req = reqOverride ?? request;
       await deleteProject(req, projectId, { headers });
