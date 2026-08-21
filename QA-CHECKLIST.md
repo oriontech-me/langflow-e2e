@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-20
+> **Last updated:** 2026-08-21
 
 ---
 
@@ -1185,11 +1185,11 @@
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
 | `security/` — Validation, SSRF, Secrets | 11 | 8 | 3 | 0 | 0 |
-| `i18n/` — Language and Localization | 5 | 0 | 0 | 0 | 5 |
+| `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces | 53 | 0 | 39 | 5 | 9 |
-| **TOTAL** | **601** | **421 (70%)** | **92 (15%)** | **19 (3%)** | **69 (11%)** |
+| **TOTAL** | **601** | **426 (71%)** | **92 (15%)** | **19 (3%)** | **64 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1205,7 +1205,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 496 `test()` calls carrying the `@stable` tag, distributed across 195 spec
+> 502 `test()` calls carrying the `@stable` tag, distributed across 197 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1651,6 +1651,14 @@
 - [x] user should be able to use Run Flow without any issues → `run-flow.spec.ts`
 - [x] user must be able to stop a building from the canvas → `stop-building.spec.ts`
 - [x] flow state should be properly cleaned up between user sessions → `user-flow-state-cleanup.spec.ts`
+
+#### i18n/
+- [x] changing the display language re-renders the interface → `language-selection.spec.ts`
+- [x] the selected language survives a reload and a second tab of the same session → `language-selection.spec.ts`
+- [x] every language the selector offers loads a translation bundle → `language-selection.spec.ts`
+- [x] the application boots into a shipped language for every unsupported or regional preference → `locale-resilience.spec.ts`
+- [x] the application boots in English and never adopts the browser locale as a preference → `locale-resilience.spec.ts`
+- [x] a missing key falls back to English beside siblings the bundle translates → `locale-resilience.spec.ts`
 
 #### mcp/client/
 - [x] Gemini invokes the echo MCP tool (regression for fixed upstream #440) → `mcp-client-agent-gemini-tool-regression.spec.ts`
