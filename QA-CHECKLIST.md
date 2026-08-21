@@ -905,32 +905,42 @@
 > asserts that the **Language group renders** with its description. Nothing asserts that
 > **changing** the language works, and that is exactly where the reported failures are.
 >
-> **Blocked on a prerequisite, by the project's own rule.** `CONTRIBUTING.md` →
-> *Browser locale is pinned to `en-US`* fixes the context locale and `Accept-Language`
-> for every test in every project, because the suite asserts English strings throughout,
-> and it states that non-English coverage *"is a separate, parameterised concern — raise
-> it as its own issue rather than editing the shared default."* §18.2 in particular
-> cannot run under that pin. These bullets therefore need that parameterisation issue
-> opened and resolved **first**; writing them against a per-test `locale` override would
-> violate the rule they depend on.
+> **The prerequisite has landed.** `CONTRIBUTING.md` used to pin the context locale to
+> `en-US` for every test with no sanctioned override, which made these bullets unwritable
+> — the exact parameterisation issue it asked for is #1400 (`tests/fixtures/locale.ts`,
+> `withLocale()`), merged 2026-08-11. The batch below is written against it.
 
 #### 18.1 Language Selection
 
-- [ ] Changing the display language in Settings → General actually re-renders the interface
+- [x] Changing the display language in Settings → General actually re-renders the interface
       in the selected language (the seam immediately past `settings-general-section.spec.ts`)
-- [ ] The selected language persists across a reload and a new session
-- [ ] Every language offered in the selector has a locale bundle that loads
+      → i18n/language-selection.spec.ts
+- [x] The selected language persists across a reload and a new session — a reload and a
+      second tab of the same browser context; a fresh context correctly does **not**
+      inherit it (the preference is `localStorage`, not server state)
+      → i18n/language-selection.spec.ts
+- [x] Every language offered in the selector has a locale bundle that loads
       (`langflow-ai/langflow#12738`, `#12740` — shipped selector entries with missing `ru`
-      and `ko` bundles)
+      and `ko` bundles; the options are enumerated at run time so a new entry is covered
+      the day it appears, and English is asserted as the inverse case — no chunk at all)
+      → i18n/language-selection.spec.ts
 
 #### 18.2 Locale Resilience
 
-- [ ] The application boots without a blank screen when the browser language is one Langflow
+- [x] The application boots without a blank screen when the browser language is one Langflow
       does not ship a bundle for — **the product's known total-failure mode**: a missing
       Chinese bundle (`#12923`, `#13477`) and Norwegian Bokmål `nb-NO` (`#13196`) each render
-      a black screen, so the product does not open at all for those users
-- [ ] A locale bundle missing individual keys falls back to English for those keys instead of
-      failing the render
+      a black screen, so the product does not open at all for those users. Covered on both
+      axes: the stored `languagePreference` (nine-seed normaliser table) and the browser
+      locale under `withLocale("nb-NO")`, which also pins that `navigator.language` never
+      becomes a preference
+      → i18n/locale-resilience.spec.ts
+- [x] A locale bundle missing individual keys falls back to English for those keys instead of
+      failing the render — asserted in the Create Memory modal under `pt`, on the two
+      `memory.dbProvider*` keys only `en` carries (`shortcuts.modifierOnly` is a decoy: its
+      call site passes an inline `defaultValue`, so it renders English even with the
+      fallback broken)
+      → i18n/locale-resilience.spec.ts
 
 ---
 
