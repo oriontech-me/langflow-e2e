@@ -25,6 +25,8 @@ const REFRESH_URL = `http://localhost:7860${COMPONENT_REFRESH_PATH}`;
 /** A Page stand-in exposing only what the helper touches. */
 function fakePage() {
   const handlers = new Map<string, Set<Handler>>();
+  /** Every `waitForTimeout` the helper asked for, in order. */
+  const sleeps: number[] = [];
   const page = {
     on(event: string, handler: Handler) {
       if (!handlers.has(event)) handlers.set(event, new Set());
@@ -34,6 +36,7 @@ function fakePage() {
       handlers.get(event)?.delete(handler);
     },
     async waitForTimeout(ms: number) {
+      sleeps.push(ms);
       await new Promise((resolve) => setTimeout(resolve, ms));
     },
   };
@@ -42,6 +45,12 @@ function fakePage() {
   };
   return {
     page: page as unknown as Page,
+    /**
+     * Every `page.waitForTimeout` the helper issued. In the E2E context each one
+     * is a traced Playwright call, so the count is what makes the poll rate an
+     * assertable property rather than a comment.
+     */
+    sleeps,
     /** Total listeners still attached, across every event. */
     get listeners() {
       return [...handlers.values()].reduce((n, set) => n + set.size, 0);
@@ -180,4 +189,67 @@ test("throws naming the endpoint when the traffic never goes quiet", async () =>
   }
 
   assert.equal(fake.listeners, 0, "every listener must be removed");
+});
+
+test("polls at a floor instead of spinning while a refresh is in flight", async () => {
+  // The sleep is derived from the REMAINING quiet window, which goes negative
+  // once `quietFor` passes `quietMs` with a request still in flight — the
+  // `inFlight === 0` conjunct correctly blocks the return, so without a floor
+  // the loop turns over every 1 ms. Measured at 5655 iterations for a request
+  // in flight for 8 s, each one a traced Playwright call landing in the trace
+  // someone opens to diagnose the throw.
+  const fake = fakePage();
+  const watch = watchNodeRefresh(fake.page);
+  fake.request(); // in flight for the whole window, never answered
+
+  await assert.rejects(() =>
+    watch.untilQuiet({ quietMs: 20, timeout: 400 }),
+  );
+
+  // 400 ms at the 50 ms floor is ~8 turns; at 1 ms it would be in the hundreds.
+  assert.ok(
+    fake.sleeps.length <= 40,
+    `must not spin while in flight (issued ${fake.sleeps.length} sleeps, expected <= 40)`,
+  );
+  assert.ok(
+    fake.sleeps.every((ms) => ms >= 20),
+    `every sleep must respect the floor (got ${JSON.stringify(fake.sleeps)})`,
+  );
+});
+
+test("a second untilQuiet() throws instead of reporting a quiet it cannot observe", async () => {
+  // The listeners are detached once the first call settles, so a second one
+  // would find `inFlight === 0` and a stale `lastActivityAt` and return on its
+  // first iteration — indistinguishable from an observed quiet, and the exact
+  // #1012 failure mode the timeout path refuses. The way in is a caller wrapping
+  // interaction + settle in `expect(async () => {…}).toPass()`.
+  const fake = fakePage();
+  const watch = watchNodeRefresh(fake.page);
+  await watch.untilQuiet({ quietMs: 20, timeout: 1000 });
+
+  const started = Date.now();
+  await assert.rejects(
+    () => watch.untilQuiet({ quietMs: 5000, timeout: 1000 }),
+    (error: Error) => {
+      assert.match(error.message, /single-use/);
+      return true;
+    },
+  );
+  assert.ok(
+    Date.now() - started < 500,
+    "the refusal must be immediate, not a timeout",
+  );
+});
+
+test("dispose() detaches the listeners on the abort path", async () => {
+  // If the interaction between `watchNodeRefresh(page)` and `untilQuiet()`
+  // throws, nothing else would ever remove these three listeners.
+  const fake = fakePage();
+  const watch = watchNodeRefresh(fake.page);
+  assert.equal(fake.listeners, 3, "three listeners attach up front");
+
+  watch.dispose();
+  assert.equal(fake.listeners, 0, "dispose() must remove all of them");
+  watch.dispose();
+  assert.equal(fake.listeners, 0, "dispose() must be idempotent");
 });

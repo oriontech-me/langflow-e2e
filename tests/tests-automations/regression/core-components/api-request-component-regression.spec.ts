@@ -634,24 +634,41 @@ test("API Request component — inspector headers table accepts key + value cell
     const headersDialog = tableDialog(page, "Headers");
     await expect(headersDialog).toBeVisible({ timeout: 10000 });
 
+    // Scoped with `[row-id]` so only DATA rows match: without it the grid's own
+    // header row is in the set, and a total row drop leaves `.last()` resolving
+    // to that header instead of resolving empty — an edit that fails somewhere
+    // unrelated rather than here.
+    const headersDataRows = headersDialog.locator(
+      '[role="treegrid"] [role="row"][row-id]',
+    );
+    await expect(headersDataRows).toHaveCount(1, { timeout: 5000 });
     await headersDialog.getByTestId("add-row-button").click();
-
-    const lastRow = headersDialog
-      .locator('[role="treegrid"] [role="row"]')
-      .last();
+    await expect(headersDataRows).toHaveCount(2, { timeout: 5000 });
 
     // fillViewTextCell asserts the cell value renders as a button inside the table dialog after Save —
     // verifying both key AND value cells closes the gap where only the key was previously asserted.
     await fillViewTextCell(
       page,
-      lastRow.locator('[col-id="key"]'),
+      headersDataRows.last().locator('[col-id="key"]'),
       "X-E2E-Header",
     );
+
+    // Re-anchor on the key just written rather than reusing `.last()`, which is
+    // a live locator. `headers` ships with a DEFAULT row (`User-Agent`), so a
+    // late component refresh landing between the two edits re-syncs `tempValue`
+    // and makes `.last()` resolve to that default row: both edits then land on
+    // it, both cell-scoped assertions inside fillViewTextCell still pass, and
+    // the test reports green having asserted nothing about the added row. Same
+    // silent-green path measured on the sibling tests in #1488.
+    const editedRow = headersDataRows.filter({ hasText: "X-E2E-Header" });
+    await expect(editedRow).toHaveCount(1, { timeout: 5000 });
     await fillViewTextCell(
       page,
-      lastRow.locator('[col-id="value"]'),
+      editedRow.locator('[col-id="value"]'),
       "test-header-value",
     );
+    // The added row must sit ALONGSIDE the default header row.
+    await expect(headersDataRows).toHaveCount(2, { timeout: 5000 });
 
     await headersDialog.getByTestId("btn-cancel-modal").click();
     await expect(headersDialog).not.toBeVisible({ timeout: 5000 });

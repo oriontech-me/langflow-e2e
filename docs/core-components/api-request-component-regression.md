@@ -68,6 +68,7 @@ For each of GET, POST, PUT, PATCH, DELETE:
   `div-table_headers` widget then renders on the node body.
 - Opens `div-table_headers` → its trigger button (`tableFieldTrigger`, role-only inside the field container — **not** matched by accessible name, see Notes) → table dialog opens.
 - Adds a row, then fills BOTH the `[col-id="key"]` cell with `X-E2E-Header` and the `[col-id="value"]` cell with `test-header-value` via the `fillViewTextCell` helper. The helper asserts each cell value renders as a button inside the table dialog after Save (this is the in-session validation; the test does not assert table-modal-level persistence — see "What this test does not cover").
+- Like test 15, the value cell is filled on the row **re-anchored by the key just written**, with a `toHaveCount(2)` guard on either side of the add. `headers` ships with a default `User-Agent` row, so a late `real_time_refresh` landing between the two edits would re-sync `tempValue` and make a `.last()` locator resolve to that default row — both edits would land on it, both cell-scoped assertions inside `fillViewTextCell` would still pass, and the test would report green having asserted nothing about the added row. The data-row locator is scoped with `[row-id]` for the same reason: unscoped, the grid's own header row is in the set and a total drop resolves `.last()` onto it instead of resolving empty (#1488).
 - Closes the dialog with `btn-cancel-modal` and asserts canvas integrity.
 
 ### 12. `cURL tab switches mode and field accepts a cURL command`

@@ -21,8 +21,22 @@ export interface NodeRefreshWatch {
    * Resolve once no component refresh is in flight AND none has been seen for
    * `quietMs`. Throws if the traffic is still going at `timeout`. Detaches its
    * listeners either way.
+   *
+   * **Single-use.** Detaching is what makes a second call unsafe: with no
+   * listeners attached, `inFlight` can never rise and `lastActivityAt` is
+   * already stale, so the second call would return on its first iteration and
+   * report a quiet it never observed — the #1012 failure mode the timeout path
+   * below refuses. It therefore throws instead. Wrap the interaction in a
+   * `toPass()` retry and you need a fresh `watchNodeRefresh(page)` per attempt.
    */
   untilQuiet(opts?: { quietMs?: number; timeout?: number }): Promise<void>;
+  /**
+   * Detach the listeners without waiting. Only needed on the abort path: if the
+   * interaction between `watchNodeRefresh(page)` and `untilQuiet()` throws, the
+   * listeners would otherwise stay attached for the rest of the test. Idempotent,
+   * and safe to call after `untilQuiet()` (which detaches on its own).
+   */
+  dispose(): void;
 }
 
 /**
@@ -88,6 +102,7 @@ export function watchNodeRefresh(page: Page): NodeRefreshWatch {
   page.on("requestfinished", onSettled);
   page.on("requestfailed", onSettled);
 
+  let spent = false;
   const detach = () => {
     page.off("request", onRequest);
     page.off("requestfinished", onSettled);
@@ -95,7 +110,21 @@ export function watchNodeRefresh(page: Page): NodeRefreshWatch {
   };
 
   return {
+    dispose: detach,
     async untilQuiet({ quietMs = 1500, timeout = 20000 } = {}) {
+      // Refuse the second call rather than answering it wrongly: the listeners
+      // are gone, so this one would see `inFlight === 0` and a stale
+      // `lastActivityAt` and return at once, claiming a quiet it cannot have
+      // observed (#1012).
+      if (spent) {
+        throw new Error(
+          "watchNodeRefresh: untilQuiet() is single-use — its listeners are " +
+            "detached once it settles, so a second call would report quiet it " +
+            "never observed. Call watchNodeRefresh(page) again before the next " +
+            "interaction.",
+        );
+      }
+      spent = true;
       try {
         const deadline = Date.now() + timeout;
         for (;;) {
@@ -112,7 +141,16 @@ export function watchNodeRefresh(page: Page): NodeRefreshWatch {
                 `never stopped re-rendering.`,
             );
           }
-          await page.waitForTimeout(Math.min(100, Math.max(1, quietMs - quietFor)));
+          // The sleep is derived from the quiet window, so with a request in
+          // flight past `quietMs` the remaining-window figure goes negative and
+          // a bare `Math.max(1, …)` collapses the loop to 1 ms per turn — a
+          // request in flight for 8 s measured 5655 iterations, and each one is
+          // a traced Playwright call, so the very trace someone opens to
+          // diagnose the throw is the one buried in them. Poll at a fixed 50 ms
+          // whenever there is nothing to wait out but the in-flight request.
+          const sleepMs =
+            inFlight > 0 ? 50 : Math.min(100, Math.max(1, quietMs - quietFor));
+          await page.waitForTimeout(sleepMs);
         }
       } finally {
         detach();
