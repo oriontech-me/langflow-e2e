@@ -1178,7 +1178,7 @@
 | `api/flows/` — REST API | 28 | 28 | 0 | 0 | 0 |
 | `core-components/` — Component Config | 27 | 24 | 3 | 0 | 0 |
 | `core-components/` — Core Components | 91 | 87 | 3 | 0 | 1 |
-| `core-functionality/auth/` | 22 | 8 | 14 | 0 | 0 |
+| `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 33 | 3 | 1 | 3 |
 | `core-functionality/model-provider/` | 34 | 32 | 2 | 0 | 0 |
@@ -1197,7 +1197,7 @@
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces | 53 | 0 | 39 | 5 | 9 |
-| **TOTAL** | **601** | **426 (71%)** | **92 (15%)** | **19 (3%)** | **64 (11%)** |
+| **TOTAL** | **602** | **439 (73%)** | **80 (13%)** | **19 (3%)** | **64 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1213,7 +1213,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 502 `test()` calls carrying the `@stable` tag, distributed across 197 spec
+> 517 `test()` calls carrying the `@stable` tag, distributed across 203 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1423,9 +1423,24 @@
 - [x] cancelling a running task moves it to canceled → `a2a-server-tasks-lifecycle.spec.ts`
 
 #### core-functionality/auth/
+- [x] admin changes user password — user can log in with new password → `admin-password-change.spec.ts`
+- [x] admin changes user password — old password no longer works after change → `admin-password-change.spec.ts`
+- [x] admin creates a user inactive by default — the inactive user cannot log in → `admin-user-management.spec.ts`
+- [x] activation and deactivation flip the same credentials between refused and accepted → `admin-user-management.spec.ts`
+- [x] renaming a user moves the login to the new username → `admin-user-management.spec.ts`
+- [x] the OSS build offers no Admin Page — menu and route both → `admin-user-management.spec.ts`
+- [x] when auto_login is off, users sign in through the form and see only their own flows → `auto-login-off.spec.ts`
+- [x] auto_login sign in → `autoLogin.spec.ts`
+- [x] auto_login block_admin → `autoLogin.spec.ts`
+- [x] login with invalid credentials must show error and stay on login page → `login-invalid-credentials.spec.ts`
+- [x] login with empty credentials must not redirect to main page → `login-invalid-credentials.spec.ts`
 - [x] logout must redirect user to login page → `logout-flow.spec.ts`
 - [x] after logout, navigating to root must redirect to login → `logout-flow.spec.ts`
 - [x] after logout, reload must stay on login page → `logout-flow.spec.ts`
+- [x] API request with invalid token returns 401 or 403 → `session-expired.spec.ts`
+- [x] API request with no token returns 401 or 403 → `session-expired.spec.ts`
+- [x] UI shows login page when auto_login is unavailable (session cannot be established) → `session-expired.spec.ts`
+- [x] valid token grants access to protected resources → `session-expired.spec.ts`
 
 #### core-functionality/knowledge-ingestion-management/
 - [x] upload a <ext> file through the Files page → `file-types-upload.spec.ts`
@@ -1766,7 +1781,7 @@
 | `api/flows/` — REST API | 0 | 0 |
 | `core-components/` — Component Config | 3 | 0 |
 | `core-components/` — Core Components | 3 | 1 |
-| `core-functionality/auth/` | 14 | 0 |
+| `core-functionality/auth/` | 2 | 0 |
 | `core-functionality/llm-agents/` | 3 | 3 |
 | `core-functionality/model-provider/` | 2 | 0 |
 | `core-functionality/playground/` | 3 | 1 |
