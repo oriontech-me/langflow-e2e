@@ -114,12 +114,38 @@ export interface RoleAssignment {
   domain_id?: string | null;
 }
 
-/** Every role assignment the instance holds. */
+/**
+ * The CALLER'S OWN role assignments — not the instance's.
+ *
+ * The scoping is easy to get wrong and fails silently in the worst direction:
+ * granting a role to somebody else and then looking for it here returns an empty
+ * result, which reads as "the grant did not land". It also means a cleanup loop
+ * built on this listing cannot see what it is meant to revoke — measured, that
+ * leaked an assignment for a test subject onto a shared instance. Use
+ * `readAllRoleAssignments` for anything about another principal.
+ */
 export async function readRoleAssignments(
   request: APIRequestContext,
   auth: string,
 ): Promise<RoleAssignment[]> {
   const response = await request.get("/api/v1/authz/role-assignments", {
+    headers: { Authorization: auth },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  return (await response.json()) as RoleAssignment[];
+}
+
+/**
+ * EVERY role assignment on the instance, from the admin listing.
+ *
+ * Behind the admin-route guard (`RBAC administrator role required`), unlike the
+ * caller-scoped listing above, which any authenticated user may read for itself.
+ */
+export async function readAllRoleAssignments(
+  request: APIRequestContext,
+  auth: string,
+): Promise<RoleAssignment[]> {
+  const response = await request.get("/api/v1/authz/admin/role-assignments", {
     headers: { Authorization: auth },
   });
   expect(response.status(), await response.text()).toBe(200);
@@ -303,6 +329,126 @@ export async function readInheritedAccess(
   );
   expect(response.status(), await response.text()).toBe(200);
   return ((await response.json()) as { items: InheritedGrant[] }).items;
+}
+
+/** One entry in the recipient's `shared-with-me` list. */
+export interface SharedWithMeItem {
+  resource_type: string;
+  resource_id: string;
+  name?: string;
+  owner_username?: string;
+  permission_level?: string;
+}
+
+/** What has been shared WITH the caller. Envelope: `{total_count, items, truncated}`. */
+export async function readSharedWithMe(
+  request: APIRequestContext,
+  auth: string,
+): Promise<SharedWithMeItem[]> {
+  const response = await request.get("/api/v1/authz/shared-with-me", {
+    headers: { Authorization: auth },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  return ((await response.json()) as { items: SharedWithMeItem[] }).items;
+}
+
+/**
+ * Who may be offered as a share target for one resource.
+ *
+ * `search` is REQUIRED, with a two-character minimum, and that is a property
+ * rather than an inconvenience: there is no call that lists everybody, so the
+ * endpoint cannot be used to enumerate the directory. Returned raw so a caller
+ * can assert the refusals (`404` for a non-manager, `422` for a short search) as
+ * well as the list.
+ */
+export function shareTargets(
+  request: APIRequestContext,
+  auth: string,
+  resourceType: string,
+  resourceId: string,
+  search: string,
+  scope = "user",
+) {
+  const query = new URLSearchParams({
+    resource_type: resourceType,
+    resource_id: resourceId,
+    scope,
+    search,
+  });
+  return request.get(`/api/v1/authz/share-targets?${query}`, {
+    headers: { Authorization: auth },
+  });
+}
+
+/** `{can_manage_shares}` — the flag a client renders the share control from. */
+export async function shareCapability(
+  request: APIRequestContext,
+  auth: string,
+  resourceType: string,
+  resourceId: string,
+): Promise<boolean> {
+  const query = new URLSearchParams({
+    resource_type: resourceType,
+    resource_id: resourceId,
+  });
+  const response = await request.get(
+    `/api/v1/authz/share-targets/capability?${query}`,
+    { headers: { Authorization: auth } },
+  );
+  expect(response.status(), await response.text()).toBe(200);
+  return ((await response.json()) as { can_manage_shares: boolean })
+    .can_manage_shares;
+}
+
+/** `{is_rbac_admin}` — the flag a client renders the admin screens from. */
+export async function isRbacAdmin(
+  request: APIRequestContext,
+  auth: string,
+): Promise<boolean> {
+  const response = await request.get("/api/v1/authz/me/rbac-admin", {
+    headers: { Authorization: auth },
+  });
+  expect(response.status(), await response.text()).toBe(200);
+  return ((await response.json()) as { is_rbac_admin: boolean }).is_rbac_admin;
+}
+
+/**
+ * The second grant path: assign by role NAME rather than by id.
+ *
+ * Returned raw, because half of what this route is worth testing for is its
+ * refusals — a subject calling it for itself is refused by the SUPERUSER guard,
+ * not the admin-role one.
+ */
+export function grantRoleByName(
+  request: APIRequestContext,
+  auth: string,
+  userId: string,
+  roleName: string,
+  domainType = "global",
+) {
+  return request.post(`/api/v1/authz/users/${userId}/roles`, {
+    headers: { Authorization: auth },
+    data: { role_name: roleName, domain_type: domainType },
+  });
+}
+
+/**
+ * Reconcile scoped to named entities.
+ *
+ * `entityKey` is the CASBIN key (`role:viewer`), NOT the entity's UUID and not its
+ * bare name — both of those answer `500` today (#1555), as does any key that
+ * matches nothing, with a `message` envelope instead of `detail`. Returned raw so
+ * the `500` can be asserted against rather than thrown inside the helper.
+ */
+export function reconcileEntities(
+  request: APIRequestContext,
+  auth: string,
+  entities: { entity_type: string; entity_key: string }[],
+) {
+  return request.post("/api/v1/authz/policy/reconcile/entities", {
+    headers: { Authorization: auth },
+    data: { entities },
+  });
 }
 
 /** The verdict `policy/reconcile` returns. Counts are per call, not cumulative. */

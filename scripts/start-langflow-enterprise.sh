@@ -50,6 +50,9 @@ EE_REPO="${LANGFLOW_EE_REPO:-$HOME/langflow-project/IBM-Langflow}"
 IMAGE="${LANGFLOW_EE_IMAGE:-langflow-enterprise:local}"
 RBAC="${LANGFLOW_EE_RBAC:-0}"
 BYPASS="${LANGFLOW_EE_BYPASS:-0}"
+# Shared by both authorization variants; each still gets its own Postgres
+# container, so the network only provides name resolution.
+EE_NETWORK="${LANGFLOW_EE_NETWORK:-langflow-ee-net}"
 # The bypass variant IS an authorization instance, so it takes the whole RBAC
 # path and flips one knob. Resolved here rather than at the docker run, so the
 # container, port and database it gets cannot drift from the ones the spec's skip
@@ -143,9 +146,25 @@ fi
 # which every existing @enterprise spec depends on.
 AUTHZ_ARGS=()
 if [ "${RBAC}" = "1" ]; then
+  # A dedicated network, so the two containers reach each other by NAME.
+  #
+  # This is not tidiness. The first version passed Postgres's container IP in
+  # LANGFLOW_DATABASE_URL, and the default bridge reassigns IPs freely: after
+  # other containers churned, `docker start langflow-ee-rbac` came back up
+  # pointed at an address that now belonged to ANOTHER session's Postgres and
+  # died with `password authentication failed for user "langflow"` — an error
+  # that reads as wrong credentials rather than as the wrong host. The lucky part
+  # is that it failed at all: a neighbour using these same throwaway credentials
+  # would have been silently attached to, and the instance would have enforced
+  # against somebody else's database. The default bridge has no DNS, hence a
+  # user-defined network rather than just using the name.
+  docker network inspect "${EE_NETWORK}" > /dev/null 2>&1 \
+    || docker network create "${EE_NETWORK}" > /dev/null
+
   echo "Starting Postgres for the RBAC variant (${PG_CONTAINER} on ${PG_PORT})..."
   docker rm -f "${PG_CONTAINER}" > /dev/null 2>&1 || true
   docker run -d --name "${PG_CONTAINER}" -p "${PG_PORT}:5432" \
+    --network "${EE_NETWORK}" \
     -e POSTGRES_USER=langflow -e POSTGRES_PASSWORD=langflow \
     -e "POSTGRES_DB=${PG_DB}" postgres:16-alpine > /dev/null
   PG_READY=0
@@ -160,15 +179,12 @@ if [ "${RBAC}" = "1" ]; then
     echo "ERROR: ${PG_CONTAINER} never became ready; the RBAC instance would come up on SQLite" >&2
     exit 3
   fi
-  # The container-network address, not localhost: Langflow reaches Postgres from
-  # inside Docker, where the published host port does not exist.
-  PG_IP="$(docker inspect "${PG_CONTAINER}" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')"
-  if [ -z "${PG_IP}" ]; then
-    echo "ERROR: could not resolve ${PG_CONTAINER}'s container IP" >&2
-    exit 3
-  fi
+  # The container NAME, not localhost and not an IP: Langflow reaches Postgres
+  # from inside Docker, where the published host port does not exist — and an IP
+  # baked in at `docker run` time is stale the moment the bridge reassigns it.
   AUTHZ_ARGS=(
-    -e "LANGFLOW_DATABASE_URL=postgresql://langflow:langflow@${PG_IP}:5432/${PG_DB}"
+    --network "${EE_NETWORK}"
+    -e "LANGFLOW_DATABASE_URL=postgresql://langflow:langflow@${PG_CONTAINER}:5432/${PG_DB}"
     -e LANGFLOW_AUTHZ_ENABLED=true
     # false on the RBAC variant: with it true the superuser is exempt from
     # resource policy and the instance reports itself as enforcing while
