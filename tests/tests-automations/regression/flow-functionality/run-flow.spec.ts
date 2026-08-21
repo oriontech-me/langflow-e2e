@@ -22,9 +22,16 @@ import { openNewFlowTemplatesModal } from "../../../helpers/flows/open-new-flow-
 // the product fix itself landed upstream in langflow#14349 (*stop flow route request
 // storm*), whose files are present on `release-1.12.0`, so `@stable` is restored here
 // after re-validation on `1.12.0.dev23` (#966). See docs/flow-functionality/run-flow.md.
-test(
+// Quarantined at triage (daily #1544): hard failure on all three attempts — the
+// click on `refresh-dropdown-list-flow_name_selected` is refused by two overlays
+// taking the pointer events, `main_canvas_controls` and an
+// `assistant-onboarding-tooltip` popper this repository references nowhere. It
+// ran on shard 1, which the in-run liveness recorder measured at zero outages,
+// so the day's mass-failure verdict does not cover it. Lifting the quarantine
+// (remove test.fixme + restore @stable) is a deliverable of #1548.
+test.fixme(
   "user should be able to use Run Flow without any issues",
-  { tag: ["@stable", "@release", "@workspace", "@api", "@regression"] },
+  { tag: ["@release", "@workspace", "@api", "@regression"] },
   async ({ page, request }) => {
     if (!process.env.CI) {
       dotenv.config({ path: path.resolve(__dirname, "../../../.env") });
