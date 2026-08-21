@@ -1213,7 +1213,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 517 `test()` calls carrying the `@stable` tag, distributed across 203 spec
+> 516 `test()` calls carrying the `@stable` tag, distributed across 203 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1324,7 +1324,6 @@
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
-- [x] adding a custom User Action creates its branch handle without a reload → `human-input-node-config.spec.ts`
 - [x] the configured branch handles persist after save and reload → `human-input-node-config.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
