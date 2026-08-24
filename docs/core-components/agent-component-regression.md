@@ -35,7 +35,9 @@ so the real testids are `OpenAI-gpt-4o-mini-option` and `Anthropic-claude-opus-5
 
 Tests 3 and 4 match on the **provider identity** (`data-value` = `${provider}::${model}`), not on the model-id prefix: "a model from a different provider" is what they are about, and a matcher pinned to `gpt-`/`claude-` would break again the day a vendor renames its family (OpenAI already ships `o1`/`o3`/`o4` models under the same provider).
 
-A matcher anchored on the model id (`[data-testid^="gpt-"]`, `[data-testid^="claude-"]`) matches **zero** options on any instance — that is issue #1568, where it made Test 4 `test.skip()` on every daily measured since 08-19 while both providers were configured, and silently voided Test 3's per-provider assertions, which reported `expected` without ever running. The same contract is documented and enforced by `tests/helpers/provider-setup/model-option.ts` (#1459/#1461/#1463); prefer reusing it over hand-rolling a matcher.
+A matcher anchored on the model id (`[data-testid^="gpt-"]`, `[data-testid^="claude-"]`) matches **zero** options on any instance — that is issue #1568, where it made Test 4 `test.skip()` on every daily measured since 08-19 while both providers were configured, and silently voided Test 3's per-provider assertions, which reported `expected` without ever running.
+
+Tests 3 and 4 resolve an option through a local `providerOptions()` locator that matches `data-value^="${provider}::"`. The model-option helper under `tests/helpers` encodes the same contract with more machinery, and is deliberately **not** reached from here: `scripts/provider-dependent-specs.mjs` decides whether a spec consumes the model-catalog sweep by grepping its source text for that helper directory's name, so importing it — or naming it in a comment — would force the provider sweep on every PR touching any helper this spec imports, re-creating the coupling #1216 removed. This spec reads the DOM and resolves no model id, so it must not carry that marker.
 
 Two further properties of an option row, both measured:
 

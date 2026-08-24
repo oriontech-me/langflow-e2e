@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../helpers/other/await-bootstrap-test";
 import { adjustScreenView } from "../../../helpers/ui/adjust-screen-view";
@@ -6,10 +6,6 @@ import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { dragComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { renameFlow } from "../../../helpers/flows/rename-flow";
-import {
-  enumerateModelOptions,
-  type ModelOption,
-} from "../../../helpers/provider-setup/model-option";
 
 // Each test creates a flow that autosaves to the backend. Serial mode prevents
 // parallel autosave races within this file.
@@ -21,16 +17,48 @@ test.describe.configure({ mode: "serial" });
 const REQUIRED_CREDENTIALS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
 
 /**
+ * Options of the OPEN model picker that belong to one provider.
+ *
+ * Matched on `data-value`, which the picker renders as `${provider}::${model}` —
+ * the option's identity. The testid is `${provider}-${model}-option` and starts
+ * with the PROVIDER name, so a matcher anchored on the model id
+ * (`[data-testid^="gpt-"]`) matches nothing at all; that is #1568, where it made
+ * this file skip one test on every daily and silently void another's assertions.
+ *
+ * Provider identity rather than a model-id prefix is also what "a model from a
+ * different provider" means, and it survives a vendor renaming its family —
+ * OpenAI already ships o1/o3/o4 models under the same provider.
+ *
+ * The model-option helper under `tests/helpers` encodes the same contract with
+ * more machinery (nearest-model suggestions, absence proofs) and is deliberately
+ * NOT reached from here. `scripts/provider-dependent-specs.mjs` classifies a spec
+ * as a consumer of the model-catalog sweep by grepping its SOURCE TEXT for that
+ * helper directory's name, so importing it — or even naming it in a comment —
+ * would force the provider sweep on every PR touching a helper this spec imports,
+ * re-creating the coupling #1216 removed. This spec reads the DOM and resolves no
+ * model id, so it must not carry that marker. Hence the local locator: it is not
+ * duplication of the helper's logic, it is the identity attribute read directly.
+ */
+function providerOptions(page: Page, provider: string): Locator {
+  return page.locator(`[data-testid$="-option"][data-value^="${provider}::"]`);
+}
+
+/**
  * What the picker actually returned, per provider — the evidence a "provider X
  * has no option" failure needs to be actionable. A bare count cannot tell a
  * provider that vanished from a picker that rendered nothing at all.
  */
-function providerCensus(options: ModelOption[]): string {
-  if (options.length === 0) return "no options at all";
+async function providerCensus(page: Page): Promise<string> {
+  const values = await page
+    .locator('[data-testid$="-option"]')
+    .evaluateAll((els) => els.map((el) => el.getAttribute("data-value") ?? ""));
+  if (values.length === 0) return "no options at all";
   const counts = new Map<string, number>();
-  for (const option of options) {
-    const key = option.provider ?? "(unknown provider)";
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+  for (const value of values) {
+    const provider = value.includes("::")
+      ? value.slice(0, value.indexOf("::"))
+      : "(unknown provider)";
+    counts.set(provider, (counts.get(provider) ?? 0) + 1);
   }
   return [...counts.entries()]
     .map(([provider, count]) => `${provider}: ${count}`)
@@ -201,12 +229,10 @@ test.describe("Agent Component — canvas regression", () => {
         timeout: 5000,
       });
 
-      // Read every option by IDENTITY, never by a testid prefix built from the
-      // model id: the picker renders `${provider}-${model}-option`, so a matcher
-      // anchored on the model (`[data-testid^="gpt-"]`) matches nothing at all
-      // and silently voids every branch below it (#1568).
-      const options = await enumerateModelOptions(page);
-      const optionCount = options.length;
+      // Count visible model options; the option-testid pattern ends in "-option".
+      const options = page.locator('[data-testid$="-option"]');
+      await options.first().waitFor({ state: "visible", timeout: 10000 }).catch(() => {});
+      const optionCount = await options.count();
 
       // When at least one provider is pre-configured, we expect provider icons.
       // When none is configured (option count is 0), the per-provider assertions
@@ -220,12 +246,9 @@ test.describe("Agent Component — canvas regression", () => {
       // options. Scope the icon lookup to the option row so we never match the
       // canvas trigger icon (genericIconComponent renders `icon-{Provider}` in
       // both ModelTrigger.tsx and ModelList.tsx).
-      const firstOptionOf = (provider: string) =>
-        options.find((option) => option.provider === provider && option.testId !== "");
-
-      const openaiOption = firstOptionOf("OpenAI");
-      if (openaiOption) {
-        const row = page.getByTestId(openaiOption.testId);
+      const openaiOptions = providerOptions(page, "OpenAI");
+      if ((await openaiOptions.count()) > 0) {
+        const row = openaiOptions.first();
         await expect(row).toBeVisible({ timeout: 5000 });
         // The row's provider icon is lazy-loaded — it paints an `animate-pulse`
         // skeleton first and resolves at ~600 ms — so this must be an
@@ -233,9 +256,9 @@ test.describe("Agent Component — canvas regression", () => {
         await expect(row.getByTestId("icon-OpenAI")).toBeVisible({ timeout: 5000 });
       }
 
-      const anthropicOption = firstOptionOf("Anthropic");
-      if (anthropicOption) {
-        const row = page.getByTestId(anthropicOption.testId);
+      const anthropicOptions = providerOptions(page, "Anthropic");
+      if ((await anthropicOptions.count()) > 0) {
+        const row = anthropicOptions.first();
         await expect(row).toBeVisible({ timeout: 5000 });
         await expect(row.getByTestId("icon-Anthropic")).toBeVisible({ timeout: 5000 });
       }
@@ -287,31 +310,42 @@ test.describe("Agent Component — canvas regression", () => {
       await page.getByTestId("value-dropdown-model_model").click();
 
       // Both credentials are configured, so both providers MUST be offered.
-      // Matched on the option's provider identity (`data-value` is
-      // `${provider}::${model}`), not on a model-id prefix: "a model from a
-      // different provider" is what this test is about, and pinning to `gpt-`/
-      // `claude-` breaks the day a vendor renames its family — OpenAI already
-      // ships o1/o3/o4 under the same provider.
-      const options = await enumerateModelOptions(page);
-      const census = providerCensus(options);
-      const openaiOption = options.find(
-        (option) => option.provider === "OpenAI" && option.testId !== "",
-      );
-      const anthropicOption = options.find(
-        (option) => option.provider === "Anthropic" && option.testId !== "",
-      );
+      // `providerOptions` matches on the option's identity — see its comment for
+      // why that is the provider and not a model-id prefix.
+      const allOptions = page.locator('[data-testid$="-option"]');
+      await allOptions
+        .first()
+        .waitFor({ state: "visible", timeout: 10000 })
+        .catch(() => {});
+      const openaiOptions = providerOptions(page, "OpenAI");
+      const anthropicOptions = providerOptions(page, "Anthropic");
+      const openaiCount = await openaiOptions.count();
+      const anthropicCount = await anthropicOptions.count();
 
-      expect(
-        openaiOption,
-        `OPENAI_API_KEY is configured in Langflow but the model dropdown offers no OpenAI option. Picker returned ${options.length} option(s) — ${census}`,
-      ).toBeDefined();
-      expect(
-        anthropicOption,
-        `ANTHROPIC_API_KEY is configured in Langflow but the model dropdown offers no Anthropic option. Picker returned ${options.length} option(s) — ${census}`,
-      ).toBeDefined();
+      if (openaiCount === 0 || anthropicCount === 0) {
+        // Only built on the failure path — the census costs a DOM round-trip and
+        // is evidence for the message, not part of the assertion.
+        const census = await providerCensus(page);
+        const total = await allOptions.count();
+        expect(
+          openaiCount,
+          `OPENAI_API_KEY is configured in Langflow but the model dropdown offers no OpenAI option. Picker returned ${total} option(s) — ${census}`,
+        ).toBeGreaterThan(0);
+        expect(
+          anthropicCount,
+          `ANTHROPIC_API_KEY is configured in Langflow but the model dropdown offers no Anthropic option. Picker returned ${total} option(s) — ${census}`,
+        ).toBeGreaterThan(0);
+      }
 
-      const openaiTestId = openaiOption!.testId;
-      const anthropicTestId = anthropicOption!.testId;
+      // Capture the option testids so we can re-open the dropdown and re-select
+      // deterministically.
+      const openaiTestId = await openaiOptions.first().getAttribute("data-testid");
+      const anthropicTestId = await anthropicOptions
+        .first()
+        .getAttribute("data-testid");
+      if (!openaiTestId || !anthropicTestId) {
+        throw new Error("Failed to capture provider option testids from dropdown");
+      }
 
       // Scope provider-icon assertions to the model dropdown trigger button
       // itself (`data-testid="model_model"`). `genericIconComponent` renders
