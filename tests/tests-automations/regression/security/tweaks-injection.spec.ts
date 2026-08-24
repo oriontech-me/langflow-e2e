@@ -29,15 +29,23 @@ import {
 //     payload untouched"), so ONE protected field refuses the WHOLE request:
 //     nothing runs, and a benign tweak sent alongside it does not apply. The
 //     paired control therefore moved to a SECOND request — Test 2 for flow A,
-//     Test 3's second step for flow B — which is the same control plus a new
-//     assertion that the refused request left the flow untouched.
+//     Test 3's last step for flow B — which is the same control plus new
+//     assertions that the refused request left the flow untouched at run time
+//     AND in the database.
 //
 // detail.message is deliberately NOT asserted: _refusal_reason() returns a
-// different string per LANGFLOW_TWEAKS_POLICY (permissive — the product default
-// and what every CI lane runs — vs declared vs off), so pinning it would fail a
-// correctly-behaving instance that is merely configured differently. code and
-// fields are stable across all three. The policy modes, the per-flow
-// api_editable allowlist and the graph-path floor are out of scope here (#1567).
+// different string under LANGFLOW_TWEAKS_POLICY=off ("This deployment does not
+// accept tweaks."), so pinning it would fail a correctly-behaving instance that
+// is merely configured differently. code and fields are stable in every mode.
+// NOTE the narrower claim: `declared` does NOT change the string, and does not
+// refuse this file's benign tweaks either — is_tweak_refused_by_policy() only
+// bites under `declared` when the flow declares an api_editable field, and
+// neither fixture flow declares one, so `declared` is byte-identical to
+// `permissive` here. Only `off` is a real divergence.
+//
+// The policy modes and the per-flow api_editable allowlist are out of scope
+// here (#1567). The graph-path floor is no longer a gap: it is covered by the
+// sibling security/tweaks-graph-path-floor.spec.ts (#1567 / PR #1571).
 //
 // Two protection routes exist and fail independently:
 //   - by field type / name — `code` (Tests 1 and 2), and
@@ -231,22 +239,24 @@ test.describe("Tweaks injection — POST /api/v1/run refuses executable fields",
             },
           });
 
-          const body = await expectTweakRefusal(res, ["code"]);
-          // Nothing ran, so the injected class's sentinel cannot have reached
-          // the response. Asserted anyway: it is the property under test, and a
-          // future contract that both runs the flow and reports the refusal
-          // would still have to satisfy it.
-          expect(JSON.stringify(body)).not.toContain(sentinel);
+          // No sentinel assertion on the refusal body: once the status is 422
+          // the body is handler constants plus refused KEY names, so a fresh
+          // `PWNED-<ts>` value can never appear in it and the check could not
+          // fail. The sentinel is asserted on the two responses below, which do
+          // execute — a dead assertion here would only pad the evidence.
+          await expectTweakRefusal(res, ["code"]);
         });
       }
 
-      await test.step("the refused request left the flow untouched and runnable", async () => {
-        // The direct assertion of process_tweaks()'s "decide first, mutate
-        // second": run the same flow with NO tweaks at all and the author's
-        // stored value is still what comes back. It doubles as the control the
-        // old silent contract could keep inside the refused request — a 200
-        // carrying the author's value proves the endpoint is healthy and the two
-        // 422s above were the refusal, not a malformed request.
+      await test.step("the flow is still runnable and still the author's", async () => {
+        // Deliberately NOT called an assertion of "decide first, mutate second":
+        // a tweak-free run never reaches process_tweaks at all (simple_run_flow
+        // skips it and may serve a pre-built graph), so it cannot exercise that
+        // ordering. What it does establish is the control the old silent
+        // contract could keep inside the refused request — a 200 carrying the
+        // author's value proves the endpoint is healthy and the two 422s above
+        // were the refusal, not a malformed request — plus that the run path
+        // still produces the author's output after one.
         const res = await request.post(`/api/v1/run/${chatFlowId}`, {
           headers: { "x-api-key": apiKey },
           data: { input_type: "chat", output_type: "chat" },
@@ -264,11 +274,16 @@ test.describe("Tweaks injection — POST /api/v1/run refuses executable fields",
         });
         expect(res.status()).toBe(200);
         const flow = await res.json();
-        const storedCode = JSON.stringify(
-          flow?.data?.nodes?.find(
-            (n: { id?: string }) => n.id === CHAT_INPUT_NODE_ID,
-          )?.data?.node?.template?.code?.value ?? "",
+        // The node and the field are asserted PRESENT before their value is
+        // compared. With a `?? ""` fallback the step passed on a lookup miss —
+        // a fixture node-id change or a reshaped `data.nodes` silently retired
+        // the assertion, which is the "unevaluated is unknown, not clean" trap.
+        const chatInputNode = flow?.data?.nodes?.find(
+          (n: { id?: string }) => n.id === CHAT_INPUT_NODE_ID,
         );
+        expect(chatInputNode, `node ${CHAT_INPUT_NODE_ID} not found on the stored flow`).toBeTruthy();
+        const storedCode = chatInputNode?.data?.node?.template?.code?.value;
+        expect(typeof storedCode).toBe("string");
         expect(storedCode).not.toContain(sentinel);
       });
     },
@@ -357,26 +372,84 @@ test.describe("Tweaks injection — POST /api/v1/run refuses executable fields",
           },
         });
 
-        const body = await expectTweakRefusal(res, [
-          "global_imports",
-          "python_code",
-        ]);
-        // The request-scope property: sender_name is neither refused nor
-        // applied. It was collateral to a refusal, never itself protected — so
-        // its absence from `fields` is as load-bearing as the two entries that
-        // are there.
-        expect(body?.detail?.fields).not.toContain("sender_name");
-        expect(JSON.stringify(body)).not.toContain(sentinel);
+        // `toEqual`, not `toContain`: both protected keys must be named, and
+        // sender_name must NOT be — its absence is the request-scope property
+        // (it was collateral to a refusal, never itself protected), and it is
+        // already implied by this one comparison, so it gets no second, dead
+        // assertion of its own.
+        await expectTweakRefusal(res, ["global_imports", "python_code"]);
       });
 
-      // The control the old silent contract could keep inside the refused
-      // request. It now has to be a SECOND request, because a refusal runs
-      // nothing at all — and it carries more than the old one did: every claim
-      // below is read off ONE 200 response, so no timing or ordering
-      // explanation is available for any of them.
+      // THE ORDER OF THE NEXT TWO STEPS IS LOAD-BEARING, and the reason is
+      // upstream's own: _refused_tweak_names() exists because "applying as we go
+      // and raising at the end leaves the accepted half written, and the graph
+      // the run paths hand us is cached and reused, so that half survives into
+      // later runs that send no tweaks at all". A step that re-tweaks
+      // sender_name overwrites the very field whose non-landing is the claim —
+      // measured: with the accepted half persisted by hand, a version of this
+      // test that only re-tweaked stayed GREEN. So non-landing is asserted
+      // FIRST, on a request that sends no tweaks at all, and only then is the
+      // field re-tweaked to prove it was tweakable all along.
+      await test.step("the refused request ran nothing and mutated nothing", async () => {
+        const res = await request.post(`/api/v1/run/${pythonFlowId}`, {
+          headers: { "x-api-key": apiKey },
+          data: { output_type: "debug" },
+        });
+
+        expect(res.status()).toBe(200);
+        const body: RunResponseBody = await res.json();
+        const python = getVertex(body, pythonNodeId);
+
+        // python_code still runs the author's code, and the sentinel is nowhere.
+        expect(python?.outputs?.results?.message?.result).toBe(authorMark);
+        expect(JSON.stringify(body)).not.toContain(sentinel);
+
+        // The component logs exactly which modules entered the namespace, and
+        // only the author's "math" is there. On this request that is a
+        // non-persistence claim, not a refusal claim: nothing asked for "os"
+        // here. The refusal itself is evidenced by `fields` in the step above.
+        const logs = (python?.logs?.results ?? []).map((l) => l.message ?? "");
+        expect(logs).toContain("Successfully imported modules: ['math']");
+
+        // The benign field the refused request carried did NOT land — the claim
+        // in this test's title, and the one an apply-as-you-go regression would
+        // break. Compared against the refused value rather than the author's
+        // literal default, so a template default change cannot silently satisfy
+        // it.
+        const chatOutput = getVertex(body, chatOutputNodeId);
+        expect(chatOutput?.results?.message?.sender_name).not.toBe(benignSender);
+      });
+
+      await test.step("the refusal left no trace on the stored flow either", async () => {
+        // The runtime check above reads a graph that may have been served from
+        // cache; this one reads what was persisted. Both have to hold.
+        const res = await request.get(`/api/v1/flows/${pythonFlowId}`, {
+          headers: { Authorization: bearerToken },
+        });
+        expect(res.status()).toBe(200);
+        const flow = await res.json();
+        const nodes: Array<{ id?: string; data?: { node?: { template?: Record<string, { value?: unknown }> } } }> =
+          flow?.data?.nodes ?? [];
+
+        const pythonTemplate = nodes.find((n) => n.id === pythonNodeId)?.data?.node
+          ?.template;
+        const chatOutputTemplate = nodes.find((n) => n.id === chatOutputNodeId)?.data
+          ?.node?.template;
+        // Asserted present before compared — a lookup miss must fail, not pass.
+        expect(pythonTemplate, `node ${pythonNodeId} not found on the stored flow`).toBeTruthy();
+        expect(chatOutputTemplate, `node ${chatOutputNodeId} not found on the stored flow`).toBeTruthy();
+
+        expect(pythonTemplate?.python_code?.value).toBe(`print("${authorMark}")`);
+        expect(pythonTemplate?.global_imports?.value).not.toContain("os");
+        expect(chatOutputTemplate?.sender_name?.value).not.toBe(benignSender);
+      });
+
       const benignSenderAfter = `BENIGN2-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
-      await test.step("the refused request ran nothing and mutated nothing", async () => {
+      await test.step("the same benign field is tweakable when sent on its own", async () => {
+        // The control: it rules out "tweaks were ignored wholesale" as the
+        // explanation for sender_name not landing above. It runs LAST because it
+        // writes the field the two steps above had to read untouched.
         const res = await request.post(`/api/v1/run/${pythonFlowId}`, {
           headers: { "x-api-key": apiKey },
           data: {
@@ -387,22 +460,6 @@ test.describe("Tweaks injection — POST /api/v1/run refuses executable fields",
 
         expect(res.status()).toBe(200);
         const body: RunResponseBody = await res.json();
-        const python = getVertex(body, pythonNodeId);
-
-        // python_code still runs the author's code: the refused tweak persisted
-        // nothing into the stored flow.
-        expect(python?.outputs?.results?.message?.result).toBe(authorMark);
-        expect(JSON.stringify(body)).not.toContain(sentinel);
-
-        // The component logs exactly which modules entered the namespace; the
-        // refused tweak asked for "math,os" and only the author's "math" is
-        // there, so global_imports never widened the exec sandbox either.
-        const logs = (python?.logs?.results ?? []).map((l) => l.message ?? "");
-        expect(logs).toContain("Successfully imported modules: ['math']");
-
-        // And the unprotected field IS tweakable on this flow — which is what
-        // rules out "tweaks were ignored wholesale" as the explanation both for
-        // the refusal above and for sender_name not landing there.
         const chatOutput = getVertex(body, chatOutputNodeId);
         expect(chatOutput?.results?.message?.sender_name).toBe(benignSenderAfter);
       });
