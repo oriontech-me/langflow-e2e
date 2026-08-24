@@ -104,7 +104,7 @@ Two further properties of an option row, both measured:
 
 - `src/lfx/src/lfx/components/models_and_agents/agent.py` — `AgentComponent` definition; the `system_prompt` input and the per-provider model-list metadata are the schema this spec asserts against. (Was recorded as `components/agents/agent.py`, a directory that does not exist on any current ref — corrected in #1040. `models_and_agents` is a **core** family, not one of the `lfx-bundles` shims, so it does not expire at M4.)
 - `src/backend/base/langflow/api/v1/models.py` — `GET /api/v1/models` is what fills the dropdown; a provider appears with `is_configured`/`is_enabled` derived from whether its credential variable exists. Tests 3 and 4 assert on what this endpoint yields.
-- `src/backend/base/langflow/api/v1/variables.py` — `GET /api/v1/variables/` is Test 4's precondition probe: the credential names it returns decide run-vs-skip.
+- `src/backend/base/langflow/api/v1/variable.py` — `GET /api/v1/variables/` is Test 4's precondition probe: the credential names it returns decide run-vs-skip. (The module is `variable.py`, singular; the route prefix is plural.)
 - `src/frontend/src/components/core/parameterRenderComponent/` — renders `value-dropdown-model_model`, the `manage-model-providers` button, and the `${provider}-${model}-option` rows; a change to that testid template breaks Tests 3 and 4 (it already did once — #1568)
 - `src/frontend/src/CustomNodes/GenericNode/` — renders the handles; the `handle-agent-shownode-{port}-{side}` pattern must remain stable
 - Provider icon assets in `src/frontend/src/icons/` — the `icon-OpenAI` and `icon-Anthropic` testids carry Test 4's assertion and break if the icon mapping changes
