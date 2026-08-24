@@ -124,6 +124,16 @@
 - [x] Expired API key is rejected on `POST /api/v1/run/{id}` with 403; valid key accepted with 200 → `api/flows/api-key-expiry-enforcement.spec.ts`
 - [x] Expiry boundary is evaluated in UTC, not shifted by viewer offset (±30 min UTC keys resolve correctly) → `api/flows/api-key-expiry-enforcement.spec.ts`
 
+#### 1.8 Workflows v2 — Job Lifecycle (1.12)
+
+> `POST /api/v2/workflows` is the run path the product itself uses, and this suite already **observes** it — `tests/fixtures/flow-error-policy.ts` classifies its stream and eight specs trigger it incidentally — but until now nothing **drove it as an API contract**. The submit half was exercised constantly; the read-back half by nothing. Spec doc: `docs/api/flows/workflows-v2-job-lifecycle.md`.
+
+- [-] A batch create with a duplicate name is refused `409 "Name must be unique"` rather than stalling on the SQLite write lock, the body renders no SQL or bound parameters, and the **next write still succeeds** — the last clause is the one that matters: a `409` that left the lock held satisfies every other assertion and is still the defect `langflow-ai/langflow#14634` fixed, because the caller sees a clean conflict and the *next* writer dies with "database is locked" → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+- [-] A batch create with a duplicate `endpoint_name` is refused with its **own** message (`"Endpoint name must be unique"`), asserted as not equal to the name guard's — two guards, one status, so the message is the only thing separating them → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+- [-] A completed `mode=background` run reports the `session_id` it was submitted with, and its outputs, on the **first** status read that says `completed` — asserted as "not the flow id" too, since the flow id is the specific degradation `langflow-ai/langflow#14512` names → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+- [!] A completed `mode=sync` run answers its own status query with the session and outputs it just returned — **declared failing (`test.fail()`) against a live defect, 15/15 on `1.12.0.dev37`**; it flips to an *unexpected pass* the day upstream fixes it, which is the alarm to remove the annotation: the read-back reports `status: "completed"` alongside `session_id == flow_id` and `outputs: {}`, self-healing in 250–463 ms (median 434, 12/12 cold jobs). #14512's fix is present (its `sync_result_storage_enabled` setting reads `False`, the default) but the flag-off path races the `vertex_build` commit it reconstructs from. Detection depends on issuing the two calls back to back — with assertions interleaved between them the defect went unseen in 1 of 13 runs → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+- [-] Attribution control: the same sync read-back **is** correct once the job's rows settle (≤10 s). Paired with the row above on purpose — that red plus this green is the race; *both* red would be a strictly worse regression, reconstruction unavailable at any time, and without the pair the two would report as one finding → `api/flows/workflows-v2-job-lifecycle.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components
