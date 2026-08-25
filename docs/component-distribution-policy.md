@@ -307,8 +307,10 @@ as `--mode=check` itself, which is what this section predicted: `check` scans th
 diff (#980) — a path in a doc the PR changed fails, a pre-existing one is reported
 as a `::warning::` — and since #1574 it resolves against `origin/main` **plus the
 two release lines the nightly is cut from**, naming in a `::notice::` any path that
-resolves on only some of them. Measured 2026-08-25: 502 paths across 261 docs, zero
-unresolved.
+resolves on only some of them. Measured 2026-08-25: 502 paths, zero unresolved —
+spread over the **145** docs that declare any, out of 261 scanned (1 exempt). The
+guard's own line reads `from 261 doc(s)` because that is what it read, not what
+declared; 116 of them name no path at all.
 
 ---
 
