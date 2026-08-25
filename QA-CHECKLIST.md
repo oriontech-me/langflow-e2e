@@ -1259,7 +1259,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 522 `test()` calls carrying the `@stable` tag, distributed across 203 spec
+> 520 `test()` calls carrying the `@stable` tag, distributed across 203 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1585,8 +1585,6 @@
 - [x] an unconfigured Azure AI Foundry panel is read-only: no enable toggle, no add-deployment control → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] credentials that do not validate are rejected and nothing is persisted → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] a portal deployment name absent from every catalog is accepted and rendered → `azure-ai-foundry-provider-setup.spec.ts`
-- [x] real credentials configure the provider and enable a portal deployment through the UI → `azure-ai-foundry-provider-setup.spec.ts`
-- [x] the configured deployment answers a real inference through the Language Model component → `azure-ai-foundry-provider-setup.spec.ts`
 - [x] Google API key is configured via Settings → Model Providers → `google-provider.spec.ts`
 - [x] configured Google selects a Gemini model in the Agent and executes the flow → `google-provider.spec.ts`
 - [x] Ollama base URL is configured via Settings → Model Providers → `ollama-provider.spec.ts`
