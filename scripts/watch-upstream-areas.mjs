@@ -9,7 +9,8 @@
  * path one of our areas depends on, and prints the `--grep` to revalidate. It
  * carried two defects that made its output untrustworthy:
  *
- *   1. `src/lfx/` was watched by ZERO of the 13 areas, while Langflow has been
+ *   1. `src/lfx/` was watched by ZERO of the areas as they then stood (13; #1581
+ *      added a 14th), while Langflow has been
  *      moving backend behavior into that package. The consequence is ATTRIBUTION,
  *      not detection: the change that broke all six stdio registrations in
  *      `mcp-server.spec.ts` (#1091) landed in `lfx/base/mcp/security.py` as part
@@ -49,7 +50,9 @@
  * counterpart of something already watched, or by being what a spec observes
  * directly.
  *
- * Measured cost of that choice, areas firing per 24h window on `origin/main`:
+ * Measured cost of that choice, areas firing per 24h window on `origin/main`,
+ * measured at 13 areas (#1581 added a 14th and re-measured — see the
+ * `Catalog & Provider Policy` entry, which records median 6 → 7 of 14):
  * the median goes from ~3 of 13 to ~7 of 13, and a busy upstream day now names
  * 11 — whose tag union is close to the whole suite. That is the honest price of
  * covering `lfx` at all, and it is near the limit of what stays a signal. Widen
@@ -215,12 +218,84 @@ export const LANGFLOW_AREAS = [
   },
   {
     area: "Tracing & Monitoring",
-    tags: ["@api"],
+    // `@observability` added by #1581: 4 of the 11 `@observability` specs carry no
+    // `@api` tag — `traces.spec.ts` (the only UI traces spec),
+    // `execution-error-notification`, `flow-error-message` and
+    // `outdated-component-notification` — so the derived command missed exactly
+    // the surface this area names. `@api` stays: it over-selects (168 tests), but
+    // narrowing it is a separate decision about 13 pre-existing areas.
+    tags: ["@api", "@observability"],
     checklist: "AREA 12 — Observability and Monitoring",
     paths: [
       "src/backend/base/langflow/api/v1/traces.py",
       "src/backend/base/langflow/api/v1/monitor.py",
       "src/backend/base/langflow/services/tracing/",
+    ],
+  },
+  {
+    // Added by #1581. The three `lfx/services/*_policy` subtrees existed upstream
+    // with no entry covering them, and no area owned this surface — so a change to
+    // the policy backend fired no area and named no revalidation command, while 5
+    // `@governance` specs and two spec-doc trees cover exactly that surface. The
+    // #1092 failure mode (`lfx/base/mcp/security.py`), one migration later.
+    // Firing cost, measured over the 14 daily windows to 2026-08-25 on
+    // `origin/main`, because #1092 caps this deliberately and says to prefer
+    // moving an entry out of scope over adding one. It is NOT free, and the first
+    // version of this comment understated it by a broken median:
+    //
+    //   before: 13 areas, median 6 per window, mean 5.29
+    //   after:  14 areas, median 7 per window, mean 5.79
+    //   this area fired on 5 of 14 windows; `Tracing & Monitoring` went 3 → 5
+    //   (the four observability modules)
+    //
+    // `utils/flow_validation.py` drives most of this area's 5 — 15 commits in 60
+    // days — and that is the point of watching it rather than an argument against:
+    // it is the file the blocklist spec's asserted message comes from. Median 7 of
+    // 14 sits at the edge the header calls the limit of what stays a signal, so
+    // the next area should displace one rather than join them.
+    area: "Catalog & Provider Policy",
+    tags: ["@governance"],
+    checklist: "governance/ — Catalog and Provider Policy (1.12)",
+    // Two reasons this area declares its commands instead of deriving one.
+    //
+    // The lane: `@governance` is ALWAYS paired with a lane tag, and both lanes are
+    // excluded from a normal run — `playwright.config.ts` `grepInvert`s
+    // `@destructive` and `@enterprise` where a CLI `--grep` cannot override it.
+    // Measured, `npx playwright test --grep "@governance"` selects **0** tests.
+    //
+    // The selector: by PATH, not by tag, because the tag does not cover its own
+    // directory. `PW_DESTRUCTIVE=1 … --grep "@governance"` selects 5 tests while
+    // the directory holds **13** — all of `template-blocklist-enforcement.spec.ts`
+    // carries no `@governance` tag at all, and 3 of the 4 in
+    // `provider-allowlist-and-bundle-revisioning.spec.ts` do not either, though
+    // both spec docs name a watched path as their first dependency. Retagging
+    // those specs is the deeper fix and belongs to a spec-side change; naming the
+    // directory is what makes the revalidation set right today.
+    //
+    // The enterprise line carries its precondition, because that lane has no OSS
+    // instance to run against: without it the 10 tests it selects all skip, which
+    // is the green all-skip (#570/#1012) this whole entry exists to avoid.
+    runs: [
+      "PW_DESTRUCTIVE=1 npx playwright test tests/tests-automations/regression/governance",
+      "PW_ENTERPRISE=1 PLAYWRIGHT_BASE_URL=<enterprise instance> npx playwright test tests/tests-automations/regression/enterprise/governance",
+    ],
+    paths: [
+      "src/backend/base/langflow/api/v1/catalog_policy.py",
+      "src/backend/base/langflow/api/v1/model_provider_policy.py",
+      "src/backend/base/langflow/api/v1/policy_bundle.py",
+      "src/backend/base/langflow/api/v1/policy_bundle_errors.py",
+      "src/backend/base/langflow/api/v1/schemas/catalog_policy.py",
+      "src/backend/base/langflow/services/catalog_policy/",
+      "src/backend/base/langflow/services/model_provider_policy.py",
+      "src/backend/base/langflow/services/policy_bundle.py",
+      "src/backend/base/langflow/services/task/model_provider_policy_refresh.py",
+      // The churniest file of the whole surface — 15 commits in the 60 days to
+      // 2026-08-25, three times the watched route — and named as the first
+      // dependency of `component-blocklist-enforcement.md`, which asserts the
+      // `Flow build blocked:` message this file produces. Watched as a single
+      // file: its subtree, `lfx/utils`, stays out of scope in LFX_CLASSIFICATION,
+      // and one file earning a mapping does not make the rest of `utils` earn one.
+      "src/lfx/src/lfx/utils/flow_validation.py",
     ],
   },
   {
@@ -314,6 +389,27 @@ export const LFX_CLASSIFICATION = {
   "services/chat": { area: "Flow Execution" },
   "services/storage": { area: "File Upload" },
   "services/tracing": { area: "Tracing & Monitoring" },
+  // The OTLP backend, added upstream 2026-07-30 / 08-12 as top-level modules
+  // rather than under `services/`: application observability (1208 lines), the
+  // delivery self-test, the FastAPI-instrumentation shim and the LLM-provider
+  // latency/error metrics.
+  //
+  // NOT "the same concern as `services/tracing`" — `observability.py`'s own
+  // docstring calls it separate from the LLM tracer integrations, no spec here
+  // sets `OTEL_*` (grep: zero hits), and the `@observability` specs assert
+  // Langflow's own trace store. What earns the mapping is that
+  // `instrument_fastapi_app(app)` runs unconditionally at import and
+  // opentelemetry is a hard dependency of `langflow-base`, so a break here 500s
+  // real API calls — which is what `Tracing & Monitoring`'s specs would catch
+  // first. Recorded because the reason is what a future reader will act on (#1581).
+  "observability.py": { area: "Tracing & Monitoring" },
+  "observability_doctor.py": { area: "Tracing & Monitoring" },
+  "observability_fastapi.py": { area: "Tracing & Monitoring" },
+  "observability_llm_metrics.py": { area: "Tracing & Monitoring" },
+  // The governance backend, whose area #1581 had to create (see LANGFLOW_AREAS).
+  "services/catalog_policy": { area: "Catalog & Provider Policy" },
+  "services/model_provider_policy": { area: "Catalog & Provider Policy" },
+  "services/policy_bundle": { area: "Catalog & Provider Policy" },
   "services/variable": { area: "Settings & Global Variables" },
   "services/settings": { area: "Settings & Global Variables" },
   "services/database": { area: "Database Models" },
@@ -897,6 +993,7 @@ export function detectChangedAreas({ areas = AREAS, commitsFor }) {
       tags: entry.tags,
       checklist: entry.checklist,
       grep: entry.tags.join("|"),
+      runs: entry.runs,
       commits: commits.split("\n").slice(0, MAX_COMMITS_PER_AREA),
     });
   }
@@ -912,6 +1009,18 @@ export const BODY_DELIMITER = "WATCHER_BODY_EOF";
 
 /** Cells go into a markdown table, and both tags and checklist contain `|`. */
 const cell = (text) => String(text).replace(/\|/g, "\\|");
+
+/**
+ * The command(s) that actually revalidate an area.
+ *
+ * Derived from the tags, EXCEPT where the area declares its own: a lane-gated tag
+ * needs its lane's env var, and the derived form would print a command that
+ * selects zero tests (#1581, measured on `@governance`).
+ */
+export function areaCommands(area) {
+  if (Array.isArray(area.runs) && area.runs.length > 0) return area.runs;
+  return [`npx playwright test --grep "${area.grep ?? area.tags.join("|")}"`];
+}
 
 /**
  * The revalidation issue body.
@@ -934,7 +1043,10 @@ export function renderIssueBody({ since, areas, today, window }) {
     "| Area | Run these tests | Checklist |",
     "|---|---|---|",
     ...areas.map(
-      (a) => `| ${cell(a.area)} | \`npx playwright test --grep "${cell(a.grep)}"\` | ${cell(a.checklist)} |`,
+      (a) =>
+        `| ${cell(a.area)} | ${areaCommands(a)
+          .map((c) => `\`${cell(c)}\``)
+          .join("<br>")} | ${cell(a.checklist)} |`,
     ),
     "",
     "### Commits",
@@ -1269,7 +1381,9 @@ function renderAreaTable() {
     "|---|---|---|---|",
     ...AREAS.map(
       (a) =>
-        `| ${cell(a.area)} | \`--grep "${cell(a.tags.join("|"))}"\` | ${cell(a.checklist)} | ${a.paths.length} |`,
+        `| ${cell(a.area)} | ${areaCommands(a)
+          .map((c) => `\`${cell(c)}\``)
+          .join("<br>")} | ${cell(a.checklist)} | ${a.paths.length} |`,
     ),
     "",
     ...AREAS.flatMap((a) => [`### ${a.area}`, ...a.paths.map((p) => `- \`${p}\``), ""]),

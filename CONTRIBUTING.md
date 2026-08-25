@@ -561,7 +561,7 @@ The guide is the human-language specification of the automated tests. Keeping it
 
 ### Monitored areas
 
-The area table is **not duplicated here** — it lives in `scripts/watch-upstream-areas.mjs` (13 areas → paths, tags, checklist sections) and is printed by:
+The area table is **not duplicated here** — it lives in `scripts/watch-upstream-areas.mjs` (14 areas → paths, tags, checklist sections, and the commands to run) and is printed by:
 
 ```bash
 node scripts/watch-upstream-areas.mjs --mode=areas
@@ -569,7 +569,7 @@ node scripts/watch-upstream-areas.mjs --mode=areas
 
 Three rules govern it (issue #1092):
 
-- **A path that cannot be evaluated is a failure, not a pass.** The workflow runs `--mode=check` before the sweep; a monitored path missing from the upstream checkout fails the job by name. Before the guard, `git log -- <bad-path>` printed nothing and read as "nothing changed" — which is how `constants/flow_constants.tsx` sat dead in the list. That path has never existed upstream on any ref (the real file is `src/frontend/src/flow_constants.tsx`), so the entry was wrong from the day it was written and nothing ever said so. The guard is `continue-on-error` and the job is failed *after* the report exists: one upstream rename must not suppress the report for the other 12 areas.
+- **A path that cannot be evaluated is a failure, not a pass.** The workflow runs `--mode=check` before the sweep; a monitored path missing from the upstream checkout fails the job by name. Before the guard, `git log -- <bad-path>` printed nothing and read as "nothing changed" — which is how `constants/flow_constants.tsx` sat dead in the list. That path has never existed upstream on any ref (the real file is `src/frontend/src/flow_constants.tsx`), so the entry was wrong from the day it was written and nothing ever said so. The guard is `continue-on-error` and the job is failed *after* the report exists: one upstream rename must not suppress the report for the other 13 areas.
 - **Every `src/lfx/` subtree is classified exactly once**, either mapped to an area or recorded as out of scope with a reason (`LFX_CLASSIFICATION` in the same file). A subtree that appears upstream and matches no entry fails the guard, so the next step of Langflow's `lfx` migration forces a decision instead of widening a blind spot. That blind spot is what made #1091 hard to catch: the change that broke all six stdio registrations landed in `src/lfx/src/lfx/base/mcp/security.py`, inside a 70-file commit that four *other* areas did watch — so the sweep would have fired, but never under **MCP Server**, leaving `@mcp` out of the revalidation grep.
 - **The window is validated, not guessed.** `since` must be `N hours|days|weeks|months ago`, `yesterday`, or an ISO date; anything else is rejected with exit 2. `git log --since=` is parsed by approxidate, which never errors — `undefined` silently selects zero commits (a green run that reads exactly like a quiet day) and `last thursdya` silently widens to 200. The sweep also prints how many commits the window selected repo-wide and the newest commit in the checkout, so an empty result is legible instead of being confused with clean areas.
 
