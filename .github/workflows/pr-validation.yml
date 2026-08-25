@@ -201,9 +201,69 @@ jobs:
           echo "::error::could not clone langflow-ai/langflow, so no dependency-path verdict exists for this PR. Not treating that as 'every path resolves'."
           exit 1
 
+      # The suite does not validate `main`: every scheduled lane runs the nightly,
+      # which is cut from a release line, and upstream merges that line back into
+      # `main` only sporadically (~1–2 months). Resolving against `main` alone
+      # failed PRs for paths that are correct for the image under test (#1574).
+      # The lines are derived, never hardcoded — they rotate, and the selection is
+      # numeric, since `release-1.9.7` sorts above `release-1.12.0` lexically. Two
+      # of them, because the line the nightly SHIPS lags the newest line CUT and a
+      # single-line window would drop the shipping one at the moment of the cut.
+      # Both network calls retry like the clone above (upstream fetches are
+      # flaky); a real failure fails the step, since guessing would put the guard
+      # back on `main` alone with nothing in the log to say so.
+      - name: Fetch the release lines the nightly is cut from
+        run: |
+          set -eo pipefail
+          for attempt in 1 2 3; do
+            if RELEASE_REFS=$(node scripts/watch-upstream-areas.mjs --mode=release-ref --root langflow-upstream); then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::could not derive the upstream release lines, so the guard would silently fall back to origin/main alone."
+              exit 1
+            fi
+            echo "::warning::release-line lookup attempt $attempt failed; retrying"
+            # Overridable so the unit lane can pin the fail-loud path (both
+            # `exit 1`s below) in under a second instead of paying 3 real sleeps.
+            # Nothing in Actions sets it, so CI waits the full 5 s.
+            sleep "${RETRY_SLEEP_SECONDS:-5}"
+          done
+          for RELEASE_REF in $RELEASE_REFS; do
+            echo "derived release line: $RELEASE_REF"
+            for attempt in 1 2 3; do
+              if git -C langflow-upstream fetch --filter=blob:none --depth 1 --no-tags origin \
+                   "+refs/heads/${RELEASE_REF}:refs/remotes/origin/${RELEASE_REF}"; then
+                break
+              fi
+              if [ "$attempt" = 3 ]; then
+                echo "::error::could not fetch ${RELEASE_REF}; a ref the guard cannot list is not a ref it may skip."
+                exit 1
+              fi
+              echo "::warning::fetch attempt $attempt for ${RELEASE_REF} failed; retrying"
+              sleep "${RETRY_SLEEP_SECONDS:-5}"
+            done
+          done
+          # Derived from the list itself, not accumulated inside the loop: a
+          # failed fetch exits above, so the two can never disagree — and one
+          # variable name that only some lines got right is what shipped an empty
+          # --releases past every guard in this repo once already.
+          RELEASE_CSV=$(printf '%s\n' $RELEASE_REFS | sed 's|^|origin/|' | paste -sd, -)
+          # The one state that must never reach the next step: an empty list is a
+          # silent fall back to `origin/main` alone, which is the defect #1574 was
+          # filed for and which shipped once from this very block.
+          if [ -z "$RELEASE_CSV" ]; then
+            echo "::error::derived no release line, so the guard would silently resolve against origin/main alone (issue #1574)."
+            exit 1
+          fi
+          echo "resolving against: origin/main,$RELEASE_CSV"
+          echo "RELEASE_CSV=$RELEASE_CSV" >> "$GITHUB_ENV"
+
       # Fails only on the changed docs; the repo-wide sweep is emitted as
       # ::warning:: so drift that lands upstream between PRs stays visible
-      # (#1012 — an unevaluated path is unknown, not clean).
+      # (#1012 — an unevaluated path is unknown, not clean). A path resolving on
+      # any one ref passes and is NAMED, as a ::notice::, when only some of them
+      # satisfied it — so a green verdict cannot be read as "exists on main".
       - name: Resolve every External-dependencies path against upstream
         run: |
           set -eo pipefail
@@ -211,6 +271,7 @@ jobs:
             --mode=check-docs \
             --root langflow-upstream \
             --ref origin/main \
+            --releases "$RELEASE_CSV" \
             --changed changed-docs.txt | tee -a "$GITHUB_STEP_SUMMARY"
 
   detect-specs:

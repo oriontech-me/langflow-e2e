@@ -69,8 +69,14 @@
  *   node scripts/watch-upstream-areas.mjs --mode=check  --root langflow-upstream
  *   node scripts/watch-upstream-areas.mjs --mode=detect --root langflow-upstream --since "24 hours ago"
  *   node scripts/watch-upstream-areas.mjs --mode=areas          # print the table, no checkout needed
- *   node scripts/watch-upstream-areas.mjs --mode=check-docs --root langflow-upstream --ref origin/main \
- *       [--changed changed-docs.txt]   # spec-doc dependency paths (#1298)
+ *   node scripts/watch-upstream-areas.mjs --mode=release-ref --root langflow-upstream
+ *   node scripts/watch-upstream-areas.mjs --mode=check-docs --root langflow-upstream \
+ *       --ref origin/main --releases origin/release-1.12.0,origin/release-1.11.5 \
+ *       [--changed changed-docs.txt]   # spec-doc dependency paths (#1298, #1574)
+ *
+ * A path satisfied by the trunk OR by any release line resolves (#1574): the
+ * suite validates the nightly, which is cut from a release line, not from `main`.
+ * `--mode=release-ref` prints the lines to fetch, newest first.
  *
  * Exit codes: 0 = verdict produced; 1 = the checkout contradicts the table (a
  * monitored path is gone, an unclassified subtree exists, or a changed doc names
@@ -620,20 +626,70 @@ export function matchGlob(pattern, treeEntries) {
  * PR that edits an unrelated doc — but it must not be invisible either, so the
  * pre-existing half is announced, never dropped (#1012).
  *
+ * **Resolution is over the trunk AND the release lines, and any one of them is
+ * enough (issue #1574).** The suite does not validate upstream `main`: every
+ * scheduled lane runs `langflowai/langflow-nightly:latest`, which is cut from a
+ * release line, and upstream merges that line back into `main` only sporadically
+ * (~1–2 months). Resolving against `main` alone therefore failed a PR for a path
+ * that is genuinely correct for the image under test — measured on PR #1570,
+ * where `src/lfx/src/lfx/exceptions/tweaks.py` was absent from `main` and present
+ * on `release-1.12.0`.
+ *
+ * What does NOT change is the guard's original purpose (#1298): a path that
+ * resolves on NO ref is still a defect. What is added is attribution, and the
+ * refs carry ROLES rather than sitting in a flat list, because only two shapes
+ * are worth a reader's attention:
+ *
+ * - `release-only` — absent from the trunk. This is #1574's case, and naming it
+ *   is what stops a green verdict from reading as "exists on `main`".
+ * - `trunk-only` — on the trunk and on NO release line tracked. Read it as
+ *   written: it is silent about a path the shipping line dropped while the older
+ *   tracked line kept it, because which of the two the nightly ships is precisely
+ *   what this script cannot know (see `pickReleaseBranches`). Measured across all
+ *   498 real dependency tokens against `main`/`1.12.0`/`1.11.5`, that gap is
+ *   currently empty. The refs are printed newest first, so a reader who knows the
+ *   shipping line can always tell.
+ *
+ * A flat list would instead report every path merely NEWER than the oldest
+ * release line tracked — measured, that is 9 of 10 findings on this repo's docs
+ * today, all of them noise, and it grows with every release cut.
+ *
  * @param {{
  *   docs: Array<{file: string, markdown: string}>,
- *   treeEntries: string[],
+ *   trunk: {ref: string, entries: string[]},
+ *   releases?: Array<{ref: string, entries: string[]}>,
  *   changedFiles?: string[],
  *   exemptFiles?: string[],
  * }} options
- * @returns {{checked: number, failures: Array, warnings: Array, exempt: string[]}}
+ * @returns {{
+ *   checked: number,
+ *   failures: Array,
+ *   warnings: Array,
+ *   partial: Array<{
+ *     file: string, line: number, token: string,
+ *     class: "release-only"|"trunk-only", resolvedOn: string[], missingOn: string[],
+ *   }>,
+ *   exempt: string[],
+ * }}
  */
-export function checkDocDeps({ docs, treeEntries, changedFiles = [], exemptFiles = DOC_DEPS_EXEMPT_FILES }) {
-  const treeSet = new Set(treeEntries);
+export function checkDocDeps({ docs, trunk, releases = [], changedFiles = [], exemptFiles = DOC_DEPS_EXEMPT_FILES }) {
+  if (!trunk || !Array.isArray(trunk.entries)) {
+    // No trunk would resolve nothing and read as "every path is broken", which is
+    // the same false verdict an empty tree is rejected for in runCheckDocs.
+    throw new Error("checkDocDeps needs a trunk { ref, entries } tree to resolve against");
+  }
+  const index = ({ ref, entries }) => ({ ref, entries, set: new Set(entries) });
+  const trunkTree = index(trunk);
+  // A release ref that IS the trunk would be listed twice in every reason string
+  // and counted as its own side of the report — the same "a ref named twice reads
+  // as two verdicts" rule `parseRefList` applies within one list.
+  const releaseTrees = releases.filter((r) => r.ref !== trunk.ref).map(index);
+  const allTrees = [trunkTree, ...releaseTrees];
   const changed = new Set(changedFiles);
   const exemptSet = new Set(exemptFiles);
   const failures = [];
   const warnings = [];
+  const partial = [];
   const exempt = [];
   let checked = 0;
 
@@ -646,24 +702,158 @@ export function checkDocDeps({ docs, treeEntries, changedFiles = [], exemptFiles
       const { kind, target } = classifyDepToken(token);
       checked += 1;
 
-      let reason = null;
+      // An ellipsis is unresolvable by construction, so no ref can decide it and
+      // asking each one would only make the reason misleading (#1012).
       if (kind === "ellipsis") {
-        reason =
-          "contains an ellipsis, so it can never be resolved against upstream — write the real path, or a glob";
-      } else if (kind === "glob") {
-        if (matchGlob(target, treeEntries).length === 0) reason = "glob matches nothing upstream";
-      } else if (!treeSet.has(target)) {
-        reason = "does not exist upstream";
+        const finding = {
+          file: doc.file,
+          line,
+          token,
+          kind,
+          reason: "contains an ellipsis, so it can never be resolved against upstream — write the real path, or a glob",
+        };
+        (changed.has(doc.file) ? failures : warnings).push(finding);
+        continue;
       }
-      if (!reason) continue;
 
-      const finding = { file: doc.file, line, token, kind, reason };
-      if (changed.has(doc.file)) failures.push(finding);
-      else warnings.push(finding);
+      const satisfies = (tree) =>
+        kind === "glob" ? matchGlob(target, tree.entries).length > 0 : tree.set.has(target);
+      const resolvedOn = allTrees.filter(satisfies).map((tree) => tree.ref);
+
+      if (resolvedOn.length === 0) {
+        const where = allTrees.map((tree) => tree.ref).join(", ");
+        const finding = {
+          file: doc.file,
+          line,
+          token,
+          kind,
+          reason: kind === "glob" ? `glob matches nothing on ${where}` : `does not exist on ${where}`,
+        };
+        (changed.has(doc.file) ? failures : warnings).push(finding);
+        continue;
+      }
+
+      const onTrunk = resolvedOn.includes(trunkTree.ref);
+      const onSomeRelease = releaseTrees.some((tree) => resolvedOn.includes(tree.ref));
+      if (!onTrunk) {
+        partial.push({
+          file: doc.file,
+          line,
+          token,
+          class: "release-only",
+          resolvedOn,
+          missingOn: [trunkTree.ref],
+        });
+      } else if (releaseTrees.length > 0 && !onSomeRelease) {
+        partial.push({
+          file: doc.file,
+          line,
+          token,
+          class: "trunk-only",
+          resolvedOn,
+          missingOn: releaseTrees.map((tree) => tree.ref),
+        });
+      }
     }
   }
 
-  return { checked, failures, warnings, exempt };
+  return { checked, failures, warnings, partial, exempt };
+}
+
+/**
+ * How many release lines are resolved against, newest first.
+ *
+ * Not one. The line the nightly SHIPS is not always the newest line CUT: upstream
+ * branches `release-1.13.0` off `main` before the nightly switches to it, and a
+ * single-line window would drop the shipping line at that moment — taking with
+ * it every path that landed there and was never merged back, which is exactly the
+ * class #1574 exists to accommodate. An older line does carry paths of its own:
+ * measured on the real remote, 61 `src/` paths live on `release-1.11.5` and on
+ * NEITHER `main` nor `release-1.12.0`, one of them
+ * `services/tracing/otel_fastapi_patch.py` — a plausible `@observability`
+ * dependency.
+ *
+ * Not more than two, either: the further back the window reaches, the more it
+ * confirms files no lane runs. Two is the smallest window that survives a cut.
+ *
+ * **Lines, not branches** — the distinction is the whole point, and getting it
+ * wrong makes this constant a lie. Upstream cuts patch branches on the live line
+ * roughly weekly (`release-1.11.0` through `release-1.11.5`), so the two newest
+ * BRANCHES spanned a single line for essentially the whole 1.11 cycle. That it
+ * spans two today (`release-1.12.0`, `release-1.11.5`) is luck: 1.12 has no patch
+ * branch yet, and the day `release-1.12.1` is cut the buffer would vanish
+ * silently.
+ */
+export const RELEASE_LINES_TRACKED = 2;
+
+/**
+ * The newest `release-X.Y[.Z]` branches upstream — the lines the nightly is cut
+ * from, newest first.
+ *
+ * `langflowai/langflow-nightly:latest` is built from a release line, not from
+ * `main`, so those are the refs a doc naming 1.12-only code must be allowed to
+ * resolve against (#1574). Deriving them beats hardcoding: the lines rotate, and
+ * a hardcoded ref goes stale silently — on a guard whose whole job is to refuse
+ * silent verdicts.
+ *
+ * Selection is by NUMERIC version, never lexically: upstream carries
+ * `release-1.9.7` and `release-1.12.0` side by side, and a string sort picks the
+ * 1.9 line. The shape is also strict — upstream's branch list holds
+ * `release-notes`, `release-0.6.0a`, `release-1.6.0-backup` and
+ * `release-1.6.0-at-scheduling-logic-branch`, none of which is a release line.
+ *
+ * Candidates are grouped by `X.Y` and only the newest branch of each line is a
+ * candidate, so `count` counts LINES. Returned newest first, which is how a
+ * reader of the report can tell the line the nightly most likely ships from the
+ * one behind it.
+ *
+ * `release-1.12` and `release-1.12.0` are the same version, so the order between
+ * them would otherwise be decided by whatever order `ls-remote` printed. The
+ * more specific spelling wins, then lexical order — arbitrary is fine, undefined
+ * is not, since the winner is a ref the caller then fetches.
+ *
+ * @param {string} lsRemoteOutput raw `git ls-remote --heads origin 'refs/heads/release-*'`
+ * @param {number} count how many release LINES to return, one branch each
+ * @returns {string[]} e.g. `["release-1.12.0", "release-1.11.5"]`
+ * @throws when the output names no release line at all — undecidable, not "none".
+ */
+export function pickReleaseBranches(lsRemoteOutput, count = RELEASE_LINES_TRACKED) {
+  const candidates = [];
+  for (const line of String(lsRemoteOutput || "").split("\n")) {
+    const name = line.trim().split(/\s+/).pop() || "";
+    const match = /^(?:refs\/heads\/)?(release-(\d+)\.(\d+)(?:\.(\d+))?)$/.exec(name);
+    if (!match) continue;
+    candidates.push({
+      branch: match[1],
+      version: [Number(match[2]), Number(match[3]), Number(match[4] || 0)],
+      segments: match[4] === undefined ? 2 : 3,
+    });
+  }
+  if (candidates.length === 0) {
+    throw new Error(
+      "no `release-X.Y[.Z]` branch found upstream, so the release line(s) the nightly is cut from cannot be derived",
+    );
+  }
+  candidates.sort(
+    (a, b) =>
+      b.version[0] - a.version[0] ||
+      b.version[1] - a.version[1] ||
+      b.version[2] - a.version[2] ||
+      b.segments - a.segments ||
+      (a.branch < b.branch ? -1 : a.branch > b.branch ? 1 : 0),
+  );
+
+  // One branch per `X.Y` line, in the order the sort already put them, so the
+  // slice below counts lines rather than patch branches on the same line.
+  const perLine = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const line = `${candidate.version[0]}.${candidate.version[1]}`;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    perLine.push(candidate.branch);
+  }
+  return perLine.slice(0, Math.max(1, count));
 }
 
 /**
@@ -858,24 +1048,65 @@ function collectDocFiles(repoRoot) {
   return out.map((file) => ({ file: path.relative(repoRoot, file), markdown: fs.readFileSync(file, "utf8") }));
 }
 
-function runCheckDocs(root, ref, changedListPath) {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/** How many `partial` findings the report names before it starts eliding (#1012: named, and capped visibly). */
+const MAX_NAMED_PARTIALS = 20;
 
-  let treeEntries;
+/**
+ * Prints the release lines the lanes' nightly is cut from, newest first, one per
+ * line, for a caller that has to fetch them before `--mode=check-docs` can
+ * resolve against them.
+ *
+ * It lives here rather than as a `git ls-remote | sort -V | head -2` in the
+ * workflow so the selection is covered by `npm run test:scripts` — the lexical
+ * trap it exists to avoid (`release-1.9.7` > `release-1.12.0`) is exactly the
+ * kind of defect that stays invisible in inline YAML (#1226).
+ */
+function runReleaseRef(root) {
+  let output;
   try {
-    treeEntries = git(root, ["ls-tree", "-r", "-t", "--name-only", ref]).split("\n").filter(Boolean);
+    output = git(root, ["ls-remote", "--heads", "origin", "refs/heads/release-*"]);
   } catch (error) {
     process.stderr.write(
-      `::error::watch-upstream-areas: could not list the upstream tree at "${ref}" in --root "${root}" (${error.message}). Treating as undecidable, not as "every path resolves".\n`,
+      `::error::watch-upstream-areas: could not list upstream release branches in --root "${root}" (${error.message}). Refusing to guess the release line.\n`,
     );
     process.exit(2);
   }
-  if (treeEntries.length === 0) {
-    process.stderr.write(
-      `::error::watch-upstream-areas: the upstream tree at "${ref}" is empty, so every path would "not exist". Undecidable.\n`,
-    );
+  try {
+    process.stdout.write(`${pickReleaseBranches(output).join("\n")}\n`);
+  } catch (error) {
+    process.stderr.write(`::error::watch-upstream-areas: ${error.message}.\n`);
     process.exit(2);
   }
+}
+
+function runCheckDocs(root, trunkRef, releaseRefs, changedListPath) {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+  // Every declared ref must be listable. A ref that is absent from the checkout
+  // would otherwise narrow the resolution back to the remaining ones and fail a
+  // PR for a path that is correct on the ref nobody fetched — #1574 all over
+  // again, this time with nothing in the log to say so.
+  const listTree = (ref) => {
+    let entries;
+    try {
+      entries = git(root, ["ls-tree", "-r", "-t", "--name-only", ref]).split("\n").filter(Boolean);
+    } catch (error) {
+      process.stderr.write(
+        `::error::watch-upstream-areas: could not list the upstream tree at "${ref}" in --root "${root}" (${error.message}). Treating as undecidable, not as "every path resolves".\n`,
+      );
+      process.exit(2);
+    }
+    if (entries.length === 0) {
+      process.stderr.write(
+        `::error::watch-upstream-areas: the upstream tree at "${ref}" is empty, so every path would "not exist". Undecidable.\n`,
+      );
+      process.exit(2);
+    }
+    return { ref, entries };
+  };
+
+  const trunk = listTree(trunkRef);
+  const releases = releaseRefs.map(listTree);
 
   // An unreadable changed-file list is undecidable too: defaulting to "nothing
   // changed" would silently downgrade every finding to a warning, which is the
@@ -897,14 +1128,64 @@ function runCheckDocs(root, ref, changedListPath) {
   }
 
   const docs = collectDocFiles(repoRoot);
-  const { checked, failures, warnings, exempt } = checkDocDeps({ docs, treeEntries, changedFiles });
+  const { checked, failures, warnings, partial, exempt } = checkDocDeps({ docs, trunk, releases, changedFiles });
 
+  const describe = (t) => `${t.ref} (${t.entries.length} tree entries)`;
   process.stdout.write(
-    `Resolved ${checked} dependency path(s) from ${docs.length - exempt.length} doc(s) against ${ref} (${treeEntries.length} tree entries); ${exempt.length} doc(s) exempt.\n`,
+    `Resolved ${checked} dependency path(s) from ${docs.length - exempt.length} doc(s) against ${describe(trunk)}` +
+      (releases.length > 0 ? ` and the release line(s) ${releases.map(describe).join(", ")}` : "") +
+      `; ${exempt.length} doc(s) exempt.\n`,
   );
+  if (releases.length === 0) {
+    // A `::warning::` and not a stdout line, because this state IS the defect
+    // #1574 was filed for, and it shipped once inside this very fix: an empty
+    // `--releases` reached the lane, the guard resolved against the trunk alone,
+    // and the only reason anyone noticed was that the PR's own doc happened to
+    // name a release-line-only path (#1580's first run). It must never again be
+    // indistinguishable from a healthy run (#1012).
+    process.stderr.write(
+      "::warning::watch-upstream-areas: no release line given, so this run resolves against the trunk alone — the suite validates the nightly, not `main` (issue #1574).\n",
+    );
+  }
   if (!changedListPath) {
     process.stdout.write(
       "No --changed list given, so every finding is reported and none fails: the diff decides severity.\n",
+    );
+  }
+
+  // The attribution half of #1574. Both classes resolve — one ref is enough — and
+  // both are reported, because in each of them "green" is a fact about a ref that
+  // is NOT the whole story.
+  const named = partial.slice(0, MAX_NAMED_PARTIALS);
+  if (partial.length > 0) {
+    const releaseOnly = partial.filter((p) => p.class === "release-only").length;
+    const trunkOnly = partial.length - releaseOnly;
+    process.stdout.write(
+      `\n${partial.length} path(s) resolve on only one side: ${releaseOnly} on a release line but not on ${trunk.ref}, ${trunkOnly} on ${trunk.ref} but on no release line.\n`,
+    );
+    for (const item of named) {
+      process.stdout.write(
+        `- ${item.file}:${item.line} \`${item.token}\` — resolves on ${item.resolvedOn.join(", ")}; absent from ${item.missingOn.join(", ")}` +
+          (item.class === "trunk-only" ? ", so the image this suite tests does not carry it yet" : "") +
+          "\n",
+      );
+    }
+    if (partial.length > MAX_NAMED_PARTIALS) {
+      process.stdout.write(
+        `- …and ${partial.length - MAX_NAMED_PARTIALS} more, elided here and in the annotations below.\n`,
+      );
+    }
+    // Also as annotations: before #1574 a path that upstream deleted on `main`
+    // while the release line kept it raised a `::warning::` and was visible in the
+    // checks panel. It resolves now, correctly — but it must not become invisible
+    // on the way, so it lands one severity down instead of disappearing (#1012).
+    for (const item of named) {
+      process.stderr.write(
+        `::notice::${item.file}:${item.line} — dependency path \`${item.token}\` resolves on ${item.resolvedOn.join(", ")} but is absent from ${item.missingOn.join(", ")}.\n`,
+      );
+    }
+    process.stdout.write(
+      "\nA path resolving is a fact about a FILE existing, never about the code inside it — a file present on every ref can still carry the behaviour on only one.\n",
     );
   }
 
@@ -915,20 +1196,20 @@ function runCheckDocs(root, ref, changedListPath) {
   }
   for (const f of failures) {
     process.stderr.write(
-      `::error::${f.file}:${f.line} — dependency path \`${f.token}\` ${f.reason}. This PR changed the doc, so the path must resolve upstream (issue #1298).\n`,
+      `::error::${f.file}:${f.line} — dependency path \`${f.token}\` ${f.reason}. This PR changed the doc, so the path must resolve on at least one of them (issue #1298, #1574).\n`,
     );
   }
 
   if (failures.length > 0) {
     process.stderr.write(
-      `::error::${failures.length} dependency path(s) in doc(s) this PR changed do not resolve upstream.\n`,
+      `::error::${failures.length} dependency path(s) in doc(s) this PR changed resolve on none of ${[trunk, ...releases].map((t) => t.ref).join(", ")}.\n`,
     );
     process.exit(1);
   }
   process.stdout.write(
     warnings.length > 0
       ? `No unresolved dependency path in the changed docs; ${warnings.length} pre-existing one(s) reported above.\n`
-      : "Every dependency path resolves upstream.\n",
+      : "Every dependency path resolves on at least one of the refs above.\n",
   );
 }
 
@@ -995,10 +1276,42 @@ function renderAreaTable() {
   ].join("\n");
 }
 
+/**
+ * `--releases` is a COMMA-SEPARATED list of the release lines to resolve against
+ * alongside the trunk (#1574). `--ref` keeps its old meaning and shape — one
+ * trunk ref — so a caller that passes only `--ref origin/main` gets exactly the
+ * pre-#1574 behaviour, which is why the new capability is a new flag rather than
+ * a new spelling of the old one.
+ *
+ * Order is preserved and duplicates dropped, because the order is what the
+ * report prints and a ref named twice would read as two verdicts.
+ *
+ * A ref whose own name contains a comma is therefore inexpressible. git permits
+ * one; upstream has never carried one, and the failure is loud rather than
+ * silent — the two halves resolve to nothing and `runCheckDocs` exits 2 naming
+ * them, which is the accepted outcome for a ref it cannot list.
+ *
+ * @param {string} value
+ * @param {{allowEmpty?: boolean}} [options] an empty `--releases` is legitimate —
+ *   it is the trunk-only run, announced as such — while an empty ref list where
+ *   one is required would report every path as broken.
+ * @returns {string[]}
+ * @throws when the list holds no ref and `allowEmpty` is not set.
+ */
+export function parseRefList(value, { allowEmpty = false } = {}) {
+  const refs = [];
+  for (const part of String(value || "").split(",")) {
+    const ref = part.trim();
+    if (ref && !refs.includes(ref)) refs.push(ref);
+  }
+  if (refs.length === 0 && !allowEmpty) throw new Error(`"${value}" names no ref`);
+  return refs;
+}
+
 /** `--flag value` and `--flag=value` both work — the mixed forms bit a reviewer. */
 export function parseArgs(args) {
-  const opts = { mode: "check", root: ".", since: "24 hours ago", ref: "HEAD", changed: "" };
-  const KEYS = new Set(["mode", "root", "since", "ref", "changed"]);
+  const opts = { mode: "check", root: ".", since: "24 hours ago", ref: "HEAD", releases: "", changed: "" };
+  const KEYS = new Set(["mode", "root", "since", "ref", "releases", "changed"]);
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     const match = /^--([a-z]+)(?:=(.*))?$/.exec(a);
@@ -1018,13 +1331,13 @@ function main(argv) {
     process.stderr.write(`::error::watch-upstream-areas: ${error.message}\n`);
     process.exit(2);
   }
-  const { mode, root, since, ref, changed } = opts;
+  const { mode, root, since, ref, releases, changed } = opts;
 
   if (mode === "areas") {
     process.stdout.write(`${renderAreaTable()}\n`);
     return;
   }
-  if (mode !== "check" && mode !== "detect" && mode !== "check-docs") {
+  if (mode !== "check" && mode !== "detect" && mode !== "check-docs" && mode !== "release-ref") {
     process.stderr.write(`::error::watch-upstream-areas: unknown mode "${mode}"\n`);
     process.exit(2);
   }
@@ -1044,9 +1357,14 @@ function main(argv) {
     }
   }
 
+  // `allowEmpty` cannot throw, so there is nothing to catch here: an absent
+  // `--releases` is the legitimate trunk-only run, announced by runCheckDocs.
+  const releaseRefs = mode === "check-docs" ? parseRefList(releases, { allowEmpty: true }) : [];
+
   try {
     if (mode === "check") return runCheck(root);
-    if (mode === "check-docs") return runCheckDocs(root, ref, changed);
+    if (mode === "release-ref") return runReleaseRef(root);
+    if (mode === "check-docs") return runCheckDocs(root, ref, releaseRefs, changed);
     return runDetect(root, since);
   } catch (error) {
     // Includes the fail-closed throw from findLfxDrift and a bad area name in
