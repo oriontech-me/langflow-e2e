@@ -30,32 +30,55 @@ import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-edito
 const MEMORIES_API = "/api/v1/memories";
 const KNOWLEDGE_BASES_API = "/api/v1/knowledge_bases/";
 
+// The provider catalog the Embedding Model picker is rendered from. Read by
+// test 5's probe and intercepted by tests 6-7; `useGetModelProviders` calls it
+// with an optional query string, so it is matched on the PATHNAME (a glob would
+// miss those variants) and `/api/v1/models/enabled_models` — a different query,
+// left live on purpose — is excluded by the same equality.
+const MODELS_API = "/api/v1/models";
+
+// What the widget renders INSTEAD of the picker when it has no provider to
+// offer: an enabled button carrying this label, whose click opens the Model
+// providers dialog. Harvested from the shipped bundle and confirmed live on
+// 1.12.0.dev37 (issue #1569).
+const SETUP_PROVIDER_LABEL = "#memory-embedding-model-setup-provider-label";
+const SETUP_PROVIDER_BUTTON = `button:has(${SETUP_PROVIDER_LABEL})`;
+
 // The Embedding Model trigger's text when a model COULD be chosen but none is.
 // Two strings because the shared widget reads `No Models Enabled` when its
 // options are empty and `Select a model` when they are not — both mean unset.
 const UNSET_EMBEDDING_MODEL = /^(Select a model|No Models Enabled)$/;
 
-// Whether the instance can offer an embedding model at all.
+/** One provider row of `GET /api/v1/models`, narrowed to what this file reads. */
+interface CatalogProvider {
+  is_configured?: boolean;
+  is_enabled?: boolean;
+  num_models?: number;
+  models?: Array<{ metadata?: { model_type?: string } }>;
+}
+
+// Whether the instance itself offers an embedding model — the precondition of
+// test 5 and of nothing else.
 //
-// This is a real precondition, not defensive coding: the Embedding Model control
-// is rendered by the shared model widget WITHOUT `showEmptyState`, which defaults
-// to false — so with no configured provider exposing an `embeddings` model, the
-// control is not in the DOM at all. Its label and placeholder text still render,
-// the required marker still shows and the submit button stays disabled forever,
-// with nothing saying why (the sibling Knowledge Base modal passes
-// `showEmptyState: true` and does render `No Models Enabled` + "Manage Model
-// Providers"). Measured on 1.12.0.dev22 with every provider `is_configured:false`,
-// and on 1.12.0.dev19 with credentials present, where the control renders.
+// It describes ONE of the picker's three states (a provider exposing an
+// `embeddings` model, where the control renders unset), NOT "what makes the
+// control render". It used to guard a second test on its negation, and that
+// negation covers two states with different DOM: with providers enabled but
+// none exposing embeddings the picker still renders, because the widget's
+// collapse condition is `!hasEnabledProviders && !showEmptyState &&
+// optionCount === 0` and `hasEnabledProviders` is `some(p => p.is_enabled ||
+// p.is_configured)` — any provider, not an embeddings-capable one. Tests 6-7
+// now name their state through the payload instead of inferring it (#1569).
 //
-// Probed through the API before the browser opens (repo convention), so the two
-// states are decided by the environment rather than by whatever the DOM happens
+// Probed through the API before the browser opens (repo convention), so the
+// state is decided by the environment rather than by whatever the DOM happens
 // to show — a `count() === 0` check inside the test would read a genuine
 // regression that removes the control as "no provider configured".
 async function embeddingModelAvailable(
   request: APIRequestContext,
   token: string,
 ): Promise<boolean> {
-  const res = await request.get("/api/v1/models", {
+  const res = await request.get(MODELS_API, {
     headers: { Authorization: token },
   });
   if (res.status() !== 200) return false;
@@ -70,6 +93,79 @@ async function embeddingModelAvailable(
       p.is_enabled === true &&
       (p.models ?? []).some((m) => m.metadata?.model_type === "embeddings"),
   );
+}
+
+/**
+ * Serves the provider catalog the picker reads, DERIVED from the live response.
+ *
+ * The real endpoint is called and its body transformed, never fabricated: a
+ * hand-written fixture keeps passing after the backend changes the payload's
+ * shape, which is the standing objection to mocking a read; the backend's own
+ * object minus one field's worth of content cannot. `route.fulfill({ response,
+ * json })` keeps the original headers, as `admin-ui-read-only-policy.spec.ts`
+ * does for the policy reads.
+ *
+ * Only GET is intercepted — a write to this path must reach the backend.
+ */
+async function serveProviders(
+  page: Page,
+  transform: (providers: CatalogProvider[]) => CatalogProvider[],
+): Promise<void> {
+  await page.route(
+    (url: URL) => url.pathname.replace(/\/$/, "") === MODELS_API,
+    async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const response = await route.fetch();
+      const body = (await response.json()) as CatalogProvider[];
+      await route.fulfill({ response, json: transform(body) });
+    },
+  );
+}
+
+/** Nothing configured and nothing enabled — the picker collapses (state C). */
+const asUnconfigured = (providers: CatalogProvider[]): CatalogProvider[] =>
+  providers.map((p) => ({
+    ...p,
+    is_configured: false,
+    is_enabled: false,
+    models: [],
+    num_models: 0,
+  }));
+
+/**
+ * Providers untouched, every embeddings model dropped (state B).
+ *
+ * Both spellings are filtered because the widget accepts both; only the plural
+ * occurs in the payload today (measured: 138 `llm`, 18 `embeddings`, no
+ * `embedding`), so this is about the widget's contract, not the data.
+ */
+const withoutEmbeddings = (providers: CatalogProvider[]): CatalogProvider[] =>
+  providers.map((p) => {
+    const models = (p.models ?? []).filter(
+      (m) =>
+        m.metadata?.model_type !== "embeddings" &&
+        m.metadata?.model_type !== "embedding",
+    );
+    return { ...p, models, num_models: models.length };
+  });
+
+/**
+ * Installs the payload and RE-ENTERS the editor so the widget reads it.
+ *
+ * The shared `beforeEach` already opened the editor, and the providers query is
+ * cached in memory with a 5-minute `staleTime`, so a route installed afterwards
+ * would not be consulted. A full document load drops that cache; the re-entry
+ * measures ~1.2 s on 1.12.0.dev37, and it is the same entry helper the
+ * `beforeEach` uses, so nothing about the editor's readiness gating diverges.
+ */
+async function enterWithProviders(
+  page: Page,
+  flowId: string,
+  transform: (providers: CatalogProvider[]) => CatalogProvider[],
+): Promise<void> {
+  await serveProviders(page, transform);
+  await openFlowById(page, flowId);
+  await openMemoriesPanel(page);
 }
 
 /**
@@ -258,11 +354,17 @@ test.describe("core-functionality/memory — Memories panel and Create Memory mo
       });
     });
 
-  // The Embedding Model default is covered by TWO tests, one per environment
-  // state, each skipping with the concrete reason when the other one's state
-  // holds. Written this way rather than as one branching test so that neither
-  // state is silently accepted: whichever the instance is in, one of the two
-  // runs and asserts something falsifiable, and the skip reason names the state.
+  // The Embedding Model control has THREE states, and each gets its own test.
+  //
+  // The first reads the instance's real provider state and skips when that state
+  // does not hold; the other two SERVE the state through the providers payload,
+  // so they run on every lane no matter what is configured. That split is the
+  // point of #1569: the second test used to be guarded on the first's negation,
+  // which covers two states with different DOM — so it never ran on any lane
+  // that configures a provider (4 of 4 retained dailies), and would have failed
+  // on a lane whose only provider ships no embeddings model (`anthropic` does
+  // not). Driving it per page keeps the file off `@destructive`, which an
+  // instance-global provider change would have forced (#1010).
   test("Embedding Model carries no default model when a provider offers embeddings",
     { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
     async ({ page, request }) => {
@@ -286,23 +388,13 @@ test.describe("core-functionality/memory — Memories panel and Create Memory mo
       });
     });
 
-  test("the Embedding Model control is absent when no provider offers embeddings",
+  test("the Embedding Model picker is replaced by a provider-setup affordance when no provider is configured",
     { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
-    async ({ page, request }) => {
-      const available = await embeddingModelAvailable(request, token);
-      test.skip(
-        available,
-        "a configured provider exposes an embeddings model, so the control renders — covered by the sibling test",
-      );
-
+    async ({ page }) => {
+      await enterWithProviders(page, flowId, asUnconfigured);
       const dialog = await openCreateMemoryModal(page);
 
-      // The product gap, asserted for what it is rather than skipped past: the
-      // required field's label and marker render while the control does not, so
-      // the modal is a dead end with nothing saying why. If upstream starts
-      // passing `showEmptyState` (as the Knowledge Base modal already does),
-      // this test fails and the spec is updated — which is the point.
-      await test.step("the required label renders with no control under it", async () => {
+      await test.step("the required label renders with no picker under it", async () => {
         await expect(
           dialog.locator("label").filter({ hasText: "Embedding Model" }),
         ).toBeVisible({ timeout: 15000 });
@@ -310,10 +402,57 @@ test.describe("core-functionality/memory — Memories panel and Create Memory mo
         await expect(
           page.getByTestId("value-dropdown-memory-embedding-model"),
         ).toHaveCount(0);
+        await expect(dialog.getByText(/^Provider: /)).toHaveCount(0);
       });
 
-      await test.step("nothing is defaulted in its place", async () => {
+      // Absence alone is not the finding, and asserting only the two counts
+      // above is what let this test claim a dead end for a modal that offers a
+      // way out: it passes both on the working empty state and on a regression
+      // that removed the picker outright. What distinguishes them is that
+      // something usable stands in its place.
+      await test.step("an enabled provider-setup affordance stands in its place", async () => {
+        await expect(page.locator(SETUP_PROVIDER_LABEL)).toHaveText(
+          "Select embedding model",
+          { timeout: 15000 },
+        );
+        await expect(page.locator(SETUP_PROVIDER_BUTTON)).toBeEnabled();
+        // Read before the click, because opening the providers dialog makes the
+        // Create Memory modal inert.
+        await expect(
+          dialog.getByRole("button", { name: "Create Memory" }),
+        ).toBeDisabled();
+      });
+
+      await test.step("clicking it opens the Model providers dialog", async () => {
+        await page.locator(SETUP_PROVIDER_BUTTON).click();
+        await expect(
+          page.getByRole("heading", { name: "Model providers" }),
+        ).toBeVisible({ timeout: 15000 });
+      });
+    });
+
+  test("the Embedding Model picker still renders when the configured providers expose no embeddings model",
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux"] },
+    async ({ page }) => {
+      await enterWithProviders(page, flowId, withoutEmbeddings);
+      const dialog = await openCreateMemoryModal(page);
+
+      // The third state, and the one the old guard silently folded into the
+      // second: the widget's collapse needs BOTH no options and no enabled
+      // provider, so with providers enabled the picker renders with nothing to
+      // offer. A test asserting the collapsed DOM here fails against a healthy
+      // instance — which is what made the old guard a latent red rather than
+      // merely dead coverage.
+      await test.step("the picker renders, unset, with no model chosen", async () => {
+        await expect(page.locator("#memory-embedding-model")).toHaveText(
+          UNSET_EMBEDDING_MODEL,
+          { timeout: 15000 },
+        );
         await expect(dialog.getByText(/^Provider: /)).toHaveCount(0);
+      });
+
+      await test.step("the provider-setup affordance is NOT shown", async () => {
+        await expect(page.locator(SETUP_PROVIDER_LABEL)).toHaveCount(0);
       });
     });
 
