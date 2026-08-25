@@ -923,9 +923,8 @@
       → security/tweaks-graph-path-floor.spec.ts
 - [x] `mode=sync` refuses a protected tweak **without ever answering 2xx**, and the refused request
       leaves the flow still running the author's code. Asserted shape-agnostically on purpose: the
-      status body is a generic `500` on `1.12.0.dev37` and still on `dev38`, where
-      `POST /api/v1/run` returns `422 TWEAKS_REFUSED` naming the field; the property pinned here
-      holds under both, while
+      status body is a generic `500` on `1.12.0.dev37` and still on `dev38`, where `POST /api/v1/run`
+      returns `422 TWEAKS_REFUSED` naming the field; the property pinned here holds under both, while
       still catching the failure that matters — a refusal answering `200` because the tweak took
       effect or was dropped and the run proceeded anyway. The shape difference is recorded in the
       spec doc → security/tweaks-graph-path-floor.spec.ts
