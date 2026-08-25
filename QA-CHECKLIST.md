@@ -938,6 +938,20 @@
       effect or was dropped and the run proceeded anyway. The shape difference is recorded in the
       spec doc → security/tweaks-graph-path-floor.spec.ts
 
+#### 17.5 Model-Provider Base URLs — the connector SSRF seam (1.12)
+
+> A provider component's base-URL field is tenant-editable **and** credential-bearing: the SDK performs a server-side request to whatever host it names, carrying the operator's stored provider credential — `lfx/base/models/provider_ssrf.py` calls it "both an SSRF primitive and a credential-exfiltration primitive". Upstream `langflow-ai/langflow#14640` created that module as the **single seam** where those components apply the policy; `#14704` followed two days later to close the call sites the first pass missed. Distinct from § 17.1, which covers an ordinary connector on a laxer policy: provider URLs block literal loopback even though `connector_ssrf_allow_loopback` ships `true`. Spec doc: `docs/security/model-provider-base-url-ssrf.md`.
+
+- [-] A loopback provider base URL is refused, and the message names **every** address the name resolves to (`::1` *and* `127.0.0.1`) plus the `LANGFLOW_SSRF_ALLOWED_HOSTS` escape hatch — both legs, because a message naming only one means the other went unchecked, and `localhost` resolving to `::1` first is the common case → `security/model-provider-base-url-ssrf.spec.ts`
+- [-] The cloud-metadata address `169.254.169.254` is refused, with the address named → `security/model-provider-base-url-ssrf.spec.ts`
+- [-] A non-`http(s)` scheme is refused naming the scheme (`'file'`) — a different validator branch from the two above, which resolve a host, so a regression could close one and leave the other open → `security/model-provider-base-url-ssrf.spec.ts`
+- [-] The **Anthropic** component refuses the same three values through its differently-named field (`base_url` vs OpenAI's `openai_api_base`) — the asymmetry `#14704` existed for, and the reason a one-component spec would have passed the regression it was written for → `security/model-provider-base-url-ssrf.spec.ts`
+- [-] An allow-listed RFC-1918 base URL is **admitted** through the seam: no `SSRF Protection` in the body and a real `404` from the private echo service. The non-vacuity control — without it every refusal above is equally consistent with "the policy blocks every non-default URL". `test.skip`-gated with a stated reason when `ECHO_BASE_URL` is unset or resolves to a host Langflow does not block by default → `security/model-provider-base-url-ssrf.spec.ts`
+- [-] An empty base URL **and** the provider's own canonical endpoint both **skip** the policy on both components, failing instead with the provider's own refusal of a deliberately invalid key (`Incorrect API key provided` / `API key is invalid`) — the `_is_provider_default` branch, and the control that survives an unset `ECHO_BASE_URL`. Asserted on the provider's words rather than a bare `401`, so the absence of the SSRF marker means *skipped* rather than *died earlier* → `security/model-provider-base-url-ssrf.spec.ts`
+- [ ] DNS rebinding through a provider base URL — `provider_httpx_clients` returns DNS-**pinned** clients precisely so the connection cannot drift from the validated IP; proving the pin needs a DNS server that answers differently on the second lookup
+- [ ] A credential forwarded to an attacker-controlled **public** endpoint — the module's own scope note says the policy blocks internal destinations only and "cannot decide whether an arbitrary *public* host is a legitimate OpenAI-compatible provider". Restricting which hosts a stored credential may reach is a separate, additive control upstream
+- [ ] The unified `LanguageModelComponent`'s `ollama_base_url` and `base_url_ibm_watsonx`, and the Ollama/Watsonx components' own `base_url` — **measured as outside this seam** on `1.12.0.dev38` (only three component files import `provider_ssrf`). Consistent with the scoping (Ollama is keyless and its default *is* loopback), recorded because the most-used model component carrying two unguarded base-URL fields deserves a deliberate look
+
 ---
 
 ## i18n/ — Interface Language and Localization
