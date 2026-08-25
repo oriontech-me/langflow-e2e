@@ -279,21 +279,38 @@ spec doc:
   either — the real prefix is `src/lfx/src/lfx/components/…`. The family is right,
   the path is not.
 
-Fixing those 20 is **not** part of #1040 — it is a docs sweep across 18 files with
+Fixing those 20 was **not** part of #1040 — it is a docs sweep across 18 files with
 no bearing on the drift detector — but the count belongs here, because the first
 version of this section said "one defect" and that reads as a clean bill of health.
-Tracked as #1298, together with the guard that would catch all 21 at once.
+It went to #1298 together with the guard, and **both shipped there** (PR #1314):
+all 21 paths are corrected, and resolving *every* doc against four refs found **42**
+unresolvable paths across 35 files rather than 21, since ~20 more were reorganised
+`src/frontend/` paths outside the `lfx…/components` spelling grepped above.
 
-That is the #1092 failure mode in a second place: a path that does not exist is
+That **was** the #1092 failure mode in a second place: a path that does not exist is
 **silent**, because `git log --since -- <bad-path>` and a grep for it both return
-nothing, which is indistinguishable from "nothing changed here".
-`scripts/validate-spec-deps.ts` does not catch it — it checks that the
-**External dependencies** section exists and is populated, never that its paths
-resolve — and it is informational, not a gate. Validating every spec-doc dependency
-path against a real ref is the guard that would have caught all 21 at once, is a
-**separate** issue, and should extend `watch-upstream-areas.mjs --mode=check` (which
-already does exactly this for the `file-watcher` area table) rather than duplicate
-it.
+nothing, which is indistinguishable from "nothing changed here". It is not silent
+any more — and the two scripts must not be confused for each other, because reading
+the wrong one led a review of PR #1570 to report a guard that had just failed that
+very PR as nonexistent:
+
+| Script | What it does | Where it runs |
+|---|---|---|
+| `scripts/validate-spec-deps.ts` | checks the **External dependencies** section exists and is populated; always exits 0, informational | `npm run validate:specs` only — nothing under `.github/` runs it |
+| `scripts/watch-upstream-areas.mjs --mode=check-docs` | **resolves** every backticked `src/…` token in that section against the upstream trees | `pr-validation.yml` → **`Spec-doc dependency paths`**, on every PR |
+
+The resolution extends `watch-upstream-areas.mjs` as a **sibling mode** rather than
+as `--mode=check` itself, which is what this section predicted: `check` scans the
+`lfx` subtrees and needs a real working tree, while `check-docs` reads through
+`git ls-tree` and therefore runs against a blobless `--depth 1 --no-checkout` clone
+(520 KB / 1.6 s, against ~117 MB to materialise the files). Severity follows the
+diff (#980) — a path in a doc the PR changed fails, a pre-existing one is reported
+as a `::warning::` — and since #1574 it resolves against `origin/main` **plus the
+two release lines the nightly is cut from**, naming in a `::notice::` any path that
+resolves on only some of them. Measured 2026-08-25: 502 paths, zero unresolved —
+spread over the **145** docs that declare any, out of 261 scanned (1 exempt). The
+guard's own line reads `from 261 doc(s)` because that is what it read, not what
+declared; 116 of them name no path at all.
 
 ---
 
