@@ -224,6 +224,41 @@ export const LANGFLOW_AREAS = [
     ],
   },
   {
+    // Added by #1581. The three `lfx/services/*_policy` subtrees existed upstream
+    // with no entry covering them, and no area owned this surface — so a change to
+    // the policy backend fired no area and named no revalidation command, while 5
+    // `@governance` specs and two spec-doc trees cover exactly that surface. The
+    // #1092 failure mode (`lfx/base/mcp/security.py`), one migration later.
+    // Firing cost, measured before adding it (#1092 caps this deliberately and
+    // says to prefer moving an entry out of scope over adding one): over the 14
+    // daily windows to 2026-08-25 this area fired on 2, and the median across all
+    // areas is unchanged — 9/14 with it, 9/13 without.
+    area: "Catalog & Provider Policy",
+    tags: ["@governance"],
+    checklist: "governance/ — Catalog and Provider Policy (1.12)",
+    // `@governance` is ALWAYS paired with a lane tag, and both lanes are excluded
+    // from a normal run — `playwright.config.ts` `grepInvert`s `@destructive` and
+    // `@enterprise` where a CLI `--grep` cannot override it. Measured:
+    // `npx playwright test --grep "@governance"` selects **0** tests, while
+    // `PW_DESTRUCTIVE=1` selects 5 and `PW_ENTERPRISE=1` selects 10. The derived
+    // one-command form would therefore have shipped a revalidation instruction
+    // that runs nothing — the #570/#1012 failure this repo is built around — so
+    // this area declares its commands, one per lane, instead of deriving one.
+    runs: [
+      'PW_DESTRUCTIVE=1 npx playwright test --grep "@governance"',
+      'PW_ENTERPRISE=1 npx playwright test --grep "@governance"',
+    ],
+    paths: [
+      "src/backend/base/langflow/api/v1/catalog_policy.py",
+      "src/backend/base/langflow/api/v1/model_provider_policy.py",
+      "src/backend/base/langflow/api/v1/policy_bundle.py",
+      "src/backend/base/langflow/api/v1/policy_bundle_errors.py",
+      "src/backend/base/langflow/services/catalog_policy/",
+      "src/backend/base/langflow/services/model_provider_policy.py",
+      "src/backend/base/langflow/services/policy_bundle.py",
+    ],
+  },
+  {
     area: "Database Models",
     tags: ["@database", "@release"],
     checklist: "AREA 1, 2, 6, 8 — any area with persisted state",
@@ -314,6 +349,18 @@ export const LFX_CLASSIFICATION = {
   "services/chat": { area: "Flow Execution" },
   "services/storage": { area: "File Upload" },
   "services/tracing": { area: "Tracing & Monitoring" },
+  // The OTLP backend, added upstream 2026-07-30 / 08-12 as top-level modules
+  // rather than under `services/`: application observability (1208 lines), the
+  // delivery self-test, the FastAPI-instrumentation shim and the LLM-provider
+  // latency/error metrics. Same area as `services/tracing` — AREA 12 (#1581).
+  "observability.py": { area: "Tracing & Monitoring" },
+  "observability_doctor.py": { area: "Tracing & Monitoring" },
+  "observability_fastapi.py": { area: "Tracing & Monitoring" },
+  "observability_llm_metrics.py": { area: "Tracing & Monitoring" },
+  // The governance backend, whose area #1581 had to create (see LANGFLOW_AREAS).
+  "services/catalog_policy": { area: "Catalog & Provider Policy" },
+  "services/model_provider_policy": { area: "Catalog & Provider Policy" },
+  "services/policy_bundle": { area: "Catalog & Provider Policy" },
   "services/variable": { area: "Settings & Global Variables" },
   "services/settings": { area: "Settings & Global Variables" },
   "services/database": { area: "Database Models" },
@@ -897,6 +944,7 @@ export function detectChangedAreas({ areas = AREAS, commitsFor }) {
       tags: entry.tags,
       checklist: entry.checklist,
       grep: entry.tags.join("|"),
+      runs: entry.runs,
       commits: commits.split("\n").slice(0, MAX_COMMITS_PER_AREA),
     });
   }
@@ -912,6 +960,18 @@ export const BODY_DELIMITER = "WATCHER_BODY_EOF";
 
 /** Cells go into a markdown table, and both tags and checklist contain `|`. */
 const cell = (text) => String(text).replace(/\|/g, "\\|");
+
+/**
+ * The command(s) that actually revalidate an area.
+ *
+ * Derived from the tags, EXCEPT where the area declares its own: a lane-gated tag
+ * needs its lane's env var, and the derived form would print a command that
+ * selects zero tests (#1581, measured on `@governance`).
+ */
+export function areaCommands(area) {
+  if (Array.isArray(area.runs) && area.runs.length > 0) return area.runs;
+  return [`npx playwright test --grep "${area.grep ?? area.tags.join("|")}"`];
+}
 
 /**
  * The revalidation issue body.
@@ -934,7 +994,10 @@ export function renderIssueBody({ since, areas, today, window }) {
     "| Area | Run these tests | Checklist |",
     "|---|---|---|",
     ...areas.map(
-      (a) => `| ${cell(a.area)} | \`npx playwright test --grep "${cell(a.grep)}"\` | ${cell(a.checklist)} |`,
+      (a) =>
+        `| ${cell(a.area)} | ${areaCommands(a)
+          .map((c) => `\`${cell(c)}\``)
+          .join("<br>")} | ${cell(a.checklist)} |`,
     ),
     "",
     "### Commits",
@@ -1269,7 +1332,9 @@ function renderAreaTable() {
     "|---|---|---|---|",
     ...AREAS.map(
       (a) =>
-        `| ${cell(a.area)} | \`--grep "${cell(a.tags.join("|"))}"\` | ${cell(a.checklist)} | ${a.paths.length} |`,
+        `| ${cell(a.area)} | ${areaCommands(a)
+          .map((c) => `\`${cell(c)}\``)
+          .join("<br>")} | ${cell(a.checklist)} | ${a.paths.length} |`,
     ),
     "",
     ...AREAS.flatMap((a) => [`### ${a.area}`, ...a.paths.map((p) => `- \`${p}\``), ""]),

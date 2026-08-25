@@ -26,6 +26,7 @@ import {
   MAX_COMMITS_PER_AREA,
   PARTIAL,
   RELEASE_LINES_TRACKED,
+  areaCommands,
   buildAreas,
   checkDocDeps,
   classifyDepToken,
@@ -558,6 +559,141 @@ test("checkDocDeps skips an exempt doc entirely and reports that it did", () => 
   assert.equal(verdict.checked, 0);
   assert.deepEqual(verdict.exempt, ["docs/TEST-SPEC-TEMPLATE.md"]);
   assert.deepEqual(verdict.failures, []);
+});
+
+// --- #1581: an area whose printed command runs nothing is worse than no area.
+
+/** Every `tag: [...]` array in the suite, one entry per `test()` — tags are per test. */
+function suiteTagSets() {
+  const out = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name.endsWith(".spec.ts")) {
+        const source = fs.readFileSync(full, "utf8");
+        // The strict predicate CLAUDE.md records: a `tag:` array, never a match
+        // anywhere in the file — the loose form overcounted 8 of 235 specs, one of
+        // them on the comment "`@release`, never `@stable`".
+        for (const match of source.matchAll(/tag:\s*\[([^\]]*)\]/g)) {
+          out.push({
+            file: path.relative(REPO_ROOT, full),
+            tags: [...match[1].matchAll(/@[a-z0-9-]+/g)].map((m) => m[0]),
+          });
+        }
+      }
+    }
+  };
+  walk(path.join(REPO_ROOT, "tests/tests-automations/regression"));
+  return out;
+}
+
+/** Which env a test needs to be selectable at all — the lanes are exclusive. */
+const laneOf = (tags) =>
+  tags.includes("@destructive") ? "PW_DESTRUCTIVE=1" : tags.includes("@enterprise") ? "PW_ENTERPRISE=1" : "default";
+
+test("every area prints a command that actually selects at least one test", () => {
+  // The defect #1581 nearly shipped. `@governance` is always paired with a lane
+  // tag, and `playwright.config.ts` grepInverts both lanes where a CLI `--grep`
+  // cannot override it — measured, `npx playwright test --grep "@governance"`
+  // selects 0 tests, `PW_DESTRUCTIVE=1` selects 5 and `PW_ENTERPRISE=1` selects
+  // 10. An area added with the derived one-command form would have named a
+  // revalidation command that runs nothing, which is #570/#1012's failure mode
+  // with a green log.
+  const tests = suiteTagSets();
+  assert.ok(tests.length > 100, `expected the real suite, parsed ${tests.length} tag sets`);
+
+  for (const area of AREAS) {
+    const matching = tests.filter((t) => area.tags.some((tag) => t.tags.includes(tag)));
+    assert.ok(matching.length > 0, `area "${area.area}" has tags no test carries: ${area.tags.join(", ")}`);
+
+    const lanes = new Set(areaCommands(area).map((c) => (c.startsWith("npx") ? "default" : c.split(" ")[0])));
+    const needed = new Set(matching.map((t) => laneOf(t.tags)));
+    const reachable = matching.filter((t) => lanes.has(laneOf(t.tags)));
+    assert.ok(
+      reachable.length > 0,
+      `area "${area.area}" prints ${[...lanes].join(" / ")} but every test it selects needs ` +
+        `${[...needed].join(" / ")} — the command would run nothing`,
+    );
+
+    // An area with NO default-lane test is entirely lane-gated, so every lane it
+    // touches must be named: declaring only one would leave the rest of its
+    // surface with no command at all, silently. Areas that do have default-lane
+    // tests are not held to this — a single `@destructive` test inside a
+    // normal-lane area is a lane the scheduled runs never take anyway, and
+    // demanding a second command for it would put one on all 13 of them.
+    if (!needed.has("default")) {
+      for (const lane of needed) {
+        assert.ok(
+          lanes.has(lane),
+          `area "${area.area}" is entirely lane-gated and does not name ${lane}, so the ` +
+            `${matching.filter((t) => laneOf(t.tags) === lane).length} test(s) needing it have no command`,
+        );
+      }
+    }
+  }
+});
+
+test("the seven subtrees #1581 classified are still classified", () => {
+  // A decision record can lose an entry silently: the guard that would catch it
+  // (`--mode=check`) needs an upstream checkout and runs only in
+  // `file-watcher.yml`, which is disabled — so the record itself is pinned here,
+  // in the lane that runs on every PR. Dropping any of the seven reopens #1581.
+  const classified = {
+    "observability.py": "Tracing & Monitoring",
+    "observability_doctor.py": "Tracing & Monitoring",
+    "observability_fastapi.py": "Tracing & Monitoring",
+    "observability_llm_metrics.py": "Tracing & Monitoring",
+    "services/catalog_policy": "Catalog & Provider Policy",
+    "services/model_provider_policy": "Catalog & Provider Policy",
+    "services/policy_bundle": "Catalog & Provider Policy",
+  };
+  for (const [key, area] of Object.entries(classified)) {
+    assert.deepEqual(LFX_CLASSIFICATION[key], { area }, `${key} lost its classification`);
+  }
+  // And the area it points at is real — buildAreas throws on a typo, but only
+  // when something calls it.
+  assert.doesNotThrow(() => buildAreas());
+});
+
+test("areaCommands derives one command by default and honours a declared lane", () => {
+  assert.deepEqual(areaCommands({ area: "X", tags: ["@api", "@workspace"] }), [
+    'npx playwright test --grep "@api|@workspace"',
+  ]);
+  // `grep` (set by the sweep) wins over re-joining the tags, so the issue body and
+  // the table cannot disagree about what to run.
+  assert.deepEqual(areaCommands({ area: "X", tags: ["@api"], grep: "@api|@extra" }), [
+    'npx playwright test --grep "@api|@extra"',
+  ]);
+  const declared = ['PW_DESTRUCTIVE=1 npx playwright test --grep "@governance"'];
+  assert.deepEqual(areaCommands({ area: "X", tags: ["@governance"], runs: declared }), declared);
+  // An empty `runs` must fall back rather than print nothing at all.
+  assert.equal(areaCommands({ area: "X", tags: ["@api"], runs: [] }).length, 1);
+});
+
+test("the issue body prints every command an area declares", () => {
+  const body = renderIssueBody({
+    since: "24 hours ago",
+    today: "2026-08-25",
+    areas: [
+      {
+        area: "Catalog & Provider Policy",
+        tags: ["@governance"],
+        checklist: "governance/",
+        grep: "@governance",
+        runs: [
+          'PW_DESTRUCTIVE=1 npx playwright test --grep "@governance"',
+          'PW_ENTERPRISE=1 npx playwright test --grep "@governance"',
+        ],
+        commits: ["abc1234 feat: policy bundle"],
+      },
+    ],
+  });
+
+  assert.match(body, /PW_DESTRUCTIVE=1 npx playwright test/);
+  assert.match(body, /PW_ENTERPRISE=1 npx playwright test/);
+  // And never the derived form, which would select nothing for this area.
+  assert.equal(/\| `npx playwright test --grep "@governance"`/.test(body), false);
 });
 
 // --- #1574: the suite validates the nightly, which is cut from a release line,
