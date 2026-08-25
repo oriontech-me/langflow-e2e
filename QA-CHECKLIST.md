@@ -910,7 +910,7 @@
 - [x] Tweak values passed to `POST /api/v1/run/{id}` cannot reach template fields as
       executable input (`langflow-ai/langflow#9319`, `#8672`)
       → security/tweaks-injection.spec.ts
-- [-] The floor holds on the **graph run path** — `POST /api/v2/workflows` `mode=stream` refuses a
+- [x] The floor holds on the **graph run path** — `POST /api/v2/workflows` `mode=stream` refuses a
       `global_imports` and a `python_code` tweak on a code-execution node, and the refusal is
       **named** in the stream (an `event: "error"` frame carrying `TweakRefusedError` and the
       refused key) rather than being a bare failure. Both failure directions are asserted because
@@ -918,13 +918,13 @@
       widened module is in scope) and an unattributable refusal by requiring the frame to name the
       key. This is the path `langflow-ai/langflow#14538` says previously accepted tweaks the sync
       mode refused → security/tweaks-graph-path-floor.spec.ts
-- [-] The same on `mode=background`, read from `GET /api/v2/workflows/{job_id}/events` — kept as
+- [x] The same on `mode=background`, read from `GET /api/v2/workflows/{job_id}/events` — kept as
       its own bullet because `#14538` names both modes and they can regress independently
       → security/tweaks-graph-path-floor.spec.ts
-- [-] `mode=sync` refuses a protected tweak **without ever answering 2xx**, and the refused request
+- [x] `mode=sync` refuses a protected tweak **without ever answering 2xx**, and the refused request
       leaves the flow still running the author's code. Asserted shape-agnostically on purpose: the
-      status body is a generic `500` on `1.12.0.dev37` where `POST /api/v1/run` returns
-      `422 TWEAKS_REFUSED` naming the field, and the property pinned here holds under both, while
+      status body is a generic `500` on `1.12.0.dev37` and still on `dev38`, where `POST /api/v1/run`
+      returns `422 TWEAKS_REFUSED` naming the field; the property pinned here holds under both, while
       still catching the failure that matters — a refusal answering `200` because the tweak took
       effect or was dropped and the run proceeded anyway. The shape difference is recorded in the
       spec doc → security/tweaks-graph-path-floor.spec.ts

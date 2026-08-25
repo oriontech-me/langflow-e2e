@@ -1,6 +1,6 @@
 # Tweaks — the protected-field floor on the graph run path
 
-**Last validated:** Langflow 1.12.0.dev37 — `langflowai/langflow-nightly@sha256:b672ab7e91981c6f1719b2932bfa7e2255324d4cfac18b7fedf0dbf5722761de`, the digest both `:latest` and `:1.12.0.dev37` resolve to (`docker manifest inspect`); upstream revision `50340f2a4322eca624b7ef5684237d87f863fc1b`.
+**Last validated:** Langflow 1.12.0.dev38 — manifest list shared by `:latest` and `:1.12.0.dev38` (verified identical), `linux/amd64` `sha256:5082eb1ecb056f94491c4debe25925be48948dabc15db7186eeeb9fe645021d0` (the image every CI lane pulls) / `linux/arm64` `sha256:5813e74988bf09fdfd6c16fd5aad39aae0099469907ec48d5e5625a3f9c66683` (the one this validation ran on, named because the arch is part of the measurement); upstream revision `814fbceeb1dd38d3e52f60ce1e638af6fb725ffe`. First validated on 1.12.0.dev37 (`sha256:b672ab7e…`, revision `50340f2a4322…`); the measured table below is unchanged between the two builds, re-measured for `mode=sync` on dev38.
 
 ---
 
@@ -26,19 +26,21 @@ Every refusal is paired with a **benign** tweak on the same surface and the same
 
 ## Tags *(required)*
 
-`@api` `@regression`
+`@stable` `@api` `@regression`
 
 No **functional** tag applies: the tag table has no security area, and the sibling `security/` specs (`tweaks-injection`, `code-execution-endpoints`, `ssrf-url-validation`) also carry only cross-cutting tags. `@api` marks the layer; `@regression` is what issue #1567 asks for.
 
-**No `@stable` in this delivery**, for the ordinary reason: it is a new spec awaiting a validation cycle, so its checklist bullets are `[-]`. The lane profile is a good fit and promotion is a one-line follow-up — pure API, no browser, no LLM, no provider key, three tests in ~4 s, and it cannot fail for a provider-outage reason. Nothing in the file is quarantined.
+**`@stable` was added in the validation cycle #1572 asked for, not in the first delivery.** PR #1571 shipped the file `@api @regression` only, which the repo's own mechanism turns into *no scheduled lane at all*: `daily-stable.yml` selects `--grep @stable` and `nightly.yml` has been dispatch-only since 2026-03, so the three tests ran only when `pr-validation.yml`'s impacted-specs gate happened to select them. The graph-path half of `langflow-ai/langflow#14538` — the half that closed a real bypass — was therefore watched by nothing, while the sync-endpoint sibling (`security/tweaks-injection.spec.ts`) was watched daily. The lane profile is why promotion needed no design change: pure API, no browser, no LLM, no provider key, no `@destructive` state, three tests in ~3 s, and no failure mode that depends on a provider key or quota. Validated on the build in **Last validated** above — five consecutive `--workers=1 --retries=0` runs plus one default-parallel run (3 workers, one `beforeAll` per worker), 18/18 tests green, zero orphan flows left behind, and an executed force-fail for every assertion family — attribution, liveness, the sync `2xx` floor, and acceptance, the last of which takes a two-part mutation on the streaming surfaces for a reason recorded under **Validation criterion**.
 
-Not `@destructive`: the file creates and deletes only its own two flows and sets no instance-wide state. (A spec for `LANGFLOW_TWEAKS_POLICY` *would* be instance-global — that surface is scoped out below.)
+Not `@destructive`, and that is a **precondition of the promotion, not a note**: `@stable` combined with `@destructive` would put the tests back in no scheduled lane, since `daily-stable.yml` has no destructive lane (#1010). The file creates and deletes only its own two flows and sets no instance-wide state.
+
+(A spec for `LANGFLOW_TWEAKS_POLICY` *would* be instance-global — that surface is scoped out below.)
 
 ---
 
 ## Measured contract — one table, four surfaces *(required reading)*
 
-Measured on the digest above, against the container's **own** published port with the identity asserted (`GET /api/v1/version` → `1.12.0.dev37` / `Langflow Nightly`) before every run. Flow: `Python Interpreter -> Chat Output`, author `global_imports = "math"`, author `python_code` = the two-sentinel probe.
+Measured on 1.12.0.dev37 and re-verified on the dev38 digest above, against the container's **own** published port with the identity asserted (`GET /api/v1/version` → the expected `.devNN` / `Langflow Nightly`) before every run. The `mode=sync` cell was re-measured directly on dev38 for the #1572 promotion and is unchanged. Flow: `Python Interpreter -> Chat Output`, author `global_imports = "math"`, author `python_code` = the two-sentinel probe.
 
 | tweak on the interpreter node | `POST /api/v1/run/{id}` | `/api/v2/workflows` `sync` | `/api/v2/workflows` `stream` | `/api/v2/workflows` `background` |
 |---|---|---|---|---|
@@ -90,7 +92,7 @@ The spec runs **3 tests** via Playwright's `request` fixture. No browser, no LLM
 
 ---
 
-**Test 1 — `mode=stream` refuses a protected tweak, and says so** *(`@api @regression`)*
+**Test 1 — `mode=stream` refuses a protected tweak, and says so** *(`@stable @api @regression`)*
 
 1. `POST /api/v2/workflows` with `mode: "stream"` and `tweaks: { <pythonNodeId>: { global_imports: ["os"] } }`; assert `200` (the stream is committed before the build runs).
 2. Parse the body with `parseStreamEvents()` and assert an `event: "error"` frame exists whose serialized text names both `TweakRefusedError` and the refused key `global_imports` — the refusal is attributable, not a bare failure.
@@ -98,11 +100,11 @@ The spec runs **3 tests** via Playwright's `request` fixture. No browser, no LLM
 4. Repeat 1–3 for `python_code`, asserting the caller's sentinel never appears.
 5. **Control, same surface:** the benign `input_value` tweak on the chat flow produces that value in the `add_message` text and emits **no** error frame; the same call with no tweaks produces the flow's stored value. Without this, steps 2–4 pass equally well against a dead mechanism.
 
-**Test 2 — `mode=background` refuses it too, and says so** *(`@api @regression`)*
+**Test 2 — `mode=background` refuses it too, and says so** *(`@stable @api @regression`)*
 
 Same five steps, with the events read from `GET /api/v2/workflows/{job_id}/events` after the submit returns a `job_id`. Kept as its own test because `#14538` names both modes and they can regress independently.
 
-**Test 3 — `mode=sync` refuses a protected tweak without ever answering `2xx`** *(`@api @regression`)*
+**Test 3 — `mode=sync` refuses a protected tweak without ever answering `2xx`** *(`@stable @api @regression`)*
 
 1. `POST /api/v2/workflows` with `mode: "sync"` and the `global_imports` tweak; assert the status is `>= 400`. A `2xx` here means the tweak either took effect or was dropped without telling the caller, and both are the failures this file exists for. The body's shape is deliberately not pinned — see above.
 2. Repeat for `python_code`.
@@ -115,7 +117,19 @@ Same five steps, with the events read from `GET /api/v2/workflows/{job_id}/event
 
 The spec passes only when, on each covered surface, **no protected tweak takes effect**, **the refusal names itself and the key**, and **a benign tweak on that same surface still applies**. A run where the benign control did not apply fails, because it measured nothing; a stream carrying `WIDENED:` fails; an error frame that does not name the refused key fails.
 
-The file fails for the right reason in both directions: relaxing an assertion cannot make it pass while the control must still apply, and the day `mode=sync` returns its `422`, Test 3 goes green by deleting one `.fixme`.
+The file fails for the right reason in both directions: relaxing an assertion cannot make it pass while the control must still apply. There is no `.fixme` and no quarantined assertion anywhere in it — the day `mode=sync` returns its `422`, Test 3 stays green **unchanged**, because the property it pins (never `2xx`) is true under both shapes. That is what makes the file safe to run in the daily lane: no assertion in it is waiting on an upstream fix.
+
+Force-fail evidence for the `@stable` promotion (#1572), each mutation executed against 1.12.0.dev38 and reverted:
+
+| mutation | emulates | tests that failed, and on which assertion |
+|---|---|---|
+| the protected `global_imports` tweak replaced by a benign `sender_name` one | the floor stops refusing, so no refusal is reported at all | 1, 2 — *"the refusal must be attributable on this surface, not a bare failure"*; 3 — *"a refused global_imports tweak must not answer 2xx"* |
+| `REFUSAL_MARKER` → a string the frame does not carry | the refusal happens but is unattributable | 1, 2 — *"the refusal must be attributable on this surface, not a bare failure"* |
+| `CHAT_INPUT_NODE_ID` → an id no node has | the tweaks mechanism is dead, so the refusals measured nothing | 1, 2, 3 — *"tweaks must be alive on this surface"* |
+| `WIDENED_PREFIX` → text the author's own run really prints | the widened branch executed | 3 — *"a refusal must leave nothing behind"* |
+| **both together**: the benign `sender_name` tweak **and** `WIDENED_PREFIX` set to text the executed run prints | the graph path *accepts* the protected tweak — the run executes and emits the widened sentinel | 1, 2 — *"the flow author's sandbox must still be in effect — the run reached the widened branch"*; 3 — the `2xx` floor |
+
+**Why the acceptance check on the two streaming surfaces needs that last, two-part mutation, and what that says about it.** On `mode=stream` and `mode=background` a protected tweak is refused *before the build runs*, so the refused request emits no program output whatsoever — measured, not inferred: mutating `sandboxProbe` so that **both** of its branches print the sentinel leaves tests 1 and 2 **green** (only test 3 fails, on its own no-residue step). No test-side edit to the probe or the sentinel alone can make the streaming `WIDENED:` assertion fire. It fires only when the run actually executes while the sentinel matches what it prints, which is exactly the causal shape of a real acceptance — and that is the mutation in the last row. Read the row as what it is: the assertion is proven live, by the one mutation that reproduces the bypass `langflow-ai/langflow#14538` closed, and by nothing cheaper.
 
 ---
 
