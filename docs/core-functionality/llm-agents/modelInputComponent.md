@@ -163,12 +163,25 @@ own their own flows.
   `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/helpers/derive-selected-model.ts`
   — the two frontend halves of the #14505 change. Restoring the empty-field
   auto-fill in either would flip test 4.4's first assertion; that is the
-  regression this test now guards. **The #14505 refactor has since been merged
-  back**: on 2026-08-13 these files existed only on `origin/release-1.12.0`, and
-  as of 2026-08-25 both resolve on `origin/main` as well, together with
-  `build-grouped-options.ts` and `useRefreshAfterProviderClose.ts`. The two
-  directories are now identical across the refs but for `saved-model-availability.ts`,
-  which is `release-1.12.0`-only.
+  regression this test now guards. Both resolve on `origin/main` and
+  `origin/release-1.12.0`, together with `build-grouped-options.ts` and
+  `useRefreshAfterProviderClose.ts`. **The doc previously recorded these as
+  `release-1.12.0`-only, measured 2026-08-13; that did not hold against upstream
+  `main`** — `#14505` (`aaa384a8`) is an ancestor of `main` and landed there on
+  2026-08-12, so the files were already present, at their post-`#14505` blobs, on
+  the `main` tip of the day the measurement was taken (`11169d7ece`, verified
+  2026-08-25).
+- **The same two paths resolve on both refs while carrying different code, and
+  the difference is behavioural.** `release-1.12.0` is one commit ahead on each
+  — `useAutoSelectModel.ts` `76cdbf2dda0d` vs `main`'s `d5f82b1e6796`,
+  `derive-selected-model.ts` `d7c016d4b8d3` vs `908d018e570d` — from `#14697`
+  (`12efda24`, LE-1960, 2026-08-21, not on `main`), which adds an
+  `isSavedModelUnavailable` branch to `deriveSelectedModel` and its import to the
+  hook, plus the `release-1.12.0`-only `saved-model-availability.ts` it calls.
+  The directory listings match but for that file; the contents do not. A resolved
+  path is evidence that a **file** exists, never that the code is in it — and
+  since `deriveSelectedModel` is what test 4.4 reads, the line this spec is
+  validated against has a branch `main` does not.
 - `src/lfx/src/lfx/base/models/unified_models/build_config.py` — the backend half
   (`user_triggered = field_name is not None`, LE-2168). Defence in depth for
   API-driven flows; the same guard. Resolves on `main` and `release-1.12.0` at
