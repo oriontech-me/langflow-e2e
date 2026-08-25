@@ -201,16 +201,35 @@ jobs:
           echo "::error::could not clone langflow-ai/langflow, so no dependency-path verdict exists for this PR. Not treating that as 'every path resolves'."
           exit 1
 
+      # The suite does not validate `main`: every scheduled lane runs the nightly,
+      # which is cut from the current release line, and upstream merges that line
+      # back into `main` only sporadically (~1–2 months). Resolving against `main`
+      # alone failed PRs for paths that are correct for the image under test
+      # (#1574). The line is derived, never hardcoded — it rotates, and the
+      # selection is numeric, since `release-1.9.7` sorts above `release-1.12.0`
+      # lexically. A failure here fails the step: guessing the ref would put the
+      # guard back on `main` alone with nothing in the log to say so.
+      - name: Fetch the release line the nightly is cut from
+        run: |
+          set -eo pipefail
+          RELEASE_REF=$(node scripts/watch-upstream-areas.mjs --mode=release-ref --root langflow-upstream)
+          echo "derived release line: $RELEASE_REF"
+          git -C langflow-upstream fetch --filter=blob:none --depth 1 --no-tags origin \
+            "+refs/heads/${RELEASE_REF}:refs/remotes/origin/${RELEASE_REF}"
+          echo "RELEASE_REF=$RELEASE_REF" >> "$GITHUB_ENV"
+
       # Fails only on the changed docs; the repo-wide sweep is emitted as
       # ::warning:: so drift that lands upstream between PRs stays visible
-      # (#1012 — an unevaluated path is unknown, not clean).
+      # (#1012 — an unevaluated path is unknown, not clean). A path resolving on
+      # either ref passes and is NAMED when only one satisfied it, so a green
+      # verdict cannot be read as "exists on main".
       - name: Resolve every External-dependencies path against upstream
         run: |
           set -eo pipefail
           node scripts/watch-upstream-areas.mjs \
             --mode=check-docs \
             --root langflow-upstream \
-            --ref origin/main \
+            --ref "origin/main,origin/${RELEASE_REF}" \
             --changed changed-docs.txt | tee -a "$GITHUB_STEP_SUMMARY"
 
   detect-specs:

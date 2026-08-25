@@ -33,6 +33,8 @@ import {
   findMissingPaths,
   matchGlob,
   parseDocDeps,
+  parseRefList,
+  pickNewestReleaseBranch,
   renderIssueBody,
 } from "./watch-upstream-areas.mjs";
 
@@ -431,6 +433,8 @@ test("a symlinked lfx subtree is classified, not skipped", () => {
 
 const DOC = (markdown, file = "docs/area/thing.md") => ({ file, markdown });
 const SECTION = (...bullets) => ["## External dependencies", "", ...bullets, "", "---"].join("\n");
+/** One resolvable ref. `checkDocDeps` resolves against a LIST of them (#1574). */
+const TREE = (ref, ...entries) => ({ ref, entries });
 
 test("parseDocDeps takes every src/ token in the section, not just the leading one", () => {
   const deps = parseDocDeps(
@@ -489,7 +493,7 @@ test("checkDocDeps fails a path in a doc the PR changed and warns on a pre-exist
   ];
   const verdict = checkDocDeps({
     docs,
-    treeEntries: ["src/here.py"],
+    trees: [TREE("origin/main", "src/here.py")],
     changedFiles: ["docs/area/touched.md"],
   });
 
@@ -508,7 +512,7 @@ test("checkDocDeps treats an ellipsis as a defect, not as a path it cannot judge
   const verdict = checkDocDeps({
     docs: [DOC(SECTION("- `src/frontend/src/.../playground` — the chat input"), "docs/area/touched.md")],
     // Even with the real directory present, the token itself is unresolvable.
-    treeEntries: ["src/frontend/src/components/core/playgroundComponent"],
+    trees: [TREE("origin/main", "src/frontend/src/components/core/playgroundComponent")],
     changedFiles: ["docs/area/touched.md"],
   });
 
@@ -527,7 +531,14 @@ test("checkDocDeps accepts a resolving glob and a path carrying a line range", (
         "docs/area/touched.md",
       ),
     ],
-    treeEntries: ["src/frontend/src/pages/LoginPage", "src/frontend/src/pages/LoginPage/index.tsx", "src/lfx/chat.py"],
+    trees: [
+      TREE(
+        "origin/main",
+        "src/frontend/src/pages/LoginPage",
+        "src/frontend/src/pages/LoginPage/index.tsx",
+        "src/lfx/chat.py",
+      ),
+    ],
     changedFiles: ["docs/area/touched.md"],
   });
 
@@ -539,13 +550,158 @@ test("checkDocDeps accepts a resolving glob and a path carrying a line range", (
 test("checkDocDeps skips an exempt doc entirely and reports that it did", () => {
   const verdict = checkDocDeps({
     docs: [DOC(SECTION("- `src/backend/...` — placeholder by design"), "docs/TEST-SPEC-TEMPLATE.md")],
-    treeEntries: ["src/backend"],
+    trees: [TREE("origin/main", "src/backend")],
     changedFiles: ["docs/TEST-SPEC-TEMPLATE.md"],
   });
 
   assert.equal(verdict.checked, 0);
   assert.deepEqual(verdict.exempt, ["docs/TEST-SPEC-TEMPLATE.md"]);
   assert.deepEqual(verdict.failures, []);
+});
+
+// --- #1574: the suite validates the nightly, which is cut from the release line,
+// not from upstream `main`. Resolution is over a list of refs; one is enough.
+
+test("checkDocDeps accepts a path that exists only on the release line, and names the ref that satisfied it", () => {
+  const verdict = checkDocDeps({
+    docs: [DOC(SECTION("- `src/lfx/src/lfx/exceptions/tweaks.py` — TweakRefusedError"), "docs/security/x.md")],
+    trees: [TREE("origin/main", "src/lfx/src/lfx/processing/process.py"), TREE("origin/release-1.12.0", "src/lfx/src/lfx/processing/process.py", "src/lfx/src/lfx/exceptions/tweaks.py")],
+    // The PR changed the doc, so under the old single-ref guard this FAILED.
+    changedFiles: ["docs/security/x.md"],
+  });
+
+  assert.deepEqual(verdict.failures, []);
+  assert.deepEqual(verdict.warnings, []);
+  assert.deepEqual(verdict.partial, [
+    {
+      file: "docs/security/x.md",
+      line: 3,
+      token: "src/lfx/src/lfx/exceptions/tweaks.py",
+      resolvedOn: ["origin/release-1.12.0"],
+      missingOn: ["origin/main"],
+    },
+  ]);
+});
+
+test("checkDocDeps stays silent about a path that resolves on every ref", () => {
+  // The `partial` report is the attribution half, not a second verdict: a path
+  // both refs carry is not interesting and must not dilute the ones that are.
+  const verdict = checkDocDeps({
+    docs: [DOC(SECTION("- `src/here.py` — everywhere"), "docs/area/touched.md")],
+    trees: [TREE("origin/main", "src/here.py"), TREE("origin/release-1.12.0", "src/here.py")],
+    changedFiles: ["docs/area/touched.md"],
+  });
+
+  assert.deepEqual(verdict.partial, []);
+  assert.deepEqual(verdict.failures, []);
+});
+
+test("checkDocDeps reports the direction, so a path missing from the release line is caught too", () => {
+  // Symmetric on purpose: a doc written against `main`-only code is exactly as
+  // unverified for the image this suite runs as the 1.12-only case is for `main`.
+  const verdict = checkDocDeps({
+    docs: [DOC(SECTION("- `src/new_on_main.py` — unreleased"), "docs/area/touched.md")],
+    trees: [TREE("origin/main", "src/new_on_main.py"), TREE("origin/release-1.12.0", "src/old.py")],
+    changedFiles: ["docs/area/touched.md"],
+  });
+
+  assert.deepEqual(verdict.failures, []);
+  assert.deepEqual(verdict.partial[0].resolvedOn, ["origin/main"]);
+  assert.deepEqual(verdict.partial[0].missingOn, ["origin/release-1.12.0"]);
+});
+
+test("checkDocDeps still fails a path that resolves on NO ref, naming all of them", () => {
+  // #1298's original purpose. Widening the refs must not widen into "anything goes".
+  const verdict = checkDocDeps({
+    docs: [
+      DOC(SECTION("- `src/gone.py` — moved upstream"), "docs/area/touched.md"),
+      DOC(SECTION("- `src/gone.py` — moved upstream"), "docs/area/untouched.md"),
+    ],
+    trees: [TREE("origin/main", "src/here.py"), TREE("origin/release-1.12.0", "src/here.py")],
+    changedFiles: ["docs/area/touched.md"],
+  });
+
+  assert.deepEqual(
+    verdict.failures.map((f) => f.file),
+    ["docs/area/touched.md"],
+  );
+  assert.match(verdict.failures[0].reason, /origin\/main, origin\/release-1\.12\.0/);
+  assert.equal(verdict.warnings.length, 1);
+  assert.deepEqual(verdict.partial, []);
+});
+
+test("checkDocDeps resolves a glob against each ref independently", () => {
+  const verdict = checkDocDeps({
+    docs: [DOC(SECTION("- `src/lfx/exceptions/*.py` — the module"), "docs/area/touched.md")],
+    trees: [TREE("origin/main", "src/lfx/processing/process.py"), TREE("origin/release-1.12.0", "src/lfx/exceptions/tweaks.py")],
+    changedFiles: ["docs/area/touched.md"],
+  });
+
+  assert.deepEqual(verdict.failures, []);
+  assert.deepEqual(verdict.partial[0].resolvedOn, ["origin/release-1.12.0"]);
+});
+
+test("checkDocDeps reports an ellipsis once, not once per ref", () => {
+  // No ref can decide it, so asking each one would only multiply the finding and
+  // make the reason name refs that were never consulted.
+  const verdict = checkDocDeps({
+    docs: [DOC(SECTION("- `src/frontend/src/.../playground` — the chat input"), "docs/area/touched.md")],
+    trees: [TREE("origin/main", "src/frontend"), TREE("origin/release-1.12.0", "src/frontend")],
+    changedFiles: ["docs/area/touched.md"],
+  });
+
+  assert.equal(verdict.failures.length, 1);
+  assert.equal(verdict.failures[0].kind, "ellipsis");
+  assert.deepEqual(verdict.partial, []);
+});
+
+test("checkDocDeps refuses to resolve against zero refs instead of failing every path", () => {
+  assert.throws(
+    () => checkDocDeps({ docs: [DOC(SECTION("- `src/here.py` — a file"))], trees: [] }),
+    /at least one/,
+  );
+});
+
+test("parseRefList passes a single ref through verbatim and splits a list in order", () => {
+  assert.deepEqual(parseRefList("origin/main"), ["origin/main"]);
+  assert.deepEqual(parseRefList("origin/main,origin/release-1.12.0"), ["origin/main", "origin/release-1.12.0"]);
+  // Whitespace and a duplicate must not become a second verdict about one ref.
+  assert.deepEqual(parseRefList(" origin/main , origin/main ,origin/x "), ["origin/main", "origin/x"]);
+  assert.throws(() => parseRefList(" , "), /names no ref/);
+});
+
+test("pickNewestReleaseBranch sorts by version, not lexically", () => {
+  // The trap: upstream carries release-1.9.7 and release-1.12.0 side by side, and
+  // a string sort picks the 1.9 line — the ref the nightly has not been cut from
+  // for two releases.
+  const output = [
+    "47ce5bf\trefs/heads/release-1.9.7",
+    "5ccd44e\trefs/heads/release-1.10.3",
+    "1e40f92\trefs/heads/release-1.12.0",
+    "287c864\trefs/heads/release-1.11.5",
+  ].join("\n");
+
+  assert.equal(pickNewestReleaseBranch(output), "release-1.12.0");
+});
+
+test("pickNewestReleaseBranch ignores the branches that only look like a release line", () => {
+  // All four are real entries in `git ls-remote` on langflow-ai/langflow.
+  const output = [
+    "a\trefs/heads/release-notes",
+    "b\trefs/heads/release-0.6.0a",
+    "c\trefs/heads/release-1.6.0-backup",
+    "d\trefs/heads/release-1.6.0-at-scheduling-logic-branch",
+    "e\trefs/heads/release-1.5",
+  ].join("\n");
+
+  // Only the two-part `release-1.5` is a release line among them.
+  assert.equal(pickNewestReleaseBranch(output), "release-1.5");
+});
+
+test("pickNewestReleaseBranch throws rather than returning nothing when no line is found", () => {
+  // Undecidable, not "no release line" — the caller exits 2 on this, because
+  // guessing would put the guard back on `main` alone with nothing in the log.
+  assert.throws(() => pickNewestReleaseBranch("a\trefs/heads/main\n"), /cannot be derived/);
 });
 
 test("no real doc outside the allowlist carries an unresolvable ellipsis dependency", () => {
@@ -586,7 +742,12 @@ test("pr-validation.yml runs the doc-deps guard with a diff list and a real upst
   assert.match(yml, /watch-upstream-areas\.mjs \\\n\s+--mode=check-docs/);
   // Without --changed the verdict cannot fail anything, so the flag IS the gate.
   assert.match(yml, /--changed changed-docs\.txt/);
-  assert.match(yml, /--ref origin\/main/);
+  // #1574: `main` alone failed PRs for paths that are correct for the image under
+  // test, so the lane must resolve against the release line too — and must DERIVE
+  // it, since a hardcoded one goes stale silently on the next release.
+  assert.match(yml, /--ref "origin\/main,origin\/\$\{RELEASE_REF\}"/);
+  assert.match(yml, /--mode=release-ref --root langflow-upstream/);
+  assert.match(yml, /fetch --filter=blob:none --depth 1 --no-tags origin/);
   // A blobless, no-checkout clone is what makes the ls-tree resolver affordable
   // here; a plain clone would pull ~117 MB per PR.
   assert.match(yml, /git clone --filter=blob:none --depth 1 --no-checkout/);

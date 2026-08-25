@@ -69,8 +69,14 @@
  *   node scripts/watch-upstream-areas.mjs --mode=check  --root langflow-upstream
  *   node scripts/watch-upstream-areas.mjs --mode=detect --root langflow-upstream --since "24 hours ago"
  *   node scripts/watch-upstream-areas.mjs --mode=areas          # print the table, no checkout needed
- *   node scripts/watch-upstream-areas.mjs --mode=check-docs --root langflow-upstream --ref origin/main \
- *       [--changed changed-docs.txt]   # spec-doc dependency paths (#1298)
+ *   node scripts/watch-upstream-areas.mjs --mode=release-ref --root langflow-upstream
+ *   node scripts/watch-upstream-areas.mjs --mode=check-docs --root langflow-upstream \
+ *       --ref origin/main,origin/release-1.12.0 \
+ *       [--changed changed-docs.txt]   # spec-doc dependency paths (#1298, #1574)
+ *
+ * `--ref` is a comma-separated LIST and a path satisfied by any one of them
+ * resolves (#1574): the suite validates the nightly, which is cut from the
+ * release line, not from `main`. `--mode=release-ref` prints the line to fetch.
  *
  * Exit codes: 0 = verdict produced; 1 = the checkout contradicts the table (a
  * monitored path is gone, an unclassified subtree exists, or a changed doc names
@@ -620,20 +626,49 @@ export function matchGlob(pattern, treeEntries) {
  * PR that edits an unrelated doc — but it must not be invisible either, so the
  * pre-existing half is announced, never dropped (#1012).
  *
+ * **Resolution is over a LIST of refs, and a path satisfied by any one of them
+ * passes (issue #1574).** The suite does not validate upstream `main`: every
+ * scheduled lane runs `langflowai/langflow-nightly:latest`, which is cut from the
+ * current release line, and upstream merges that line back into `main` only
+ * sporadically (~1–2 months). Resolving against `main` alone therefore failed a
+ * PR for a path that is genuinely correct for the image under test — measured on
+ * PR #1570, where `src/lfx/src/lfx/exceptions/tweaks.py` was absent from `main`
+ * and present on `release-1.12.0`.
+ *
+ * What does NOT change is the guard's original purpose (#1298): a path that
+ * resolves on NO ref is still a defect. What is added is attribution — a path
+ * that resolves on some refs and not others is returned in `partial`, naming
+ * both sides, because "green" must not be readable as "exists on `main`". That
+ * report is symmetric on purpose: a doc written against `main`-only code is just
+ * as unverified for the image this suite runs as the case above is for `main`.
+ *
  * @param {{
  *   docs: Array<{file: string, markdown: string}>,
- *   treeEntries: string[],
+ *   trees: Array<{ref: string, entries: string[]}>,
  *   changedFiles?: string[],
  *   exemptFiles?: string[],
  * }} options
- * @returns {{checked: number, failures: Array, warnings: Array, exempt: string[]}}
+ * @returns {{
+ *   checked: number,
+ *   failures: Array,
+ *   warnings: Array,
+ *   partial: Array<{file: string, line: number, token: string, resolvedOn: string[], missingOn: string[]}>,
+ *   exempt: string[],
+ * }}
  */
-export function checkDocDeps({ docs, treeEntries, changedFiles = [], exemptFiles = DOC_DEPS_EXEMPT_FILES }) {
-  const treeSet = new Set(treeEntries);
+export function checkDocDeps({ docs, trees, changedFiles = [], exemptFiles = DOC_DEPS_EXEMPT_FILES }) {
+  if (!Array.isArray(trees) || trees.length === 0) {
+    // Zero refs would resolve nothing and read as "every path is broken", which is
+    // the same false verdict an empty tree is rejected for in runCheckDocs.
+    throw new Error("checkDocDeps needs at least one { ref, entries } tree to resolve against");
+  }
+  const indexed = trees.map(({ ref, entries }) => ({ ref, entries, set: new Set(entries) }));
+  const refNames = indexed.map((t) => t.ref);
   const changed = new Set(changedFiles);
   const exemptSet = new Set(exemptFiles);
   const failures = [];
   const warnings = [];
+  const partial = [];
   const exempt = [];
   let checked = 0;
 
@@ -646,24 +681,94 @@ export function checkDocDeps({ docs, treeEntries, changedFiles = [], exemptFiles
       const { kind, target } = classifyDepToken(token);
       checked += 1;
 
-      let reason = null;
+      // An ellipsis is unresolvable by construction, so no ref can decide it and
+      // asking each one would only make the reason misleading (#1012).
       if (kind === "ellipsis") {
-        reason =
-          "contains an ellipsis, so it can never be resolved against upstream — write the real path, or a glob";
-      } else if (kind === "glob") {
-        if (matchGlob(target, treeEntries).length === 0) reason = "glob matches nothing upstream";
-      } else if (!treeSet.has(target)) {
-        reason = "does not exist upstream";
+        const finding = {
+          file: doc.file,
+          line,
+          token,
+          kind,
+          reason: "contains an ellipsis, so it can never be resolved against upstream — write the real path, or a glob",
+        };
+        (changed.has(doc.file) ? failures : warnings).push(finding);
+        continue;
       }
-      if (!reason) continue;
 
-      const finding = { file: doc.file, line, token, kind, reason };
-      if (changed.has(doc.file)) failures.push(finding);
-      else warnings.push(finding);
+      const resolvedOn = indexed
+        .filter((tree) => (kind === "glob" ? matchGlob(target, tree.entries).length > 0 : tree.set.has(target)))
+        .map((tree) => tree.ref);
+
+      if (resolvedOn.length === 0) {
+        const where = refNames.join(", ");
+        const finding = {
+          file: doc.file,
+          line,
+          token,
+          kind,
+          reason: kind === "glob" ? `glob matches nothing on ${where}` : `does not exist on ${where}`,
+        };
+        (changed.has(doc.file) ? failures : warnings).push(finding);
+        continue;
+      }
+
+      if (resolvedOn.length < refNames.length) {
+        partial.push({
+          file: doc.file,
+          line,
+          token,
+          resolvedOn,
+          missingOn: refNames.filter((ref) => !resolvedOn.includes(ref)),
+        });
+      }
     }
   }
 
-  return { checked, failures, warnings, exempt };
+  return { checked, failures, warnings, partial, exempt };
+}
+
+/**
+ * The newest `release-X.Y[.Z]` branch upstream — the line the nightly is cut from.
+ *
+ * `langflowai/langflow-nightly:latest` is built from the current release line, not
+ * from `main`, so that is the ref a doc naming 1.12-only code must be allowed to
+ * resolve against (#1574). Deriving it beats hardcoding one: the line rotates
+ * (1.11.x → 1.12.0 → …), and a hardcoded ref becomes wrong silently, on a guard
+ * whose whole job is to refuse silent verdicts.
+ *
+ * Selection is by NUMERIC version, never lexically: upstream carries
+ * `release-1.9.7` and `release-1.12.0` side by side, and a string sort picks the
+ * 1.9 line. The shape is also strict — upstream's branch list holds
+ * `release-notes`, `release-0.6.0a`, `release-1.6.0-backup` and
+ * `release-1.6.0-at-scheduling-logic-branch`, none of which is a release line.
+ *
+ * Known skew, stated rather than hidden: this tracks the newest line CUT, which
+ * leads the line the nightly SHIPS by however long upstream takes to switch. That
+ * makes the guard marginally more permissive for a few days per release, never
+ * less — and the refs it resolved against are named in the report either way.
+ *
+ * @param {string} lsRemoteOutput raw `git ls-remote --heads origin 'refs/heads/release-*'`
+ * @returns {string} e.g. `release-1.12.0`
+ * @throws when the output names no release line at all — undecidable, not "none".
+ */
+export function pickNewestReleaseBranch(lsRemoteOutput) {
+  const candidates = [];
+  for (const line of String(lsRemoteOutput || "").split("\n")) {
+    const name = line.trim().split(/\s+/).pop() || "";
+    const match = /^(?:refs\/heads\/)?(release-(\d+)\.(\d+)(?:\.(\d+))?)$/.exec(name);
+    if (!match) continue;
+    candidates.push({
+      branch: match[1],
+      version: [Number(match[2]), Number(match[3]), Number(match[4] || 0)],
+    });
+  }
+  if (candidates.length === 0) {
+    throw new Error(
+      "no `release-X.Y[.Z]` branch found upstream, so the release line the nightly is cut from cannot be derived",
+    );
+  }
+  candidates.sort((a, b) => b.version[0] - a.version[0] || b.version[1] - a.version[1] || b.version[2] - a.version[2]);
+  return candidates[0].branch;
 }
 
 /**
@@ -858,23 +963,61 @@ function collectDocFiles(repoRoot) {
   return out.map((file) => ({ file: path.relative(repoRoot, file), markdown: fs.readFileSync(file, "utf8") }));
 }
 
-function runCheckDocs(root, ref, changedListPath) {
-  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/** How many `partial` findings the report names before it starts eliding (#1012: named, and capped visibly). */
+const MAX_NAMED_PARTIALS = 20;
 
-  let treeEntries;
+/**
+ * Prints the release line the lanes' nightly is cut from, one token, for a caller
+ * that has to fetch it before `--mode=check-docs` can resolve against it.
+ *
+ * It lives here rather than as a `git ls-remote | sort -V | tail -1` in the
+ * workflow so the selection is covered by `npm run test:scripts` — the lexical
+ * trap it exists to avoid (`release-1.9.7` > `release-1.12.0`) is exactly the
+ * kind of defect that stays invisible in inline YAML (#1226).
+ */
+function runReleaseRef(root) {
+  let output;
   try {
-    treeEntries = git(root, ["ls-tree", "-r", "-t", "--name-only", ref]).split("\n").filter(Boolean);
+    output = git(root, ["ls-remote", "--heads", "origin", "refs/heads/release-*"]);
   } catch (error) {
     process.stderr.write(
-      `::error::watch-upstream-areas: could not list the upstream tree at "${ref}" in --root "${root}" (${error.message}). Treating as undecidable, not as "every path resolves".\n`,
+      `::error::watch-upstream-areas: could not list upstream release branches in --root "${root}" (${error.message}). Refusing to guess the release line.\n`,
     );
     process.exit(2);
   }
-  if (treeEntries.length === 0) {
-    process.stderr.write(
-      `::error::watch-upstream-areas: the upstream tree at "${ref}" is empty, so every path would "not exist". Undecidable.\n`,
-    );
+  try {
+    process.stdout.write(`${pickNewestReleaseBranch(output)}\n`);
+  } catch (error) {
+    process.stderr.write(`::error::watch-upstream-areas: ${error.message}.\n`);
     process.exit(2);
+  }
+}
+
+function runCheckDocs(root, refs, changedListPath) {
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+  // Every declared ref must be listable. A ref that is absent from the checkout
+  // would otherwise narrow the resolution back to the remaining ones and fail a
+  // PR for a path that is correct on the ref nobody fetched — #1574 all over
+  // again, this time with nothing in the log to say so.
+  const trees = [];
+  for (const ref of refs) {
+    let entries;
+    try {
+      entries = git(root, ["ls-tree", "-r", "-t", "--name-only", ref]).split("\n").filter(Boolean);
+    } catch (error) {
+      process.stderr.write(
+        `::error::watch-upstream-areas: could not list the upstream tree at "${ref}" in --root "${root}" (${error.message}). Treating as undecidable, not as "every path resolves".\n`,
+      );
+      process.exit(2);
+    }
+    if (entries.length === 0) {
+      process.stderr.write(
+        `::error::watch-upstream-areas: the upstream tree at "${ref}" is empty, so every path would "not exist". Undecidable.\n`,
+      );
+      process.exit(2);
+    }
+    trees.push({ ref, entries });
   }
 
   // An unreadable changed-file list is undecidable too: defaulting to "nothing
@@ -897,14 +1040,35 @@ function runCheckDocs(root, ref, changedListPath) {
   }
 
   const docs = collectDocFiles(repoRoot);
-  const { checked, failures, warnings, exempt } = checkDocDeps({ docs, treeEntries, changedFiles });
+  const { checked, failures, warnings, partial, exempt } = checkDocDeps({ docs, trees, changedFiles });
 
+  const describedRefs = trees.map((t) => `${t.ref} (${t.entries.length} tree entries)`).join(", ");
   process.stdout.write(
-    `Resolved ${checked} dependency path(s) from ${docs.length - exempt.length} doc(s) against ${ref} (${treeEntries.length} tree entries); ${exempt.length} doc(s) exempt.\n`,
+    `Resolved ${checked} dependency path(s) from ${docs.length - exempt.length} doc(s) against ${describedRefs}; ${exempt.length} doc(s) exempt.\n`,
   );
   if (!changedListPath) {
     process.stdout.write(
       "No --changed list given, so every finding is reported and none fails: the diff decides severity.\n",
+    );
+  }
+
+  // The attribution half of #1574: a path satisfied by only some of the refs is
+  // resolved, and saying so is the whole point — "green" here is a fact about the
+  // named ref, never about upstream as a whole.
+  if (partial.length > 0) {
+    process.stdout.write(
+      `\n${partial.length} path(s) do NOT resolve on every ref. They pass — one ref is enough — but a green verdict for them is evidence about that ref only:\n`,
+    );
+    for (const item of partial.slice(0, MAX_NAMED_PARTIALS)) {
+      process.stdout.write(
+        `- ${item.file}:${item.line} \`${item.token}\` — resolves on ${item.resolvedOn.join(", ")}; absent from ${item.missingOn.join(", ")}\n`,
+      );
+    }
+    if (partial.length > MAX_NAMED_PARTIALS) {
+      process.stdout.write(`- …and ${partial.length - MAX_NAMED_PARTIALS} more, elided.\n`);
+    }
+    process.stdout.write(
+      "\nA path resolving is a fact about a FILE existing, never about the code inside it — a file present on both refs can still carry the behaviour on only one.\n",
     );
   }
 
@@ -915,20 +1079,20 @@ function runCheckDocs(root, ref, changedListPath) {
   }
   for (const f of failures) {
     process.stderr.write(
-      `::error::${f.file}:${f.line} — dependency path \`${f.token}\` ${f.reason}. This PR changed the doc, so the path must resolve upstream (issue #1298).\n`,
+      `::error::${f.file}:${f.line} — dependency path \`${f.token}\` ${f.reason}. This PR changed the doc, so the path must resolve on at least one of them (issue #1298, #1574).\n`,
     );
   }
 
   if (failures.length > 0) {
     process.stderr.write(
-      `::error::${failures.length} dependency path(s) in doc(s) this PR changed do not resolve upstream.\n`,
+      `::error::${failures.length} dependency path(s) in doc(s) this PR changed resolve on none of ${refs.join(", ")}.\n`,
     );
     process.exit(1);
   }
   process.stdout.write(
     warnings.length > 0
       ? `No unresolved dependency path in the changed docs; ${warnings.length} pre-existing one(s) reported above.\n`
-      : "Every dependency path resolves upstream.\n",
+      : "Every dependency path resolves on at least one of the refs above.\n",
   );
 }
 
@@ -995,6 +1159,29 @@ function renderAreaTable() {
   ].join("\n");
 }
 
+/**
+ * `--ref` is a COMMA-SEPARATED list, and one entry behaves exactly as it did
+ * before (#1574) — `--ref origin/main` is still resolution against `origin/main`
+ * and nothing else.
+ *
+ * Order is preserved and duplicates dropped, because the order is what the
+ * `partial` report prints and a ref named twice would read as two verdicts.
+ *
+ * @param {string} value
+ * @returns {string[]}
+ * @throws when the list holds no ref at all — resolving against nothing would
+ *   report every path as broken.
+ */
+export function parseRefList(value) {
+  const refs = [];
+  for (const part of String(value || "").split(",")) {
+    const ref = part.trim();
+    if (ref && !refs.includes(ref)) refs.push(ref);
+  }
+  if (refs.length === 0) throw new Error(`--ref "${value}" names no ref`);
+  return refs;
+}
+
 /** `--flag value` and `--flag=value` both work — the mixed forms bit a reviewer. */
 export function parseArgs(args) {
   const opts = { mode: "check", root: ".", since: "24 hours ago", ref: "HEAD", changed: "" };
@@ -1024,7 +1211,7 @@ function main(argv) {
     process.stdout.write(`${renderAreaTable()}\n`);
     return;
   }
-  if (mode !== "check" && mode !== "detect" && mode !== "check-docs") {
+  if (mode !== "check" && mode !== "detect" && mode !== "check-docs" && mode !== "release-ref") {
     process.stderr.write(`::error::watch-upstream-areas: unknown mode "${mode}"\n`);
     process.exit(2);
   }
@@ -1044,9 +1231,20 @@ function main(argv) {
     }
   }
 
+  let refs = [];
+  if (mode === "check-docs") {
+    try {
+      refs = parseRefList(ref);
+    } catch (error) {
+      process.stderr.write(`::error::watch-upstream-areas: ${error.message}\n`);
+      process.exit(2);
+    }
+  }
+
   try {
     if (mode === "check") return runCheck(root);
-    if (mode === "check-docs") return runCheckDocs(root, ref, changed);
+    if (mode === "release-ref") return runReleaseRef(root);
+    if (mode === "check-docs") return runCheckDocs(root, refs, changed);
     return runDetect(root, since);
   } catch (error) {
     // Includes the fail-closed throw from findLfxDrift and a bad area name in
