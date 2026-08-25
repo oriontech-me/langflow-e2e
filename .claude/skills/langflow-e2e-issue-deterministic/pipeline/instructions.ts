@@ -90,7 +90,8 @@ export function instructionFor(s: PipelineState): string {
       return [
         `Force-fail every test() in the touched spec files (list in status). For each: add a mutation WITH the marker comment "// FF-MUTATION", then run:`,
         `${CLI} ff-run ${n} --file <spec> --test "<exact title>" --mutation "<what you changed>"`,
-        `The command runs playwright --grep on that title and only records the entry if it FAILS. Serial files: mutate one test at a time. Then revert all mutations; the gate verifies no FF-MUTATION marker remains and requires a final green run (next runs it).`,
+        `The command runs playwright --grep on that title and only records the entry if it FAILS. Serial files: mutate one test at a time. Then revert all mutations; the gate verifies no FF-MUTATION marker remains and requires a final green run PER FILE (next runs them).`,
+        `MULTI-INSTANCE issues: when the touched files need DIFFERENT Langflow configurations (a lane variant, an enterprise/governance matrix, a fail-closed row), do NOT run them all against one instance. Point PLAYWRIGHT_BASE_URL at the container one file needs and run "${CLI} next ${n} --spec <that file>"; the green run is banked per file and the phase closes when every touched spec has its own. A run that executes ZERO tests is refused, not counted — set the lane flag (PW_SERVING_IDENTITY / PW_ENTERPRISE / PW_DESTRUCTIVE) rather than dropping it to make the run green.`,
         done('FORCE_FAIL'),
       ].join('\n')
 

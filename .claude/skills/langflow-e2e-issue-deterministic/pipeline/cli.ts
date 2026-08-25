@@ -2,8 +2,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import type {
-  BackendAmbient, FFEntry, Phase, PipelineState, PwStats, ReproRate, RunClass,
-  RunRecord,
+  BackendAmbient, FFEntry, Phase, PipelineState, PwStats, ReproRate, RunRecord,
 } from './types.ts'
 import {
   initState, loadState, saveState, ensureStep, completeStep, escalateToDebug,
@@ -13,13 +12,13 @@ import { classify, detectBodyFormat } from './classify.ts'
 import {
   ghIssueView, ghAssignSelf, ghPrView, runPlaywright, npmRun, gitCurrentBranch,
   gitDiffNames, gitDiffOf, enumerateTests, enumerateTestEntries, enumerateRunnableTests,
-  getInstanceVersion, getLatestNightlyTag, sh, classifyRun, gitChangedVsBase,
-  gitIsDirty, ghRunArtifactName, ghRunDownload,
+  getInstanceVersion, getLatestNightlyTag, sh, classifyRun, classOf, countsAsClean,
+  gitChangedVsBase, gitIsDirty, ghRunArtifactName, ghRunDownload,
 } from './runners.ts'
 import {
   checkSpecDoc, checkQaDiff, checkForceFailCoverage, checkNoMutationMarkers,
   checkPrReadiness, checkQuarantineLifted, checkDebugEvidence, checkBranchPurity,
-  checkCiVerdict, symptomsOwnedElsewhere,
+  checkCiVerdict, symptomsOwnedElsewhere, checkFinalGreenCoverage, finalGreenTargets,
 } from './gates.ts'
 import { summarizeRunArtifact } from './artifacts.ts'
 import { instructionFor } from './instructions.ts'
@@ -28,7 +27,7 @@ const REPO = 'oriontech-me/langflow-e2e'
 const EXCEPTION_LABELS = ['daily-failure', 'community', 'follow-up']
 export const RESERVED_KEYS = [
   'runs', 'typecheck', 'lint', 'nightly', 'qaDiff', 'ff', 'finalGreen',
-  'reproRate', 'artifactRuns',
+  'finalGreenRuns', 'reproRate', 'artifactRuns',
 ]
 const BURST = Number(process.env.PIPELINE_BURST ?? 3)
 // A wedged backend can void several runs in a row (#1074: the worker is killed
@@ -82,20 +81,6 @@ function touchedSpecFiles(): string[] {
   return gitDiffNames().filter(f => f.endsWith('.spec.ts'))
 }
 
-// Records written before infra classification existed have no `class`; derive
-// it so old state keeps counting the same way it did when it was written.
-function classOf(r: RunRecord): RunClass {
-  return r.class ?? (r.stats.unexpected === 0 && r.stats.flaky === 0 && !r.stats.backendErrors
-    ? 'clean'
-    : 'real-failure')
-}
-
-/** A run counts toward the burst when the spec answered green. */
-function countsAsClean(r: RunRecord): boolean {
-  const c = classOf(r)
-  return c === 'clean' || c === 'clean-ambient'
-}
-
 /**
  * Run a spec, classifying infra aborts as void and retrying them, so a wedged
  * backend never masquerades as a spec verdict. Returns the classified runs;
@@ -104,7 +89,7 @@ function countsAsClean(r: RunRecord): boolean {
 function runUntilClean(
   args: string[], target: string, needed: number, existing: RunRecord[], notes: string[],
   ambient?: BackendAmbient,
-): { records: RunRecord[]; voids: number; realFailure: boolean } {
+): { records: RunRecord[]; voids: number; realFailure: boolean; noEvidence: boolean } {
   const records: RunRecord[] = []
   let voids = existing.filter(r => r.target === target && classOf(r) === 'infra-void').length
   let clean = existing.filter(r => r.target === target && countsAsClean(r)).length
@@ -113,7 +98,10 @@ function runUntilClean(
     if (!run.stats) throw new Error(`could not parse playwright JSON for ${target}`)
     const cls = classifyRun(run.stats, ambient)
     records.push({ target, stats: run.stats, class: cls })
-    notes.push(`run ${clean + 1}/${needed} ${target}: ${cls} expected=${run.stats.expected} unexpected=${run.stats.unexpected} flaky=${run.stats.flaky} backendErrors=${run.stats.backendErrors}`)
+    notes.push(`run ${clean + 1}/${needed} ${target}: ${cls} expected=${run.stats.expected} unexpected=${run.stats.unexpected} flaky=${run.stats.flaky} backendErrors=${run.stats.backendErrors} skipped=${run.stats.skipped}`)
+    // Deterministic, so retrying is pointless: return and let the caller name
+    // the cause. Counting it clean is the #1593 trap; retrying it would spin.
+    if (cls === 'no-evidence') return { records, voids, realFailure: false, noEvidence: true }
     if (cls === 'clean') { clean++; continue }
     if (cls === 'clean-ambient') {
       clean++
@@ -123,12 +111,12 @@ function runUntilClean(
     if (cls === 'infra-void') {
       voids++
       notes.push(`  ↳ voided: every failure carries an environment signature (auto_login/socket hang up/connection) — not counted, re-running`)
-      if (voids >= MAX_INFRA_VOIDS) return { records, voids, realFailure: false }
+      if (voids >= MAX_INFRA_VOIDS) return { records, voids, realFailure: false, noEvidence: false }
       continue
     }
-    return { records, voids, realFailure: true }
+    return { records, voids, realFailure: true, noEvidence: false }
   }
-  return { records, voids, realFailure: false }
+  return { records, voids, realFailure: false, noEvidence: false }
 }
 
 function guardBranchOwnership(s: PipelineState): void {
@@ -273,6 +261,14 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
         fail(e instanceof Error ? e.message : String(e))
       }
       ev.runs.push(...outcome.records)
+      if (outcome.noEvidence) {
+        saveState(s)
+        const last = outcome.records[outcome.records.length - 1]?.stats
+        fail(`${t} executed NOTHING (expected=0 unexpected=0 flaky=0 skipped=${last?.skipped ?? 0}) — that is not a clean run, it is no run at all (#1593). `
+          + (last?.skipped
+            ? `Every test skipped: a runtime test.skip() gate is unmet (missing provider key, unmet lane precondition).`
+            : `Zero tests were selected: a lane-selected spec needs its lane flag (PW_SERVING_IDENTITY / PW_ENTERPRISE / PW_DESTRUCTIVE — playwright.config.ts grepInverts them and a CLI --grep cannot widen it), or the --grep matched nothing.`))
+      }
       if (outcome.voids >= MAX_INFRA_VOIDS) {
         saveState(s)
         fail(`${outcome.voids} runs of ${t} aborted on environment signatures (auto_login timeout / socket hang up / connection refused) — the instance is the blocker, not the spec. Restart it (see langflow-e2e → nightly) and run next again; these runs are recorded as void, not as failures.`)
@@ -289,8 +285,14 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
   }
 
   if (s.phase === 'FORCE_FAIL') {
-    const ev = rec.evidence as { ff?: FFEntry[]; finalGreen?: PwStats }
+    const ev = rec.evidence as {
+      ff?: FFEntry[]; finalGreen?: PwStats; finalGreenRuns?: RunRecord[]
+    }
     ev.ff ??= []
+    // Per-file green runs, accumulated across invocations. Legacy state carries
+    // only the single `finalGreen` slot, which cannot say WHICH file it covered,
+    // so such a pipeline re-runs them — one extra run per file, never one fewer.
+    ev.finalGreenRuns ??= []
     // A test.fixme/test.skip never executes, so demanding a red run for it
     // would deadlock the phase — only runnable titles are required.
     const required = touchedSpecFiles().map(f => ({
@@ -307,23 +309,48 @@ async function mechanicalFor(s: PipelineState, flags: Record<string, string>): P
     // VALIDATE already examined and wrote down.
     const ffAmbient = (s.steps.VALIDATE?.evidence as { backendAmbient?: BackendAmbient })
       ?.backendAmbient
-    if (missing.length === 0 && dirty.length === 0 && !ev.finalGreen) {
-      for (const { file } of required) {
+    if (missing.length === 0 && dirty.length === 0) {
+      const files = required.map(r => r.file)
+      // Only what is still missing a green run, so a re-invocation banks
+      // progress instead of redoing it — and `--spec` narrows to ONE file so it
+      // can be measured on the instance that file needs (#1593). Records from
+      // every invocation accumulate, exactly as VALIDATE's burst already does.
+      const selection = finalGreenTargets(files, ev.finalGreenRuns, flags.spec)
+      if (selection.problem) fail(selection.problem)
+      for (const file of selection.targets) {
         let outcome
         try {
-          outcome = runUntilClean([file, '--retries=0', '--workers=1'], file, 1, [], notes, ffAmbient)
+          outcome = runUntilClean(
+            [file, '--retries=0', '--workers=1'], file, 1, ev.finalGreenRuns, notes, ffAmbient)
         } catch (e) {
           saveState(s)
           fail(e instanceof Error ? e.message : String(e))
         }
+        // Banked BEFORE any exit path: a green run already measured must not be
+        // discarded because a later file failed, or a four-instance issue can
+        // never converge.
+        ev.finalGreenRuns.push(...outcome.records)
+        const last = outcome.records[outcome.records.length - 1]?.stats
+        // `finalGreen` is no longer what the gate reads — `finalGreenRuns` is —
+        // but it stays written as the human-readable "last green run" summary a
+        // reviewer opening the state file looks for, and keeps the evidence
+        // shape unchanged for anything that already parsed it.
+        if (last) ev.finalGreen = last
+        saveState(s)
+        if (outcome.noEvidence) {
+          fail(`final green run for ${file} executed NOTHING (expected=0, skipped=${last?.skipped ?? 0}) — not a green run (#1593). `
+            + `A lane-selected spec needs its lane flag set (PW_SERVING_IDENTITY / PW_ENTERPRISE / PW_DESTRUCTIVE); `
+            + `playwright.config.ts grepInverts those tags and a CLI --grep cannot widen it.`)
+        }
         if (outcome.voids >= MAX_INFRA_VOIDS) {
-          saveState(s)
           fail(`final green run for ${file} kept aborting on environment signatures — restart the instance and run next again`)
         }
         if (outcome.realFailure) fail(`final green run failed for ${file} after FF reverts`)
-        ev.finalGreen = outcome.records[outcome.records.length - 1]?.stats
       }
-      notes.push('final green run after reverts ✓')
+      const stillMissing = checkFinalGreenCoverage(files, ev.finalGreenRuns)
+      notes.push(stillMissing.length === 0
+        ? `final green run after reverts ✓ (${files.length} file(s))`
+        : stillMissing.join('; '))
     }
   }
 
@@ -419,14 +446,19 @@ async function gateFor(s: PipelineState, step: Phase, evidence: Record<string, u
   }
 
   if (step === 'FORCE_FAIL') {
-    const ev = (rec?.evidence ?? {}) as { ff?: FFEntry[]; finalGreen?: PwStats }
+    const ev = (rec?.evidence ?? {}) as {
+      ff?: FFEntry[]; finalGreen?: PwStats; finalGreenRuns?: RunRecord[]
+    }
     const required = touchedSpecFiles().map(f => ({
       file: f, titles: enumerateRunnableTests(fs.readFileSync(f, 'utf8')),
     }))
     problems.push(...checkForceFailCoverage(required, ev.ff ?? []))
     problems.push(...checkNoMutationMarkers(
       touchedSpecFiles().map(f => ({ file: f, diff: gitDiffOf(f) }))))
-    if (required.length > 0 && !ev.finalGreen) problems.push('final green run missing (run next)')
+    // Per FILE, not one flag for the whole phase (#1593): the old check closed
+    // on any single green run, which is both too weak (one file's green stood
+    // for all of them) and unreachable for a multi-instance issue.
+    problems.push(...checkFinalGreenCoverage(required.map(r => r.file), ev.finalGreenRuns ?? []))
   }
 
   if (step === 'AWAIT_PR_AUTH') {

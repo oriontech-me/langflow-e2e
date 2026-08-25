@@ -44,6 +44,7 @@ $PIPE escalate <NNN> debug --reason "…"   # behavior looks broken, any phase
 $PIPE ff-run <NNN> --file <spec> --test "<title>" --mutation "<desc>"
 $PIPE artifacts <NNN> --run <workflow-run-id> [--filter "<test title>"]
 $PIPE repro-run <NNN> --spec <path> [--grep "<title>"] [--runs 10]   # DEBUG only
+$PIPE next <NNN> --spec <spec>             # VALIDATE/FORCE_FAIL: one file, one instance
 $PIPE status <NNN>
 $PIPE metrics <NNN>                        # benchmark data
 $PIPE abort <NNN> --reason "…"
@@ -67,6 +68,32 @@ rate of a flake on the unmodified spec (it refuses a dirty spec file).
   `test()` in every touched `.spec.ts` gets a verified red run + revert proof
   (gate 3). No "the test obviously works" exception; if there's a spec change,
   it gets force-failed.
+- **A run that executed NOTHING is refused, never counted** (#1593). Zero
+  `expected`/`unexpected`/`flaky` used to satisfy every green predicate, so the
+  classifier called it `clean` and a phase could close having run nothing. It is
+  now `no-evidence` and stops the phase naming the cause. The route that
+  produces it is real and tempting: running a lane-selected spec **without** its
+  lane flag makes `grepInvert` select zero tests, and the run goes green. Set
+  `PW_SERVING_IDENTITY` / `PW_ENTERPRISE` / `PW_DESTRUCTIVE`; never drop the flag
+  to make a gate pass. (A `playwright.config.ts` `grepInvert` cannot be widened
+  by a CLI `--grep`.)
+- **Multi-instance issues close one FILE at a time, not one PHASE at a time.**
+  When the touched specs need different Langflow configurations — a lane
+  variant, an `@enterprise`/`@governance` matrix, a fail-closed row — point
+  `PLAYWRIGHT_BASE_URL` at the container one file needs and give VALIDATE and
+  FORCE_FAIL that file alone:
+
+  ```bash
+  PLAYWRIGHT_BASE_URL=http://localhost:7893 PW_SERVING_IDENTITY=1 \
+    npx tsx .claude/skills/langflow-e2e-issue-deterministic/pipeline/cli.ts \
+    next <NNN> --spec tests/.../end-user-identity-isolation.spec.ts
+  ```
+
+  Both phases accumulate per target across invocations, so the phase closes when
+  every touched spec has its own evidence — measured on the instance it needs.
+  Before #1593 only VALIDATE had this shape and FORCE_FAIL ran every file
+  against one instance, which is why #1583 had to finish through the prose
+  orchestrator.
 - **VALIDATE's burst IS the determinism evidence — don't re-run it by hand.**
   The VALIDATE phase already runs the spec `BURST` times (default 3) at
   `--retries=0 --workers=1`, caches the clean runs, and gates on
@@ -148,6 +175,25 @@ the process is enforced:
   rigidity gets in the way.
 
 Both delegate test authoring to `langflow-e2e`.
+
+## Changing the pipeline itself
+
+`pipeline/` is 2.8k lines of TypeScript that owns every gate. It has its own
+lane — `npm run test:pipeline` (119 tests + `tsc -p` against the pipeline's own
+tsconfig), wired into `pr-validation.yml`. Run it before and after any edit.
+
+It needs a separate runner from `npm run test:units`: the pipeline imports with
+explicit `.ts` extensions under `moduleResolution: bundler`, which
+`ts-node/register` cannot load, so the lane uses `tsx`. Until #1593 there was no
+lane at all — `test:units` globs `.`, `scripts/` and `tests/`; `test:scripts`
+globs `.claude/skills` but only `*.test.mjs`; and the root tsconfig's `include`
+stops at `scripts/**`.
+
+Put the decision in a **pure function** with a test on its output, not in the
+phase block. #1226's lesson applies here directly: a guard that pins a spelling
+does not pin a behaviour, and the FORCE_FAIL defect #1593 fixed lived in a loop
+body no test could reach. `finalGreenTargets` and `checkFinalGreenCoverage` are
+the shape to copy.
 
 ## Boundaries
 

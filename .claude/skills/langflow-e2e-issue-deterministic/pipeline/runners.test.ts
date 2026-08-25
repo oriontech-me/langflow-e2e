@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { PwStats } from './types.ts'
-import { parsePwJson, enumerateTests, enumerateTestEntries, enumerateRunnableTests, classifyRun, filterScoutSpecs } from './runners.ts'
+import { parsePwJson, enumerateTests, enumerateTestEntries, enumerateRunnableTests, classifyRun, classOf, countsAsClean, filterScoutSpecs } from './runners.ts'
 
 test('filterScoutSpecs drops throwaway scout/tmp specs, keeps real ones', () => {
   const kept = filterScoutSpecs([
@@ -74,7 +74,7 @@ test('parsePwJson handles the reporter pretty-printed format', () => {
 function statsWith(over: Partial<PwStats>): PwStats {
   return {
     expected: 0, unexpected: 0, flaky: 0, skipped: 0, durationMs: 1000,
-    backendErrors: false, failureMessages: [], ...over,
+    backendErrors: false, backendErrorLines: [], failureMessages: [], ...over,
   }
 }
 
@@ -237,4 +237,55 @@ test('parsePwJson keeps every backend-error line, not just a boolean', () => {
   assert.equal(stats!.backendErrors, true)
   assert.equal(stats!.backendErrorLines.length, 2)
   assert.match(stats!.backendErrorLines[0], /api\/v1\/flows/)
+})
+
+// ---------- zero-evidence runs (#1593) ----------
+
+const noRun: PwStats = {
+  expected: 0, unexpected: 0, flaky: 0, skipped: 0, durationMs: 120,
+  backendErrors: false, backendErrorLines: [], failureMessages: [],
+}
+
+test('classifyRun refuses a run that executed nothing — zero tests selected', () => {
+  // THE trap #1593 names: run a lane-selected spec without its lane flag and
+  // grepInvert correctly selects zero tests. Every green predicate holds
+  // (unexpected=0, flaky=0, no backend error), so the old classifier said
+  // `clean` and a gate could close having executed nothing.
+  assert.equal(classifyRun(noRun), 'no-evidence')
+})
+
+test('classifyRun refuses a run whose every test skipped', () => {
+  // Same absence of evidence by the other route: a runtime test.skip(cond) —
+  // a missing provider key, an unmet lane gate. Tests exist, none answered.
+  assert.equal(classifyRun({ ...noRun, skipped: 4 }), 'no-evidence')
+})
+
+test('classifyRun still calls a single passing test clean', () => {
+  assert.equal(classifyRun({ ...noRun, expected: 1 }), 'clean')
+})
+
+test('an empty run is never laundered clean by an ambient declaration', () => {
+  const declared = { patterns: ['500 /api/v1/flows/'], reason: 'known' }
+  // Truly empty — nothing ran, nothing fired. The declaration has nothing to
+  // excuse, and cannot supply a result that was never produced.
+  assert.equal(classifyRun(noRun, declared), 'no-evidence')
+  // Nothing ran but the monitor DID fire: something broke before any test could
+  // start (globalSetup, a fixture). That is a positive signal, so it outranks
+  // the absence of one and stays a real failure — which is also what keeps it
+  // out of `clean-ambient`, the class an empty green-looking run would land in.
+  const empty = {
+    ...noRun, backendErrors: true,
+    backendErrorLines: ['🚨 Backend Error: 500 /api/v1/flows/'],
+  }
+  assert.equal(classifyRun(empty, declared), 'real-failure')
+})
+
+test('countsAsClean rejects a no-evidence record, and classOf derives it for legacy state', () => {
+  assert.equal(countsAsClean({ target: 'a.spec.ts', stats: noRun, class: 'no-evidence' }), false)
+  // Records written before this class existed carry no `class`. Deriving
+  // `clean` for them is the same false verdict from the state file instead of
+  // the run, so the derivation refuses an empty record too — a phase needs one
+  // more run, never one fewer.
+  assert.equal(classOf({ target: 'a.spec.ts', stats: noRun }), 'no-evidence')
+  assert.equal(classOf({ target: 'a.spec.ts', stats: { ...noRun, expected: 2 } }), 'clean')
 })

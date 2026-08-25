@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import type { PwStats, RunClass, TestEntry } from './types.ts'
+import type { BackendAmbient, PwStats, RunClass, RunRecord, TestEntry } from './types.ts'
 
 // ---------- pure, unit-tested ----------
 
@@ -84,14 +84,24 @@ export function parsePwJson(raw: string): PwStats | null {
  * silence a genuine red.
  */
 export function classifyRun(stats: PwStats, ambient?: BackendAmbient): RunClass {
-  if (stats.unexpected === 0 && stats.flaky === 0 && !stats.backendErrors) return 'clean'
+  // Checked FIRST, and ahead of the ambient declaration: an empty run satisfies
+  // every green predicate below, so any ordering that reaches them turns
+  // "nothing ran" into "nothing failed" (#1593). A declaration excuses a
+  // backend error; it can never supply a result that was never produced.
+  if (isEvidenceFree(stats)) return 'no-evidence'
+  // Both clean verdicts require the spec to have ANSWERED. Without this, a run
+  // that executed nothing satisfies each of them on the nose — no unexpected,
+  // no flaky — and an ambient declaration turns the empty run into
+  // `clean-ambient`, laundering the very absence #1593 is about.
+  const answered = executedTests(stats) > 0
+  if (answered && stats.unexpected === 0 && stats.flaky === 0 && !stats.backendErrors) return 'clean'
   // A declared ambient backend error counts as clean ONLY when the run is
   // otherwise green AND every logged line matches a declared pattern: one
   // unmatched line keeps the run a real failure, so a declaration can never
   // blanket-silence the monitor the way `allowHttpErrors()` on the spec would
   // (#1084's lesson, applied to the pipeline instead of the fixture).
   if (
-    stats.unexpected === 0 && stats.flaky === 0 &&
+    answered && stats.unexpected === 0 && stats.flaky === 0 &&
     ambient && ambient.patterns.length > 0 && ambient.reason.trim() !== '' &&
     stats.backendErrorLines.length > 0 &&
     stats.backendErrorLines.every(l => ambient.patterns.some(p => l.includes(p)))
@@ -99,6 +109,48 @@ export function classifyRun(stats: PwStats, ambient?: BackendAmbient): RunClass 
   const msgs = stats.failureMessages
   if (msgs.length > 0 && msgs.every(isInfraFailure)) return 'infra-void'
   return 'real-failure'
+}
+
+/** Tests that actually produced a verdict. `skipped` is deliberately not one. */
+export function executedTests(stats: PwStats): number {
+  return stats.expected + stats.unexpected + stats.flaky
+}
+
+/**
+ * A run that said nothing at all: no test reached a verdict AND nothing fired.
+ *
+ * The second half is load-bearing. A run where zero tests executed but the
+ * backend monitor DID log — something breaking in globalSetup or a fixture
+ * before any test could start — carries a positive signal, and a positive
+ * signal outranks the absence of one: it stays a `real-failure`, which also
+ * keeps it out of reach of an ambient declaration (that excuses a backend error
+ * beside a green run, never a run that never happened).
+ */
+export function isEvidenceFree(stats: PwStats): boolean {
+  return executedTests(stats) === 0
+    && !stats.backendErrors
+    && stats.failureMessages.length === 0
+}
+
+/**
+ * The class of a stored run. Records written before infra classification
+ * existed carry no `class`, so it is derived — but an EMPTY legacy record
+ * derives `no-evidence` rather than `clean`, or the false verdict #1593 names
+ * simply moves from the run into the state file. The derivation can only ever
+ * cost a phase one more run, never one fewer.
+ */
+export function classOf(r: RunRecord): RunClass {
+  if (r.class) return r.class
+  if (isEvidenceFree(r.stats)) return 'no-evidence'
+  return r.stats.unexpected === 0 && r.stats.flaky === 0 && !r.stats.backendErrors
+    ? 'clean'
+    : 'real-failure'
+}
+
+/** A run counts toward a burst — or as a phase's green run — when the spec answered green. */
+export function countsAsClean(r: RunRecord): boolean {
+  const c = classOf(r)
+  return c === 'clean' || c === 'clean-ambient'
 }
 
 const TEST_RE =
