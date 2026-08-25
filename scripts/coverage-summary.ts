@@ -50,6 +50,7 @@ const MODULES: ModuleConfig[] = [
   { label: "`memory/` — Memory Base Registration",           sectionStart: "## memory/" },
   { label: "`governance/` — Catalog and Provider Policy",    sectionStart: "## governance/" },
   { label: "`enterprise/` — Enterprise-only Surfaces",       sectionStart: "## enterprise/" },
+  { label: "`serving/` — Serving-Plane End-User Identity",   sectionStart: "## serving/" },
 ];
 
 const PART_II_HEADER = "# PART II — TEST AUTOMATION COVERAGE";

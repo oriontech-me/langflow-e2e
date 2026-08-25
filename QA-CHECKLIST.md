@@ -134,6 +134,15 @@
 - [!] A completed `mode=sync` run answers its own status query with the session and outputs it just returned — **declared failing (`test.fail()`) against a live defect, 15/15 on `1.12.0.dev37`**; it flips to an *unexpected pass* the day upstream fixes it, which is the alarm to remove the annotation: the read-back reports `status: "completed"` alongside `session_id == flow_id` and `outputs: {}`, self-healing in 250–463 ms (median 434, 12/12 cold jobs). #14512's fix is present (its `sync_result_storage_enabled` setting reads `False`, the default) but the flag-off path races the `vertex_build` commit it reconstructs from. Detection depends on issuing the two calls back to back — with assertions interleaved between them the defect went unseen in 1 of 13 runs → `api/flows/workflows-v2-job-lifecycle.spec.ts`
 - [-] Attribution control: the same sync read-back **is** correct once the job's rows settle (≤10 s). Paired with the row above on purpose — that red plus this green is the race; *both* red would be a strictly worse regression, reconstruction unavailable at any time, and without the pair the two would report as one finding → `api/flows/workflows-v2-job-lifecycle.spec.ts`
 
+#### 1.9 Serving End-User Identity — inert by default (1.12)
+
+> Langflow 1.12's serving-plane end-user identity (`langflow-ai/langflow` #14443, #14550) scopes per-user chat memory behind a **trusted gateway** header, `X-End-User-Id`. It is **off by default** and turned on only by instance-global environment variables, so this subsection asserts the *off* half — the configuration every deployment is in today. The *on* half needs a different container and lives under § 23. Spec doc: `docs/api/flows/serving-end-user-identity-default.md`.
+
+- [-] Premise guard: the instance under test genuinely has no identity header configured, probed by running the flow because `GET /api/v1/config` exposes no serving setting at all (35 keys, none matching `serving`/`end_user`/`trust`) — it **fails** rather than skipping, since a skip here would read green on all four configurations → `api/flows/serving-end-user-identity-default.spec.ts`
+- [-] `POST /api/v2/workflows` twice on one `session_id` as `alice` then `bob`: both report the session **verbatim** and all 4 messages land in it, with `alice::<S>` and `bob::<S>` holding 0 — the scoped counts are the load-bearing half, since an instance could report the plain session while persisting to the scoped one → `api/flows/serving-end-user-identity-default.spec.ts`
+- [-] `POST /api/v1/run/{id}` behaves identically (4 / 0 / 0) — asserted because #14550's phase 1 extends the v2-only scoping to *all* serving APIs, making v1 the surface a partial rollout would honour first, and the one deployed integrations actually call → `api/flows/serving-end-user-identity-default.spec.ts`
+- [-] Non-vacuity control: one identity-less run on a **different** `session_id` persists its 2 messages there. Without it, "the header did nothing" and "chat memory is broken outright" give identical readings — both leave the scoped sessions empty → `api/flows/serving-end-user-identity-default.spec.ts`
+
 ---
 
 ## core-components/ — Component Configuration + Core Components
@@ -1209,6 +1218,53 @@
 - [-] **Assigning at project scope through the dialog creates a project-scoped assignment** — `domain_type: "project"` with `domain_id` equal to the id of a project the test created, asserted at the API rather than from the row's text. Scope is the axis the deny matrix turns on, and a picker submitting `global` regardless would hand instance-wide access to an operator who asked for one project. The test owns its project because two stock projects are both named `Starter Project`, told apart in the picker only by a ` — <owner>` suffix → `enterprise/authz/access-control-ui.spec.ts`
 - [-] **Revoking on the screen removes the assignment at the API** — the confirm dialog names the role and the user losing it, and the state is read from the admin listing afterwards rather than from the row disappearing. Both buttons are named exactly `Revoke`, so the row's and the dialog's are addressed separately → `enterprise/authz/access-control-ui.spec.ts`
 - [ ] Cross-replica convergence — needs Redis and a second replica: without one `invalidation.listener_connected` is `false` while the policy still resolves `active`, so a single-container assertion would measure nothing. **Recipe measured out; blocked only on machine memory** (a second Langflow replica costs ~1.1 GiB against an 8 GiB local Docker VM already holding six): the variable is `LANGFLOW_AUTHZ_REDIS_URL` (`src/authz/policy_invalidation.py`), so it takes a `redis:7-alpine` on `langflow-ee-net`, the RBAC container recreated with `LANGFLOW_AUTHZ_REDIS_URL=redis://redis-ee:6379/0`, and a second replica on another port sharing the same `LANGFLOW_DATABASE_URL`. The assertions are then `listener_connected: true` on both, and a grant written through replica A flipping replica B's enforcement with no restart, `seen_revision` / `observed_revision` converging
+
+---
+
+## serving/ — Serving-Plane End-User Identity (1.12)
+
+> **New area (2026-08-25).** The *on* half of § 1.9. Langflow 1.12 lets a trusted
+> gateway scope per-user chat memory with a request header, so two end users
+> sharing one `session_id` do not read each other's history
+> (`langflow-ai/langflow` #14443, #14550). The feature is configured entirely by
+> instance-global environment variables, which is why it is its own area rather
+> than more bullets under `api/flows/`: it needs a **different container**, reached
+> through the `@serving` lane selector and
+> `./scripts/start-langflow-serving-identity.sh` (#1582).
+
+> **Three files because there are three container states**, one per row of the
+> contract — a spec cannot restart its own instance, and a single file that
+> detected the state would have to branch inside its tests, hiding which row was
+> actually asserted. Every file opens with a **fail-closed configuration guard**:
+> the configuration is exposed by no API, so it is probed by running the flow, and
+> a mismatch **fails** naming both readings and the exact invocation that produces
+> the state the spec needs.
+
+> **None of these can be `@stable`** — nothing runs `@serving` on a cron, so the
+> tag would mark a test that never runs (#1010). The four-configuration contract
+> is in `docs/serving/end-user-identity-lane.md`.
+
+#### 23.1 Isolation, when the header is trusted
+
+- [-] Configuration guard: the instance names the header **and** trusts it, told apart from its three siblings by two probe runs — an *identified* request is `200` and scoped under `trusted` **and** under `required`, so only the identity-less run separates them → `serving/end-user-identity-isolation.spec.ts`
+- [-] `POST /api/v2/workflows` as `alice` then `bob` on one `session_id` resolves to `alice::<S>` and `bob::<S>`, 2 messages each, **and the bare `<S>` holds 0** — that last clause is the boundary: a merge that scoped the read but also wrote to the unscoped session leaves both per-user counts correct while a third client on plain `<S>` reads everybody's history → `serving/end-user-identity-isolation.spec.ts`
+- [-] `POST /api/v1/run/{id}` isolates identically, through a minted `x-api-key` → `serving/end-user-identity-isolation.spec.ts`
+- [-] An identity-less run reports `anon::<uuid>` and persists **nothing**, asserted over the whole flow (`?flow_id=`) rather than the session it reported — checking the reported session confirms it did not write *there* while saying nothing about whether it wrote somewhere else, which is exactly what a scoping bug does → `serving/end-user-identity-isolation.spec.ts`
+
+#### 23.2 Named but untrusted — fail-closed *and* fail-silent
+
+- [-] Configuration guard: the header is named and **not** trusted (both probe runs anonymised) → `serving/end-user-identity-untrusted.spec.ts`
+- [-] An identified run answers `200 completed` while being anonymised to `anon::<uuid>` and persisting zero rows anywhere in the flow — the `200` is asserted on purpose: this configuration is fail-closed for security and fail-**silent** for operations, so an operator who names the header and forgets the trust flag has a working-looking instance that remembers nothing, instance-wide → `serving/end-user-identity-untrusted.spec.ts`
+- [-] A whitespace-only header value is treated as **absent**, never as a scope named `"   "::<S>` that every client would collide on, and two consecutive blank runs on one session get **different** uuids — the anonymous scope is minted per *request*, which is what makes "remembers nothing" exact rather than approximate → `serving/end-user-identity-untrusted.spec.ts`
+
+#### 23.3 Required — refused, on every surface
+
+- [-] Configuration guard: an identity-less request is refused while an identified one is scoped → `serving/end-user-identity-required.spec.ts`
+- [-] `POST /api/v2/workflows`: an identified run is `200`, scoped and persisted; an identity-less one is `401` with `detail.code: "END_USER_IDENTITY_REQUIRED"`; a whitespace-only value is refused the same way. Asserted on the **code**, not the sentence — the code is what a gateway branches on — plus one property of the message: that it **names the configured header**, since an operator running a non-default name needs the error to say which one is missing → `serving/end-user-identity-required.spec.ts`
+- [-] `POST /api/v1/run/{id}` refuses with the same code and accepts an identified run — the accepted half is asserted because a guard that refuses everything is as broken as one that refuses nothing, and would pass a spec that only checked the `401`s → `serving/end-user-identity-required.spec.ts`
+- [ ] Job-lifecycle gating by end user (#14550 phase 3) — `GET /api/v2/workflows`, `/stop` and `/resume` refusing another end user's job. The natural follow-up now that the lane exists; kept out so the memory boundary landed first
+- [ ] `serving_internal_mcp_hosts` (#14550 phase 4) — the fail-closed outbound allowlist that forwards the identity only to operator-allowlisted internal hosts. Needs an internal MCP host to point at
+- [ ] `serving_trace_end_user` and the end-user span link (#14616) — needs an OTLP collector, which this repo has none of (`otlp|opentelemetry` returns zero matches across `tests/`, `docs/`, `scripts/` and `.github/`)
 
 ---
 
