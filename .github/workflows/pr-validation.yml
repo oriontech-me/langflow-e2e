@@ -202,34 +202,62 @@ jobs:
           exit 1
 
       # The suite does not validate `main`: every scheduled lane runs the nightly,
-      # which is cut from the current release line, and upstream merges that line
-      # back into `main` only sporadically (~1–2 months). Resolving against `main`
-      # alone failed PRs for paths that are correct for the image under test
-      # (#1574). The line is derived, never hardcoded — it rotates, and the
-      # selection is numeric, since `release-1.9.7` sorts above `release-1.12.0`
-      # lexically. A failure here fails the step: guessing the ref would put the
-      # guard back on `main` alone with nothing in the log to say so.
-      - name: Fetch the release line the nightly is cut from
+      # which is cut from a release line, and upstream merges that line back into
+      # `main` only sporadically (~1–2 months). Resolving against `main` alone
+      # failed PRs for paths that are correct for the image under test (#1574).
+      # The lines are derived, never hardcoded — they rotate, and the selection is
+      # numeric, since `release-1.9.7` sorts above `release-1.12.0` lexically. Two
+      # of them, because the line the nightly SHIPS lags the newest line CUT and a
+      # single-line window would drop the shipping one at the moment of the cut.
+      # Both network calls retry like the clone above (upstream fetches are
+      # flaky); a real failure fails the step, since guessing would put the guard
+      # back on `main` alone with nothing in the log to say so.
+      - name: Fetch the release lines the nightly is cut from
         run: |
           set -eo pipefail
-          RELEASE_REF=$(node scripts/watch-upstream-areas.mjs --mode=release-ref --root langflow-upstream)
-          echo "derived release line: $RELEASE_REF"
-          git -C langflow-upstream fetch --filter=blob:none --depth 1 --no-tags origin \
-            "+refs/heads/${RELEASE_REF}:refs/remotes/origin/${RELEASE_REF}"
-          echo "RELEASE_REF=$RELEASE_REF" >> "$GITHUB_ENV"
+          for attempt in 1 2 3; do
+            if RELEASE_REFS=$(node scripts/watch-upstream-areas.mjs --mode=release-ref --root langflow-upstream); then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then
+              echo "::error::could not derive the upstream release lines, so the guard would silently fall back to origin/main alone."
+              exit 1
+            fi
+            echo "::warning::release-line lookup attempt $attempt failed; retrying"
+            sleep 5
+          done
+          RELEASE_CSV=""
+          for RELEASE_REF in $RELEASE_REFS; do
+            echo "derived release line: $RELEASE_REF"
+            for attempt in 1 2 3; do
+              if git -C langflow-upstream fetch --filter=blob:none --depth 1 --no-tags origin \
+                   "+refs/heads/${RELEASE_REF}:refs/remotes/origin/${RELEASE_REF}"; then
+                DOC_DEPS_REFS="${DOC_DEPS_REFS},origin/${RELEASE_REF}"
+                break
+              fi
+              if [ "$attempt" = 3 ]; then
+                echo "::error::could not fetch ${RELEASE_REF}; a ref the guard cannot list is not a ref it may skip."
+                exit 1
+              fi
+              echo "::warning::fetch attempt $attempt for ${RELEASE_REF} failed; retrying"
+              sleep 5
+            done
+          done
+          echo "RELEASE_CSV=$RELEASE_CSV" >> "$GITHUB_ENV"
 
       # Fails only on the changed docs; the repo-wide sweep is emitted as
       # ::warning:: so drift that lands upstream between PRs stays visible
       # (#1012 — an unevaluated path is unknown, not clean). A path resolving on
-      # either ref passes and is NAMED when only one satisfied it, so a green
-      # verdict cannot be read as "exists on main".
+      # any one ref passes and is NAMED, as a ::notice::, when only some of them
+      # satisfied it — so a green verdict cannot be read as "exists on main".
       - name: Resolve every External-dependencies path against upstream
         run: |
           set -eo pipefail
           node scripts/watch-upstream-areas.mjs \
             --mode=check-docs \
             --root langflow-upstream \
-            --ref "origin/main,origin/${RELEASE_REF}" \
+            --ref origin/main \
+            --releases "$RELEASE_CSV" \
             --changed changed-docs.txt | tee -a "$GITHUB_STEP_SUMMARY"
 
   detect-specs:
