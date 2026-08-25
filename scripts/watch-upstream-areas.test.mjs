@@ -928,6 +928,79 @@ test("every exempt doc exists, so the allowlist cannot rot into a blanket skip",
   }
 });
 
+/**
+ * The `run:` body of a named step in a workflow, dedented so bash can run it.
+ *
+ * Extracting it beats retyping it: a hand-written copy of this block passed a
+ * full local reproduction while the YAML itself built the ref list into a
+ * variable no other line read, and the lane shipped an empty `--releases`
+ * (measured on PR #1580's first run — every guard in this repo green).
+ */
+function stepRunBody(yml, stepName) {
+  const at = yml.indexOf(`- name: ${stepName}`);
+  assert.ok(at >= 0, `no step named "${stepName}"`);
+  const runAt = yml.indexOf("run: |", at);
+  assert.ok(runAt >= 0, `step "${stepName}" has no run: block`);
+  const lines = yml.slice(yml.indexOf("\n", runAt) + 1).split("\n");
+  const indent = lines[0].match(/^\s*/)[0];
+  const body = [];
+  for (const line of lines) {
+    if (line.trim() !== "" && !line.startsWith(indent)) break;
+    body.push(line.slice(indent.length));
+  }
+  return body.join("\n");
+}
+
+test("the doc-deps steps, AS WRITTEN IN THE YAML, resolve a release-only path end to end", () => {
+  // The strongest guard in this file: it runs the workflow's own shell against a
+  // local git fixture — no network — so a defect in the YAML fails here instead
+  // of on the PR that ships it. It is what #1226 asks for: assert on behaviour,
+  // not on a spelling.
+  const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"), "utf8");
+  const home = docsFixture(SECTION("- `src/only_on_release.py` — the release-line-only module"));
+  // The steps address the checkout by that exact relative name.
+  const upstream = path.join(home, "langflow-upstream");
+  fs.renameSync(upstreamFixture(), upstream);
+  // The fixture is its own remote, so moving it invalidates the URL it recorded.
+  spawnSync("git", ["remote", "set-url", "origin", upstream], { cwd: upstream });
+  spawnSync("git", ["fetch", "-q", "origin"], { cwd: upstream });
+  fs.renameSync(path.join(home, "changed.txt"), path.join(home, "changed-docs.txt"));
+
+  const githubEnv = path.join(home, "github-env");
+  const summary = path.join(home, "step-summary");
+  fs.writeFileSync(githubEnv, "");
+
+  const fetchStep = spawnSync("bash", ["-c", stepRunBody(yml, "Fetch the release lines the nightly is cut from")], {
+    cwd: home,
+    encoding: "utf8",
+    env: { ...process.env, GITHUB_ENV: githubEnv },
+  });
+  assert.equal(fetchStep.status, 0, fetchStep.stderr);
+  // The step's whole product: the value the next step reads. An empty one is how
+  // the guard silently fell back to the trunk alone.
+  const exported = Object.fromEntries(
+    fs
+      .readFileSync(githubEnv, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+  );
+  assert.equal(exported.RELEASE_CSV, "origin/release-1.12.0,origin/release-1.9.7");
+
+  // The fixture's trunk is `main`, so the step's `--ref origin/main` resolves
+  // against the tracking ref the fetch above created.
+  const resolveStep = spawnSync(
+    "bash",
+    ["-c", stepRunBody(yml, "Resolve every External-dependencies path against upstream")],
+    { cwd: home, encoding: "utf8", env: { ...process.env, ...exported, GITHUB_STEP_SUMMARY: summary } },
+  );
+
+  assert.equal(resolveStep.status, 0, resolveStep.stdout + resolveStep.stderr);
+  assert.match(resolveStep.stdout, /resolves on origin\/release-1\.12\.0; absent from origin\/main/);
+  // What a reviewer actually opens.
+  assert.match(fs.readFileSync(summary, "utf8"), /resolve on only one side/);
+});
+
 test("pr-validation.yml runs the doc-deps guard with a diff list and a real upstream ref", () => {
   // Presence wiring, not behaviour: the behaviour is pinned by checkDocDeps above.
   // #1226's lesson is that a regex over YAML cannot prove a verdict is right —

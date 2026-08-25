@@ -226,13 +226,11 @@ jobs:
             echo "::warning::release-line lookup attempt $attempt failed; retrying"
             sleep 5
           done
-          RELEASE_CSV=""
           for RELEASE_REF in $RELEASE_REFS; do
             echo "derived release line: $RELEASE_REF"
             for attempt in 1 2 3; do
               if git -C langflow-upstream fetch --filter=blob:none --depth 1 --no-tags origin \
                    "+refs/heads/${RELEASE_REF}:refs/remotes/origin/${RELEASE_REF}"; then
-                DOC_DEPS_REFS="${DOC_DEPS_REFS},origin/${RELEASE_REF}"
                 break
               fi
               if [ "$attempt" = 3 ]; then
@@ -243,6 +241,12 @@ jobs:
               sleep 5
             done
           done
+          # Derived from the list itself, not accumulated inside the loop: a
+          # failed fetch exits above, so the two can never disagree — and one
+          # variable name that only some lines got right is what shipped an empty
+          # --releases past every guard in this repo once already.
+          RELEASE_CSV=$(printf '%s\n' $RELEASE_REFS | sed 's|^|origin/|' | paste -sd, -)
+          echo "resolving against: origin/main,$RELEASE_CSV"
           echo "RELEASE_CSV=$RELEASE_CSV" >> "$GITHUB_ENV"
 
       # Fails only on the changed docs; the repo-wide sweep is emitted as
