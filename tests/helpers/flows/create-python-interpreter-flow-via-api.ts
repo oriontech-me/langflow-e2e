@@ -81,7 +81,7 @@ export interface BuildPythonInterpreterFlowOptions {
  * (`scapedJSONStringfy` in the frontend). The backend reads these strings, so
  * they must be produced in the same encoding — not as plain JSON.
  */
-function escapeHandle(handle: Record<string, unknown>): string {
+export function escapeHandle(handle: Record<string, unknown>): string {
   return JSON.stringify(handle).replace(/"/g, "œ");
 }
 
