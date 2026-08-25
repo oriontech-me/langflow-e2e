@@ -168,23 +168,31 @@ own their own flows.
   `useRefreshAfterProviderClose.ts`. **The doc's earlier 2026-08-13 measurement —
   that they were `release-1.12.0`-only — was correct when taken, and the
   back-port is what changed it.** `#14505` merged to `release-1.12.0` on
-  2026-08-12 (`aaa384a8`) and reached `main` only on 2026-08-14, through the
-  back-port `#14581` (`525d83311`, "chore: back port the new workflow updates
-  from 1.12"), whose first parent does not contain it. On 2026-08-13 `main`'s
-  tip was `976ec789d`, where the component's `hooks/` held only
-  `useModelConnectionLogic.ts` and its `helpers/` only `model-option-identity.ts`
-  and `recover-model-option.ts` (verified 2026-08-25).
+  2026-08-12 (`aaa384a8`, `base: release-1.12.0`) and reached `main` only on
+  2026-08-15 (`525d83311`, 03:57Z), through the back-port `#14581` ("chore: back
+  port the new workflow updates from 1.12"), whose first parent does not contain
+  it. Read that off `main`'s **first-parent** line, never off reachability: the
+  back-port pulled every `release-1.12.0` commit into what `main` reaches
+  *today*, so `git log`, `compare` and `--contains` all report `aaa384a8` as
+  `main` history, and the #14511 merge (`11169d7ece`, also
+  `base: release-1.12.0`) as a `main` tip — neither was, on the day. By
+  first parent, `main`'s tip was `976ec789d` from 2026-08-12 22:34Z until
+  `b1b0ce1a` on 2026-08-14 19:29Z, so it was the tip for the whole of 08-13, and
+  there the component's `hooks/` held only `useModelConnectionLogic.ts` and its
+  `helpers/` only `model-option-identity.ts` and `recover-model-option.ts` — as
+  did `b1b0ce1a`, the last `main` tip before the back-port (verified 2026-08-25).
 - **The same two paths resolve on both refs while carrying different code, and
   the difference is behavioural.** `release-1.12.0` is one commit ahead on each
   — `useAutoSelectModel.ts` `76cdbf2dda0d` vs `main`'s `d5f82b1e6796`,
   `derive-selected-model.ts` `d7c016d4b8d3` vs `908d018e570d` — from `#14697`
   (`12efda24`, LE-1960, 2026-08-21, not on `main`), which adds an
   `isSavedModelUnavailable` branch to `deriveSelectedModel` and its import to the
-  hook. The listings differ too, by four `release-1.12.0`-only files: the
-  `saved-model-availability.ts` that branch calls, its test, and two component
-  tests (`ModelInputComponent.restricted-model.test.tsx`,
-  `modelListboxLabel.a11y.test.tsx`). A resolved path is evidence that a **file**
-  exists, never that the code is in it — and since `deriveSelectedModel` is what
+  hook. The listings differ too, by four `release-1.12.0`-only files: three from
+  that same change — the `saved-model-availability.ts` the branch calls, its
+  test, and `ModelInputComponent.restricted-model.test.tsx` — plus
+  `modelListboxLabel.a11y.test.tsx`, which is *not* in `12efda24` and arrived
+  separately. A resolved path is evidence that a **file** exists, never that the
+  code is in it — and since `deriveSelectedModel` is what
   test 4.4 reads, the line this spec is validated against has a branch `main`
   does not.
 - `src/lfx/src/lfx/base/models/unified_models/build_config.py` — the backend half
