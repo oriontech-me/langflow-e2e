@@ -1,6 +1,6 @@
 # Tweaks — the protected-field floor on the graph run path
 
-**Last validated:** Langflow 1.12.0.dev37 — `langflowai/langflow-nightly@sha256:b672ab7e91981c6f1719b2932bfa7e2255324d4cfac18b7fedf0dbf5722761de`, the digest both `:latest` and `:1.12.0.dev37` resolve to (`docker manifest inspect`); upstream revision `50340f2a4322eca624b7ef5684237d87f863fc1b`.
+**Last validated:** Langflow 1.12.0.dev38 — `langflowai/langflow-nightly@sha256:5813e74988bf09fdfd6c16fd5aad39aae0099469907ec48d5e5625a3f9c66683` (the `linux/arm64` image of the manifest list `:latest` and `:1.12.0.dev38` both resolve to — the two lists are byte-identical); upstream revision `814fbceeb1dd38d3e52f60ce1e638af6fb725ffe`. First validated on 1.12.0.dev37 (`sha256:b672ab7e…`, revision `50340f2a4322…`); the measured table below is unchanged between the two builds, re-measured for `mode=sync` on dev38.
 
 ---
 
@@ -26,13 +26,15 @@ Every refusal is paired with a **benign** tweak on the same surface and the same
 
 ## Tags *(required)*
 
-`@api` `@regression`
+`@stable` `@api` `@regression`
 
 No **functional** tag applies: the tag table has no security area, and the sibling `security/` specs (`tweaks-injection`, `code-execution-endpoints`, `ssrf-url-validation`) also carry only cross-cutting tags. `@api` marks the layer; `@regression` is what issue #1567 asks for.
 
-**No `@stable` in this delivery**, for the ordinary reason: it is a new spec awaiting a validation cycle, so its checklist bullets are `[-]`. The lane profile is a good fit and promotion is a one-line follow-up — pure API, no browser, no LLM, no provider key, three tests in ~4 s, and it cannot fail for a provider-outage reason. Nothing in the file is quarantined.
+**`@stable` was added in the validation cycle #1572 asked for, not in the first delivery.** PR #1571 shipped the file `@api @regression` only, which the repo's own mechanism turns into *no scheduled lane at all*: `daily-stable.yml` selects `--grep @stable` and `nightly.yml` has been dispatch-only since 2026-03, so the three tests ran only when `pr-validation.yml`'s impacted-specs gate happened to select them. The graph-path half of `langflow-ai/langflow#14538` — the half that closed a real bypass — was therefore watched by nothing, while the sync-endpoint sibling (`security/tweaks-injection.spec.ts`) was watched daily. The lane profile is why promotion needed no design change: pure API, no browser, no LLM, no provider key, no `@destructive` state, three tests in ~3 s, and no failure mode that depends on a provider key or quota. Validated on the build in **Last validated** above — five consecutive `--workers=1 --retries=0` runs plus one default-parallel run (3 workers, one `beforeAll` per worker), 18/18 tests green, zero orphan flows left behind, and one executed force-fail per assertion family (acceptance, attribution, liveness, and the sync `2xx` floor).
 
-Not `@destructive`: the file creates and deletes only its own two flows and sets no instance-wide state. (A spec for `LANGFLOW_TWEAKS_POLICY` *would* be instance-global — that surface is scoped out below.)
+Not `@destructive`, and that is a **precondition of the promotion, not a note**: `@stable` combined with `@destructive` would put the tests back in no scheduled lane, since `daily-stable.yml` has no destructive lane (#1010). The file creates and deletes only its own two flows and sets no instance-wide state.
+
+(A spec for `LANGFLOW_TWEAKS_POLICY` *would* be instance-global — that surface is scoped out below.)
 
 ---
 
@@ -115,7 +117,16 @@ Same five steps, with the events read from `GET /api/v2/workflows/{job_id}/event
 
 The spec passes only when, on each covered surface, **no protected tweak takes effect**, **the refusal names itself and the key**, and **a benign tweak on that same surface still applies**. A run where the benign control did not apply fails, because it measured nothing; a stream carrying `WIDENED:` fails; an error frame that does not name the refused key fails.
 
-The file fails for the right reason in both directions: relaxing an assertion cannot make it pass while the control must still apply, and the day `mode=sync` returns its `422`, Test 3 goes green by deleting one `.fixme`.
+The file fails for the right reason in both directions: relaxing an assertion cannot make it pass while the control must still apply. There is no `.fixme` and no quarantined assertion anywhere in it — the day `mode=sync` returns its `422`, Test 3 stays green **unchanged**, because the property it pins (never `2xx`) is true under both shapes. That is what makes the file safe to run in the daily lane: no assertion in it is waiting on an upstream fix.
+
+Force-fail evidence for the `@stable` promotion (#1572), each mutation executed against 1.12.0.dev38 and reverted:
+
+| mutation | emulates | tests that failed, and on which assertion |
+|---|---|---|
+| the protected `global_imports` tweak replaced by a benign `sender_name` one | the floor stops refusing and the run proceeds | 1, 2 — *"the flow author's sandbox must still be in effect"*; 3 — *"a refused global_imports tweak must not answer 2xx"* |
+| `REFUSAL_MARKER` → a string the frame does not carry | the refusal becomes unattributable | 1, 2 — *"the refusal must be attributable on this surface, not a bare failure"* |
+| `CHAT_INPUT_NODE_ID` → an id no node has | the tweaks mechanism is dead, so the refusals measured nothing | 1, 2, 3 — *"tweaks must be alive on this surface"* |
+| `WIDENED_PREFIX` → text the author's own run really prints | the widened branch executed | 3 — *"a refusal must leave nothing behind"*. **Not** 1 or 2, and that is the honest reading: on those two surfaces the refused run emits no program output at all, so the `WIDENED:` check there is proven live only by the first mutation above, where the run does execute. |
 
 ---
 

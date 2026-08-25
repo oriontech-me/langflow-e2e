@@ -17,9 +17,10 @@ import { createRunnableChatFlowViaApi } from "../../../helpers/flows/create-runn
 // enforcement plus `except TweakRefusedError` re-raises at three call sites
 // "because both call sites previously swallowed the refusal into a 500".
 //
-// MEASURED on 1.12.0.dev37: the floor holds on all four run surfaces — no
-// protected tweak is applied anywhere. What differs is how the refusal REACHES
-// THE CALLER, and that is what this file pins:
+// MEASURED on 1.12.0.dev37, re-measured on 1.12.0.dev38 when the file was
+// promoted to @stable (#1572) and unchanged between the two: the floor holds on
+// all four run surfaces — no protected tweak is applied anywhere. What differs
+// is how the refusal REACHES THE CALLER, and that is what this file pins:
 //   POST /api/v1/run        -> 422, code TWEAKS_REFUSED, fields naming the key
 //   /api/v2/workflows sync  -> 500 INTERNAL_SERVER_ERROR (the defect; Test 3)
 //   /api/v2/workflows stream/background
@@ -316,7 +317,7 @@ test.describe("Tweaks — the protected-field floor on the graph run path", () =
 
   test(
     "mode=stream refuses a protected tweak and names the refusal",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       await assertStreamingSurface(request, "stream");
     },
@@ -324,7 +325,7 @@ test.describe("Tweaks — the protected-field floor on the graph run path", () =
 
   test(
     "mode=background refuses a protected tweak and names the refusal",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       await assertStreamingSurface(request, "background");
     },
@@ -349,7 +350,7 @@ test.describe("Tweaks — the protected-field floor on the graph run path", () =
   // recorded in docs/security/tweaks-graph-path-floor.md instead.
   test(
     "mode=sync refuses a protected tweak without ever answering 2xx",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       for (const [field, tweak] of [
         ["global_imports", SANDBOX_WIDENING_TWEAK],
