@@ -563,7 +563,16 @@ test("checkDocDeps skips an exempt doc entirely and reports that it did", () => 
 
 // --- #1581: an area whose printed command runs nothing is worse than no area.
 
-/** Every `tag: [...]` array in the suite, one entry per `test()` — tags are per test. */
+/**
+ * Every `tag: [...]` array in the suite, with the file it came from.
+ *
+ * Tags are per test, but a `test.describe` may carry them too and Playwright
+ * merges those into every test inside it — so a describe-level LANE tag is
+ * unioned into the file's test-level sets. Without that, putting `@destructive`
+ * on a describe would read as default-lane here and the lane guard below would
+ * bless a command that selects nothing (measured: 1 describe-level array in the
+ * suite today, carrying no lane tag, so the guard was right by luck).
+ */
 function suiteTagSets() {
   const out = [];
   const walk = (dir) => {
@@ -575,16 +584,20 @@ function suiteTagSets() {
         // The strict predicate CLAUDE.md records: a `tag:` array, never a match
         // anywhere in the file — the loose form overcounted 8 of 235 specs, one of
         // them on the comment "`@release`, never `@stable`".
+        const tagsIn = (text) => [...text.matchAll(/@[a-z0-9-]+/g)].map((m) => m[0]);
+        const describeLanes = [...source.matchAll(/test\.describe\([^)]*?tag:\s*\[([^\]]*)\]/gs)]
+          .flatMap((m) => tagsIn(m[1]))
+          .filter((t) => t === "@destructive" || t === "@enterprise");
         for (const match of source.matchAll(/tag:\s*\[([^\]]*)\]/g)) {
           out.push({
             file: path.relative(REPO_ROOT, full),
-            tags: [...match[1].matchAll(/@[a-z0-9-]+/g)].map((m) => m[0]),
+            tags: [...new Set([...tagsIn(match[1]), ...describeLanes])],
           });
         }
       }
     }
   };
-  walk(path.join(REPO_ROOT, "tests/tests-automations/regression"));
+  walk(path.join(REPO_ROOT, "tests"));
   return out;
 }
 
@@ -592,29 +605,52 @@ function suiteTagSets() {
 const laneOf = (tags) =>
   tags.includes("@destructive") ? "PW_DESTRUCTIVE=1" : tags.includes("@enterprise") ? "PW_ENTERPRISE=1" : "default";
 
-test("every area prints a command that actually selects at least one test", () => {
-  // The defect #1581 nearly shipped. `@governance` is always paired with a lane
-  // tag, and `playwright.config.ts` grepInverts both lanes where a CLI `--grep`
-  // cannot override it — measured, `npx playwright test --grep "@governance"`
-  // selects 0 tests, `PW_DESTRUCTIVE=1` selects 5 and `PW_ENTERPRISE=1` selects
-  // 10. An area added with the derived one-command form would have named a
-  // revalidation command that runs nothing, which is #570/#1012's failure mode
-  // with a green log.
+/**
+ * What one printed command would actually select: its lane, and its selector.
+ *
+ * Both halves matter and the first version of this guard read neither out of a
+ * declared command — it compared `area.tags` against the suite and looked only at
+ * each command's lane prefix. Three mutations survived that: pointing both
+ * commands at `--grep "@nope"`, adding a lane nothing needs, and letting `tags`
+ * and `runs` disagree. A command is now parsed as the lane it sets plus either a
+ * `--grep` pattern or the path prefixes it names.
+ */
+function parseCommand(command) {
+  const tokens = command.split(/\s+/);
+  const env = [];
+  while (tokens.length > 0 && /^[A-Z_][A-Z0-9_]*=/.test(tokens[0])) env.push(tokens.shift());
+  const lane = env.find((e) => e.startsWith("PW_")) ?? "default";
+  const grep = /--grep\s+"([^"]+)"/.exec(command);
+  const paths = tokens.filter((t) => t.startsWith("tests/"));
+  return { lane, grep: grep ? grep[1] : null, paths };
+}
+
+test("every command an area prints selects at least one test, in a lane that can run it", () => {
+  // The defect #1581 nearly shipped twice. First the lane: `@governance` is always
+  // paired with a lane tag and both lanes are grepInverted where a CLI `--grep`
+  // cannot override them, so the derived `npx playwright test --grep "@governance"`
+  // selects 0 tests. Then the selector: `--grep "@governance"` covers 5 of the 13
+  // tests in its own directory, because two of the three spec files there are not
+  // tagged `@governance` at all.
   const tests = suiteTagSets();
   assert.ok(tests.length > 100, `expected the real suite, parsed ${tests.length} tag sets`);
 
   for (const area of AREAS) {
-    const matching = tests.filter((t) => area.tags.some((tag) => t.tags.includes(tag)));
-    assert.ok(matching.length > 0, `area "${area.area}" has tags no test carries: ${area.tags.join(", ")}`);
+    const commands = areaCommands(area).map(parseCommand);
 
-    const lanes = new Set(areaCommands(area).map((c) => (c.startsWith("npx") ? "default" : c.split(" ")[0])));
-    const needed = new Set(matching.map((t) => laneOf(t.tags)));
-    const reachable = matching.filter((t) => lanes.has(laneOf(t.tags)));
-    assert.ok(
-      reachable.length > 0,
-      `area "${area.area}" prints ${[...lanes].join(" / ")} but every test it selects needs ` +
-        `${[...needed].join(" / ")} — the command would run nothing`,
-    );
+    for (const command of commands) {
+      const selected = tests.filter((t) => {
+        if (laneOf(t.tags) !== command.lane) return false;
+        if (command.grep) return new RegExp(command.grep).test(t.tags.join(" "));
+        if (command.paths.length > 0) return command.paths.some((p) => t.file.startsWith(p));
+        return true;
+      });
+      assert.ok(
+        selected.length > 0,
+        `area "${area.area}" prints a command that selects NOTHING: ` +
+          `${command.lane} + ${command.grep ? `--grep ${command.grep}` : command.paths.join(" ")}`,
+      );
+    }
 
     // An area with NO default-lane test is entirely lane-gated, so every lane it
     // touches must be named: declaring only one would leave the rest of its
@@ -622,15 +658,57 @@ test("every area prints a command that actually selects at least one test", () =
     // tests are not held to this — a single `@destructive` test inside a
     // normal-lane area is a lane the scheduled runs never take anyway, and
     // demanding a second command for it would put one on all 13 of them.
+    const byTag = tests.filter((t) => area.tags.some((tag) => t.tags.includes(tag)));
+    assert.ok(byTag.length > 0, `area "${area.area}" has tags no test carries: ${area.tags.join(", ")}`);
+    const needed = new Set(byTag.map((t) => laneOf(t.tags)));
     if (!needed.has("default")) {
+      const declared = new Set(commands.map((c) => c.lane));
       for (const lane of needed) {
         assert.ok(
-          lanes.has(lane),
+          declared.has(lane),
           `area "${area.area}" is entirely lane-gated and does not name ${lane}, so the ` +
-            `${matching.filter((t) => laneOf(t.tags) === lane).length} test(s) needing it have no command`,
+            `${byTag.filter((t) => laneOf(t.tags) === lane).length} test(s) needing it have no command`,
         );
       }
     }
+  }
+});
+
+test("the governance area's commands cover the whole directory, not just the tagged half", () => {
+  // Pins the measurement that decided the selector: 13 tests in the directory
+  // against 5 that carry the tag. A future edit back to `--grep "@governance"`
+  // would pass the guard above (5 > 0) and silently drop 8 tests, so the ratio is
+  // asserted here rather than left to the floor.
+  const tests = suiteTagSets();
+  const area = AREAS.find((a) => a.area === "Catalog & Provider Policy");
+  const inDir = tests.filter((t) => t.file.startsWith("tests/tests-automations/regression/governance"));
+  const byTag = inDir.filter((t) => t.tags.includes("@governance"));
+
+  assert.ok(inDir.length > byTag.length, "if the specs get retagged, simplify this area back to a tag selector");
+  const [ossCommand] = areaCommands(area).map(parseCommand);
+  assert.deepEqual(ossCommand.paths, ["tests/tests-automations/regression/governance"]);
+  assert.equal(ossCommand.grep, null);
+});
+
+test("the Tracing & Monitoring command reaches every spec in the observability directory", () => {
+  // Why `@observability` had to join that area's tags: 2 of the 9 specs there —
+  // `traces.spec.ts`, the only UI traces spec, and `flow-error-message` — carry no
+  // `@api` tag, so the pre-#1581 command missed them while the area is where the
+  // four new `observability*` modules land.
+  //
+  // Scoped to this one directory on purpose. The general property — every spec
+  // whose doc declares a path an area watches must be selected by that area — is
+  // violated by 11 of the 14 areas as they stand (measured; MCP Server misses 7 of
+  // its 8), so asserting it repo-wide would fail for reasons far outside #1581.
+  const area = AREAS.find((a) => a.area === "Tracing & Monitoring");
+  const commands = areaCommands(area).map(parseCommand);
+  const dir = "tests/tests-automations/regression/core-functionality/observability-monitoring";
+  const inDir = suiteTagSets().filter((t) => t.file.startsWith(dir));
+
+  assert.ok(inDir.length >= 9, `expected the observability directory, found ${inDir.length} tag sets`);
+  for (const t of inDir) {
+    const reached = commands.some((c) => c.lane === laneOf(t.tags) && c.grep && new RegExp(c.grep).test(t.tags.join(" ")));
+    assert.ok(reached, `${t.file} carries ${t.tags.join(" ")} and no Tracing & Monitoring command selects it`);
   }
 });
 
@@ -665,7 +743,7 @@ test("areaCommands derives one command by default and honours a declared lane", 
   assert.deepEqual(areaCommands({ area: "X", tags: ["@api"], grep: "@api|@extra" }), [
     'npx playwright test --grep "@api|@extra"',
   ]);
-  const declared = ['PW_DESTRUCTIVE=1 npx playwright test --grep "@governance"'];
+  const declared = ["PW_DESTRUCTIVE=1 npx playwright test tests/tests-automations/regression/governance"];
   assert.deepEqual(areaCommands({ area: "X", tags: ["@governance"], runs: declared }), declared);
   // An empty `runs` must fall back rather than print nothing at all.
   assert.equal(areaCommands({ area: "X", tags: ["@api"], runs: [] }).length, 1);
@@ -682,8 +760,8 @@ test("the issue body prints every command an area declares", () => {
         checklist: "governance/",
         grep: "@governance",
         runs: [
-          'PW_DESTRUCTIVE=1 npx playwright test --grep "@governance"',
-          'PW_ENTERPRISE=1 npx playwright test --grep "@governance"',
+          "PW_DESTRUCTIVE=1 npx playwright test tests/tests-automations/regression/governance",
+          "PW_ENTERPRISE=1 npx playwright test tests/tests-automations/regression/enterprise/governance",
         ],
         commits: ["abc1234 feat: policy bundle"],
       },

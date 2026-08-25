@@ -46,7 +46,7 @@ jobs:
       # next package split forces a decision instead of widening the blind spot.
       #
       # `continue-on-error` deliberately: upstream renames constantly, and one
-      # dead path must not suppress the report for the other 12 areas. The
+      # dead path must not suppress the report for the other 13 areas. The
       # annotations land here, the report is still produced, and the job is failed
       # at the end by "Enforce the path guard" — coverage first, strictness kept
       # (the trade-off `Collect models` makes on the daily, #980/#570).
