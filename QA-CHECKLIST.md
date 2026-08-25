@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-24
+> **Last updated:** 2026-08-25
 
 ---
 
@@ -1259,7 +1259,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 518 `test()` calls carrying the `@stable` tag, distributed across 202 spec
+> 519 `test()` calls carrying the `@stable` tag, distributed across 202 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1571,7 +1571,8 @@
 - [x] the Create Memory modal exposes its five controls → `memory-base-panel.spec.ts`
 - [x] Vector Database defaults to Chroma Local and Batch Size to 1 → `memory-base-panel.spec.ts`
 - [x] Embedding Model carries no default model when a provider offers embeddings → `memory-base-panel.spec.ts`
-- [x] the Embedding Model control is absent when no provider offers embeddings → `memory-base-panel.spec.ts`
+- [x] the Embedding Model picker is replaced by a provider-setup affordance when no provider is configured → `memory-base-panel.spec.ts`
+- [x] the Embedding Model picker still renders when the configured providers expose no embeddings model → `memory-base-panel.spec.ts`
 - [x] Create Memory stays disabled with an empty form and with only the Name filled → `memory-base-panel.spec.ts`
 - [x] cancelling the Create Memory modal creates no memory base → `memory-base-panel.spec.ts`
 - [x] a registered memory base is exposed through the Memory Base API, never through the knowledge-base list → `memory-base-registration.spec.ts`
