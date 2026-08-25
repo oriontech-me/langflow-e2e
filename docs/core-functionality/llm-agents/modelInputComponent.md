@@ -158,26 +158,21 @@ own their own flows.
 - `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/components/ModelList.tsx`
   — `getModelOptionTestId` defines the `{Provider}-{model}-option` shape the test
   reads the picked label from.
-- The two frontend halves of the #14505 change — `useAutoSelectModel.ts` (under
-  the component's `hooks/`) and `derive-selected-model.ts` (under its
-  `helpers/`). Restoring the empty-field auto-fill in either would flip test
-  4.4's first assertion; that is the regression this test now guards. **They are
-  deliberately named here as bare filenames rather than as full upstream
-  dependency paths, because they do not resolve on upstream `main`** — measured
-  2026-08-13, they exist only on
-  `origin/release-1.12.0`, together with `build-grouped-options.ts` and
-  `useRefreshAfterProviderClose.ts`, while `main`'s `hooks/` holds only
-  `useModelConnectionLogic.ts` and its `helpers/` only `model-option-identity.ts`
-  and `recover-model-option.ts`. The release line is the one the nightly is cut
-  from and the one this spec is validated against — the same ref distinction
-  `CLAUDE.md` records for the component-distribution measurements. Citing them as
-  dependency paths would fail `watch-upstream-areas.mjs --mode=check-docs`, which
-  resolves against `main`, and the honest fact is that the refactor has not been
-  merged back rather than that the files are missing.
+- `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/hooks/useAutoSelectModel.ts`
+  and
+  `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/helpers/derive-selected-model.ts`
+  — the two frontend halves of the #14505 change. Restoring the empty-field
+  auto-fill in either would flip test 4.4's first assertion; that is the
+  regression this test now guards. **The #14505 refactor has since been merged
+  back**: on 2026-08-13 these files existed only on `origin/release-1.12.0`, and
+  as of 2026-08-25 both resolve on `origin/main` as well, together with
+  `build-grouped-options.ts` and `useRefreshAfterProviderClose.ts`. The two
+  directories are now identical across the refs but for `saved-model-availability.ts`,
+  which is `release-1.12.0`-only.
 - `src/lfx/src/lfx/base/models/unified_models/build_config.py` — the backend half
   (`user_triggered = field_name is not None`, LE-2168). Defence in depth for
-  API-driven flows; the same guard. Unlike the two frontend files, this one is
-  present on both refs.
+  API-driven flows; the same guard. Resolves on `main` and `release-1.12.0` at
+  the same blob (`2408c53b93ad`, measured 2026-08-25).
 - `tests/helpers/provider-setup/` + `data/models.json` / `providers.json` —
   produced by `tests/collect-models.spec.ts`; what puts a credential on the
   instance so the picker renders at all.
