@@ -224,7 +224,10 @@ jobs:
               exit 1
             fi
             echo "::warning::release-line lookup attempt $attempt failed; retrying"
-            sleep 5
+            # Overridable so the unit lane can pin the fail-loud path (both
+            # `exit 1`s below) in under a second instead of paying 3 real sleeps.
+            # Nothing in Actions sets it, so CI waits the full 5 s.
+            sleep "${RETRY_SLEEP_SECONDS:-5}"
           done
           for RELEASE_REF in $RELEASE_REFS; do
             echo "derived release line: $RELEASE_REF"
@@ -238,7 +241,7 @@ jobs:
                 exit 1
               fi
               echo "::warning::fetch attempt $attempt for ${RELEASE_REF} failed; retrying"
-              sleep 5
+              sleep "${RETRY_SLEEP_SECONDS:-5}"
             done
           done
           # Derived from the list itself, not accumulated inside the loop: a
@@ -246,6 +249,13 @@ jobs:
           # variable name that only some lines got right is what shipped an empty
           # --releases past every guard in this repo once already.
           RELEASE_CSV=$(printf '%s\n' $RELEASE_REFS | sed 's|^|origin/|' | paste -sd, -)
+          # The one state that must never reach the next step: an empty list is a
+          # silent fall back to `origin/main` alone, which is the defect #1574 was
+          # filed for and which shipped once from this very block.
+          if [ -z "$RELEASE_CSV" ]; then
+            echo "::error::derived no release line, so the guard would silently resolve against origin/main alone (issue #1574)."
+            exit 1
+          fi
           echo "resolving against: origin/main,$RELEASE_CSV"
           echo "RELEASE_CSV=$RELEASE_CSV" >> "$GITHUB_ENV"
 

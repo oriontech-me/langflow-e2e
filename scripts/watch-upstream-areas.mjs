@@ -642,11 +642,16 @@ export function matchGlob(pattern, treeEntries) {
  *
  * - `release-only` — absent from the trunk. This is #1574's case, and naming it
  *   is what stops a green verdict from reading as "exists on `main`".
- * - `trunk-only` — on the trunk and on no release line, so the image this suite
- *   actually runs does not carry it. The mirror of the same defect.
+ * - `trunk-only` — on the trunk and on NO release line tracked. Read it as
+ *   written: it is silent about a path the shipping line dropped while the older
+ *   tracked line kept it, because which of the two the nightly ships is precisely
+ *   what this script cannot know (see `pickReleaseBranches`). Measured across all
+ *   498 real dependency tokens against `main`/`1.12.0`/`1.11.5`, that gap is
+ *   currently empty. The refs are printed newest first, so a reader who knows the
+ *   shipping line can always tell.
  *
  * A flat list would instead report every path merely NEWER than the oldest
- * release line tracked — measured, that is 8 of 9 findings on this repo's docs
+ * release line tracked — measured, that is 9 of 10 findings on this repo's docs
  * today, all of them noise, and it grows with every release cut.
  *
  * @param {{
@@ -675,7 +680,10 @@ export function checkDocDeps({ docs, trunk, releases = [], changedFiles = [], ex
   }
   const index = ({ ref, entries }) => ({ ref, entries, set: new Set(entries) });
   const trunkTree = index(trunk);
-  const releaseTrees = releases.map(index);
+  // A release ref that IS the trunk would be listed twice in every reason string
+  // and counted as its own side of the report — the same "a ref named twice reads
+  // as two verdicts" rule `parseRefList` applies within one list.
+  const releaseTrees = releases.filter((r) => r.ref !== trunk.ref).map(index);
   const allTrees = [trunkTree, ...releaseTrees];
   const changed = new Set(changedFiles);
   const exemptSet = new Set(exemptFiles);
@@ -755,18 +763,26 @@ export function checkDocDeps({ docs, trunk, releases = [], changedFiles = [], ex
 /**
  * How many release lines are resolved against, newest first.
  *
- * Not one. The line the nightly SHIPS lags the newest line CUT: upstream branches
- * `release-1.13.0` off `main` before the nightly switches to it, and a
+ * Not one. The line the nightly SHIPS is not always the newest line CUT: upstream
+ * branches `release-1.13.0` off `main` before the nightly switches to it, and a
  * single-line window would drop the shipping line at that moment — taking with
  * it every path that landed there and was never merged back, which is exactly the
- * class #1574 exists to accommodate. Measured on the real remote: 61 `src/` paths
- * live on `release-1.11.5` and on NEITHER `main` nor `release-1.12.0`, one of
- * them `services/tracing/otel_fastapi_patch.py` — a plausible `@observability`
- * dependency. Two lines cover a full cycle of that lag.
+ * class #1574 exists to accommodate. An older line does carry paths of its own:
+ * measured on the real remote, 61 `src/` paths live on `release-1.11.5` and on
+ * NEITHER `main` nor `release-1.12.0`, one of them
+ * `services/tracing/otel_fastapi_patch.py` — a plausible `@observability`
+ * dependency.
  *
- * Not more than two, either: a path only the line before last carries is a path
- * the tested image does not run, and the guard would then be confirming a file
- * nobody tests.
+ * Not more than two, either: the further back the window reaches, the more it
+ * confirms files no lane runs. Two is the smallest window that survives a cut.
+ *
+ * **Lines, not branches** — the distinction is the whole point, and getting it
+ * wrong makes this constant a lie. Upstream cuts patch branches on the live line
+ * roughly weekly (`release-1.11.0` through `release-1.11.5`), so the two newest
+ * BRANCHES spanned a single line for essentially the whole 1.11 cycle. That it
+ * spans two today (`release-1.12.0`, `release-1.11.5`) is luck: 1.12 has no patch
+ * branch yet, and the day `release-1.12.1` is cut the buffer would vanish
+ * silently.
  */
 export const RELEASE_LINES_TRACKED = 2;
 
@@ -786,13 +802,18 @@ export const RELEASE_LINES_TRACKED = 2;
  * `release-notes`, `release-0.6.0a`, `release-1.6.0-backup` and
  * `release-1.6.0-at-scheduling-logic-branch`, none of which is a release line.
  *
+ * Candidates are grouped by `X.Y` and only the newest branch of each line is a
+ * candidate, so `count` counts LINES. Returned newest first, which is how a
+ * reader of the report can tell the line the nightly most likely ships from the
+ * one behind it.
+ *
  * `release-1.12` and `release-1.12.0` are the same version, so the order between
  * them would otherwise be decided by whatever order `ls-remote` printed. The
  * more specific spelling wins, then lexical order — arbitrary is fine, undefined
  * is not, since the winner is a ref the caller then fetches.
  *
  * @param {string} lsRemoteOutput raw `git ls-remote --heads origin 'refs/heads/release-*'`
- * @param {number} count how many lines to return
+ * @param {number} count how many release LINES to return, one branch each
  * @returns {string[]} e.g. `["release-1.12.0", "release-1.11.5"]`
  * @throws when the output names no release line at all — undecidable, not "none".
  */
@@ -821,7 +842,18 @@ export function pickReleaseBranches(lsRemoteOutput, count = RELEASE_LINES_TRACKE
       b.segments - a.segments ||
       (a.branch < b.branch ? -1 : a.branch > b.branch ? 1 : 0),
   );
-  return candidates.slice(0, Math.max(1, count)).map((c) => c.branch);
+
+  // One branch per `X.Y` line, in the order the sort already put them, so the
+  // slice below counts lines rather than patch branches on the same line.
+  const perLine = [];
+  const seen = new Set();
+  for (const candidate of candidates) {
+    const line = `${candidate.version[0]}.${candidate.version[1]}`;
+    if (seen.has(line)) continue;
+    seen.add(line);
+    perLine.push(candidate.branch);
+  }
+  return perLine.slice(0, Math.max(1, count));
 }
 
 /**
@@ -1105,8 +1137,14 @@ function runCheckDocs(root, trunkRef, releaseRefs, changedListPath) {
       `; ${exempt.length} doc(s) exempt.\n`,
   );
   if (releases.length === 0) {
-    process.stdout.write(
-      "No release line given, so this run resolves against the trunk alone — which is what #1574 is about: the suite validates the nightly, not `main`.\n",
+    // A `::warning::` and not a stdout line, because this state IS the defect
+    // #1574 was filed for, and it shipped once inside this very fix: an empty
+    // `--releases` reached the lane, the guard resolved against the trunk alone,
+    // and the only reason anyone noticed was that the PR's own doc happened to
+    // name a release-line-only path (#1580's first run). It must never again be
+    // indistinguishable from a healthy run (#1012).
+    process.stderr.write(
+      "::warning::watch-upstream-areas: no release line given, so this run resolves against the trunk alone — the suite validates the nightly, not `main` (issue #1574).\n",
     );
   }
   if (!changedListPath) {
@@ -1133,7 +1171,9 @@ function runCheckDocs(root, trunkRef, releaseRefs, changedListPath) {
       );
     }
     if (partial.length > MAX_NAMED_PARTIALS) {
-      process.stdout.write(`- …and ${partial.length - MAX_NAMED_PARTIALS} more, elided.\n`);
+      process.stdout.write(
+        `- …and ${partial.length - MAX_NAMED_PARTIALS} more, elided here and in the annotations below.\n`,
+      );
     }
     // Also as annotations: before #1574 a path that upstream deleted on `main`
     // while the release line kept it raised a `::warning::` and was visible in the
@@ -1317,15 +1357,9 @@ function main(argv) {
     }
   }
 
-  let releaseRefs = [];
-  if (mode === "check-docs") {
-    try {
-      releaseRefs = parseRefList(releases, { allowEmpty: true });
-    } catch (error) {
-      process.stderr.write(`::error::watch-upstream-areas: ${error.message}\n`);
-      process.exit(2);
-    }
-  }
+  // `allowEmpty` cannot throw, so there is nothing to catch here: an absent
+  // `--releases` is the legitimate trunk-only run, announced by runCheckDocs.
+  const releaseRefs = mode === "check-docs" ? parseRefList(releases, { allowEmpty: true }) : [];
 
   try {
     if (mode === "check") return runCheck(root);

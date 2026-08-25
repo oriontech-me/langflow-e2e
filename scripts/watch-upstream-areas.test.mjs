@@ -620,7 +620,7 @@ test("checkDocDeps reports a path the trunk has and no release line does", () =>
 
 test("checkDocDeps says nothing about a path merely newer than the OLDEST release line", () => {
   // The reason the refs carry roles instead of sitting in a flat list. Measured
-  // against the real docs, a symmetric report over a flat list produced 8 of 9
+  // against the real docs, a symmetric report over a flat list produced 9 of 10
   // findings of exactly this shape — all noise, and it grows with each release
   // cut, burying the one finding that matters.
   const verdict = checkDocDeps({
@@ -721,11 +721,39 @@ test("pickReleaseBranches sorts by version, not lexically", () => {
   assert.deepEqual(pickReleaseBranches(output, 1), ["release-1.12.0"]);
 });
 
-test("pickReleaseBranches tracks two lines, because the shipping line lags the newest cut", () => {
-  // Measured on the real remote: 61 `src/` paths live on release-1.11.5 and on
-  // NEITHER main nor release-1.12.0. A one-line window drops all of them the
-  // moment upstream cuts the next release, which is #1574 reopening.
-  assert.equal(RELEASE_LINES_TRACKED, 2);
+test("pickReleaseBranches counts LINES, not patch branches on the same line", () => {
+  // The defect this replaces pinned the constant and not the property, so the
+  // guarantee "two lines" held only by luck. Upstream cuts patch branches on the
+  // live line roughly weekly, and these are its real branch lists: for the whole
+  // 1.11 cycle the two newest BRANCHES spanned one line, and the day
+  // release-1.12.1 is cut the same would be true again.
+  const remote = (...branches) => branches.map((b) => `x\trefs/heads/${b}`).join("\n");
+
+  const duringTheCycle = remote(
+    "release-1.11.5",
+    "release-1.11.4",
+    "release-1.11.3",
+    "release-1.11.2",
+    "release-1.11.1",
+    "release-1.11.0",
+    "release-1.10.3",
+  );
+  assert.deepEqual(pickReleaseBranches(duringTheCycle), ["release-1.11.5", "release-1.10.3"]);
+
+  // Today's list, and the same list once 1.12 gets its first patch branch.
+  assert.deepEqual(pickReleaseBranches(remote("release-1.12.0", "release-1.11.5", "release-1.9.7")), [
+    "release-1.12.0",
+    "release-1.11.5",
+  ]);
+  assert.deepEqual(pickReleaseBranches(remote("release-1.12.1", "release-1.12.0", "release-1.11.5")), [
+    "release-1.12.1",
+    "release-1.11.5",
+  ]);
+
+  // The property, stated once: whatever the list, the result spans as many
+  // distinct `X.Y` lines as it has entries.
+  const minors = new Set(pickReleaseBranches(duringTheCycle).map((b) => b.split(".").slice(0, 2).join(".")));
+  assert.equal(minors.size, RELEASE_LINES_TRACKED);
 });
 
 test("pickReleaseBranches ignores the branches that only look like a release line", () => {
@@ -756,6 +784,25 @@ test("pickReleaseBranches throws rather than returning nothing when no line is f
   // Undecidable, not "no release line" — the caller exits 2 on this, because
   // guessing would put the guard back on `main` alone with nothing in the log.
   assert.throws(() => pickReleaseBranches("a\trefs/heads/main\n"), /cannot be derived/);
+});
+
+test("checkDocDeps does not count a release ref that IS the trunk as a second side", () => {
+  const verdict = checkDocDeps({
+    docs: [DOC(SECTION("- `src/here.py` — a file"), "docs/area/touched.md")],
+    trunk: TREE("origin/main", "src/here.py"),
+    releases: [TREE("origin/main", "src/here.py")],
+    changedFiles: ["docs/area/touched.md"],
+  });
+
+  // Not `trunk-only`, and the reason string below must not name origin/main twice.
+  assert.deepEqual(verdict.partial, []);
+  const gone = checkDocDeps({
+    docs: [DOC(SECTION("- `src/gone.py` — moved"), "docs/area/touched.md")],
+    trunk: TREE("origin/main", "src/here.py"),
+    releases: [TREE("origin/main", "src/here.py")],
+    changedFiles: ["docs/area/touched.md"],
+  });
+  assert.equal(gone.failures[0].reason, "does not exist on origin/main");
 });
 
 // ---------- #1574 end-to-end through the CLI ----------
@@ -939,8 +986,13 @@ test("every exempt doc exists, so the allowlist cannot rot into a blanket skip",
 function stepRunBody(yml, stepName) {
   const at = yml.indexOf(`- name: ${stepName}`);
   assert.ok(at >= 0, `no step named "${stepName}"`);
-  const runAt = yml.indexOf("run: |", at);
-  assert.ok(runAt >= 0, `step "${stepName}" has no run: block`);
+  // Bounded to THIS step: an unbounded search would silently reach the next
+  // step's `run: |` the day this one is rewritten as a folded scalar, and assert
+  // happily against a block from somewhere else in the file.
+  const nextStep = yml.indexOf("\n      - name: ", at + 1);
+  const scope = yml.slice(at, nextStep === -1 ? undefined : nextStep);
+  const runAt = at + scope.indexOf("run: |");
+  assert.ok(scope.includes("run: |"), `step "${stepName}" has no literal run: | block`);
   const lines = yml.slice(yml.indexOf("\n", runAt) + 1).split("\n");
   const indent = lines[0].match(/^\s*/)[0];
   const body = [];
@@ -963,18 +1015,25 @@ test("the doc-deps steps, AS WRITTEN IN THE YAML, resolve a release-only path en
   fs.renameSync(upstreamFixture(), upstream);
   // The fixture is its own remote, so moving it invalidates the URL it recorded.
   spawnSync("git", ["remote", "set-url", "origin", upstream], { cwd: upstream });
-  spawnSync("git", ["fetch", "-q", "origin"], { cwd: upstream });
+  // ONLY the trunk, mirroring the lane's `--depth 1` clone, which is
+  // single-branch: `origin/release-*` must be created by the step's own fetch or
+  // not at all. Pre-fetching everything here made that fetch untestable — the
+  // step could be neutered and the suite stayed green.
+  spawnSync("git", ["fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main"], { cwd: upstream });
   fs.renameSync(path.join(home, "changed.txt"), path.join(home, "changed-docs.txt"));
 
   const githubEnv = path.join(home, "github-env");
   const summary = path.join(home, "step-summary");
   fs.writeFileSync(githubEnv, "");
 
-  const fetchStep = spawnSync("bash", ["-c", stepRunBody(yml, "Fetch the release lines the nightly is cut from")], {
-    cwd: home,
-    encoding: "utf8",
-    env: { ...process.env, GITHUB_ENV: githubEnv },
-  });
+  // `-e` because the runner uses `bash -e {0}`: without it a test is strictly
+  // more permissive than the lane, and dropping `set -eo pipefail` from the step
+  // would go unnoticed.
+  const fetchStep = spawnSync(
+    "bash",
+    ["-e", "-c", stepRunBody(yml, "Fetch the release lines the nightly is cut from")],
+    { cwd: home, encoding: "utf8", env: { ...process.env, GITHUB_ENV: githubEnv, RETRY_SLEEP_SECONDS: "0" } },
+  );
   assert.equal(fetchStep.status, 0, fetchStep.stderr);
   // The step's whole product: the value the next step reads. An empty one is how
   // the guard silently fell back to the trunk alone.
@@ -986,12 +1045,18 @@ test("the doc-deps steps, AS WRITTEN IN THE YAML, resolve a release-only path en
       .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
   );
   assert.equal(exported.RELEASE_CSV, "origin/release-1.12.0,origin/release-1.9.7");
+  // Created by the step, not by the fixture: the lane's clone is single-branch.
+  const tracking = spawnSync("git", ["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"], {
+    cwd: upstream,
+    encoding: "utf8",
+  }).stdout;
+  assert.match(tracking, /origin\/release-1\.12\.0/);
 
   // The fixture's trunk is `main`, so the step's `--ref origin/main` resolves
   // against the tracking ref the fetch above created.
   const resolveStep = spawnSync(
     "bash",
-    ["-c", stepRunBody(yml, "Resolve every External-dependencies path against upstream")],
+    ["-e", "-c", stepRunBody(yml, "Resolve every External-dependencies path against upstream")],
     { cwd: home, encoding: "utf8", env: { ...process.env, ...exported, GITHUB_STEP_SUMMARY: summary } },
   );
 
@@ -999,6 +1064,124 @@ test("the doc-deps steps, AS WRITTEN IN THE YAML, resolve a release-only path en
   assert.match(resolveStep.stdout, /resolves on origin\/release-1\.12\.0; absent from origin\/main/);
   // What a reviewer actually opens.
   assert.match(fs.readFileSync(summary, "utf8"), /resolve on only one side/);
+});
+
+test("the fetch step, AS WRITTEN IN THE YAML, fails loudly when it cannot reach upstream", () => {
+  // Both of its `exit 1`s survived mutation to `exit 0` before this test existed.
+  // A `--root` with no git repository at all makes the lookup fail on all three
+  // attempts, which is the state the step must never turn into an empty ref list.
+  const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"), "utf8");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-noremote-"));
+  fs.mkdirSync(path.join(home, "scripts"));
+  fs.mkdirSync(path.join(home, "langflow-upstream"));
+  fs.copyFileSync(
+    path.join(REPO_ROOT, "scripts/watch-upstream-areas.mjs"),
+    path.join(home, "scripts/watch-upstream-areas.mjs"),
+  );
+  const githubEnv = path.join(home, "github-env");
+  fs.writeFileSync(githubEnv, "");
+
+  const step = spawnSync(
+    "bash",
+    ["-e", "-c", stepRunBody(yml, "Fetch the release lines the nightly is cut from")],
+    {
+      cwd: home,
+      encoding: "utf8",
+      // Retries are real; the sleep between them is not worth 15 s of unit lane.
+      env: { ...process.env, GITHUB_ENV: githubEnv, RETRY_SLEEP_SECONDS: "0" },
+    },
+  );
+
+  assert.notEqual(step.status, 0);
+  assert.match(step.stdout + step.stderr, /::error::/);
+  // And nothing was exported, so the next step cannot inherit a half-built value.
+  assert.equal(fs.readFileSync(githubEnv, "utf8").includes("RELEASE_CSV="), false);
+});
+
+test("the fetch step fails loudly when a ref is advertised but cannot be fetched", () => {
+  // The `n2` mutation: turning this step's second `exit 1` into `exit 0` made it
+  // export NOTHING and pass, so the resolve step ran trunk-only — #1574's
+  // regression, one swallowed error away. The no-remote test above cannot reach
+  // it, because the lookup fails first. This fixture advertises a ref pointing at
+  // an object the remote does not have, which is what a transient upstream
+  // failure looks like from here.
+  const yml = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows/pr-validation.yml"), "utf8");
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), "watcher-badref-"));
+  fs.mkdirSync(path.join(home, "scripts"));
+  fs.copyFileSync(
+    path.join(REPO_ROOT, "scripts/watch-upstream-areas.mjs"),
+    path.join(home, "scripts/watch-upstream-areas.mjs"),
+  );
+  const upstream = path.join(home, "langflow-upstream");
+  fs.renameSync(upstreamFixture(), upstream);
+  spawnSync("git", ["remote", "set-url", "origin", upstream], { cwd: upstream });
+  fs.writeFileSync(path.join(upstream, ".git/refs/heads/release-1.12.0"), `${"a".repeat(40)}\n`);
+
+  // The premise, asserted rather than assumed: a git that refused to advertise
+  // this ref would make the test vacuous instead of failing.
+  const advertised = spawnSync("git", ["ls-remote", "--heads", "origin", "refs/heads/release-*"], {
+    cwd: upstream,
+    encoding: "utf8",
+  }).stdout;
+  assert.match(advertised, /release-1\.12\.0/, "fixture precondition: the bad ref must be advertised");
+
+  const githubEnv = path.join(home, "github-env");
+  fs.writeFileSync(githubEnv, "");
+  const step = spawnSync(
+    "bash",
+    ["-e", "-c", stepRunBody(yml, "Fetch the release lines the nightly is cut from")],
+    { cwd: home, encoding: "utf8", env: { ...process.env, GITHUB_ENV: githubEnv, RETRY_SLEEP_SECONDS: "0" } },
+  );
+
+  assert.notEqual(step.status, 0, step.stdout + step.stderr);
+  assert.match(step.stdout + step.stderr, /::error::could not fetch release-1\.12\.0/);
+  assert.equal(fs.readFileSync(githubEnv, "utf8").includes("RELEASE_CSV="), false);
+});
+
+test("a trunk-only run announces itself as a warning, not as a line in the summary", () => {
+  // The state PR #1580's own first run shipped: --releases arrived empty, the
+  // guard resolved against the trunk alone, and nothing said so. It was caught by
+  // luck — the changed doc happened to name a release-only path.
+  const upstream = upstreamFixture();
+  const home = docsFixture(SECTION("- `src/shared.py` — on every ref"));
+
+  const run = runCliFrom(home, [
+    "--mode=check-docs",
+    "--root",
+    upstream,
+    "--ref",
+    "main",
+    "--releases",
+    "",
+    "--changed",
+    path.join(home, "changed.txt"),
+  ]);
+
+  assert.equal(run.code, 0, run.err);
+  assert.match(run.err, /::warning::.*no release line given/);
+});
+
+test("the report names at most MAX_NAMED_PARTIALS paths and says how many it elided", () => {
+  // A cap that silently truncates reads as "that was all of them" (#1012).
+  const docs = Array.from({ length: 25 }, (_, i) =>
+    DOC(SECTION(`- \`src/only_on_release_${i}.py\` — release-line only`), `docs/area/doc-${i}.md`),
+  );
+  const verdict = checkDocDeps({
+    docs,
+    trunk: TREE("origin/main", "src/shared.py"),
+    releases: [TREE("origin/release-1.12.0", ...docs.map((_, i) => `src/only_on_release_${i}.py`))],
+  });
+  assert.equal(verdict.partial.length, 25);
+
+  // Through the CLI, so the assertion is on what is printed.
+  const upstream = upstreamFixture();
+  const home = docsFixture(
+    SECTION(...Array.from({ length: 25 }, (_, i) => `- \`src/only_on_release.py\` — copy ${i}`)),
+  );
+  const run = runCliFrom(home, ["--mode=check-docs", "--root", upstream, "--ref", "main", "--releases", "release-1.12.0"]);
+
+  assert.equal(run.code, 0, run.err);
+  assert.match(run.out, /…and 5 more, elided/);
 });
 
 test("pr-validation.yml runs the doc-deps guard with a diff list and a real upstream ref", () => {
