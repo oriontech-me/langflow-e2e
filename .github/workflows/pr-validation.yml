@@ -47,6 +47,21 @@ jobs:
       - name: TypeScript unit tests
         run: npm run test:units
 
+      # The deterministic issue pipeline — 2.8k lines of TypeScript that owns
+      # phase order, every gate, and the evidence a PR's Validation block is
+      # written from — was covered by NEITHER lane and typechecked by nothing
+      # (#1593). `test:units` globs `.`, `scripts/` and `tests/`, never
+      # `.claude/skills`; `test:scripts` globs `.claude/skills` but only for
+      # `*.test.mjs`; and the root tsconfig's `include` stops at `scripts/**`.
+      # Its 119 tests passed locally the whole time — nothing ran them, so a
+      # refactor could have broken any gate silently. It needs its own runner
+      # rather than the glob next door: the pipeline imports with explicit `.ts`
+      # extensions under `moduleResolution: bundler`, which `ts-node/register`
+      # cannot load (measured: 0 pass, 1 fail), so the script uses tsx and runs
+      # `tsc -p` against the pipeline's own tsconfig in the same step.
+      - name: Issue-pipeline unit tests
+        run: npm run test:pipeline
+
       # The REGRESSIONS.md indicator block is generated and committed by hand.
       # Fail the PR when a row was added without regenerating it, so the
       # headline number can never silently disagree with the table.

@@ -1,5 +1,6 @@
-import type { FFEntry, ReproRate, TestEntry } from './types.ts'
+import type { FFEntry, ReproRate, RunRecord, TestEntry } from './types.ts'
 import { VERDICTS } from './types.ts'
+import { countsAsClean } from './runners.ts'
 
 export const SPEC_DOC_SECTIONS = [
   'What this test validates', 'Tags', 'Validation criterion', 'External dependencies',
@@ -67,6 +68,62 @@ export function checkNoMutationMarkers(diffs: Array<{ file: string; diff: string
   return diffs
     .filter(d => d.diff.includes('FF-MUTATION'))
     .map(d => `FF-MUTATION marker still present in working diff of ${d.file} — revert incomplete`)
+}
+
+/**
+ * Every touched spec has its own post-revert green run, accumulated ACROSS
+ * invocations (#1593).
+ *
+ * The phase used to loop over all touched files against the single instance
+ * `PLAYWRIGHT_BASE_URL` names, so an issue whose contract spans configurations
+ * could not close: #1583's deliverable is the same `X-End-User-Id` header
+ * proven inert on a default instance and decisive on a configured one, which
+ * needs at least two instances by definition — collapsing the files changes
+ * nothing. This mirrors what VALIDATE's burst already does per target, so
+ * `next --spec <file>` can bank one file's green run on the instance that file
+ * needs and the phase closes when the union covers every file.
+ *
+ * A file whose only run is `no-evidence` is NOT covered, which closes the trap
+ * the issue names: running the lane-selected specs with the lane flag unset
+ * makes every run green and empty.
+ */
+export function checkFinalGreenCoverage(required: string[], runs: RunRecord[]): string[] {
+  return required
+    .filter(f => !runs.some(r => r.target === f && countsAsClean(r)))
+    .map(f => `no post-revert green run for ${f} — run "next <NNN> --spec ${f}" `
+      + `against the instance that file needs (one file per invocation; the phase `
+      + `closes when every touched spec has one)`)
+}
+
+/**
+ * Which files THIS `next` invocation should run a final green run for.
+ *
+ * The decision the old phase got wrong, extracted so it is provable rather than
+ * pinned by the shape of the loop that used to hold it (#1226's lesson): every
+ * touched file, unconditionally, against one instance. Two changes — it skips
+ * what is already banked, so re-invoking makes progress instead of repeating
+ * it, and `--spec` narrows to a single file so it can be measured on the
+ * instance that file needs.
+ *
+ * `--spec` outside the touched set is refused rather than silently ignored: a
+ * typo would otherwise leave the phase looking done while covering nothing.
+ */
+export function finalGreenTargets(
+  files: string[], runs: RunRecord[], specFlag?: string,
+): { targets: string[]; problem?: string } {
+  if (specFlag) {
+    if (!files.includes(specFlag)) {
+      return {
+        targets: [],
+        problem: `--spec ${specFlag} is not a touched spec file. `
+          + `This phase's targets are: ${files.join(', ')}`,
+      }
+    }
+    return { targets: [specFlag] }
+  }
+  return {
+    targets: files.filter(f => !runs.some(r => r.target === f && countsAsClean(r))),
+  }
 }
 
 // ---------- quarantine lift (#1060) ----------

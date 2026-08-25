@@ -61,8 +61,18 @@ export interface PwStats {
  * A run that aborted on a known environment signature (a wedged backend
  * dropping /api/v1/auto_login, a socket hang up) says nothing about the spec.
  * It is voided and re-run, never counted as a failure or as a clean run.
+ *
+ * `no-evidence` is the other kind of silence, and the one that used to read as
+ * success (#1593): a run where NOTHING executed. Every green predicate holds —
+ * no unexpected, no flaky, no backend error — so the classifier called it
+ * `clean` and a gate could close on it. It is reached two ways, both real:
+ * a lane-selected spec run without its lane flag (`grepInvert` correctly
+ * selects zero tests) and a spec whose every test hit a runtime `test.skip`.
+ * Unlike an infra void it is deterministic, so re-running is pointless — the
+ * caller reports the cause instead of looping.
  */
-export type RunClass = 'clean' | 'clean-ambient' | 'infra-void' | 'real-failure'
+export type RunClass =
+  | 'clean' | 'clean-ambient' | 'infra-void' | 'real-failure' | 'no-evidence'
 
 /**
  * A declared-ambient backend error: substrings that may appear in a run's

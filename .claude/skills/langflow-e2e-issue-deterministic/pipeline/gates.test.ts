@@ -5,7 +5,9 @@ import {
   checkNoMutationMarkers, checkPrReadiness, BRANCH_RE,
   checkQuarantineLifted, extractSymptomRows, checkSymptomCoverage,
   symptomsOwnedElsewhere, checkDebugEvidence, checkBranchPurity, checkCiVerdict,
+  checkFinalGreenCoverage, finalGreenTargets,
 } from './gates.ts'
+import type { RunRecord } from './types.ts'
 
 const GOOD_DOC = `# agent-tools spec
 ## What this test validates
@@ -340,4 +342,101 @@ test('checkBranchPurity refuses extraFiles with no reason', () => {
   )
   assert.ok(problems.some(p => /needs evidence\.extraFilesReason/.test(p)))
   assert.ok(problems.some(p => /never touched: tests\/helpers\/b\.ts/.test(p)))
+})
+
+// ---------- final-green coverage, one file at a time (#1593) ----------
+
+const green = (target: string): RunRecord => ({
+  target,
+  stats: {
+    expected: 4, unexpected: 0, flaky: 0, skipped: 0, durationMs: 9000,
+    backendErrors: false, backendErrorLines: [], failureMessages: [],
+  },
+  class: 'clean',
+})
+
+const empty = (target: string): RunRecord => ({
+  target,
+  stats: {
+    expected: 0, unexpected: 0, flaky: 0, skipped: 0, durationMs: 120,
+    backendErrors: false, backendErrorLines: [], failureMessages: [],
+  },
+  class: 'no-evidence',
+})
+
+test('checkFinalGreenCoverage names every file with no post-revert green run', () => {
+  const problems = checkFinalGreenCoverage(
+    ['a.spec.ts', 'b.spec.ts', 'c.spec.ts'], [green('a.spec.ts')])
+  assert.equal(problems.length, 2)
+  assert.match(problems[0], /b\.spec\.ts/)
+  assert.match(problems[1], /c\.spec\.ts/)
+  // The message has to carry the way out, or a multi-instance issue reads it
+  // as "the spec is broken" — which is what forced #1583 off the pipeline.
+  assert.match(problems[0], /--spec/)
+})
+
+test('checkFinalGreenCoverage closes when every file has its own green run', () => {
+  assert.deepEqual(
+    checkFinalGreenCoverage(['a.spec.ts', 'b.spec.ts'],
+      [green('a.spec.ts'), green('b.spec.ts')]),
+    [])
+})
+
+test('checkFinalGreenCoverage accumulates across invocations, in any order', () => {
+  // The whole point: run A on container 1, run B on container 2, and the
+  // records from both invocations close the phase together.
+  assert.deepEqual(
+    checkFinalGreenCoverage(['a.spec.ts', 'b.spec.ts'],
+      [green('b.spec.ts'), empty('a.spec.ts'), green('a.spec.ts')]),
+    [])
+})
+
+test('checkFinalGreenCoverage refuses a file whose only run executed nothing', () => {
+  // The trap: running the @serving specs with PW_SERVING_IDENTITY unset makes
+  // the run green and empty. It must not close the phase.
+  const problems = checkFinalGreenCoverage(['a.spec.ts'], [empty('a.spec.ts')])
+  assert.equal(problems.length, 1)
+  assert.match(problems[0], /a\.spec\.ts/)
+})
+
+test('checkFinalGreenCoverage is silent on a diff with no spec files', () => {
+  assert.deepEqual(checkFinalGreenCoverage([], []), [])
+})
+
+test('finalGreenTargets runs only what is still missing a green run', () => {
+  const targets = finalGreenTargets(
+    ['a.spec.ts', 'b.spec.ts', 'c.spec.ts'], [green('a.spec.ts')])
+  assert.deepEqual(targets.targets, ['b.spec.ts', 'c.spec.ts'])
+  assert.equal(targets.problem, undefined)
+})
+
+test('finalGreenTargets narrows to the one file --spec names', () => {
+  // The multi-instance route: point PLAYWRIGHT_BASE_URL at the container this
+  // file needs, run just this file, bank it, repeat. Without the narrowing the
+  // phase drags every other touched spec onto the wrong instance (#1583).
+  const targets = finalGreenTargets(
+    ['a.spec.ts', 'b.spec.ts', 'c.spec.ts'], [], 'b.spec.ts')
+  assert.deepEqual(targets.targets, ['b.spec.ts'])
+})
+
+test('finalGreenTargets refuses a --spec outside the touched files, naming them', () => {
+  const targets = finalGreenTargets(['a.spec.ts'], [], 'tests/elsewhere.spec.ts')
+  assert.deepEqual(targets.targets, [])
+  assert.match(targets.problem!, /tests\/elsewhere\.spec\.ts/)
+  assert.match(targets.problem!, /a\.spec\.ts/)
+})
+
+test('finalGreenTargets is empty once every file is banked — the phase is done', () => {
+  assert.deepEqual(
+    finalGreenTargets(['a.spec.ts', 'b.spec.ts'],
+      [green('a.spec.ts'), green('b.spec.ts')]).targets,
+    [])
+})
+
+test('finalGreenTargets re-runs a file whose only record executed nothing', () => {
+  // The trap, at the selection layer this time: an empty run must not retire a
+  // file from the outstanding list.
+  assert.deepEqual(
+    finalGreenTargets(['a.spec.ts'], [empty('a.spec.ts')]).targets,
+    ['a.spec.ts'])
 })

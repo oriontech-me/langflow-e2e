@@ -12,6 +12,7 @@
     "test:unit": "npx playwright test tests/core/unit/",
     "test:scripts": "files=$(find scripts .claude/skills -name '*.test.mjs' -not -path '*/node_modules/*' | sort); [ -n \"$files\" ] || { echo 'no *.test.mjs found — the scripts unit lane would silently pass' >&2; exit 1; }; node --test $files",
     "test:units": "files=$( { find . -maxdepth 1 -name '*.test.ts'; find scripts tests -name '*.test.ts' -not -path '*/node_modules/*'; } | sort); [ -n \"$files\" ] || { echo 'no *.test.ts found — the TypeScript unit lane would silently pass' >&2; exit 1; }; node --require ts-node/register --test $files",
+    "test:pipeline": "files=$(find .claude/skills -name '*.test.ts' -not -path '*/node_modules/*' | sort); [ -n \"$files\" ] || { echo 'no *.test.ts found under .claude/skills — the pipeline unit lane would silently pass' >&2; exit 1; }; npx tsc --noEmit -p .claude/skills/langflow-e2e-issue-deterministic/pipeline/tsconfig.json && npx tsx --test $files",
     "test:regression": "npx playwright test tests/core/regression/ tests/extended/regression/",
     "test:grep": "npx playwright test --grep",
     "report": "npx playwright show-report",
@@ -39,6 +40,7 @@
     "eslint-plugin-playwright": "^2.11.0",
     "playwright": "1.58.2",
     "ts-node": "^10.9.2",
+    "tsx": "^4.23.12",
     "typescript": "^5.4.5",
     "typescript-eslint": "^8.67.0"
   }
