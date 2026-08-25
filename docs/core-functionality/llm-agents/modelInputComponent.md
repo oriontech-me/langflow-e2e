@@ -158,26 +158,47 @@ own their own flows.
 - `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/components/ModelList.tsx`
   — `getModelOptionTestId` defines the `{Provider}-{model}-option` shape the test
   reads the picked label from.
-- The two frontend halves of the #14505 change — `useAutoSelectModel.ts` (under
-  the component's `hooks/`) and `derive-selected-model.ts` (under its
-  `helpers/`). Restoring the empty-field auto-fill in either would flip test
-  4.4's first assertion; that is the regression this test now guards. **They are
-  deliberately named here as bare filenames rather than as full upstream
-  dependency paths, because they do not resolve on upstream `main`** — measured
-  2026-08-13, they exist only on
-  `origin/release-1.12.0`, together with `build-grouped-options.ts` and
-  `useRefreshAfterProviderClose.ts`, while `main`'s `hooks/` holds only
-  `useModelConnectionLogic.ts` and its `helpers/` only `model-option-identity.ts`
-  and `recover-model-option.ts`. The release line is the one the nightly is cut
-  from and the one this spec is validated against — the same ref distinction
-  `CLAUDE.md` records for the component-distribution measurements. Citing them as
-  dependency paths would fail `watch-upstream-areas.mjs --mode=check-docs`, which
-  resolves against `main`, and the honest fact is that the refactor has not been
-  merged back rather than that the files are missing.
+- `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/hooks/useAutoSelectModel.ts`
+  and
+  `src/frontend/src/components/core/parameterRenderComponent/components/modelInputComponent/helpers/derive-selected-model.ts`
+  — the two frontend halves of the #14505 change. Restoring the empty-field
+  auto-fill in either would flip test 4.4's first assertion; that is the
+  regression this test now guards. Both resolve on `origin/main` and
+  `origin/release-1.12.0` today, together with `build-grouped-options.ts` and
+  `useRefreshAfterProviderClose.ts`. **The doc's earlier 2026-08-13 measurement —
+  that they were `release-1.12.0`-only — was correct when taken, and the
+  back-port is what changed it.** `#14505` merged to `release-1.12.0` on
+  2026-08-12 (`aaa384a8`, `base: release-1.12.0`) and reached `main` only on
+  2026-08-15 (`525d83311`, 03:57Z), through the back-port `#14581` ("chore: back
+  port the new workflow updates from 1.12"), whose first parent does not contain
+  it. Read that off `main`'s **first-parent** line, never off reachability: the
+  back-port pulled every `release-1.12.0` commit into what `main` reaches
+  *today*, so `git log`, `compare` and `--contains` all report `aaa384a8` as
+  `main` history, and the #14511 merge (`11169d7ece`, also
+  `base: release-1.12.0`) as a `main` tip — neither was, on the day. By
+  first parent, `main`'s tip was `976ec789d` from 2026-08-12 22:34Z until
+  `b1b0ce1a` on 2026-08-14 19:29Z, so it was the tip for the whole of 08-13, and
+  there the component's `hooks/` held only `useModelConnectionLogic.ts` and its
+  `helpers/` only `model-option-identity.ts` and `recover-model-option.ts` — as
+  did `b1b0ce1a`, the last `main` tip before the back-port (verified 2026-08-25).
+- **The same two paths resolve on both refs while carrying different code, and
+  the difference is behavioural.** `release-1.12.0` is one commit ahead on each
+  — `useAutoSelectModel.ts` `76cdbf2dda0d` vs `main`'s `d5f82b1e6796`,
+  `derive-selected-model.ts` `d7c016d4b8d3` vs `908d018e570d` — from `#14697`
+  (`12efda24`, LE-1960, 2026-08-21, not on `main`), which adds an
+  `isSavedModelUnavailable` branch to `deriveSelectedModel` and its import to the
+  hook. The listings differ too, by four `release-1.12.0`-only files: three from
+  that same change — the `saved-model-availability.ts` the branch calls, its
+  test, and `ModelInputComponent.restricted-model.test.tsx` — plus
+  `modelListboxLabel.a11y.test.tsx`, which is *not* in `12efda24` and arrived
+  separately. A resolved path is evidence that a **file** exists, never that the
+  code is in it — and since `deriveSelectedModel` is what
+  test 4.4 reads, the line this spec is validated against has a branch `main`
+  does not.
 - `src/lfx/src/lfx/base/models/unified_models/build_config.py` — the backend half
   (`user_triggered = field_name is not None`, LE-2168). Defence in depth for
-  API-driven flows; the same guard. Unlike the two frontend files, this one is
-  present on both refs.
+  API-driven flows; the same guard. Resolves on `main` and `release-1.12.0` at
+  the same blob (`2408c53b93ad`, measured 2026-08-25).
 - `tests/helpers/provider-setup/` + `data/models.json` / `providers.json` —
   produced by `tests/collect-models.spec.ts`; what puts a credential on the
   instance so the picker renders at all.
