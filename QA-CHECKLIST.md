@@ -1238,12 +1238,12 @@
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 14 | 7 | 6 | 1 | 0 |
+| `security/` — Validation, SSRF, Secrets | 14 | 10 | 3 | 1 | 0 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces | 71 | 0 | 56 | 9 | 6 |
-| **TOTAL** | **628** | **438 (70%)** | **104 (17%)** | **25 (4%)** | **61 (10%)** |
+| **TOTAL** | **628** | **441 (70%)** | **101 (16%)** | **25 (4%)** | **61 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1259,7 +1259,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 519 `test()` calls carrying the `@stable` tag, distributed across 202 spec
+> 522 `test()` calls carrying the `@stable` tag, distributed across 203 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1768,6 +1768,9 @@
 - [x] a blocked address the allow-list does not cover is refused the same way → `ssrf-url-validation.spec.ts`
 - [x] an address inside a blocked range is admitted when a CIDR entry covers it → `ssrf-url-validation.spec.ts`
 - [x] the refusal surfaces in the editor as an error, not a silent empty result → `ssrf-url-validation.spec.ts`
+- [x] mode=stream refuses a protected tweak and names the refusal → `tweaks-graph-path-floor.spec.ts`
+- [x] mode=background refuses a protected tweak and names the refusal → `tweaks-graph-path-floor.spec.ts`
+- [x] mode=sync refuses a protected tweak without ever answering 2xx → `tweaks-graph-path-floor.spec.ts`
 - [x] a code tweak is refused with a 422 naming the field, and the flow is left untouched → `tweaks-injection.spec.ts`
 - [x] the refusal is field-scoped: an unprotected field on the same node still applies → `tweaks-injection.spec.ts`
 - [x] a protected field on a code-execution component refuses the whole request, and the benign tweak sent with it does not land → `tweaks-injection.spec.ts`
