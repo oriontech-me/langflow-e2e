@@ -496,7 +496,7 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
   // then timed out on. The poll was never the problem, and it is kept.
   test(
     "real credentials configure the provider and enable a portal deployment through the UI",
-    { tag: ["@stable", "@model-provider", "@settings"] },
+    { tag: ["@model-provider", "@settings"] },
     async ({ page, request }) => {
       const probe = await probeFoundry(request);
       test.skip(!probe.usable, `Azure AI Foundry not usable: ${probe.reason}`);
@@ -715,7 +715,7 @@ test.describe("Azure AI Foundry — unified provider setup", () => {
 
   test(
     "the configured deployment answers a real inference through the Language Model component",
-    { tag: ["@stable", "@model-provider", "@components", "@playground"] },
+    { tag: ["@model-provider", "@components", "@playground"] },
     async ({ page, request }) => {
       const probe = await probeFoundry(request);
       test.skip(!probe.usable, `Azure AI Foundry not usable: ${probe.reason}`);
