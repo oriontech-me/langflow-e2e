@@ -1323,9 +1323,9 @@
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
-| `enterprise/` — Enterprise-only Surfaces | 71 | 0 | 56 | 9 | 6 |
+| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 71 | 0 | 56 | 9 | 6 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL** | **660** | **451 (68%)** | **115 (17%)** | **25 (4%)** | **69 (10%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **589** | **451 (77%)** | **59 (10%)** | **16 (3%)** | **63 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
