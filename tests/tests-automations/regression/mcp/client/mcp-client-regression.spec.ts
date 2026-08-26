@@ -1,9 +1,13 @@
 import type { Page } from "@playwright/test";
 import { expect, test } from "../../../../fixtures/fixtures";
 import { awaitBootstrapTest } from "../../../../helpers/other/await-bootstrap-test";
-import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { getAuthToken } from "../../../../helpers/auth/get-auth-token";
 import { zoomOut } from "../../../../helpers/ui/zoom-out";
+import { enterCreatedFlow } from "../../../../helpers/flows/blank-flow-entry";
+import {
+  trackCreatedFlows,
+  type FlowTracker,
+} from "../../../../helpers/flows/track-created-flows";
 
 // Clicks the blank-flow card and returns the id from the flow-creation POST, NOT
 // from the canvas URL: the URL id is a transient client-side handle on this
@@ -14,6 +18,12 @@ import { zoomOut } from "../../../../helpers/ui/zoom-out";
 // created nothing and the app stays on the flows list (an error toast, no
 // navigation), so re-clicking blank-flow is a safe retry. A 4xx is
 // deterministic and surfaces immediately.
+//
+// The 201 path does NOT retry, and must not: the flow exists, so a re-click
+// would create a second one. Its own failure mode — a 201 the SPA never routes
+// on (#1126) — is handled by `enterCreatedFlow`, which probes the backend, fails
+// attributed when Langflow is the one that is gone, and otherwise recovers by
+// loading the created flow directly. See `helpers/flows/blank-flow-entry.ts`.
 async function openBlankFlow(page: Page): Promise<string> {
   const MAX_ATTEMPTS = 3;
   let lastStatus = 0;
@@ -34,7 +44,7 @@ async function openBlankFlow(page: Page): Promise<string> {
       if (!created.id) {
         throw new Error("blank-flow creation returned no flow id");
       }
-      await page.waitForURL(/\/flow\//, { timeout: 30000 });
+      await enterCreatedFlow(page, created.id);
       return created.id;
     }
 
@@ -92,20 +102,28 @@ test.describe.configure({ mode: "serial" });
 const BAD_SERVER_NAME = "bad-server";
 const HTTP_FORM_SERVER_NAME = "http-form-server";
 
-// Id of the flow the running test created; teardown deletes only this one via
-// the API (scoped) — never a global cleanAllFlows, which wipes flows other
-// parallel workers are actively building mid-run (#515).
-let createdFlowId: string | undefined;
+// Every flow the page creates, id-scoped (#1108) — never a global cleanAllFlows,
+// which wipes flows other parallel workers are actively building mid-run (#515).
+//
+// The single tracked id this replaces was not enough: `awaitBootstrapTest` clicks
+// the "New Flow" entry point, which on this version can create a flow of its own
+// before the templates modal opens (#1002), and nothing returned that id. Measured
+// on 1.12.0.dev39, one clean run of this file took the instance from 26 to 28
+// flows — two orphaned `New Flow (N)` per run.
+let flows: FlowTracker;
 
 test.describe("MCP Client – Configure and Execute Tool", () => {
-  test.afterEach(async ({ page }) => {
-    const flowId = createdFlowId;
-    createdFlowId = undefined;
+  // Armed BEFORE the test body so bootstrap's creation is inside the capture
+  // window; that is precisely the leak the per-test id could not see.
+  test.beforeEach(({ page }) => {
+    flows = trackCreatedFlows(page);
+  });
 
+  test.afterEach(async ({ page, request }) => {
     // Navigate off the editor first so the unmounted flow page stops polling the
-    // flow we are about to delete. The auth header is reused for both the MCP
-    // server cleanup and the flow deletion — page.request is unauthenticated
-    // under AUTO_LOGIN and would 401 otherwise.
+    // flows we are about to delete. This header serves the MCP-server cleanup
+    // below — page.request is unauthenticated under AUTO_LOGIN and would 401
+    // otherwise; the flow deletion authenticates itself inside the tracker.
     await page.goto("/");
     const authHeader = await getAuthToken(page.request);
     const opts = authHeader
@@ -121,11 +139,14 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       // best-effort
     }
 
-    // Delete ONLY the flow this test created (scoped teardown, #515). Not
-    // swallowed: a failed cleanup surfaces instead of silently leaking (#547).
-    if (flowId) {
-      await deleteFlow(page.request, flowId, opts);
-    }
+    // `strict: true` keeps the pre-existing contract: this file failed its
+    // teardown on a failed delete rather than logging it (#547), and migrating to
+    // the shared tracker must not silently downgrade that to a warning line.
+    // The tracker authenticates with the Bearer token itself, so it takes the
+    // `request` fixture — `page.request` carries only browser cookies and the
+    // flows API wants the header.
+    await flows.cleanup(request, { strict: true });
+    flows.dispose();
   });
 
   test(
@@ -138,7 +159,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
         await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-        createdFlowId = await openBlankFlow(page);
+        await openBlankFlow(page);
       });
 
       await test.step("Delete existing MCP server and re-add via JSON", async () => {
@@ -235,20 +256,22 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
     },
   );
 
-  // Quarantined for #1126 — recurrent flake (dailies 2026-07-16, 2026-07-20,
-  // 2026-07-30): openBlankFlow's page.waitForURL times out after 30 s even
-  // though POST /api/v1/flows already returned 201. Lifting the quarantine and
-  // restoring @stable is a deliverable of #1126.
-  test.fixme(
+  // Quarantine lifted (#1126). This test was `test.fixme` after three dailies
+  // (2026-07-16, 2026-07-20, 2026-07-30) lost it in `openBlankFlow`, on a
+  // `waitForURL` that timed out although POST /api/v1/flows had already answered
+  // 201. The stall is terminal rather than slow — no navigation event was
+  // emitted at all — so it is now handled at the entry point by
+  // `enterCreatedFlow`, and `@stable` is restored.
+  test(
     "unreachable HTTP server results in empty tool dropdown",
-    { tag: ["@mcp", "@regression"] },
+    { tag: ["@mcp", "@regression", "@stable"] },
     async ({ page }) => {
       const BAD_SERVER = BAD_SERVER_NAME;
 
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
         await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-        createdFlowId = await openBlankFlow(page);
+        await openBlankFlow(page);
       });
 
       await test.step("Pre-clean: delete bad-server if it exists", async () => {
@@ -337,7 +360,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
         await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-        createdFlowId = await openBlankFlow(page);
+        await openBlankFlow(page);
       });
 
       await test.step("Pre-clean: delete http-form-server if it exists", async () => {
@@ -407,7 +430,7 @@ test.describe("MCP Client – Configure and Execute Tool", () => {
       await test.step("Open blank flow", async () => {
         await awaitBootstrapTest(page);
         await expect(page.getByTestId("blank-flow")).toBeVisible({ timeout: 30000 });
-        createdFlowId = await openBlankFlow(page);
+        await openBlankFlow(page);
       });
 
       await test.step("Register everything server via JSON and wait for tools", async () => {
