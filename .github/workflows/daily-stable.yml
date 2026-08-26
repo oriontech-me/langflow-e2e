@@ -1368,10 +1368,42 @@ jobs:
       # `--pass-with-no-tests`, so a run that matches no @stable test passes while
       # executing nothing. Without this the run only goes red at the last step and no
       # umbrella issue names the condition.
+      # The BODY of this issue is decision logic, not a template — three mutually
+      # exclusive shapes (zero tests / partial / per-test), each with its own title
+      # and its own triage instruction. It lives in `scripts/create-failure-issue.mjs`
+      # rather than inline here, and it is ONE copy on purpose: the same script
+      # renders the umbrella when the daily runs off Actions, and two copies of one
+      # decision is the shape #1045 names ("a copy-pasted step is how the gates
+      # diverge"). Keeping the Actions lane on it is also what exercises it — the
+      # off-Actions lane would otherwise be its first run ever.
+      # `create-failure-issue.test.mjs` pins the body this lane produces byte-for-byte
+      # against what the inline `actions/github-script` block emitted, and pins the
+      # absence of a resurrected copy here.
       - name: Create issue on failure
         if: (needs.test.result == 'failure' || steps.runguard.outputs.empty == 'true') && github.event_name == 'schedule'
-        uses: actions/github-script@v9
+        run: node scripts/create-failure-issue.mjs
         env:
+          # `gh` is NOT in mcr.microsoft.com/playwright:v1.58.2-noble, which is the
+          # container this job runs in (verified in the image). The script's REST
+          # path is what works here; without a token it would fall back to `gh`,
+          # find none, and leave the umbrella uncreated with only a warning.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_REPO: ${{ github.repository }}
+          # RUN_URL is the discriminator: set = the Actions lane, so the body gets
+          # the run link and the "artifact from the run above" wording instead of a
+          # VM path that means nothing here. It is the one input a VM run cannot
+          # have and an Actions run always does.
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_ID: ${{ github.run_id }}
+          # Out of the checkout: the script always writes the rendered body to disk
+          # as its fallback, and the workspace is a git tree whose commit steps run
+          # in this same job.
+          RUN_DIR: ${{ runner.temp }}
+          # This step only runs on an ALREADY red run, so failing it costs no
+          # signal — and an umbrella that silently fails to open is how a red day
+          # ends up with no triage attached to it. The off-Actions lane leaves this
+          # unset and keeps the body-on-disk fallback instead.
+          ISSUE_STRICT: "1"
           IMAGE: ${{ inputs.langflow_image || 'langflowai/langflow-nightly' }}:${{ inputs.langflow_image_tag || 'latest' }}
           # Set by the (schedule-only) auto-remove step above; empty only if that
           # step errored, its mass-failure guard left everything untouched, or a
@@ -1395,101 +1427,6 @@ jobs:
           # the wedge out for the triager, and "not measured" says the state is
           # unknown. Only silence would be misleading.
           LIVENESS_MD: ${{ steps.liveness.outputs.summary_md }}
-        with:
-          script: |
-            const today = new Date().toISOString().split('T')[0];
-            const image = process.env.IMAGE;
-            const arStatus = process.env.AUTO_REMOVE_STATUS || '';
-            const arSummary = process.env.AUTO_REMOVE_SUMMARY || '';
-            const empty = process.env.RUN_EMPTY === 'true';
-            const unreadable = process.env.RUN_UNREADABLE === 'true';
-            const runErrors = process.env.RUN_ERRORS || '0';
-            const firstError = process.env.RUN_FIRST_ERROR || '';
-            const partial = process.env.RUN_PARTIAL === 'true';
-            const runTests = process.env.RUN_TESTS || '0';
-            // Three shapes, most specific first.
-            // 1. ZERO tests executed (#1012): there is no per-test evidence to
-            //    triage, so say so instead of rendering the auto-removal line,
-            //    which reads as a clean triage on an empty report.
-            // 2. The auto-remove step acted — show what it did.
-            // 3. Neither (it errored, or a guard skipped it) — manual triage.
-            const section = empty
-              ? [
-                  '### ⚠️ ZERO tests executed — infra abort, not a per-test failure',
-                  '',
-                  unreadable
-                    ? 'The merged report was **missing or unparseable** — the run produced no readable result at all. Suspect the `Merge blob reports` step and the per-shard blob artifacts first.'
-                    : `The merged report carries **no test results at all** (${runErrors} top-level report error(s)) — the shards aborted before the first test.`,
-                  'No spec failed and no `@stable` tag was touched, so there is **no per-test evidence to triage**.',
-                  ...(firstError ? ['', '```', firstError, '```'] : []),
-                  '',
-                  '**Triage this as infrastructure**: find why nothing ran, not which test broke.',
-                  ...(unreadable
-                    ? ['Start from the `Merge blob reports` step log and the per-shard blob artifacts.']
-                    : [
-                        'The shard logs and the Langflow service container logs are the evidence. This does',
-                        '*not* clear Langflow — a wedged or unreachable backend fails the pre-flight before',
-                        'any test starts. Known cause of this shape: the post-`collect-models` backend wedge — #1011.',
-                      ]),
-                ]
-              : partial
-                ? [
-                    '### ⚠️ PARTIAL run — some shards never ran their tests',
-                    '',
-                    `The merged report carries **${runTests} test result(s)** but also **${runErrors} top-level report error(s)**.`,
-                    'A top-level error means a shard aborted before running the tests assigned to it, so',
-                    'the totals above are **UNDER-COUNTED** — the specs of the dead shard are neither',
-                    'passed nor failed, they simply never ran.',
-                    ...(firstError ? ['', '```', firstError, '```'] : []),
-                    '',
-                    '`@stable` auto-removal and the spec-duration refresh were **both skipped**: a tag must',
-                    'not be judged, nor a timing baseline rebuilt, on a report that never saw half the suite.',
-                    '',
-                    '**Triage the abort first.** Compare the recorded total against the last green run — a',
-                    'large drop is the abort, not a fix. The cause above is quoted from the shard that died;',
-                    'the shard logs hold the rest. Known cause of this shape: `Collect models` failing without',
-                    'importing a provider key as a Langflow global variable — #1058.',
-                  ]
-                : arStatus
-                ? ['### `@stable` auto-removal', '', arSummary]
-                : [
-                    '### Next steps',
-                    '1. Open the Playwright report in the artifact from the run above',
-                    '2. Determine if the failure is a test bug or a Langflow regression',
-                    '3. If the test is incorrect or outdated: remove the `@stable` tag from the test and open a fix PR',
-                    '4. If it is a Langflow regression: flag it to the team and monitor upstream',
-                  ];
-            // The liveness section leads the body when the backend went down:
-            // the cause has to be the first thing read, ahead of the per-test
-            // material, or triage starts from the collateral specs again
-            // (#1030). Empty when the reporting step produced no output at all.
-            const liveness = (process.env.LIVENESS_MD || '').trim();
-            const livenessSection = liveness ? [liveness, ''] : [];
-            // The title is what gets scanned in the issue list, so an empty run
-            // must not claim that tests failed — none ran.
-            const title = empty
-              ? `[Daily Failure] @stable run executed ZERO tests on ${today} (${image})`
-              : partial
-                ? `[Daily Failure] @stable run was PARTIAL — a shard never ran on ${today} (${image})`
-                : `[Daily Failure] @stable tests failed on ${today} (${image})`;
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title,
-              body: [
-                '## Daily @stable E2E Failure',
-                '',
-                `- **Date:** ${today}`,
-                `- **Langflow version:** \`${image}\``,
-                `- **Run:** [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})`,
-                '',
-                ...livenessSection,
-                ...section,
-                '',
-                '/cc @Victor-w-Madeira @daniellicnerski1 @rafaelgiln',
-              ].join('\n'),
-              labels: ['daily-failure', 'needs-triage'],
-            });
 
       # Runs LAST, after history / QA POST / umbrella issue have all recorded the
       # (flagged) degraded run: fail a scheduled run whose report cannot be
