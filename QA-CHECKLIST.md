@@ -1344,7 +1344,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 532 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 533 `test()` calls carrying the `@stable` tag, distributed across 205 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1606,6 +1606,7 @@
 - [x] model refusal does not crash the component → `agent-empty-refusal-response.spec.ts`
 - [x] empty response does not crash the component → `agent-empty-refusal-response.spec.ts`
 - [x] input via the Agent's direct field drives the agent response → `agent-input-sources.spec.ts`
+- [x] agent stops when max iterations is reached → `agent-max-iterations.spec.ts`
 - [x] causal control — a high max iterations does not hit the limit → `agent-max-iterations.spec.ts`
 - [x] max_tokens=50 caps the response's output tokens → `agent-max-tokens.spec.ts`
 - [x] causal control — unset max_tokens generates freely → `agent-max-tokens.spec.ts`
