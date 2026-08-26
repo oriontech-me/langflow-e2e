@@ -12,17 +12,30 @@
  * - Removing/renaming a choice, the duplicate-choice guard and `Enable Fallback`
  *   are listed as out of scope in the spec doc.
  *
+ * Two of the four tests are LE-2278 guards. That defect let the on-mount
+ * `decisions` refresh response revert a choice the user had just committed —
+ * chips back to [Approve, Reject] while the node kept the third branch handle —
+ * and it is fixed upstream in langflow-ai/langflow#14741 (first nightly
+ * carrying it: 1.12.0.dev39). The live-rebuild test re-reads the chip once the
+ * refresh traffic goes quiet, which catches the revert only when the response
+ * actually lags; the stale-refresh test holds that response on purpose, so the
+ * guard fires on every run and on any machine.
+ *
  * Spec doc: `docs/core-components/human-input-node-config.md`. No provider
  * credentials are needed — nothing here runs the flow.
  */
 
-import type { Locator, Page } from "@playwright/test";
+import type { Locator, Page, Route } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { setupBlankFlow } from "../../../helpers/flows/setup-blank-flow";
 import { addComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
 import { unmountEditorForCleanup } from "../../../helpers/flows/unmount-editor-for-cleanup";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
+import {
+  COMPONENT_REFRESH_PATH,
+  watchNodeRefresh,
+} from "../../../helpers/ui/watch-node-refresh";
 
 // Sidebar search term + add button for the component under test, kept together
 // so a testid can't drift from the term that filters it into view.
@@ -66,6 +79,17 @@ const branchHandles = (page: Page): Locator =>
   humanInputNode(page).locator(
     '[data-testid^="handle-humaninput-shownode-"][data-testid$="-right"]',
   );
+
+/**
+ * Every `User Choices` chip on the node.
+ *
+ * Counted alongside `branchHandles` because the LE-2278 signature is the two
+ * DISAGREEING — two chips against three handles — which neither count alone can
+ * see. Asserting only the handles is what let the reverted state look healthy
+ * from the canvas.
+ */
+const choiceChips = (page: Page): Locator =>
+  humanInputNode(page).locator('[data-testid^="action-edit-"]');
 
 /** Add the Human Input node via the sidebar and confirm it landed. */
 async function addHumanInputNode(page: Page) {
@@ -191,38 +215,144 @@ test.describe("Human Input node configuration (HITL branch handles)", () => {
     },
   );
 
-  // Quarantined at triage (daily #1544): recurrent flake — the custom action's
-  // own edit row `action-edit-<name>` never enters the DOM (the call log reads
-  // "element(s) not found", not hidden), so the test never reaches the branch
-  // handle it is named for. Same signature on the 2026-08-13 and 08-21 dailies;
-  // on 08-21 it ran on shard 3, which measured zero backend outages. Lifting the
-  // quarantine (remove test.fixme + restore @stable) is a deliverable of #1547.
-  test.fixme("adding a custom User Action creates its branch handle without a reload",
-    { tag: ["@components", "@ui-ux"] },
+  // `@regression` was added here with the quarantine lift (#1547): this test
+  // caught LE-2278, so it now guards a previously fixed bug. The quarantine it
+  // carried (daily #1544 — `action-edit-<name>` never entering the DOM, same
+  // signature on the 2026-08-13 and 08-21 dailies) was the defect, not the wait.
+  test("adding a custom User Action creates its branch handle without a reload",
+    { tag: ["@stable", "@regression", "@components", "@ui-ux"] },
     async ({ page }) => {
-      await test.step("Add a Human Input node with its two default branches", async () => {
-        await addHumanInputNode(page);
-        await expect(branchHandles(page)).toHaveCount(2);
-      });
-
-      await test.step(`Add "${CUSTOM_CHOICE}" to User Choices`, async () => {
-        await addCustomChoice(page, CUSTOM_CHOICE);
-        await expect(
-          page.getByTestId(`action-edit-${CUSTOM_CHOICE}`),
-        ).toBeVisible({ timeout: 15000 });
-      });
-
-      await test.step("Its branch handle appears on the same page, with the defaults intact", async () => {
-        // No reload and no navigation between the commit above and this
-        // assertion: the node rebuilds its outputs live, through the
-        // `real_time_refresh` round trip on `decisions`.
-        await expect(page.getByTestId(CUSTOM_HANDLE)).toBeVisible({
-          timeout: 15000,
+      // Attached BEFORE the node lands, so the on-mount refresh for `decisions`
+      // is inside the watched window — that is the request whose late response
+      // reverted the commit under LE-2278, and a watcher started afterwards
+      // cannot see it (`watchNodeRefresh`'s own rationale).
+      const refresh = watchNodeRefresh(page);
+      try {
+        await test.step("Add a Human Input node with its two default branches", async () => {
+          await addHumanInputNode(page);
+          await expect(branchHandles(page)).toHaveCount(2);
         });
-        await expect(page.getByTestId(APPROVE_HANDLE)).toBeVisible();
-        await expect(page.getByTestId(REJECT_HANDLE)).toBeVisible();
-        await expect(branchHandles(page)).toHaveCount(3);
+
+        await test.step(`Add "${CUSTOM_CHOICE}" to User Choices`, async () => {
+          await addCustomChoice(page, CUSTOM_CHOICE);
+          await expect(
+            page.getByTestId(`action-edit-${CUSTOM_CHOICE}`),
+          ).toBeVisible({ timeout: 15000 });
+        });
+
+        await test.step("Its branch handle appears on the same page, with the defaults intact", async () => {
+          // No reload and no navigation between the commit above and this
+          // assertion: the node rebuilds its outputs live, through the
+          // `real_time_refresh` round trip on `decisions`.
+          await expect(page.getByTestId(CUSTOM_HANDLE)).toBeVisible({
+            timeout: 15000,
+          });
+          await expect(page.getByTestId(APPROVE_HANDLE)).toBeVisible();
+          await expect(page.getByTestId(REJECT_HANDLE)).toBeVisible();
+          await expect(branchHandles(page)).toHaveCount(3);
+        });
+
+        await test.step("The choice is still there once the refresh traffic goes quiet", async () => {
+          // The assertions above are point-in-time, and under LE-2278 the chip
+          // rendered from local state before a late on-mount response removed
+          // it — so they are satisfied by a value that is about to be reverted.
+          // Re-reading after the refresh has settled is what sees the revert;
+          // the revert is permanent, so one clean read is enough. The re-read is
+          // the assertion — `untilQuiet()` alone would only be a wait.
+          await refresh.untilQuiet();
+          await expect(
+            page.getByTestId(`action-edit-${CUSTOM_CHOICE}`),
+          ).toBeVisible();
+          await expect(choiceChips(page)).toHaveCount(3);
+          await expect(branchHandles(page)).toHaveCount(3);
+        });
+      } finally {
+        // No-op after `untilQuiet()` settled; it matters on the abort path, where
+        // the listeners would otherwise outlive the test.
+        refresh.dispose();
+      }
+    },
+  );
+
+  test("a stale refresh response does not revert a committed User Action",
+    { tag: ["@stable", "@regression", "@components", "@ui-ux"] },
+    async ({ page }) => {
+      let openGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        openGate = resolve;
       });
+      let claimed = false;
+      let parked = false;
+
+      try {
+        await test.step("Hold the on-mount `decisions` refresh response", async () => {
+          // Claims the FIRST refresh carrying a two-entry `decisions` value —
+          // the on-mount one, measured on 1.12.0.dev39 as firing ~230 ms after
+          // the node lands with `["Approve", "Reject"]`. Discriminating on the
+          // VALUE and not on arrival order means a build that fires an extra
+          // refresh cannot silently shift which response is held.
+          //
+          // `route.fetch()` runs BEFORE the park, not at release time: parking
+          // the route and fetching on release makes the response arrive after
+          // the window has already closed, which degrades this test into the
+          // aborted-response control where the add always sticks (measured —
+          // the first version of this released nothing and still passed).
+          await page.route(`**${COMPONENT_REFRESH_PATH}`, async (route: Route) => {
+            const body = route.request().postDataJSON();
+            const isOnMount =
+              !claimed &&
+              body?.field === "decisions" &&
+              Array.isArray(body?.field_value) &&
+              body.field_value.length === 2;
+            if (!isOnMount) {
+              await route.continue();
+              return;
+            }
+            claimed = true;
+            const response = await route.fetch();
+            parked = true;
+            await gate;
+            await route.fulfill({ response });
+          });
+        });
+
+        await test.step("Add the node and confirm its on-mount refresh is parked", async () => {
+          await addHumanInputNode(page);
+          await expect(branchHandles(page)).toHaveCount(2);
+          await expect
+            .poll(() => parked, { timeout: 20000, intervals: [100] })
+            .toBe(true);
+        });
+
+        await test.step(`Commit "${CUSTOM_CHOICE}", then release the stale response into the window`, async () => {
+          await addCustomChoice(page, CUSTOM_CHOICE);
+          // 150 ms is measured, not guessed: the commit's own refresh leaves
+          // ~300 ms after the Enter (debounce), and its response applies later
+          // still, so releasing here lands the stale response strictly BETWEEN
+          // the commit and that response — the one delivery of the four that
+          // reverts. A slower box widens that window rather than narrowing it.
+          await page.waitForTimeout(150);
+          openGate();
+        });
+
+        await test.step("The committed choice survived, and chips agree with handles", async () => {
+          await expect(
+            page.getByTestId(`action-edit-${CUSTOM_CHOICE}`),
+          ).toBeVisible({ timeout: 15000 });
+          // Under LE-2278 this read `2` chips against `3` handles — the mixed
+          // state the daily screenshotted. Both counts are asserted because
+          // either one alone reads as healthy.
+          await expect(choiceChips(page)).toHaveCount(3);
+          await expect(branchHandles(page)).toHaveCount(3);
+        });
+      } finally {
+        // Opening the gate unconditionally keeps a failure before the release
+        // from leaving a route handler awaiting a promise nobody resolves, and
+        // the unroute keeps a refresh fired during the cleanup navigation from
+        // being held by it.
+        openGate();
+        await page.unroute(`**${COMPONENT_REFRESH_PATH}`);
+      }
     },
   );
 
