@@ -3,8 +3,9 @@ name: langflow-e2e-infra
 description: >-
   Use when the task concerns the E2E suite's INFRASTRUCTURE layer rather than
   test authoring (oriontech-me/langflow-e2e) — CI workflows
-  (.github/workflows/*), scripts/*, playwright.config.ts, reports/ run-history +
-  Flakiness.io, or a qa-infra-labelled GitHub issue. Triggers: "otimiza/melhora a
+  (.github/workflows/*), scripts/*, playwright.config.ts, reports/ run-history,
+  the VM runner scripts, or a qa-infra-labelled GitHub
+  issue. Triggers: "otimiza/melhora a
   infra dos testes", "resolve a issue qa-infra #NNN", daily slowdown, single-
   backend saturation, sharding, low-concurrency lane, collect-models skips/403,
   flaky-under-load, CI runner sizing, pre-flight gate, LLM mocking, external-
@@ -31,7 +32,7 @@ any other work — resolve the current wave live, never hardcode it.
   coverage-summary, stable-tests, checklist guards.
 - `playwright.config.ts` — parallelism, workers, retries, timeouts, reporters,
   lanes.
-- `reports/` (run-history JSONL + schema) and the Flakiness.io reporter.
+- `reports/` (run-history JSONL + schema).
 - The `qa-infra` issue class end-to-end.
 
 **Defers (invoke the owner, don't improvise):**
@@ -94,7 +95,6 @@ Trigger: `/langflow-e2e-infra`, "audita a infra", "onde melhorar a infra".
    - recent daily durations + failure counts — `reports/daily-history.jsonl`
      (schema in `reports/README.md`; example `jq` queries there);
    - open `qa-infra` issues — `gh issue list --label qa-infra --state open`;
-   - Flakiness.io signal — `flakiness-report/report.json`.
 2. **Rank** improvement opportunities by leverage against the failure-mode index
    (`references/failure-modes.md`). Prefer levers that cut recurring pain
    (saturation, silent skips, external-dep hard-fails) over cosmetic wins.
@@ -123,7 +123,7 @@ Trigger: `/langflow-e2e-infra #NNN`, "resolve a issue qa-infra #NNN".
    | CI-workflow | `.github/workflows/*`, ci(...) | edit YAML; prove via `manual.yml` / next CI |
    | script | `scripts/*`, collect-models, history | run locally + `typecheck`/`lint` |
    | config | `playwright.config.ts`, workers/lanes/retries | parse-check + targeted run |
-   | history-reporting | `reports/`, Flakiness.io, coverage-summary | `reports/README.md` |
+   | history-reporting | `reports/`, coverage-summary | `reports/README.md` |
    | external-dependency | httpbin/postman/npx-server hard-fail | decouple / mock (#462/#463/#639/#883) |
    | isolation-cleanup | cross-worker flow deletion, POST 500 race | id-scoped cleanup + API creation (#515/#588/#605) |
    | provider/collect-models | 403, silent skip, missing pip pkg | buildable probe + skip-credentials (#570/#873/#900) |

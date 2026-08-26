@@ -110,36 +110,26 @@ export default defineConfig({
   // ISSUE-833-SHARDING-DESIGN.md §"workers per shard".
   workers: SERIAL_LANE ? 1 : process.env.CI ? 2 : undefined,
   timeout: 5 * 60 * 1000, // 5 minutes per test
-  // Reporters run side by side. The Flakiness.io reporter MUST live here, not on
-  // the CLI `--reporter` flag, because its `flakinessProject` option (required for
-  // GitHub OIDC upload) cannot be passed via the command line. It uploads per-run
-  // in its onExit() hook, so under sharding each shard uploads its own slice — no
-  // merge of Flakiness reports is needed (the merge job only recombines Playwright
-  // blobs).
-  //
   // Three reporter shapes:
-  // - Sharded CI (PW_SHARD_FILE_LEVEL set by the daily's shard step): `blob` (the
-  //   merge job rebuilds html/github/json from the combined blobs) + Flakiness.io.
-  //   `blob` MUST be configured here rather than via `--reporter=blob` on the CLI,
-  //   which would replace the whole list and drop the Flakiness reporter.
-  // - Non-sharded CI (nightly / manual): html + github + json + Flakiness.io.
-  // - Local: html + Flakiness.io.
+  // - Sharded CI (PW_SHARD_FILE_LEVEL, set by the daily's shard step and by any
+  //   other runner that shards): `blob` only — the merge step rebuilds
+  //   html/github/json from the combined blobs. It stays configured HERE rather
+  //   than passed as `--reporter=blob`, so the sharded lane cannot be switched
+  //   onto a reporter whose output the merge step is unable to read.
+  // - Non-sharded CI (nightly / manual): html + github + json.
+  // - Local: html.
+  //
+  // The Flakiness.io reporter sat alongside all three until 2026-08-25. It
+  // authenticates through GitHub Actions OIDC, and the scheduled suite is moving
+  // off Actions onto a VM: with no Actions run there is no OIDC token to mint, so
+  // the reporter can only warn and upload nothing, or hang trying. Restoring it
+  // means restoring an upload path that works without Actions, not just re-adding
+  // the line.
   reporter: process.env.CI
     ? process.env.PW_SHARD_FILE_LEVEL
-      ? [
-          ["blob"],
-          ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
-        ]
-      : [
-          ["html"],
-          ["github"],
-          ["json"],
-          ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
-        ]
-    : [
-        ["html"],
-        ["@flakiness/playwright", { flakinessProject: "Orion/langflow-e2e" }],
-      ],
+      ? [["blob"]]
+      : [["html"], ["github"], ["json"]]
+    : [["html"]],
 
   use: {
     baseURL: BASE_URL,

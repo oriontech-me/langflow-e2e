@@ -417,8 +417,8 @@ for (const lane of LANES) {
     const text = fs.readFileSync(path.join(REPO_ROOT, ".github/workflows", lane.file), "utf8");
     // Keyed on the inline loop's own marker variable rather than on `curl`: these
     // workflows legitimately curl /api/v1/version elsewhere (capturing the Langflow
-    // version for the report and the Flakiness environment tag), and a guard that
-    // banned the URL outright would fail on those instead of on a resurrected gate.
+    // version for the run summary), and a guard that banned the URL outright would
+    // fail on those instead of on a resurrected gate.
     const inline = text.split("\n").filter((l) => l.includes("RECOVER_TIMEOUT_S"));
     assert.deepEqual(inline, [], `inline gate loop still present in ${lane.file}`);
   });
