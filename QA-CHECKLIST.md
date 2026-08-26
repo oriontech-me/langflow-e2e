@@ -170,6 +170,7 @@
 - [x] Enable Tool Mode on a component → `core-components/tool-mode.spec.ts`
 - [x] Group components in Tool Mode → `core-components/tool-mode-group.spec.ts`
 - [x] Edit tools (slug, description, requires-approval persistence) → core-components/edit-tools.spec.ts
+- [x] Tool Mode stale-update guard: a pre-edit `tools_metadata` refresh response released across the editor close does not revert the action's slug or description — asserted in the reopened editor and in the persisted flow (LE-2272, upstream `langflow-ai/langflow#14741`) → `core-components/edit-tools.spec.ts`
 
 #### 2.3 Component Updates
 - [x] Outdated component notification → `core-components/outdated-component-notification.spec.ts`

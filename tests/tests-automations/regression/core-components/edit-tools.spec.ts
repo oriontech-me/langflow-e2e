@@ -1,4 +1,4 @@
-import type { APIRequestContext, Page, Request } from "@playwright/test";
+import type { APIRequestContext, Page, Request, Route } from "@playwright/test";
 import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createFlow } from "../../../helpers/flows/create-flow";
@@ -53,6 +53,9 @@ import { addComponentFromSidebar } from "../../../helpers/flows/add-component-fr
 const SLUG_INPUT = "web_fetch";
 const SLUG_SHOWN = "WEB_FETCH";
 const SLUG_DEFAULT = "FETCH_CONTENT";
+// Same action, as the flow document and the update payloads spell it — the grid
+// upper-cases for display only.
+const SLUG_PERSISTED_DEFAULT = "fetch_content";
 const DESC_EDIT = "custom tool description for e2e";
 
 // Flipping "Requires Approval" on writes the per-action HITL decisions into the
@@ -63,6 +66,20 @@ const DESC_EDIT = "custom tool description for e2e";
 // contract that matters is non-empty, so only membership is asserted and the
 // exact set is free to grow upstream.
 const APPROVAL_DECISION = "approve";
+
+// `POST` here is what carries a node through the backend on every field refresh
+// and on the actions editor close. Both the barrier (§2.2.1) and the hold
+// (§2.2.2) key on it.
+const UPDATE_PATH = "/api/v1/custom_component/update";
+
+// The Requires Approval switch renders instantly but writes onto the grid row
+// ~200 ms after the click, deliberately, so the ag-Grid cell does not remount
+// mid-animation (upstream #14741 records this as a separate, smaller defect,
+// explicitly out of its scope). Losing that write has nothing to do with
+// LE-2272 — the editor-close request then carries `approval_actions: []` and
+// there is nothing left for a staleness guard to protect — so the flip goes
+// first and this wait covers the window (see `applyActionEdits`).
+const ROW_COMMIT_MS = 600;
 
 /**
  * Block until no `POST /api/v1/custom_component/update` is in flight.
@@ -88,7 +105,7 @@ async function waitForComponentUpdateSettled(
 ): Promise<void> {
   const isNodeUpdate = (req: Request) =>
     req.method() === "POST" &&
-    new URL(req.url()).pathname.includes("/api/v1/custom_component/update");
+    new URL(req.url()).pathname.includes(UPDATE_PATH);
 
   await new Promise<void>((resolve) => {
     let quietTimer: ReturnType<typeof setTimeout> | undefined;
@@ -145,7 +162,7 @@ async function waitForComponentUpdateSettled(
 async function expectPersistedAction(
   flowId: string,
   request: APIRequestContext,
-  expected: { name: string; description: string },
+  expected: { name: string; description: string; approval?: boolean },
 ): Promise<void> {
   const bearer = await getAuthToken(request);
   await expect
@@ -179,8 +196,13 @@ async function expectPersistedAction(
     .toMatch(
       new RegExp(
         `^name=${expected.name} ` +
-          `description=${expected.description.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} ` +
-          `approval=\\[[^\\]]*"${APPROVAL_DECISION}"`,
+          `description=${expected.description.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}` +
+          // The approval half is opt-out: the LE-2272 guard edits slug and
+          // description only, because the toggle carries a second, unrelated
+          // defect (see that test's header).
+          (expected.approval === false
+            ? ""
+            : ` approval=\\[[^\\]]*"${APPROVAL_DECISION}"`),
       ),
     );
 }
@@ -227,6 +249,97 @@ async function openFlowWithUrlComponent(
   return flowId;
 }
 
+// The action grid renders its rows in the ag-Grid center container. Both tests
+// walk the same cells, so the locators live here rather than in one body.
+const gridRows = (page: Page) =>
+  page.locator(".ag-center-cols-container [row-index]");
+const nameCell = (page: Page) =>
+  page.locator('.ag-center-cols-container [col-id="name"]');
+const slugCell = (page: Page) =>
+  page.locator('.ag-center-cols-container [col-id="name_1"]');
+const descCell = (page: Page) =>
+  page.locator('.ag-center-cols-container [col-id="description"]');
+const approvalToggle = (page: Page) =>
+  page.getByTestId("requires-approval-toggle").first();
+
+/** Switch the URL node to Tool Mode; it then exposes its actions as handles. */
+async function enterToolMode(page: Page): Promise<void> {
+  await page.getByTestId("generic-node-title-arrangement").click();
+  await page.getByTestId("tool-mode-button").click({ timeout: 15000 });
+  await expect(page.getByTestId("tool_fetch_content")).toBeVisible({
+    timeout: 15000,
+  });
+}
+
+/** Open the Tool Mode actions editor and wait for its single row to render. */
+async function openActionsEditor(page: Page): Promise<void> {
+  await page.getByTestId("button_open_actions").click();
+  await expect(gridRows(page)).toHaveCount(1, { timeout: 30000 });
+}
+
+/**
+ * Edit the single action's slug and description, then flip Requires Approval.
+ *
+ * The grid reflects each edit live, so each one is asserted on its cell: that
+ * proves the edit committed AND settles the panel before the next step (a rushed
+ * sequence races the async commit and drops edits). The flip goes last so the
+ * two edit paths do not race, and the row-commit window is waited out
+ * afterwards — nothing here has reached the flow yet, every panel edit is
+ * applied on editor close (#1519).
+ */
+/**
+ * Edit the single action's slug and description, and optionally flip Requires
+ * Approval.
+ *
+ * The grid reflects each edit live, so each one is asserted on its own cell:
+ * that proves the edit committed AND settles the panel before the next step (a
+ * rushed sequence races the async commit and drops edits). The flip goes last so
+ * the two edit paths do not race, and the row-commit window is waited out
+ * afterwards. Nothing here has reached the flow yet — every panel edit is
+ * applied on editor close (#1519).
+ */
+async function applyActionEdits(
+  page: Page,
+  { flipApproval = true }: { flipApproval?: boolean } = {},
+): Promise<void> {
+  // Open the side edit panel: double-click the name cell, offset past the row
+  // selection checkbox on the cell's left edge.
+  await nameCell(page).dblclick({ position: { x: 120, y: 12 } });
+  await page.getByTestId("input_update_name").fill(SLUG_INPUT);
+  await expect(slugCell(page)).toHaveText(SLUG_SHOWN, { timeout: 15000 });
+  await page.getByTestId("input_update_description").fill(DESC_EDIT);
+  await expect(descCell(page)).toHaveText(DESC_EDIT, { timeout: 15000 });
+  // Blur the description field before continuing: pressing Escape while a panel
+  // input holds focus fires the input's own Escape handler (revert) instead of
+  // closing the editor, which drops the just-made edits.
+  await page.getByTestId("input_update_description").blur();
+
+  if (!flipApproval) return;
+  await approvalToggle(page).click();
+  await expect(approvalToggle(page)).toHaveAttribute("aria-checked", "true");
+  await page.waitForTimeout(ROW_COMMIT_MS);
+}
+
+/** Assert the reopened editor renders the edited values. */
+async function expectEditedActionInEditor(
+  page: Page,
+  { approval = true }: { approval?: boolean } = {},
+): Promise<void> {
+  await expect(slugCell(page)).toHaveText(SLUG_SHOWN, { timeout: 15000 });
+  await expect(descCell(page)).toHaveText(DESC_EDIT);
+  if (approval) {
+    await expect(approvalToggle(page)).toHaveAttribute("aria-checked", "true");
+  }
+}
+
+/** Close the actions editor with Escape and wait for the dialog to go away. */
+async function closeActionsEditor(page: Page): Promise<void> {
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[role="dialog"]')).toHaveCount(0, {
+    timeout: 15000,
+  });
+}
+
 test.describe("Edit tools (Tool Mode)", () => {
   // Quarantined at the triage of daily #1517 and un-quarantined by #1519, which
   // replaced the fixed settle with the two barriers above and added the
@@ -243,56 +356,16 @@ test.describe("Edit tools (Tool Mode)", () => {
       });
 
       await test.step("switch the URL component to Tool Mode", async () => {
-        await page.getByTestId("generic-node-title-arrangement").click();
-        await page
-          .getByTestId("tool-mode-button")
-          .click({ timeout: 15000 });
-        // Tool Mode exposes the component's actions as tool handles on the node.
-        await expect(page.getByTestId("tool_fetch_content")).toBeVisible({
-          timeout: 15000,
-        });
+        await enterToolMode(page);
       });
-
-      // The action grid rows render in the ag-Grid center container.
-      const gridRows = page.locator(".ag-center-cols-container [row-index]");
-      const nameCell = page.locator('.ag-center-cols-container [col-id="name"]');
-      const slugCell = page.locator(
-        '.ag-center-cols-container [col-id="name_1"]',
-      );
-      const descCell = page.locator(
-        '.ag-center-cols-container [col-id="description"]',
-      );
 
       await test.step("open the actions editor — single Fetch Content action", async () => {
-        await page.getByTestId("button_open_actions").click();
-        await expect(gridRows).toHaveCount(1, { timeout: 15000 });
-        await expect(slugCell).toHaveText(SLUG_DEFAULT);
+        await openActionsEditor(page);
+        await expect(slugCell(page)).toHaveText(SLUG_DEFAULT);
       });
 
-      await test.step("edit the action slug and description", async () => {
-        // Open the side edit panel (double-click the name cell, offset past the
-        // row selection checkbox on the cell's left edge) and edit slug +
-        // description. The grid reflects each edit live, so assert the grid cells
-        // update: this proves the edit committed AND settles the editor before it
-        // is closed (a rushed close races the async commit and drops edits).
-        await nameCell.dblclick({ position: { x: 120, y: 12 } });
-        await page.getByTestId("input_update_name").fill(SLUG_INPUT);
-        await expect(slugCell).toHaveText(SLUG_SHOWN, { timeout: 15000 });
-        await page.getByTestId("input_update_description").fill(DESC_EDIT);
-        await expect(descCell).toHaveText(DESC_EDIT, { timeout: 15000 });
-        // Blur the description field before continuing: pressing Escape while a
-        // panel input holds focus fires the input's own Escape handler (revert)
-        // instead of closing the editor, which drops the just-made edits.
-        await page.getByTestId("input_update_description").blur();
-      });
-
-      await test.step("flip Requires Approval last", async () => {
-        // Flip after the slug/description edits, so the two edit paths do not
-        // race. The panel reflects it immediately; nothing has reached the flow
-        // yet — every panel edit is applied on editor close (#1519).
-        const approval = page.getByTestId("requires-approval-toggle").first();
-        await approval.click();
-        await expect(approval).toHaveAttribute("aria-checked", "true");
+      await test.step("edit the action and flip Requires Approval", async () => {
+        await applyActionEdits(page);
       });
 
       await test.step("let the node update round trip settle before closing", async () => {
@@ -304,10 +377,7 @@ test.describe("Edit tools (Tool Mode)", () => {
       });
 
       await test.step("close the editor", async () => {
-        await page.keyboard.press("Escape");
-        await expect(page.locator('[role="dialog"]')).toHaveCount(0, {
-          timeout: 5000,
-        });
+        await closeActionsEditor(page);
       });
 
       await test.step("the edits reached the persisted flow", async () => {
@@ -322,11 +392,7 @@ test.describe("Edit tools (Tool Mode)", () => {
 
       await test.step("reopen the editor — edits are retained", async () => {
         await page.getByTestId("button_open_actions").click();
-        await expect(slugCell).toHaveText(SLUG_SHOWN, { timeout: 15000 });
-        await expect(descCell).toHaveText(DESC_EDIT);
-        await expect(
-          page.getByTestId("requires-approval-toggle").first(),
-        ).toHaveAttribute("aria-checked", "true");
+        await expectEditedActionInEditor(page);
       });
 
       await test.step("the reopen did not clobber the persisted edits", async () => {
@@ -340,10 +406,153 @@ test.describe("Edit tools (Tool Mode)", () => {
       });
 
       await test.step("clearing the slug reverts it to the default", async () => {
-        await nameCell.dblclick({ position: { x: 120, y: 12 } });
+        await nameCell(page).dblclick({ position: { x: 120, y: 12 } });
         await page.getByTestId("input_update_name").fill("");
-        await expect(slugCell).toHaveText(SLUG_DEFAULT, { timeout: 15000 });
+        await expect(slugCell(page)).toHaveText(SLUG_DEFAULT, {
+          timeout: 15000,
+        });
       });
+    },
+  );
+
+  // The deterministic LE-2272 guard. The test above keeps its pre-close barrier
+  // on purpose — waiting the round trip out is what a human user does by being
+  // slower than automation, and it has to keep working whether or not the
+  // product race is fixed. That barrier also means the test above can no longer
+  // SEE the race, so this one forces it: it holds the pre-edit `tools_metadata`
+  // refresh, releases it across the editor close (the window LE-2272 lands in)
+  // and asserts the reopened editor and the persisted flow.
+  //
+  // Fixed upstream by `langflow-ai/langflow#14741` (`keepUserEdits` plus a
+  // per-node `lastAppliedValues` baseline in `mutate-template.ts`), first
+  // shipped in 1.12.0.dev39. Measured on the same host with the same script:
+  // dev38 reverts (the reopened slug reads FETCH_CONTENT), dev39 keeps the
+  // edits — which is this test's force-fail evidence, stronger than any
+  // hand-made mutation.
+  //
+  // Deliberately asserts SLUG + DESCRIPTION and not Requires Approval. LE-2272
+  // reverts the whole `tools_metadata` entry, so those two detect it in full,
+  // while the toggle drags in a SECOND and unrelated defect that upstream #14741
+  // records as out of its scope: the switch's row write lands ~200 ms after the
+  // click and is lost if anything remounts the cell first, in which case the
+  // editor-close request already carries `approval_actions: []` and no
+  // staleness guard could have saved it. Traced on 1.12.0.dev39 (close request
+  // `name: "web_fetch"`, `ap: []`), it costs ~1 run in 6 here — the settle
+  // barrier is what keeps it out of the test above. Approval persistence stays
+  // asserted there.
+  test(
+    "a stale node-update response does not revert the action edits",
+    { tag: ["@stable", "@regression", "@components"] },
+    async ({ page, request }) => {
+      const bearer = await getAuthToken(request);
+      let flowId = "";
+      let openGate: () => void = () => {};
+      const gate = new Promise<void>((resolve) => {
+        openGate = resolve;
+      });
+      let claimed = false;
+      let parked = false;
+      let released = false;
+
+      try {
+        await test.step("open a flow with the URL component", async () => {
+          flowId = await openFlowWithUrlComponent(page, request, bearer);
+        });
+
+        await test.step("hold the pre-edit tools_metadata refresh", async () => {
+          // Claims a `tools_metadata` refresh whose payload still carries the
+          // DEFAULT slug and no approval decisions — i.e. one computed before
+          // any edit. Discriminating on the payload rather than on arrival
+          // order means a build that fires an extra refresh cannot silently
+          // shift which response is held (the lesson
+          // `human-input-node-config.spec.ts` records for LE-2278).
+          //
+          // `route.fetch()` runs BEFORE the park: parking the route and
+          // fetching at release time makes the response arrive after the window
+          // has already closed, which degrades this test into the
+          // aborted-response control where the edits always survive.
+          await page.route(`**${UPDATE_PATH}`, async (route: Route) => {
+            const body = route.request().postDataJSON();
+            const action = body?.field_value?.[0];
+            const isPreEdit =
+              !claimed &&
+              body?.field === "tools_metadata" &&
+              Array.isArray(body?.field_value) &&
+              action?.name === SLUG_PERSISTED_DEFAULT &&
+              (action?.approval_actions ?? []).length === 0;
+            if (!isPreEdit) {
+              await route.continue();
+              return;
+            }
+            claimed = true;
+            const response = await route.fetch();
+            parked = true;
+            await gate;
+            await route.fulfill({ response });
+            released = true;
+          });
+        });
+
+        await test.step("switch the URL component to Tool Mode", async () => {
+          await enterToolMode(page);
+        });
+
+        await test.step("open the actions editor with the refresh parked", async () => {
+          await openActionsEditor(page);
+          await expect(slugCell(page)).toHaveText(SLUG_DEFAULT);
+          // Asserted, not assumed: a run that held nothing would walk the happy
+          // path and pass while measuring nothing at all.
+          await expect
+            .poll(() => parked, { timeout: 20000, intervals: [100] })
+            .toBe(true);
+        });
+
+        await test.step("edit the action slug and description", async () => {
+          await applyActionEdits(page, { flipApproval: false });
+        });
+
+        await test.step("close the editor with the stale response still held", async () => {
+          // No barrier here — the missing barrier IS the mechanism under test.
+          await closeActionsEditor(page);
+        });
+
+        await test.step("release the stale response into the post-close window", async () => {
+          openGate();
+          await expect
+            .poll(() => released, { timeout: 20000, intervals: [100] })
+            .toBe(true);
+          // The clobber is not instantaneous: the stale response is applied to
+          // the store and the debounced autosave then writes it (~1.4 s,
+          // measured on 1.12.0.dev33). Asserting before that lands would read a
+          // reverted node as healthy, so give the whole chain room — under the
+          // fix nothing happens here, which costs 4 s and buys the failure mode
+          // being reachable at all.
+          await page.waitForTimeout(4000);
+        });
+
+        await test.step("reopen the editor — the edits survived", async () => {
+          await page.getByTestId("button_open_actions").click();
+          await expectEditedActionInEditor(page, { approval: false });
+          await page.keyboard.press("Escape");
+        });
+
+        await test.step("the persisted flow kept the edits", async () => {
+          // Asserted as well as the UI: the post-reopen variant of LE-2272
+          // leaves the editor rendering the edits while the document has
+          // already lost them, so the UI alone reads healthy.
+          await expectPersistedAction(flowId, request, {
+            name: SLUG_INPUT,
+            description: DESC_EDIT,
+            approval: false,
+          });
+        });
+      } finally {
+        // Opening the gate unconditionally keeps a failure before the release
+        // from leaving a route handler awaiting a promise nobody resolves, and
+        // the unroute keeps a refresh fired during cleanup from being held.
+        openGate();
+        await page.unroute(`**${UPDATE_PATH}`);
+      }
     },
   );
 });
