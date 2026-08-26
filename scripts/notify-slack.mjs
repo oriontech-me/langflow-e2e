@@ -62,6 +62,7 @@
 //   REPORT_URL          where the Playwright report lives
 //   RUN_ID, VM_HOSTNAME
 //   SLACK_DRY_RUN=1     render and print the payload, post nothing
+//   SLACK_FORCE=1       post even when the run reported nothing bad (wiring test)
 //
 // Run: node scripts/notify-slack.mjs
 
@@ -122,6 +123,35 @@ const host = env.VM_HOSTNAME || env.HOSTNAME || "the QA VM";
 
 const shape = empty ? "empty" : partial ? "partial" : "failures";
 
+// A GREEN day is not one of the three shapes, and this script has to say so
+// itself. Its header claims it "fires on the SAME condition as the triage issue",
+// but that condition lives in the caller — and the caller is the runner, the one
+// piece still being written. Without this, a run that is neither empty nor partial
+// and failed nothing renders "🔴 Daily @stable failed — 0 test(s)": the #1012
+// defect pointed the other way, announcing a verdict the report does not support.
+// The gate belongs HERE because here is where the verdict is decided; a caller
+// that forgets it is a caller, and there will be more than one.
+//
+// Deliberately narrow: it fires only when EVERY signal agrees the day was clean —
+// not empty, not partial, a failed count of exactly zero, and an empty failure
+// list. An absent or unreadable payload leaves `totals.failed` undefined, which is
+// UNKNOWN rather than zero, and an unknown verdict must still be announced (#1012
+// again). SLACK_FORCE=1 posts anyway, which is how the webhook wiring gets tested
+// against a green run without editing this file.
+const failedCount = totals.failed;
+const nothingFailed =
+  shape === "failures" &&
+  (failedCount === 0 || failedCount === "0") &&
+  failures.length === 0;
+
+if (nothingFailed && env.SLACK_FORCE !== "1") {
+  console.log(
+    "[slack] the run reported no failures and neither the empty nor the partial verdict — nothing to announce. " +
+      "(SLACK_FORCE=1 posts anyway, e.g. to test the webhook wiring.)",
+  );
+  process.exit(0);
+}
+
 const headline = {
   empty: `⚠️ Daily @stable executed ZERO tests — ${date}`,
   partial: `⚠️ Daily @stable was PARTIAL — a shard never ran — ${date}`,
@@ -179,7 +209,14 @@ const totalsLine =
     ? `*${totals.failed ?? 0} failed* · ${totals.flaky ?? 0} flaky · ${totals.passed ?? 0} passed · ${totals.skipped ?? 0} skipped`
     : "";
 
-const errorBlock = firstError ? "```\n" + firstError + "\n```" : "";
+// Truncate the quoted cause BEFORE it is fenced, not after. The body as a whole is
+// capped at SECTION_MAX, and a cut that lands inside the fence leaves it unclosed
+// and elides the diagnosis with nothing but an ellipsis to show for it — a silent
+// cap, which is the thing this file refuses to do for the failure list two blocks
+// up. check-run-integrity.mjs already caps `first_error` to a single line, so this
+// is a floor under an assumption about another script, not a fix for a live defect.
+const ERROR_MAX = 600;
+const errorBlock = firstError ? "```\n" + truncate(firstError, ERROR_MAX) + "\n```" : "";
 
 const body = [
   `*Langflow* \`${truncate(version || image, 200)}\`  ·  *Run* \`${truncate(runId, 200)}\` on ${host}`,

@@ -48,9 +48,17 @@ const PAYLOAD = {
   flaky: [],
 };
 
+const GREEN_PAYLOAD = {
+  ...PAYLOAD,
+  totals: { passed: 331, failed: 0, flaky: 0, skipped: 20 },
+  failures: [],
+};
+
 const dir = mkdtempSync(join(tmpdir(), "notify-slack-"));
 const payloadPath = join(dir, "payload.json");
 writeFileSync(payloadPath, JSON.stringify(PAYLOAD), "utf8");
+const greenPayloadPath = join(dir, "payload-green.json");
+writeFileSync(greenPayloadPath, JSON.stringify(GREEN_PAYLOAD), "utf8");
 
 /** Run the notifier and return { stdout, stderr, status }. spawnSync, not
  *  execFileSync: the latter surfaces stderr only on a NON-zero exit, and this
@@ -199,4 +207,52 @@ test("every transport failure still exits 0", async () => {
   } finally {
     server.close();
   }
+});
+
+test("a green run is not announced as a red one", () => {
+  // The header says this "fires on the SAME condition as the triage issue", but
+  // that condition lives in the caller — and the caller is the runner that is still
+  // being written. Unguarded, a clean day rendered
+  // "🔴 Daily @stable failed — 0 test(s)".
+  const url = "https://hooks.slack.com/triggers/E1/2/abc";
+  const { stdout } = run({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: greenPayloadPath, SLACK_DRY_RUN: "1" });
+  assert.doesNotMatch(stdout, /Daily @stable failed/, "a clean run must not be announced as a failure");
+  assert.match(stdout, /nothing to announce/);
+
+  // SLACK_FORCE is the wiring test, and it must still reach a rendered payload.
+  const forced = render({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: greenPayloadPath, SLACK_FORCE: "1" });
+  assert.match(forced.body.headline, /Daily @stable failed/);
+});
+
+test("the gate is narrow: an UNKNOWN verdict is still announced", () => {
+  const url = "https://hooks.slack.com/triggers/E1/2/abc";
+
+  // No payload at all: `totals.failed` is undefined, which is unknown, not zero.
+  // Staying silent there is #1012 from the other side — a run whose verdict nobody
+  // could read must not pass for a clean one.
+  const noPayload = render({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: join(dir, "does-not-exist.json") });
+  assert.match(noPayload.body.headline, /Daily @stable failed/);
+
+  // Zero failures but an EMPTY or PARTIAL verdict is the whole point of those two
+  // shapes: nothing failed precisely because nothing ran.
+  const empty = render({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: greenPayloadPath, RUN_EMPTY: "true" });
+  assert.match(empty.body.headline, /ZERO tests/);
+
+  const partial = render({ SLACK_WEBHOOK_URL: url, PAYLOAD_JSON: greenPayloadPath, RUN_PARTIAL: "true" });
+  assert.match(partial.body.headline, /PARTIAL/);
+});
+
+test("a long quoted cause is truncated inside its fence, not across it", () => {
+  // The body as a whole is capped at SECTION_MAX. A cut landing inside the code
+  // fence leaves it unclosed and elides the diagnosis silently — the one thing this
+  // script refuses to do for the failure list.
+  const huge = "Error: worker process exited unexpectedly\n    at a stack frame that is long\n".repeat(60);
+  const { body } = render({
+    SLACK_WEBHOOK_URL: "https://hooks.slack.com/triggers/E1/2/abc",
+    RUN_PARTIAL: "true", RUN_TESTS: "180", RUN_ERRORS: "2", RUN_FIRST_ERROR: huge,
+  });
+  const fences = (body.body.match(/```/g) || []).length;
+  assert.equal(fences % 2, 0, "the code fence must be closed");
+  assert.equal(fences, 2);
+  assert.ok(body.body.length <= 2900, "and the body still fits Slack's section cap");
 });
