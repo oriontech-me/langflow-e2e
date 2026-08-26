@@ -141,7 +141,7 @@ for (const { label, options, skipReason } of targets) {
 
     test(
       "input via ChatInput handle drives the agent response",
-      { tag: ["@stable", "@components", "@agents", "@playground"] },
+      { tag: ["@components", "@agents", "@playground"] },
       async ({ page }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(

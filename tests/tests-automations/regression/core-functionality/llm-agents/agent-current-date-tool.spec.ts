@@ -259,7 +259,7 @@ for (const { label, options, skipReason } of targets) {
   test.describe(`Agent Current Date Tool [${label}]`, () => {
     test(
       "toggle ON (default): agent's date tool returns today's date",
-      { tag: ["@stable", "@regression", "@agents", "@playground"] },
+      { tag: ["@regression", "@agents", "@playground"] },
       async ({ page, request }) => {
         test.skip(!!skipReason, skipReason ?? "");
         test.skip(
