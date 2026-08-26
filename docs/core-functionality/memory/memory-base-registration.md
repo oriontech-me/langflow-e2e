@@ -39,11 +39,17 @@ Test 2: `@api` `@workspace` (cross-cutting) + `@files` (functional).
 `@files` on test 2 is the repo's functional tag for the knowledge/vector
 ingestion family, which is the resource boundary that test asserts.
 
-**`@stable` decision:** proposed for both. Test 2 is provider-free and fully
-deterministic. Test 1 skips loudly rather than failing when the daily's provider
-key is drained (a state this account has been in three times — #772, #1029,
-#1169), so it cannot redden the daily for a credential reason. Confirm with the
-team before the PR; a `@stable` test must not be `@destructive`, and neither is.
+**`@stable` decision:** both. Test 2 is provider-free and fully deterministic.
+Test 1 skips loudly rather than failing when the daily's provider key is drained
+(a state this account has been in three times — #772, #1029, #1169), so it cannot
+redden the daily for a credential reason. Neither is `@destructive`.
+
+Test 1's `@stable` was **auto-removed** by the daily triage (`f6f4c398`, daily
+`31786538844`) when the `sr-only` counter broke its option matcher, and is
+**restored here** — that is the quarantine #1460 asks to lift. The removal was
+correct as triage: with no scheduled lane running it afterwards, the defect
+stayed invisible to the daily and surfaced only on PRs, because the
+impacted-specs lane selects by import graph rather than by tag (#871/#1054).
 
 ---
 
@@ -99,6 +105,36 @@ team before the PR; a `@stable` test must not be `@destructive`, and neither is.
   list: enabling a model while the modal is open leaves the picker reading
   `No Models Enabled` until `refresh-model-list` is clicked (measured). The
   spec avoids the refresh path entirely by doing the API write first.
+- **The embedding option is selected by its IDENTITY, never by its rendered
+  text — issue #1460.** Since **1.12.0.dev26** every option of the unified model
+  picker renders its own position inside itself as
+  `<span class="sr-only">N of M</span>`: invisible to a user, but part of both
+  `textContent` and the accessible name. Measured on **1.12.0.dev37** in this
+  very picker, with one enabled embeddings model, the single option reads
+
+  ```
+  data-testid  Google Generative AI-gemini-embedding-2-option
+  data-value   Google Generative AI::gemini-embedding-2
+  textContent  "gemini-embedding-21 of 1"        <- .sr-only = ["1 of 1"]
+  ```
+
+  so `getByRole("option", { name: "gemini-embedding-2", exact: true }).count()`
+  is **0** (the loose matcher: 1) and the click the spec used to make times out
+  at 20 s. The selection therefore goes through `selectPinnedModelOption`
+  (`tests/helpers/provider-setup/model-option.ts`, built for the sibling
+  issue #1459): it resolves the option by `data-value` / `data-testid`, clicks by
+  identity, and raises a loud `MODEL_PICKER_DEFECT` when the picker contradicts
+  the API probe rather than degrading into a skip (#1461). The announcement can
+  change wording, position or total without touching this test.
+- **The counter is intended product behaviour, and the trigger is the clean
+  half.** Both readings #1460 asked to separate were measured on 1.12.0.dev37.
+  Re-read after a 4 s settle the option is byte-identical (`1 of 1` persists), so
+  it is not a mid-update render artefact. And after selecting, the trigger
+  `#memory-embedding-model` carries `textContent === "gemini-embedding-2"` with
+  **zero** `.sr-only` descendants — so the existing
+  `toHaveText(embedding.modelId)` assertion on the trigger asserts a real product
+  contract and is kept unweakened. Only the *matcher* that reached the option was
+  wrong; nothing about what the test proves is relaxed.
 - **A skip is never a silent pass.** Test 1 skips with the concrete reason; test
   2 runs regardless, so the file always executes at least one falsifiable
   assertion about registration.
@@ -184,6 +220,16 @@ is shared with parallel workers.
   still there. The submit button and the panel's list item carry **no**
   `data-testid` (the item is a plain `div`), so they resolve by role+name and by
   exact text inside the panel's `aside`.
+- **The option markup measured for #1460, on 1.12.0.dev37**, with
+  `Google Generative AI / gemini-embedding-2` enabled (the model
+  `findEmbeddingModel` picks on the suite's own instance — Anthropic is
+  configured but exposes no embeddings model, so it is skipped):
+  `role=option` count 1, accessible name `"gemini-embedding-21 of 1"`,
+  `exact: true` count **0** / loose count 1, unchanged after a 4 s settle;
+  trigger after selection `"gemini-embedding-2"` with no `.sr-only` node, and
+  `Provider: ` rendered. The `data-testid` embeds the provider display name
+  **spaces included** (`Google Generative AI-…-option`), which is why the
+  identity is read from `data-value` first and the testid only as a fallback.
 - **Batch Size is `threshold` on the wire** — the modal's `#memory-batch-size`
   maps to the `threshold` field (default `50` in the model, `1` in the modal).
   Worth knowing before reading a payload and concluding a field is missing.
