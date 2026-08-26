@@ -64,8 +64,8 @@ test.afterEach(async ({ request }) => {
 // ECHO_HOST is derived from the same base URL so the echoed-host assertions
 // match whatever endpoint is configured.
 const ECHO_BASE = (
-  process.env.ECHO_BASE_URL ??
-  process.env.HTTPBIN_BASE_URL ??
+  process.env.ECHO_BASE_URL ||
+  process.env.HTTPBIN_BASE_URL ||
   "https://postman-echo.com"
 ).replace(/\/$/, "");
 const ECHO_HOST = new URL(ECHO_BASE).host;

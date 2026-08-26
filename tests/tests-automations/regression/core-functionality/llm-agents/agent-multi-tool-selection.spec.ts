@@ -59,8 +59,8 @@ if (!process.env.CI) {
 // below holds against either backend. The env-var names match the ones the daily
 // already exports, so no workflow change is needed to pick this up.
 const HTTPBIN_BASE = (
-  process.env.ECHO_BASE_URL ??
-  process.env.HTTPBIN_BASE_URL ??
+  process.env.ECHO_BASE_URL ||
+  process.env.HTTPBIN_BASE_URL ||
   "https://httpbin.org"
 ).replace(/\/$/, "");
 const FETCH_URL = `${HTTPBIN_BASE}/json`;

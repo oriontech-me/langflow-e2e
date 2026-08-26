@@ -66,7 +66,7 @@ export type PrivateEchoEndpoint = { url: string } | { skipReason: string };
  * The returned URL has no trailing slash, so a caller can append a path.
  */
 export function privateEchoEndpoint(env: Record<string, string | undefined>): PrivateEchoEndpoint {
-  const base = (env.ECHO_BASE_URL ?? env.HTTPBIN_BASE_URL ?? "").replace(/\/$/, "");
+  const base = (env.ECHO_BASE_URL || env.HTTPBIN_BASE_URL || "").replace(/\/$/, "");
 
   if (!base) {
     return {

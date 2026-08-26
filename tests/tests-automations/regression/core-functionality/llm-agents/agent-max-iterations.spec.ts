@@ -66,8 +66,8 @@ if (!process.env.CI) {
 // CI resolves ECHO_BASE_URL to the lane's in-network go-httpbin (#1128); locally
 // it falls back to the public host, same contract as agent-multi-tool-selection.
 const ECHO_BASE = (
-  process.env.ECHO_BASE_URL ??
-  process.env.HTTPBIN_BASE_URL ??
+  process.env.ECHO_BASE_URL ||
+  process.env.HTTPBIN_BASE_URL ||
   "https://httpbin.org"
 ).replace(/\/$/, "");
 const TARGET_URL = `${ECHO_BASE}/uuid`;
