@@ -77,15 +77,22 @@ open.
 
 ## Tags *(required)*
 
-`["@api", "@regression"]`
+`["@stable", "@api", "@regression"]`
 
 `@api` for the layer — every call goes through the `request` fixture, no browser. `@regression`
 because the file pins an upstream fix. Same pair as both `security/` siblings; that directory
 is area-by-directory and no functional tag in `CLAUDE.md`'s table names the secret-handling
 surface.
 
-**No `@stable` yet**, per the rule that the tag follows team validation. Strong candidate:
-keyless, no model, one run, a few seconds.
+`@stable` since #1604. It is not carried from the first delivery: this spec shipped without the
+tag under the justification *"per the rule that the tag follows team validation"* — a rule
+`CONTRIBUTING.md` does not have (*"every new test enters with `@stable`… in the PR itself"*), and a
+circular one, since without the tag the spec never enters the daily and so can never accumulate the
+history that justification cites. Promoted on the #1604 pipeline evidence against `1.12.0.dev38`: a 3-run burst at
+`--retries=0 --workers=1` (4/4 each, 2.3 / 2.0 / 1.9 s — the single run lives in `beforeAll`,
+so the whole file costs about what one of the `tweaks-*` siblings does), **4 force-fail
+mutations each verified red and reverted**, and a post-revert green run (4/4, 2.4 s). 0 backend
+errors, 0 skipped.
 
 ---
 

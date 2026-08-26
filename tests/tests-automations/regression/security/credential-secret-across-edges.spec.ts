@@ -170,7 +170,7 @@ test.describe("A credential crossing a graph edge is real to execution and maske
 
   test(
     "the edge delivers the real secret, not the mask",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async () => {
       // THE assertion that fails on the pre-fix build, where `Output.value` held
       // the sanitized copy the edge then read: the downstream would report
@@ -187,7 +187,7 @@ test.describe("A credential crossing a graph edge is real to execution and maske
 
   test(
     "the upstream's own display copy is masked on that same run",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async () => {
       // Simultaneous with the test above by construction: same run, same graph.
       // The node that emitted the real value onto the edge shows only the mask.
@@ -202,7 +202,7 @@ test.describe("A credential crossing a graph edge is real to execution and maske
 
   test(
     "a downstream that re-emits the secret is masked too",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async () => {
       // The metadata-propagation half. This node received the REAL value (its
       // sibling proves the edge delivered it) and re-emitted it — so without the
@@ -217,7 +217,7 @@ test.describe("A credential crossing a graph edge is real to execution and maske
 
   test(
     "the secret appears nowhere in the run response",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async () => {
       // Asserted over the WHOLE payload, not one node's slice: "not in that node"
       // says nothing about the other surfaces the same run writes.

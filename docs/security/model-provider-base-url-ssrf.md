@@ -76,7 +76,7 @@ policy blocks every non-default URL", which would be a different — and also br
 
 ## Tags *(required)*
 
-`["@api", "@regression"]`
+`["@stable", "@api", "@regression"]`
 
 `@api` for the layer — every call goes through the `request` fixture, no browser. `@regression`
 because the file pins two upstream security fixes.
@@ -87,8 +87,21 @@ table names the SSRF surface. `@model-provider` was considered and rejected — 
 provider *configuration* (Settings UI, keys, the model modal), and a reviewer filtering on it would
 get a security spec that never touches those screens.
 
-**No `@stable` yet**, per the rule that the tag is added only after team validation. It is a strong
-candidate: keyless, ~10 s, no model, and the only network it needs is one refused `401`.
+`@stable` since #1604. It is not carried from the first delivery: this spec shipped without the
+tag under the justification *"per the rule that the tag is added only after team validation"* — a
+rule `CONTRIBUTING.md` does not have (*"every new test enters with `@stable`… in the PR itself"*),
+and a circular one, since without the tag the spec never enters the daily and so can never
+accumulate the history that justification cites. Promoted on the #1604 pipeline evidence against `1.12.0.dev38`: a 3-run burst at
+`--retries=0 --workers=1` (6/6 each, 53.7 / 53.9 / 54.6 s), **6 force-fail mutations each
+verified red and reverted**, and a post-revert green run (6/6, 53.4 s). 0 backend errors and
+**0 skipped on every run**, which is the figure that matters here — see the limitation below.
+
+**Known limitation.** The non-vacuity control (*an allow-listed private base URL is admitted*) is
+`test.skip`-gated on a reachable RFC-1918 `ECHO_BASE_URL`. `daily-stable.yml` resolves it in
+`mode: warn`, so a resolution failure there leaves the control **skipped rather than red**, and the
+five refusals remain equally consistent with a policy that blocks every non-default URL. The
+already-`@stable` sibling `security/ssrf-url-validation.spec.ts` carries the identical gate on its
+own control, so this is the accepted precedent for the area, not a new exposure.
 
 ---
 
