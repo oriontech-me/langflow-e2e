@@ -5,6 +5,7 @@ import { createFlow } from "../../../../helpers/flows/create-flow";
 import { deleteFlow } from "../../../../helpers/flows/delete-flow";
 import { openFlowById } from "../../../../helpers/flows/open-flow-by-id";
 import { unmountEditorForCleanup } from "../../../../helpers/flows/unmount-editor-for-cleanup";
+import { selectPinnedModelOption } from "../../../../helpers/provider-setup/model-option";
 
 // Memory Base — registering a memory base end-to-end (QA-CHECKLIST §20.3).
 // Spec doc: docs/core-functionality/memory/memory-base-registration.md
@@ -229,8 +230,13 @@ test.describe("core-functionality/memory — registering a memory base", () => {
     await deleteFlow(request, flowId, { headers: { Authorization: token } });
   });
 
+  // `@stable` was auto-removed by the daily triage (f6f4c398, daily 31786538844)
+  // when the `sr-only` counter broke the option matcher below, and is restored
+  // here — the quarantine lift #1460 asks for. The removal was correct as triage,
+  // but it left no scheduled lane running this test, so the defect was invisible
+  // to the daily and surfaced only on PRs whose diff the import graph reached.
   test("registering a memory base from the Create Memory modal persists it",
-    { tag: ["@release", "@workspace", "@ui-ux", "@model-provider"] },
+    { tag: ["@stable", "@release", "@workspace", "@ui-ux", "@model-provider"] },
     async ({ page, request }) => {
       const choice = await findEmbeddingModel(request, token);
       test.skip(
@@ -257,11 +263,37 @@ test.describe("core-functionality/memory — registering a memory base", () => {
       await test.step("the form is completed with a name and an embedding model", async () => {
         await page.locator("#memory-name").fill(memoryName);
         await page.locator("#memory-embedding-model").click();
-        await page
-          .getByRole("option", { name: embedding.modelId, exact: true })
-          .click();
+
+        // Selected by IDENTITY, never by the option's rendered text, and that is
+        // #1460: since 1.12.0.dev26 every option of the unified model picker
+        // renders its own position inside itself —
+        //
+        //     <div data-testid="Google Generative AI-gemini-embedding-2-option"
+        //          data-value="Google Generative AI::gemini-embedding-2"
+        //          role="option">
+        //       <div class="truncate text-[13px]">gemini-embedding-2</div>
+        //       <span class="sr-only">1 of 1</span>
+        //     </div>
+        //
+        // The span is invisible to a user but part of both `textContent` and the
+        // accessible name, so `getByRole("option", { name, exact: true })` counts
+        // ZERO (measured on 1.12.0.dev37; the loose matcher counts 1) and the
+        // click this used to make died on a 20 s timeout. The counter is intended
+        // product behaviour — unchanged after a 4 s settle, so not a mid-update
+        // artefact — and `data-value` carries `{Provider}::{model}` exactly, so
+        // the helper resolves the option there and clicks it by identity. It
+        // raises a loud MODEL_PICKER_DEFECT when the picker contradicts the API
+        // probe above rather than degrading into a skip (#1461).
+        await selectPinnedModelOption(page, {
+          requested: embedding.modelId,
+          providerLabel: embedding.provider,
+        });
+
         // Both halves of "a model is chosen": the trigger carries the id, and
-        // the `Provider:` line renders only once one is.
+        // the `Provider:` line renders only once one is. Asserted unweakened —
+        // the trigger is the half that was CORRECT all along (measured: it reads
+        // exactly the model id, with no `sr-only` descendant of its own), so this
+        // still fails if the trigger shows a model other than the one selected.
         await expect(page.locator("#memory-embedding-model")).toHaveText(
           embedding.modelId,
           { timeout: 15000 },
