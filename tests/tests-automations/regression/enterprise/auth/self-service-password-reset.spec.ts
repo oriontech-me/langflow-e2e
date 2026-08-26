@@ -12,21 +12,31 @@ import {
  * `credential-lifecycle` covers the forced rotation — the gate that holds a
  * bootstrapped superuser, the minimum it enforces, and the token it invalidates.
  * `PATCH /api/v1/users/{user_id}/reset-password` is the path a user calls for
- * themselves, and nothing covered it. Two paths onto one credential is how a
- * policy ends up applying to one of them, and here it does: the forced path
- * declares `new_password` with `minLength: 8` and enforces it, while this one
- * declares no minimum and accepts a ONE-CHARACTER password (#1558).
+ * themselves, and nothing covered it. It is OSS (`langflow/api/v1/users.py`),
+ * unchanged by Enterprise, and it makes exactly THREE refusals: a wrong current
+ * password, the current password offered as the new one, and a reset aimed at
+ * somebody else. All three are asserted here.
  *
- * The behaviours it gets right are asserted alongside, so a fix cannot regress
- * them: proof of possession, and a cross-user attempt that is refused AND leaves
- * the target's credential untouched.
+ * Two things are measured and asserted in NEITHER direction, because pinning
+ * either would settle a product question by assertion.
  *
- * One asymmetry is deliberately asserted in NEITHER direction. The forced
- * rotation invalidates the token that performed it; this path does not. Keeping
- * the current session alive while revoking others is a legitimate product choice,
- * so pinning today's answer would settle a product question by assertion — and
- * asserting the opposite would fail a build that never claimed otherwise. It is
- * recorded in #1558 and in the spec doc.
+ * The first is the absent length minimum. This route accepts a ONE-CHARACTER
+ * password with 200 while the forced path declares `minLength: 8`, and that was
+ * filed as a defect (#1558) on the reading that the minimum had been added to one
+ * model and not the other. The product's own source refutes that reading: EE's
+ * `ForcePasswordChangeRequest` carries a comment stating the floor is deliberate
+ * and scoped to that flow, "not inherited from an existing convention", and
+ * recording that OSS's reset-password "validates nothing beyond 'differs from the
+ * current password'". It is the only password minimum in the Enterprise tree, and
+ * a THIRD path has none either — the CLI `langflow admin reset-password` refuses
+ * only an EMPTY password. The spec doc carries the measurement, including the
+ * part worth putting to the product rather than asserting: the declared rationale
+ * names an admin/break-glass recovery flow, and the CLI IS that flow.
+ *
+ * The second is token lifetime. The forced rotation invalidates the token that
+ * performed it; this path does not. Keeping the current session alive while
+ * revoking others is a legitimate product choice, so the assertion below states
+ * only what is true today and is never the reason a build fails.
  *
  * The target of the cross-user attempt is a second throwaway account, never the
  * superuser. An earlier version of this measurement aimed it at the lane's own
@@ -103,29 +113,23 @@ test.describe("Enterprise — the self-service password reset", () => {
   );
 
   test(
-    "the minimum length applies here as it does to the forced rotation",
+    "the current password cannot be offered as the new one",
     { tag: ["@enterprise", "@api", "@regression", "@auth"] },
     async ({ request }) => {
-      // EXPECTED RED (#1558). `account/force-password-change` declares
-      // `minLength: 8` and refuses anything shorter; this route declares no
-      // minimum and answers 200, leaving the account on a one-character
-      // password. Any user can downgrade their own credential below the policy
-      // every bootstrapped account is put through.
-      const tooShort = await request.patch(RESET_PATH(actor.id), {
+      // The route's only CONTENT rule, and the one nothing covered until
+      // #1558's re-measurement — which is what replaced the minimum-length
+      // assertion this test used to carry. Deliberately order-independent: it
+      // reads `actor.password`, which `beforeAll` seeds and the test above keeps
+      // in sync, so neither declaration order nor a worker split can change
+      // what it measures.
+      const reuse = await request.patch(RESET_PATH(actor.id), {
         headers: { Authorization: actor.auth },
-        data: { current_password: actor.password, password: "x" },
+        data: { current_password: actor.password, password: actor.password },
       });
-      expect(tooShort.status()).toBeGreaterThanOrEqual(400);
-
-      // Leave the account usable whatever the answer was, so the ordering of
-      // these two tests cannot change what the other one measures.
-      if (tooShort.ok()) {
-        const restore = await request.patch(RESET_PATH(actor.id), {
-          headers: { Authorization: actor.auth },
-          data: { current_password: "x", password: actor.password },
-        });
-        expect(restore.status(), await restore.text()).toBe(200);
-      }
+      expect(reuse.status()).toBe(400);
+      expect(((await reuse.json()) as { detail: string }).detail).toBe(
+        "You can't use your current password",
+      );
     },
   );
 
