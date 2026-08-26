@@ -129,7 +129,7 @@ test.describe("Model-provider base URLs go through the connector SSRF policy", (
 
   test(
     "a loopback base URL is refused, naming every address the name resolves to",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       const { text } = await runWith(request, OPENAI_MODEL, LOOPBACK_BY_NAME);
 
@@ -149,7 +149,7 @@ test.describe("Model-provider base URLs go through the connector SSRF policy", (
 
   test(
     "the cloud-metadata address is refused",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       const { text } = await runWith(request, OPENAI_MODEL, CLOUD_METADATA);
 
@@ -160,7 +160,7 @@ test.describe("Model-provider base URLs go through the connector SSRF policy", (
 
   test(
     "a non-http(s) scheme is refused, naming the scheme",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // A different branch of the validator from the two above: this one never gets
       // as far as resolving a host, so a regression could plausibly close the
@@ -175,7 +175,7 @@ test.describe("Model-provider base URLs go through the connector SSRF policy", (
 
   test(
     "the same policy guards the Anthropic component through its differently-named field",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // OpenAI's field is `openai_api_base`; Anthropic's is `base_url`. #14704
       // exists because a per-component fix missed a call site, so a spec that
@@ -196,7 +196,7 @@ test.describe("Model-provider base URLs go through the connector SSRF policy", (
 
   test(
     "an allow-listed private base URL is admitted through the provider seam",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // The non-vacuity control for every refusal above: without it they are equally
       // consistent with "the policy blocks every non-default URL", which would be a
@@ -221,7 +221,7 @@ test.describe("Model-provider base URLs go through the connector SSRF policy", (
 
   test(
     "the provider's own endpoint skips the policy on both components",
-    { tag: ["@api", "@regression"] },
+    { tag: ["@stable", "@api", "@regression"] },
     async ({ request }) => {
       // `_is_provider_default` treats an empty value AND the provider's canonical
       // endpoint as nothing to constrain: no client minted, no DNS round trip.
