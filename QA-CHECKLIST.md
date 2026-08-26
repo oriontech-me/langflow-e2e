@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-25
+> **Last updated:** 2026-08-26
 
 ---
 
@@ -1319,13 +1319,13 @@
 | `mcp/server/` | 16 | 13 | 1 | 1 | 1 |
 | `ui-ux/` — Canvas | 44 | 40 | 0 | 4 | 0 |
 | `ui-ux/` — Settings | 7 | 6 | 0 | 1 | 0 |
-| `security/` — Validation, SSRF, Secrets | 29 | 10 | 13 | 1 | 5 |
+| `security/` — Validation, SSRF, Secrets | 29 | 20 | 3 | 1 | 5 |
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces | 71 | 0 | 56 | 9 | 6 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL** | **660** | **441 (67%)** | **125 (19%)** | **25 (4%)** | **69 (10%)** |
+| **TOTAL** | **660** | **451 (68%)** | **115 (17%)** | **25 (4%)** | **69 (10%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1341,7 +1341,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 520 `test()` calls carrying the `@stable` tag, distributed across 203 spec
+> 530 `test()` calls carrying the `@stable` tag, distributed across 205 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1842,8 +1842,18 @@
 - [x] PATCH updates a registered server, merges at the top level, and refuses to rename it → `mcp-server.spec.ts`
 
 #### security/
+- [x] the edge delivers the real secret, not the mask → `credential-secret-across-edges.spec.ts`
+- [x] the upstream's own display copy is masked on that same run → `credential-secret-across-edges.spec.ts`
+- [x] a downstream that re-emits the secret is masked too → `credential-secret-across-edges.spec.ts`
+- [x] the secret appears nowhere in the run response → `credential-secret-across-edges.spec.ts`
 - [x] the trace detail masks the credential whatever the secret field is called → `credential-secret-exposure.spec.ts`
 - [x] the run resolves the credential without echoing it → `credential-secret-exposure.spec.ts`
+- [x] a loopback base URL is refused, naming every address the name resolves to → `model-provider-base-url-ssrf.spec.ts`
+- [x] the cloud-metadata address is refused → `model-provider-base-url-ssrf.spec.ts`
+- [x] a non-http(s) scheme is refused, naming the scheme → `model-provider-base-url-ssrf.spec.ts`
+- [x] the same policy guards the Anthropic component through its differently-named field → `model-provider-base-url-ssrf.spec.ts`
+- [x] an allow-listed private base URL is admitted through the provider seam → `model-provider-base-url-ssrf.spec.ts`
+- [x] the provider's own endpoint skips the policy on both components → `model-provider-base-url-ssrf.spec.ts`
 - [x] a loopback address is refused, and the refusal names the allow-list → `ssrf-url-validation.spec.ts`
 - [x] a blocked address the allow-list does not cover is refused the same way → `ssrf-url-validation.spec.ts`
 - [x] an address inside a blocked range is admitted when a CIDR entry covers it → `ssrf-url-validation.spec.ts`
