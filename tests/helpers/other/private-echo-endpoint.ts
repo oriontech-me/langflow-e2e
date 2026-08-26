@@ -14,11 +14,16 @@
  * `validators.url()` rejects a single-label host). Locally there may be none, so
  * the caller `test.skip`s with the reason this module returns.
  *
- * **Canonical home, with one migration outstanding.**
- * `security/ssrf-url-validation.spec.ts` (#1391) carries an inline copy of both
- * functions — it is the file they were written in. Migrating it here is a
- * deliberate follow-up rather than part of #1595: that spec's four tests would
- * otherwise enter #1595's force-fail scope for no behavioural change.
+ * **Canonical home, and the only copy** (#1599). The functions were written in
+ * `security/ssrf-url-validation.spec.ts` (#1391) and extracted here by #1595,
+ * which left that spec's inline copy in place rather than dragging its four tests
+ * into its own force-fail scope; #1599 migrated it. Both consumers now import
+ * from here — that spec's admitted case, and
+ * `security/model-provider-base-url-ssrf.spec.ts`'s non-vacuity control on the
+ * provider seam. Keep it that way: the load-bearing branch is that a PUBLIC host
+ * is *skipped* rather than accepted, and a second copy is the shape where a
+ * tightening reaches one caller and not the other (#1108's 51 hand-copied
+ * cleanup blocks are the precedent).
  */
 
 /**
@@ -27,6 +32,11 @@
  *
  * A hostname answers **false**: this cannot know what a name resolves to, and
  * guessing is how a public endpoint would slip in as the admitted case.
+ *
+ * Deliberately wider than `isPrivateIpv4` in `scripts/resolve-echo-endpoint.mjs`,
+ * which answers a different question (may this endpoint need the allow-list?) and
+ * covers RFC-1918 only. Here the question is whether a 200 is attributable to the
+ * allow-list, which is true for every range the guard blocks by default.
  */
 export function isBlockedRangeIpv4(host: string): boolean {
   const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host ?? "");

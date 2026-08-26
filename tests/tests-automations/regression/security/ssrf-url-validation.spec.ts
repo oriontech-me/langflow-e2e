@@ -3,6 +3,7 @@ import { expect, test } from "../../../fixtures/fixtures";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { createApiRequestFlowViaApi } from "../../../helpers/flows/create-api-request-flow-via-api";
 import { openFlowById } from "../../../helpers/flows/open-flow-by-id";
+import { privateEchoUrl } from "../../../helpers/other/private-echo-endpoint";
 
 /**
  * SSRF allow-list round trip on a URL-fetching component (issue #1391).
@@ -47,70 +48,6 @@ const LOOPBACK_URL = "http://127.0.0.1:7860/api/v1/version";
 // stays refused on the very instance where Test 3's private address goes
 // through — which is what makes Test 3's 200 attributable to the allow-list.
 const METADATA_URL = "http://169.254.169.254/latest/meta-data/";
-
-// The echo endpoint each CI lane self-hosts; `resolve-echo-endpoint` sets this to
-// the go-httpbin CONTAINER IP (a private RFC-1918 address), which the lane's
-// `LANGFLOW_SSRF_ALLOWED_HOSTS` CIDRs admit. Unset (or public) means the accept
-// arm has nothing to prove — see `privateEchoUrl()`.
-const ECHO_BASE = (
-  process.env.ECHO_BASE_URL ??
-  process.env.HTTPBIN_BASE_URL ??
-  ""
-).replace(/\/$/, "");
-
-/**
- * The ranges `lfx/utils/ssrf_protection.py` blocks by default and that a lane may
- * allow-list. Only these prove anything: a PUBLIC echo host is reachable with or
- * without an allow-list, so asserting a 200 against it would pass on an instance
- * that ignores `LANGFLOW_SSRF_ALLOWED_HOSTS` entirely.
- *
- * Deliberately wider than `isPrivateIpv4` in `scripts/resolve-echo-endpoint.mjs`,
- * which answers a different question (may this endpoint need the allow-list?) and
- * covers RFC-1918 only. Here the question is whether a 200 is attributable to the
- * allow-list, which is true for every range the guard blocks by default.
- */
-function isBlockedRangeIpv4(host: string): boolean {
-  const match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host ?? "");
-  if (!match) return false;
-  const parts = match.slice(1).map(Number);
-  if (parts.some((p) => p > 255)) return false;
-  const [a, b] = parts;
-  return (
-    a === 10 || // 10.0.0.0/8
-    a === 127 || // 127.0.0.0/8 (loopback)
-    (a === 172 && b >= 16 && b <= 31) || // 172.16.0.0/12
-    (a === 192 && b === 168) || // 192.168.0.0/16
-    (a === 169 && b === 254) || // 169.254.0.0/16 (link-local / metadata)
-    (a === 100 && b >= 64 && b <= 127) // 100.64.0.0/10 (CGNAT)
-  );
-}
-
-/** `${ECHO_BASE}/get` when the echo host is an address the guard blocks by default. */
-function privateEchoUrl(): { url: string } | { skipReason: string } {
-  if (!ECHO_BASE) {
-    return {
-      skipReason:
-        "ECHO_BASE_URL/HTTPBIN_BASE_URL is unset, so there is no private endpoint whose " +
-        "reachability could only come from LANGFLOW_SSRF_ALLOWED_HOSTS. Every CI lane sets it " +
-        "via .github/actions/resolve-echo-endpoint; locally see docs/security/ssrf-url-validation.md.",
-    };
-  }
-  let host: string;
-  try {
-    host = new URL(ECHO_BASE).hostname;
-  } catch {
-    return { skipReason: `ECHO_BASE_URL is not a URL: ${ECHO_BASE}` };
-  }
-  if (!isBlockedRangeIpv4(host)) {
-    return {
-      skipReason:
-        `the echo endpoint resolved to ${ECHO_BASE}, whose host is not an address Langflow blocks ` +
-        "by default (a public host, or a name rather than an IP). Reaching it proves nothing about " +
-        "the allow-list, so this test would be vacuous rather than green.",
-    };
-  }
-  return { url: `${ECHO_BASE}/get` };
-}
 
 /** The component's own result object inside a `POST /api/v1/run/{id}` response. */
 interface ApiRequestResult {
@@ -270,7 +207,9 @@ test.describe("SSRF URL validation — allow-list round trip", () => {
         "skipReason" in echo,
         "skipReason" in echo ? echo.skipReason : "",
       );
-      const url = (echo as { url: string }).url;
+      // The helper answers with the base URL only — the path is this spec's own, and
+      // `/get` is the go-httpbin route that echoes the request back.
+      const url = `${(echo as { url: string }).url}/get`;
 
       let flowId = "";
       await test.step(`create a flow targeting the allow-listed private endpoint ${url}`, async () => {
