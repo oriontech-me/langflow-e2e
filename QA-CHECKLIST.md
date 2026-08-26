@@ -1305,7 +1305,7 @@
 |--------|-------|-----------------|------------------------|---------------------|---------------------|
 | `api/flows/` — REST API | 37 | 28 | 8 | 1 | 0 |
 | `core-components/` — Component Config | 27 | 24 | 3 | 0 | 0 |
-| `core-components/` — Core Components | 91 | 87 | 3 | 0 | 1 |
+| `core-components/` — Core Components | 92 | 88 | 3 | 0 | 1 |
 | `core-functionality/auth/` | 23 | 21 | 2 | 0 | 0 |
 | `core-functionality/knowledge-ingestion/` | 8 | 8 | 0 | 0 | 0 |
 | `core-functionality/llm-agents/` | 40 | 33 | 3 | 1 | 3 |
@@ -1326,7 +1326,7 @@
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
 | `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 71 | 0 | 56 | 9 | 6 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
-| **TOTAL (OSS — excludes `enterprise/`)** | **589** | **451 (77%)** | **59 (10%)** | **16 (3%)** | **63 (11%)** |
+| **TOTAL (OSS — excludes `enterprise/`)** | **590** | **452 (77%)** | **59 (10%)** | **16 (3%)** | **63 (11%)** |
 
 > Note: `Validated [x]` counts checklist bullets, not `test()` calls. The
 > `@stable` tag is per-`test()`, and a single `@stable` test may map to
@@ -1342,7 +1342,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 530 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 532 `test()` calls carrying the `@stable` tag, distributed across 205 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1456,6 +1456,8 @@
 - [x] the system must delete the handles from advanced fields when the code is updated → `general-bugs-delete-handle-advanced-input.spec.ts`
 - [x] any changes on the node must be saved on user interaction → `general-bugs-save-changes-on-node.spec.ts`
 - [x] Human Input renders the default Approve and Reject branch handles when added to the canvas → `human-input-node-config.spec.ts`
+- [x] adding a custom User Action creates its branch handle without a reload → `human-input-node-config.spec.ts`
+- [x] a stale refresh response does not revert a committed User Action → `human-input-node-config.spec.ts`
 - [x] the configured branch handles persist after save and reload → `human-input-node-config.spec.ts`
 - [x] If-Else routes matching input through the True branch and skips the False branch → `if-else-component-regression.spec.ts`
 - [x] If-Else routes non-matching input through the False branch and skips the True branch → `if-else-component-regression.spec.ts`
