@@ -4,8 +4,8 @@ description: >-
   Use when the task concerns the E2E suite's INFRASTRUCTURE layer rather than
   test authoring (oriontech-me/langflow-e2e) — CI workflows
   (.github/workflows/*), scripts/*, playwright.config.ts, reports/ run-history,
-  the VM runner scripts, or a qa-infra-labelled GitHub
-  issue. Triggers: "otimiza/melhora a
+  the daily's off-Actions reporting scripts, or a qa-infra-labelled GitHub issue.
+  Triggers: "otimiza/melhora a
   infra dos testes", "resolve a issue qa-infra #NNN", daily slowdown, single-
   backend saturation, sharding, low-concurrency lane, collect-models skips/403,
   flaky-under-load, CI runner sizing, pre-flight gate, LLM mocking, external-
@@ -94,7 +94,7 @@ Trigger: `/langflow-e2e-infra`, "audita a infra", "onde melhorar a infra".
    - workflows (`.github/workflows/*`), scripts, `playwright.config.ts` knobs;
    - recent daily durations + failure counts — `reports/daily-history.jsonl`
      (schema in `reports/README.md`; example `jq` queries there);
-   - open `qa-infra` issues — `gh issue list --label qa-infra --state open`;
+   - open `qa-infra` issues — `gh issue list --label qa-infra --state open`.
 2. **Rank** improvement opportunities by leverage against the failure-mode index
    (`references/failure-modes.md`). Prefer levers that cut recurring pain
    (saturation, silent skips, external-dep hard-fails) over cosmetic wins.

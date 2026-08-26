@@ -157,7 +157,6 @@ updates:
         versions:
           - ">=6"
 
-
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
