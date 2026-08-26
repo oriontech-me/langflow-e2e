@@ -294,6 +294,7 @@
 
 #### 3.9 Human Input (HITL, 1.11.0)
 - [x] Human Input node config: default Approve/Reject branch handles, custom User Action creates a new handle, configured handles persist after save + reload → `core-components/human-input-node-config.spec.ts`
+- [x] Human Input stale-refresh guard: an on-mount `decisions` refresh response released across the commit does not revert the just-added User Action — chips and branch handles stay in agreement (LE-2278, upstream `langflow-ai/langflow#14741`) → `core-components/human-input-node-config.spec.ts`
 
 #### 3.10 Data Operations (1.11.0)
 - [x] Data Operations component: unified JSON/Table/Text operations produce correct outputs per operation mode (Text→Message, Word Count→JSON override, JSON Select Keys, Table Filter) → `core-components/data-operations-component.spec.ts`

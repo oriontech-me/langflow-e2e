@@ -2,7 +2,8 @@
 
 **Test file:** `tests/tests-automations/regression/core-components/human-input-node-config.spec.ts`
 
-**Last validated:** Langflow 1.12.x (scouted on `1.12.0.dev10`)
+**Last validated:** Langflow 1.12.x (scouted on `1.12.0.dev10`; the live-rebuild test
+re-validated on `1.12.0.dev39`, the first nightly carrying the LE-2278 fix)
 
 ---
 
@@ -11,7 +12,7 @@
 Confirms the **configuration surface** of the `Human Input` node shipped with Langflow
 1.11.0 (upstream `langflow-ai/langflow#13633`, LE-1449): the node's **branch outputs are
 derived from its `User Choices` field**, one handle per choice, and that derivation
-holds on three occasions.
+holds on four occasions.
 
 1. **On add** — a freshly added node presents **exactly** the two default branch handles
    (`Approve`, `Reject`), before any field is touched: both present, and no third branch
@@ -27,6 +28,16 @@ holds on three occasions.
 2. **On change (live)** — adding a custom choice creates its branch handle **without a
    reload**: the `real_time_refresh` field round-trips through
    `POST /api/v1/custom_component/update` and the node re-renders with the new handle.
+   **This step is also a regression guard (LE-2278).** The same `real_time_refresh` wiring
+   fires an on-mount refresh for `decisions`, and until
+   `langflow-ai/langflow#14741` a response computed *before* the user's commit was applied
+   *after* it, silently reverting the just-added choice: `decisions` went back to
+   `["Approve", "Reject"]` — the chip vanished with no toast — while the node kept
+   rendering the third branch handle. The node was left **mixed** (two chips, three
+   handles) and autosave persisted the reverted value over the user's work. Caught twice
+   by the daily on loaded CI shards (2026-08-13, 2026-08-21) as *the chip's own edit row
+   never entered the DOM*, so the step asserts the choice both **arrives** and **stays**
+   once the refresh round trip has settled.
 3. **After save + reload** — the configured choices and their handles survive a full page
    load. **Two** mechanisms can rebuild them — `update_frontend_node()` on the backend and
    the frontend's own on-mount round trip — so the spec asserts the **observable** (the
@@ -34,6 +45,13 @@ holds on three occasions.
    is that the reload actually happened: a `window` sentinel set before it must be gone
    after, because every DOM assertion in that step is *also* satisfied by the pre-reload
    page, so a silently-cancelled navigation would otherwise pass it.
+4. **Against a stale refresh response** — a choice committed while the node's on-mount
+   refresh is still in flight survives that response landing. This is LE-2278 turned into a
+   **deterministic** oracle: the on-mount response is held with `page.route` until just
+   after the commit, then released into the window the bug needed. Test 2's re-read catches
+   the same defect but only when the response happens to lag, which never happens on an
+   idle box — the pre-fix rate there is 0 in 10 locally against 2 hits in 30 days on the
+   8-worker daily. Holding the response makes the guard fire every run, on any machine.
 
 The custom choice is deliberately a **two-word label** (`Request Changes`), because the
 label→handle mapping is where the two ends of this feature have to agree: the backend
@@ -52,11 +70,19 @@ This spec never runs the flow, so it needs **no LLM provider**.
 ## Tags
 
 `@stable` `@components` `@ui-ux` — plus `@database` on the persistence test, which
-asserts state read back from the flows API after a reload.
+asserts state read back from the flows API after a reload, and `@regression` on the
+live-rebuild test and the stale-refresh test.
 
 No functional tag maps to HITL today; `@ui-ux` is used because every assertion here is
-made against the node's configuration UI. `@regression` is deliberately **absent**: this
-is first-time coverage of a new feature, not a previously fixed bug.
+made against the node's configuration UI.
+
+`@regression` is scoped to **two** tests on purpose. The file began as first-time coverage
+of a new feature, which is why the tag was absent everywhere; the live-rebuild test earned
+it by catching a real one — the stale-refresh revert filed as
+[LE-2278](https://datastax.jira.com/browse/LE-2278) and fixed upstream in
+`langflow-ai/langflow#14741` — and the stale-refresh test exists only to guard that fix.
+The add-time and persistence tests still guard no previously fixed bug and stay untagged
+for it.
 
 ---
 
@@ -99,6 +125,12 @@ is first-time coverage of a new feature, not a previously fixed bug.
    `action-edit-Request Changes` is rendered.
 5. Assert the output-handle count is now `3`, and that the two defaults are still there
    (adding a choice adds a branch; it does not replace the existing ones).
+6. **Assert the choice stays** (LE-2278 guard): wait for the field's refresh round trip to
+   go quiet, then re-assert the chip and the handle count. A point-in-time `toBeVisible`
+   is satisfied by a value that is about to be reverted — under LE-2278 the chip rendered
+   from local state and a late on-mount response removed it — so the reverted **mixed**
+   state (two chips, three handles) is only caught by reading the chip again after the
+   refresh has settled. The re-read is the assertion; a bare wait would not be.
 
 **Test 3 — configured handles persist after save + reload**
 1. Add the node and the `Request Changes` choice (Test 2's steps 1–3).
@@ -119,6 +151,35 @@ is first-time coverage of a new feature, not a previously fixed bug.
    `action-edit-Reject`, `action-edit-Request Changes`) and all three branch handles, with
    the output-handle count back at `3`.
 
+**Test 4 — a stale refresh response does not revert a committed choice (LE-2278)**
+1. Install a `page.route` on `**/api/v1/custom_component/update` **before** the node is
+   added. It claims the **first** request whose body has `field: "decisions"` and a
+   `field_value` of length `2` — the on-mount refresh, measured on `1.12.0.dev39` as
+   firing ~230 ms after the node lands, carrying `["Approve", "Reject"]`. Every other
+   request on that route, including the commit's own `["Approve", "Reject", "Request
+   Changes"]`, passes straight through with `route.continue()`.
+2. For the claimed request: `route.fetch()` to obtain the real response, flag it **parked**,
+   then `await` a gate promise the test opens later, and only then `route.fulfill({ response })`.
+   Fetching before parking is what makes the release deterministic — parking the *route* and
+   fetching at release time leaves the response arriving after the window has already closed
+   (measured: the first attempt at this released nothing, because `route.fetch()` had not
+   resolved yet, which silently degraded the test into the *aborted-response* control where
+   the add always sticks).
+3. Add the node, then `expect.poll` until the parked flag is set — the on-mount response is
+   now held, and the guarded window is open.
+4. Add the `Request Changes` choice (Test 2's steps 2–3).
+5. Wait ~150 ms after the `Enter`, then open the gate. This lands the stale response
+   **between** the commit and the commit's own refresh response — the only one of the four
+   deliveries that reverts (delivered before the commit, or after that refresh response
+   applied, is harmless; never delivered at all is the control where the add sticks).
+6. Assert the choice **survived**: the chip `action-edit-Request Changes` is visible, the
+   node renders exactly `3` choice chips, and the output-handle count is `3`. The chip count
+   is asserted alongside the handle count because the defect's signature is the two
+   **disagreeing** — chips `[Approve, Reject]` with three handles — which asserting handles
+   alone cannot see.
+7. `page.unroute` the endpoint before the hook's cleanup navigation, so a late refresh
+   during teardown is not held by a gate nobody will open.
+
 **afterEach (all tests)**
 1. `page.goto("/")` to unmount the editor (an editor left mounted over a deleted flow
    404s its `GET /flows/{id}/events` poll, which the fixture logs as a backend error),
@@ -135,7 +196,8 @@ is first-time coverage of a new feature, not a previously fixed bug.
 | Test | Criterion |
 |---|---|
 | Human Input renders the default Approve and Reject branch handles when added to the canvas | `handle-humaninput-shownode-approve-right` **and** `handle-humaninput-shownode-reject-right` visible, with the node's output-handle count exactly `2` |
-| adding a custom User Action creates its branch handle without a reload | after committing `Request Changes` in `action-add-input`, `handle-humaninput-shownode-request changes-right` becomes visible on the same page and the output-handle count goes `2` → `3` |
+| adding a custom User Action creates its branch handle without a reload | after committing `Request Changes` in `action-add-input`, `handle-humaninput-shownode-request changes-right` becomes visible on the same page and the output-handle count goes `2` → `3` — **and both survive the refresh round trip settling**: the chip `action-edit-Request Changes` is still rendered and the count is still `3` once `POST /api/v1/custom_component/update` has gone quiet, so the LE-2278 mixed state (chips `[Approve, Reject]` + three handles) fails the test |
+| a stale refresh response does not revert a committed choice (LE-2278) | with the on-mount `custom_component/update` response held and released ~150 ms after the `Request Changes` commit, the chip `action-edit-Request Changes` is still visible, the node renders exactly `3` chips **and** `3` output handles. Measured A/B on the same host, same script: `1.12.0.dev38` (pre-fix) → `chips=2, handles=3, chip hidden`; `1.12.0.dev39` (post-fix) → `chips=3, handles=3, chip visible` |
 | the configured branch handles persist after save and reload | `GET /api/v1/flows/{id}` reports the node's `outputs` names as exactly `branch_approve, branch_reject, branch_request_changes`; the `window.__reloadSentinel` marker is gone after `page.reload()` (the navigation really happened); and the three chips and three handles render again |
 
 ---
@@ -157,9 +219,25 @@ is first-time coverage of a new feature, not a previously fixed bug.
 - **`POST /api/v1/custom_component/update`** — the round trip behind the live rebuild
   (`real_time_refresh` on `decisions`). Not asserted directly: the DOM assertion is the
   user-visible outcome, and pinning the endpoint would couple the spec to a refresh
-  mechanism upstream may change.
+  mechanism upstream may change. It **is** used as a timing signal for the LE-2278 guard —
+  the spec waits for it to go quiet before re-reading the chip — which is a weaker
+  coupling than asserting its payload: the endpoint going away would make the wait a no-op,
+  not a false pass, because the re-read still runs.
+- **The staleness guard the LE-2278 fix added** —
+  `src/frontend/src/CustomNodes/helpers/mutate-template.ts` (`keepUserEdits`, which keeps a
+  locally edited field value over an older in-flight refresh response), reached from
+  `src/frontend/src/controllers/API/queries/nodes/use-post-template-value.ts`. Its absence
+  is what the guard step detects: before the fix a local edit made through
+  `src/frontend/src/CustomNodes/hooks/use-handle-new-value.ts` never stamped
+  `last_updated`, so any in-flight response passed the response-vs-response ordering check
+  and replaced the whole template.
 - **`GET /api/v1/flows/{id}`** with a Bearer token (`helpers/auth/get-auth-token.ts`) —
   the persistence oracle.
+- **The refresh request body**, for telling the on-mount call apart from the commit's own.
+  Measured on `1.12.0.dev39`: keys `code, template, field, field_value, tool_mode`, with
+  the field name under **`field`** (not `field_name`). The two calls are distinguished by
+  `field_value` length — `2` on mount, `3` after the commit — rather than by order, so a
+  build that fires an extra refresh cannot silently shift which one is held.
 - **Helpers** — `helpers/flows/setup-blank-flow.ts`,
   `helpers/flows/add-component-from-sidebar.ts`, `helpers/flows/delete-flow.ts`.
 
@@ -194,3 +272,21 @@ is first-time coverage of a new feature, not a previously fixed bug.
   rebuild from masking the persistence check.
 - Sibling reference for shape: `core-components/singleton-components.spec.ts` (blank flow
   + sidebar add + node assertions + id-scoped cleanup).
+- **The live-rebuild test was quarantined and is not any more.** It flaked on the
+  2026-08-13 and 2026-08-21 dailies (`action-edit-Request Changes` never entering the DOM),
+  was quarantined at triage as `test.fixme` with `@stable` removed, and root-caused to
+  LE-2278 rather than to its wait strategy: the window is `[the user's commit → that
+  commit's own refresh response applying]`, roughly the 300 ms debounce plus one round
+  trip, so it needs the on-mount response to lag ~1 s — rare locally (a 10-run baseline
+  never reproduced it), recurrent on a loaded 8-worker shard. The quarantine was lifted
+  once the fix reached the nightly (`1.12.0.dev39`); the mechanism, the deterministic
+  `page.route` reproduction and the ledger entry live in `REGRESSIONS.md` and issue #1547.
+- **The stale-refresh test was A/B'd across the fix boundary, not just run green.** The
+  same script against two nightlies on the same host: `1.12.0.dev38` reproduced the defect
+  (`chips=2, handles=3`, chip gone — the mixed state from the daily's attempt-0 screenshot)
+  and `1.12.0.dev39` did not (`chips=3, handles=3`). A test that only ever ran on the fixed
+  build would not have shown it can fail.
+- **Test 1's scope caveat is unchanged by that fix.** Isolating the component's hardcoded
+  `outputs` fallback still needs a different oracle — the fix stops a stale response from
+  overwriting a *user edit*, it does not stop the on-mount refresh from rebuilding the
+  handles.
