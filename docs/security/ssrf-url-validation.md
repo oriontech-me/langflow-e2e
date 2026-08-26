@@ -116,10 +116,13 @@ Test 4 uses the canvas. Every flow is created id-scoped and deleted in `afterEac
 
 **Test 3 — an address inside a blocked range is admitted when a CIDR entry covers it** *(`@api`)*
 
-1. **Precondition, asserted not assumed:** `ECHO_BASE_URL` is set and its host is a literal IPv4 in
-   a blocked-by-default range (RFC-1918, loopback, link-local or CGNAT). If it is not — no echo
-   service, or the lane fell back to the public `postman-echo.com` — `test.skip` with the resolved
-   value in the reason, because a public host proves nothing about the allow-list.
+1. **Precondition, asserted not assumed**, and resolved by the shared
+   `tests/helpers/other/private-echo-endpoint.ts` rather than by logic local to this file:
+   `ECHO_BASE_URL` is set and its host is a literal IPv4 in a blocked-by-default range (RFC-1918,
+   loopback, link-local or CGNAT). If it is not — no echo service, or the lane fell back to a public
+   host — the helper returns a `skipReason` naming the resolved value and the test `test.skip`s on
+   it, because a public host proves nothing about the allow-list. The helper answers with the base
+   URL only; the `/get` path is this spec's own.
 2. Create the flow with `url_input = ${ECHO_BASE_URL}/get` and run it.
 3. Assert **200**, and that the run output carries `status_code: 200` and `source` equal to the URL
    requested — the request really left the backend and came back.
@@ -229,8 +232,14 @@ Test 4 uses the canvas. Every flow is created id-scoped and deleted in `afterEac
 - `tests/helpers/flows/delete-flow.ts` — id-scoped teardown.
 - `tests/helpers/flows/open-flow-by-id.ts` — Test 4's canvas entry (`canvas_controls_dropdown` +
   writability gate), avoiding the sidebar-add race.
+- `tests/helpers/other/private-echo-endpoint.ts` — the canonical `ECHO_BASE_URL` guard
+  (`isBlockedRangeIpv4` + `privateEchoUrl`): decides whether the resolved endpoint is an address
+  Langflow blocks by default, and returns the skip reason when it is not. Shared with
+  `security/model-provider-base-url-ssrf.spec.ts`, which asserts the same non-vacuity control
+  through the provider seam.
 - `ECHO_BASE_URL` — resolved per lane by `.github/actions/resolve-echo-endpoint`
-  (`scripts/resolve-echo-endpoint.mjs`); Test 3 reads it and skips when it is not a private IP.
+  (`scripts/resolve-echo-endpoint.mjs`); Test 3 reads it through the helper above and skips when it
+  is not a private IP.
 - `src/lfx/src/lfx/utils/ssrf_protection.py` — `validate_and_resolve_url`, `is_host_allowed`,
   `get_allowed_hosts`, `is_ip_blocked` and the blocked-range table: the code under test.
 - `src/lfx/src/lfx/components/data_source/api_request.py` — calls `validate_and_resolve_url` and
