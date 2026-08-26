@@ -13,11 +13,29 @@
 import * as fs from "fs";
 import * as path from "path";
 
-interface ModuleConfig {
+export interface ModuleConfig {
   /** Label as it appears in the first column of the table. */
   label: string;
   /** Prefix of the markdown header line where the section starts. */
   sectionStart: string;
+  /**
+   * Keep the module's own row, but leave its bullets out of the `**TOTAL**`
+   * (#1607).
+   *
+   * The total answers "what fraction of what we INTEND to run is validated".
+   * A module whose lane the team has declined can never reach `[x]` — not
+   * because its specs are unfinished, but because nothing will ever schedule
+   * them — so counting it guarantees the metric never closes and drifts
+   * further with every OSS bullet validated.
+   *
+   * This is deliberately a property of the MODULE, not a sixth bullet symbol:
+   * every one of those bullets is accurately `[-]` (automated, not validated).
+   * What changed is whether we intend to validate it. Reversing the decision is
+   * deleting this field.
+   *
+   * The exclusion is rendered, never silent — see `renderCoverageTable`.
+   */
+  excludeFromTotal?: boolean;
 }
 
 /**
@@ -49,7 +67,12 @@ const MODULES: ModuleConfig[] = [
   { label: "`i18n/` — Language and Localization",            sectionStart: "## i18n/" },
   { label: "`memory/` — Memory Base Registration",           sectionStart: "## memory/" },
   { label: "`governance/` — Catalog and Provider Policy",    sectionStart: "## governance/" },
-  { label: "`enterprise/` — Enterprise-only Surfaces",       sectionStart: "## enterprise/" },
+  // Enterprise is out of CI scope by team decision (2026-08-26): only OSS is
+  // tested on a schedule. `governance/` and `serving/` stay counted — both are
+  // OSS (the nightly ships and enforces the governance routes; serving is the
+  // same image under different env vars) and both are slated for lanes.
+  { label: "`enterprise/` — Enterprise-only Surfaces",       sectionStart: "## enterprise/",
+    excludeFromTotal: true },
   { label: "`serving/` — Serving-Plane End-User Identity",   sectionStart: "## serving/" },
 ];
 
@@ -78,7 +101,7 @@ const LAST_UPDATED_PREFIX = "> **Last updated:**";
 
 const BULLET_RE = /^- \[([x\- ~!])\] /;
 
-interface Counts {
+export interface Counts {
   validated: number;       // [x]
   needsValidation: number; // [-]
   partial: number;         // [~] + [!]
@@ -174,6 +197,58 @@ function computeCounts(lines: string[]): Counts[] {
   return counts;
 }
 
+/**
+ * The Coverage Summary table, header row through `**TOTAL**`.
+ *
+ * Pure and exported so the table the roadmap and leadership read is asserted on
+ * its OUTPUT — it had no unit test at all before #1607, despite regenerating on
+ * every push to `main`.
+ *
+ * A module with `excludeFromTotal` keeps its row and its real counts; only the
+ * denominator drops it. Both the row and the total say so out loud: a silent
+ * exclusion is how the number starts lying again the day the decision reverses.
+ */
+export function renderCoverageTable(modules: ModuleConfig[], counts: Counts[]): string[] {
+  const tot = emptyCounts();
+  const excluded: string[] = [];
+  modules.forEach((m, i) => {
+    const c = counts[i];
+    if (m.excludeFromTotal) {
+      // The module KEY, not its whole label: real labels carry an em-dash
+      // description ("`enterprise/` — Enterprise-only Surfaces"), and splicing
+      // that whole string into a sentence that already has an em-dash renders
+      // "TOTAL (OSS — excludes `enterprise/` — Enterprise-only Surfaces)".
+      excluded.push(m.label.split(" — ")[0]);
+      return;
+    }
+    tot.validated += c.validated;
+    tot.needsValidation += c.needsValidation;
+    tot.partial += c.partial;
+    tot.notAutomated += c.notAutomated;
+  });
+  const totSum = totalOf(tot);
+
+  const dataRows = modules.map((m, i) => {
+    const c = counts[i];
+    // Decorate the RENDERED cell only — `m.label` itself is the key the Phase
+    // tables are matched by (`labelToIndex`), so changing it would break them.
+    const label = m.excludeFromTotal ? `${m.label} (not scheduled — decision)` : m.label;
+    return `| ${label} | ${totalOf(c)} | ${c.validated} | ${c.needsValidation} | ${c.partial} | ${c.notAutomated} |`;
+  });
+
+  const totalLabel = excluded.length
+    ? `**TOTAL (OSS — excludes ${excluded.join(", ")})**`
+    : "**TOTAL**";
+  const totalRow =
+    `| ${totalLabel} | **${totSum}** | ` +
+    `**${tot.validated} (${fmtPercent(tot.validated, totSum)})** | ` +
+    `**${tot.needsValidation} (${fmtPercent(tot.needsValidation, totSum)})** | ` +
+    `**${tot.partial} (${fmtPercent(tot.partial, totSum)})** | ` +
+    `**${tot.notAutomated} (${fmtPercent(tot.notAutomated, totSum)})** |`;
+
+  return [TABLE_HEADER, TABLE_SEPARATOR, ...dataRows, totalRow];
+}
+
 function regenerateCoverageTable(
   lines: string[],
   counts: Counts[]
@@ -192,27 +267,7 @@ function regenerateCoverageTable(
     throw new Error(`Coverage Summary header not found: "${COVERAGE_SUMMARY_HEADER_PREFIX}"`);
   }
 
-  const tot = emptyCounts();
-  for (const c of counts) {
-    tot.validated += c.validated;
-    tot.needsValidation += c.needsValidation;
-    tot.partial += c.partial;
-    tot.notAutomated += c.notAutomated;
-  }
-  const totSum = totalOf(tot);
-
-  const dataRows = MODULES.map((m, i) => {
-    const c = counts[i];
-    return `| ${m.label} | ${totalOf(c)} | ${c.validated} | ${c.needsValidation} | ${c.partial} | ${c.notAutomated} |`;
-  });
-  const totalRow =
-    `| **TOTAL** | **${totSum}** | ` +
-    `**${tot.validated} (${fmtPercent(tot.validated, totSum)})** | ` +
-    `**${tot.needsValidation} (${fmtPercent(tot.needsValidation, totSum)})** | ` +
-    `**${tot.partial} (${fmtPercent(tot.partial, totSum)})** | ` +
-    `**${tot.notAutomated} (${fmtPercent(tot.notAutomated, totSum)})** |`;
-
-  const newTable = [TABLE_HEADER, TABLE_SEPARATOR, ...dataRows, totalRow];
+  const newTable = renderCoverageTable(MODULES, counts);
 
   const tableHeaderIdx = findLineIndex(
     lines,
@@ -346,4 +401,10 @@ function main(): void {
   console.log("QA-CHECKLIST.md updated (Coverage Summary, Phase tables, and/or Last updated).");
 }
 
-main();
+// Only run when invoked as a script — keeps the module importable from tests.
+// Without this the import in coverage-summary.test.ts REGENERATES
+// QA-CHECKLIST.md on every `npm run test:units`, in CI included: the unit lane
+// would silently rewrite a tracked file as a side effect of loading it (#1607).
+if (require.main === module) {
+  main();
+}
