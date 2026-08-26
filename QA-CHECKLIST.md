@@ -1344,7 +1344,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 531 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 532 `test()` calls carrying the `@stable` tag, distributed across 205 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1661,6 +1661,7 @@
 - [x] the Embedding Model picker still renders when the configured providers expose no embeddings model → `memory-base-panel.spec.ts`
 - [x] Create Memory stays disabled with an empty form and with only the Name filled → `memory-base-panel.spec.ts`
 - [x] cancelling the Create Memory modal creates no memory base → `memory-base-panel.spec.ts`
+- [x] registering a memory base from the Create Memory modal persists it → `memory-base-registration.spec.ts`
 - [x] a registered memory base is exposed through the Memory Base API, never through the knowledge-base list → `memory-base-registration.spec.ts`
 
 #### core-functionality/model-provider/
