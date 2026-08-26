@@ -1,6 +1,6 @@
 # Agent Max Iterations — agent stops at the configured limit
 
-**Last validated:** Langflow 1.12.x (`1.12.0.dev23`)
+**Last validated:** Langflow 1.12.x (`1.12.0.dev39`)
 
 ---
 
@@ -29,40 +29,63 @@ Two tests establish this **causally**:
 > completes). The bug appears **fixed**, so this is authored as a normal passing
 > `@stable` test, not an expected-fail. Flagged on the issue/PR.
 
-> **Quarantine lifted (2026-08-12, nightly 1.12.0.dev23) — #1264 was a TEST
-> defect, not a product regression.** The cap **is** enforced: with
-> `max_iterations = 1` and a fetch target the URL tool can actually reach, the
-> agent returns `Model call limits exceeded: run limit (1/1)` in **3.3 s**
-> (measured on `google / gemini-3.5-flash`, dev23). What produced #1264's
-> signature was this spec's own fetch target — the instance's own
-> `http://localhost:7860/api/v1/version`, which Langflow's SSRF layer **blocks**.
-> A tool call that can never succeed puts the run on the **tool-error path**,
-> where the cap is not what stops the loop:
+> **#1264, second pass (2026-08-26, nightly 1.12.0.dev39) — still a TEST defect,
+> but NOT the one the first pass recorded.** The first pass blamed the run's
+> *target* (an SSRF-blocked URL putting every run on the tool-error path, where
+> LangGraph's `recursion_limit` was said to fire before the model-call cap). That
+> mechanism is **refuted as an explanation of this spec's failures**, and the
+> refutation matters because the recurrence happened with the fix already merged:
+> the test hard-failed 3/3 attempts on the 2026-08-13 daily
+> ([run 31685261355](https://github.com/oriontech-me/langflow-e2e/actions/runs/31685261355))
+> with commit `9792bed` an ancestor of the run's `headSha`, and that run's own job
+> log records `ECHO_BASE_URL: http://172.18.0.5:8080` — the target was reachable.
 >
-> - `ModelCallLimitMiddleware(run_limit=max_iterations)` counts **model calls**
->   (`after_model` increments), and
-> - `_compute_recursion_limit()` gives LangGraph `max_iterations * 2 + 5`,
->   budgeting **2 graph steps per iteration** (model node + tools node)
->   — `lfx/components/models_and_agents/agent.py:559`.
+> **The real mechanism is that the cap can only fire on a SECOND model call, and
+> the second model call is elected by the MODEL.** Read
+> `langchain/agents/middleware/model_call_limit.py` in the image:
 >
-> With a failing tool each model call costs more than two steps (the error
-> ToolMessage plus `ToolRetryMiddleware(max_retries=2)`), so **LangGraph's limit
-> trips first** and the run dies with `GraphRecursionError` instead of the
-> graceful limit message. Measured on the 2026-08-12 daily
-> ([run 31581590030](https://github.com/oriontech-me/langflow-e2e/actions/runs/31581590030),
-> `google / gemini-3.5-flash`): `Recursion limit of 45 reached without hitting a
-> stop condition` — 45 being exactly `20 * 2 + 5` for Test 2's cap of 20 — after
-> **11 model calls / 733,990 tokens** on one trace, ending in a collapsed
-> "An error occurred" card with no chat message at all (attempt 0 failed, the
-> retry passed). Earlier reproductions of #1264 on Anthropic models hit the same
-> path with `max_iterations = 1` (`recursion_limit = 7`) and surfaced the model's
-> pre-tool text instead of the limit message.
+> - `after_model` increments `run_model_call_count` **after** each call;
+> - `before_model` compares `run_count >= run_limit` **before** the next one and,
+>   when it holds, jumps to `end` injecting the `AIMessage` under test.
 >
-> Consequences encoded here: the task now targets a **reachable** echo endpoint,
-> so the loop the cap is supposed to bound is the loop that actually runs; Test 1
-> is no longer `test.fixme`; and the tool-error/recursion interplay is explicitly
-> **out of scope** for this spec (see *What this test does not cover*) — it is a
-> product-side cost defect, tracked on #1264, not a max-iterations assertion.
+> So with `run_limit = 1`: `before_model` #1 sees `0 >= 1` (false) and the first
+> call happens; the graph then re-enters `before_model` **only through the tools
+> node**, i.e. only if that first call emitted a `tool_use` block. A model that
+> answers in prose ends the run after one call and no limit message is ever
+> produced. That is exactly what the failing run did — its token-attribution
+> artifact (`tokens-4`) records `calls: 1`, `status: ok`, 934 prompt / 77-82
+> completion tokens on `claude-haiku-4-5`, with the rendered bubble reading
+> *"I'll fetch that URL for you."*
+>
+> **There is no product surface that forces the second call**, so this dependence
+> cannot be engineered away: `lfx/components/models_and_agents/agent.py` declares
+> `max_iterations` with `range_spec(min=1)` and clamps `run_limit = max(1, …)` (a
+> cap of 0 is impossible by design — it is a safety cap, never an "unlimited"
+> toggle), and the component exposes **no `tool_choice` input** — Langflow
+> deliberately dropped the legacy `create_granite_agent` path *because* it
+> hardcoded `tool_choice='required'`, which the WatsonX API now rejects.
+>
+> **What the product does, measured on dev39** (`google / gemini-3.6-flash`,
+> reachable target, `max_iterations = 1`): exactly one chat bubble reading
+> `Model call limits exceeded: run limit (1/1)`, with the *Agent Steps* block
+> showing an executed `tool_use` (`fetch_content`) ahead of it. So the cap **is**
+> enforced, the wording is **unchanged**, and the injected message **is** the last
+> and only bubble — which also refutes the competing reading of the 08-13 failure
+> ("the cap fired but its message did not render last").
+>
+> **The tool-error runaway is real history but is NOT this spec's failure mode.**
+> The 733,990-token blow-up below happened, on `gemini-3.5-flash`; that model now
+> answers `404 … no longer available`, and on dev39 the same SSRF-blocked target
+> produces no runaway at all — at `max_iterations = 5` the agent makes one tool
+> call and reports the SSRF error to the user in plain text (2 model calls), and
+> at `max_iterations = 1` the cap still fires first. Keep the reachable target for
+> cost hygiene; do not read a failure of this spec as that path.
+>
+> Consequence encoded here: Test 1 asserts the **precondition it depends on** —
+> an executed `tool_use` in *Agent Steps* — before asserting the limit message, so
+> a model that declines to call a tool is reported as such instead of as a broken
+> cap; and the Agent Instructions state the contract the previous wording left
+> satisfiable by an announcement.
 
 If this fails, the agent no longer honours its iteration cap — a regression in a
 core safety/cost control.
@@ -74,10 +97,35 @@ core safety/cost control.
 `@stable` `@regression` `@agents` `@playground`
 
 `@stable` added only after multiple clean `--retries=0` runs on the fresh nightly.
-Both tests carry it as of the #1264 fix: Test 1 is no longer `test.fixme` (the cap
-is enforced — see the note above) and, with a reachable fetch target, it is the
-cheap half of the pair (~3 s, ~1k tokens), so the daily gains the enforcement
-assertion it never ran.
+
+**Both tests carry `@stable`. Test 1's tag was decided by measurement, not by the
+fix landing** — the daily triage auto-removed it on 2026-08-13 (`1bb9425`), and
+Test 1 is the half whose assertion depends on the model electing to call a tool
+(see the #1264 note), which #1187 established a run-count gate cannot certify.
+Measured before restoring it, on `manual.yml` at `retries=0`, both tests of the
+pair per run:
+
+| When | Provider / model | Runs | Result |
+|---|---|---|---|
+| Pre-fix (unmodified spec), CI | `openai` / `gpt-4o-mini` | 3 | 3/3 clean |
+| Pre-fix (unmodified spec), CI | `google` / `gemini-3.5-flash` | 3 | 3/3 clean |
+| Post-fix, local `1.12.0.dev39` | `google` / `gemini-3.5-flash` | 3 | 3/3 clean, `flaky=0 skipped=0` |
+
+9 runs, 18 tests, zero failures. **`anthropic` could not be measured at all** — the
+key is out of credit in CI as well as locally (`Your credit balance is too low`;
+three `provider=anthropic` dispatches exited 1 at *Resolve the run's provider
+selection*), so the one recorded non-compliance (2026-08-13,
+`claude-haiku-4-5`, a single daily) is currently unreproducible.
+
+**Residual risk, stated rather than implied.** `daily-stable.yml`'s weekday
+rotation advances past an inactive provider, so anthropic (Tue/Fri) does not run
+in the daily while its key is dry — which is why restoring the tag costs nothing
+today, and also why the risk returns the day the credential is funded. If that
+happens and Test 1 reds on an anthropic day, read the failure text before
+triaging: a declined tool call now fails with *"the model answered without
+calling any tool … This is model non-compliance with the Agent Instructions, NOT
+a broken max_iterations (#1264)"*, and belongs in this section as a measured rate,
+not in a new product issue.
 `@regression` — guards the max-iterations enforcement from regressing (the bug
 #481 documented); `@agents` — agent execution; `@playground` — the flow is run
 through the Playground.
@@ -118,29 +166,53 @@ Shared setup per test (identical except `max_iterations`):
 
 The task targets the **echo endpoint's `/uuid`** (`ECHO_BASE_URL` /
 `HTTPBIN_BASE_URL`, defaulting to the public `https://httpbin.org` — CI resolves
-it to the in-network go-httpbin service, #1128). Two properties make it the right
-forcer, and the second is what #1264 taught:
+it to the in-network go-httpbin service, #1128). Three properties matter, and the
+third is what #1264's second pass taught:
 
-1. **Unknowable ⇒ the tool is really called.** `/uuid` returns a fresh random
-   UUID per request, so the model cannot answer from memory (a famous page like
-   example.com is memorised, arithmetic is computed inline — both verified flaky)
-   and cannot decode it out of the URL either.
+1. **Unknowable ⇒ the model has no answer without the tool.** `/uuid` returns a
+   fresh random UUID per request, so the model cannot answer from memory (a
+   famous page like example.com is memorised, arithmetic is computed inline —
+   both verified flaky) and cannot decode it out of the URL either.
 2. **Reachable ⇒ the loop terminates.** The fetch **succeeds**, so a normal run
    is exactly two model calls (tool call → final answer): the cap at 1 trips on
-   the second, and a high cap completes. The previous target — the instance's own
-   SSRF-blocked `/api/v1/version` — could never succeed, which put every run on
-   the tool-error path where LangGraph's `recursion_limit` fires before the cap
-   (see the note above): a runaway of 11+ model calls, 733,990 tokens and no
-   final message, instead of the behaviour under test.
+   the second, and a high cap completes. Cost hygiene, not the failure mode — the
+   previously blamed SSRF-blocked target does not reproduce a runaway on dev39.
+3. **The tool call is still ELECTED, and the spec says so.** No amount of task
+   design makes the `tool_use` block structurally mandatory — the product exposes
+   no `tool_choice` and the cap is only checkable on the second `before_model`
+   (see the #1264 note). "Unknowable" raises compliance; it does not guarantee
+   it. `claude-haiku-4-5` satisfied the previous instruction wording with the
+   announcement *"I'll fetch that URL for you."* and no tool call. The Agent
+   Instructions therefore state the contract as an ordering rule ("your FIRST
+   action must be a tool call; never answer in text before calling one"), and
+   Test 1 asserts the resulting `tool_use` step **before** the limit message so a
+   declined tool call is never reported as a broken cap.
 
 ---
 
 **Test 1 — agent stops when max iterations is reached** (§6.2 / §7.7)
 
 1. Shared setup with `max_iterations = 1`.
-2. **Validation:** the AI message contains `Model call limits exceeded` **and**
-   the cap `(1/1)` — the tool-call attempt exceeds the limit of 1 and the agent
-   stops.
+2. **Precondition, asserted first:** the run's persisted AI message carries at
+   least one `tool_use` entry in its `content_blocks` — read from
+   `GET /api/v1/monitor/messages?flow_id=<id>`, the same monitor-API route
+   `agent-multi-tool-selection.spec.ts` already uses for tool observables, because
+   the *Agent Steps* disclosure is collapsed and its text is **not** in the
+   bubble's `innerText` (measured: the passing bubble is 43 characters, the limit
+   message alone). This is the condition the cap needs in order to be reachable at
+   all, and it is the model's choice — so it gets its own assertion, with its own
+   failure text, rather than being read back through a missing limit message.
+   Without it, a model that answers in prose fails this test with *"expected
+   `/model call limits exceeded/`, received `I'll fetch that URL for you.`"*, which
+   reads as a broken cap and mis-triages (#1264's whole second pass).
+   **Any** tool counts, not specifically `fetch_content`: the cap is reached by
+   *entering the tool loop*, whichever of the template's two tools the model
+   picks, and pinning the name would add a second election dependency for no gain
+   — tool *selection* is `agent-multi-tool-selection.spec.ts`'s assertion, not
+   this one's. The tool names actually called are printed in the failure text.
+3. **Validation:** the AI message contains `Model call limits exceeded` **and**
+   the cap `(1/1)` — the second model call the tool step implies is refused by the
+   limit of 1 and the agent stops.
 
 ---
 
@@ -162,6 +234,11 @@ model that does loop — 15 graph steps instead of 45.
 
 ## Validation criterion *(required)*
 
+- **Tool loop entered (Test 1, precondition):** the run's persisted AI message
+  (`GET /api/v1/monitor/messages?flow_id=<id>`) carries ≥1 `tool_use` entry in its
+  `content_blocks`. Without it the cap is unreachable by construction, so its
+  absence is reported as "the model declined to call a tool", never as a cap
+  failure.
 - **Limit enforced (Test 1):** `max_iterations=1` → the AI response is
   `Model call limits exceeded: run limit (1/1)` (the `(1/1)` ties the stop to the
   configured value).
@@ -177,10 +254,13 @@ model that does loop — 15 graph steps instead of 45.
 - **Causal pair:** the only difference between Test 1 (stops) and Test 2
   (completes) is the `max_iterations` value — so the stop is attributable to the
   parameter, not to a flaky failure. Test 1 also asserts the exact cap `(1/1)`.
-- **Unbypassable tool forcing:** the task targets `/uuid`, whose value the model
-  cannot know or derive, so it must call the URL tool — guaranteeing a second
-  model call, so a limit of 1 genuinely trips (a calculator task and a famous page
-  like example.com are answered inline — verified flaky; see Notes).
+- **Tool forcing is asserted, not assumed.** The task targets `/uuid`, whose value
+  the model cannot know or derive, which is what makes calling the URL tool the
+  only way to answer — but it does not *force* the call, and the previous version
+  of this section claimed it did. `claude-haiku-4-5` answered in prose instead
+  (#1264). Test 1 therefore asserts the executed tool step first, so the two
+  outcomes stay distinguishable: no tool step ⇒ the model declined and the cap was
+  never exercised; tool step but no limit message ⇒ the cap really is broken.
 - **Non-empty completion plus a positive observable:** Test 2 asserts a non-empty
   final message without the limit marker **and** a UUID-shaped token, so neither a
   blank/aborted run nor a refusal ("I cannot fetch URLs") can pass the negative
@@ -197,13 +277,21 @@ model that does loop — 15 graph steps instead of 45.
   observable used instead).
 - `max_tokens` / other agent controls (separate specs).
 - Tool execution correctness (see `agent-component-regression.spec.ts`).
-- **The tool-error path — deliberately out of scope (#1264).** When the tool can
-  never succeed, LangGraph's `recursion_limit` (`max_iterations * 2 + 5`) fires
-  before the model-call cap, so the user gets a bare `GraphRecursionError` ("An
-  error occurred", no message) after burning the whole budget — 733,990 tokens on
-  the 2026-08-12 daily. That is a product-side cost/UX defect, and asserting it
-  would mean a spec whose *purpose* is a runaway: every run of it costs ~320× the
-  rest of this file. Tracked on #1264 for an upstream ask instead.
+- **The tool-error runaway — out of scope, and no longer reproducible here
+  (#1264).** On 2026-08-12 a `gemini-3.5-flash` run against an unreachable target
+  burned LangGraph's whole `recursion_limit` (`max_iterations * 2 + 5` = 45) over
+  11 model calls / 733,990 tokens and ended in a bare `GraphRecursionError` with
+  no chat message. It is kept on record because the cost was real, but it is
+  **model-specific and does not reproduce on 1.12.0.dev39**: that model id now
+  answers `404 … no longer available`, and with the settled `gemini-3.6-flash` the
+  same SSRF-blocked target yields one tool call and a plain-text SSRF error to the
+  user at `max_iterations = 5`, and the limit message at `max_iterations = 1`.
+  Asserting a runaway would still mean a spec whose *purpose* is to burn tokens,
+  so it stays out of scope; there is now no measured product defect behind it to
+  file upstream.
+- **Whether a given model complies with the tool-call instruction.** That is a
+  model property, not a Langflow one. Test 1 detects non-compliance and names it,
+  but the spec does not assert a compliance rate for any provider.
 
 ---
 
@@ -232,9 +320,18 @@ model that does loop — 15 graph steps instead of 45.
 
 - If the terminal message wording changes from `Model call limits exceeded: run
   limit (N/N)`.
-- If the Agent node field testids change
-  (`int_int_max_iterations`, `toggle_bool_edit_add_calculator_tool`).
-- If the Simple Agent template or the calculator tool is renamed/rewired.
+- If the Agent node field testids change (`int_int_max_iterations`,
+  `inspector-add-max_iterations`, `textarea_str_system_prompt`).
+- If the Simple Agent template or its URL fetch tool is renamed/rewired — the
+  template ships **two** tools (`URLComponent` and `UnifiedWebSearch`, both wired
+  to the Agent's `tools` handle), and the asserted step name comes from the URL
+  one (`fetch_content`).
+- **If the Agent component ever gains a `tool_choice` input, or `max_iterations`
+  loses its `min=1` floor.** Either would make the second model call structural
+  instead of model-elected, which is the single change that would let this test
+  stop depending on the model's choice — see the #1264 note.
+- If `ModelCallLimitMiddleware` moves the check out of `before_model` (e.g. to
+  `after_model`), which would change *when* the cap can fire.
 
 ---
 
@@ -250,8 +347,12 @@ model that does loop — 15 graph steps instead of 45.
   creating the flow (the #751/#1072 credential-settle guard throws exactly there).
 - **Observable found during reproduction:** setting `max_iterations=1` yields the
   AI message `Model call limits exceeded: run limit (1/1)`; a high limit
-  completes. This is a clean, deterministic signal — far more robust than
-  counting reasoning steps in the DOM.
+  completes. The *message* is a clean, exact signal — far more robust than
+  counting reasoning steps in the DOM. **Reaching it is not deterministic, and an
+  earlier version of this line said it was.** The message is only produced once
+  the agent has entered its tool loop, and entering it is the model's decision;
+  #1264's recurrence is exactly the case where a model declined. The two halves
+  are now asserted separately so the distinction survives into the failure text.
 - **Why a URL-fetch task to an unknowable endpoint, not a calculator or a famous
   page:** "iterations" count the agent's **tool-calling loop**, not the final
   answer, so the cap only trips when the agent actually enters the loop. A capable
