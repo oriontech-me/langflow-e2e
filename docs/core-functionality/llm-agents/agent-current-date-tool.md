@@ -1,6 +1,6 @@
 # Agent current-date tool — add_current_date_tool toggle
 
-**Last validated:** Langflow 1.11.x
+**Last validated:** Langflow 1.12.x
 
 ---
 
