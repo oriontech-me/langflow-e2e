@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-26
+> **Last updated:** 2026-08-27
 
 ---
 
@@ -1344,7 +1344,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 534 `test()` calls carrying the `@stable` tag, distributed across 205 spec
+> 533 `test()` calls carrying the `@stable` tag, distributed across 204 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1883,7 +1883,6 @@
 - [x] user can edit the text of an existing sticky note and the canvas reflects only the new text → `edit-sticky-note-text.spec.ts`
 - [x] executing flow with network error shows error feedback → `execution-error-notification.spec.ts`
 - [x] executing flow with server error shows error feedback → `execution-error-notification.spec.ts`
-- [x] user must see on handle click the possibility connections → `filterSidebar.spec.ts`
 - [x] create a Generic global variable from Settings page → `global-variable-edit.spec.ts`
 - [x] edit existing global variable by clicking its row → `global-variable-edit.spec.ts`
 - [x] create a Generic type global variable → `global-variables-crud.spec.ts`
