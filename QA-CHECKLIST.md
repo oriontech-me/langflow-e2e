@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-27
+> **Last updated:** 2026-08-28
 
 ---
 
@@ -1344,7 +1344,7 @@
 
 ### 🟢 Phase 0 — Validated
 
-> 533 `test()` calls carrying the `@stable` tag, distributed across 204 spec
+> 534 `test()` calls carrying the `@stable` tag, distributed across 204 spec
 > files. Run weekly by the stable workflow. New specs are merged with all
 > tests tagged `@stable`; the tag is removed per-test during weekly triage
 > when a failure is classified as a test bug — so a spec may end up with a
@@ -1839,6 +1839,7 @@
 - [x] user must be able to see starter projects for mcp servers → `mcp-server-starter-projects.spec.ts`
 - [x] user must not be able to add duplicate mcp servers from starter projects → `mcp-server-starter-projects.spec.ts`
 - [x] user should be able to manage MCP server tools and configuration → `mcp-server-tab.spec.ts`
+- [x] user must be able to change mode of MCP tools without any issues → `mcp-server.spec.ts`
 - [x] user must be able to add and delete MCP server from sidebar → `mcp-server.spec.ts`
 - [x] STDIO MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
 - [x] HTTP/SSE MCP server fields should persist after saving and editing → `mcp-server.spec.ts`
