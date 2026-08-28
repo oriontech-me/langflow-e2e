@@ -8,6 +8,8 @@ import {
 } from "../../../helpers/ui/open-advanced-options";
 import { getAuthToken } from "../../../helpers/auth/get-auth-token";
 import { deleteFlow } from "../../../helpers/flows/delete-flow";
+import { dragComponentFromSidebar } from "../../../helpers/flows/add-component-from-sidebar";
+import { openBlankFlowFromModal } from "../../../helpers/flows/open-blank-flow-from-modal";
 
 // Capture every flow THIS page creates from its POST /api/v1/flows → 201
 // responses and delete them id-scoped in afterEach (repo convention, #490/#681).
@@ -42,38 +44,70 @@ test.afterEach(async ({ request }) => {
 
 test(
   "user must see on handle click the possibility connections",
-  { tag: ["@release", "@components", "@api", "@ui-ux"] },
+  { tag: ["@stable", "@release", "@components", "@api", "@ui-ux"] },
 
   async ({ page }) => {
     trackCreatedFlows(page);
     await awaitBootstrapTest(page);
 
-    await page.waitForSelector('[data-testid="blank-flow"]', {
-      timeout: 3000,
+    await expect(page.getByTestId("blank-flow")).toBeVisible({
+      timeout: 30000,
     });
 
-    await page.getByTestId("blank-flow").click();
-    await page.waitForSelector('[data-testid="sidebar-search-input"]', {
-      timeout: 3000,
+    // Entry through the shared primitive, not a bare click: the blank-flow click
+    // IS a flow creation and the backend can refuse it with 400 "flow must be
+    // unique" while the modal stays open over the editor (#1468). The helper
+    // re-issues the click and only returns once the modal is gone.
+    await openBlankFlowFromModal(page);
+
+    // Readiness barrier before ANY sidebar interaction — this is what #1623 was.
+    // On a blank-flow entry the `flow-builder-welcome` onboarding overlay covers
+    // the canvas and leaves `sidebar-search-input` in the DOM but NOT visible,
+    // which is the exact shape the 2026-08-27 daily reported ("10 x locator
+    // resolved to hidden"). Measured on nightly 1.12.0.dev40: the overlay was
+    // visible at the moment of the click in 6 of 6 entries, the input hidden in
+    // 6 of 6, and the input turned visible within ~100 ms of the overlay
+    // clearing every time. Idle it clears in 140-790 ms, so the old 3000 ms wait
+    // was the entire margin; holding the editor's mount GETs for 4 s reproduced
+    // the daily's error byte-for-byte, 2 of 2. The overlay is waited out FIRST
+    // and explicitly so a stuck overlay fails AS the overlay rather than as a
+    // sidebar that never appeared (#1301's attribution lesson), and 30 s is the
+    // budget `setupBlankFlow` already uses for the canvas barrier.
+    const welcomeOverlay = page.locator(
+      '[data-testid="flow-builder-welcome-panel"]',
+    );
+    if (await welcomeOverlay.isVisible().catch(() => false)) {
+      await expect(welcomeOverlay).toBeHidden({ timeout: 30000 });
+    }
+    await expect(page.getByTestId("canvas_controls_dropdown")).toBeVisible({
+      timeout: 30000,
     });
 
-    await page.getByTestId("sidebar-search-input").click();
-    await page.getByTestId("sidebar-search-input").fill("api request");
+    // Drag through the shared primitive, not a bare fill + dragTo: Langflow drops
+    // the sidebar add outright a measurable fraction of the time — the gesture is
+    // accepted, no node is created and no flow write follows (#1304/#1320/#1335)
+    // — and the bare version here surfaced that as
+    // `handle-apirequest-shownode-url-left` never appearing, which is how
+    // attempts 1 and 2 of the same daily died and what the 2026-08-25 run
+    // recorded as flaky. The helper owns the search fill and its #1518 reset
+    // repair, requires a node id that was NOT on the canvas before, and re-issues
+    // the drag once when none appeared. A longer wait cannot fix a gesture the
+    // app never registered.
+    await dragComponentFromSidebar(
+      page,
+      "api request",
+      "data_sourceAPI Request",
+    );
 
-    await page.waitForSelector('[data-testid="data_sourceAPI Request"]', {
-      timeout: 3000,
-    });
-    await page
-      .getByTestId("data_sourceAPI Request")
-      .dragTo(page.locator('//*[@id="react-flow-id"]'));
-    await page.mouse.up();
-    await page.mouse.down();
     await adjustScreenView(page);
 
+    // Post-condition rather than the place a failure lands: the helper above
+    // already guarantees a new node, so this budget is only ever paid by a real
+    // regression in the node's handles.
     await page.waitForSelector(
       '[data-testid="handle-apirequest-shownode-url-left"]',
       {
-        timeout: 3000,
+        timeout: 30000,
       },
     );
     await page.getByTestId("handle-apirequest-shownode-url-left").click();
