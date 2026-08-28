@@ -2,7 +2,7 @@
 
 **Test file:** `tests/tests-automations/regression/ui-ux/filterSidebar.spec.ts`
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev8`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev40`)
 
 ---
 
@@ -33,8 +33,11 @@ The test drives an **API Request** node and exercises two of its inputs:
 
 ## Step by step
 
-1. Bootstrap; open a blank flow; drag an **API Request** node onto the canvas.
-   The created flow is captured from `POST /api/v1/flows → 201` and deleted
+1. Bootstrap; open a blank flow from the templates modal; wait out the
+   `flow-builder-welcome` onboarding overlay and confirm the editor has mounted
+   (`canvas_controls_dropdown`) **before touching the sidebar**; then drag an
+   **API Request** node onto the canvas through the shared add primitive. The
+   created flow is captured from `POST /api/v1/flows → 201` and deleted
    id-scoped in `afterEach`.
 2. Click the `url` input handle → assert the filter chip (`icon-ListFilter`)
    shows and the expected category disclosures are visible.
@@ -58,6 +61,8 @@ The test drives an **API Request** node and exercises two of its inputs:
 
 | Step | Criterion |
 |---|---|
+| blank flow entered | the templates modal is gone, `flow-builder-welcome-panel` is hidden and `canvas_controls_dropdown` is visible before any sidebar interaction |
+| API Request added | a node id that was **not** on the canvas before the drag is present |
 | `url` handle clicked | `icon-ListFilter` visible; category disclosures visible |
 | legacy on / beta off | legacy components visible; `Prompt Hub` hidden with beta off |
 | `headers` handle clicked | `data_sourceAPI Request`, `datastaxAstra DB`, `flow_controlsSub Flow` visible |
@@ -71,6 +76,13 @@ The test drives an **API Request** node and exercises two of its inputs:
 - API Request component (its `url` and advanced `headers` inputs).
 - `tests/helpers/ui/open-advanced-options.ts` — `openAdvancedOptions` /
   `closeAdvancedOptions` (dev46 inspector; `inspector-add-headers`).
+- `tests/helpers/flows/open-blank-flow-from-modal.ts` — `openBlankFlowFromModal`
+  (re-issues the `blank-flow` click when the creation is refused, #1468).
+- `tests/helpers/flows/add-component-from-sidebar.ts` —
+  `dragComponentFromSidebar` (repairs the swallowed sidebar add, #1304/#1320/#1335;
+  it also owns the search fill and its reset repair, #1518).
+- The `flow-builder-welcome` onboarding overlay (`flow-builder-welcome-panel`)
+  and the canvas readiness barrier (`canvas_controls_dropdown`).
 - Sidebar legacy/beta toggles (`sidebar-options-trigger`, `sidebar-legacy-switch`,
   `sidebar-beta-switch`) and the filter chip (`icon-ListFilter`, `icon-X`,
   `sidebar-filter-reset`).
@@ -109,6 +121,26 @@ The test drives an **API Request** node and exercises two of its inputs:
   subject (clicking a handle reveals the compatible connections) is this
   spec's subject, exercised here on a non-legacy component and with
   substantially stronger assertions.
+- **#1623 — readiness, not behavior.** On the 2026-08-27 daily (run
+  `33105369510`) this test hard-failed all three attempts, at **two** different
+  locators: attempt 0 on `sidebar-search-input` and attempts 1-2 on
+  `handle-apirequest-shownode-url-left`. Both are the same root cause class —
+  every gate in this spec was budgeted at 3000 ms and the spec drove the entry,
+  the search fill and the drag by hand.
+  Measured on nightly `1.12.0.dev40`, 3 of 3 blank-flow entries: the
+  `flow-builder-welcome-panel` overlay is **visible at the moment of the
+  `blank-flow` click**, and `sidebar-search-input` is in the DOM but **not
+  visible** — the exact reported shape. On an idle host the overlay clears in
+  ~107 ms and the input becomes visible at ~211-231 ms; #1301 measured the
+  sibling observable at up to ~10.6 s under load, which is why 3000 ms is the
+  whole margin. The overlay is intentional onboarding, present since ~dev17 —
+  this is a test-side readiness gap, **not** a Langflow regression, and nothing
+  was filed upstream. The second locator is the swallowed sidebar add
+  (#1304/#1320): the bare `dragTo` is accepted, no node is created and no flow
+  write follows, so the handle never renders — a longer wait provably cannot fix
+  it. Fixed by routing the entry through `openBlankFlowFromModal`, gating on the
+  overlay and the canvas controls explicitly (attribution: a stuck overlay must
+  fail as the overlay), and adding the node through `dragComponentFromSidebar`.
 - Validated on `1.11.0.dev46` (2026-07-20): 3/3 green (~52s), `--workers=1
   --retries=0`, 0 orphan flows. Force-fail: asserting a component that is not in
   the compatible set (`processingSplit Text`) fails.
