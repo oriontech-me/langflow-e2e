@@ -220,6 +220,28 @@ fixture with `page.expectKnownHttpError()`; the other three are globally exempt 
   firing, and the fixture fails naming the entry to delete, which is the right signal since
   this list would then be out of date.
 
+  **Every arrival at `security` awaits that read**, and this is not tidiness (#1636). The
+  declaration is only honest if the state it declares has actually occurred by the time the
+  test ends, and the first version of this spec awaited only each screen's primary `read`.
+  The per-tab Security test observed the `503` alongside its own read and passed; the strip
+  and i18n walks merely passed through, asserted on what had rendered, and could finish
+  first. Under the load of a whole-directory run they did — the spec alone reported 3 hits
+  twice over while the full run reported 2 and failed on a stale exemption, on an instance
+  answering `503` to 5 of 5 direct calls at that moment.
+
+  Measured before relying on it: entitlements is requested on **every** arrival — by `goto`,
+  by clicking the tab, and again on clicking away and back. Nothing is cached, so awaiting it
+  cannot hang.
+
+  Falsified deterministically rather than by hoping to reproduce a load-dependent race:
+  delaying the response by 6 s makes the race certain, and **without** the wait three tests
+  fail with `1 declared known backend defect(s) did NOT occur`, **with** it all nine pass.
+
+  It is also a better test on its own terms. A screen whose reads have not landed is a screen
+  the i18n scan is reading too early, and an assertion of **absence** taken against a
+  half-rendered screen is precisely the failure mode this document warns about two sections
+  above.
+
 The remaining three fire on every page load of the console:
 
 - `GET /api/v1/auto_login` → `403`, correct on a password-first instance; the HTTP error

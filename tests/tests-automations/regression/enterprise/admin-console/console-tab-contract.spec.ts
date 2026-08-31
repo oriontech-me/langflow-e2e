@@ -78,6 +78,27 @@ interface AdminTab {
    * rather than a branch inside a test body.
    */
   knownHttpErrors: KnownHttpDefect[];
+  /**
+   * Reads this screen performs beyond `read`, which a caller must await before
+   * asserting on the screen.
+   *
+   * Only `security` has any, and awaiting them is not tidiness (#1636): its
+   * `503` on `/api/v1/sso/entitlements` is DECLARED above, and the fixture fails
+   * a declaration that does not occur. The per-tab test awaited its own `read`
+   * and observed the `503` alongside it; the strip and i18n walks merely passed
+   * through and could finish first. Under a full-directory run they did, and the
+   * spec reported a stale exemption for a state that was firing on every visit.
+   *
+   * Measured: entitlements is requested on every arrival at the screen — by
+   * `goto`, by clicking the tab, and again on clicking away and back. Nothing is
+   * cached, so awaiting it cannot hang.
+   *
+   * It is also a better test. A screen whose reads have not landed is a screen
+   * the i18n scan is reading too early, and an assertion of ABSENCE taken
+   * against a half-rendered screen is the failure mode this file's own doc warns
+   * about.
+   */
+  secondaryReads: string[];
 }
 
 const TABS: AdminTab[] = [
@@ -87,6 +108,7 @@ const TABS: AdminTab[] = [
     subtitle: "Manage users and their access to this Langflow instance.",
     read: "/api/v1/users/",
     knownHttpErrors: [],
+    secondaryReads: [],
   },
   {
     route: "access-control",
@@ -94,6 +116,7 @@ const TABS: AdminTab[] = [
     subtitle: "Define roles, grant them to people and teams, and review who has access.",
     read: "/api/v1/authz/roles",
     knownHttpErrors: [],
+    secondaryReads: [],
   },
   {
     // The one screen whose label does not name its route.
@@ -102,6 +125,7 @@ const TABS: AdminTab[] = [
     subtitle: "Manage the approved component catalog, builder visibility, and policy.",
     read: "/api/v1/enterprise-admin/catalog/components",
     knownHttpErrors: [],
+    secondaryReads: [],
   },
   {
     route: "models",
@@ -109,6 +133,7 @@ const TABS: AdminTab[] = [
     subtitle: "Choose which models are available in this Langflow instance.",
     read: "/api/v1/model-availability-policy",
     knownHttpErrors: [],
+    secondaryReads: [],
   },
   {
     route: "providers",
@@ -116,6 +141,7 @@ const TABS: AdminTab[] = [
     subtitle: "Approve model providers globally for this Langflow installation.",
     read: "/api/v1/model-provider-policy",
     knownHttpErrors: [],
+    secondaryReads: [],
   },
   {
     route: "security",
@@ -138,6 +164,9 @@ const TABS: AdminTab[] = [
           "the contract asserted by enterprise/auth/entitlement-fail-closed.spec.ts",
       },
     ],
+    // The read that carries the declaration above. Awaited on every arrival, so
+    // the declaration cannot go stale on a loaded run (#1636).
+    secondaryReads: ["/api/v1/sso/entitlements"],
   },
   {
     route: "audit-logs",
@@ -145,6 +174,7 @@ const TABS: AdminTab[] = [
     subtitle: "Sign-on and access-control events for this Langflow instance, newest first.",
     read: "/api/v1/authz/audit",
     knownHttpErrors: [],
+    secondaryReads: [],
   },
 ];
 
@@ -204,6 +234,41 @@ function stripTab(page: Page, label: string) {
 }
 
 /**
+ * Arm a wait for every read this screen performs, BEFORE navigating to it.
+ *
+ * Armed first because the reads fire during the navigation: asking afterwards is
+ * a race the screen usually wins, which is exactly how #1636 got in.
+ */
+function armReads(page: Page, tab: AdminTab) {
+  return [tab.read, ...tab.secondaryReads].map((pathname) =>
+    page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === pathname &&
+        response.request().method() === "GET",
+      { timeout: 30_000 },
+    ),
+  );
+}
+
+/**
+ * Navigate to one screen, wait for its reads to land, and assert it rendered.
+ *
+ * Used by the strip and i18n walks. `navigate` is passed in because they arrive
+ * differently — one clicks the tab, the other deep-links — while what has to be
+ * true on arrival is identical.
+ */
+async function visitScreen(
+  page: Page,
+  tab: AdminTab,
+  navigate: () => Promise<unknown>,
+): Promise<void> {
+  const reads = armReads(page, tab);
+  await navigate();
+  await Promise.all(reads);
+  await expectScreenRendered(page, tab);
+}
+
+/**
  * Open one screen and assert it is the one that rendered.
  *
  * Shared by the strip test and the i18n test so neither can inspect a screen
@@ -252,14 +317,9 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
       async ({ page }) => {
         declareKnownHttpErrors(page, [tab]);
 
-        // Armed BEFORE navigating: the read fires during the load, and asking
+        // Armed BEFORE navigating: the reads fire during the load, and asking
         // afterwards would be a race the screen usually wins.
-        const read = page.waitForResponse(
-          (response) =>
-            new URL(response.url()).pathname === tab.read &&
-            response.request().method() === "GET",
-          { timeout: 30_000 },
-        );
+        const [read, ...secondary] = armReads(page, tab);
 
         await page.goto(`/admin-ee/${tab.route}`);
 
@@ -291,6 +351,11 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
             response.status(),
             `${tab.route} read ${tab.read} and the instance answered ${response.status()}`,
           ).toBeLessThan(300);
+
+          // Not asserted on, only awaited: a screen's secondary reads are its
+          // own business, but a declared HTTP state among them has to have
+          // OCCURRED before this test ends (#1636).
+          await Promise.all(secondary);
         });
       },
     );
@@ -305,16 +370,14 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
       // Start somewhere the walk does not begin on, so the first click is a real
       // navigation rather than a no-op on the already-selected tab.
       const [first, ...rest] = TABS;
-      await page.goto(`/admin-ee/${first.route}`);
-      await expectScreenRendered(page, first);
+      await visitScreen(page, first, () => page.goto(`/admin-ee/${first.route}`));
 
       for (const tab of rest) {
         await test.step(`'${tab.label}' opens /admin-ee/${tab.route}`, async () => {
           // By role and name: the strip buttons carry no testid, and the label
           // does not name the route for `Components` -> `catalog`.
-          await stripTab(page, tab.label).click();
+          await visitScreen(page, tab, () => stripTab(page, tab.label).click());
           await expect(page).toHaveURL(new RegExp(`/admin-ee/${tab.route}(?:[?#]|$)`));
-          await expectScreenRendered(page, tab);
         });
       }
     },
@@ -333,10 +396,10 @@ test.describe("Enterprise — every screen of the admin console resolves and loa
       const findings: string[] = [];
 
       for (const tab of TABS) {
-        await page.goto(`/admin-ee/${tab.route}`);
         // Required before inspecting text: a blank screen satisfies "no raw
-        // keys" perfectly, and would keep satisfying it forever.
-        await expectScreenRendered(page, tab);
+        // keys" perfectly and would keep satisfying it forever — and a screen
+        // whose reads have not landed is one this scan is reading too early.
+        await visitScreen(page, tab, () => page.goto(`/admin-ee/${tab.route}`));
 
         const raw = await page.evaluate(() => {
           const elements = Array.from(document.querySelectorAll("body *"));
