@@ -1,6 +1,6 @@
 # Agent context_id — continuity between session messages
 
-**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev15`)
+**Last validated:** Langflow 1.12.x (nightly `1.12.0.dev44`)
 
 ---
 
@@ -65,6 +65,15 @@ surface; `@components` — Message History node drives the retrieval assert.
   declared first so a routed failure cannot skip it (this file is `mode: "serial"`).
 - Run with `--workers=1` — test 1 loads the Simple Agent template (agent-area
   rule). Flows are id-scoped-deleted in cleanup (`deleteFlow` helper).
+- The provider setup this test depends on may have to **enable** models, not just
+  find them enabled: a container whose `Collect models` sweep did not land leaves
+  the provider at its `MIN_DEFAULT_MODELS = 5` default. That path goes through the
+  provider panel's debounced toggle queue, and closing the panel on top of an
+  unflushed batch leaves the model picker on the pre-toggle set — the
+  `MODEL_PICKER_DEFECT` this spec reported five times on 2026-08-31 (#1649). The
+  wait and its ~30 s refresh budget live in `tests/helpers/provider-setup/`; the
+  measurement is in the agent-area `CLAUDE.md` § 5. **This does not change what
+  this test validates** — it is a precondition of reaching the assertions at all.
 
 ---
 

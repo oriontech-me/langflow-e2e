@@ -51,17 +51,33 @@ export type ModelOptionVerdict =
   | { kind: "match"; option: ModelOption }
   | { kind: "unmatchable"; message: string; evidence: string[] }
   | { kind: "empty"; message: string }
+  | { kind: "not-enabled"; message: string }
   | { kind: "absent"; message: string };
 
 export type ResolveContext = {
   /**
-   * Model ids observed as `llm-toggle-<model>` in the provider panel, when the
-   * caller enabled them. The second independent source the picker can be
-   * contradicted by: a model enabled there but missing here is not an absence.
-   * `undefined` means "not observed" and is reported as such — an unobserved
-   * source must never read as a negative one (#1012).
+   * Every `llm-toggle-<model>` id the provider panel RENDERED, whatever its
+   * `aria-checked` state — what `enumerateEnabledModels` returns. It proves the
+   * provider LISTS the model and nothing more. `undefined` means "not observed"
+   * and is reported as such — an unobserved source must never read as a negative
+   * one (#1012).
    */
-  enabledModels?: string[];
+  listedModels?: string[];
+  /**
+   * The subset whose toggle is actually ON — what `enumerateCheckedModels`
+   * returns. This is the second independent source the picker can be
+   * CONTRADICTED by: a model enabled here but missing from the picker is not an
+   * absence, it is a disagreement.
+   *
+   * Kept separate from `listedModels` because the two answer different
+   * questions and the resolver's loudest message asserts the stronger one. Until
+   * #1649 the listed set was passed as the only source and the message said
+   * "is ENABLED in the provider panel" on evidence that could not establish it —
+   * true by luck on 2026-08-31, where the real cause was the panel being closed
+   * inside its own toggle-queue debounce. `undefined` again means "not observed":
+   * the message then says LISTED, and no branch infers a toggle is off from it.
+   */
+  checkedModels?: string[];
   /** Provider the caller is configuring, for the message only. */
   providerLabel?: string;
 };
@@ -72,6 +88,12 @@ const MODEL_NOT_AVAILABLE = "MODEL_NOT_AVAILABLE";
  * prefix into `test.skip`, so a suite-side defect carrying it would be silent.
  */
 const MODEL_PICKER_DEFECT = "MODEL_PICKER_DEFECT";
+/**
+ * Also deliberately NOT prefixed `MODEL_NOT_AVAILABLE`: a model the panel LISTS
+ * is not absent, so this must never reach a caller as a skip. It is the setup's
+ * own failure to enable it (#1649).
+ */
+const MODEL_NOT_ENABLED = "MODEL_NOT_ENABLED";
 
 /** Derives the model identity from the attributes, text last. */
 export function toModelOption(raw: RawModelOption): ModelOption {
@@ -195,8 +217,12 @@ export function resolveModelOption(
     };
   }
 
-  const enabled = context.enabledModels;
-  if (enabled?.includes(requested)) {
+  // The panel is TWO sources, not one, and which of them knows the model decides
+  // how loud the verdict is and what it may claim (#1649).
+  const listed = context.listedModels;
+  const checked = context.checkedModels;
+
+  if (checked?.includes(requested)) {
     return {
       kind: "unmatchable",
       evidence: [`llm-toggle-${requested} in the provider panel`],
@@ -210,11 +236,48 @@ export function resolveModelOption(
     };
   }
 
+  if (listed?.includes(requested)) {
+    // The toggle state was never read, so the strongest true statement is LISTED.
+    // Saying ENABLED here is the overclaim #1649 removed: an unobserved source
+    // must not be reported as a stronger one (#1012).
+    if (checked === undefined) {
+      return {
+        kind: "unmatchable",
+        evidence: [`llm-toggle-${requested} in the provider panel`],
+        message:
+          `${MODEL_PICKER_DEFECT}: "${requested}" is listed by the provider panel ` +
+          `(llm-toggle-${requested})${provider} but the model picker does not offer it — ` +
+          `${options.length} option(s) enumerated (${providerCounts(options)}). ` +
+          `Its toggle state was NOT observed on this path, so this is reported on the ` +
+          `listing alone: the model is not absent, and the picker either did not refresh ` +
+          `after the panel closed or the option list is filtered. Reported as a FAILURE, ` +
+          `not a skip (#1461).`,
+      };
+    }
+
+    // Listed, toggle OFF, absent from the picker: all three agree, and the picker
+    // is RIGHT to omit a disabled model. Nothing about the product is wrong here —
+    // the setup did not enable it. Loud anyway: a listed model is not absent, so
+    // this may never reach a caller as `test.skip`.
+    return {
+      kind: "not-enabled",
+      message:
+        `${MODEL_NOT_ENABLED}: "${requested}" is listed by the provider panel ` +
+        `(llm-toggle-${requested})${provider} but its toggle is OFF — ` +
+        `${checked.length} of ${listed.length} listed model(s) are enabled, and the picker ` +
+        `offers ${options.length} option(s) (${providerCounts(options)}). ` +
+        `The picker is correct to omit a disabled model, so this is NOT a picker defect: ` +
+        `the setup failed to enable it. On a freshly configured provider the enabled set ` +
+        `is the ${"`"}MIN_DEFAULT_MODELS${"`"} default, which is what a panel closed inside its own ` +
+        `toggle-queue debounce leaves behind (#1649). Reported as a FAILURE, never a skip.`,
+    };
+  }
+
   const nearest = nearestModels(requested, options);
   const toggleEvidence =
-    enabled === undefined
+    listed === undefined
       ? "provider toggles were not observed on this path"
-      : `${enabled.length} provider toggle(s) observed, none of them "${requested}"`;
+      : `${listed.length} provider toggle(s) observed, none of them "${requested}"`;
 
   return {
     kind: "absent",
@@ -352,6 +415,27 @@ export async function enumerateEnabledModels(page: Page): Promise<string[]> {
 }
 
 /**
+ * The subset of `enumerateEnabledModels` whose toggle is actually ON.
+ *
+ * This is the one that may be reported as ENABLED. Its sibling above returns every
+ * rendered id regardless of `aria-checked`, and passing that as the resolver's
+ * only source is how the loud verdict came to assert "is ENABLED in the provider
+ * panel" from evidence that established only "is listed" (#1649). Both are read
+ * because the two together separate three states a single count cannot: the
+ * picker disagreeing with an enabled model, the setup having failed to enable it,
+ * and the model genuinely being gone.
+ *
+ * `:visible` is deliberately NOT applied: the deprecated disclosure's toggles are
+ * collapsed, not absent, and one that is checked is genuinely enabled.
+ */
+export async function enumerateCheckedModels(page: Page): Promise<string[]> {
+  const ids = await page
+    .locator('[data-testid^="llm-toggle-"][aria-checked="true"]')
+    .evaluateAll((els) => els.map((el) => el.getAttribute("data-testid") ?? ""));
+  return ids.map((id) => id.replace(/^llm-toggle-/, "")).filter(Boolean);
+}
+
+/**
  * Clicks an enumerated option by identity.
  *
  * Prefers the testid and falls back to the cmdk value, so a build that drops one
@@ -371,7 +455,7 @@ export type PinnedSelection =
 /**
  * Selects a pinned model in the OPEN picker, or reports what the picker proved.
  *
- * Loud verdicts (`empty`, `unmatchable`) always throw: they are the suite's own
+ * Loud verdicts (`empty`, `unmatchable`, `not-enabled`) always throw: they are the suite's own
  * defects and must never reach a caller that would skip on them. Only an
  * *established* absence is handed back, and even then the caller decides —
  * `absentBehavior: "return"` exists for `setup-openai`'s `fallbackToRanking`
@@ -381,7 +465,8 @@ export async function selectPinnedModelOption(
   page: Page,
   opts: {
     requested: string;
-    enabledModels?: string[];
+    listedModels?: string[];
+    checkedModels?: string[];
     providerLabel?: string;
     absentBehavior?: "throw" | "return";
     timeout?: number;
@@ -389,7 +474,8 @@ export async function selectPinnedModelOption(
 ): Promise<PinnedSelection> {
   const options = await enumerateModelOptions(page, opts.timeout ?? 10000);
   const verdict = resolveModelOption(opts.requested, options, {
-    enabledModels: opts.enabledModels,
+    listedModels: opts.listedModels,
+    checkedModels: opts.checkedModels,
     providerLabel: opts.providerLabel,
   });
 
