@@ -156,7 +156,8 @@ test("a provider name carrying spaces still parses from the testid alone", () =>
 
 test("a model enabled in the provider panel but missing from the picker FAILS loudly", () => {
   const verdict = resolveModelOption("claude-haiku-4-5", [option("OpenAI", "gpt-4o-mini")], {
-    enabledModels: ["claude-opus-5", "claude-haiku-4-5"],
+    listedModels: ["claude-opus-5", "claude-haiku-4-5"],
+    checkedModels: ["claude-opus-5", "claude-haiku-4-5"],
     providerLabel: "Anthropic",
   });
   assert.equal(verdict.kind, "unmatchable");
@@ -174,7 +175,8 @@ test("an EMPTY picker proves nothing and FAILS loudly", () => {
 
 test("an established absence skips, and the message carries what was seen", () => {
   const verdict = resolveModelOption("claude-haiku-3-5", DEV26_PICKER, {
-    enabledModels: ["claude-opus-5", "claude-haiku-4-5"],
+    listedModels: ["claude-opus-5", "claude-haiku-4-5"],
+    checkedModels: ["claude-opus-5", "claude-haiku-4-5"],
     providerLabel: "Anthropic",
   });
   assert.equal(verdict.kind, "absent");
@@ -299,3 +301,68 @@ test("hasOptionIdentity accepts an option carrying either attribute alone", () =
 // the provider specs, whose pinned model only resolves when the strip works, plus
 // the force-fail that reverts it. What this file pins is the half a live spec
 // cannot reproduce on demand: the verdict.
+
+// --- #1649: the panel LISTS a model and the panel ENABLES it are different facts ---
+//
+// `enumerateEnabledModels` returns every rendered `llm-toggle-*` id regardless of
+// `aria-checked` — its own docstring says so, and says a count taken from it is
+// never a count of enabled models. It was nonetheless passed as the single
+// `enabledModels` source, so the loud verdict announced "is ENABLED in the provider
+// panel" from evidence that only proves the panel LISTS it. On 2026-08-31 that
+// claim happened to be true; the reason it was true was a separate defect (#1649:
+// setup-openai closed the panel inside the toggle queue's 1000 ms debounce, so the
+// picker kept the pre-toggle set). The split below makes the message state what it
+// measured, and — the load-bearing half — keeps the new branch LOUD: a model the
+// panel lists with its toggle OFF is a setup failure, never a skip.
+
+test("a model whose toggle is ON but which the picker omits FAILS, and says ENABLED truthfully", () => {
+  const verdict = resolveModelOption("claude-haiku-4-5", [option("OpenAI", "gpt-4o-mini")], {
+    listedModels: ["claude-opus-5", "claude-haiku-4-5"],
+    checkedModels: ["claude-opus-5", "claude-haiku-4-5"],
+    providerLabel: "Anthropic",
+  });
+  assert.equal(verdict.kind, "unmatchable");
+  assert.ok(!verdict.message.startsWith("MODEL_NOT_AVAILABLE"));
+  assert.match(verdict.message, /is ENABLED in the provider panel/);
+  assert.match(verdict.message, /llm-toggle-claude-haiku-4-5/);
+});
+
+test("a model the panel LISTS with its toggle OFF is a setup failure, not a picker defect", () => {
+  const verdict = resolveModelOption("claude-haiku-4-5", [option("OpenAI", "gpt-4o-mini")], {
+    listedModels: ["claude-opus-5", "claude-haiku-4-5"],
+    checkedModels: ["claude-opus-5"],
+    providerLabel: "Anthropic",
+  });
+  assert.equal(verdict.kind, "not-enabled");
+  // Never the skip prefix, and never the picker-defect prefix either: the picker is
+  // not disagreeing with anything — it is correctly omitting a disabled model.
+  assert.ok(!verdict.message.startsWith("MODEL_NOT_AVAILABLE"));
+  assert.ok(!verdict.message.startsWith("MODEL_PICKER_DEFECT"));
+  assert.match(verdict.message, /MODEL_NOT_ENABLED/);
+  assert.match(verdict.message, /toggle is OFF/);
+  // The count that separates "the setup enabled nothing" from "it missed one".
+  assert.match(verdict.message, /1 of 2 listed/);
+});
+
+test("the not-enabled verdict outranks absence — a listed model is never reported missing", () => {
+  // `claude-haiku-3-5` is NOT in the picker, and the nearest-model machinery would
+  // happily produce a plausible `MODEL_NOT_AVAILABLE` for it. The panel listing it
+  // outranks that: absent means nobody knows the model.
+  const verdict = resolveModelOption("claude-haiku-3-5", DEV26_PICKER, {
+    listedModels: ["claude-haiku-3-5", "claude-opus-5"],
+    checkedModels: ["claude-opus-5"],
+    providerLabel: "Anthropic",
+  });
+  assert.equal(verdict.kind, "not-enabled");
+  assert.ok(!verdict.message.startsWith("MODEL_NOT_AVAILABLE"));
+});
+
+test("with only listedModels observed the message says so instead of claiming ENABLED", () => {
+  const verdict = resolveModelOption("claude-haiku-4-5", [option("OpenAI", "gpt-4o-mini")], {
+    listedModels: ["claude-haiku-4-5"],
+    providerLabel: "Anthropic",
+  });
+  assert.equal(verdict.kind, "unmatchable");
+  assert.match(verdict.message, /listed by the provider panel/);
+  assert.ok(!/is ENABLED in the provider panel/.test(verdict.message));
+});

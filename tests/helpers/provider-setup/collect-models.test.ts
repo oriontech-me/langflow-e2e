@@ -49,6 +49,7 @@ import {
   waitForButtonIdle,
   waitForToggleChecked,
   type ProviderRecord,
+  confirmEnabledOnServer,
 } from "./collect-models";
 
 // ─── Verbatim provider errors ────────────────────────────────────────────────
@@ -1277,4 +1278,60 @@ test("#1355: waitedMs is what lets the caller bound the SUM, not just each write
   assert.equal(slow.waitedMs, 500);
   assert.equal(fast.waitedMs, 0);
   assert.ok(slow.waitedMs > fast.waitedMs, "a slow confirmation must cost the budget more than a fast one");
+});
+
+// --- #1649: the toggle confirmation was reading the OPTIMISTIC client cache ---
+//
+// `waitForToggleChecked` polls `aria-checked`, and `useModelToggleQueue` flips that
+// synchronously at click time via `queryClient.setQueryData` — before any request
+// leaves the browser. Measured on 1.12.0.dev44: all 36 clicks reported "confirmed"
+// while the POST only went out at t=8132 ms. So a write that never reaches the
+// server is indistinguishable from one that lands, the #1355 shortfall warning
+// cannot fire, and the next spec inherits a provider it believes is fully enabled.
+// The server is the only source that settles it, and it is read ONCE after the
+// batch has flushed — polling it during the write was measured stalling a
+// single-worker backend (`apiRequestContext.get: Timeout 20000ms exceeded`).
+test("a server that answered confirms every model the loop expected", () => {
+  const v = confirmEnabledOnServer({ "gpt-4o": true, "gpt-4o-mini": true }, ["gpt-4o", "gpt-4o-mini"]);
+  assert.equal(v.kind, "confirmed");
+  if (v.kind === "confirmed") assert.equal(v.expected, 2);
+});
+
+test("a write that never landed is a SHORTFALL naming the models, not a pass", () => {
+  const v = confirmEnabledOnServer({ "gpt-4o": true, "gpt-4o-mini": false }, [
+    "gpt-4o",
+    "gpt-4o-mini",
+    "gpt-4.1",
+  ]);
+  assert.equal(v.kind, "shortfall");
+  if (v.kind === "shortfall") {
+    assert.deepEqual(v.missing, ["gpt-4o-mini", "gpt-4.1"]);
+    assert.equal(v.enabled, 1);
+    assert.equal(v.expected, 3);
+    assert.match(v.message, /1 of 3/);
+    assert.match(v.message, /gpt-4o-mini/);
+    assert.match(v.message, /#1649/);
+  }
+});
+
+test("a model missing from the response entirely counts as NOT enabled", () => {
+  // Absence is not `true`. The endpoint lists every model of a configured
+  // provider, so a key the loop expected and the response does not carry means
+  // the write did not land — the exact state the optimistic read hid.
+  const v = confirmEnabledOnServer({ "gpt-4o": true }, ["gpt-4o", "gpt-4o-mini"]);
+  assert.equal(v.kind, "shortfall");
+  if (v.kind === "shortfall") assert.deepEqual(v.missing, ["gpt-4o-mini"]);
+});
+
+test("a server that did not answer is UNAVAILABLE, never a silent confirmation", () => {
+  // #1012: an unevaluated check is unknown, not clean. Reporting `confirmed` here
+  // would be the same false green the optimistic read produced.
+  const v = confirmEnabledOnServer(undefined, ["gpt-4o"]);
+  assert.equal(v.kind, "unavailable");
+  if (v.kind === "unavailable") assert.match(v.message, /could not be confirmed/i);
+});
+
+test("expecting nothing is confirmed, not unavailable — there was nothing to write", () => {
+  const v = confirmEnabledOnServer(undefined, []);
+  assert.equal(v.kind, "confirmed");
 });

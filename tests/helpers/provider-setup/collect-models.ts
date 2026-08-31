@@ -402,6 +402,12 @@ const SAVE_IDLE_POLL_MS = 250;
  */
 const TOGGLE_CONFIRM_TIMEOUT_MS = 5_000;
 const TOGGLE_CONFIRM_BUDGET_MS = 60_000;
+/**
+ * Quiet period allowed for the toggle queue's 1000 ms debounce to flush before the
+ * server is asked what actually landed. Same constant the provider-setup helpers
+ * wait on (`model-toggle-batch.ts`), for the same product reason (#1649).
+ */
+const TOGGLE_FLUSH_QUIET_MS = 1500;
 const TOGGLE_CONFIRM_POLL_MS = 100;
 
 /**
@@ -732,6 +738,66 @@ export interface ButtonStateLocator {
   isEnabled(): Promise<boolean>;
 }
 
+/** What the server said about the models this sweep tried to enable (#1649). */
+export type ServerConfirmation =
+  | { kind: "confirmed"; expected: number }
+  | { kind: "shortfall"; expected: number; enabled: number; missing: string[]; message: string }
+  | { kind: "unavailable"; message: string };
+
+/**
+ * Confirms the toggle batch against the SERVER, which is the only source that can.
+ *
+ * `waitForToggleChecked` below reads `aria-checked`, and the provider modal flips
+ * that synchronously at click time (`useModelToggleQueue` applies an optimistic
+ * `setQueryData` before any request leaves the browser). Measured on 1.12.0.dev44:
+ * all 36 clicks were "confirmed" while the POST only went out at t=8132 ms. So the
+ * client read cannot distinguish a write that landed from one that never did — and
+ * a sweep that silently enabled nothing hands the next spec a provider still on its
+ * `MIN_DEFAULT_MODELS` default, which is what turned #1649's latent defect into five
+ * red attempts in one daily.
+ *
+ * Pure, and read ONCE by the caller after the batch has flushed — never polled:
+ * polling this endpoint while the write is in flight was measured stalling a
+ * single-worker backend at 20 s.
+ */
+export function confirmEnabledOnServer(
+  serverEnabled: Record<string, boolean> | undefined,
+  expected: string[],
+): ServerConfirmation {
+  if (expected.length === 0) return { kind: "confirmed", expected: 0 };
+
+  if (serverEnabled === undefined) {
+    return {
+      kind: "unavailable",
+      message:
+        `collect-models: the enabled state of ${expected.length} model(s) could not be confirmed ` +
+        `against the server — the read did not answer. Reported as UNKNOWN rather than ` +
+        `confirmed: an unevaluated check is unknown, not clean (#1012/#1649).`,
+    };
+  }
+
+  // Absence is not `true`: the endpoint lists every model of a configured
+  // provider, so a key it does not carry is one the write never created.
+  const missing = expected.filter((model) => serverEnabled[model] !== true);
+  if (missing.length === 0) return { kind: "confirmed", expected: expected.length };
+
+  const enabled = expected.length - missing.length;
+  return {
+    kind: "shortfall",
+    expected: expected.length,
+    enabled,
+    missing,
+    message:
+      `collect-models: the server confirms only ${enabled} of ${expected.length} model(s) this ` +
+      `sweep tried to enable. Missing: ${missing.slice(0, 10).join(", ")}` +
+      `${missing.length > 10 ? ` (+${missing.length - 10} more)` : ""}. ` +
+      `The panel's own toggles report the OPTIMISTIC client state and cannot see this, so a ` +
+      `sweep that wrote nothing used to look identical to one that wrote everything. Specs on ` +
+      `this instance will find the provider on its MIN_DEFAULT_MODELS default and have to ` +
+      `enable it themselves (#1649/#1355).`,
+  };
+}
+
 /**
  * Wait for a model toggle to report itself enabled after a click (#1355).
  *
@@ -1009,6 +1075,14 @@ function chargeBudget(budget: SweepBudget, provider: string, ms: number): void {
 interface ProviderCollection {
   models: ModelRecord[];
   stall: string | null;
+  /**
+   * Models this sweep CLICKED to enable, so the caller can confirm them against
+   * the server once the whole sweep is idle (#1649). Never confirmed here: the
+   * read has to happen while the backend is not busy with the very write it is
+   * being asked about — measured timing out at 20 s when issued inside the loop
+   * on a `LANGFLOW_WORKERS=1` instance.
+   */
+  attempted: string[];
 }
 
 async function collectModelsForProvider(
@@ -1297,6 +1371,9 @@ async function collectModelsForProvider(
   // than silently dropped (#1012).
   let unconfirmed = 0;
   let confirmBudgetLeft = TOGGLE_CONFIRM_BUDGET_MS;
+  // Every model this loop CLICKED, so the server read below can answer the one
+  // question `aria-checked` cannot: did the write actually land (#1649)?
+  const attempted: string[] = [];
   for (let i = 0; i < toggleCount; i++) {
     const toggle = toggles.nth(i);
     const modelName = await toggle.locator("..").locator("span.text-sm").textContent();
@@ -1305,6 +1382,7 @@ async function collectModelsForProvider(
     }
     const isChecked = (await toggle.getAttribute("aria-checked")) === "true";
     if (!isChecked) {
+      if (modelName?.trim()) attempted.push(modelName.trim());
       await toggle.click();
       if (confirmBudgetLeft > 0) {
         const confirm = await waitForToggleChecked(toggle, {
@@ -1345,7 +1423,7 @@ async function collectModelsForProvider(
 
   await page.getByTestId("sidebar-nav-Model Providers").click();
 
-  return { models, stall };
+  return { models, stall, attempted };
 }
 
 async function collectModels(page: Page): Promise<{
@@ -1358,6 +1436,8 @@ async function collectModels(page: Page): Promise<{
 
   const allModels: ModelRecord[] = [];
   const stalls = new Map<string, string>();
+  /** Provider DISPLAY name -> the models this sweep clicked to enable (#1649). */
+  const attempted = new Map<string, string[]>();
 
   // One budget for the whole sweep, spent down as each provider's post-Save
   // waits actually run (#1370), with a per-provider ledger so a collateral stall
@@ -1380,6 +1460,36 @@ async function collectModels(page: Page): Promise<{
     );
     allModels.push(...collection.models);
     if (collection.stall) stalls.set(provider, collection.stall);
+    if (collection.attempted.length > 0) {
+      // Keyed by the DISPLAY name, which is how `enabled_models` keys its map
+      // ("OpenAI", not "openai") — derived from the testid rather than restated,
+      // so a new provider needs no second table (the `displayNameOf` shape
+      // `preconfigure-routed-provider.ts` already uses).
+      attempted.set(config.providerTestId.replace(/^provider-item-/, ""), collection.attempted);
+    }
+  }
+
+  // Confirm the toggle writes against the SERVER, once, now that the sweep is
+  // idle (#1649). The panel's own `aria-checked` confirmation is the OPTIMISTIC
+  // client state — `useModelToggleQueue` flips it synchronously at click time,
+  // before any request leaves the browser — so a write that never landed is
+  // indistinguishable from one that did, and the #1355 shortfall warning cannot
+  // fire. This read has to be LAST: issued inside the provider loop it competes
+  // with the very write it asks about and was measured timing out at 20 s on a
+  // `LANGFLOW_WORKERS=1` instance, turning an honest check into a warning on
+  // every sweep. Reporting only — never fails the sweep (#980).
+  if (attempted.size > 0) {
+    const enabledByProvider = await page
+      .request.get("/api/v1/models/enabled_models?purpose=configure", { timeout: 30000 })
+      .then((r) => (r.ok() ? r.json() : null))
+      .then((body) => body?.enabled_models as Record<string, Record<string, boolean>> | undefined)
+      .catch(() => undefined);
+    for (const [provider, models] of attempted) {
+      const confirmation = confirmEnabledOnServer(enabledByProvider?.[provider], models);
+      if (confirmation.kind !== "confirmed") {
+        console.warn(`⚠️  [${provider}] ${confirmation.message}`);
+      }
+    }
   }
 
   // Printed on EVERY sweep, not only a failing one (#1385). The budget is the

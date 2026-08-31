@@ -89,7 +89,54 @@ trace. Resolve a model through
 `tests/helpers/provider-setup/model-option.ts` (identity from `data-value` /
 `data-testid`), never through the option's rendered text.
 
-### 5. Run with --workers=1
+### 5. Enabling models leaves the panel mid-transaction — never close on top of it
+
+The provider panel's model toggles are **not** written per click. Every toggle
+feeds `useModelToggleQueue`, which applies an optimistic cache update and then
+sends the whole batch through a **1000 ms debounce**. Which of the two send paths
+ends up carrying the batch decides whether the model picker sees the result at
+all, and only one of them refreshes it:
+
+| Path | Runs on | Refreshes the picker |
+|---|---|---|
+| debounced flush (`flushModelToggles`) | 1000 ms after the last toggle | **yes** — its `onSettled` invalidates *and* calls `refreshAllModelInputs` |
+| close-path flush (`flushPendingChanges`) | the modal's Close | **no** — it only invalidates; `handleClose`'s own `refreshAllModelInputs` runs *after* `onClose` already unmounted the modal |
+
+So closing the panel **within** the debounce window takes the path that never
+refreshes the picker, and the picker then renders the **pre-toggle** enabled set
+— which on a freshly configured provider is the `MIN_DEFAULT_MODELS = 5` default
+(`lfx/base/models/model_utils.py`). That is a genuine picker/panel disagreement,
+so `MODEL_PICKER_DEFECT` fires, correctly (§4) — and the cause is ours.
+
+Measured on `1.12.0.dev44`, one clean container, three runs of the identical
+sequence differing **only** in the pause between the last toggle click and Close,
+with the server reporting `enabled=41` in all three (#1649):
+
+| Pause before Close | `model_model` visible after | Picker offers |
+|---|---|---|
+| 0 ms | 4 327 ms | **5** ❌ |
+| 1 200 ms | 30 020 ms | 35 ✅ |
+| 2 000 ms | 29 640 ms | 35 ✅ |
+
+Two consequences for anything that drives this panel:
+
+1. **Wait for the batch to flush before clicking Close.** A person never closes a
+   dialog under a second after their last click, which is why this is unreachable
+   by hand and reproduces every time from automation.
+2. **Budget for the refresh.** Taking the correct path makes `model_model` take
+   **~30 s** to come back, not the ~4 s the broken path returns in. A 15 s budget
+   turns the fix into a `model_model` visibility timeout.
+
+Two conditions were measured and rejected as the wait: `waitForResponse` on the
+toggle POST **races** — the batch is often already sent mid-loop, so the wait
+times out while the write has in fact landed — and polling `GET enabled_models`
+**stalls the backend** that is busy with the very write being waited on
+(`apiRequestContext.get: Timeout 20000ms exceeded`).
+
+This is handled for you inside `tests/helpers/provider-setup/` — do not
+re-implement the toggle loop in a spec.
+
+### 6. Run with --workers=1
 
 ```bash
 npx playwright test tests/tests-automations/regression/core-functionality/llm-agents/my-test.spec.ts --workers=1

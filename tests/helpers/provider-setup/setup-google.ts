@@ -2,10 +2,12 @@ import type { Page } from "@playwright/test";
 import { hideInspectorPanel } from "../ui/hide-inspector-panel";
 import {
   clickModelOption,
+  enumerateCheckedModels,
   enumerateEnabledModels,
   enumerateModelOptions,
   selectPinnedModelOption,
 } from "./model-option";
+import { enableAndSettleModelToggles } from "./model-toggle-batch";
 import { openProviderPanel } from "./provider-panel-entry";
 import { waitForProviderRow } from "./provider-list-state";
 import { providerAlreadyConfigured } from "./provider-config-state";
@@ -85,36 +87,47 @@ export async function setupGoogle(
       .catch(() => {});
   }
 
-  // Step 5: Enable all available Google Generative AI models.
+  // Step 5: Enable all available models — and let the write settle.
   // Toggles only render after the provider is authenticated — waitFor retries until visible.
   // The `:visible` filter excludes toggles inside the collapsed "deprecated
   // models" section, which are mounted in the DOM but not displayed until the
   // section's "Show N deprecated models" button is clicked. Without the
   // filter, `.click()` on a hidden toggle (e.g. gemini-2.0-flash on 1.11.x)
   // retry-loops to a timeout.
-  const toggles = page.locator('[data-testid^="llm-toggle"]:visible');
-  await toggles.first().waitFor({ state: "visible", timeout: 15000 }).catch(() => {});
-  const toggleCount = await toggles.count();
-
-  for (let i = 0; i < toggleCount; i++) {
-    const toggle = toggles.nth(i);
-    const isChecked = (await toggle.getAttribute("aria-checked")) === "true";
-    if (!isChecked) {
-      await toggle.click();
-    }
-  }
+  // Enabling is a TRANSACTION: the toggles are batched behind a 1000 ms debounce,
+  // and closing the panel inside that window takes the flush path that never
+  // refreshes the model picker (#1649). The helper clicks and then waits for the
+  // product's own write to go quiet, so Step 6 below cannot close on top of it.
+  // Costs nothing when nothing was clicked, which is the normal CI path.
+  await enableAndSettleModelToggles(page);
 
   // Read the panel's toggles BEFORE closing it: they are the second, independent
-  // source for "this model exists and is enabled", and a picker miss that this
-  // list contradicts is not an absence (#1461).
-  const enabledModels = await enumerateEnabledModels(page);
+  // source the picker can be contradicted by, and a picker miss that they
+  // contradict is not an absence (#1461). BOTH are read, because "the panel lists
+  // it" and "its toggle is on" are different facts and only the second one may be
+  // reported as ENABLED (#1649).
+  const listedModels = await enumerateEnabledModels(page);
+  const checkedModels = await enumerateCheckedModels(page);
 
   // Step 6: Close the provider management panel
   await page.getByRole("button", { name: "Close" }).click();
 
   // Step 7: Select model — uses modelTestId if provided, otherwise selects the first available
   await hideInspectorPanel(page);
-  await page.getByTestId("model_model").click();
+  // Closing the panel (Step 6) puts the model dropdown into a post-close refresh
+  // state where the `model_model` trigger is briefly replaced by a (testid-less)
+  // "Loading models…" button while providers and enabled models refetch. Both
+  // budgets below are 60 s, and NOT to make a stall pass: taking the correct
+  // flush path in Step 5 means the product genuinely re-fetches, measured at
+  // 30 020 ms and 29 640 ms against the 4 327 ms the broken path returned in.
+  // The click carries its own budget because it otherwise falls back to the 20 s
+  // `actionTimeout` and the trigger can re-enter the loading state between
+  // "visible" and the click — measured failing exactly there
+  // (`locator.click: Timeout 20000ms exceeded ... getByTestId('model_model')`)
+  // on the cold path with the provider on its MIN_DEFAULT_MODELS default (#1649).
+  const modelTrigger = page.getByTestId("model_model");
+  await modelTrigger.waitFor({ state: "visible", timeout: 60000 });
+  await modelTrigger.click({ timeout: 60000 });
   if (modelTestId) {
     // Resolved by option IDENTITY (data-value / data-testid), never by the option's
     // text: 1.12.0.dev26 renders a `sr-only` "N of M" counter inside each option, so
@@ -123,7 +136,8 @@ export async function setupGoogle(
     // whose trace shows the model present at option 22 of 90 (#1459).
     await selectPinnedModelOption(page, {
       requested: modelTestId,
-      enabledModels,
+      listedModels,
+      checkedModels,
       providerLabel: "Google Generative AI",
     });
   } else {
