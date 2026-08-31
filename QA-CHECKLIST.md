@@ -3,7 +3,7 @@
 > **Repository:** `C:/QAx/langflow-playwright/langflow-e2e`
 > **Tests:** `tests/tests-automations/regression/`
 > **Config:** `playwright.config.ts`
-> **Last updated:** 2026-08-28
+> **Last updated:** 2026-08-31
 
 ---
 
@@ -1345,7 +1345,7 @@
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
-| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 72 | 0 | 57 | 8 | 7 |
+| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 76 | 0 | 60 | 8 | 8 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | **TOTAL (OSS — excludes `enterprise/`)** | **591** | **453 (77%)** | **59 (10%)** | **16 (3%)** | **63 (11%)** |
 
