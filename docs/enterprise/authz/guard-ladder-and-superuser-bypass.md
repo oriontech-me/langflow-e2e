@@ -68,6 +68,16 @@ without touching the policy; a lane that gates on `false` is asserting that its 
 is subject to policy like anybody else. Both halves are asserted here, each against the
 container that can answer it — and each skipping, named, on the container that cannot.
 
+## Note — the owner override (#1635)
+
+Since the 2026-08-27 Enterprise build, `flow:create` is allowed by an **owner override** when
+the destination project belongs to the caller, and a bare `POST /api/v1/flows/` canonicalises
+to exactly that project. Any probe here that means "this subject is refused" therefore names a
+destination the subject does **not** own, via `attemptFlowCreate(…, folderId)`.
+
+The full reasoning, and the test that pins the override as a scoped rule rather than a hole,
+live in `rbac-instance-baseline.md`.
+
 ## Tags *(required)*
 
 `@enterprise` `@api` `@regression` `@authz`

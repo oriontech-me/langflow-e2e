@@ -76,6 +76,15 @@ would go red on an upstream tightening that is arguably the fix. What is asserte
 ends, where the answer is unambiguous: `viewer` and a role-less user are refused by
 authorization, and `admin` is not.
 
+## Note — the deployment payload gained `slug` (#1635)
+
+On the 2026-08-27 Enterprise build `POST /api/v1/control-plane/deployments` requires a `slug`.
+Without it FastAPI answers **`422` before authorization runs** — for the superuser too — so the
+request never reaches the verdict this spec exists to observe, and the gate test failed for a
+payload reason wearing an authorization failure's clothes. With `slug` present the measured
+answers are unchanged: role-less `403 Permission denied`, superuser `503 Control Plane
+deployment is not configured`.
+
 ## Tags *(required)*
 
 `@enterprise` `@api` `@regression` `@authz`

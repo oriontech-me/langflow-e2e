@@ -16,6 +16,8 @@ import {
   restoreRoleAssignments,
   type RbacUser,
   type RoleAssignment,
+  attemptFlowCreate,
+  getProjectOwnedBy,
 } from "../../../../helpers/enterprise/rbac";
 
 /**
@@ -93,17 +95,19 @@ async function probeGuards(
   request: APIRequestContext,
   auth: string,
   label: string,
+  foreignProjectId: string,
 ): Promise<GuardVerdicts> {
   const headers = { Authorization: auth };
 
-  const resource = await request.post("/api/v1/flows/", {
-    headers,
-    data: {
-      name: `guard-ladder-${label}-${Date.now()}`,
-      description: "",
-      data: { nodes: [], edges: [] },
-    },
-  });
+  // Into a project the subject does NOT own. A bare create canonicalises to the
+  // caller's own project, where the owner override answers `201` for anybody
+  // and this probe would measure the override rather than the guard (#1635).
+  const resource = await attemptFlowCreate(
+    request,
+    auth,
+    `guard-ladder-${label}-${Date.now()}`,
+    foreignProjectId,
+  );
   const adminRoute = await request.get("/api/v1/authz/admin/users", { headers });
   const roleAdmin = await request.post("/api/v1/authz/roles", {
     headers,
@@ -199,6 +203,7 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
     async ({ request }) => {
       const auth = await getEnterpriseAuthToken(request);
       await requireRbacInstance(request, auth);
+      const foreignProjectId = await getProjectOwnedBy(request, auth);
 
       const subject: RbacUser = await getSharedRbacSubject(request, auth);
       const granted: { assignments: string[]; shares: string[] } = {
@@ -212,7 +217,7 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
         await resetSubjectGrants(request, auth, granted);
 
         await test.step("a role-less subject is refused by all three, with three different messages", async () => {
-          roleLess = await probeGuards(request, subject.auth, "roleless");
+          roleLess = await probeGuards(request, subject.auth, "roleless", foreignProjectId);
 
           expect(roleLess.resource.status).toBe(403);
           expect(roleLess.resource.detail).toBe(RESOURCE_GUARD);
@@ -239,7 +244,7 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
             await assignRole(request, auth, subject.id, roles.admin),
           );
 
-          asAdmin = await probeGuards(request, subject.auth, "admin");
+          asAdmin = await probeGuards(request, subject.auth, "admin", foreignProjectId);
 
           expect(asAdmin.resource.status).toBe(201);
           expect(asAdmin.adminRoute.status).toBe(200);
@@ -280,11 +285,20 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
     async ({ request }) => {
       const auth = await getEnterpriseAuthToken(request);
       await requireRbacInstance(request, auth);
+      const foreignProjectId = await getProjectOwnedBy(request, auth);
 
       let stripped: RoleAssignment[] = [];
       let verdicts: GuardVerdicts | undefined;
 
       try {
+        // Owned by the SUBJECT, not by the superuser: the point of this test is
+        // the superuser writing where policy — not ownership — has to answer,
+        // and a project the superuser owns would be answered by the override
+        // before the guard is ever consulted.
+        const subjectProjectId = await getProjectOwnedBy(
+          request,
+          (await getSharedRbacSubject(request, auth)).auth,
+        );
         stripped = await stripSuperuserAssignments(request, auth);
         expect(
           stripped.length,
@@ -292,7 +306,7 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
             "answer whether the flag or the role is what allows it",
         ).toBeGreaterThan(0);
 
-        verdicts = await probeGuards(request, auth, "superuser-enforced");
+        verdicts = await probeGuards(request, auth, "superuser-enforced", subjectProjectId);
 
         // This is what `superuser_bypass: false` buys, and the reason every
         // spec in this directory gates on it: the superuser's resource-policy
@@ -321,6 +335,7 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
     async ({ request }) => {
       const auth = await getEnterpriseAuthToken(request);
       await requireBypassInstance(request, auth);
+      const foreignProjectId = await getProjectOwnedBy(request, auth);
 
       let stripped: RoleAssignment[] = [];
       let verdicts: GuardVerdicts | undefined;
@@ -331,7 +346,7 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
         stripped = await stripSuperuserAssignments(request, auth);
 
         await test.step("a role-less superuser is allowed the call policy refuses", async () => {
-          verdicts = await probeGuards(request, auth, "superuser-bypass");
+          verdicts = await probeGuards(request, auth, "superuser-bypass", foreignProjectId);
 
           // With `assignment_count` at zero, no role grants this. The flag does.
           expect(verdicts.resource.status).toBe(201);
@@ -341,7 +356,7 @@ test.describe("Enterprise — three guards, and what superuser bypass switches",
 
         await test.step("a role-less peer on the same instance is still refused by all three", async () => {
           peer = await createRbacUser(request, auth, "bypass-peer");
-          peerVerdicts = await probeGuards(request, peer.auth, "peer");
+          peerVerdicts = await probeGuards(request, peer.auth, "peer", foreignProjectId);
 
           // The half that separates an escape hatch from an off-switch. If the
           // bypass disabled enforcement, this subject would be allowed too, and
