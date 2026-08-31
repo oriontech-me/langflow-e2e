@@ -1357,7 +1357,7 @@
 | `i18n/` — Language and Localization | 5 | 5 | 0 | 0 | 0 |
 | `memory/` — Memory Base Registration | 16 | 9 | 0 | 0 | 7 |
 | `governance/` — Catalog and Provider Policy | 14 | 0 | 12 | 0 | 2 |
-| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 82 | 0 | 65 | 8 | 9 |
+| `enterprise/` — Enterprise-only Surfaces (not scheduled — decision) | 88 | 0 | 70 | 8 | 10 |
 | `serving/` — Serving-Plane End-User Identity | 13 | 0 | 10 | 0 | 3 |
 | **TOTAL (OSS — excludes `enterprise/`)** | **591** | **453 (77%)** | **59 (10%)** | **16 (3%)** | **63 (11%)** |
 
