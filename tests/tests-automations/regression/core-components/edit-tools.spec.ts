@@ -440,9 +440,11 @@ test.describe("Edit tools (Tool Mode)", () => {
   // `name: "web_fetch"`, `ap: []`), it costs ~1 run in 6 here — the settle
   // barrier is what keeps it out of the test above. Approval persistence stays
   // asserted there.
-  test(
+  // QUARANTINED for #1644 — the stale-response park never engages, so this guard asserts on an unmeasured run
+  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
+  test.fixme(
     "a stale node-update response does not revert the action edits",
-    { tag: ["@stable", "@regression", "@components"] },
+    { tag: ["@regression", "@components"] },
     async ({ page, request }) => {
       const bearer = await getAuthToken(request);
       let flowId = "";

@@ -509,9 +509,11 @@ const targets = resolveTestTargets({ tier: "any-completion" });
 test.describe.configure({ mode: "serial" });
 
 test.describe("Context ID isolation — retrieval layer (model-free)", () => {
-  test(
+  // QUARANTINED for #1643 — an overlay at the canvas bottom intercepts the output-inspection-messages-memory click
+  // (daily 2026-08-31, run 33410643882; guard tripped, so the workflow removed nothing).
+  test.fixme(
     "mirrored context-scoped retrievals return only their own context's messages",
-    { tag: ["@stable", "@regression", "@agents", "@components"] },
+    { tag: ["@regression", "@agents", "@components"] },
     async ({ page, request }) => {
       const seeded = await seedTwoContextSession(request);
       try {
