@@ -1247,6 +1247,25 @@
 - [-] **Revoking on the screen removes the assignment at the API** — the confirm dialog names the role and the user losing it, and the state is read from the admin listing afterwards rather than from the row disappearing. Both buttons are named exactly `Revoke`, so the row's and the dialog's are addressed separately → `enterprise/authz/access-control-ui.spec.ts`
 - [ ] Cross-replica convergence — needs Redis and a second replica: without one `invalidation.listener_connected` is `false` while the policy still resolves `active`, so a single-container assertion would measure nothing. **Recipe measured out; blocked only on machine memory** (a second Langflow replica costs ~1.1 GiB against an 8 GiB local Docker VM already holding six): the variable is `LANGFLOW_AUTHZ_REDIS_URL` (`src/authz/policy_invalidation.py`), so it takes a `redis:7-alpine` on `langflow-ee-net`, the RBAC container recreated with `LANGFLOW_AUTHZ_REDIS_URL=redis://redis-ee:6379/0`, and a second replica on another port sharing the same `LANGFLOW_DATABASE_URL`. The assertions are then `listener_connected: true` on both, and a grant written through replica A flipping replica B's enforcement with no restart, `seen_revision` / `observed_revision` converging
 
+#### 22.7 Admin Console Shell (`/admin-ee`)
+
+> The console is the surface § 21 names as Enterprise-owned; its seven screens are governed
+> from here and nowhere else. This subsection is the **shell** contract only — that each
+> screen resolves, is the one its tab claims, and loaded its own data. What each screen lets
+> an operator *do* is a follow-up per tab, and every one of those depends on this: an
+> assertion about a filter or a dialog passes vacuously against a screen that never rendered.
+> Needs the RBAC variant (§ 22.6) — `access-control` and `audit-logs` read `/authz/*` and
+> have nothing to load without it. The seven-tab strip is what the build under test serves:
+> `access-control-ui.spec.ts` records `/admin-ee/access-control` redirecting away and no such
+> tab existing, and on this build the redirect runs the other way — `/settings/access-control`
+> lands on `/admin-ee/access-control`. That spec still passes, because it asserts on the
+> tables rather than the route; its header is what went stale.
+
+- [-] Each of the seven screens deep-links to itself: the URL does not redirect to a default tab, `enterprise-admin-tab-<route>` marks it selected, its own subtitle renders — the screen's header copy, because four of the seven candidate testids describe an instance *state* and a fifth is shared with a neighbouring tab — **and the one API read no other tab performs answered 2xx** — all seven paint the same chrome, so an assertion on chrome would pass against any of them → `enterprise/admin-console/console-tab-contract.spec.ts`
+- [-] The tab strip opens the screen each label names, asserted over all seven rather than assumed from the label — `Components` is `/admin-ee/catalog`, so the mapping is already not derivable from the text → `enterprise/admin-console/console-tab-contract.spec.ts`
+- [-] No screen in the console renders an unresolved i18n key, failing with every offending screen and string named. The guard of #1563, where `users-groups` shipped 17 raw `admin.*` keys; fixed on the 2026-08-27 image and unwitnessed until now. Matching is unanchored and covers `aria-label`/`title`, because the serious one — the delete-account button's accessible name — reaches the DOM composed (`admin.deleteTitle — langflow`) and an anchored pattern finds only the harmless column headers. Measured against the build that shipped the defect: 9 keys; against the current one: 0 → `enterprise/admin-console/console-tab-contract.spec.ts`
+- [ ] Per-tab operator behaviour — audit filters that actually filter, provider add/deactivate, the model blocklist round trip, user lifecycle with its confirmation dialog, role assignment. One follow-up each, all gated on the shell above
+
 ---
 
 ## serving/ — Serving-Plane End-User Identity (1.12)
